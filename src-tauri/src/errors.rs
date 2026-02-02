@@ -71,6 +71,7 @@ impl AppError {
     }
 
     /// Returns whether this error is recoverable (can be retried)
+    #[allow(dead_code)]
     pub fn is_recoverable(&self) -> bool {
         match self {
             AppError::AudioDevice(_) => true,  // Device might reconnect
@@ -84,6 +85,7 @@ impl AppError {
     }
 
     /// Returns a suggested action for the user
+    #[allow(dead_code)]
     pub fn suggested_action(&self) -> Option<&str> {
         match self {
             AppError::AudioDevice(_) => Some("Check your microphone connection and try again"),

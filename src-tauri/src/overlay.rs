@@ -1,10 +1,13 @@
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WindowEvent};
 use serde::{Deserialize, Serialize};
+use std::thread;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum OverlayState {
     Idle,
+    ToggleIdle,
     Recording,
     Transcribing,
 }
@@ -22,25 +25,24 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         WebviewUrl::App("overlay.html".into()),
     )
     .title("Trispr Flow Overlay")
-    .inner_size(200.0, 80.0)
+    .inner_size(32.0, 32.0)
     .resizable(false)
     .decorations(false)
+    .shadow(false)
     .transparent(true)
+    .focusable(false)
     .always_on_top(true)
     .skip_taskbar(true)
     .visible(false) // Start hidden
     .build()
     .map_err(|e| format!("Failed to create overlay window: {}", e))?;
 
-    // Position in top-right corner by default
+    // Position in top-left corner by default
     if let Ok(monitor) = window.current_monitor() {
-        if let Some(monitor) = monitor {
-            let size = monitor.size();
-            let scale = monitor.scale_factor();
-
-            // Position in top-right with 20px margin
-            let x = (size.width as f64 / scale) - 220.0;
-            let y = 20.0;
+        if let Some(_monitor) = monitor {
+            // Position in top-left with 12px margin
+            let x = 12.0;
+            let y = 12.0;
 
             let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition {
                 x,
@@ -48,6 +50,8 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
             }));
         }
     }
+
+    let _ = window.set_ignore_cursor_events(true);
 
     // Handle window events
     let app_handle = app.clone();
@@ -72,25 +76,33 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
         None => create_overlay_window(app)?,
     };
 
-    // Emit state to overlay
-    app.emit("overlay:state", &state)
-        .map_err(|e| format!("Failed to emit overlay state: {}", e))?;
+    // Emit state directly to overlay window (broadcast as fallback)
+    let _ = window.emit("overlay:state", &state);
+    let _ = app.emit("overlay:state", &state);
 
     // Show or hide based on state
     match state {
         OverlayState::Idle => {
             window.hide().map_err(|e| format!("Failed to hide overlay: {}", e))?;
         }
-        OverlayState::Recording | OverlayState::Transcribing => {
+        OverlayState::ToggleIdle | OverlayState::Recording | OverlayState::Transcribing => {
             window.show().map_err(|e| format!("Failed to show overlay: {}", e))?;
-            window.set_focus().ok(); // Focus is optional
         }
     }
+
+    // Re-emit after a short delay to ensure the overlay webview is ready.
+    let app_handle = app.clone();
+    let state_clone = state.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(120));
+        let _ = app_handle.emit("overlay:state", &state_clone);
+    });
 
     Ok(())
 }
 
 /// Get current overlay position (for settings persistence)
+#[allow(dead_code)]
 pub fn get_overlay_position(app: &AppHandle) -> Option<(f64, f64)> {
     app.get_webview_window("overlay")
         .and_then(|w| w.outer_position().ok())
@@ -98,6 +110,7 @@ pub fn get_overlay_position(app: &AppHandle) -> Option<(f64, f64)> {
 }
 
 /// Set overlay position (from saved settings)
+#[allow(dead_code)]
 pub fn set_overlay_position(app: &AppHandle, x: f64, y: f64) -> Result<(), String> {
     let window = app
         .get_webview_window("overlay")

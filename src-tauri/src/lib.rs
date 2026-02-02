@@ -12,13 +12,14 @@ use enigo::{Enigo, Key, KeyboardControllable};
 use errors::{AppError, ErrorEvent};
 use overlay::{OverlayState, update_overlay_state};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::CheckMenuItem;
@@ -86,6 +87,7 @@ struct Settings {
   model: String,
   cloud_fallback: bool,
   audio_cues: bool,
+  audio_cues_volume: f32,
 }
 
 impl Default for Settings {
@@ -99,6 +101,7 @@ impl Default for Settings {
       model: "whisper-large-v3".to_string(),
       cloud_fallback: false,
       audio_cues: true,
+      audio_cues_volume: 0.3,
     }
   }
 }
@@ -357,13 +360,43 @@ fn float_to_i16(sample: f32) -> i16 {
   (clamped * i16::MAX as f32) as i16
 }
 
+struct OverlayLevelEmitter {
+  app: AppHandle,
+  start: Instant,
+  last_emit_ms: AtomicU64,
+}
+
+impl OverlayLevelEmitter {
+  fn new(app: AppHandle) -> Self {
+    Self {
+      app,
+      start: Instant::now(),
+      last_emit_ms: AtomicU64::new(0),
+    }
+  }
+
+  fn emit_level(&self, level: f32) {
+    let now_ms = self.start.elapsed().as_millis() as u64;
+    let last = self.last_emit_ms.load(Ordering::Relaxed);
+    if now_ms.saturating_sub(last) < 50 {
+      return;
+    }
+    self.last_emit_ms.store(now_ms, Ordering::Relaxed);
+    let level = level.clamp(0.0, 1.0);
+    let _ = self.app.emit("overlay:level", level);
+  }
+}
+
 fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> {
   let manager = app.global_shortcut();
   let _ = manager.unregister_all();
 
-  let ptt = settings.hotkey_ptt.trim();
-  if !ptt.is_empty() {
-    info!("Registering PTT hotkey: {}", ptt);
+  let register_ptt = || -> Result<(), String> {
+    let ptt = settings.hotkey_ptt.trim();
+    if ptt.is_empty() {
+      return Ok(());
+    }
+    info!("Registering PTT hotkey (hold): {}", ptt);
     match manager.on_shortcut(ptt, |app, _shortcut, event| {
       let app = app.clone();
       if event.state == ShortcutState::Pressed {
@@ -374,18 +407,24 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         handle_ptt_release_async(app);
       }
     }) {
-      Ok(_) => info!("PTT hotkey registered successfully"),
+      Ok(_) => {
+        info!("PTT hotkey registered successfully");
+        Ok(())
+      }
       Err(e) => {
         error!("Failed to register PTT hotkey '{}': {}", ptt, e);
         emit_error(app, AppError::Hotkey(format!("Could not register PTT hotkey '{}': {}. Try a different key.", ptt, e)), Some("Hotkey Registration"));
-        return Err(e.to_string());
+        Err(e.to_string())
       }
     }
-  }
+  };
 
-  let toggle = settings.hotkey_toggle.trim();
-  if !toggle.is_empty() {
-    info!("Registering Toggle hotkey: {}", toggle);
+  let register_toggle = || -> Result<(), String> {
+    let toggle = settings.hotkey_toggle.trim();
+    if toggle.is_empty() {
+      return Ok(());
+    }
+    info!("Registering Toggle hotkey (click): {}", toggle);
     match manager.on_shortcut(toggle, |app, _shortcut, event| {
       if event.state == ShortcutState::Pressed {
         info!("Toggle hotkey pressed");
@@ -393,12 +432,24 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         handle_toggle_async(app);
       }
     }) {
-      Ok(_) => info!("Toggle hotkey registered successfully"),
+      Ok(_) => {
+        info!("Toggle hotkey registered successfully");
+        Ok(())
+      }
       Err(e) => {
         error!("Failed to register Toggle hotkey '{}': {}", toggle, e);
         emit_error(app, AppError::Hotkey(format!("Could not register Toggle hotkey '{}': {}. Try a different key.", toggle, e)), Some("Hotkey Registration"));
-        return Err(e.to_string());
+        Err(e.to_string())
       }
+    }
+  };
+
+  match settings.mode.as_str() {
+    "ptt" => register_ptt()?,
+    "toggle" => register_toggle()?,
+    _ => {
+      register_ptt()?;
+      register_toggle()?;
     }
   }
 
@@ -418,6 +469,16 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
   }
   save_settings_file(&app, &settings)?;
   register_hotkeys(&app, &settings)?;
+
+  // Update overlay state based on new mode
+  let recorder = state.recorder.lock().unwrap();
+  if settings.mode == "toggle" && !recorder.active {
+    let _ = overlay::update_overlay_state(&app, overlay::OverlayState::ToggleIdle);
+  } else if !recorder.active {
+    let _ = overlay::update_overlay_state(&app, overlay::OverlayState::Idle);
+  }
+  drop(recorder);
+
   let _ = app.emit("settings-changed", settings.clone());
   let _ = app.emit("menu:update-cloud", settings.cloud_fallback.to_string());
   Ok(())
@@ -590,6 +651,7 @@ fn build_input_stream_f32(
   device: &cpal::Device,
   config: &StreamConfig,
   buffer: Arc<Mutex<CaptureBuffer>>,
+  overlay: Option<Arc<OverlayLevelEmitter>>,
 ) -> Result<cpal::Stream, String> {
   let channels = config.channels as usize;
   let sample_rate = config.sample_rate.0;
@@ -600,12 +662,21 @@ fn build_input_stream_f32(
       config,
       move |data: &[f32], _| {
         let mut mono = Vec::with_capacity(data.len() / channels.max(1));
+        let mut sum_abs = 0.0f32;
         for frame in data.chunks(channels.max(1)) {
           let mut sum = 0.0f32;
           for &sample in frame {
             sum += sample;
           }
-          mono.push(sum / channels.max(1) as f32);
+          let sample = sum / channels.max(1) as f32;
+          mono.push(sample);
+          sum_abs += sample.abs();
+        }
+        if let Some(emitter) = overlay.as_ref() {
+          if !mono.is_empty() {
+            let level = (sum_abs / mono.len() as f32).min(1.0);
+            emitter.emit_level(level);
+          }
         }
         push_mono_samples(&buffer, mono, sample_rate);
       },
@@ -619,6 +690,7 @@ fn build_input_stream_i16(
   device: &cpal::Device,
   config: &StreamConfig,
   buffer: Arc<Mutex<CaptureBuffer>>,
+  overlay: Option<Arc<OverlayLevelEmitter>>,
 ) -> Result<cpal::Stream, String> {
   let channels = config.channels as usize;
   let sample_rate = config.sample_rate.0;
@@ -629,12 +701,21 @@ fn build_input_stream_i16(
       config,
       move |data: &[i16], _| {
         let mut mono = Vec::with_capacity(data.len() / channels.max(1));
+        let mut sum_abs = 0.0f32;
         for frame in data.chunks(channels.max(1)) {
           let mut sum = 0.0f32;
           for &sample in frame {
             sum += sample as f32 / i16::MAX as f32;
           }
-          mono.push(sum / channels.max(1) as f32);
+          let sample = sum / channels.max(1) as f32;
+          mono.push(sample);
+          sum_abs += sample.abs();
+        }
+        if let Some(emitter) = overlay.as_ref() {
+          if !mono.is_empty() {
+            let level = (sum_abs / mono.len() as f32).min(1.0);
+            emitter.emit_level(level);
+          }
         }
         push_mono_samples(&buffer, mono, sample_rate);
       },
@@ -648,6 +729,7 @@ fn build_input_stream_u16(
   device: &cpal::Device,
   config: &StreamConfig,
   buffer: Arc<Mutex<CaptureBuffer>>,
+  overlay: Option<Arc<OverlayLevelEmitter>>,
 ) -> Result<cpal::Stream, String> {
   let channels = config.channels as usize;
   let sample_rate = config.sample_rate.0;
@@ -658,13 +740,22 @@ fn build_input_stream_u16(
       config,
       move |data: &[u16], _| {
         let mut mono = Vec::with_capacity(data.len() / channels.max(1));
+        let mut sum_abs = 0.0f32;
         for frame in data.chunks(channels.max(1)) {
           let mut sum = 0.0f32;
           for &sample in frame {
             let centered = sample as f32 - 32768.0;
             sum += centered / 32768.0;
           }
-          mono.push(sum / channels.max(1) as f32);
+          let sample = sum / channels.max(1) as f32;
+          mono.push(sample);
+          sum_abs += sample.abs();
+        }
+        if let Some(emitter) = overlay.as_ref() {
+          if !mono.is_empty() {
+            let level = (sum_abs / mono.len() as f32).min(1.0);
+            emitter.emit_level(level);
+          }
         }
         push_mono_samples(&buffer, mono, sample_rate);
       },
@@ -689,6 +780,7 @@ fn start_recording_with_settings(
   }
 
   let buffer = recorder.buffer.clone();
+  let overlay_emitter = Arc::new(OverlayLevelEmitter::new(app.clone()));
   let device_id = settings.input_device.clone();
   let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
   let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
@@ -702,10 +794,11 @@ fn start_recording_with_settings(
         .map_err(|e| e.to_string())?;
       let stream_config: StreamConfig = config.clone().into();
 
+      let overlay = Some(overlay_emitter);
       let stream = match config.sample_format() {
-        SampleFormat::F32 => build_input_stream_f32(&device, &stream_config, buffer)?,
-        SampleFormat::I16 => build_input_stream_i16(&device, &stream_config, buffer)?,
-        SampleFormat::U16 => build_input_stream_u16(&device, &stream_config, buffer)?,
+        SampleFormat::F32 => build_input_stream_f32(&device, &stream_config, buffer, overlay.clone())?,
+        SampleFormat::I16 => build_input_stream_i16(&device, &stream_config, buffer, overlay.clone())?,
+        SampleFormat::U16 => build_input_stream_u16(&device, &stream_config, buffer, overlay.clone())?,
         _ => return Err("Unsupported sample format".to_string()),
       };
 
@@ -782,7 +875,13 @@ fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
     let min_samples = (TARGET_SAMPLE_RATE as u64 * MIN_AUDIO_MS / 1000) as usize;
     if samples.len() < min_samples {
       let _ = app_handle.emit("capture:state", "idle");
-      let _ = update_overlay_state(&app_handle, OverlayState::Idle);
+      // Set overlay based on mode
+      let overlay_state = if settings.mode == "toggle" {
+        OverlayState::ToggleIdle
+      } else {
+        OverlayState::Idle
+      };
+      let _ = update_overlay_state(&app_handle, overlay_state);
       let _ = app_handle.emit(
         "transcription:error",
         format!(
@@ -805,7 +904,13 @@ fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
     drop(recorder);
 
     let _ = app_handle.emit("capture:state", "idle");
-    let _ = update_overlay_state(&app_handle, OverlayState::Idle);
+    // Set overlay based on mode
+    let overlay_state = if settings.mode == "toggle" {
+      OverlayState::ToggleIdle
+    } else {
+      OverlayState::Idle
+    };
+    let _ = update_overlay_state(&app_handle, overlay_state);
 
     // Emit audio cue if enabled
     if settings.audio_cues {
@@ -1307,6 +1412,11 @@ pub fn run() {
 
       if let Err(err) = register_hotkeys(app.handle(), &settings) {
         eprintln!("⚠ Failed to register hotkeys: {}", err);
+      }
+
+      // Create overlay window at startup
+      if let Err(err) = overlay::create_overlay_window(&app.handle()) {
+        eprintln!("⚠ Failed to create overlay window: {}", err);
       }
 
       let icon = {

@@ -150,8 +150,6 @@ pub fn test_hotkey_registration(app: &AppHandle, key: &str) -> Result<(), String
     }
 
     // Try to register (and immediately unregister)
-    let manager = app.global_shortcut();
-
     // Note: This is a simplified test. In a real scenario, we'd need to check
     // if the hotkey is already registered and handle that case.
     // For now, we just validate the format.

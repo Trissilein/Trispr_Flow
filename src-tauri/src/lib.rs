@@ -12,7 +12,7 @@ use enigo::{Enigo, Key, KeyboardControllable};
 use errors::{AppError, ErrorEvent};
 use overlay::{OverlayState, update_overlay_state};
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
@@ -319,39 +319,74 @@ fn find_model_in_dir(dir: &PathBuf, spec: &ModelSpec) -> Option<PathBuf> {
 }
 
 fn resolve_model_path(app: &AppHandle, model_id: &str) -> Option<PathBuf> {
+  info!("Resolving model path for: {}", model_id);
+
   if let Ok(path) = std::env::var("TRISPR_WHISPER_MODEL") {
-    let candidate = PathBuf::from(path);
+    let candidate = PathBuf::from(&path);
+    info!("Checking TRISPR_WHISPER_MODEL env var: {}", path);
     if candidate.exists() {
+      info!("Found model at: {}", candidate.display());
       return Some(candidate);
     }
   }
 
   let spec = model_spec(model_id)?;
+  info!("Looking for model file: {}", spec.file_name);
 
   if let Ok(dir) = std::env::var("TRISPR_WHISPER_MODEL_DIR") {
-    let dir = PathBuf::from(dir);
+    let dir = PathBuf::from(&dir);
+    info!("Checking TRISPR_WHISPER_MODEL_DIR: {}", dir.display());
     if let Some(path) = find_model_in_dir(&dir, spec) {
+      info!("Found model at: {}", path.display());
       return Some(path);
     }
   }
 
   let models_dir = resolve_models_dir(app);
+  info!("Checking app data dir: {}", models_dir.display());
   if let Some(path) = find_model_in_dir(&models_dir, spec) {
+    info!("Found model at: {}", path.display());
     return Some(path);
   }
 
+  // Search relative to executable location (works for built .exe)
+  if let Ok(exe_path) = std::env::current_exe() {
+    if let Some(exe_dir) = exe_path.parent() {
+      info!("Executable directory: {}", exe_dir.display());
+      let exe_search_dirs = [
+        exe_dir.join("models"),              // models/ next to .exe
+        exe_dir.join("../models"),           // models/ one level up
+        exe_dir.join("../whisper.cpp/models"), // whisper.cpp/models one level up
+        exe_dir.join("../../whisper.cpp/models"), // whisper.cpp/models two levels up
+      ];
+      for dir in &exe_search_dirs {
+        info!("Checking: {}", dir.display());
+        if let Some(path) = find_model_in_dir(dir, spec) {
+          info!("Found model at: {}", path.display());
+          return Some(path);
+        }
+      }
+    }
+  }
+
+  // Search relative to current working directory (works for dev)
   if let Ok(cwd) = std::env::current_dir() {
+    info!("Current working directory: {}", cwd.display());
     let search_dirs = [
+      cwd.join("models"),
       cwd.join("../whisper.cpp/models"),
       cwd.join("../../whisper.cpp/models"),
     ];
     for dir in &search_dirs {
+      info!("Checking: {}", dir.display());
       if let Some(path) = find_model_in_dir(dir, spec) {
+        info!("Found model at: {}", path.display());
         return Some(path);
       }
     }
   }
 
+  warn!("Model not found for: {}", model_id);
   None
 }
 

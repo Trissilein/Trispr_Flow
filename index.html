@@ -13,6 +13,7 @@
   </head>
   <body>
     <div class="bg-noise"></div>
+    <div id="toast-container" class="toast-container"></div>
     <main class="app">
       <header class="hero" style="--delay: 0.05s">
         <div>
@@ -62,14 +63,22 @@
               <option value="toggle">Toggle</option>
             </select>
           </label>
-          <label class="field">
+          <div class="field hotkey-field">
             <span class="field-label">PTT hotkey</span>
-            <input id="ptt-hotkey" type="text" placeholder="CommandOrControl+Shift+Space" />
-          </label>
-          <label class="field">
+            <div class="hotkey-input-group">
+              <input id="ptt-hotkey" type="text" placeholder="CommandOrControl+Shift+Space" readonly />
+              <button id="ptt-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+            </div>
+            <span id="ptt-hotkey-status" class="hotkey-status"></span>
+          </div>
+          <div class="field hotkey-field">
             <span class="field-label">Toggle hotkey</span>
-            <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" />
-          </label>
+            <div class="hotkey-input-group">
+              <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" readonly />
+              <button id="toggle-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+            </div>
+            <span id="toggle-hotkey-status" class="hotkey-status"></span>
+          </div>
           <label class="field">
             <span class="field-label">Input device</span>
             <select id="device-select"></select>
@@ -99,6 +108,13 @@
           <label class="field toggle">
             <span class="field-label">Claude fallback</span>
             <input id="cloud-toggle" type="checkbox" />
+            <span class="toggle-track">
+              <span class="toggle-thumb"></span>
+            </span>
+          </label>
+          <label class="field toggle">
+            <span class="field-label">Audio cues</span>
+            <input id="audio-cues-toggle" type="checkbox" />
             <span class="toggle-track">
               <span class="toggle-thumb"></span>
             </span>

@@ -1,11 +1,18 @@
 // Trispr Flow - core app runtime
 #![allow(clippy::needless_return)]
 
+mod errors;
+mod hotkeys;
+mod overlay;
+
 use arboard::Clipboard;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
 use enigo::{Enigo, Key, KeyboardControllable};
+use errors::{AppError, ErrorEvent};
+use overlay::{OverlayState, update_overlay_state};
 use serde::{Deserialize, Serialize};
+use tracing::{debug, error, info, warn};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
@@ -78,6 +85,7 @@ struct Settings {
   language_mode: String,
   model: String,
   cloud_fallback: bool,
+  audio_cues: bool,
 }
 
 impl Default for Settings {
@@ -90,6 +98,7 @@ impl Default for Settings {
       language_mode: "auto".to_string(),
       model: "whisper-large-v3".to_string(),
       cloud_fallback: false,
+      audio_cues: true,
     }
   }
 }
@@ -354,28 +363,43 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
 
   let ptt = settings.hotkey_ptt.trim();
   if !ptt.is_empty() {
-    manager
-      .on_shortcut(ptt, |app, _shortcut, event| {
-        let app = app.clone();
-        if event.state == ShortcutState::Pressed {
-          let _ = handle_ptt_press(&app);
-        } else {
-          handle_ptt_release_async(app);
-        }
-      })
-      .map_err(|e| e.to_string())?;
+    info!("Registering PTT hotkey: {}", ptt);
+    match manager.on_shortcut(ptt, |app, _shortcut, event| {
+      let app = app.clone();
+      if event.state == ShortcutState::Pressed {
+        info!("PTT hotkey pressed");
+        let _ = handle_ptt_press(&app);
+      } else {
+        info!("PTT hotkey released");
+        handle_ptt_release_async(app);
+      }
+    }) {
+      Ok(_) => info!("PTT hotkey registered successfully"),
+      Err(e) => {
+        error!("Failed to register PTT hotkey '{}': {}", ptt, e);
+        emit_error(app, AppError::Hotkey(format!("Could not register PTT hotkey '{}': {}. Try a different key.", ptt, e)), Some("Hotkey Registration"));
+        return Err(e.to_string());
+      }
+    }
   }
 
   let toggle = settings.hotkey_toggle.trim();
   if !toggle.is_empty() {
-    manager
-      .on_shortcut(toggle, |app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-          let app = app.clone();
-          handle_toggle_async(app);
-        }
-      })
-      .map_err(|e| e.to_string())?;
+    info!("Registering Toggle hotkey: {}", toggle);
+    match manager.on_shortcut(toggle, |app, _shortcut, event| {
+      if event.state == ShortcutState::Pressed {
+        info!("Toggle hotkey pressed");
+        let app = app.clone();
+        handle_toggle_async(app);
+      }
+    }) {
+      Ok(_) => info!("Toggle hotkey registered successfully"),
+      Err(e) => {
+        error!("Failed to register Toggle hotkey '{}': {}", toggle, e);
+        emit_error(app, AppError::Hotkey(format!("Could not register Toggle hotkey '{}': {}. Try a different key.", toggle, e)), Some("Hotkey Registration"));
+        return Err(e.to_string());
+      }
+    }
   }
 
   Ok(())
@@ -509,6 +533,26 @@ fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), Str
 fn stop_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
   stop_recording_async(app, &state);
   Ok(())
+}
+
+#[tauri::command]
+fn validate_hotkey(key: String) -> hotkeys::ValidationResult {
+  hotkeys::validate_hotkey_format(&key)
+}
+
+#[tauri::command]
+fn test_hotkey(app: AppHandle, key: String) -> Result<(), String> {
+  hotkeys::test_hotkey_registration(&app, &key)
+}
+
+#[tauri::command]
+fn get_hotkey_conflicts(state: State<'_, AppState>) -> Vec<hotkeys::ConflictInfo> {
+  let settings = state.settings.lock().unwrap();
+  let hotkeys = vec![
+    settings.hotkey_ptt.clone(),
+    settings.hotkey_toggle.clone(),
+  ];
+  hotkeys::detect_conflicts(hotkeys)
 }
 
 fn resolve_input_device(device_id: &str) -> Option<cpal::Device> {
@@ -695,6 +739,13 @@ fn start_recording_with_settings(
   recorder.active = true;
 
   let _ = app.emit("capture:state", "recording");
+  let _ = update_overlay_state(app, OverlayState::Recording);
+
+  // Emit audio cue if enabled
+  if settings.audio_cues {
+    let _ = app.emit("audio:cue", "start");
+  }
+
   Ok(())
 }
 
@@ -731,6 +782,7 @@ fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
     let min_samples = (TARGET_SAMPLE_RATE as u64 * MIN_AUDIO_MS / 1000) as usize;
     if samples.len() < min_samples {
       let _ = app_handle.emit("capture:state", "idle");
+      let _ = update_overlay_state(&app_handle, OverlayState::Idle);
       let _ = app_handle.emit(
         "transcription:error",
         format!(
@@ -744,6 +796,7 @@ fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
     }
 
     let _ = app_handle.emit("capture:state", "transcribing");
+    let _ = update_overlay_state(&app_handle, OverlayState::Transcribing);
 
     let result = transcribe_audio(&app_handle, &settings, &samples);
 
@@ -752,6 +805,12 @@ fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
     drop(recorder);
 
     let _ = app_handle.emit("capture:state", "idle");
+    let _ = update_overlay_state(&app_handle, OverlayState::Idle);
+
+    // Emit audio cue if enabled
+    if settings.audio_cues {
+      let _ = app_handle.emit("audio:cue", "stop");
+    }
 
     match result {
       Ok((text, source)) => {
@@ -1062,6 +1121,39 @@ fn resolve_whisper_cli_path() -> Option<PathBuf> {
   None
 }
 
+/// Initialize logging with tracing
+fn init_logging() {
+  use tracing_subscriber::{fmt, EnvFilter};
+
+  // Try to create log file in app data directory
+  // For now, just log to stdout in development
+  let filter = EnvFilter::try_from_default_env()
+    .unwrap_or_else(|_| EnvFilter::new("info"));
+
+  fmt()
+    .with_env_filter(filter)
+    .with_target(false)
+    .with_thread_ids(false)
+    .with_file(true)
+    .with_line_number(true)
+    .init();
+
+  info!("Trispr Flow starting up");
+}
+
+/// Emit an error event to the frontend
+fn emit_error(app: &AppHandle, error: AppError, context: Option<&str>) {
+  let event = if let Some(ctx) = context {
+    ErrorEvent::new(error.clone()).with_context(ctx)
+  } else {
+    ErrorEvent::new(error.clone())
+  };
+
+  error!("{}: {}", error.title(), error.message());
+
+  let _ = app.emit("app:error", event);
+}
+
 fn load_local_env() {
   let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
   let parent = cwd.parent().map(|p| p.to_path_buf());
@@ -1196,7 +1288,10 @@ fn toggle_main_window(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  init_logging();
   load_local_env();
+
+  info!("Starting Trispr Flow application");
   tauri::Builder::default()
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .setup(|app| {
@@ -1317,6 +1412,9 @@ pub fn run() {
       add_history_entry,
       start_recording,
       stop_recording,
+      validate_hotkey,
+      test_hotkey,
+      get_hotkey_conflicts,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

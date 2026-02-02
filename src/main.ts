@@ -15,6 +15,7 @@ interface Settings {
     | "whisper-large-v3"
     | "whisper-large-v3-turbo";
   cloud_fallback: boolean;
+  audio_cues: boolean;
 }
 
 interface HistoryEntry {
@@ -55,6 +56,23 @@ interface DownloadError {
   error: string;
 }
 
+interface ValidationResult {
+  valid: boolean;
+  error: string | null;
+  formatted: string | null;
+}
+
+interface AppErrorType {
+  type: "AudioDevice" | "Transcription" | "Hotkey" | "Storage" | "Network" | "Window" | "Other";
+  message: string;
+}
+
+interface ErrorEvent {
+  error: AppErrorType;
+  timestamp: number;
+  context?: string;
+}
+
 let settings: Settings | null = null;
 let history: HistoryEntry[] = [];
 let devices: AudioDevice[] = [];
@@ -75,25 +93,20 @@ const deviceState = $("device-state");
 const simulateButton = $("simulate-transcribe");
 const modeSelect = $("mode-select") as HTMLSelectElement | null;
 const pttHotkey = $("ptt-hotkey") as HTMLInputElement | null;
+const pttHotkeyRecord = $("ptt-hotkey-record") as HTMLButtonElement | null;
+const pttHotkeyStatus = $("ptt-hotkey-status") as HTMLSpanElement | null;
 const toggleHotkey = $("toggle-hotkey") as HTMLInputElement | null;
+const toggleHotkeyRecord = $("toggle-hotkey-record") as HTMLButtonElement | null;
+const toggleHotkeyStatus = $("toggle-hotkey-status") as HTMLSpanElement | null;
 const deviceSelect = $("device-select") as HTMLSelectElement | null;
 const modelSelect = $("model-select") as HTMLSelectElement | null;
 const languageSelect = $("language-select") as HTMLSelectElement | null;
 const cloudToggle = $("cloud-toggle") as HTMLInputElement | null;
+const audioCuesToggle = $("audio-cues-toggle") as HTMLInputElement | null;
 const historyList = $("history-list");
 const historyInput = $("history-input") as HTMLInputElement | null;
 const historyAdd = $("history-add");
 const modelList = $("model-list");
-
-const defaultSettings: Settings = {
-  mode: "ptt",
-  hotkey_ptt: "CommandOrControl+Shift+Space",
-  hotkey_toggle: "CommandOrControl+Shift+M",
-  input_device: "default",
-  language_mode: "auto",
-  model: "whisper-large-v3",
-  cloud_fallback: false,
-};
 
 function setStatus(state: "idle" | "recording" | "transcribing") {
   currentStatus = state;
@@ -131,6 +144,7 @@ function renderSettings() {
   if (modelSelect) modelSelect.value = settings.model;
   if (languageSelect) languageSelect.value = settings.language_mode;
   if (cloudToggle) cloudToggle.checked = settings.cloud_fallback;
+  if (audioCuesToggle) audioCuesToggle.checked = settings.audio_cues;
 }
 
 function renderDevices() {
@@ -275,6 +289,134 @@ async function persistSettings() {
   }
 }
 
+// Hotkey Recorder Setup
+function setupHotkeyRecorder(
+  type: "ptt" | "toggle",
+  input: HTMLInputElement | null,
+  recordBtn: HTMLButtonElement | null,
+  statusEl: HTMLSpanElement | null
+) {
+  if (!input || !recordBtn || !statusEl) return;
+
+  let isRecording = false;
+  let recordedKeys: Set<string> = new Set();
+
+  const updateStatus = (message: string, type: "success" | "error" | "info") => {
+    statusEl.textContent = message;
+    statusEl.className = `hotkey-status ${type}`;
+  };
+
+  const validateHotkey = async (hotkey: string) => {
+    try {
+      const result = await invoke<ValidationResult>("validate_hotkey", { key: hotkey });
+
+      if (result.valid) {
+        input.classList.remove("invalid");
+        input.classList.add("valid");
+        updateStatus("✓ Valid hotkey", "success");
+        return true;
+      } else {
+        input.classList.remove("valid");
+        input.classList.add("invalid");
+        updateStatus(result.error || "Invalid hotkey", "error");
+        return false;
+      }
+    } catch (error) {
+      input.classList.remove("valid");
+      input.classList.add("invalid");
+      updateStatus(`Error: ${error}`, "error");
+      return false;
+    }
+  };
+
+  const stopRecording = () => {
+    isRecording = false;
+    recordBtn.textContent = "🎹 Record";
+    recordBtn.classList.remove("recording");
+    input.classList.remove("recording");
+    document.removeEventListener("keydown", handleKeyDown);
+    document.removeEventListener("keyup", handleKeyUp);
+  };
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    e.preventDefault();
+
+    // Add modifiers
+    if (e.ctrlKey) recordedKeys.add("Ctrl");
+    if (e.shiftKey) recordedKeys.add("Shift");
+    if (e.altKey) recordedKeys.add("Alt");
+    if (e.metaKey) recordedKeys.add("Command");
+
+    // Add the actual key - use e.code for better reliability with special characters
+    const isModifier = ["Control", "Shift", "Alt", "Meta"].includes(e.key);
+    if (!isModifier) {
+      // Use e.key for display (shows actual character like "^")
+      // But handle special cases
+      let keyName = e.key;
+
+      // For single character keys, uppercase them
+      if (keyName.length === 1) {
+        keyName = keyName.toUpperCase();
+      }
+
+      recordedKeys.add(keyName);
+    }
+
+    // Display current combination
+    const keysArray = Array.from(recordedKeys);
+    const hotkeyString = keysArray.join("+");
+    input.value = hotkeyString;
+  };
+
+  const handleKeyUp = async (e: KeyboardEvent) => {
+    // When all keys are released, finalize the hotkey
+    if (!e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && recordedKeys.size > 1) {
+      stopRecording();
+
+      const hotkeyString = Array.from(recordedKeys).join("+");
+
+      // Validate
+      const isValid = await validateHotkey(hotkeyString);
+
+      if (isValid && settings) {
+        // Save to settings
+        if (type === "ptt") {
+          settings.hotkey_ptt = hotkeyString;
+        } else {
+          settings.hotkey_toggle = hotkeyString;
+        }
+        await persistSettings();
+      }
+
+      recordedKeys.clear();
+    }
+  };
+
+  // Record button click
+  recordBtn.addEventListener("click", () => {
+    if (isRecording) {
+      stopRecording();
+      updateStatus("Recording cancelled", "info");
+    } else {
+      isRecording = true;
+      recordedKeys.clear();
+      recordBtn.textContent = "⏺ Recording...";
+      recordBtn.classList.add("recording");
+      input.classList.add("recording");
+      input.value = "";
+      updateStatus("Press your key combination...", "info");
+
+      document.addEventListener("keydown", handleKeyDown);
+      document.addEventListener("keyup", handleKeyUp);
+    }
+  });
+
+  // Initial validation
+  if (input.value.trim()) {
+    validateHotkey(input.value.trim());
+  }
+}
+
 function wireEvents() {
   modeSelect?.addEventListener("change", async () => {
     if (!settings) return;
@@ -283,17 +425,9 @@ function wireEvents() {
     renderHero();
   });
 
-  pttHotkey?.addEventListener("change", async () => {
-    if (!settings) return;
-    settings.hotkey_ptt = pttHotkey.value.trim() || defaultSettings.hotkey_ptt;
-    await persistSettings();
-  });
-
-  toggleHotkey?.addEventListener("change", async () => {
-    if (!settings) return;
-    settings.hotkey_toggle = toggleHotkey.value.trim() || defaultSettings.hotkey_toggle;
-    await persistSettings();
-  });
+  // Hotkey recording functionality
+  setupHotkeyRecorder("ptt", pttHotkey, pttHotkeyRecord, pttHotkeyStatus);
+  setupHotkeyRecorder("toggle", toggleHotkey, toggleHotkeyRecord, toggleHotkeyStatus);
 
   deviceSelect?.addEventListener("change", async () => {
     if (!settings) return;
@@ -321,6 +455,12 @@ function wireEvents() {
     renderHero();
   });
 
+  audioCuesToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.audio_cues = audioCuesToggle.checked;
+    await persistSettings();
+  });
+
   historyAdd?.addEventListener("click", async () => {
     if (!historyInput?.value.trim()) return;
     history = await invoke("add_history_entry", {
@@ -340,6 +480,129 @@ function wireEvents() {
     });
     renderHistory();
   });
+}
+
+// Toast Notification System
+type ToastType = "error" | "success" | "warning" | "info";
+
+interface ToastOptions {
+  type?: ToastType;
+  title: string;
+  message: string;
+  duration?: number;
+  icon?: string;
+}
+
+let toastCounter = 0;
+
+function showToast(options: ToastOptions) {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+
+  const id = `toast-${++toastCounter}`;
+  const type = options.type || "info";
+  const duration = options.duration || 5000;
+
+  const icons: Record<ToastType, string> = {
+    error: "❌",
+    success: "✅",
+    warning: "⚠️",
+    info: "ℹ️",
+  };
+
+  const icon = options.icon || icons[type];
+
+  const toast = document.createElement("div");
+  toast.id = id;
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${icon}</span>
+    <div class="toast-content">
+      <div class="toast-title">${options.title}</div>
+      <div class="toast-message">${options.message}</div>
+    </div>
+    <button class="toast-close" title="Close">×</button>
+  `;
+
+  const closeBtn = toast.querySelector(".toast-close");
+  closeBtn?.addEventListener("click", () => removeToast(id));
+
+  container.appendChild(toast);
+
+  // Auto-remove after duration
+  if (duration > 0) {
+    setTimeout(() => removeToast(id), duration);
+  }
+}
+
+function removeToast(id: string) {
+  const toast = document.getElementById(id);
+  if (!toast) return;
+
+  toast.classList.add("removing");
+
+  setTimeout(() => {
+    toast.remove();
+  }, 200);
+}
+
+function showErrorToast(error: AppErrorType, context?: string) {
+  const typeMapping: Record<string, string> = {
+    AudioDevice: "Audio Device Issue",
+    Transcription: "Transcription Failed",
+    Hotkey: "Hotkey Problem",
+    Storage: "Storage Error",
+    Network: "Network Problem",
+    Window: "Window Error",
+    Other: "Error",
+  };
+
+  showToast({
+    type: "error",
+    title: typeMapping[error.type] || "Error",
+    message: context ? `${context}: ${error.message}` : error.message,
+    duration: 7000,
+  });
+}
+
+// Audio cue playback using Web Audio API
+let audioContext: AudioContext | null = null;
+
+function playAudioCue(type: "start" | "stop") {
+  try {
+    // Initialize AudioContext lazily (requires user interaction first)
+    if (!audioContext) {
+      audioContext = new AudioContext();
+    }
+
+    const now = audioContext.currentTime;
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    // Different frequencies for start and stop
+    if (type === "start") {
+      // Rising beep: 600Hz -> 800Hz
+      oscillator.frequency.setValueAtTime(600, now);
+      oscillator.frequency.linearRampToValueAtTime(800, now + 0.1);
+    } else {
+      // Falling beep: 800Hz -> 600Hz
+      oscillator.frequency.setValueAtTime(800, now);
+      oscillator.frequency.linearRampToValueAtTime(600, now + 0.1);
+    }
+
+    // Quick fade in/out
+    gainNode.gain.setValueAtTime(0, now);
+    gainNode.gain.linearRampToValueAtTime(0.3, now + 0.01);
+    gainNode.gain.linearRampToValueAtTime(0, now + 0.1);
+
+    oscillator.start(now);
+    oscillator.stop(now + 0.1);
+  } catch (error) {
+    console.error("Failed to play audio cue:", error);
+  }
 }
 
 async function bootstrap() {
@@ -400,6 +663,27 @@ async function bootstrap() {
     console.error("transcription error", event.payload);
     setStatus("idle");
     if (statusMessage) statusMessage.textContent = `Error: ${event.payload}`;
+
+    // Show toast for transcription errors
+    showToast({
+      type: "error",
+      title: "Transcription Failed",
+      message: event.payload,
+      duration: 7000,
+    });
+  });
+
+  // Listen for app-wide errors from backend
+  await listen<ErrorEvent>("app:error", (event) => {
+    showErrorToast(event.payload.error, event.payload.context);
+  });
+
+  // Listen for audio cues (beep on recording start/stop)
+  await listen<string>("audio:cue", (event) => {
+    const type = event.payload as "start" | "stop";
+    if (settings?.audio_cues) {
+      playAudioCue(type);
+    }
   });
 }
 

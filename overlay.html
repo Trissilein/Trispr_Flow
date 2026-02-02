@@ -4,12 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Trispr Flow Overlay</title>
-    <link rel="stylesheet" href="src/overlay.css" />
+    <link rel="stylesheet" href="/src/overlay.css" />
   </head>
   <body>
-    <div id="overlay-container">
-      <div id="overlay-icon"></div>
-      <div id="overlay-text">Idle</div>
+    <div id="overlay-root" data-state="idle">
+      <div id="overlay-dot"></div>
     </div>
     <script type="module" src="/src/overlay.ts"></script>
   </body>

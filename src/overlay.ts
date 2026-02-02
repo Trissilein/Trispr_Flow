@@ -1,42 +1,37 @@
 import { listen } from "@tauri-apps/api/event";
 
-type OverlayState = "idle" | "recording" | "transcribing";
+type OverlayState = "idle" | "toggle-idle" | "recording" | "transcribing";
 
-const container = document.getElementById("overlay-container");
-const icon = document.getElementById("overlay-icon");
-const text = document.getElementById("overlay-text");
+const root = document.getElementById("overlay-root") as HTMLDivElement | null;
 
-// Listen for state changes from Rust backend
+let currentState: OverlayState = "idle";
+let currentLevel = 0;
+
+function setLevel(level: number) {
+  if (!root) return;
+  const clamped = Math.max(0, Math.min(1, level));
+  root.style.setProperty("--level", clamped.toFixed(3));
+}
+
+function updateOverlay(state: OverlayState) {
+  if (!root) return;
+  currentState = state;
+  root.dataset.state = state;
+  if (state !== "recording") {
+    currentLevel = 0;
+    setLevel(0);
+  }
+}
+
 listen<OverlayState>("overlay:state", (event) => {
   updateOverlay(event.payload);
 });
 
-function updateOverlay(state: OverlayState) {
-  if (!container || !icon || !text) return;
+listen<number>("overlay:level", (event) => {
+  if (currentState !== "recording") return;
+  const next = Math.max(0, Math.min(1, event.payload ?? 0));
+  currentLevel = currentLevel * 0.6 + next * 0.4;
+  setLevel(currentLevel);
+});
 
-  // Remove all state classes
-  container.classList.remove("idle", "recording", "transcribing");
-
-  // Add current state class
-  container.classList.add(state);
-
-  // Update text and icon
-  switch (state) {
-    case "recording":
-      text.textContent = "Recording...";
-      icon.innerHTML = "🎤";
-      break;
-    case "transcribing":
-      text.textContent = "Transcribing...";
-      icon.innerHTML = "⚡";
-      break;
-    case "idle":
-    default:
-      text.textContent = "Idle";
-      icon.innerHTML = "💤";
-      break;
-  }
-}
-
-// Initialize with idle state
 updateOverlay("idle");

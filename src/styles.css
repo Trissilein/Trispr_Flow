@@ -42,16 +42,16 @@ body {
 .app {
   max-width: 1100px;
   margin: 0 auto;
-  padding: 48px 28px 80px;
+  padding: 32px 24px 60px;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 20px;
 }
 
 .hero {
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr);
-  gap: 24px;
+  gap: 18px;
   align-items: start;
   animation: rise 0.6s ease both;
   animation-delay: var(--delay, 0s);
@@ -157,12 +157,38 @@ h1 {
   margin-top: 8px;
 }
 
+.layout-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  grid-template-areas:
+    "output output"
+    "capture model"
+    "transcription model";
+  gap: 18px;
+}
+
+.output-panel {
+  grid-area: output;
+}
+
+.capture-panel {
+  grid-area: capture;
+}
+
+.transcription-panel {
+  grid-area: transcription;
+}
+
+.model-panel {
+  grid-area: model;
+}
+
 .panel {
   background: var(--card);
   border-radius: var(--radius);
   border: 1px solid var(--stroke);
   box-shadow: var(--shadow);
-  padding: 22px 24px 26px;
+  padding: 18px 20px 22px;
   animation: rise 0.6s ease both;
   animation-delay: var(--delay, 0s);
 }
@@ -171,13 +197,13 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 .panel-header h2 {
   margin: 0;
   font-family: "Space Grotesk", sans-serif;
-  font-size: 1.4rem;
+  font-size: 1.25rem;
 }
 
 .panel-header p {
@@ -188,7 +214,72 @@ h1 {
 .panel-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px 20px;
+  gap: 12px 16px;
+}
+
+.expander {
+  margin-top: 14px;
+  border: 1px solid var(--stroke);
+  border-radius: 16px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.expander summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+  color: var(--ink);
+  position: relative;
+  padding-right: 24px;
+  user-select: none;
+}
+
+.expander summary::-webkit-details-marker {
+  display: none;
+}
+
+.expander summary::after {
+  content: "▼";
+  position: absolute;
+  right: 0;
+  transition: transform 0.2s ease;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.expander[open] summary::after {
+  transform: rotate(-180deg);
+}
+
+.expander summary:hover::after {
+  color: var(--ink);
+}
+
+.expander[open] summary {
+  margin-bottom: 10px;
+}
+
+.expander-body {
+  display: grid;
+  gap: 10px;
+}
+
+.field.range .range-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.field.range input[type="range"] {
+  flex: 1;
+}
+
+.range-value {
+  font-weight: 600;
+  color: var(--ink);
+  min-width: 48px;
+  text-align: right;
 }
 
 .field {
@@ -422,6 +513,18 @@ button.ghost {
   color: var(--muted);
 }
 
+.output-panel .history-list {
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.model-panel .model-list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
 .history-compose input {
   flex: 1;
   border: 1px solid var(--stroke);
@@ -435,8 +538,22 @@ button.ghost {
     grid-template-columns: 1fr;
   }
 
+  .layout-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "output"
+      "capture"
+      "transcription"
+      "model";
+  }
+
   .panel-grid {
     grid-template-columns: 1fr;
+  }
+
+  .output-panel .history-list,
+  .model-panel .model-list {
+    max-height: none;
   }
 
   .history-compose {
@@ -460,6 +577,7 @@ button.ghost {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  grid-column: span 2;
 }
 
 .hotkey-input-group {

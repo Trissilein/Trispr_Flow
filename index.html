@@ -44,107 +44,119 @@
             <span class="hero-label">Input</span>
             <span id="device-state" class="hero-value">Default</span>
           </div>
-          <div class="hero-footer">
-            <button id="simulate-transcribe" class="ghost">Simulate transcript</button>
-          </div>
         </div>
       </header>
 
-      <section class="panel" style="--delay: 0.12s">
-        <div class="panel-header">
-          <h2>Capture</h2>
-          <p>Hotkeys, input device, and recording mode.</p>
-        </div>
-        <div class="panel-grid">
-          <label class="field">
-            <span class="field-label">Mode</span>
-            <select id="mode-select">
-              <option value="ptt">Push-to-talk</option>
-              <option value="toggle">Toggle</option>
-            </select>
-          </label>
-          <div class="field hotkey-field">
-            <span class="field-label">PTT hotkey</span>
-            <div class="hotkey-input-group">
-              <input id="ptt-hotkey" type="text" placeholder="CommandOrControl+Shift+Space" readonly />
-              <button id="ptt-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+      <div class="layout-grid">
+        <section class="panel output-panel" style="--delay: 0.12s">
+          <div class="panel-header">
+            <h2>Output</h2>
+            <p>Latest transcripts. Copy or paste as needed.</p>
+          </div>
+          <div id="history-list" class="history-list"></div>
+          <div class="history-compose">
+            <input id="history-input" type="text" placeholder="Type a test entry..." />
+            <button id="history-add">Add to history</button>
+          </div>
+        </section>
+
+        <section class="panel capture-panel" style="--delay: 0.16s">
+          <div class="panel-header">
+            <h2>Capture</h2>
+            <p>Hotkeys, input device, and recording mode.</p>
+          </div>
+          <div class="panel-grid">
+            <label class="field">
+              <span class="field-label">Mode</span>
+              <select id="mode-select">
+                <option value="ptt">Push-to-talk (PTT)</option>
+                <option value="toggle">Toggle</option>
+              </select>
+            </label>
+            <div class="field hotkey-field">
+              <span class="field-label">PTT hotkey (hold)</span>
+              <div class="hotkey-input-group">
+                <input id="ptt-hotkey" type="text" placeholder="CommandOrControl+Shift+Space" readonly />
+                <button id="ptt-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+              </div>
+              <span id="ptt-hotkey-status" class="hotkey-status"></span>
             </div>
-            <span id="ptt-hotkey-status" class="hotkey-status"></span>
-          </div>
-          <div class="field hotkey-field">
-            <span class="field-label">Toggle hotkey</span>
-            <div class="hotkey-input-group">
-              <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" readonly />
-              <button id="toggle-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+            <div class="field hotkey-field">
+              <span class="field-label">Toggle hotkey (click)</span>
+              <div class="hotkey-input-group">
+                <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" readonly />
+                <button id="toggle-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+              </div>
+              <span id="toggle-hotkey-status" class="hotkey-status"></span>
             </div>
-            <span id="toggle-hotkey-status" class="hotkey-status"></span>
+            <label class="field">
+              <span class="field-label">Input device</span>
+              <select id="device-select"></select>
+            </label>
           </div>
-          <label class="field">
-            <span class="field-label">Input device</span>
-            <select id="device-select"></select>
-          </label>
-        </div>
-      </section>
+        </section>
 
-      <section class="panel" style="--delay: 0.18s">
-        <div class="panel-header">
-          <h2>Transcription</h2>
-          <p>Model quality, language detection, and cloud fallback.</p>
-        </div>
-        <div class="panel-grid">
-          <label class="field">
-            <span class="field-label">Model</span>
-            <select id="model-select">
-              <option value="whisper-large-v3">Whisper large-v3 (quality)</option>
-              <option value="whisper-large-v3-turbo">Whisper large-v3-turbo (speed)</option>
-            </select>
-          </label>
-          <label class="field">
-            <span class="field-label">Language</span>
-            <select id="language-select">
-              <option value="auto">Auto (DE/EN mix)</option>
-            </select>
-          </label>
-          <label class="field toggle">
-            <span class="field-label">Claude fallback</span>
-            <input id="cloud-toggle" type="checkbox" />
-            <span class="toggle-track">
-              <span class="toggle-thumb"></span>
-            </span>
-          </label>
-          <label class="field toggle">
-            <span class="field-label">Audio cues</span>
-            <input id="audio-cues-toggle" type="checkbox" />
-            <span class="toggle-track">
-              <span class="toggle-thumb"></span>
-            </span>
-          </label>
-          <div class="field note">
-            <span class="field-label">Backend</span>
-            <div class="field-value">whisper.cpp (GPU auto-detect, CPU fallback)</div>
+        <section class="panel transcription-panel" style="--delay: 0.2s">
+          <div class="panel-header">
+            <h2>Transcription</h2>
+            <p>Model quality, language detection, and advanced options.</p>
           </div>
-        </div>
-      </section>
+          <div class="panel-grid">
+            <label class="field">
+              <span class="field-label">Model</span>
+              <select id="model-select">
+                <option value="whisper-large-v3">Whisper large-v3 (quality)</option>
+                <option value="whisper-large-v3-turbo">Whisper large-v3-turbo (speed)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label">Language</span>
+              <select id="language-select">
+                <option value="auto">Auto (DE/EN mix)</option>
+              </select>
+            </label>
+          </div>
 
-      <section class="panel" style="--delay: 0.22s">
-        <div class="panel-header">
-          <h2>Model manager</h2>
-          <p>Download and manage local whisper.cpp models.</p>
-        </div>
-        <div id="model-list" class="model-list"></div>
-      </section>
+          <details class="expander">
+            <summary>Advanced</summary>
+            <div class="expander-body">
+              <label class="field toggle">
+                <span class="field-label">Claude fallback</span>
+                <input id="cloud-toggle" type="checkbox" />
+                <span class="toggle-track">
+                  <span class="toggle-thumb"></span>
+                </span>
+              </label>
+              <label class="field toggle">
+                <span class="field-label">Audio cues</span>
+                <input id="audio-cues-toggle" type="checkbox" />
+                <span class="toggle-track">
+                  <span class="toggle-thumb"></span>
+                </span>
+              </label>
+              <label class="field range">
+                <span class="field-label">Audio cue volume</span>
+                <div class="range-row">
+                  <input id="audio-cues-volume" type="range" min="0" max="100" step="1" />
+                  <span id="audio-cues-volume-value" class="range-value">30%</span>
+                </div>
+              </label>
+              <div class="field note">
+                <span class="field-label">Backend</span>
+                <div class="field-value">whisper.cpp (GPU auto-detect, CPU fallback)</div>
+              </div>
+            </div>
+          </details>
+        </section>
 
-      <section class="panel" style="--delay: 0.24s">
-        <div class="panel-header">
-          <h2>History</h2>
-          <p>Recent transcripts. Paste or copy as needed.</p>
-        </div>
-        <div id="history-list" class="history-list"></div>
-        <div class="history-compose">
-          <input id="history-input" type="text" placeholder="Type a test entry..." />
-          <button id="history-add">Add to history</button>
-        </div>
-      </section>
+        <section class="panel model-panel" style="--delay: 0.22s">
+          <div class="panel-header">
+            <h2>Model manager</h2>
+            <p>Download and manage local whisper.cpp models.</p>
+          </div>
+          <div id="model-list" class="model-list"></div>
+        </section>
+      </div>
     </main>
   </body>
 </html>

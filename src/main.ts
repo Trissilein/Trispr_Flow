@@ -16,6 +16,7 @@ interface Settings {
     | "whisper-large-v3-turbo";
   cloud_fallback: boolean;
   audio_cues: boolean;
+  audio_cues_volume: number;
 }
 
 interface HistoryEntry {
@@ -90,7 +91,6 @@ const engineLabel = $("engine-label");
 const cloudState = $("cloud-state");
 const modeState = $("mode-state");
 const deviceState = $("device-state");
-const simulateButton = $("simulate-transcribe");
 const modeSelect = $("mode-select") as HTMLSelectElement | null;
 const pttHotkey = $("ptt-hotkey") as HTMLInputElement | null;
 const pttHotkeyRecord = $("ptt-hotkey-record") as HTMLButtonElement | null;
@@ -103,6 +103,8 @@ const modelSelect = $("model-select") as HTMLSelectElement | null;
 const languageSelect = $("language-select") as HTMLSelectElement | null;
 const cloudToggle = $("cloud-toggle") as HTMLInputElement | null;
 const audioCuesToggle = $("audio-cues-toggle") as HTMLInputElement | null;
+const audioCuesVolume = $("audio-cues-volume") as HTMLInputElement | null;
+const audioCuesVolumeValue = $("audio-cues-volume-value");
 const historyList = $("history-list");
 const historyInput = $("history-input") as HTMLInputElement | null;
 const historyAdd = $("history-add");
@@ -145,6 +147,10 @@ function renderSettings() {
   if (languageSelect) languageSelect.value = settings.language_mode;
   if (cloudToggle) cloudToggle.checked = settings.cloud_fallback;
   if (audioCuesToggle) audioCuesToggle.checked = settings.audio_cues;
+  if (audioCuesVolume) audioCuesVolume.value = Math.round(settings.audio_cues_volume * 100).toString();
+  if (audioCuesVolumeValue) {
+    audioCuesVolumeValue.textContent = `${Math.round(settings.audio_cues_volume * 100)}%`;
+  }
 }
 
 function renderDevices() {
@@ -461,6 +467,20 @@ function wireEvents() {
     await persistSettings();
   });
 
+  audioCuesVolume?.addEventListener("input", () => {
+    if (!settings || !audioCuesVolume) return;
+    const value = Number(audioCuesVolume.value);
+    settings.audio_cues_volume = Math.min(1, Math.max(0, value / 100));
+    if (audioCuesVolumeValue) {
+      audioCuesVolumeValue.textContent = `${Math.round(settings.audio_cues_volume * 100)}%`;
+    }
+  });
+
+  audioCuesVolume?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
   historyAdd?.addEventListener("click", async () => {
     if (!historyInput?.value.trim()) return;
     history = await invoke("add_history_entry", {
@@ -471,15 +491,6 @@ function wireEvents() {
     renderHistory();
   });
 
-  simulateButton?.addEventListener("click", async () => {
-    const stamp = new Date().toLocaleTimeString();
-    const sample = `Simulated transcript (${stamp})`;
-    history = await invoke("add_history_entry", {
-      text: sample,
-      source: settings?.cloud_fallback ? "cloud" : "local",
-    });
-    renderHistory();
-  });
 }
 
 // Toast Notification System
@@ -594,8 +605,10 @@ function playAudioCue(type: "start" | "stop") {
     }
 
     // Quick fade in/out
+    const volume = settings?.audio_cues_volume ?? 0.3;
+    const target = Math.max(0, Math.min(1, volume));
     gainNode.gain.setValueAtTime(0, now);
-    gainNode.gain.linearRampToValueAtTime(0.3, now + 0.01);
+    gainNode.gain.linearRampToValueAtTime(target, now + 0.01);
     gainNode.gain.linearRampToValueAtTime(0, now + 0.1);
 
     oscillator.start(now);

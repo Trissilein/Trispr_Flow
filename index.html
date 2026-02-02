@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    />
+    <title>Trispr Flow</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <div class="bg-noise"></div>
+    <main class="app">
+      <header class="hero" style="--delay: 0.05s">
+        <div>
+          <div class="badge">Offline dictation</div>
+          <h1>Trispr Flow</h1>
+          <p class="subtitle">
+            GPU-first voice capture and transcription for English + Deutsch, with
+            a privacy-first local pipeline and optional Claude fallback.
+          </p>
+          <div class="status">
+            <span class="status-dot" id="status-dot" data-state="idle"></span>
+            <span id="status-label">Idle</span>
+            <span class="status-divider">•</span>
+            <span id="engine-label">whisper.cpp (GPU)</span>
+            <span id="status-message" class="status-message"></span>
+          </div>
+        </div>
+        <div class="hero-card">
+          <div class="hero-row">
+            <span class="hero-label">Cloud fallback</span>
+            <span id="cloud-state" class="hero-value">Off</span>
+          </div>
+          <div class="hero-row">
+            <span class="hero-label">Mode</span>
+            <span id="mode-state" class="hero-value">PTT</span>
+          </div>
+          <div class="hero-row">
+            <span class="hero-label">Input</span>
+            <span id="device-state" class="hero-value">Default</span>
+          </div>
+          <div class="hero-footer">
+            <button id="simulate-transcribe" class="ghost">Simulate transcript</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="panel" style="--delay: 0.12s">
+        <div class="panel-header">
+          <h2>Capture</h2>
+          <p>Hotkeys, input device, and recording mode.</p>
+        </div>
+        <div class="panel-grid">
+          <label class="field">
+            <span class="field-label">Mode</span>
+            <select id="mode-select">
+              <option value="ptt">Push-to-talk</option>
+              <option value="toggle">Toggle</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">PTT hotkey</span>
+            <input id="ptt-hotkey" type="text" placeholder="CommandOrControl+Shift+Space" />
+          </label>
+          <label class="field">
+            <span class="field-label">Toggle hotkey</span>
+            <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" />
+          </label>
+          <label class="field">
+            <span class="field-label">Input device</span>
+            <select id="device-select"></select>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel" style="--delay: 0.18s">
+        <div class="panel-header">
+          <h2>Transcription</h2>
+          <p>Model quality, language detection, and cloud fallback.</p>
+        </div>
+        <div class="panel-grid">
+          <label class="field">
+            <span class="field-label">Model</span>
+            <select id="model-select">
+              <option value="whisper-large-v3">Whisper large-v3 (quality)</option>
+              <option value="whisper-large-v3-turbo">Whisper large-v3-turbo (speed)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">Language</span>
+            <select id="language-select">
+              <option value="auto">Auto (DE/EN mix)</option>
+            </select>
+          </label>
+          <label class="field toggle">
+            <span class="field-label">Claude fallback</span>
+            <input id="cloud-toggle" type="checkbox" />
+            <span class="toggle-track">
+              <span class="toggle-thumb"></span>
+            </span>
+          </label>
+          <div class="field note">
+            <span class="field-label">Backend</span>
+            <div class="field-value">whisper.cpp (GPU auto-detect, CPU fallback)</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" style="--delay: 0.22s">
+        <div class="panel-header">
+          <h2>Model manager</h2>
+          <p>Download and manage local whisper.cpp models.</p>
+        </div>
+        <div id="model-list" class="model-list"></div>
+      </section>
+
+      <section class="panel" style="--delay: 0.24s">
+        <div class="panel-header">
+          <h2>History</h2>
+          <p>Recent transcripts. Paste or copy as needed.</p>
+        </div>
+        <div id="history-list" class="history-list"></div>
+        <div class="history-compose">
+          <input id="history-input" type="text" placeholder="Type a test entry..." />
+          <button id="history-add">Add to history</button>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

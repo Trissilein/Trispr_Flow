@@ -1,106 +1,216 @@
 # Trispr Flow
 
-Offline dictation tool that runs in the system tray, records the microphone via hotkey, transcribes speech, and pastes the result into the active input field. Designed for fast EN/DE recognition with GPU-first inference on Windows and macOS.
+> GPU-first offline dictation tool with privacy-first local pipeline and optional Claude fallback
 
-## Status
-MVP pipeline works end-to-end on Windows (PTT/toggle, local transcription, paste, history).
-GPU build is wired for whisper.cpp; macOS not tested yet.
+[![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
+[![macOS](https://img.shields.io/badge/macOS-000000?style=flat&logo=apple&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Last updated: 2026-02-02
+Trispr Flow is a modern desktop dictation application built with Tauri, Rust, and TypeScript. It combines the power of local GPU-accelerated transcription (whisper.cpp) with a beautiful, responsive UI for seamless voice-to-text conversion.
 
-## Vision
-Build a fast, private, and reliable dictation workflow similar to Wispr Flow, but offline-first and customizable.
+## ✨ Features
 
-## Core user flow
-1. User presses PTT or toggles recording on.
-2. Audio is captured from a selectable input device.
-3. Recording ends on key release (PTT) or toggle-off.
-4. Audio is transcribed with GPU-accelerated ASR.
-5. Text is post-processed and pasted into the focused input.
-6. Transcript is stored in history for review and reuse.
+### Core Functionality
+- **🎙️ Push-to-Talk & Toggle Modes** - Record with global hotkeys
+- **⚡ GPU-Accelerated Transcription** - Fast local processing with whisper.cpp
+- **🔒 Privacy-First** - All processing happens on your machine by default
+- **🌐 Multi-Language Support** - English and German with auto-detection
+- **☁️ Claude Fallback** - Optional cloud transcription for complex audio
 
-## Key requirements
-- **Cross-platform**: Windows and macOS.
-- **GPU-first** inference with auto-detect (NVIDIA CUDA, Apple GPU), CPU fallback.
-- **Excellent EN/DE recognition** with robust punctuation and auto language detect.
-- **System tray app** with hotkey control (PTT and toggle).
-- **Device selection** via dropdown.
-- **History UI** with settings (hotkeys, model, language, etc.).
-- **Offline-first** by default; optional cloud fallback toggle (Claude pipeline).
+### Phase 1 (Complete) ✅
+- **📊 Visual Recording Overlay** - Always-on-top status indicator with states:
+  - 🔴 Recording (red pulse)
+  - 🟡 Transcribing (yellow spinner)
+  - Hidden when idle
+- **⌨️ Advanced Hotkey System**
+  - Visual hotkey recorder with real-time capture
+  - Format validation and conflict detection
+  - Inline success/error indicators
+- **🚨 Comprehensive Error Handling**
+  - Categorized error types with recovery suggestions
+  - Toast notifications for user feedback
+  - Structured logging with tracing
+- **🔊 Audio Cues** (Toggleable)
+  - Rising beep on recording start
+  - Falling beep on recording stop
+  - 100ms non-intrusive feedback
 
-## Candidate ASR backends (to evaluate)
-- whisper.cpp with CUDA/Metal for a native, embeddable path.
-- faster-whisper (CTranslate2) as a Windows-only turbo backend (optional).
+### Coming Soon
+- **🎯 Voice Activity Detection (VAD)** - Automatic silence trimming
+- **📝 Text Post-Processing** - Punctuation, number formatting, custom vocabulary
+- **🌙 Dark Mode** - System theme integration
+- **📊 Local Analytics Dashboard** - Usage insights (privacy-first)
+- **📤 Export Options** - Plain text, Markdown, JSON, CSV
 
-Decision criteria: latency, accuracy on EN/DE, VRAM usage, cold-start time, licensing, ease of embedding in a tray app.
+## 🚀 Quick Start
 
-## High-level architecture
-- **Audio capture**: WASAPI (Windows) and CoreAudio (macOS) with ring buffer.
-- **Hotkey manager**: global hotkeys for PTT/toggle.
-- **VAD/endpointing**: optional voice activity detection to trim silence.
-- **ASR engine**: pluggable backend (GPU-first, CPU fallback).
-- **Cloud fallback**: optional toggle to route audio to a Claude-based cloud pipeline.
-- **Post-processing**: casing, punctuation, number formatting, custom vocab.
-- **Text injection**: clipboard-safe paste or simulated typing.
-- **UI/Tray**: status, device picker, model settings, history.
-- **Storage**: local settings + history (SQLite or lightweight KV).
+### Prerequisites
+- Windows 10/11 or macOS 10.15+
+- CUDA-capable GPU (recommended) or CPU fallback
+- ~2GB disk space for models
 
-## Initial tech stack (proposed)
-- **App shell**: Tauri v2 (tray, hotkeys, cross-platform).
-- **Core**: Rust for capture, hotkey, ASR orchestration.
-- **ASR**: whisper.cpp primary backend with GPU auto-detect.
+### Installation
 
-## Cloud fallback toggle (Claude)
-When enabled, the app routes finalized audio to a Claude-based cloud pipeline instead of local ASR. This is opt-in, clearly labeled, and disabled by default. The exact transport (API endpoint, auth) will be configurable to keep the desktop app decoupled from any hosted service.
-
-## Non-goals (initially)
-- Cloud-only transcription
-- Live streaming captions
-- Full editor replacement
-
-## Repo structure (planned)
-- `docs/` project docs, architecture, and decisions
-- `src/` application code
-- `tools/` model management scripts
-- `assets/` icons, UI assets
-
-## Tech stack (current)
-- Tauri v2 + Rust core, Vite + TypeScript frontend
-- whisper.cpp as primary ASR backend (GPU auto-detect)
-- Optional Claude cloud fallback toggle (opt-in)
-
-## Development
+#### Build from Source
 ```bash
+# Clone the repository
+git clone https://github.com/Trissilein/Trispr_Flow.git
+cd Trispr_Flow
+
+# Install dependencies
 npm install
+
+# Run in development mode
 npm run tauri dev
+
+# Build for production
+npm run tauri build
 ```
 
-## Runtime configuration
-Environment variables for local and cloud pipelines:
-- `TRISPR_WHISPER_CLI` (optional): absolute path to `whisper-cli` binary.
-- `TRISPR_WHISPER_MODEL` (optional): absolute path to a ggml model file.
-- `TRISPR_WHISPER_MODEL_DIR` (optional): directory containing ggml model files.
-- `TRISPR_WHISPER_MODEL_BASE_URL` (optional): base URL for model downloads.
-- `TRISPR_CLOUD_ENDPOINT` (optional): HTTP endpoint for cloud fallback.
-- `TRISPR_CLOUD_TOKEN` (optional): bearer token for cloud fallback.
+## 🎮 Usage
 
-If none are set, the app attempts to find `../whisper.cpp` relative to the repo root.
+### Basic Workflow
+1. **Launch** Trispr Flow - app opens in system tray
+2. **Configure** hotkeys in the Capture section (default: `Ctrl+Shift+Space`)
+3. **Select** your microphone from Input device dropdown
+4. **Press and hold** your PTT hotkey while speaking
+5. **Release** to transcribe - text is automatically pasted to your active window
 
-Note: on macOS, paste injection via simulated keystrokes requires Accessibility permissions.
+### Settings
 
-## Local whisper.cpp setup (dev)
-- Build `whisper-cli` with CUDA support in `D:\GIT\whisper.cpp` (or any path).
-- Place the model file (e.g. `ggml-large-v3.bin`) in `whisper.cpp/models`.
-- Export `TRISPR_WHISPER_CLI` / `TRISPR_WHISPER_MODEL_DIR` if you keep them elsewhere.
+#### Capture
+- **Mode**: Push-to-Talk (PTT) or Toggle
+- **Hotkeys**: Customizable global shortcuts with visual recorder
+- **Input Device**: Select your preferred microphone
 
-## Roadmap
-See `ROADMAP.md` for milestones and deliverables.
+#### Transcription
+- **Model**: Choose between quality (large-v3) or speed (large-v3-turbo)
+- **Language**: Auto-detect German/English or specify
+- **Claude Fallback**: Optional cloud transcription for complex audio
+- **Audio Cues**: Toggle sound feedback on/off
 
-## Project status
-Current progress and next steps live in `STATUS.md`.
+#### Model Manager
+- Download whisper.cpp models on-demand
+- Track download progress
+- Manage installed models
 
-## Contributing
-See `CONTRIBUTING.md` and `docs/DEVELOPMENT.md`.
+## 🏗️ Architecture
 
-## Cloud fallback
-Design notes for the Claude toggle and cloud pipeline live in `docs/CLOUD_FALLBACK.md`.
+### Tech Stack
+- **Frontend**: TypeScript + Vite + Vanilla JS (no framework overhead)
+- **Backend**: Rust + Tauri 2.0
+- **Transcription**: whisper.cpp (GPU via CUDA/Metal, CPU fallback)
+- **Audio**: cpal for cross-platform audio capture
+- **Hotkeys**: tauri-plugin-global-shortcut
+
+### Project Structure
+```
+Trispr_Flow/
+├── src/                    # Frontend TypeScript
+│   ├── main.ts            # Main app logic
+│   ├── overlay.ts         # Recording overlay
+│   └── styles.css         # Application styling
+├── src-tauri/             # Rust backend
+│   ├── src/
+│   │   ├── lib.rs         # Core app logic
+│   │   ├── errors.rs      # Error handling
+│   │   ├── hotkeys.rs     # Hotkey validation
+│   │   └── overlay.rs     # Overlay window management
+│   └── Cargo.toml
+├── overlay.html           # Overlay UI
+├── index.html             # Main window UI
+├── ROADMAP.md            # Development roadmap
+└── README.md             # This file
+```
+
+## 🗺️ Roadmap
+
+### ✅ Milestone 1 - MVP (Complete)
+- Basic PTT recording and transcription
+- Settings persistence
+- History management
+
+### ✅ Milestone 2 - Foundation & Critical UX (Complete)
+- Recording overlay with visual states
+- Advanced hotkey system with validation
+- Error recovery and logging
+- Audio cues
+
+### 📋 Milestone 3 - Quality of Life (Next)
+- Voice Activity Detection (VAD)
+- Text post-processing pipeline
+- Multi-language context switching
+- Additional keyboard shortcuts
+- Undo for paste
+
+### 📋 Milestone 4 - Advanced Features
+- Dark mode
+- Export options
+- Custom model support
+- Local analytics dashboard
+
+### 📋 Milestone 5 - Production Ready
+- macOS testing and fixes
+- Professional installers
+- Auto-update mechanism
+- Auto-start configuration
+
+See [ROADMAP.md](ROADMAP.md) for detailed implementation plans.
+
+## ⚙️ Configuration
+
+### Environment Variables
+- `TRISPR_WHISPER_CLI`: Path to whisper-cli binary
+- `TRISPR_WHISPER_MODEL`: Path to ggml model file
+- `TRISPR_WHISPER_MODEL_DIR`: Directory containing model files
+- `TRISPR_WHISPER_MODEL_BASE_URL`: Base URL for model downloads
+- `TRISPR_CLOUD_ENDPOINT`: HTTP endpoint for cloud fallback
+- `TRISPR_CLOUD_TOKEN`: Bearer token for cloud authentication
+
+### Local whisper.cpp Setup
+```bash
+# Build whisper-cli with CUDA support
+cd D:\GIT\whisper.cpp
+make
+
+# Place models in whisper.cpp/models/
+# Example: ggml-large-v3.bin
+
+# Export paths if needed
+export TRISPR_WHISPER_CLI=/path/to/whisper-cli
+export TRISPR_WHISPER_MODEL_DIR=/path/to/models
+```
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+### Development Setup
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes with conventional commits
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+### Code Style
+- **Rust**: Follow `rustfmt` and `clippy` guidelines
+- **TypeScript**: ESLint + Prettier
+- **Commits**: Conventional Commits format
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [whisper.cpp](https://github.com/ggerganov/whisper.cpp) - Fast whisper inference
+- [Tauri](https://tauri.app) - Rust-powered desktop framework
+- [Anthropic Claude](https://anthropic.com) - Optional cloud transcription fallback
+
+## 📧 Contact
+
+Project Link: [https://github.com/Trissilein/Trispr_Flow](https://github.com/Trissilein/Trispr_Flow)
+
+---
+
+**Status**: Active Development | **Version**: 0.1.0 | **Phase**: Milestone 2 Complete ✅

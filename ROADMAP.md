@@ -13,9 +13,10 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 🔄 **Milestone 2**: In Progress (Foundation & Critical UX improvements)
 
 **Recent Progress**:
-- Recording overlay indicator implemented
+- Recording overlay indicator implemented (needs redesign)
 - Overlay shows real-time status (Recording/Transcribing/Idle)
 - Overlay positioned in top-right with draggable support
+- GPU build path validated with CUDA override
 
 ---
 
@@ -50,7 +51,7 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 
 ---
 
-## Milestone 2 - Foundation & Critical UX ✅
+## Milestone 2 - Foundation & Critical UX 🔄
 
 **Target**: 2-3 weeks
 **Status**: Complete
@@ -60,6 +61,12 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 - ✅ Visual states: Recording (red pulse), Transcribing (yellow spinner), Idle (hidden)
 - ✅ Positioned in top-right corner (configurable)
 - ✅ Draggable overlay
+
+### Phase 1.1b: Overlay Redesign (Minimal Dot) 🔄
+- Replace overlay window UX with a minimal red dot in the top-left.
+- Remove any invisible window artifacts; keep only the dot visible.
+- Dot pulses like an equalizer when input is detected.
+- Keep status transitions (Recording/Transcribing/Idle) but without text labels.
 
 ### Phase 1.2: Hotkey System Refactor ✅
 
@@ -97,6 +104,13 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 - Dependencies: `tracing`, `tracing-subscriber`, `tracing-appender`
 - Log levels: ERROR, WARN, INFO, DEBUG
 - Key events logged: hotkey press/release, audio capture, transcription, settings changes
+
+### Phase 1.5: Audio Cue Volume 🔄
+- Add a volume slider for audio cues.
+- Persist volume in settings.
+
+### Phase 1.6: UI Cleanup 🔄
+- Remove "simulate transcript" button from UI.
 
 **Definition of Done**:
 - ✅ Recording overlay shows status in <100ms
@@ -154,6 +168,12 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 - Multi-language switching works reliably
 - Undo works within 30-second window
 - Professional UX throughout
+
+#### Interface Compression (UX)
+- Rework UI density: two-column layout where possible.
+- Move output panel to the top.
+- Use expanders for advanced controls.
+- Make history/model panels scrollable.
 
 ---
 

@@ -16,13 +16,13 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 
 - ✅ Dark mode implementation - Complete UI redesign with dark theme
 - ✅ UI density improvements - 40-60% spacing reduction for compact layout
-- ✅ Mode architecture corrected - VAD vs PTT (both PTT and Toggle hotkeys active in PTT mode)
+- ❌ Mode architecture still PTT vs Toggle (needs PTT vs VAD; toggle should be convenience within PTT)
 - ✅ Model cleanup - Removed small models, kept only large-v3 and large-v3-turbo
 - ✅ Enhanced model path resolution - Works correctly in built .exe
 - ✅ Comprehensive logging - Detailed tracing for debugging
 - ✅ Expander UX - Added chevron indicators
 - ✅ Dropdown styling - Dark backgrounds for options
-- 🔄 Overlay visibility debugging - In progress (logs show success but visibility issue)
+- 🔄 Overlay visibility debugging - In progress (dot exists, but not visible)
 
 ---
 
@@ -62,6 +62,11 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 **Target**: 2-3 weeks
 **Status**: Complete
 
+### Phase 1.0: Recording Modes (PTT vs VAD) 🔄
+- Replace mode toggle with **PTT vs Voice‑Activated**.
+- Keep **Toggle hotkey** as convenience within PTT mode (always available when PTT is active).
+- VAD mode: no hold/toggle requirement; capture is voice‑triggered.
+
 ### Phase 1.1: Recording Overlay ✅
 - ✅ Overlay window with always-on-top, transparent design
 - ✅ Visual states: Recording (red pulse), Transcribing (yellow spinner), Idle (hidden)
@@ -73,6 +78,7 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 - Remove any invisible window artifacts; keep only the dot visible.
 - Dot pulses like an equalizer when input is detected.
 - Keep status transitions (Recording/Transcribing/Idle) but without text labels.
+- Make **position/offset configurable in UI** (reference: helltime overlay settings pattern).
 
 ### Phase 1.2: Hotkey System Refactor ✅
 
@@ -127,6 +133,12 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 
 - Add a volume slider for audio cues.
 - Persist volume in settings.
+
+### Phase 1.7: Quality Loop (Post‑Transcription) 🔄
+- Optional “Quality Loop” that reviews the transcript before paste.
+- Detect likely errors (punctuation, capitalization, homophones, missing words).
+- Toggleable in UI (fast path if disabled).
+- Output should remain low‑latency; keep original transcript available for audit.
 
 **Definition of Done**:
 - ✅ Recording overlay shows status in <100ms

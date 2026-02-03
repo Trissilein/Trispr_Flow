@@ -181,7 +181,6 @@ const transcribeBatchValue = $("transcribe-batch-value");
 const transcribeOverlapField = $("transcribe-overlap-field");
 const transcribeChunkOverlap = $("transcribe-chunk-overlap") as HTMLInputElement | null;
 const transcribeOverlapValue = $("transcribe-overlap-value");
-const transcribeGainField = $("transcribe-gain-field");
 const transcribeGain = $("transcribe-gain") as HTMLInputElement | null;
 const transcribeGainValue = $("transcribe-gain-value");
 const overlayColor = $("overlay-color") as HTMLInputElement | null;

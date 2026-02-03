@@ -945,11 +945,6 @@ impl OverlayLevelEmitter {
       }
     }
   }
-
-  /// Get the current dynamic threshold value
-  fn get_dynamic_threshold(&self) -> f32 {
-    self.dynamic_threshold.get_threshold()
-  }
 }
 
 #[derive(Debug)]
@@ -2504,7 +2499,7 @@ fn run_transcribe_loopback(
     .initialize_client(&mix_format, &wasapi::Direction::Capture, &stream_mode)
     .map_err(|e| e.to_string())?;
 
-  let mut capture_client = audio_client.get_audiocaptureclient().map_err(|e| e.to_string())?;
+  let capture_client = audio_client.get_audiocaptureclient().map_err(|e| e.to_string())?;
   audio_client.start_stream().map_err(|e| e.to_string())?;
 
   let channels = mix_format.get_nchannels() as usize;

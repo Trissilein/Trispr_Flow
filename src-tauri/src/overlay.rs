@@ -32,10 +32,6 @@ pub fn mark_overlay_ready() {
     OVERLAY_JS_READY.store(true, Ordering::Relaxed);
 }
 
-pub fn overlay_js_ready() -> bool {
-    OVERLAY_JS_READY.load(Ordering::Relaxed)
-}
-
 /// Creates and configures the overlay window for recording status
 pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     use tracing::info;

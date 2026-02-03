@@ -19,6 +19,13 @@ interface Settings {
   audio_cues_volume: number;
   vad_threshold: number;
   vad_silence_ms: number;
+  overlay_color: string;
+  overlay_min_radius: number;
+  overlay_max_radius: number;
+  overlay_rise_ms: number;
+  overlay_fall_ms: number;
+  overlay_pos_x: number;
+  overlay_pos_y: number;
 }
 
 interface HistoryEntry {
@@ -115,6 +122,17 @@ const vadSilence = $("vad-silence") as HTMLInputElement | null;
 const vadSilenceValue = $("vad-silence-value");
 const vadMeter = $("vad-meter");
 const vadMeterFill = $("vad-meter-fill");
+const overlayColor = $("overlay-color") as HTMLInputElement | null;
+const overlayMinRadius = $("overlay-min-radius") as HTMLInputElement | null;
+const overlayMinRadiusValue = $("overlay-min-radius-value");
+const overlayMaxRadius = $("overlay-max-radius") as HTMLInputElement | null;
+const overlayMaxRadiusValue = $("overlay-max-radius-value");
+const overlayRise = $("overlay-rise") as HTMLInputElement | null;
+const overlayRiseValue = $("overlay-rise-value");
+const overlayFall = $("overlay-fall") as HTMLInputElement | null;
+const overlayFallValue = $("overlay-fall-value");
+const overlayPosX = $("overlay-pos-x") as HTMLInputElement | null;
+const overlayPosY = $("overlay-pos-y") as HTMLInputElement | null;
 const historyList = $("history-list");
 const historyInput = $("history-input") as HTMLInputElement | null;
 const historyAdd = $("history-add");
@@ -171,6 +189,17 @@ function renderSettings() {
   if (vadMeter) {
     vadMeter.style.setProperty("--threshold", `${Math.round(settings.vad_threshold * 100)}%`);
   }
+  if (overlayColor) overlayColor.value = settings.overlay_color;
+  if (overlayMinRadius) overlayMinRadius.value = Math.round(settings.overlay_min_radius).toString();
+  if (overlayMinRadiusValue) overlayMinRadiusValue.textContent = `${Math.round(settings.overlay_min_radius)}`;
+  if (overlayMaxRadius) overlayMaxRadius.value = Math.round(settings.overlay_max_radius).toString();
+  if (overlayMaxRadiusValue) overlayMaxRadiusValue.textContent = `${Math.round(settings.overlay_max_radius)}`;
+  if (overlayRise) overlayRise.value = settings.overlay_rise_ms.toString();
+  if (overlayRiseValue) overlayRiseValue.textContent = `${settings.overlay_rise_ms}`;
+  if (overlayFall) overlayFall.value = settings.overlay_fall_ms.toString();
+  if (overlayFallValue) overlayFallValue.textContent = `${settings.overlay_fall_ms}`;
+  if (overlayPosX) overlayPosX.value = Math.round(settings.overlay_pos_x).toString();
+  if (overlayPosY) overlayPosY.value = Math.round(settings.overlay_pos_y).toString();
 }
 
 function renderDevices() {
@@ -198,6 +227,7 @@ function renderHistory() {
     wrapper.className = "history-item";
 
     const textWrap = document.createElement("div");
+    textWrap.className = "history-content";
     const text = document.createElement("div");
     text.className = "history-text";
     text.textContent = entry.text;
@@ -529,6 +559,90 @@ function wireEvents() {
 
   vadSilence?.addEventListener("change", async () => {
     if (!settings) return;
+    await persistSettings();
+  });
+
+  overlayColor?.addEventListener("input", () => {
+    if (!settings || !overlayColor) return;
+    settings.overlay_color = overlayColor.value;
+  });
+
+  overlayColor?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  overlayMinRadius?.addEventListener("input", () => {
+    if (!settings || !overlayMinRadius || !overlayMaxRadius) return;
+    settings.overlay_min_radius = Number(overlayMinRadius.value);
+    if (settings.overlay_min_radius > settings.overlay_max_radius) {
+      settings.overlay_max_radius = settings.overlay_min_radius;
+      overlayMaxRadius.value = Math.round(settings.overlay_max_radius).toString();
+    }
+    if (overlayMinRadiusValue) {
+      overlayMinRadiusValue.textContent = `${Math.round(settings.overlay_min_radius)}`;
+    }
+    if (overlayMaxRadiusValue) {
+      overlayMaxRadiusValue.textContent = `${Math.round(settings.overlay_max_radius)}`;
+    }
+  });
+
+  overlayMinRadius?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  overlayMaxRadius?.addEventListener("input", () => {
+    if (!settings || !overlayMaxRadius || !overlayMinRadius) return;
+    settings.overlay_max_radius = Number(overlayMaxRadius.value);
+    if (settings.overlay_max_radius < settings.overlay_min_radius) {
+      settings.overlay_min_radius = settings.overlay_max_radius;
+      overlayMinRadius.value = Math.round(settings.overlay_min_radius).toString();
+    }
+    if (overlayMinRadiusValue) {
+      overlayMinRadiusValue.textContent = `${Math.round(settings.overlay_min_radius)}`;
+    }
+    if (overlayMaxRadiusValue) {
+      overlayMaxRadiusValue.textContent = `${Math.round(settings.overlay_max_radius)}`;
+    }
+  });
+
+  overlayMaxRadius?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  overlayRise?.addEventListener("input", () => {
+    if (!settings || !overlayRise) return;
+    settings.overlay_rise_ms = Number(overlayRise.value);
+    if (overlayRiseValue) overlayRiseValue.textContent = `${settings.overlay_rise_ms}`;
+  });
+
+  overlayRise?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  overlayFall?.addEventListener("input", () => {
+    if (!settings || !overlayFall) return;
+    settings.overlay_fall_ms = Number(overlayFall.value);
+    if (overlayFallValue) overlayFallValue.textContent = `${settings.overlay_fall_ms}`;
+  });
+
+  overlayFall?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  overlayPosX?.addEventListener("change", async () => {
+    if (!settings || !overlayPosX) return;
+    settings.overlay_pos_x = Number(overlayPosX.value);
+    await persistSettings();
+  });
+
+  overlayPosY?.addEventListener("change", async () => {
+    if (!settings || !overlayPosY) return;
+    settings.overlay_pos_y = Number(overlayPosY.value);
     await persistSettings();
   });
 

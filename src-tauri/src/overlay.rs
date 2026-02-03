@@ -12,6 +12,17 @@ pub enum OverlayState {
     Transcribing,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverlaySettings {
+    pub color: String,
+    pub min_radius: f64,
+    pub max_radius: f64,
+    pub rise_ms: u64,
+    pub fall_ms: u64,
+    pub pos_x: f64,
+    pub pos_y: f64,
+}
+
 /// Creates and configures the overlay window for recording status
 pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     use tracing::info;
@@ -32,7 +43,7 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         WebviewUrl::App("overlay.html".into()),
     )
     .title("Trispr Flow Overlay")
-    .inner_size(32.0, 32.0)
+    .inner_size(64.0, 64.0)
     .resizable(false)
     .decorations(false)
     .shadow(false)
@@ -44,19 +55,11 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     .build()
     .map_err(|e| format!("Failed to create overlay window: {}", e))?;
 
-    // Position in top-left corner by default
-    if let Ok(monitor) = window.current_monitor() {
-        if let Some(_monitor) = monitor {
-            // Position in top-left with 12px margin
-            let x = 12.0;
-            let y = 12.0;
-
-            let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition {
-                x,
-                y,
-            }));
-        }
-    }
+    // Default position (will be overridden by overlay settings)
+    let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition {
+        x: 12.0,
+        y: 12.0,
+    }));
 
     let _ = window.set_ignore_cursor_events(true);
 
@@ -113,6 +116,7 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
                 error!("Failed to show overlay: {}", e);
                 format!("Failed to show overlay: {}", e)
             })?;
+            let _ = window.set_always_on_top(true);
             info!("Overlay window.show() succeeded");
         }
     }
@@ -125,6 +129,28 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
         let _ = app_handle.emit("overlay:state", &state_clone);
     });
 
+    Ok(())
+}
+
+pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Result<(), String> {
+    let window = match app.get_webview_window("overlay") {
+        Some(w) => w,
+        None => create_overlay_window(app)?,
+    };
+
+    let max_radius = settings.max_radius.max(settings.min_radius).max(4.0);
+    let size = (max_radius * 2.0 + 32.0).max(32.0);
+    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
+        width: size,
+        height: size,
+    }));
+    let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition {
+        x: settings.pos_x,
+        y: settings.pos_y,
+    }));
+
+    let _ = window.emit("overlay:settings", settings);
+    let _ = app.emit("overlay:settings", settings);
     Ok(())
 }
 

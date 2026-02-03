@@ -58,6 +58,54 @@
             <input id="history-input" type="text" placeholder="Type a test entry..." />
             <button id="history-add">Add to history</button>
           </div>
+
+          <details class="expander">
+            <summary>Overlay</summary>
+            <div class="expander-body">
+              <label class="field">
+                <span class="field-label">Dot color</span>
+                <input id="overlay-color" type="color" />
+              </label>
+              <label class="field range">
+                <span class="field-label">Min radius (px)</span>
+                <div class="range-row">
+                  <input id="overlay-min-radius" type="range" min="4" max="32" step="1" />
+                  <span id="overlay-min-radius-value" class="range-value">8</span>
+                </div>
+              </label>
+              <label class="field range">
+                <span class="field-label">Max radius (px)</span>
+                <div class="range-row">
+                  <input id="overlay-max-radius" type="range" min="8" max="64" step="1" />
+                  <span id="overlay-max-radius-value" class="range-value">24</span>
+                </div>
+              </label>
+              <label class="field range">
+                <span class="field-label">Rise smoothing (ms)</span>
+                <div class="range-row">
+                  <input id="overlay-rise" type="range" min="20" max="600" step="10" />
+                  <span id="overlay-rise-value" class="range-value">80</span>
+                </div>
+              </label>
+              <label class="field range">
+                <span class="field-label">Fall smoothing (ms)</span>
+                <div class="range-row">
+                  <input id="overlay-fall" type="range" min="20" max="800" step="10" />
+                  <span id="overlay-fall-value" class="range-value">160</span>
+                </div>
+              </label>
+              <div class="panel-grid">
+                <label class="field">
+                  <span class="field-label">Position X</span>
+                  <input id="overlay-pos-x" type="number" min="0" step="1" />
+                </label>
+                <label class="field">
+                  <span class="field-label">Position Y</span>
+                  <input id="overlay-pos-y" type="number" min="0" step="1" />
+                </label>
+              </div>
+            </div>
+          </details>
         </section>
 
         <section class="panel capture-panel" style="--delay: 0.16s">

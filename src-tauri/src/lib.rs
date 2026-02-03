@@ -69,6 +69,13 @@ struct Settings {
   audio_cues_volume: f32,
   vad_threshold: f32,
   vad_silence_ms: u64,
+  overlay_color: String,
+  overlay_min_radius: f32,
+  overlay_max_radius: f32,
+  overlay_rise_ms: u64,
+  overlay_fall_ms: u64,
+  overlay_pos_x: f64,
+  overlay_pos_y: f64,
 }
 
 impl Default for Settings {
@@ -85,6 +92,13 @@ impl Default for Settings {
       audio_cues_volume: 0.3,
       vad_threshold: VAD_THRESHOLD_DEFAULT,
       vad_silence_ms: VAD_SILENCE_MS_DEFAULT,
+      overlay_color: "#ff3d2e".to_string(),
+      overlay_min_radius: 8.0,
+      overlay_max_radius: 24.0,
+      overlay_rise_ms: 80,
+      overlay_fall_ms: 160,
+      overlay_pos_x: 12.0,
+      overlay_pos_y: 12.0,
     }
   }
 }
@@ -250,6 +264,21 @@ fn load_settings(app: &AppHandle) -> Settings {
       if settings.vad_silence_ms < 100 {
         settings.vad_silence_ms = VAD_SILENCE_MS_DEFAULT;
       }
+      if settings.overlay_min_radius < 4.0 {
+        settings.overlay_min_radius = 4.0;
+      }
+      if settings.overlay_max_radius < settings.overlay_min_radius {
+        settings.overlay_max_radius = settings.overlay_min_radius + 4.0;
+      }
+      if settings.overlay_max_radius > 64.0 {
+        settings.overlay_max_radius = 64.0;
+      }
+      if settings.overlay_rise_ms < 20 {
+        settings.overlay_rise_ms = 20;
+      }
+      if settings.overlay_fall_ms < 20 {
+        settings.overlay_fall_ms = 20;
+      }
       settings
     }
     Err(_) => Settings::default(),
@@ -287,6 +316,18 @@ fn now_ms() -> u64 {
 
 fn model_spec(model_id: &str) -> Option<&'static ModelSpec> {
   MODEL_SPECS.iter().find(|spec| spec.id == model_id)
+}
+
+fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
+  overlay::OverlaySettings {
+    color: settings.overlay_color.clone(),
+    min_radius: settings.overlay_min_radius as f64,
+    max_radius: settings.overlay_max_radius as f64,
+    rise_ms: settings.overlay_rise_ms,
+    fall_ms: settings.overlay_fall_ms,
+    pos_x: settings.overlay_pos_x,
+    pos_y: settings.overlay_pos_y,
+  }
 }
 
 fn resolve_models_dir(app: &AppHandle) -> PathBuf {
@@ -582,6 +623,9 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
       }
     }
   }
+
+  let overlay_settings = build_overlay_settings(&settings);
+  let _ = overlay::apply_overlay_settings(&app, &overlay_settings);
 
   // Update overlay state based on new mode
   let recorder = state.recorder.lock().unwrap();
@@ -1818,6 +1862,7 @@ pub fn run() {
       if let Err(err) = overlay::create_overlay_window(&app.handle()) {
         eprintln!("⚠ Failed to create overlay window: {}", err);
       }
+      let _ = overlay::apply_overlay_settings(&app.handle(), &build_overlay_settings(&settings));
 
       let icon = {
         let paths = [

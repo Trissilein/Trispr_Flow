@@ -13,46 +13,25 @@ body {
 }
 
 #overlay-root {
-  width: 32px;
-  height: 32px;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  --level: 0;
+  --dot-color: #ff3d2e;
   opacity: 1;
   transition: opacity 0.12s ease-out;
 }
 
 #overlay-dot {
-  width: 10px;
-  height: 10px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: #ff3d2e;
-  transform: scale(calc(1 + var(--level) * 0.9));
-  box-shadow:
-    0 0 0 calc(4px + var(--level) * 6px) rgba(255, 61, 46, 0.35),
-    0 0 12px rgba(255, 61, 46, 0.45);
-  transition: transform 80ms linear, box-shadow 120ms ease-out;
-}
-
-#overlay-root[data-state="transcribing"] #overlay-dot {
-  background: #f5b342;
-  box-shadow:
-    0 0 0 calc(4px + var(--level) * 4px) rgba(245, 179, 66, 0.28),
-    0 0 10px rgba(245, 179, 66, 0.4);
-}
-
-#overlay-root[data-state="toggle-idle"] #overlay-dot {
-  background: #4a9eff;
-  transform: scale(0.8);
-  box-shadow: 0 0 8px rgba(74, 158, 255, 0.4);
+  background: var(--dot-color);
+  box-shadow: 0 0 8px rgba(255, 61, 46, 0.45);
+  transition: box-shadow 80ms linear;
 }
 
 #overlay-root[data-state="idle"] {
   opacity: 0;
-}
-
-#overlay-root[data-state="idle"] #overlay-dot {
-  transform: scale(1);
-  box-shadow: none;
 }

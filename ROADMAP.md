@@ -79,6 +79,7 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 - Dot pulses like an equalizer when input is detected.
 - Keep status transitions (Recording/Transcribing/Idle) but without text labels.
 - Make **position/offset configurable in UI** (reference: helltime overlay settings pattern).
+- Add **Overlay Settings**: color, min/max radius, rise/fall smoothing (ms), position.
 
 ### Phase 1.2: Hotkey System Refactor ✅
 
@@ -139,6 +140,13 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 - Detect likely errors (punctuation, capitalization, homophones, missing words).
 - Toggleable in UI (fast path if disabled).
 - Output should remain low‑latency; keep original transcript available for audit.
+
+### Phase 1.8: Model Manager Revamp 🔄
+- Source selector: default source + custom URL.
+- Custom source: JSON index or direct model URL.
+- Show **Available (remote)** vs **Installed (local)**.
+- Install / Remove actions (delete local model files).
+- Clearly show source of each model and storage path.
 
 **Definition of Done**:
 - ✅ Recording overlay shows status in <100ms

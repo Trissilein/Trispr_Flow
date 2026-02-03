@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-02
+Last updated: 2026-02-03
 
 This roadmap has been restructured based on a comprehensive project overhaul. The focus is on building a solid foundation before adding advanced features.
 
@@ -10,13 +10,19 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 
 ✅ **Milestone 0**: Complete (Tech stack locked, ASR backend validated)
 ✅ **Milestone 1**: Complete (MVP with PTT, capture, transcription, paste working)
-🔄 **Milestone 2**: In Progress (Foundation & Critical UX improvements)
+🔄 **Milestone 2**: In Progress (Foundation & Critical UX improvements - UI/UX polish phase)
 
-**Recent Progress**:
-- Recording overlay indicator implemented (needs redesign)
-- Overlay shows real-time status (Recording/Transcribing/Idle)
-- Overlay positioned in top-right with draggable support
-- GPU build path validated with CUDA override
+**Recent Progress (2026-02-03)**:
+
+- ✅ Dark mode implementation - Complete UI redesign with dark theme
+- ✅ UI density improvements - 40-60% spacing reduction for compact layout
+- ✅ Mode architecture corrected - VAD vs PTT (both PTT and Toggle hotkeys active in PTT mode)
+- ✅ Model cleanup - Removed small models, kept only large-v3 and large-v3-turbo
+- ✅ Enhanced model path resolution - Works correctly in built .exe
+- ✅ Comprehensive logging - Detailed tracing for debugging
+- ✅ Expander UX - Added chevron indicators
+- ✅ Dropdown styling - Dark backgrounds for options
+- 🔄 Overlay visibility debugging - In progress (logs show success but visibility issue)
 
 ---
 
@@ -105,12 +111,22 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 - Log levels: ERROR, WARN, INFO, DEBUG
 - Key events logged: hotkey press/release, audio capture, transcription, settings changes
 
-### Phase 1.5: Audio Cue Volume 🔄
+### Phase 1.5: UI/UX Polish ✅
+
+- ✅ Dark mode - Complete CSS redesign with dark color scheme
+- ✅ UI density - 40-60% spacing reduction for compact, efficient interface
+- ✅ Mode architecture fix - Corrected to VAD vs PTT structure
+- ✅ Model cleanup - Removed small models (base, small, medium, tiny)
+- ✅ Expander indicators - Added chevron icons for better UX
+- ✅ Dropdown styling - Dark backgrounds in expanded state
+- ✅ Model path resolution - Enhanced search paths for built .exe
+- ✅ Comprehensive logging - Detailed tracing throughout app
+- 🔄 Overlay visibility - Debugging in progress
+
+### Phase 1.6: Audio Cue Volume 🔄
+
 - Add a volume slider for audio cues.
 - Persist volume in settings.
-
-### Phase 1.6: UI Cleanup 🔄
-- Remove "simulate transcript" button from UI.
 
 **Definition of Done**:
 - ✅ Recording overlay shows status in <100ms

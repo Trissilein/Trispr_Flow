@@ -26,6 +26,7 @@ Trispr Flow is a modern desktop dictation application built with Tauri, Rust, an
   - Visual hotkey recorder with real-time capture
   - Format validation and conflict detection
   - Inline success/error indicators
+  - Both PTT (hold) and Toggle (click) modes in PTT
 - **🚨 Comprehensive Error Handling**
   - Categorized error types with recovery suggestions
   - Toast notifications for user feedback
@@ -34,11 +35,15 @@ Trispr Flow is a modern desktop dictation application built with Tauri, Rust, an
   - Rising beep on recording start
   - Falling beep on recording stop
   - 100ms non-intrusive feedback
+- **🌙 Dark Mode** - Professional dark theme with compact UI
+  - 40-60% spacing reduction for efficient layout
+  - Dark color scheme with high contrast
+  - Expander indicators with chevron icons
 
 ### Coming Soon
+
 - **🎯 Voice Activity Detection (VAD)** - Automatic silence trimming
 - **📝 Text Post-Processing** - Punctuation, number formatting, custom vocabulary
-- **🌙 Dark Mode** - System theme integration
 - **📊 Local Analytics Dashboard** - Usage insights (privacy-first)
 - **📤 Export Options** - Plain text, Markdown, JSON, CSV
 
@@ -79,15 +84,17 @@ npm run tauri build
 ### Settings
 
 #### Capture
-- **Mode**: Push-to-Talk (PTT) or Toggle
-- **Hotkeys**: Customizable global shortcuts with visual recorder
+
+- **Mode**: Voice Activity Detection (VAD) or Push-to-Talk (PTT)
+- **PTT Hotkey (Hold)**: Customizable global shortcut - hold to record
+- **Toggle Hotkey (Click)**: Customizable global shortcut - click to start/stop
 - **Input Device**: Select your preferred microphone
 
 #### Transcription
 - **Model**: Choose between quality (large-v3) or speed (large-v3-turbo)
 - **Language**: Auto-detect German/English or specify
 - **Claude Fallback**: Optional cloud transcription for complex audio
-- **Audio Cues**: Toggle sound feedback on/off
+- **Audio Cues**: Toggle sound feedback on/off with volume control
 
 #### Model Manager
 - Download whisper.cpp models on-demand

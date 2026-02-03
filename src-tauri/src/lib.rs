@@ -39,30 +39,6 @@ struct ModelSpec {
 
 const MODEL_SPECS: &[ModelSpec] = &[
   ModelSpec {
-    id: "whisper-tiny",
-    label: "Whisper tiny",
-    file_name: "ggml-tiny.bin",
-    size_mb: 75,
-  },
-  ModelSpec {
-    id: "whisper-base",
-    label: "Whisper base",
-    file_name: "ggml-base.bin",
-    size_mb: 142,
-  },
-  ModelSpec {
-    id: "whisper-small",
-    label: "Whisper small",
-    file_name: "ggml-small.bin",
-    size_mb: 466,
-  },
-  ModelSpec {
-    id: "whisper-medium",
-    label: "Whisper medium",
-    file_name: "ggml-medium.bin",
-    size_mb: 1530,
-  },
-  ModelSpec {
     id: "whisper-large-v3",
     label: "Whisper large-v3",
     file_name: "ggml-large-v3.bin",
@@ -805,8 +781,10 @@ fn start_recording_with_settings(
   state: &State<'_, AppState>,
   settings: &Settings,
 ) -> Result<(), String> {
+  info!("start_recording_with_settings called");
   let mut recorder = state.recorder.lock().unwrap();
   if recorder.active || recorder.transcribing {
+    info!("Recording already active or transcribing, skipping");
     return Ok(());
   }
 
@@ -857,6 +835,7 @@ fn start_recording_with_settings(
   };
 
   if let Err(err) = start_result {
+    error!("Failed to start recording: {}", err);
     let _ = stop_tx.send(());
     let _ = join_handle.join();
     return Err(err);
@@ -866,6 +845,7 @@ fn start_recording_with_settings(
   recorder.join_handle = Some(join_handle);
   recorder.active = true;
 
+  info!("Recording started successfully, updating overlay");
   let _ = app.emit("capture:state", "recording");
   let _ = update_overlay_state(app, OverlayState::Recording);
 
@@ -882,10 +862,12 @@ fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
   let settings = state.settings.lock().unwrap().clone();
 
   thread::spawn(move || {
+    info!("stop_recording_async called");
     let state = app_handle.state::<AppState>();
     let (buffer, stop_tx, join_handle) = {
       let mut recorder = state.recorder.lock().unwrap();
       if !recorder.active {
+        info!("Recording not active, skipping stop");
         return;
       }
       recorder.active = false;

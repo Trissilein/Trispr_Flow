@@ -14,10 +14,17 @@ pub enum OverlayState {
 
 /// Creates and configures the overlay window for recording status
 pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    use tracing::{info, error};
+
+    info!("create_overlay_window called");
+
     // Check if overlay already exists
     if let Some(existing) = app.get_webview_window("overlay") {
+        info!("Overlay window already exists, returning existing");
         return Ok(existing);
     }
+
+    info!("Creating new overlay window");
 
     let window = tauri::WebviewWindowBuilder::new(
         app,
@@ -70,12 +77,23 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
 
 /// Updates the overlay state and shows/hides it accordingly
 pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), String> {
+    use tracing::{info, error, warn};
+
+    info!("update_overlay_state called with state: {:?}", state);
+
     // Get or create overlay window
     let window = match app.get_webview_window("overlay") {
-        Some(w) => w,
-        None => create_overlay_window(app)?,
+        Some(w) => {
+            info!("Overlay window found");
+            w
+        }
+        None => {
+            warn!("Overlay window not found, creating new one");
+            create_overlay_window(app)?
+        }
     };
 
+    info!("Emitting overlay state: {:?}", state);
     // Emit state directly to overlay window (broadcast as fallback)
     let _ = window.emit("overlay:state", &state);
     let _ = app.emit("overlay:state", &state);
@@ -83,10 +101,19 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
     // Show or hide based on state
     match state {
         OverlayState::Idle => {
-            window.hide().map_err(|e| format!("Failed to hide overlay: {}", e))?;
+            info!("Hiding overlay (Idle state)");
+            window.hide().map_err(|e| {
+                error!("Failed to hide overlay: {}", e);
+                format!("Failed to hide overlay: {}", e)
+            })?;
         }
         OverlayState::ToggleIdle | OverlayState::Recording | OverlayState::Transcribing => {
-            window.show().map_err(|e| format!("Failed to show overlay: {}", e))?;
+            info!("Showing overlay ({:?} state)", state);
+            window.show().map_err(|e| {
+                error!("Failed to show overlay: {}", e);
+                format!("Failed to show overlay: {}", e)
+            })?;
+            info!("Overlay window.show() succeeded");
         }
     }
 

@@ -90,6 +90,11 @@
                 </div>
                 <span id="toggle-hotkey-status" class="hotkey-status"></span>
               </div>
+              <label class="field toggle">
+                <span class="field-label">Use voice activation in PTT</span>
+                <input id="ptt-use-vad-toggle" type="checkbox" />
+                <span class="toggle-hint">Only record when audio exceeds threshold, even while holding PTT key</span>
+              </label>
             </div>
             <div id="vad-block" class="field-group hidden">
               <label class="field range">
@@ -107,9 +112,19 @@
                 </div>
               </label>
               <div class="field">
-                <span class="field-label">Input level</span>
-                <div id="vad-meter" class="vad-meter">
-                  <div id="vad-meter-fill" class="vad-meter-fill"></div>
+                <span class="field-label">Input level <span id="vad-level-dbm" class="dbm-value">-∞ dB</span></span>
+                <div class="vad-meter-container">
+                  <div id="vad-meter" class="vad-meter">
+                    <div id="vad-meter-fill" class="vad-meter-fill"></div>
+                    <div id="vad-marker-start" class="vad-marker vad-marker-start" title="Start threshold"></div>
+                    <div id="vad-marker-sustain" class="vad-marker vad-marker-sustain" title="Sustain threshold (dynamic)"></div>
+                  </div>
+                  <div class="vad-meter-scale">
+                    <span data-db="-60">-60</span>
+                    <span data-db="-40">-40</span>
+                    <span data-db="-20">-20</span>
+                    <span data-db="0">0 dB</span>
+                  </div>
                 </div>
               </div>
             </div>

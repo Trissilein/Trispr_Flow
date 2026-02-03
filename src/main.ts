@@ -17,7 +17,10 @@ interface Settings {
   cloud_fallback: boolean;
   audio_cues: boolean;
   audio_cues_volume: number;
+  ptt_use_vad: boolean;
   vad_threshold: number;
+  vad_threshold_start: number;
+  vad_threshold_sustain: number;
   vad_silence_ms: number;
   overlay_color: string;
   overlay_min_radius: number;
@@ -91,6 +94,21 @@ let devices: AudioDevice[] = [];
 let models: ModelInfo[] = [];
 const modelProgress = new Map<string, DownloadProgress>();
 let currentStatus: "idle" | "recording" | "transcribing" = "idle";
+let dynamicSustainThreshold: number = 0.01;
+
+// Convert linear level (0-1) to dB (assuming 0dB = 1.0)
+function levelToDb(level: number): number {
+  if (level <= 0.00001) return -100;
+  return 20 * Math.log10(level);
+}
+
+// Convert linear threshold (0-1) to percentage position on dB scale (-60 to 0)
+function thresholdToPercent(threshold: number): number {
+  const db = levelToDb(threshold);
+  // Scale: -60dB = 0%, 0dB = 100%
+  const percent = ((db + 60) / 60) * 100;
+  return Math.max(0, Math.min(100, percent));
+}
 
 const $ = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T | null;
@@ -115,6 +133,7 @@ const languageSelect = $("language-select") as HTMLSelectElement | null;
 const cloudToggle = $("cloud-toggle") as HTMLInputElement | null;
 const audioCuesToggle = $("audio-cues-toggle") as HTMLInputElement | null;
 const audioCuesVolume = $("audio-cues-volume") as HTMLInputElement | null;
+const pttUseVadToggle = $("ptt-use-vad-toggle") as HTMLInputElement | null;
 const audioCuesVolumeValue = $("audio-cues-volume-value");
 const hotkeysBlock = $("hotkeys-block");
 const vadBlock = $("vad-block");
@@ -122,8 +141,10 @@ const vadThreshold = $("vad-threshold") as HTMLInputElement | null;
 const vadThresholdValue = $("vad-threshold-value");
 const vadSilence = $("vad-silence") as HTMLInputElement | null;
 const vadSilenceValue = $("vad-silence-value");
-const vadMeter = $("vad-meter");
 const vadMeterFill = $("vad-meter-fill");
+const vadLevelDbm = $("vad-level-dbm");
+const vadMarkerStart = $("vad-marker-start");
+const vadMarkerSustain = $("vad-marker-sustain");
 const overlayColor = $("overlay-color") as HTMLInputElement | null;
 const overlayMinRadius = $("overlay-min-radius") as HTMLInputElement | null;
 const overlayMinRadiusValue = $("overlay-min-radius-value");
@@ -184,17 +205,22 @@ function renderSettings() {
   if (languageSelect) languageSelect.value = settings.language_mode;
   if (cloudToggle) cloudToggle.checked = settings.cloud_fallback;
   if (audioCuesToggle) audioCuesToggle.checked = settings.audio_cues;
+  if (pttUseVadToggle) pttUseVadToggle.checked = settings.ptt_use_vad;
   if (audioCuesVolume) audioCuesVolume.value = Math.round(settings.audio_cues_volume * 100).toString();
   if (audioCuesVolumeValue) {
     audioCuesVolumeValue.textContent = `${Math.round(settings.audio_cues_volume * 100)}%`;
   }
-  if (vadThreshold) vadThreshold.value = Math.round(settings.vad_threshold * 100).toString();
-  if (vadThresholdValue) vadThresholdValue.textContent = `${Math.round(settings.vad_threshold * 100)}%`;
+  // Display start threshold in the slider (main user-facing threshold)
+  if (vadThreshold) vadThreshold.value = Math.round(settings.vad_threshold_start * 100).toString();
+  if (vadThresholdValue) vadThresholdValue.textContent = `${Math.round(settings.vad_threshold_start * 100)}%`;
   if (vadSilence) vadSilence.value = settings.vad_silence_ms.toString();
   if (vadSilenceValue) vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
-  if (vadMeter) {
-    vadMeter.style.setProperty("--threshold", `${Math.round(settings.vad_threshold * 100)}%`);
+  // Initialize dynamic sustain threshold from settings
+  if (settings.vad_threshold_sustain > 0) {
+    dynamicSustainThreshold = settings.vad_threshold_sustain;
   }
+  // Update threshold markers on settings change
+  updateThresholdMarkers();
   if (overlayColor) overlayColor.value = settings.overlay_color;
   if (overlayMinRadius) overlayMinRadius.value = Math.round(settings.overlay_min_radius).toString();
   if (overlayMinRadiusValue) overlayMinRadiusValue.textContent = `${Math.round(settings.overlay_min_radius)}`;
@@ -535,6 +561,12 @@ function wireEvents() {
     await persistSettings();
   });
 
+  pttUseVadToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.ptt_use_vad = pttUseVadToggle.checked;
+    await persistSettings();
+  });
+
   audioCuesVolume?.addEventListener("input", () => {
     if (!settings || !audioCuesVolume) return;
     const value = Number(audioCuesVolume.value);
@@ -552,13 +584,19 @@ function wireEvents() {
   vadThreshold?.addEventListener("input", () => {
     if (!settings || !vadThreshold) return;
     const value = Number(vadThreshold.value);
-    settings.vad_threshold = Math.min(1, Math.max(0, value / 100));
+    const threshold = Math.min(1, Math.max(0, value / 100));
+
+    // Update the start threshold (main threshold)
+    settings.vad_threshold_start = threshold;
+    // Keep legacy field in sync
+    settings.vad_threshold = threshold;
+
     if (vadThresholdValue) {
-      vadThresholdValue.textContent = `${Math.round(settings.vad_threshold * 100)}%`;
+      vadThresholdValue.textContent = `${Math.round(threshold * 100)}%`;
     }
-    if (vadMeter) {
-      vadMeter.style.setProperty("--threshold", `${Math.round(settings.vad_threshold * 100)}%`);
-    }
+
+    // Update threshold markers
+    updateThresholdMarkers();
   });
 
   vadThreshold?.addEventListener("change", async () => {
@@ -704,7 +742,7 @@ function wireEvents() {
   applyOverlayBtn?.addEventListener("click", async () => {
     if (!settings) return;
     await persistSettings();
-    showToast("Overlay settings applied", "success");
+    showToast({ title: "Applied", message: "Overlay settings applied", type: "success" });
   });
 
   historyAdd?.addEventListener("click", async () => {
@@ -928,8 +966,38 @@ async function bootstrap() {
   await listen<number>("audio:level", (event) => {
     if (!vadMeterFill) return;
     const level = Math.max(0, Math.min(1, event.payload ?? 0));
-    vadMeterFill.style.width = `${Math.round(level * 100)}%`;
+    // Convert to dB scale for display (-60dB to 0dB)
+    const db = levelToDb(level);
+    const percent = thresholdToPercent(level);
+    vadMeterFill.style.width = `${percent}%`;
+
+    // Update dBm display
+    if (vadLevelDbm) {
+      if (db <= -60) {
+        vadLevelDbm.textContent = "-∞ dB";
+      } else {
+        vadLevelDbm.textContent = `${db.toFixed(0)} dB`;
+      }
+    }
   });
+
+  // Listen for dynamic sustain threshold updates from backend
+  await listen<number>("vad:dynamic-threshold", (event) => {
+    dynamicSustainThreshold = event.payload ?? 0.01;
+    updateThresholdMarkers();
+  });
+}
+
+// Update threshold marker positions
+function updateThresholdMarkers() {
+  if (vadMarkerStart && settings) {
+    const startPercent = thresholdToPercent(settings.vad_threshold_start);
+    vadMarkerStart.style.left = `${startPercent}%`;
+  }
+  if (vadMarkerSustain) {
+    const sustainPercent = thresholdToPercent(dynamicSustainThreshold);
+    vadMarkerSustain.style.left = `${sustainPercent}%`;
+  }
 }
 
 window.addEventListener("DOMContentLoaded", () => {

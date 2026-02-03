@@ -28,7 +28,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const MIN_AUDIO_MS: u64 = 250;
-const VAD_THRESHOLD_DEFAULT: f32 = 0.015;
+const VAD_THRESHOLD_START_DEFAULT: f32 = 0.02;
+const VAD_THRESHOLD_SUSTAIN_DEFAULT: f32 = 0.01;
 const VAD_SILENCE_MS_DEFAULT: u64 = 700;
 const VAD_MIN_VOICE_MS: u64 = 250;
 const DEFAULT_MODEL_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
@@ -67,7 +68,10 @@ struct Settings {
   cloud_fallback: bool,
   audio_cues: bool,
   audio_cues_volume: f32,
-  vad_threshold: f32,
+  ptt_use_vad: bool,  // Enable VAD threshold check even in PTT mode
+  vad_threshold: f32,  // Legacy: now maps to vad_threshold_start
+  vad_threshold_start: f32,
+  vad_threshold_sustain: f32,
   vad_silence_ms: u64,
   overlay_color: String,
   overlay_min_radius: f32,
@@ -92,7 +96,10 @@ impl Default for Settings {
       cloud_fallback: false,
       audio_cues: true,
       audio_cues_volume: 0.3,
-      vad_threshold: VAD_THRESHOLD_DEFAULT,
+      ptt_use_vad: false,  // Disabled by default
+      vad_threshold: VAD_THRESHOLD_START_DEFAULT,  // Legacy field
+      vad_threshold_start: VAD_THRESHOLD_START_DEFAULT,
+      vad_threshold_sustain: VAD_THRESHOLD_SUSTAIN_DEFAULT,
       vad_silence_ms: VAD_SILENCE_MS_DEFAULT,
       overlay_color: "#ff3d2e".to_string(),
       overlay_min_radius: 8.0,
@@ -262,9 +269,30 @@ fn load_settings(app: &AppHandle) -> Settings {
       if settings.mode != "ptt" && settings.mode != "vad" {
         settings.mode = "ptt".to_string();
       }
-      if !(0.0..=1.0).contains(&settings.vad_threshold) {
-        settings.vad_threshold = VAD_THRESHOLD_DEFAULT;
+      // Migrate legacy vad_threshold to new dual-threshold system
+      if settings.vad_threshold_start <= 0.0 {
+        settings.vad_threshold_start = if settings.vad_threshold > 0.0 {
+          settings.vad_threshold
+        } else {
+          VAD_THRESHOLD_START_DEFAULT
+        };
       }
+      if settings.vad_threshold_sustain <= 0.0 {
+        settings.vad_threshold_sustain = VAD_THRESHOLD_SUSTAIN_DEFAULT;
+      }
+      // Clamp thresholds to valid range
+      if !(0.001..=0.5).contains(&settings.vad_threshold_start) {
+        settings.vad_threshold_start = VAD_THRESHOLD_START_DEFAULT;
+      }
+      if !(0.001..=0.5).contains(&settings.vad_threshold_sustain) {
+        settings.vad_threshold_sustain = VAD_THRESHOLD_SUSTAIN_DEFAULT;
+      }
+      // Ensure sustain <= start
+      if settings.vad_threshold_sustain > settings.vad_threshold_start {
+        settings.vad_threshold_sustain = settings.vad_threshold_start;
+      }
+      // Sync legacy field
+      settings.vad_threshold = settings.vad_threshold_start;
       if settings.vad_silence_ms < 100 {
         settings.vad_silence_ms = VAD_SILENCE_MS_DEFAULT;
       }
@@ -456,18 +484,106 @@ fn float_to_i16(sample: f32) -> i16 {
   (clamped * i16::MAX as f32) as i16
 }
 
+/// Dynamic threshold calculator with smoothed rise/fall
+/// Tracks ambient noise floor and sets sustain threshold above it
+struct DynamicThreshold {
+  /// Smoothed ambient level (noise floor estimate)
+  ambient_level: std::sync::atomic::AtomicU64,
+  /// Current dynamic threshold
+  dynamic_threshold: std::sync::atomic::AtomicU64,
+  /// Minimum threshold (never go below this)
+  min_threshold: f32,
+  /// Maximum threshold (never exceed this - stays below start threshold)
+  max_threshold: f32,
+  /// Multiplier above ambient for threshold
+  ambient_multiplier: f32,
+  /// Rise time constant in ms (slower - for increasing threshold)
+  rise_tau_ms: f32,
+  /// Fall time constant in ms (faster - for decreasing threshold)
+  fall_tau_ms: f32,
+  /// Last update timestamp
+  last_update_ms: AtomicU64,
+}
+
+impl DynamicThreshold {
+  fn new(min_threshold: f32, max_threshold: f32) -> Self {
+    // Start with low ambient estimate for fast initial sensitivity
+    let initial_ambient = (min_threshold * 0.3 * 1_000_000.0) as u64;
+    let initial_threshold = (min_threshold * 1_000_000.0) as u64;
+    Self {
+      ambient_level: std::sync::atomic::AtomicU64::new(initial_ambient),
+      dynamic_threshold: std::sync::atomic::AtomicU64::new(initial_threshold),
+      min_threshold,
+      max_threshold: max_threshold.max(min_threshold), // Ensure max >= min
+      ambient_multiplier: 1.5, // Threshold is 1.5x ambient level (reduced from 2.5)
+      rise_tau_ms: 1000.0,     // 1 second rise time (faster than before)
+      fall_tau_ms: 300.0,      // 0.3 second fall time (faster for sensitivity)
+      last_update_ms: AtomicU64::new(0),
+    }
+  }
+
+  /// Update with new audio level sample, returns current dynamic threshold
+  fn update(&self, level: f32, now_ms: u64) -> f32 {
+    let last = self.last_update_ms.swap(now_ms, Ordering::Relaxed);
+    let dt_ms = now_ms.saturating_sub(last) as f32;
+    if dt_ms <= 0.0 {
+      return self.get_threshold();
+    }
+
+    // Get current values
+    let current_ambient = self.ambient_level.load(Ordering::Relaxed) as f32 / 1_000_000.0;
+
+    // Update ambient level with exponential smoothing
+    // Use moderate time constant for ambient to track noise floor
+    let ambient_tau_ms = 1500.0; // 1.5 second time constant for ambient (faster init)
+    let ambient_alpha = 1.0 - (-dt_ms / ambient_tau_ms).exp();
+    let new_ambient = current_ambient + (level - current_ambient) * ambient_alpha;
+    self.ambient_level.store((new_ambient * 1_000_000.0) as u64, Ordering::Relaxed);
+
+    // Calculate target threshold based on ambient
+    let target_threshold = (new_ambient * self.ambient_multiplier).max(self.min_threshold);
+
+    // Get current threshold and smooth toward target
+    let current_threshold = self.dynamic_threshold.load(Ordering::Relaxed) as f32 / 1_000_000.0;
+
+    // Use different time constants for rise vs fall
+    let tau = if target_threshold > current_threshold {
+      self.rise_tau_ms
+    } else {
+      self.fall_tau_ms
+    };
+    let alpha = 1.0 - (-dt_ms / tau).exp();
+    let new_threshold = current_threshold + (target_threshold - current_threshold) * alpha;
+    let clamped_threshold = new_threshold.clamp(self.min_threshold, self.max_threshold);
+
+    self.dynamic_threshold.store((clamped_threshold * 1_000_000.0) as u64, Ordering::Relaxed);
+
+    clamped_threshold
+  }
+
+  fn get_threshold(&self) -> f32 {
+    self.dynamic_threshold.load(Ordering::Relaxed) as f32 / 1_000_000.0
+  }
+}
+
 struct OverlayLevelEmitter {
   app: AppHandle,
   start: Instant,
   last_emit_ms: AtomicU64,
+  dynamic_threshold: DynamicThreshold,
+  last_threshold_emit_ms: AtomicU64,
 }
 
 impl OverlayLevelEmitter {
-  fn new(app: AppHandle) -> Self {
+  fn new(app: AppHandle, min_sustain_threshold: f32, start_threshold: f32) -> Self {
+    // max_threshold is 90% of start_threshold to ensure sustain stays below start
+    let max_threshold = start_threshold * 0.9;
     Self {
       app,
       start: Instant::now(),
       last_emit_ms: AtomicU64::new(0),
+      dynamic_threshold: DynamicThreshold::new(min_sustain_threshold, max_threshold),
+      last_threshold_emit_ms: AtomicU64::new(0),
     }
   }
 
@@ -481,8 +597,18 @@ impl OverlayLevelEmitter {
 
     let level_clamped = level.clamp(0.0, 1.0);
 
+    // Update dynamic threshold with current level
+    let dynamic_thresh = self.dynamic_threshold.update(level_clamped, now_ms);
+
     // audio:level as float 0.0-1.0 for main UI
     let _ = self.app.emit("audio:level", level_clamped);
+
+    // Emit dynamic threshold periodically (every 200ms to reduce overhead)
+    let last_thresh_emit = self.last_threshold_emit_ms.load(Ordering::Relaxed);
+    if now_ms.saturating_sub(last_thresh_emit) >= 200 {
+      self.last_threshold_emit_ms.store(now_ms, Ordering::Relaxed);
+      let _ = self.app.emit("vad:dynamic-threshold", dynamic_thresh);
+    }
 
     // Update overlay directly via JS (most reliable method)
     if let Some(window) = self.app.get_webview_window("overlay") {
@@ -501,6 +627,11 @@ impl OverlayLevelEmitter {
       }
     }
   }
+
+  /// Get the current dynamic threshold value
+  fn get_dynamic_threshold(&self) -> f32 {
+    self.dynamic_threshold.get_threshold()
+  }
 }
 
 #[derive(Debug)]
@@ -511,7 +642,10 @@ struct VadRuntime {
   last_voice_ms: AtomicU64,
   start_ms: AtomicU64,
   audio_cues: bool,
-  threshold_scaled: AtomicU64,
+  /// Start threshold (higher) - used to initiate recording
+  threshold_start_scaled: AtomicU64,
+  /// Sustain threshold (lower) - used to keep recording active
+  threshold_sustain_scaled: AtomicU64,
   silence_ms: AtomicU64,
   /// Counter for consecutive chunks above threshold (spike filter)
   consecutive_above: AtomicU64,
@@ -521,8 +655,9 @@ struct VadRuntime {
 const VAD_MIN_CONSECUTIVE_CHUNKS: u64 = 3;
 
 impl VadRuntime {
-  fn new(audio_cues: bool, threshold: f32, silence_ms: u64) -> Self {
-    let scaled = (threshold.clamp(0.001, 0.5) * 1_000_000.0) as u64;
+  fn new(audio_cues: bool, threshold_start: f32, threshold_sustain: f32, silence_ms: u64) -> Self {
+    let start_scaled = (threshold_start.clamp(0.001, 0.5) * 1_000_000.0) as u64;
+    let sustain_scaled = (threshold_sustain.clamp(0.001, 0.5) * 1_000_000.0) as u64;
     Self {
       recording: std::sync::atomic::AtomicBool::new(false),
       pending_flush: std::sync::atomic::AtomicBool::new(false),
@@ -530,19 +665,28 @@ impl VadRuntime {
       last_voice_ms: AtomicU64::new(0),
       start_ms: AtomicU64::new(0),
       audio_cues,
-      threshold_scaled: AtomicU64::new(scaled),
+      threshold_start_scaled: AtomicU64::new(start_scaled),
+      threshold_sustain_scaled: AtomicU64::new(sustain_scaled),
       silence_ms: AtomicU64::new(silence_ms.max(100)),
       consecutive_above: AtomicU64::new(0),
     }
   }
 
-  fn threshold(&self) -> f32 {
-    self.threshold_scaled.load(Ordering::Relaxed) as f32 / 1_000_000.0
+  /// Get threshold for starting recording (higher)
+  fn threshold_start(&self) -> f32 {
+    self.threshold_start_scaled.load(Ordering::Relaxed) as f32 / 1_000_000.0
   }
 
-  fn update_threshold(&self, threshold: f32) {
-    let scaled = (threshold.clamp(0.001, 0.5) * 1_000_000.0) as u64;
-    self.threshold_scaled.store(scaled, Ordering::Relaxed);
+  /// Get threshold for sustaining recording (lower)
+  fn threshold_sustain(&self) -> f32 {
+    self.threshold_sustain_scaled.load(Ordering::Relaxed) as f32 / 1_000_000.0
+  }
+
+  fn update_thresholds(&self, threshold_start: f32, threshold_sustain: f32) {
+    let start_scaled = (threshold_start.clamp(0.001, 0.5) * 1_000_000.0) as u64;
+    let sustain_scaled = (threshold_sustain.clamp(0.001, 0.5) * 1_000_000.0) as u64;
+    self.threshold_start_scaled.store(start_scaled, Ordering::Relaxed);
+    self.threshold_sustain_scaled.store(sustain_scaled, Ordering::Relaxed);
   }
 
   fn silence_ms(&self) -> u64 {
@@ -645,7 +789,10 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
-  let prev_mode = { state.settings.lock().unwrap().mode.clone() };
+  let (prev_mode, prev_device) = {
+    let current = state.settings.lock().unwrap();
+    (current.mode.clone(), current.input_device.clone())
+  };
   {
     let mut current = state.settings.lock().unwrap();
     *current = settings.clone();
@@ -653,18 +800,22 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
   save_settings_file(&app, &settings)?;
   register_hotkeys(&app, &settings)?;
 
-  if prev_mode != settings.mode {
-    if prev_mode == "vad" {
+  let mode_changed = prev_mode != settings.mode;
+  let device_changed = prev_device != settings.input_device;
+
+  // Restart VAD monitor if mode changed or device changed (while in VAD mode)
+  if mode_changed || (device_changed && settings.mode == "vad") {
+    if prev_mode == "vad" || (settings.mode == "vad" && device_changed) {
       stop_vad_monitor(&app, &state);
     }
     if settings.mode == "vad" {
       let _ = start_vad_monitor(&app, &state, &settings);
     }
-  }
-  if settings.mode == "vad" {
+  } else if settings.mode == "vad" {
+    // Only update thresholds/silence if we didn't restart the monitor
     if let Ok(recorder) = state.recorder.lock() {
       if let Some(runtime) = recorder.vad_runtime.as_ref() {
-        runtime.update_threshold(settings.vad_threshold);
+        runtime.update_thresholds(settings.vad_threshold_start, settings.vad_threshold_sustain);
         runtime.update_silence_ms(settings.vad_silence_ms);
       }
     }
@@ -857,16 +1008,23 @@ fn handle_vad_audio(
 ) {
   let runtime = &vad_handle.runtime;
   let now = now_ms();
-  let threshold = runtime.threshold();
   let is_recording = runtime.recording.load(Ordering::Relaxed);
+
+  // Use different thresholds based on recording state:
+  // - Start threshold (higher) to initiate recording
+  // - Sustain threshold (lower) to keep recording active
+  let threshold = if is_recording {
+    runtime.threshold_sustain()
+  } else {
+    runtime.threshold_start()
+  };
 
   if level >= threshold {
     // Increment consecutive counter (spike filter)
     let consecutive = runtime.consecutive_above.fetch_add(1, Ordering::Relaxed) + 1;
     runtime.last_voice_ms.store(now, Ordering::Relaxed);
 
-    // Only start recording if above threshold for enough consecutive chunks
-    // OR if already recording (don't interrupt)
+    // Only start recording if above START threshold for enough consecutive chunks
     if !is_recording && consecutive >= VAD_MIN_CONSECUTIVE_CHUNKS {
       runtime.recording.store(true, Ordering::Relaxed);
       runtime.start_ms.store(now, Ordering::Relaxed);
@@ -882,7 +1040,10 @@ fn handle_vad_audio(
     }
   } else {
     // Reset consecutive counter when below threshold
-    runtime.consecutive_above.store(0, Ordering::Relaxed);
+    // (only matters for START; sustain uses silence timeout)
+    if !is_recording {
+      runtime.consecutive_above.store(0, Ordering::Relaxed);
+    }
   }
 
   if runtime.recording.load(Ordering::Relaxed) {
@@ -936,7 +1097,7 @@ fn build_input_stream_f32(
         } else {
           let rms = (sum_squared / mono.len() as f32).sqrt();
           // Scale RMS (typically 0.0-0.2 for speech) to 0.0-1.0 range
-          (rms * 4.0).min(1.0)
+          (rms * 2.5).min(1.0)
         };
         if let Some(emitter) = overlay.as_ref() {
           emitter.emit_level(level);
@@ -984,7 +1145,7 @@ fn build_input_stream_i16(
           0.0
         } else {
           let rms = (sum_squared / mono.len() as f32).sqrt();
-          (rms * 4.0).min(1.0)
+          (rms * 2.5).min(1.0)
         };
         if let Some(emitter) = overlay.as_ref() {
           emitter.emit_level(level);
@@ -1033,7 +1194,7 @@ fn build_input_stream_u16(
           0.0
         } else {
           let rms = (sum_squared / mono.len() as f32).sqrt();
-          (rms * 4.0).min(1.0)
+          (rms * 2.5).min(1.0)
         };
         if let Some(emitter) = overlay.as_ref() {
           emitter.emit_level(level);
@@ -1067,7 +1228,7 @@ fn start_recording_with_settings(
   }
 
   let buffer = recorder.buffer.clone();
-  let overlay_emitter = Arc::new(OverlayLevelEmitter::new(app.clone()));
+  let overlay_emitter = Arc::new(OverlayLevelEmitter::new(app.clone(), settings.vad_threshold_sustain, settings.vad_threshold_start));
   let device_id = settings.input_device.clone();
   let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
   let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
@@ -1149,7 +1310,7 @@ fn start_vad_monitor(
   }
 
   let buffer = recorder.buffer.clone();
-  let overlay_emitter = Arc::new(OverlayLevelEmitter::new(app.clone()));
+  let overlay_emitter = Arc::new(OverlayLevelEmitter::new(app.clone(), settings.vad_threshold_sustain, settings.vad_threshold_start));
   let device_id = settings.input_device.clone();
   let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
   let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
@@ -1157,7 +1318,8 @@ fn start_vad_monitor(
 
   let vad_runtime = Arc::new(VadRuntime::new(
     settings.audio_cues,
-    settings.vad_threshold,
+    settings.vad_threshold_start,
+    settings.vad_threshold_sustain,
     settings.vad_silence_ms,
   ));
   let vad_handle = VadHandle {
@@ -1450,7 +1612,13 @@ fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
   if settings.mode != "ptt" {
     return Ok(());
   }
-  start_recording_with_settings(app, &state, &settings)
+
+  // If PTT+VAD is enabled, start VAD monitor instead of direct recording
+  if settings.ptt_use_vad {
+    start_vad_monitor(app, &state, &settings)
+  } else {
+    start_recording_with_settings(app, &state, &settings)
+  }
 }
 
 fn handle_ptt_release_async(app: AppHandle) {
@@ -1460,7 +1628,13 @@ fn handle_ptt_release_async(app: AppHandle) {
   if settings.mode != "ptt" {
     return;
   }
-  stop_recording_async(app, &state);
+
+  // If PTT+VAD was enabled, stop VAD monitor (which also stops any active recording)
+  if settings.ptt_use_vad {
+    stop_vad_monitor(&app, &state);
+  } else {
+    stop_recording_async(app, &state);
+  }
 }
 
 fn handle_toggle_async(app: AppHandle) {

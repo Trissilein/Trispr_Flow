@@ -804,6 +804,12 @@ button:disabled {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.vad-meter-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .vad-meter {
   position: relative;
   width: 100%;
@@ -811,26 +817,66 @@ button:disabled {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid var(--stroke);
-  overflow: hidden;
-  --threshold: 15%;
-}
-
-.vad-meter::after {
-  content: "";
-  position: absolute;
-  top: -4px;
-  bottom: -4px;
-  width: 2px;
-  left: var(--threshold);
-  background: rgba(255, 107, 61, 0.9);
-  box-shadow: 0 0 6px rgba(255, 107, 61, 0.6);
+  overflow: visible;
 }
 
 .vad-meter-fill {
   height: 100%;
   width: 0%;
+  border-radius: 999px;
   background: linear-gradient(90deg, rgba(29, 166, 160, 0.75), rgba(245, 179, 66, 0.9));
   transition: width 80ms linear;
+}
+
+.vad-marker {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  border-radius: 1px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.vad-marker-start {
+  left: 15%;
+  background: rgba(255, 107, 61, 0.9);
+  box-shadow: 0 0 6px rgba(255, 107, 61, 0.6);
+}
+
+.vad-marker-sustain {
+  left: 10%;
+  background: rgba(100, 200, 255, 0.8);
+  box-shadow: 0 0 4px rgba(100, 200, 255, 0.5);
+}
+
+.vad-meter-scale {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 2px;
+  font-size: 9px;
+  color: var(--ink-muted);
+  user-select: none;
+}
+
+.vad-meter-scale span {
+  flex: 1;
+  text-align: center;
+}
+
+.vad-meter-scale span:first-child {
+  text-align: left;
+}
+
+.vad-meter-scale span:last-child {
+  text-align: right;
+}
+
+.dbm-value {
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  margin-left: 8px;
 }
 
 /* TOAST NOTIFICATIONS - COMPACT */

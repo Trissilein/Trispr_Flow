@@ -58,8 +58,9 @@ body {
   opacity: var(--overlay-opacity-active);
 }
 
-/* Debug overlay - temporary for diagnostics */
+/* Debug overlay - disabled */
 #overlay-debug {
+  display: none;
   position: absolute;
   bottom: 2px;
   left: 50%;

@@ -1,55 +1,55 @@
 # Architecture
 
-Last updated: 2026-02-02
+Last updated: 2026-02-03
 
-## Data flow (PTT)
+## Data flow (Microphone - PTT)
 1. Hotkey pressed
-2. Audio capture starts (selected device)
+2. Audio capture starts (selected input device)
 3. Ring buffer collects PCM frames
 4. Hotkey released
 5. Audio chunk finalized
 6. ASR backend transcribes
-7. Post-processing rules applied
-8. Text injected into focused field
-9. Transcript stored in history
+7. Transcript pasted into active field
+8. Transcript stored in history (mic)
 
-## Data flow (Toggle)
-1. Hotkey toggles recording on
-2. Audio capture starts
-3. Hotkey toggles recording off
-4. Steps 5-9 same as PTT
+## Data flow (Microphone - VAD)
+1. VAD monitor starts
+2. Audio capture runs continuously
+3. VAD gates chunk start/stop with silence grace
+4. ASR backend transcribes each chunk
+5. Transcript pasted + stored
 
-## Components
-- **HotkeyService**: global hotkey registration via tauri-plugin-global-shortcut.
-- **AudioCapture**: cpal-backed capture (WASAPI on Windows, CoreAudio on macOS), selectable device, resampling.
-- **AudioBuffer**: ring buffer + chunk finalization.
-- **Endpointing**: optional VAD or silence trimming.
-- **BackendSelector**: decides local vs cloud path based on toggle and availability.
-- **AsrBackend**: interface for whisper.cpp (GPU-first, CPU fallback) or faster-whisper.
-- **CloudBackend**: Claude-based cloud pipeline for fallback (opt-in).
-- **ModelManager**: downloads and caches ggml models for local use.
-- **PostProcessor**: punctuation, casing, numbers, custom vocab.
-- **PasteService**: clipboard-safe paste with OS-level key simulation.
-- **HistoryStore**: persistent transcripts and metadata.
-- **TrayUI**: status + settings + history access.
+## Data flow (System Audio - WASAPI loopback)
+1. Transcribe hotkey toggles monitoring
+2. WASAPI loopback capture reads system output
+3. Chunker segments audio (interval + overlap)
+4. Optional VAD gate for system audio
+5. ASR backend transcribes per chunk
+6. Transcript stored in system history
 
-## Backend interface (concept)
-- init(model_path, device, options)
-- transcribe(audio_pcm, language_hint)
-- shutdown()
+## Conversation view
+- Combines mic + system histories into a single time‑ordered stream.
+- Rendered in the Output panel (Conversation tab).
+- Optional detachable window (WIP).
 
-## Local backend (current)
-- `whisper-cli` is invoked as an external process.
-- The app writes a temporary WAV file and reads the generated `.txt` output.
-- Model and binary paths are resolved via env vars or `../whisper.cpp`.
-- GPU builds validated via CUDA (Windows); CPU fallback available.
+## Core components
+- **HotkeyService**: global hotkey registration (PTT / Toggle / Transcribe)
+- **AudioCapture (mic)**: cpal input capture, resampling to 16 kHz mono
+- **AudioCapture (system)**: WASAPI loopback (Windows)
+- **Chunker**: splits audio for system transcription (interval + overlap)
+- **VAD**: threshold + silence grace gating for mic/system
+- **BackendSelector**: local whisper.cpp or cloud fallback
+- **AsrBackend**: whisper-cli process runner
+- **PasteService**: clipboard-safe paste to focused field
+- **HistoryStore**: mic + system histories + conversation rendering
+- **Overlay**: separate always-on-top window (WIP)
 
-## Cloud backend contract (concept)
-- init(endpoint, auth, options)
-- transcribe(audio_pcm, language_hint)
-- shutdown()
+## Local backend
+- `whisper-cli` invoked with a temporary WAV file.
+- Model path resolved via env vars or `whisper.cpp/models`.
+- GPU builds validated (CUDA on Windows); CPU fallback supported.
 
-## Error handling
-- Clear error states in tray UI.
-- Retry on transient backend failures.
-- Log minimal diagnostics (opt-in).
+## Cloud backend (optional)
+- HTTP endpoint + token
+- Used only when cloud fallback is enabled
+

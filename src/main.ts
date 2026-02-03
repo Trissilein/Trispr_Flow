@@ -22,6 +22,16 @@ interface Settings {
   vad_threshold_start: number;
   vad_threshold_sustain: number;
   vad_silence_ms: number;
+  transcribe_enabled: boolean;
+  transcribe_hotkey: string;
+  transcribe_output_device: string;
+  transcribe_vad_mode: boolean;
+  transcribe_vad_threshold: number;
+  transcribe_vad_silence_ms: number;
+  transcribe_batch_interval_ms: number;
+  transcribe_chunk_overlap_ms: number;
+  transcribe_input_gain_db: number;
+  capture_enabled: boolean;
   overlay_color: string;
   overlay_min_radius: number;
   overlay_max_radius: number;
@@ -90,10 +100,13 @@ interface ErrorEvent {
 
 let settings: Settings | null = null;
 let history: HistoryEntry[] = [];
+let transcribeHistory: HistoryEntry[] = [];
 let devices: AudioDevice[] = [];
+let outputDevices: AudioDevice[] = [];
 let models: ModelInfo[] = [];
 const modelProgress = new Map<string, DownloadProgress>();
 let currentStatus: "idle" | "recording" | "transcribing" = "idle";
+let currentHistoryTab: "mic" | "system" | "conversation" = "mic";
 let dynamicSustainThreshold: number = 0.01;
 
 // Convert linear level (0-1) to dB (assuming 0dB = 1.0)
@@ -145,6 +158,32 @@ const vadMeterFill = $("vad-meter-fill");
 const vadLevelDbm = $("vad-level-dbm");
 const vadMarkerStart = $("vad-marker-start");
 const vadMarkerSustain = $("vad-marker-sustain");
+const transcribeStatus = $("transcribe-status");
+const transcribeHotkey = $("transcribe-hotkey") as HTMLInputElement | null;
+const transcribeHotkeyRecord = $("transcribe-hotkey-record") as HTMLButtonElement | null;
+const transcribeHotkeyStatus = $("transcribe-hotkey-status") as HTMLSpanElement | null;
+const transcribeDeviceSelect = $("transcribe-device-select") as HTMLSelectElement | null;
+const transcribeVadToggle = $("transcribe-vad-toggle") as HTMLInputElement | null;
+const transcribeVadThreshold = $("transcribe-vad-threshold") as HTMLInputElement | null;
+const transcribeVadThresholdValue = $("transcribe-vad-threshold-value");
+const transcribeVadThresholdField = $("transcribe-vad-threshold-field");
+const transcribeVadSilenceField = $("transcribe-vad-silence-field");
+const transcribeVadSilence = $("transcribe-vad-silence") as HTMLInputElement | null;
+const transcribeVadSilenceValue = $("transcribe-vad-silence-value");
+const transcribeMeterFill = $("transcribe-meter-fill");
+const transcribeMeterDb = $("transcribe-meter-db");
+const transcribeMeterThreshold = $("transcribe-meter-threshold");
+const transcribeThresholdDb = $("transcribe-threshold-db");
+const transcribeThresholdLabel = $("transcribe-threshold-label");
+const transcribeBatchField = $("transcribe-batch-field");
+const transcribeBatchInterval = $("transcribe-batch-interval") as HTMLInputElement | null;
+const transcribeBatchValue = $("transcribe-batch-value");
+const transcribeOverlapField = $("transcribe-overlap-field");
+const transcribeChunkOverlap = $("transcribe-chunk-overlap") as HTMLInputElement | null;
+const transcribeOverlapValue = $("transcribe-overlap-value");
+const transcribeGainField = $("transcribe-gain-field");
+const transcribeGain = $("transcribe-gain") as HTMLInputElement | null;
+const transcribeGainValue = $("transcribe-gain-value");
 const overlayColor = $("overlay-color") as HTMLInputElement | null;
 const overlayMinRadius = $("overlay-min-radius") as HTMLInputElement | null;
 const overlayMinRadiusValue = $("overlay-min-radius-value");
@@ -163,6 +202,15 @@ const overlayPosY = $("overlay-pos-y") as HTMLInputElement | null;
 const historyList = $("history-list");
 const historyInput = $("history-input") as HTMLInputElement | null;
 const historyAdd = $("history-add");
+const historyCompose = document.querySelector(".history-compose") as HTMLDivElement | null;
+const historyTabMic = $("history-tab-mic");
+const historyTabSystem = $("history-tab-system");
+const historyTabConversation = $("history-tab-conversation");
+const historyCopyConversation = $("history-copy-conversation") as HTMLButtonElement | null;
+const historyDetachConversation = $("history-detach-conversation") as HTMLButtonElement | null;
+const conversationFontControls = $("conversation-font-controls");
+const conversationFontSize = $("conversation-font-size") as HTMLInputElement | null;
+const conversationFontSizeValue = $("conversation-font-size-value");
 const modelList = $("model-list");
 
 function setStatus(state: "idle" | "recording" | "transcribing") {
@@ -176,10 +224,15 @@ function setStatus(state: "idle" | "recording" | "transcribing") {
 
 function formatTime(timestamp: number) {
   const date = new Date(timestamp);
-  return date.toLocaleTimeString(undefined, {
+  const base = date.toLocaleTimeString(undefined, {
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
   });
+  const hundredths = Math.floor(date.getMilliseconds() / 10)
+    .toString()
+    .padStart(2, "0");
+  return `${base}.${hundredths}`;
 }
 
 function renderHero() {
@@ -221,6 +274,65 @@ function renderSettings() {
   }
   // Update threshold markers on settings change
   updateThresholdMarkers();
+  if (transcribeStatus && !transcribeStatus.textContent) {
+    transcribeStatus.textContent = "Idle";
+  }
+  if (transcribeHotkey) transcribeHotkey.value = settings.transcribe_hotkey;
+  if (transcribeDeviceSelect) transcribeDeviceSelect.value = settings.transcribe_output_device;
+  if (transcribeVadToggle) transcribeVadToggle.checked = settings.transcribe_vad_mode;
+  if (transcribeVadThreshold) {
+    transcribeVadThreshold.value = Math.round(settings.transcribe_vad_threshold * 100).toString();
+  }
+  if (transcribeVadThresholdValue) {
+    transcribeVadThresholdValue.textContent = `${Math.round(settings.transcribe_vad_threshold * 100)}%`;
+  }
+  if (transcribeVadSilence) {
+    transcribeVadSilence.value = settings.transcribe_vad_silence_ms.toString();
+  }
+  if (transcribeVadSilenceValue) {
+    transcribeVadSilenceValue.textContent = `${Math.round(settings.transcribe_vad_silence_ms / 100) / 10}s`;
+  }
+  updateTranscribeThreshold(settings.transcribe_vad_threshold);
+  updateTranscribeVadVisibility(settings.transcribe_vad_mode);
+  if (transcribeBatchInterval) {
+    transcribeBatchInterval.value = settings.transcribe_batch_interval_ms.toString();
+  }
+  if (transcribeBatchValue) {
+    transcribeBatchValue.textContent = `${Math.round(settings.transcribe_batch_interval_ms / 1000)}s`;
+  }
+  if (transcribeChunkOverlap) {
+    transcribeChunkOverlap.value = settings.transcribe_chunk_overlap_ms.toString();
+  }
+  if (transcribeOverlapValue) {
+    transcribeOverlapValue.textContent = `${(settings.transcribe_chunk_overlap_ms / 1000).toFixed(1)}s`;
+  }
+  if (transcribeGain) {
+    transcribeGain.value = Math.round(settings.transcribe_input_gain_db).toString();
+  }
+  if (transcribeGainValue) {
+    const gain = Math.round(settings.transcribe_input_gain_db);
+    transcribeGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
+  }
+  if (transcribeBatchField) {
+    const disabled = settings.transcribe_vad_mode;
+    transcribeBatchField.classList.toggle("is-disabled", disabled);
+    transcribeBatchInterval?.toggleAttribute("disabled", disabled);
+  }
+  if (transcribeOverlapField) {
+    const disabled = settings.transcribe_vad_mode;
+    transcribeOverlapField.classList.toggle("is-disabled", disabled);
+    transcribeChunkOverlap?.toggleAttribute("disabled", disabled);
+  }
+  if (transcribeVadThresholdField) {
+    const disabled = !settings.transcribe_vad_mode;
+    transcribeVadThresholdField.classList.toggle("is-disabled", disabled);
+    transcribeVadThreshold?.toggleAttribute("disabled", disabled);
+  }
+  if (transcribeVadSilenceField) {
+    const disabled = !settings.transcribe_vad_mode;
+    transcribeVadSilenceField.classList.toggle("is-disabled", disabled);
+    transcribeVadSilence?.toggleAttribute("disabled", disabled);
+  }
   if (overlayColor) overlayColor.value = settings.overlay_color;
   if (overlayMinRadius) overlayMinRadius.value = Math.round(settings.overlay_min_radius).toString();
   if (overlayMinRadiusValue) overlayMinRadiusValue.textContent = `${Math.round(settings.overlay_min_radius)}`;
@@ -246,6 +358,28 @@ function renderSettings() {
   if (overlayPosY) overlayPosY.value = Math.round(settings.overlay_pos_y).toString();
 }
 
+const TRANSCRIBE_DB_FLOOR = -60;
+
+function updateTranscribeVadVisibility(enabled: boolean) {
+  if (transcribeMeterThreshold) {
+    transcribeMeterThreshold.style.display = enabled ? "block" : "none";
+  }
+  if (transcribeThresholdLabel) {
+    transcribeThresholdLabel.style.display = enabled ? "block" : "none";
+  }
+}
+
+function updateTranscribeThreshold(threshold: number) {
+  const db = threshold <= 0.00001 ? TRANSCRIBE_DB_FLOOR : Math.max(TRANSCRIBE_DB_FLOOR, 20 * Math.log10(threshold));
+  if (transcribeThresholdDb) {
+    transcribeThresholdDb.textContent = `${db.toFixed(1)} dB`;
+  }
+  if (transcribeMeterThreshold) {
+    const pos = (db - TRANSCRIBE_DB_FLOOR) / (0 - TRANSCRIBE_DB_FLOOR);
+    transcribeMeterThreshold.style.left = `${Math.round(pos * 100)}%`;
+  }
+}
+
 function renderDevices() {
   if (!deviceSelect) return;
   deviceSelect.innerHTML = "";
@@ -257,16 +391,94 @@ function renderDevices() {
   });
 }
 
+function renderOutputDevices() {
+  if (!transcribeDeviceSelect) return;
+  transcribeDeviceSelect.innerHTML = "";
+  outputDevices.forEach((device) => {
+    const option = document.createElement("option");
+    option.value = device.id;
+    option.textContent = device.label;
+    transcribeDeviceSelect.appendChild(option);
+  });
+}
+
+function buildConversationHistory(): HistoryEntry[] {
+  const combined = [...history, ...transcribeHistory];
+  return combined.sort((a, b) => b.timestamp_ms - a.timestamp_ms);
+}
+
+function buildConversationText(entries: HistoryEntry[]) {
+  return entries
+    .map((entry) => {
+      const speaker = entry.source === "output" ? "System Audio" : "Microphone";
+      return `[${formatTime(entry.timestamp_ms)}] ${speaker}: ${entry.text}`;
+    })
+    .join("\n");
+}
+
+function applyPanelCollapsed(panelId: string, collapsed: boolean) {
+  const panel = document.querySelector(`[data-panel="${panelId}"]`) as HTMLElement | null;
+  if (!panel) return;
+  panel.classList.toggle("panel-collapsed", collapsed);
+  localStorage.setItem(`panelCollapsed:${panelId}`, collapsed ? "1" : "0");
+}
+
+function initPanelState() {
+  const panelIds = ["output", "capture", "system", "interface", "model"];
+  panelIds.forEach((id) => {
+    const collapsed = localStorage.getItem(`panelCollapsed:${id}`) === "1";
+    applyPanelCollapsed(id, collapsed);
+  });
+}
+
 function renderHistory() {
   if (!historyList) return;
-  if (!history.length) {
+  const dataset =
+    currentHistoryTab === "mic"
+      ? history
+      : currentHistoryTab === "system"
+        ? transcribeHistory
+        : buildConversationHistory();
+
+  if (historyCompose) {
+    historyCompose.style.display = currentHistoryTab === "mic" ? "flex" : "none";
+  }
+  if (historyCopyConversation) {
+    historyCopyConversation.style.display =
+      currentHistoryTab === "conversation" ? "inline-flex" : "none";
+  }
+  if (historyDetachConversation) {
+    historyDetachConversation.style.display =
+      currentHistoryTab === "conversation" ? "inline-flex" : "none";
+  }
+  if (conversationFontControls) {
+    conversationFontControls.style.display =
+      currentHistoryTab === "conversation" ? "inline-flex" : "none";
+  }
+
+  if (!dataset.length) {
+    const emptyMessage =
+      currentHistoryTab === "mic"
+        ? "Start dictating to build your microphone history."
+        : currentHistoryTab === "system"
+          ? "Start system audio capture to build your output history."
+          : "Build microphone or system audio entries to generate the conversation view.";
     historyList.innerHTML =
-      "<div class=\"history-item\"><div><div class=\"history-text\">No transcripts yet.</div><div class=\"history-meta\">Start dictating to build your history.</div></div></div>";
+      `<div class="history-item"><div><div class="history-text">No transcripts yet.</div><div class="history-meta">${emptyMessage}</div></div></div>`;
     return;
   }
 
   historyList.innerHTML = "";
-  history.forEach((entry) => {
+
+  if (currentHistoryTab === "conversation") {
+    const block = document.createElement("div");
+    block.className = "conversation-block";
+    block.textContent = buildConversationText(dataset);
+    historyList.appendChild(block);
+    return;
+  }
+
+  dataset.forEach((entry) => {
     const wrapper = document.createElement("div");
     wrapper.className = "history-item";
 
@@ -278,7 +490,17 @@ function renderHistory() {
 
     const meta = document.createElement("div");
     meta.className = "history-meta";
-    meta.textContent = `${formatTime(entry.timestamp_ms)} · ${entry.source}`;
+    if (currentHistoryTab === "conversation") {
+      const speaker =
+        entry.source === "output"
+          ? "System Audio"
+          : entry.source && entry.source !== "local"
+            ? `Microphone (${entry.source})`
+            : "Microphone";
+      meta.textContent = `${formatTime(entry.timestamp_ms)} · ${speaker}`;
+    } else {
+      meta.textContent = `${formatTime(entry.timestamp_ms)} · ${entry.source}`;
+    }
 
     textWrap.appendChild(text);
     textWrap.appendChild(meta);
@@ -299,6 +521,14 @@ function renderHistory() {
 
     historyList.appendChild(wrapper);
   });
+}
+
+function setHistoryTab(tab: "mic" | "system" | "conversation") {
+  currentHistoryTab = tab;
+  if (historyTabMic) historyTabMic.classList.toggle("active", tab === "mic");
+  if (historyTabSystem) historyTabSystem.classList.toggle("active", tab === "system");
+  if (historyTabConversation) historyTabConversation.classList.toggle("active", tab === "conversation");
+  renderHistory();
 }
 
 function formatSize(sizeMb: number) {
@@ -391,7 +621,7 @@ async function persistSettings() {
 
 // Hotkey Recorder Setup
 function setupHotkeyRecorder(
-  type: "ptt" | "toggle",
+  type: "ptt" | "toggle" | "transcribe",
   input: HTMLInputElement | null,
   recordBtn: HTMLButtonElement | null,
   statusEl: HTMLSpanElement | null
@@ -479,11 +709,12 @@ function setupHotkeyRecorder(
       const isValid = await validateHotkey(hotkeyString);
 
       if (isValid && settings) {
-        // Save to settings
         if (type === "ptt") {
           settings.hotkey_ptt = hotkeyString;
-        } else {
+        } else if (type === "toggle") {
           settings.hotkey_toggle = hotkeyString;
+        } else {
+          settings.transcribe_hotkey = hotkeyString;
         }
         await persistSettings();
       }
@@ -525,15 +756,160 @@ function wireEvents() {
     renderHero();
   });
 
+  document.querySelectorAll<HTMLButtonElement>(".panel-collapse-btn").forEach((button) => {
+    const panelId = button.dataset.panelCollapse;
+    if (!panelId) return;
+    button.addEventListener("click", () => {
+      const panel = document.querySelector(`[data-panel="${panelId}"]`);
+      const collapsed = panel?.classList.contains("panel-collapsed") ?? false;
+      applyPanelCollapsed(panelId, !collapsed);
+    });
+  });
+
+  historyTabMic?.addEventListener("click", () => setHistoryTab("mic"));
+  historyTabSystem?.addEventListener("click", () => setHistoryTab("system"));
+  historyTabConversation?.addEventListener("click", () => setHistoryTab("conversation"));
+
+  historyCopyConversation?.addEventListener("click", async () => {
+    const entries = buildConversationHistory();
+    if (!entries.length) return;
+    const transcript = buildConversationText(entries);
+    await navigator.clipboard.writeText(transcript);
+  });
+
+  historyDetachConversation?.addEventListener("click", async () => {
+    await invoke("open_conversation_window");
+  });
+
+  conversationFontSize?.addEventListener("input", () => {
+    if (!conversationFontSize) return;
+    const size = Number(conversationFontSize.value);
+    document.documentElement.style.setProperty("--conversation-font-size", `${size}px`);
+    if (conversationFontSizeValue) {
+      conversationFontSizeValue.textContent = `${size}px`;
+    }
+    localStorage.setItem("conversationFontSize", size.toString());
+  });
+
   // Hotkey recording functionality
   setupHotkeyRecorder("ptt", pttHotkey, pttHotkeyRecord, pttHotkeyStatus);
   setupHotkeyRecorder("toggle", toggleHotkey, toggleHotkeyRecord, toggleHotkeyStatus);
+  setupHotkeyRecorder("transcribe", transcribeHotkey, transcribeHotkeyRecord, transcribeHotkeyStatus);
 
   deviceSelect?.addEventListener("change", async () => {
     if (!settings) return;
     settings.input_device = deviceSelect.value;
     await persistSettings();
     renderHero();
+  });
+
+  transcribeDeviceSelect?.addEventListener("change", async () => {
+    if (!settings || !transcribeDeviceSelect) return;
+    settings.transcribe_output_device = transcribeDeviceSelect.value;
+    await persistSettings();
+  });
+
+  transcribeVadToggle?.addEventListener("change", async () => {
+    if (!settings || !transcribeVadToggle) return;
+    settings.transcribe_vad_mode = transcribeVadToggle.checked;
+    if (transcribeBatchField) {
+      const disabled = settings.transcribe_vad_mode;
+      transcribeBatchField.classList.toggle("is-disabled", disabled);
+      transcribeBatchInterval?.toggleAttribute("disabled", disabled);
+    }
+    if (transcribeOverlapField) {
+      const disabled = settings.transcribe_vad_mode;
+      transcribeOverlapField.classList.toggle("is-disabled", disabled);
+      transcribeChunkOverlap?.toggleAttribute("disabled", disabled);
+    }
+    if (transcribeVadThresholdField) {
+      const disabled = !settings.transcribe_vad_mode;
+      transcribeVadThresholdField.classList.toggle("is-disabled", disabled);
+      transcribeVadThreshold?.toggleAttribute("disabled", disabled);
+    }
+    if (transcribeVadSilenceField) {
+      const disabled = !settings.transcribe_vad_mode;
+      transcribeVadSilenceField.classList.toggle("is-disabled", disabled);
+      transcribeVadSilence?.toggleAttribute("disabled", disabled);
+    }
+    updateTranscribeVadVisibility(settings.transcribe_vad_mode);
+    await persistSettings();
+  });
+
+  transcribeVadThreshold?.addEventListener("input", () => {
+    if (!settings || !transcribeVadThreshold) return;
+    const value = Number(transcribeVadThreshold.value);
+    settings.transcribe_vad_threshold = Math.min(1, Math.max(0, value / 100));
+    if (transcribeVadThresholdValue) {
+      transcribeVadThresholdValue.textContent = `${Math.round(settings.transcribe_vad_threshold * 100)}%`;
+    }
+    updateTranscribeThreshold(settings.transcribe_vad_threshold);
+  });
+
+  transcribeVadThreshold?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  transcribeVadSilence?.addEventListener("input", () => {
+    if (!settings || !transcribeVadSilence) return;
+    const value = Number(transcribeVadSilence.value);
+    settings.transcribe_vad_silence_ms = Math.max(200, Math.min(5000, value));
+    if (transcribeVadSilenceValue) {
+      transcribeVadSilenceValue.textContent = `${Math.round(settings.transcribe_vad_silence_ms / 100) / 10}s`;
+    }
+  });
+
+  transcribeVadSilence?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  transcribeBatchInterval?.addEventListener("input", () => {
+    if (!settings || !transcribeBatchInterval) return;
+    const value = Number(transcribeBatchInterval.value);
+    settings.transcribe_batch_interval_ms = Math.max(4000, Math.min(15000, value));
+    if (transcribeBatchValue) {
+      transcribeBatchValue.textContent = `${Math.round(settings.transcribe_batch_interval_ms / 1000)}s`;
+    }
+  });
+
+  transcribeBatchInterval?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  transcribeChunkOverlap?.addEventListener("input", () => {
+    if (!settings || !transcribeChunkOverlap) return;
+    const value = Number(transcribeChunkOverlap.value);
+    settings.transcribe_chunk_overlap_ms = Math.max(0, Math.min(3000, value));
+    if (settings.transcribe_chunk_overlap_ms > settings.transcribe_batch_interval_ms) {
+      settings.transcribe_chunk_overlap_ms = Math.floor(settings.transcribe_batch_interval_ms / 2);
+      transcribeChunkOverlap.value = settings.transcribe_chunk_overlap_ms.toString();
+    }
+    if (transcribeOverlapValue) {
+      transcribeOverlapValue.textContent = `${(settings.transcribe_chunk_overlap_ms / 1000).toFixed(1)}s`;
+    }
+  });
+
+  transcribeChunkOverlap?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  transcribeGain?.addEventListener("input", () => {
+    if (!settings || !transcribeGain) return;
+    const value = Number(transcribeGain.value);
+    settings.transcribe_input_gain_db = Math.max(0, Math.min(24, value));
+    if (transcribeGainValue) {
+      const gain = Math.round(settings.transcribe_input_gain_db);
+      transcribeGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
+    }
+  });
+
+  transcribeGain?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
   });
 
   modelSelect?.addEventListener("change", async () => {
@@ -757,6 +1133,39 @@ function wireEvents() {
 
 }
 
+function initConversationView() {
+  const params = new URLSearchParams(window.location.search);
+  const isConversationOnly = params.get("view") === "conversation";
+  const applyConversationOnly = () => {
+    document.body.classList.add("conversation-only");
+    setHistoryTab("conversation");
+  };
+  if (isConversationOnly) {
+    applyConversationOnly();
+  }
+
+  if ((window as unknown as { __TRISPR_VIEW__?: string }).__TRISPR_VIEW__ === "conversation") {
+    applyConversationOnly();
+  }
+
+  window.addEventListener("trispr:view", (event) => {
+    const detail = (event as CustomEvent<string>).detail;
+    if (detail === "conversation") {
+      applyConversationOnly();
+    }
+  });
+
+  const stored = Number(localStorage.getItem("conversationFontSize") ?? "16");
+  const size = Number.isFinite(stored) ? stored : 16;
+  document.documentElement.style.setProperty("--conversation-font-size", `${size}px`);
+  if (conversationFontSize) {
+    conversationFontSize.value = size.toString();
+  }
+  if (conversationFontSizeValue) {
+    conversationFontSizeValue.textContent = `${size}px`;
+  }
+}
+
 // Toast Notification System
 type ToastType = "error" | "success" | "warning" | "info";
 
@@ -885,16 +1294,21 @@ function playAudioCue(type: "start" | "stop") {
 async function bootstrap() {
   settings = await invoke<Settings>("get_settings");
   devices = await invoke<AudioDevice[]>("list_audio_devices");
+  outputDevices = await invoke<AudioDevice[]>("list_output_devices");
   history = await invoke<HistoryEntry[]>("get_history");
+  transcribeHistory = await invoke<HistoryEntry[]>("get_transcribe_history");
   models = await invoke<ModelInfo[]>("list_models");
 
   renderDevices();
+  renderOutputDevices();
   renderSettings();
   renderHero();
   setStatus("idle");
   renderHistory();
   renderModels();
   wireEvents();
+  initPanelState();
+  initConversationView();
 
   await listen<Settings>("settings-changed", (event) => {
     settings = event.payload ?? settings;
@@ -908,8 +1322,34 @@ async function bootstrap() {
     setStatus(state ?? "idle");
   });
 
+  await listen<string>("transcribe:state", (event) => {
+    if (transcribeStatus) {
+      const state = event.payload;
+      transcribeStatus.textContent =
+        state === "recording" ? "Monitoring" : state === "transcribing" ? "Transcribing" : "Idle";
+    }
+  });
+
+  await listen<number>("transcribe:level", (event) => {
+    if (!transcribeMeterFill) return;
+    const level = Math.max(0, Math.min(1, event.payload ?? 0));
+    transcribeMeterFill.style.width = `${Math.round(level * 100)}%`;
+  });
+
+  await listen<number>("transcribe:db", (event) => {
+    if (!transcribeMeterDb) return;
+    const value = event.payload ?? -60;
+    const clamped = Math.max(-60, Math.min(0, value));
+    transcribeMeterDb.textContent = `${clamped.toFixed(1)} dB`;
+  });
+
   await listen<HistoryEntry[]>("history:updated", (event) => {
     history = event.payload ?? history;
+    renderHistory();
+  });
+
+  await listen<HistoryEntry[]>("transcribe:history-updated", (event) => {
+    transcribeHistory = event.payload ?? transcribeHistory;
     renderHistory();
   });
 

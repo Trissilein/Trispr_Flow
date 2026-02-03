@@ -19,7 +19,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::CheckMenuItem;
@@ -73,6 +73,16 @@ struct Settings {
   vad_threshold_start: f32,
   vad_threshold_sustain: f32,
   vad_silence_ms: u64,
+  transcribe_enabled: bool,
+  transcribe_hotkey: String,
+  transcribe_output_device: String,
+  transcribe_vad_mode: bool,
+  transcribe_vad_threshold: f32,
+  transcribe_vad_silence_ms: u64,
+  transcribe_batch_interval_ms: u64,
+  transcribe_chunk_overlap_ms: u64,
+  transcribe_input_gain_db: f32,
+  capture_enabled: bool,
   overlay_color: String,
   overlay_min_radius: f32,
   overlay_max_radius: f32,
@@ -101,6 +111,16 @@ impl Default for Settings {
       vad_threshold_start: VAD_THRESHOLD_START_DEFAULT,
       vad_threshold_sustain: VAD_THRESHOLD_SUSTAIN_DEFAULT,
       vad_silence_ms: VAD_SILENCE_MS_DEFAULT,
+      transcribe_enabled: true,
+      transcribe_hotkey: "CommandOrControl+Shift+O".to_string(),
+      transcribe_output_device: "default".to_string(),
+      transcribe_vad_mode: false,
+      transcribe_vad_threshold: 0.04,
+      transcribe_vad_silence_ms: 900,
+      transcribe_batch_interval_ms: 8000,
+      transcribe_chunk_overlap_ms: 1000,
+      transcribe_input_gain_db: 0.0,
+      capture_enabled: true,
       overlay_color: "#ff3d2e".to_string(),
       overlay_min_radius: 8.0,
       overlay_max_radius: 24.0,
@@ -176,11 +196,35 @@ impl CaptureBuffer {
     self.resample_pos = 0.0;
   }
 
+  fn len(&self) -> usize {
+    self.samples.len()
+  }
+
   fn drain(&mut self) -> Vec<i16> {
     let mut out = Vec::new();
     std::mem::swap(&mut out, &mut self.samples);
     self.resample_pos = 0.0;
     out
+  }
+
+  fn take_chunk(&mut self, chunk_samples: usize, overlap_samples: usize) -> Vec<i16> {
+    if chunk_samples == 0 || self.samples.len() < chunk_samples {
+      return Vec::new();
+    }
+
+    let chunk = self.samples[..chunk_samples].to_vec();
+    let mut remaining = self.samples[chunk_samples..].to_vec();
+
+    if overlap_samples > 0 && overlap_samples < chunk_samples {
+      let overlap_start = chunk_samples.saturating_sub(overlap_samples);
+      let mut new_samples = chunk[overlap_start..].to_vec();
+      new_samples.append(&mut remaining);
+      self.samples = new_samples;
+    } else {
+      self.samples = remaining;
+    }
+
+    chunk
   }
 
   fn push_samples(&mut self, input: &[f32], in_rate: u32) {
@@ -236,11 +280,30 @@ impl Recorder {
   }
 }
 
+struct TranscribeRecorder {
+  active: bool,
+  stop_tx: Option<std::sync::mpsc::Sender<()>>,
+  join_handle: Option<thread::JoinHandle<()>>,
+}
+
+impl TranscribeRecorder {
+  fn new() -> Self {
+    Self {
+      active: false,
+      stop_tx: None,
+      join_handle: None,
+    }
+  }
+}
+
 struct AppState {
   settings: Mutex<Settings>,
   history: Mutex<Vec<HistoryEntry>>,
+  history_transcribe: Mutex<Vec<HistoryEntry>>,
   recorder: Mutex<Recorder>,
+  transcribe: Mutex<TranscribeRecorder>,
   downloads: Mutex<HashSet<String>>,
+  transcribe_active: AtomicBool,
 }
 
 fn resolve_config_path(app: &AppHandle, filename: &str) -> PathBuf {
@@ -296,6 +359,34 @@ fn load_settings(app: &AppHandle) -> Settings {
       if settings.vad_silence_ms < 100 {
         settings.vad_silence_ms = VAD_SILENCE_MS_DEFAULT;
       }
+      if !(0.0..=1.0).contains(&settings.transcribe_vad_threshold) {
+        settings.transcribe_vad_threshold = 0.04;
+      }
+      if settings.transcribe_batch_interval_ms < 4000 {
+        settings.transcribe_batch_interval_ms = 4000;
+      }
+      if settings.transcribe_batch_interval_ms > 15000 {
+        settings.transcribe_batch_interval_ms = 15000;
+      }
+      if settings.transcribe_chunk_overlap_ms > settings.transcribe_batch_interval_ms {
+        settings.transcribe_chunk_overlap_ms = settings.transcribe_batch_interval_ms / 2;
+      }
+      if settings.transcribe_chunk_overlap_ms > 3000 {
+        settings.transcribe_chunk_overlap_ms = 3000;
+      }
+      if settings.transcribe_vad_silence_ms < 200 {
+        settings.transcribe_vad_silence_ms = 200;
+      }
+      if settings.transcribe_vad_silence_ms > 5000 {
+        settings.transcribe_vad_silence_ms = 5000;
+      }
+      settings.transcribe_input_gain_db = settings.transcribe_input_gain_db.clamp(0.0, 24.0);
+      #[cfg(target_os = "windows")]
+      if settings.transcribe_output_device != "default"
+        && !settings.transcribe_output_device.starts_with("wasapi:")
+      {
+        settings.transcribe_output_device = "default".to_string();
+      }
       if settings.overlay_min_radius < 4.0 {
         settings.overlay_min_radius = 4.0;
       }
@@ -326,6 +417,8 @@ fn load_settings(app: &AppHandle) -> Settings {
       if settings.overlay_opacity_active < settings.overlay_opacity_inactive {
         settings.overlay_opacity_active = settings.overlay_opacity_inactive;
       }
+      settings.capture_enabled = true;
+      settings.transcribe_enabled = true;
       settings
     }
     Err(_) => Settings::default(),
@@ -349,6 +442,21 @@ fn load_history(app: &AppHandle) -> Vec<HistoryEntry> {
 
 fn save_history_file(app: &AppHandle, history: &[HistoryEntry]) -> Result<(), String> {
   let path = resolve_data_path(app, "history.json");
+  let raw = serde_json::to_string_pretty(history).map_err(|e| e.to_string())?;
+  fs::write(path, raw).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+fn load_transcribe_history(app: &AppHandle) -> Vec<HistoryEntry> {
+  let path = resolve_data_path(app, "history_transcribe.json");
+  match fs::read_to_string(path) {
+    Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+    Err(_) => Vec::new(),
+  }
+}
+
+fn save_transcribe_history_file(app: &AppHandle, history: &[HistoryEntry]) -> Result<(), String> {
+  let path = resolve_data_path(app, "history_transcribe.json");
   let raw = serde_json::to_string_pretty(history).map_err(|e| e.to_string())?;
   fs::write(path, raw).map_err(|e| e.to_string())?;
   Ok(())
@@ -767,6 +875,30 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
     }
   };
 
+  let register_transcribe = || -> Result<(), String> {
+    let hotkey = settings.transcribe_hotkey.trim();
+    if hotkey.is_empty() {
+      return Ok(());
+    }
+    info!("Registering Transcribe hotkey (toggle): {}", hotkey);
+    match manager.on_shortcut(hotkey, |app, _shortcut, event| {
+      if event.state == ShortcutState::Pressed {
+        let app = app.clone();
+        toggle_transcribe_state(&app);
+      }
+    }) {
+      Ok(_) => {
+        info!("Transcribe hotkey registered successfully");
+        Ok(())
+      }
+      Err(e) => {
+        error!("Failed to register Transcribe hotkey '{}': {}", hotkey, e);
+        emit_error(app, AppError::Hotkey(format!("Could not register Transcribe hotkey '{}': {}. Try a different key.", hotkey, e)), Some("Hotkey Registration"));
+        Err(e.to_string())
+      }
+    }
+  };
+
   match settings.mode.as_str() {
     "ptt" => {
       register_ptt()?;
@@ -778,6 +910,8 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
       register_toggle()?;
     }
   }
+
+  register_transcribe()?;
 
   Ok(())
 }
@@ -800,6 +934,7 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
   save_settings_file(&app, &settings)?;
   register_hotkeys(&app, &settings)?;
 
+
   let mode_changed = prev_mode != settings.mode;
   let device_changed = prev_device != settings.input_device;
 
@@ -808,7 +943,7 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
     if prev_mode == "vad" || (settings.mode == "vad" && device_changed) {
       stop_vad_monitor(&app, &state);
     }
-    if settings.mode == "vad" {
+    if settings.mode == "vad" && settings.capture_enabled {
       let _ = start_vad_monitor(&app, &state, &settings);
     }
   } else if settings.mode == "vad" {
@@ -819,6 +954,13 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
         runtime.update_silence_ms(settings.vad_silence_ms);
       }
     }
+  }
+
+  if !settings.capture_enabled {
+    stop_vad_monitor(&app, &state);
+  }
+  if !settings.transcribe_enabled {
+    stop_transcribe_monitor(&app, &state);
   }
 
   let overlay_settings = build_overlay_settings(&settings);
@@ -851,6 +993,52 @@ fn list_audio_devices() -> Vec<AudioDevice> {
         .unwrap_or_else(|_| format!("Input {}", index + 1));
       let id = format!("input-{}-{}", index, name);
       devices.push(AudioDevice { id, label: name });
+    }
+  }
+
+  devices
+}
+
+#[tauri::command]
+fn list_output_devices() -> Vec<AudioDevice> {
+  let mut devices = vec![AudioDevice {
+    id: "default".to_string(),
+    label: "System Default Output".to_string(),
+  }];
+
+  #[cfg(target_os = "windows")]
+  {
+    if let Ok(enumerator) = wasapi::DeviceEnumerator::new() {
+      if let Ok(collection) = enumerator.get_device_collection(&wasapi::Direction::Render) {
+        if let Ok(count) = collection.get_nbr_devices() {
+          for index in 0..count {
+            if let Ok(device) = collection.get_device_at_index(index) {
+              let name = device
+                .get_friendlyname()
+                .unwrap_or_else(|_| format!("Output {}", index + 1));
+              let id = device.get_id().unwrap_or_else(|_| format!("idx-{}", index));
+              devices.push(AudioDevice {
+                id: format!("wasapi:{}", id),
+                label: name,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  #[cfg(not(target_os = "windows"))]
+  {
+    let host = cpal::default_host();
+    if let Ok(outputs) = host.output_devices() {
+      for (index, device) in outputs.enumerate() {
+        let name = device
+          .name()
+          .unwrap_or_else(|_| format!("Output {}", index + 1));
+        let id = format!("output-{}-{}", index, name);
+        devices.push(AudioDevice { id, label: name });
+      }
     }
   }
 
@@ -926,6 +1114,11 @@ fn get_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
 }
 
 #[tauri::command]
+fn get_transcribe_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
+  state.history_transcribe.lock().unwrap().clone()
+}
+
+#[tauri::command]
 fn add_history_entry(
   app: AppHandle,
   state: State<'_, AppState>,
@@ -937,6 +1130,15 @@ fn add_history_entry(
 }
 
 #[tauri::command]
+fn add_transcribe_entry(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  text: String,
+) -> Result<Vec<HistoryEntry>, String> {
+  push_transcribe_entry_inner(&app, &state.history_transcribe, text)
+}
+
+#[tauri::command]
 fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
   let settings = state.settings.lock().unwrap().clone();
   start_recording_with_settings(&app, &state, &settings)
@@ -945,6 +1147,44 @@ fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), Str
 #[tauri::command]
 fn stop_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
   stop_recording_async(app, &state);
+  Ok(())
+}
+
+#[tauri::command]
+fn toggle_transcribe(app: AppHandle) -> Result<(), String> {
+  toggle_transcribe_state(&app);
+  Ok(())
+}
+
+#[tauri::command]
+fn open_conversation_window(app: AppHandle) -> Result<(), String> {
+  if app.get_webview_window("conversation").is_some() {
+    if let Some(window) = app.get_webview_window("conversation") {
+      let _ = window.show();
+      let _ = window.set_focus();
+    }
+    return Ok(());
+  }
+
+  let window = tauri::WebviewWindowBuilder::new(
+    &app,
+    "conversation",
+    tauri::WebviewUrl::App("index.html".into()),
+  )
+  .title("Trispr Flow · Conversation")
+  .inner_size(860.0, 680.0)
+  .min_inner_size(640.0, 420.0)
+  .resizable(true)
+  .decorations(true)
+  .transparent(false)
+  .visible(true)
+  .build()
+  .map_err(|e| e.to_string())?;
+
+  let _ = window.eval(
+    "window.__TRISPR_VIEW__='conversation'; window.dispatchEvent(new CustomEvent('trispr:view', { detail: 'conversation' }));",
+  );
+
   Ok(())
 }
 
@@ -964,6 +1204,7 @@ fn get_hotkey_conflicts(state: State<'_, AppState>) -> Vec<hotkeys::ConflictInfo
   let hotkeys = vec![
     settings.hotkey_ptt.clone(),
     settings.hotkey_toggle.clone(),
+    settings.transcribe_hotkey.clone(),
   ];
   hotkeys::detect_conflicts(hotkeys)
 }
@@ -987,6 +1228,27 @@ fn resolve_input_device(device_id: &str) -> Option<cpal::Device> {
   }
 
   host.default_input_device()
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_output_device(device_id: &str) -> Option<wasapi::Device> {
+  let enumerator = wasapi::DeviceEnumerator::new().ok()?;
+  if device_id == "default" {
+    return enumerator.get_default_device(&wasapi::Direction::Render).ok();
+  }
+
+  if let Some(id) = device_id.strip_prefix("wasapi:") {
+    if let Ok(device) = enumerator.get_device(id) {
+      return Some(device);
+    }
+  }
+
+  enumerator.get_default_device(&wasapi::Direction::Render).ok()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_output_device(_device_id: &str) -> Option<cpal::Device> {
+  None
 }
 
 fn push_mono_samples(
@@ -1217,6 +1479,9 @@ fn start_recording_with_settings(
   settings: &Settings,
 ) -> Result<(), String> {
   info!("start_recording_with_settings called");
+  if !settings.capture_enabled {
+    return Ok(());
+  }
   let mut recorder = state.recorder.lock().unwrap();
   if recorder.active || recorder.transcribing {
     info!("Recording already active or transcribing, skipping");
@@ -1299,6 +1564,9 @@ fn start_vad_monitor(
   settings: &Settings,
 ) -> Result<(), String> {
   info!("start_vad_monitor called");
+  if !settings.capture_enabled {
+    return Ok(());
+  }
   let mut recorder = state.recorder.lock().unwrap();
   if recorder.active || recorder.transcribing {
     info!("VAD already active or transcribing, skipping");
@@ -1330,7 +1598,6 @@ fn start_vad_monitor(
 
   let app_handle = app.clone();
   let settings_clone = settings.clone();
-  let buffer_clone = buffer.clone();
   let vad_runtime_clone = vad_runtime.clone();
   thread::spawn(move || {
     for event in vad_rx {
@@ -1609,6 +1876,9 @@ fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
 fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
   let state = app.state::<AppState>();
   let settings = state.settings.lock().unwrap().clone();
+  if !settings.capture_enabled {
+    return Ok(());
+  }
   if settings.mode != "ptt" {
     return Ok(());
   }
@@ -1641,6 +1911,9 @@ fn handle_toggle_async(app: AppHandle) {
   let app_handle = app.clone();
   let state = app_handle.state::<AppState>();
   let settings = state.settings.lock().unwrap().clone();
+  if !settings.capture_enabled {
+    return;
+  }
   if settings.mode != "ptt" {
     return;
   }
@@ -1651,6 +1924,398 @@ fn handle_toggle_async(app: AppHandle) {
   } else {
     let _ = start_recording_with_settings(&app, &state, &settings);
   }
+}
+
+fn start_transcribe_monitor(
+  app: &AppHandle,
+  state: &State<'_, AppState>,
+  settings: &Settings,
+) -> Result<(), String> {
+  let mut recorder = state.transcribe.lock().unwrap();
+  if recorder.active {
+    return Ok(());
+  }
+
+  let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+  let app_handle = app.clone();
+  let settings = settings.clone();
+
+  let join_handle = thread::spawn(move || {
+    #[cfg(target_os = "windows")]
+    {
+      if let Err(err) = run_transcribe_loopback(app_handle.clone(), settings, stop_rx) {
+        emit_error(&app_handle, AppError::AudioDevice(err), Some("System Audio"));
+        let state = app_handle.state::<AppState>();
+        state.transcribe_active.store(false, Ordering::Relaxed);
+        if let Ok(mut transcribe) = state.transcribe.lock() {
+          transcribe.active = false;
+          transcribe.stop_tx = None;
+          transcribe.join_handle = None;
+        }
+        let _ = app_handle.emit("transcribe:state", "idle");
+      }
+      return;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+      let _ = stop_rx.recv();
+      emit_error(&app_handle, AppError::AudioDevice("System audio capture is not supported on this OS yet.".to_string()), Some("System Audio"));
+      let state = app_handle.state::<AppState>();
+      state.transcribe_active.store(false, Ordering::Relaxed);
+      if let Ok(mut transcribe) = state.transcribe.lock() {
+        transcribe.active = false;
+        transcribe.stop_tx = None;
+        transcribe.join_handle = None;
+      }
+      let _ = app_handle.emit("transcribe:state", "idle");
+    }
+  });
+
+  recorder.active = true;
+  recorder.stop_tx = Some(stop_tx);
+  recorder.join_handle = Some(join_handle);
+  state.transcribe_active.store(true, Ordering::Relaxed);
+
+  let _ = app.emit("transcribe:state", "recording");
+  Ok(())
+}
+
+fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppState>) {
+  let (stop_tx, join_handle) = {
+    let mut recorder = state.transcribe.lock().unwrap();
+    recorder.active = false;
+    (recorder.stop_tx.take(), recorder.join_handle.take())
+  };
+
+  state.transcribe_active.store(false, Ordering::Relaxed);
+  let _ = app.emit("transcribe:state", "idle");
+
+  if let Some(tx) = stop_tx {
+    let _ = tx.send(());
+  }
+  if let Some(handle) = join_handle {
+    thread::spawn(move || {
+      let _ = handle.join();
+    });
+  }
+}
+
+fn toggle_transcribe_state(app: &AppHandle) {
+  let state = app.state::<AppState>();
+  let settings = state.settings.lock().unwrap().clone();
+  if !settings.transcribe_enabled {
+    let _ = app.emit("transcribe:state", "idle");
+    return;
+  }
+  let active = state.transcribe_active.load(Ordering::Relaxed);
+  if active {
+    stop_transcribe_monitor(app, &state);
+  } else {
+    if let Err(err) = start_transcribe_monitor(app, &state, &settings) {
+      emit_error(app, AppError::AudioDevice(err), Some("System Audio"));
+      state.transcribe_active.store(false, Ordering::Relaxed);
+      let _ = app.emit("transcribe:state", "idle");
+    }
+  }
+}
+
+fn rms_f32(samples: &[f32]) -> f32 {
+  if samples.is_empty() {
+    return 0.0;
+  }
+  let mut sum = 0.0f32;
+  for &sample in samples {
+    sum += sample * sample;
+  }
+  (sum / samples.len() as f32).sqrt().clamp(0.0, 1.0)
+}
+
+fn rms_i16(samples: &[i16]) -> f32 {
+  if samples.is_empty() {
+    return 0.0;
+  }
+  let mut sum = 0.0f32;
+  for &sample in samples {
+    let value = sample as f32 / i16::MAX as f32;
+    sum += value * value;
+  }
+  (sum / samples.len() as f32).sqrt().clamp(0.0, 1.0)
+}
+
+fn transcribe_worker(
+  app: AppHandle,
+  settings: Settings,
+  rx: std::sync::mpsc::Receiver<Vec<i16>>,
+) {
+  let min_samples = (TARGET_SAMPLE_RATE as u64 * MIN_AUDIO_MS / 1000) as usize;
+  for chunk in rx {
+    if chunk.len() < min_samples {
+      continue;
+    }
+
+    if settings.transcribe_vad_mode {
+      let level = rms_i16(&chunk);
+      if level < settings.transcribe_vad_threshold {
+        continue;
+      }
+    }
+
+    let _ = app.emit("transcribe:state", "transcribing");
+    let result = transcribe_audio(&app, &settings, &chunk);
+
+    if app.state::<AppState>().transcribe_active.load(Ordering::Relaxed) {
+      let _ = app.emit("transcribe:state", "recording");
+    }
+
+    match result {
+      Ok((text, _source)) => {
+        if !text.trim().is_empty() {
+          let state = app.state::<AppState>();
+          let _ = push_transcribe_entry_inner(&app, &state.history_transcribe, text);
+        }
+      }
+      Err(err) => {
+        let _ = app.emit("transcription:error", err);
+      }
+    }
+  }
+}
+
+#[cfg(target_os = "windows")]
+fn decode_wasapi_mono(
+  raw: &[u8],
+  channels: usize,
+  bytes_per_sample: usize,
+  sample_format: wasapi::SampleType,
+) -> Vec<f32> {
+  if channels == 0 || bytes_per_sample == 0 {
+    return Vec::new();
+  }
+
+  let bytes_per_frame = channels * bytes_per_sample;
+  let mut mono = Vec::with_capacity(raw.len() / bytes_per_frame);
+
+  match sample_format {
+    wasapi::SampleType::Float => {
+      if bytes_per_sample != 4 {
+        return Vec::new();
+      }
+      for frame in raw.chunks_exact(bytes_per_frame) {
+        let mut sum = 0.0f32;
+        for ch in 0..channels {
+          let start = ch * bytes_per_sample;
+          let sample = f32::from_le_bytes([
+            frame[start],
+            frame[start + 1],
+            frame[start + 2],
+            frame[start + 3],
+          ]);
+          sum += sample;
+        }
+        mono.push(sum / channels as f32);
+      }
+    }
+    wasapi::SampleType::Int => {
+      for frame in raw.chunks_exact(bytes_per_frame) {
+        let mut sum = 0.0f32;
+        for ch in 0..channels {
+          let start = ch * bytes_per_sample;
+          let sample = match bytes_per_sample {
+            2 => {
+              let value = i16::from_le_bytes([frame[start], frame[start + 1]]) as f32;
+              value / i16::MAX as f32
+            }
+            3 => {
+              let b0 = frame[start] as i32;
+              let b1 = (frame[start + 1] as i32) << 8;
+              let b2 = (frame[start + 2] as i32) << 16;
+              let mut value = b0 | b1 | b2;
+              if value & 0x800000 != 0 {
+                value |= !0xFFFFFF;
+              }
+              value as f32 / 8_388_608.0
+            }
+            4 => {
+              let value = i32::from_le_bytes([
+                frame[start],
+                frame[start + 1],
+                frame[start + 2],
+                frame[start + 3],
+              ]) as f32;
+              value / i32::MAX as f32
+            }
+            _ => 0.0,
+          };
+          sum += sample;
+        }
+        mono.push(sum / channels as f32);
+      }
+    }
+  }
+
+  mono
+}
+
+#[cfg(target_os = "windows")]
+fn run_transcribe_loopback(
+  app: AppHandle,
+  settings: Settings,
+  stop_rx: std::sync::mpsc::Receiver<()>,
+) -> Result<(), String> {
+  let hr = wasapi::initialize_mta();
+  if hr.0 < 0 {
+    return Err(format!("COM initialization failed: HRESULT={}", hr.0));
+  }
+
+  let device = resolve_output_device(&settings.transcribe_output_device)
+    .ok_or_else(|| "No output device available".to_string())?;
+  let mut audio_client = device.get_iaudioclient().map_err(|e| e.to_string())?;
+  let mix_format = audio_client.get_mixformat().map_err(|e| e.to_string())?;
+
+  let stream_mode = wasapi::StreamMode::PollingShared {
+    autoconvert: true,
+    buffer_duration_hns: 200_000,
+  };
+  audio_client
+    .initialize_client(&mix_format, &wasapi::Direction::Capture, &stream_mode)
+    .map_err(|e| e.to_string())?;
+
+  let mut capture_client = audio_client.get_audiocaptureclient().map_err(|e| e.to_string())?;
+  audio_client.start_stream().map_err(|e| e.to_string())?;
+
+  let channels = mix_format.get_nchannels() as usize;
+  let sample_rate = mix_format.get_samplespersec();
+  let bytes_per_frame = mix_format.get_blockalign() as usize;
+  let bytes_per_sample = if channels > 0 {
+    bytes_per_frame / channels
+  } else {
+    0
+  };
+  let sample_format = mix_format
+    .get_subformat()
+    .unwrap_or(wasapi::SampleType::Int);
+
+  let chunk_samples =
+    (TARGET_SAMPLE_RATE as u64 * settings.transcribe_batch_interval_ms / 1000) as usize;
+  let overlap_samples =
+    (TARGET_SAMPLE_RATE as u64 * settings.transcribe_chunk_overlap_ms / 1000) as usize;
+  let mut gain = (10.0f32).powf(settings.transcribe_input_gain_db / 20.0);
+  let mut vad_enabled = settings.transcribe_vad_mode;
+  let mut vad_threshold = settings.transcribe_vad_threshold;
+  let mut vad_silence_ms = settings.transcribe_vad_silence_ms;
+  let mut last_settings_check = Instant::now();
+  let mut vad_last_hit_ms = Instant::now();
+
+  let (chunk_tx, chunk_rx) = std::sync::mpsc::channel::<Vec<i16>>();
+  let worker_app = app.clone();
+  let worker_settings = settings.clone();
+  let worker_handle = thread::spawn(move || {
+    transcribe_worker(worker_app, worker_settings, chunk_rx);
+  });
+
+  let mut buffer = CaptureBuffer::default();
+  let mut smooth_level = 0.0f32;
+  let mut last_emit = Instant::now();
+
+  loop {
+    match stop_rx.try_recv() {
+      Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+      Err(std::sync::mpsc::TryRecvError::Empty) => {}
+    }
+
+    let packet_frames = capture_client
+      .get_next_packet_size()
+      .map_err(|e| e.to_string())?;
+    let packet_frames = match packet_frames {
+      Some(value) => value,
+      None => {
+        thread::sleep(Duration::from_millis(10));
+        continue;
+      }
+    };
+    if packet_frames == 0 {
+      thread::sleep(Duration::from_millis(10));
+      continue;
+    }
+
+    let mut raw = vec![0u8; packet_frames as usize * bytes_per_frame];
+    let (frames_read, _) = capture_client
+      .read_from_device(&mut raw)
+      .map_err(|e| e.to_string())?;
+    if frames_read == 0 {
+      continue;
+    }
+
+    let valid_bytes = frames_read as usize * bytes_per_frame;
+    if last_settings_check.elapsed() >= Duration::from_millis(200) {
+      if let Ok(current) = app.state::<AppState>().settings.lock() {
+        gain = (10.0f32).powf(current.transcribe_input_gain_db / 20.0);
+        vad_enabled = current.transcribe_vad_mode;
+        vad_threshold = current.transcribe_vad_threshold;
+        vad_silence_ms = current.transcribe_vad_silence_ms;
+      }
+      last_settings_check = Instant::now();
+    }
+
+    let mut mono = decode_wasapi_mono(
+      &raw[..valid_bytes],
+      channels,
+      bytes_per_sample,
+      sample_format,
+    );
+    if mono.is_empty() {
+      continue;
+    }
+
+    if gain != 1.0 {
+      for sample in mono.iter_mut() {
+        *sample = (*sample * gain).clamp(-1.0, 1.0);
+      }
+    }
+
+    let rms = rms_f32(&mono);
+    if vad_enabled && rms >= vad_threshold {
+      vad_last_hit_ms = Instant::now();
+    }
+    smooth_level = smooth_level * 0.8 + rms * 0.2;
+    if last_emit.elapsed() >= Duration::from_millis(50) {
+      let db = if smooth_level <= 0.000_01 {
+        -60.0
+      } else {
+        (20.0 * smooth_level.log10()).max(-60.0).min(0.0)
+      };
+      let meter = (db + 60.0) / 60.0;
+      let _ = app.emit("transcribe:level", meter.clamp(0.0, 1.0));
+      let _ = app.emit("transcribe:db", db);
+      last_emit = Instant::now();
+    }
+
+    buffer.push_samples(&mono, sample_rate);
+    while buffer.len() >= chunk_samples {
+      let chunk = buffer.take_chunk(chunk_samples, overlap_samples);
+      if chunk.is_empty() {
+        break;
+      }
+      if vad_enabled {
+        if vad_last_hit_ms.elapsed() <= Duration::from_millis(vad_silence_ms) {
+          let _ = chunk_tx.send(chunk);
+        }
+      } else {
+        let _ = chunk_tx.send(chunk);
+      }
+    }
+  }
+
+  let leftover = buffer.drain();
+  if !leftover.is_empty() {
+    let _ = chunk_tx.send(leftover);
+  }
+
+  drop(chunk_tx);
+  let _ = worker_handle.join();
+  let _ = audio_client.stop_stream();
+  Ok(())
 }
 
 fn push_history_entry(
@@ -1677,6 +2342,24 @@ fn push_history_entry_inner(
   };
   history.insert(0, entry);
   save_history_file(app, &history)?;
+  Ok(history.clone())
+}
+
+fn push_transcribe_entry_inner(
+  app: &AppHandle,
+  history: &Mutex<Vec<HistoryEntry>>,
+  text: String,
+) -> Result<Vec<HistoryEntry>, String> {
+  let mut history = history.lock().unwrap();
+  let entry = HistoryEntry {
+    id: format!("o_{}", now_ms()),
+    text,
+    timestamp_ms: now_ms(),
+    source: "output".to_string(),
+  };
+  history.insert(0, entry);
+  save_transcribe_history_file(app, &history)?;
+  let _ = app.emit("transcribe:history-updated", history.clone());
   Ok(history.clone())
 }
 
@@ -2078,19 +2761,25 @@ pub fn run() {
     .setup(|app| {
       let mut settings = load_settings(app.handle());
       let history = load_history(app.handle());
+      let history_transcribe = load_transcribe_history(app.handle());
 
       app.manage(AppState {
         settings: Mutex::new(settings.clone()),
         history: Mutex::new(history),
+        history_transcribe: Mutex::new(history_transcribe),
         recorder: Mutex::new(Recorder::new()),
+        transcribe: Mutex::new(TranscribeRecorder::new()),
         downloads: Mutex::new(HashSet::new()),
+        transcribe_active: AtomicBool::new(false),
       });
+
+      let _ = app.emit("transcribe:state", "idle");
 
       if let Err(err) = register_hotkeys(app.handle(), &settings) {
         eprintln!("⚠ Failed to register hotkeys: {}", err);
       }
 
-      if settings.mode == "vad" {
+      if settings.mode == "vad" && settings.capture_enabled {
         if let Err(err) = start_vad_monitor(app.handle(), &app.state::<AppState>(), &settings) {
           eprintln!("⚠ Failed to start VAD monitor: {}", err);
         }
@@ -2215,12 +2904,17 @@ pub fn run() {
       get_settings,
       save_settings,
       list_audio_devices,
+      list_output_devices,
       list_models,
       download_model,
       get_history,
+      get_transcribe_history,
       add_history_entry,
+      add_transcribe_entry,
       start_recording,
       stop_recording,
+      toggle_transcribe,
+      open_conversation_window,
       validate_hotkey,
       test_hotkey,
       get_hotkey_conflicts,

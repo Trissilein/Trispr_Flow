@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tauri::AppHandle;
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
+// tauri_plugin_global_shortcut::GlobalShortcutExt not needed here.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationResult {
@@ -142,7 +142,7 @@ fn normalize_hotkey(key: &str) -> String {
 }
 
 /// Tests if a hotkey can be registered (without actually activating it)
-pub fn test_hotkey_registration(app: &AppHandle, key: &str) -> Result<(), String> {
+pub fn test_hotkey_registration(_app: &AppHandle, key: &str) -> Result<(), String> {
     // First validate format
     let validation = validate_hotkey_format(key);
     if !validation.valid {

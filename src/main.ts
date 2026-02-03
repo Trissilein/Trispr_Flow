@@ -17,6 +17,8 @@ interface Settings {
   cloud_fallback: boolean;
   audio_cues: boolean;
   audio_cues_volume: number;
+  vad_threshold: number;
+  vad_silence_ms: number;
 }
 
 interface HistoryEntry {
@@ -105,6 +107,14 @@ const cloudToggle = $("cloud-toggle") as HTMLInputElement | null;
 const audioCuesToggle = $("audio-cues-toggle") as HTMLInputElement | null;
 const audioCuesVolume = $("audio-cues-volume") as HTMLInputElement | null;
 const audioCuesVolumeValue = $("audio-cues-volume-value");
+const hotkeysBlock = $("hotkeys-block");
+const vadBlock = $("vad-block");
+const vadThreshold = $("vad-threshold") as HTMLInputElement | null;
+const vadThresholdValue = $("vad-threshold-value");
+const vadSilence = $("vad-silence") as HTMLInputElement | null;
+const vadSilenceValue = $("vad-silence-value");
+const vadMeter = $("vad-meter");
+const vadMeterFill = $("vad-meter-fill");
 const historyList = $("history-list");
 const historyInput = $("history-input") as HTMLInputElement | null;
 const historyAdd = $("history-add");
@@ -143,10 +153,8 @@ function renderSettings() {
   if (pttHotkey) pttHotkey.value = settings.hotkey_ptt;
   if (toggleHotkey) toggleHotkey.value = settings.hotkey_toggle;
   const hotkeysEnabled = settings.mode === "ptt";
-  if (pttHotkey) pttHotkey.disabled = !hotkeysEnabled;
-  if (pttHotkeyRecord) pttHotkeyRecord.disabled = !hotkeysEnabled;
-  if (toggleHotkey) toggleHotkey.disabled = !hotkeysEnabled;
-  if (toggleHotkeyRecord) toggleHotkeyRecord.disabled = !hotkeysEnabled;
+  if (hotkeysBlock) hotkeysBlock.classList.toggle("hidden", !hotkeysEnabled);
+  if (vadBlock) vadBlock.classList.toggle("hidden", hotkeysEnabled);
   if (deviceSelect) deviceSelect.value = settings.input_device;
   if (modelSelect) modelSelect.value = settings.model;
   if (languageSelect) languageSelect.value = settings.language_mode;
@@ -155,6 +163,13 @@ function renderSettings() {
   if (audioCuesVolume) audioCuesVolume.value = Math.round(settings.audio_cues_volume * 100).toString();
   if (audioCuesVolumeValue) {
     audioCuesVolumeValue.textContent = `${Math.round(settings.audio_cues_volume * 100)}%`;
+  }
+  if (vadThreshold) vadThreshold.value = Math.round(settings.vad_threshold * 100).toString();
+  if (vadThresholdValue) vadThresholdValue.textContent = `${Math.round(settings.vad_threshold * 100)}%`;
+  if (vadSilence) vadSilence.value = settings.vad_silence_ms.toString();
+  if (vadSilenceValue) vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
+  if (vadMeter) {
+    vadMeter.style.setProperty("--threshold", `${Math.round(settings.vad_threshold * 100)}%`);
   }
 }
 
@@ -486,6 +501,37 @@ function wireEvents() {
     await persistSettings();
   });
 
+  vadThreshold?.addEventListener("input", () => {
+    if (!settings || !vadThreshold) return;
+    const value = Number(vadThreshold.value);
+    settings.vad_threshold = Math.min(1, Math.max(0, value / 100));
+    if (vadThresholdValue) {
+      vadThresholdValue.textContent = `${Math.round(settings.vad_threshold * 100)}%`;
+    }
+    if (vadMeter) {
+      vadMeter.style.setProperty("--threshold", `${Math.round(settings.vad_threshold * 100)}%`);
+    }
+  });
+
+  vadThreshold?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  vadSilence?.addEventListener("input", () => {
+    if (!settings || !vadSilence) return;
+    const value = Math.max(200, Math.min(4000, Number(vadSilence.value)));
+    settings.vad_silence_ms = value;
+    if (vadSilenceValue) {
+      vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
+    }
+  });
+
+  vadSilence?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
   historyAdd?.addEventListener("click", async () => {
     if (!historyInput?.value.trim()) return;
     history = await invoke("add_history_entry", {
@@ -702,6 +748,12 @@ async function bootstrap() {
     if (settings?.audio_cues) {
       playAudioCue(type);
     }
+  });
+
+  await listen<number>("audio:level", (event) => {
+    if (!vadMeterFill) return;
+    const level = Math.max(0, Math.min(1, event.payload ?? 0));
+    vadMeterFill.style.width = `${Math.round(level * 100)}%`;
   });
 }
 

@@ -73,21 +73,45 @@
                 <option value="vad">Voice-Activated (VAD)</option>
               </select>
             </label>
-            <div class="field hotkey-field">
-              <span class="field-label">PTT hotkey (hold)</span>
-              <div class="hotkey-input-group">
-                <input id="ptt-hotkey" type="text" placeholder="CommandOrControl+Shift+Space" readonly />
-                <button id="ptt-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+            <div id="hotkeys-block" class="field-group">
+              <div class="field hotkey-field">
+                <span class="field-label">PTT hotkey (hold)</span>
+                <div class="hotkey-input-group">
+                  <input id="ptt-hotkey" type="text" placeholder="CommandOrControl+Shift+Space" readonly />
+                  <button id="ptt-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+                </div>
+                <span id="ptt-hotkey-status" class="hotkey-status"></span>
               </div>
-              <span id="ptt-hotkey-status" class="hotkey-status"></span>
+              <div class="field hotkey-field">
+                <span class="field-label">Toggle hotkey (click)</span>
+                <div class="hotkey-input-group">
+                  <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" readonly />
+                  <button id="toggle-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+                </div>
+                <span id="toggle-hotkey-status" class="hotkey-status"></span>
+              </div>
             </div>
-            <div class="field hotkey-field">
-              <span class="field-label">Toggle hotkey (click)</span>
-              <div class="hotkey-input-group">
-                <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" readonly />
-                <button id="toggle-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+            <div id="vad-block" class="field-group hidden">
+              <label class="field range">
+                <span class="field-label">VAD threshold</span>
+                <div class="range-row">
+                  <input id="vad-threshold" type="range" min="0" max="100" step="1" />
+                  <span id="vad-threshold-value" class="range-value">0%</span>
+                </div>
+              </label>
+              <label class="field range">
+                <span class="field-label">Silence grace</span>
+                <div class="range-row">
+                  <input id="vad-silence" type="range" min="200" max="4000" step="50" />
+                  <span id="vad-silence-value" class="range-value">700 ms</span>
+                </div>
+              </label>
+              <div class="field">
+                <span class="field-label">Input level</span>
+                <div id="vad-meter" class="vad-meter">
+                  <div id="vad-meter-fill" class="vad-meter-fill"></div>
+                </div>
               </div>
-              <span id="toggle-hotkey-status" class="hotkey-status"></span>
             </div>
             <label class="field">
               <span class="field-label">Input device</span>

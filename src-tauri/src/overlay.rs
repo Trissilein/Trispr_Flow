@@ -14,7 +14,7 @@ pub enum OverlayState {
 
 /// Creates and configures the overlay window for recording status
 pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
-    use tracing::{info, error};
+    use tracing::info;
 
     info!("create_overlay_window called");
 

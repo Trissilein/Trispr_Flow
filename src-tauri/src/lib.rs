@@ -28,8 +28,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const MIN_AUDIO_MS: u64 = 250;
-const VAD_THRESHOLD: f32 = 0.015;
-const VAD_SILENCE_MS: u64 = 700;
+const VAD_THRESHOLD_DEFAULT: f32 = 0.015;
+const VAD_SILENCE_MS_DEFAULT: u64 = 700;
 const VAD_MIN_VOICE_MS: u64 = 250;
 const DEFAULT_MODEL_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 
@@ -67,6 +67,8 @@ struct Settings {
   cloud_fallback: bool,
   audio_cues: bool,
   audio_cues_volume: f32,
+  vad_threshold: f32,
+  vad_silence_ms: u64,
 }
 
 impl Default for Settings {
@@ -81,6 +83,8 @@ impl Default for Settings {
       cloud_fallback: false,
       audio_cues: true,
       audio_cues_volume: 0.3,
+      vad_threshold: VAD_THRESHOLD_DEFAULT,
+      vad_silence_ms: VAD_SILENCE_MS_DEFAULT,
     }
   }
 }
@@ -239,6 +243,12 @@ fn load_settings(app: &AppHandle) -> Settings {
       let mut settings: Settings = serde_json::from_str(&raw).unwrap_or_default();
       if settings.mode != "ptt" && settings.mode != "vad" {
         settings.mode = "ptt".to_string();
+      }
+      if !(0.0..=1.0).contains(&settings.vad_threshold) {
+        settings.vad_threshold = VAD_THRESHOLD_DEFAULT;
+      }
+      if settings.vad_silence_ms < 100 {
+        settings.vad_silence_ms = VAD_SILENCE_MS_DEFAULT;
       }
       settings
     }
@@ -408,6 +418,7 @@ impl OverlayLevelEmitter {
     self.last_emit_ms.store(now_ms, Ordering::Relaxed);
     let level = level.clamp(0.0, 1.0);
     let _ = self.app.emit("overlay:level", level);
+    let _ = self.app.emit("audio:level", level);
   }
 }
 
@@ -415,28 +426,50 @@ impl OverlayLevelEmitter {
 struct VadRuntime {
   recording: std::sync::atomic::AtomicBool,
   pending_flush: std::sync::atomic::AtomicBool,
-  transcribing: std::sync::atomic::AtomicBool,
+  processing: std::sync::atomic::AtomicBool,
   last_voice_ms: AtomicU64,
   start_ms: AtomicU64,
   audio_cues: bool,
+  threshold_scaled: AtomicU64,
+  silence_ms: AtomicU64,
 }
 
 impl VadRuntime {
-  fn new(audio_cues: bool) -> Self {
+  fn new(audio_cues: bool, threshold: f32, silence_ms: u64) -> Self {
+    let scaled = (threshold.clamp(0.001, 0.5) * 1_000_000.0) as u64;
     Self {
       recording: std::sync::atomic::AtomicBool::new(false),
       pending_flush: std::sync::atomic::AtomicBool::new(false),
-      transcribing: std::sync::atomic::AtomicBool::new(false),
+      processing: std::sync::atomic::AtomicBool::new(false),
       last_voice_ms: AtomicU64::new(0),
       start_ms: AtomicU64::new(0),
       audio_cues,
+      threshold_scaled: AtomicU64::new(scaled),
+      silence_ms: AtomicU64::new(silence_ms.max(100)),
     }
+  }
+
+  fn threshold(&self) -> f32 {
+    self.threshold_scaled.load(Ordering::Relaxed) as f32 / 1_000_000.0
+  }
+
+  fn update_threshold(&self, threshold: f32) {
+    let scaled = (threshold.clamp(0.001, 0.5) * 1_000_000.0) as u64;
+    self.threshold_scaled.store(scaled, Ordering::Relaxed);
+  }
+
+  fn silence_ms(&self) -> u64 {
+    self.silence_ms.load(Ordering::Relaxed)
+  }
+
+  fn update_silence_ms(&self, silence_ms: u64) {
+    self.silence_ms.store(silence_ms.max(100), Ordering::Relaxed);
   }
 }
 
 #[derive(Debug, Clone)]
 enum VadEvent {
-  Finalize,
+  Finalize(Vec<i16>),
 }
 
 #[derive(Clone)]
@@ -539,6 +572,14 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
     }
     if settings.mode == "vad" {
       let _ = start_vad_monitor(&app, &state, &settings);
+    }
+  }
+  if settings.mode == "vad" {
+    if let Ok(recorder) = state.recorder.lock() {
+      if let Some(runtime) = recorder.vad_runtime.as_ref() {
+        runtime.update_threshold(settings.vad_threshold);
+        runtime.update_silence_ms(settings.vad_silence_ms);
+      }
     }
   }
 
@@ -725,12 +766,9 @@ fn handle_vad_audio(
   sample_rate: u32,
 ) {
   let runtime = &vad_handle.runtime;
-  if runtime.transcribing.load(Ordering::Relaxed) {
-    return;
-  }
-
   let now = now_ms();
-  if level >= VAD_THRESHOLD {
+  let threshold = runtime.threshold();
+  if level >= threshold {
     runtime.last_voice_ms.store(now, Ordering::Relaxed);
     if !runtime.recording.swap(true, Ordering::Relaxed) {
       runtime.start_ms.store(now, Ordering::Relaxed);
@@ -751,11 +789,15 @@ fn handle_vad_audio(
 
     let last = runtime.last_voice_ms.load(Ordering::Relaxed);
     let start = runtime.start_ms.load(Ordering::Relaxed);
-    if now.saturating_sub(last) > VAD_SILENCE_MS && now.saturating_sub(start) > VAD_MIN_VOICE_MS {
+    let silence_ms = runtime.silence_ms();
+    if now.saturating_sub(last) > silence_ms && now.saturating_sub(start) > VAD_MIN_VOICE_MS {
       if !runtime.pending_flush.swap(true, Ordering::Relaxed) {
         runtime.recording.store(false, Ordering::Relaxed);
-        runtime.transcribing.store(true, Ordering::Relaxed);
-        let _ = vad_handle.tx.send(VadEvent::Finalize);
+        let samples = {
+          let mut buf = buffer.lock().unwrap();
+          buf.drain()
+        };
+        let _ = vad_handle.tx.send(VadEvent::Finalize(samples));
       }
     }
   }
@@ -787,11 +829,13 @@ fn build_input_stream_f32(
           mono.push(sample);
           sum_abs += sample.abs();
         }
+        let level = if mono.is_empty() {
+          0.0
+        } else {
+          (sum_abs / mono.len() as f32).min(1.0)
+        };
         if let Some(emitter) = overlay.as_ref() {
-          if !mono.is_empty() {
-            let level = (sum_abs / mono.len() as f32).min(1.0);
-            emitter.emit_level(level);
-          }
+          emitter.emit_level(level);
         }
         if let Some(vad_handle) = vad.as_ref() {
           handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
@@ -831,11 +875,13 @@ fn build_input_stream_i16(
           mono.push(sample);
           sum_abs += sample.abs();
         }
+        let level = if mono.is_empty() {
+          0.0
+        } else {
+          (sum_abs / mono.len() as f32).min(1.0)
+        };
         if let Some(emitter) = overlay.as_ref() {
-          if !mono.is_empty() {
-            let level = (sum_abs / mono.len() as f32).min(1.0);
-            emitter.emit_level(level);
-          }
+          emitter.emit_level(level);
         }
         if let Some(vad_handle) = vad.as_ref() {
           handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
@@ -876,11 +922,13 @@ fn build_input_stream_u16(
           mono.push(sample);
           sum_abs += sample.abs();
         }
+        let level = if mono.is_empty() {
+          0.0
+        } else {
+          (sum_abs / mono.len() as f32).min(1.0)
+        };
         if let Some(emitter) = overlay.as_ref() {
-          if !mono.is_empty() {
-            let level = (sum_abs / mono.len() as f32).min(1.0);
-            emitter.emit_level(level);
-          }
+          emitter.emit_level(level);
         }
         if let Some(vad_handle) = vad.as_ref() {
           handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
@@ -999,7 +1047,11 @@ fn start_vad_monitor(
   let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
   let (vad_tx, vad_rx) = std::sync::mpsc::channel::<VadEvent>();
 
-  let vad_runtime = Arc::new(VadRuntime::new(settings.audio_cues));
+  let vad_runtime = Arc::new(VadRuntime::new(
+    settings.audio_cues,
+    settings.vad_threshold,
+    settings.vad_silence_ms,
+  ));
   let vad_handle = VadHandle {
     runtime: vad_runtime.clone(),
     tx: vad_tx.clone(),
@@ -1013,8 +1065,8 @@ fn start_vad_monitor(
   thread::spawn(move || {
     for event in vad_rx {
       match event {
-        VadEvent::Finalize => {
-          process_vad_segment(app_handle.clone(), settings_clone.clone(), buffer_clone.clone(), vad_runtime_clone.clone());
+        VadEvent::Finalize(samples) => {
+          process_vad_segment(app_handle.clone(), settings_clone.clone(), samples, vad_runtime_clone.clone());
         }
       }
     }
@@ -1092,7 +1144,7 @@ fn stop_vad_monitor(app: &AppHandle, state: &State<'_, AppState>) {
 
   if let Some(runtime) = vad_runtime {
     runtime.recording.store(false, Ordering::Relaxed);
-    runtime.transcribing.store(false, Ordering::Relaxed);
+    runtime.processing.store(false, Ordering::Relaxed);
     runtime.pending_flush.store(false, Ordering::Relaxed);
   }
 
@@ -1114,19 +1166,17 @@ fn stop_vad_monitor(app: &AppHandle, state: &State<'_, AppState>) {
 fn process_vad_segment(
   app_handle: AppHandle,
   settings: Settings,
-  buffer: Arc<Mutex<CaptureBuffer>>,
+  samples: Vec<i16>,
   runtime: Arc<VadRuntime>,
 ) {
   let state = app_handle.state::<AppState>();
-  {
-    let mut recorder = state.recorder.lock().unwrap();
+  if samples.is_empty() {
+    runtime.pending_flush.store(false, Ordering::Relaxed);
+    return;
+  }
+  if let Ok(mut recorder) = state.recorder.lock() {
     recorder.transcribing = true;
   }
-
-  let samples = {
-    let mut buf = buffer.lock().unwrap();
-    buf.drain()
-  };
 
   let min_samples = (TARGET_SAMPLE_RATE as u64 * MIN_AUDIO_MS / 1000) as usize;
   if samples.len() < min_samples {
@@ -1139,7 +1189,7 @@ fn process_vad_segment(
         (samples.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64)
       ),
     );
-    runtime.transcribing.store(false, Ordering::Relaxed);
+    runtime.processing.store(false, Ordering::Relaxed);
     runtime.pending_flush.store(false, Ordering::Relaxed);
     if let Ok(mut recorder) = state.recorder.lock() {
       recorder.transcribing = false;
@@ -1147,6 +1197,7 @@ fn process_vad_segment(
     return;
   }
 
+  runtime.processing.store(true, Ordering::Relaxed);
   let _ = app_handle.emit("capture:state", "transcribing");
   let _ = update_overlay_state(&app_handle, OverlayState::Transcribing);
 
@@ -1156,11 +1207,16 @@ fn process_vad_segment(
     recorder.transcribing = false;
   }
 
-  runtime.transcribing.store(false, Ordering::Relaxed);
+  runtime.processing.store(false, Ordering::Relaxed);
   runtime.pending_flush.store(false, Ordering::Relaxed);
 
-  let _ = app_handle.emit("capture:state", "idle");
-  let _ = update_overlay_state(&app_handle, OverlayState::Idle);
+  if runtime.recording.load(Ordering::Relaxed) {
+    let _ = app_handle.emit("capture:state", "recording");
+    let _ = update_overlay_state(&app_handle, OverlayState::Recording);
+  } else {
+    let _ = app_handle.emit("capture:state", "idle");
+    let _ = update_overlay_state(&app_handle, OverlayState::Idle);
+  }
 
   if settings.audio_cues {
     let _ = app_handle.emit("audio:cue", "stop");

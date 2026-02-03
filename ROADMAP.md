@@ -162,6 +162,12 @@ This roadmap has been restructured based on a comprehensive project overhaul. Th
 - Settings: VAD on/off toggle + sensitivity slider
 - Expected improvement: 20%+ reduction in average recording length
 
+#### Activation Words (Always‑On)
+- Optional activation word (e.g., “over”) to finalize and paste.
+- Enables continuous recording with post‑cutting of silence.
+- Settings: activation word text + enable/disable + timeout.
+- Works alongside VAD (activation word as hard stop).
+
 #### Text Post-Processing
 - Pipeline for text transformations after transcription
 - Processors:

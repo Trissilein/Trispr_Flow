@@ -314,6 +314,10 @@ h1 {
   background-repeat: no-repeat;
   background-position: right 10px center;
   padding-right: 32px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .field select option {
@@ -499,6 +503,8 @@ button:disabled {
   border-radius: var(--radius-sm);
   transition: all 0.15s ease;
   cursor: pointer;
+  overflow: hidden;
+  max-width: 100%;
 }
 
 .history-item:hover {
@@ -509,11 +515,13 @@ button:disabled {
 
 .history-text {
   flex: 1;
+  min-width: 0;
   font-size: 0.85rem;
   color: var(--ink-soft);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  line-height: 1.4;
 }
 
 .history-meta {

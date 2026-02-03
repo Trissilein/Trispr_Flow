@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 interface Settings {
-  mode: "ptt" | "toggle";
+  mode: "ptt" | "vad";
   hotkey_ptt: string;
   hotkey_toggle: string;
   input_device: string;
@@ -130,7 +130,7 @@ function formatTime(timestamp: number) {
 function renderHero() {
   if (!settings) return;
   if (cloudState) cloudState.textContent = settings.cloud_fallback ? "On" : "Off";
-  if (modeState) modeState.textContent = settings.mode === "ptt" ? "PTT" : "Toggle";
+  if (modeState) modeState.textContent = settings.mode === "ptt" ? "PTT" : "VAD";
   const device = devices.find((item) => item.id === settings?.input_device);
   if (deviceState) deviceState.textContent = device?.label ?? "Default";
   if (engineLabel) engineLabel.textContent = "whisper.cpp (GPU auto)";
@@ -142,6 +142,11 @@ function renderSettings() {
   if (modeSelect) modeSelect.value = settings.mode;
   if (pttHotkey) pttHotkey.value = settings.hotkey_ptt;
   if (toggleHotkey) toggleHotkey.value = settings.hotkey_toggle;
+  const hotkeysEnabled = settings.mode === "ptt";
+  if (pttHotkey) pttHotkey.disabled = !hotkeysEnabled;
+  if (pttHotkeyRecord) pttHotkeyRecord.disabled = !hotkeysEnabled;
+  if (toggleHotkey) toggleHotkey.disabled = !hotkeysEnabled;
+  if (toggleHotkeyRecord) toggleHotkeyRecord.disabled = !hotkeysEnabled;
   if (deviceSelect) deviceSelect.value = settings.input_device;
   if (modelSelect) modelSelect.value = settings.model;
   if (languageSelect) languageSelect.value = settings.language_mode;

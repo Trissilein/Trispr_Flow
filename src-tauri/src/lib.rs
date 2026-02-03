@@ -28,6 +28,9 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const MIN_AUDIO_MS: u64 = 250;
+const VAD_THRESHOLD: f32 = 0.015;
+const VAD_SILENCE_MS: u64 = 700;
+const VAD_MIN_VOICE_MS: u64 = 250;
 const DEFAULT_MODEL_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 
 struct ModelSpec {
@@ -186,6 +189,8 @@ struct Recorder {
   transcribing: bool,
   stop_tx: Option<std::sync::mpsc::Sender<()>>,
   join_handle: Option<thread::JoinHandle<()>>,
+  vad_tx: Option<std::sync::mpsc::Sender<VadEvent>>,
+  vad_runtime: Option<Arc<VadRuntime>>,
 }
 
 impl Recorder {
@@ -196,6 +201,8 @@ impl Recorder {
       transcribing: false,
       stop_tx: None,
       join_handle: None,
+      vad_tx: None,
+      vad_runtime: None,
     }
   }
 }
@@ -228,7 +235,13 @@ fn resolve_data_path(app: &AppHandle, filename: &str) -> PathBuf {
 fn load_settings(app: &AppHandle) -> Settings {
   let path = resolve_config_path(app, "settings.json");
   match fs::read_to_string(path) {
-    Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+    Ok(raw) => {
+      let mut settings: Settings = serde_json::from_str(&raw).unwrap_or_default();
+      if settings.mode != "ptt" && settings.mode != "vad" {
+        settings.mode = "ptt".to_string();
+      }
+      settings
+    }
     Err(_) => Settings::default(),
   }
 }
@@ -398,6 +411,41 @@ impl OverlayLevelEmitter {
   }
 }
 
+#[derive(Debug)]
+struct VadRuntime {
+  recording: std::sync::atomic::AtomicBool,
+  pending_flush: std::sync::atomic::AtomicBool,
+  transcribing: std::sync::atomic::AtomicBool,
+  last_voice_ms: AtomicU64,
+  start_ms: AtomicU64,
+  audio_cues: bool,
+}
+
+impl VadRuntime {
+  fn new(audio_cues: bool) -> Self {
+    Self {
+      recording: std::sync::atomic::AtomicBool::new(false),
+      pending_flush: std::sync::atomic::AtomicBool::new(false),
+      transcribing: std::sync::atomic::AtomicBool::new(false),
+      last_voice_ms: AtomicU64::new(0),
+      start_ms: AtomicU64::new(0),
+      audio_cues,
+    }
+  }
+}
+
+#[derive(Debug, Clone)]
+enum VadEvent {
+  Finalize,
+}
+
+#[derive(Clone)]
+struct VadHandle {
+  runtime: Arc<VadRuntime>,
+  tx: std::sync::mpsc::Sender<VadEvent>,
+  app: AppHandle,
+}
+
 fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> {
   let manager = app.global_shortcut();
   let _ = manager.unregister_all();
@@ -456,8 +504,11 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
   };
 
   match settings.mode.as_str() {
-    "ptt" => register_ptt()?,
-    "toggle" => register_toggle()?,
+    "ptt" => {
+      register_ptt()?;
+      register_toggle()?;
+    }
+    "vad" => {}
     _ => {
       register_ptt()?;
       register_toggle()?;
@@ -474,6 +525,7 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
+  let prev_mode = { state.settings.lock().unwrap().mode.clone() };
   {
     let mut current = state.settings.lock().unwrap();
     *current = settings.clone();
@@ -481,11 +533,18 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
   save_settings_file(&app, &settings)?;
   register_hotkeys(&app, &settings)?;
 
+  if prev_mode != settings.mode {
+    if prev_mode == "vad" {
+      stop_vad_monitor(&app, &state);
+    }
+    if settings.mode == "vad" {
+      let _ = start_vad_monitor(&app, &state, &settings);
+    }
+  }
+
   // Update overlay state based on new mode
   let recorder = state.recorder.lock().unwrap();
-  if settings.mode == "toggle" && !recorder.active {
-    let _ = overlay::update_overlay_state(&app, overlay::OverlayState::ToggleIdle);
-  } else if !recorder.active {
+  if !recorder.active {
     let _ = overlay::update_overlay_state(&app, overlay::OverlayState::Idle);
   }
   drop(recorder);
@@ -650,11 +709,55 @@ fn resolve_input_device(device_id: &str) -> Option<cpal::Device> {
 
 fn push_mono_samples(
   buffer: &Arc<Mutex<CaptureBuffer>>,
-  mono: Vec<f32>,
+  mono: &[f32],
   sample_rate: u32,
 ) {
   if let Ok(mut guard) = buffer.lock() {
-    guard.push_samples(&mono, sample_rate);
+    guard.push_samples(mono, sample_rate);
+  }
+}
+
+fn handle_vad_audio(
+  vad_handle: &VadHandle,
+  buffer: &Arc<Mutex<CaptureBuffer>>,
+  mono: Vec<f32>,
+  level: f32,
+  sample_rate: u32,
+) {
+  let runtime = &vad_handle.runtime;
+  if runtime.transcribing.load(Ordering::Relaxed) {
+    return;
+  }
+
+  let now = now_ms();
+  if level >= VAD_THRESHOLD {
+    runtime.last_voice_ms.store(now, Ordering::Relaxed);
+    if !runtime.recording.swap(true, Ordering::Relaxed) {
+      runtime.start_ms.store(now, Ordering::Relaxed);
+      runtime.pending_flush.store(false, Ordering::Relaxed);
+      if let Ok(mut buf) = buffer.lock() {
+        buf.reset();
+      }
+      let _ = vad_handle.app.emit("capture:state", "recording");
+      let _ = update_overlay_state(&vad_handle.app, OverlayState::Recording);
+      if runtime.audio_cues {
+        let _ = vad_handle.app.emit("audio:cue", "start");
+      }
+    }
+  }
+
+  if runtime.recording.load(Ordering::Relaxed) {
+    push_mono_samples(buffer, &mono, sample_rate);
+
+    let last = runtime.last_voice_ms.load(Ordering::Relaxed);
+    let start = runtime.start_ms.load(Ordering::Relaxed);
+    if now.saturating_sub(last) > VAD_SILENCE_MS && now.saturating_sub(start) > VAD_MIN_VOICE_MS {
+      if !runtime.pending_flush.swap(true, Ordering::Relaxed) {
+        runtime.recording.store(false, Ordering::Relaxed);
+        runtime.transcribing.store(true, Ordering::Relaxed);
+        let _ = vad_handle.tx.send(VadEvent::Finalize);
+      }
+    }
   }
 }
 
@@ -663,6 +766,7 @@ fn build_input_stream_f32(
   config: &StreamConfig,
   buffer: Arc<Mutex<CaptureBuffer>>,
   overlay: Option<Arc<OverlayLevelEmitter>>,
+  vad: Option<VadHandle>,
 ) -> Result<cpal::Stream, String> {
   let channels = config.channels as usize;
   let sample_rate = config.sample_rate.0;
@@ -689,7 +793,11 @@ fn build_input_stream_f32(
             emitter.emit_level(level);
           }
         }
-        push_mono_samples(&buffer, mono, sample_rate);
+        if let Some(vad_handle) = vad.as_ref() {
+          handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
+        } else {
+          push_mono_samples(&buffer, &mono, sample_rate);
+        }
       },
       err_fn,
       None,
@@ -702,6 +810,7 @@ fn build_input_stream_i16(
   config: &StreamConfig,
   buffer: Arc<Mutex<CaptureBuffer>>,
   overlay: Option<Arc<OverlayLevelEmitter>>,
+  vad: Option<VadHandle>,
 ) -> Result<cpal::Stream, String> {
   let channels = config.channels as usize;
   let sample_rate = config.sample_rate.0;
@@ -728,7 +837,11 @@ fn build_input_stream_i16(
             emitter.emit_level(level);
           }
         }
-        push_mono_samples(&buffer, mono, sample_rate);
+        if let Some(vad_handle) = vad.as_ref() {
+          handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
+        } else {
+          push_mono_samples(&buffer, &mono, sample_rate);
+        }
       },
       err_fn,
       None,
@@ -741,6 +854,7 @@ fn build_input_stream_u16(
   config: &StreamConfig,
   buffer: Arc<Mutex<CaptureBuffer>>,
   overlay: Option<Arc<OverlayLevelEmitter>>,
+  vad: Option<VadHandle>,
 ) -> Result<cpal::Stream, String> {
   let channels = config.channels as usize;
   let sample_rate = config.sample_rate.0;
@@ -768,7 +882,11 @@ fn build_input_stream_u16(
             emitter.emit_level(level);
           }
         }
-        push_mono_samples(&buffer, mono, sample_rate);
+        if let Some(vad_handle) = vad.as_ref() {
+          handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
+        } else {
+          push_mono_samples(&buffer, &mono, sample_rate);
+        }
       },
       err_fn,
       None,
@@ -808,10 +926,11 @@ fn start_recording_with_settings(
       let stream_config: StreamConfig = config.clone().into();
 
       let overlay = Some(overlay_emitter);
+      let vad = None;
       let stream = match config.sample_format() {
-        SampleFormat::F32 => build_input_stream_f32(&device, &stream_config, buffer, overlay.clone())?,
-        SampleFormat::I16 => build_input_stream_i16(&device, &stream_config, buffer, overlay.clone())?,
-        SampleFormat::U16 => build_input_stream_u16(&device, &stream_config, buffer, overlay.clone())?,
+        SampleFormat::F32 => build_input_stream_f32(&device, &stream_config, buffer, overlay.clone(), vad.clone())?,
+        SampleFormat::I16 => build_input_stream_i16(&device, &stream_config, buffer, overlay.clone(), vad.clone())?,
+        SampleFormat::U16 => build_input_stream_u16(&device, &stream_config, buffer, overlay.clone(), vad.clone())?,
         _ => return Err("Unsupported sample format".to_string()),
       };
 
@@ -857,6 +976,220 @@ fn start_recording_with_settings(
   Ok(())
 }
 
+fn start_vad_monitor(
+  app: &AppHandle,
+  state: &State<'_, AppState>,
+  settings: &Settings,
+) -> Result<(), String> {
+  info!("start_vad_monitor called");
+  let mut recorder = state.recorder.lock().unwrap();
+  if recorder.active || recorder.transcribing {
+    info!("VAD already active or transcribing, skipping");
+    return Ok(());
+  }
+
+  if let Ok(mut buf) = recorder.buffer.lock() {
+    buf.reset();
+  }
+
+  let buffer = recorder.buffer.clone();
+  let overlay_emitter = Arc::new(OverlayLevelEmitter::new(app.clone()));
+  let device_id = settings.input_device.clone();
+  let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+  let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
+  let (vad_tx, vad_rx) = std::sync::mpsc::channel::<VadEvent>();
+
+  let vad_runtime = Arc::new(VadRuntime::new(settings.audio_cues));
+  let vad_handle = VadHandle {
+    runtime: vad_runtime.clone(),
+    tx: vad_tx.clone(),
+    app: app.clone(),
+  };
+
+  let app_handle = app.clone();
+  let settings_clone = settings.clone();
+  let buffer_clone = buffer.clone();
+  let vad_runtime_clone = vad_runtime.clone();
+  thread::spawn(move || {
+    for event in vad_rx {
+      match event {
+        VadEvent::Finalize => {
+          process_vad_segment(app_handle.clone(), settings_clone.clone(), buffer_clone.clone(), vad_runtime_clone.clone());
+        }
+      }
+    }
+  });
+
+  let join_handle = thread::spawn(move || {
+    let result = (|| -> Result<(), String> {
+      let device = resolve_input_device(&device_id)
+        .ok_or_else(|| "No input device available".to_string())?;
+      let config = device
+        .default_input_config()
+        .map_err(|e| e.to_string())?;
+      let stream_config: StreamConfig = config.clone().into();
+
+      let overlay = Some(overlay_emitter);
+      let vad = Some(vad_handle);
+      let stream = match config.sample_format() {
+        SampleFormat::F32 => build_input_stream_f32(&device, &stream_config, buffer, overlay.clone(), vad.clone())?,
+        SampleFormat::I16 => build_input_stream_i16(&device, &stream_config, buffer, overlay.clone(), vad.clone())?,
+        SampleFormat::U16 => build_input_stream_u16(&device, &stream_config, buffer, overlay.clone(), vad.clone())?,
+        _ => return Err("Unsupported sample format".to_string()),
+      };
+
+      stream.play().map_err(|e| e.to_string())?;
+      let _ = ready_tx.send(Ok(()));
+
+      let _ = stop_rx.recv();
+      drop(stream);
+      Ok(())
+    })();
+
+    if let Err(err) = result {
+      let _ = ready_tx.send(Err(err));
+    }
+  });
+
+  let start_result = match ready_rx.recv_timeout(Duration::from_secs(3)) {
+    Ok(Ok(())) => Ok(()),
+    Ok(Err(err)) => Err(err),
+    Err(_) => Err("Failed to start audio stream".to_string()),
+  };
+
+  if let Err(err) = start_result {
+    error!("Failed to start VAD monitor: {}", err);
+    let _ = stop_tx.send(());
+    let _ = join_handle.join();
+    return Err(err);
+  }
+
+  recorder.stop_tx = Some(stop_tx);
+  recorder.join_handle = Some(join_handle);
+  recorder.active = true;
+  recorder.vad_tx = Some(vad_tx);
+  recorder.vad_runtime = Some(vad_runtime);
+
+  let _ = app.emit("capture:state", "idle");
+  let _ = update_overlay_state(app, OverlayState::Idle);
+  Ok(())
+}
+
+fn stop_vad_monitor(app: &AppHandle, state: &State<'_, AppState>) {
+  let (stop_tx, join_handle, vad_tx, vad_runtime) = {
+    let mut recorder = state.recorder.lock().unwrap();
+    if !recorder.active {
+      return;
+    }
+    recorder.active = false;
+    (
+      recorder.stop_tx.take(),
+      recorder.join_handle.take(),
+      recorder.vad_tx.take(),
+      recorder.vad_runtime.take(),
+    )
+  };
+
+  if let Some(runtime) = vad_runtime {
+    runtime.recording.store(false, Ordering::Relaxed);
+    runtime.transcribing.store(false, Ordering::Relaxed);
+    runtime.pending_flush.store(false, Ordering::Relaxed);
+  }
+
+  if let Some(tx) = vad_tx {
+    drop(tx);
+  }
+
+  if let Some(tx) = stop_tx {
+    let _ = tx.send(());
+  }
+  if let Some(join_handle) = join_handle {
+    let _ = join_handle.join();
+  }
+
+  let _ = app.emit("capture:state", "idle");
+  let _ = update_overlay_state(app, OverlayState::Idle);
+}
+
+fn process_vad_segment(
+  app_handle: AppHandle,
+  settings: Settings,
+  buffer: Arc<Mutex<CaptureBuffer>>,
+  runtime: Arc<VadRuntime>,
+) {
+  let state = app_handle.state::<AppState>();
+  {
+    let mut recorder = state.recorder.lock().unwrap();
+    recorder.transcribing = true;
+  }
+
+  let samples = {
+    let mut buf = buffer.lock().unwrap();
+    buf.drain()
+  };
+
+  let min_samples = (TARGET_SAMPLE_RATE as u64 * MIN_AUDIO_MS / 1000) as usize;
+  if samples.len() < min_samples {
+    let _ = app_handle.emit("capture:state", "idle");
+    let _ = update_overlay_state(&app_handle, OverlayState::Idle);
+    let _ = app_handle.emit(
+      "transcription:error",
+      format!(
+        "Audio too short ({} ms). Speak a bit longer.",
+        (samples.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64)
+      ),
+    );
+    runtime.transcribing.store(false, Ordering::Relaxed);
+    runtime.pending_flush.store(false, Ordering::Relaxed);
+    if let Ok(mut recorder) = state.recorder.lock() {
+      recorder.transcribing = false;
+    }
+    return;
+  }
+
+  let _ = app_handle.emit("capture:state", "transcribing");
+  let _ = update_overlay_state(&app_handle, OverlayState::Transcribing);
+
+  let result = transcribe_audio(&app_handle, &settings, &samples);
+
+  if let Ok(mut recorder) = state.recorder.lock() {
+    recorder.transcribing = false;
+  }
+
+  runtime.transcribing.store(false, Ordering::Relaxed);
+  runtime.pending_flush.store(false, Ordering::Relaxed);
+
+  let _ = app_handle.emit("capture:state", "idle");
+  let _ = update_overlay_state(&app_handle, OverlayState::Idle);
+
+  if settings.audio_cues {
+    let _ = app_handle.emit("audio:cue", "stop");
+  }
+
+  match result {
+    Ok((text, source)) => {
+      if !text.trim().is_empty() {
+        if let Ok(updated) = push_history_entry_inner(&app_handle, &state.history, text.clone(), source.clone()) {
+          let _ = app_handle.emit("history:updated", updated);
+        }
+        let _ = app_handle.emit(
+          "transcription:result",
+          TranscriptionResult {
+            text: text.clone(),
+            source: source.clone(),
+          },
+        );
+        if let Err(err) = paste_text(&text) {
+          let _ = app_handle.emit("transcription:error", err);
+        }
+      }
+    }
+    Err(err) => {
+      let _ = app_handle.emit("transcription:error", err);
+    }
+  }
+}
+
 fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
   let app_handle = app.clone();
   let settings = state.settings.lock().unwrap().clone();
@@ -892,13 +1225,7 @@ fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
     let min_samples = (TARGET_SAMPLE_RATE as u64 * MIN_AUDIO_MS / 1000) as usize;
     if samples.len() < min_samples {
       let _ = app_handle.emit("capture:state", "idle");
-      // Set overlay based on mode
-      let overlay_state = if settings.mode == "toggle" {
-        OverlayState::ToggleIdle
-      } else {
-        OverlayState::Idle
-      };
-      let _ = update_overlay_state(&app_handle, overlay_state);
+      let _ = update_overlay_state(&app_handle, OverlayState::Idle);
       let _ = app_handle.emit(
         "transcription:error",
         format!(
@@ -921,13 +1248,7 @@ fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
     drop(recorder);
 
     let _ = app_handle.emit("capture:state", "idle");
-    // Set overlay based on mode
-    let overlay_state = if settings.mode == "toggle" {
-      OverlayState::ToggleIdle
-    } else {
-      OverlayState::Idle
-    };
-    let _ = update_overlay_state(&app_handle, overlay_state);
+    let _ = update_overlay_state(&app_handle, OverlayState::Idle);
 
     // Emit audio cue if enabled
     if settings.audio_cues {
@@ -982,7 +1303,7 @@ fn handle_toggle_async(app: AppHandle) {
   let app_handle = app.clone();
   let state = app_handle.state::<AppState>();
   let settings = state.settings.lock().unwrap().clone();
-  if settings.mode != "toggle" {
+  if settings.mode != "ptt" {
     return;
   }
 
@@ -1429,6 +1750,12 @@ pub fn run() {
 
       if let Err(err) = register_hotkeys(app.handle(), &settings) {
         eprintln!("⚠ Failed to register hotkeys: {}", err);
+      }
+
+      if settings.mode == "vad" {
+        if let Err(err) = start_vad_monitor(app.handle(), &app.state::<AppState>(), &settings) {
+          eprintln!("⚠ Failed to start VAD monitor: {}", err);
+        }
       }
 
       // Create overlay window at startup

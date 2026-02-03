@@ -291,25 +291,41 @@ h1 {
   padding: 8px 10px;
   border: 1px solid var(--stroke-strong);
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.03);
+  background-color: rgba(255, 255, 255, 0.03);
   color: var(--ink);
   font-family: inherit;
   font-size: 0.85rem;
-  transition: all 0.15s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.field input[type="color"] {
+  padding: 0;
+  height: 34px;
+  min-height: 34px;
+  background-color: transparent;
+}
+
+.field input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.field input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: calc(var(--radius-sm) - 1px);
 }
 
 .field input:focus,
 .field select:focus {
   outline: none;
   border-color: var(--accent-2);
-  background: rgba(255, 255, 255, 0.05);
+  background-color: rgba(255, 255, 255, 0.05);
   box-shadow: 0 0 0 3px rgba(29, 166, 160, 0.15);
 }
 
 .field input:hover,
 .field select:hover {
   border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.04);
+  background-color: rgba(255, 255, 255, 0.04);
 }
 
 .field select {

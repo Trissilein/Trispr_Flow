@@ -24,6 +24,8 @@ interface Settings {
   overlay_max_radius: number;
   overlay_rise_ms: number;
   overlay_fall_ms: number;
+  overlay_opacity_inactive: number;
+  overlay_opacity_active: number;
   overlay_pos_x: number;
   overlay_pos_y: number;
 }
@@ -131,6 +133,10 @@ const overlayRise = $("overlay-rise") as HTMLInputElement | null;
 const overlayRiseValue = $("overlay-rise-value");
 const overlayFall = $("overlay-fall") as HTMLInputElement | null;
 const overlayFallValue = $("overlay-fall-value");
+const overlayOpacityInactive = $("overlay-opacity-inactive") as HTMLInputElement | null;
+const overlayOpacityInactiveValue = $("overlay-opacity-inactive-value");
+const overlayOpacityActive = $("overlay-opacity-active") as HTMLInputElement | null;
+const overlayOpacityActiveValue = $("overlay-opacity-active-value");
 const overlayPosX = $("overlay-pos-x") as HTMLInputElement | null;
 const overlayPosY = $("overlay-pos-y") as HTMLInputElement | null;
 const historyList = $("history-list");
@@ -198,6 +204,18 @@ function renderSettings() {
   if (overlayRiseValue) overlayRiseValue.textContent = `${settings.overlay_rise_ms}`;
   if (overlayFall) overlayFall.value = settings.overlay_fall_ms.toString();
   if (overlayFallValue) overlayFallValue.textContent = `${settings.overlay_fall_ms}`;
+  if (overlayOpacityInactive) {
+    overlayOpacityInactive.value = Math.round(settings.overlay_opacity_inactive * 100).toString();
+  }
+  if (overlayOpacityInactiveValue) {
+    overlayOpacityInactiveValue.textContent = `${Math.round(settings.overlay_opacity_inactive * 100)}%`;
+  }
+  if (overlayOpacityActive) {
+    overlayOpacityActive.value = Math.round(settings.overlay_opacity_active * 100).toString();
+  }
+  if (overlayOpacityActiveValue) {
+    overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_opacity_active * 100)}%`;
+  }
   if (overlayPosX) overlayPosX.value = Math.round(settings.overlay_pos_x).toString();
   if (overlayPosY) overlayPosY.value = Math.round(settings.overlay_pos_y).toString();
 }
@@ -634,6 +652,41 @@ function wireEvents() {
     await persistSettings();
   });
 
+  overlayOpacityInactive?.addEventListener("input", () => {
+    if (!settings || !overlayOpacityInactive || !overlayOpacityActive) return;
+    const value = Math.min(1, Math.max(0.05, Number(overlayOpacityInactive.value) / 100));
+    settings.overlay_opacity_inactive = value;
+    if (settings.overlay_opacity_active < settings.overlay_opacity_inactive) {
+      settings.overlay_opacity_active = settings.overlay_opacity_inactive;
+      overlayOpacityActive.value = Math.round(settings.overlay_opacity_active * 100).toString();
+    }
+    if (overlayOpacityInactiveValue) {
+      overlayOpacityInactiveValue.textContent = `${Math.round(settings.overlay_opacity_inactive * 100)}%`;
+    }
+    if (overlayOpacityActiveValue) {
+      overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_opacity_active * 100)}%`;
+    }
+  });
+
+  overlayOpacityInactive?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  overlayOpacityActive?.addEventListener("input", () => {
+    if (!settings || !overlayOpacityActive || !overlayOpacityInactive) return;
+    const value = Math.min(1, Math.max(settings.overlay_opacity_inactive, Number(overlayOpacityActive.value) / 100));
+    settings.overlay_opacity_active = value;
+    if (overlayOpacityActiveValue) {
+      overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_opacity_active * 100)}%`;
+    }
+  });
+
+  overlayOpacityActive?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
   overlayPosX?.addEventListener("change", async () => {
     if (!settings || !overlayPosX) return;
     settings.overlay_pos_x = Number(overlayPosX.value);
@@ -644,6 +697,14 @@ function wireEvents() {
     if (!settings || !overlayPosY) return;
     settings.overlay_pos_y = Number(overlayPosY.value);
     await persistSettings();
+  });
+
+  // Apply Overlay Settings button
+  const applyOverlayBtn = document.getElementById("apply-overlay-btn");
+  applyOverlayBtn?.addEventListener("click", async () => {
+    if (!settings) return;
+    await persistSettings();
+    showToast("Overlay settings applied", "success");
   });
 
   historyAdd?.addEventListener("click", async () => {

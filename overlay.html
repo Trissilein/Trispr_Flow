@@ -4,12 +4,86 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Trispr Flow Overlay</title>
-    <link rel="stylesheet" href="/src/overlay.css" />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+      }
+
+      #container {
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #dot {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #ff3d2e;
+        transition: opacity 0.12s ease-out, width 0.05s ease-out, height 0.05s ease-out;
+      }
+
+      #debug {
+        position: fixed;
+        bottom: 4px;
+        left: 4px;
+        font: 10px monospace;
+        color: #0f0;
+        background: rgba(0,0,0,0.85);
+        padding: 3px 6px;
+        border-radius: 3px;
+        z-index: 999;
+      }
+    </style>
   </head>
   <body>
-    <div id="overlay-root" data-state="idle">
-      <div id="overlay-dot"></div>
+    <div id="container">
+      <div id="dot"></div>
     </div>
-    <script type="module" src="/src/overlay.ts"></script>
+    <div id="debug">ready</div>
+
+    <script>
+      // Simple overlay - controlled entirely by backend JS eval
+      const dot = document.getElementById("dot");
+      const debug = document.getElementById("debug");
+
+      // State
+      let isActive = false;
+      let opacityActive = 1.0;
+      let opacityInactive = 0.25;
+
+      function updateOpacity() {
+        dot.style.opacity = isActive ? opacityActive : opacityInactive;
+      }
+
+      // Called from Rust via window.eval()
+      window.setOverlayState = function(state) {
+        debug.textContent = "state: " + state;
+        isActive = (state === "recording" || state === "transcribing");
+        updateOpacity();
+      };
+
+      window.setOverlayColor = function(color) {
+        dot.style.background = color;
+        debug.textContent = "color: " + color;
+      };
+
+      window.setOverlayOpacity = function(active, inactive) {
+        opacityActive = Math.max(0.1, Math.min(1, active));
+        opacityInactive = Math.max(0.05, Math.min(1, inactive));
+        updateOpacity();
+        debug.textContent = "opacity: " + opacityInactive + "/" + opacityActive;
+      };
+
+      // Initialize with default opacity
+      updateOpacity();
+      debug.textContent = "ready";
+    </script>
   </body>
 </html>

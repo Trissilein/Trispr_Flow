@@ -2,6 +2,9 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WindowEvent}
 use serde::{Deserialize, Serialize};
 use std::thread;
 use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static OVERLAY_JS_READY: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -19,8 +22,18 @@ pub struct OverlaySettings {
     pub max_radius: f64,
     pub rise_ms: u64,
     pub fall_ms: u64,
+    pub opacity_inactive: f64,
+    pub opacity_active: f64,
     pub pos_x: f64,
     pub pos_y: f64,
+}
+
+pub fn mark_overlay_ready() {
+    OVERLAY_JS_READY.store(true, Ordering::Relaxed);
+}
+
+pub fn overlay_js_ready() -> bool {
+    OVERLAY_JS_READY.load(Ordering::Relaxed)
 }
 
 /// Creates and configures the overlay window for recording status
@@ -51,11 +64,11 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     .focusable(false)
     .always_on_top(true)
     .skip_taskbar(true)
-    .visible(false) // Start hidden
+    .visible(true)
     .build()
     .map_err(|e| format!("Failed to create overlay window: {}", e))?;
 
-    // Default position (will be overridden by overlay settings)
+    // Default position (may be overridden by overlay settings)
     let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition {
         x: 12.0,
         y: 12.0,
@@ -101,25 +114,24 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
     let _ = window.emit("overlay:state", &state);
     let _ = app.emit("overlay:state", &state);
 
-    // Show or hide based on state
-    match state {
-        OverlayState::Idle => {
-            info!("Hiding overlay (Idle state)");
-            window.hide().map_err(|e| {
-                error!("Failed to hide overlay: {}", e);
-                format!("Failed to hide overlay: {}", e)
-            })?;
-        }
-        OverlayState::ToggleIdle | OverlayState::Recording | OverlayState::Transcribing => {
-            info!("Showing overlay ({:?} state)", state);
-            window.show().map_err(|e| {
-                error!("Failed to show overlay: {}", e);
-                format!("Failed to show overlay: {}", e)
-            })?;
-            let _ = window.set_always_on_top(true);
-            info!("Overlay window.show() succeeded");
-        }
-    }
+    // Keep overlay visible; visual state is handled by CSS opacity.
+    info!("Showing overlay ({:?} state)", state);
+    window.show().map_err(|e| {
+        error!("Failed to show overlay: {}", e);
+        format!("Failed to show overlay: {}", e)
+    })?;
+    let _ = window.set_always_on_top(true);
+    info!("Overlay window.show() succeeded");
+
+    let state_str = match state {
+        OverlayState::Idle => "idle",
+        OverlayState::ToggleIdle => "idle",
+        OverlayState::Recording => "recording",
+        OverlayState::Transcribing => "transcribing",
+    };
+    // Call setOverlayState JS function (new simple overlay)
+    let js = format!("if(window.setOverlayState){{window.setOverlayState('{}');}}", state_str);
+    let _ = window.eval(&js);
 
     // Re-emit after a short delay to ensure the overlay webview is ready.
     let app_handle = app.clone();
@@ -132,6 +144,45 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
     Ok(())
 }
 
+fn resolve_overlay_position(window: &WebviewWindow, settings: &OverlaySettings, size: f64) -> (f64, f64) {
+    let mut anchor_x = settings.pos_x;
+    let mut anchor_y = settings.pos_y;
+
+    let is_default = anchor_x <= 16.0 && anchor_y <= 16.0;
+    if is_default {
+        if let Some(monitor) = window.current_monitor().ok().flatten().or_else(|| window.primary_monitor().ok().flatten()) {
+            let scale = monitor.scale_factor();
+            let size_px = monitor.size();
+            let pos_px = monitor.position();
+            let width = size_px.width as f64 / scale;
+            let height = size_px.height as f64 / scale;
+            let origin_x = pos_px.x as f64 / scale;
+            let origin_y = pos_px.y as f64 / scale;
+            anchor_x = origin_x + width * 0.5;
+            anchor_y = origin_y + height - 30.0;
+        }
+    }
+
+    let pos_x = anchor_x - size * 0.5;
+    let pos_y = anchor_y - size * 0.5;
+    (pos_x, pos_y)
+}
+
+pub fn resolve_overlay_position_for_settings(app: &AppHandle, settings: &OverlaySettings) -> Option<(f64, f64)> {
+    let window = app.get_webview_window("overlay")?;
+    let max_radius = settings.max_radius.max(settings.min_radius).max(4.0);
+    let size = (max_radius * 2.0 + 96.0).max(64.0);
+    let (pos_x, pos_y) = resolve_overlay_position(&window, settings, size);
+    let center_x = pos_x + size * 0.5;
+    let center_y = pos_y + size * 0.5;
+    let changed = (center_x - settings.pos_x).abs() > 0.5 || (center_y - settings.pos_y).abs() > 0.5;
+    if changed {
+        Some((center_x, center_y))
+    } else {
+        None
+    }
+}
+
 pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Result<(), String> {
     let window = match app.get_webview_window("overlay") {
         Some(w) => w,
@@ -139,18 +190,26 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
     };
 
     let max_radius = settings.max_radius.max(settings.min_radius).max(4.0);
-    let size = (max_radius * 2.0 + 32.0).max(32.0);
+    let size = (max_radius * 2.0 + 96.0).max(64.0);
     let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
         width: size,
         height: size,
     }));
+    let (pos_x, pos_y) = resolve_overlay_position(&window, settings, size);
     let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition {
-        x: settings.pos_x,
-        y: settings.pos_y,
+        x: pos_x,
+        y: pos_y,
     }));
 
-    let _ = window.emit("overlay:settings", settings);
-    let _ = app.emit("overlay:settings", settings);
+    // Update overlay via JS functions
+    let js = format!(
+        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}",
+        settings.color,
+        settings.opacity_active,
+        settings.opacity_inactive
+    );
+    let _ = window.eval(&js);
+
     Ok(())
 }
 

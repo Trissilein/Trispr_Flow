@@ -18,20 +18,58 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
   --dot-color: #ff3d2e;
-  opacity: 1;
+  --overlay-opacity-idle: 0.2;
+  --overlay-opacity-active: 0.8;
+  opacity: var(--overlay-opacity-idle);
   transition: opacity 0.12s ease-out;
 }
 
+/* Outer ring - static max radius, shows boundary */
+#overlay-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 48px;  /* max_radius * 2, set via JS */
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid var(--dot-color);
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* Inner dot - dynamic radius based on level */
 #overlay-dot {
-  width: 16px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 16px;  /* set via JS based on level */
   height: 16px;
   border-radius: 50%;
   background: var(--dot-color);
-  box-shadow: 0 0 8px rgba(255, 61, 46, 0.45);
-  transition: box-shadow 80ms linear;
+  pointer-events: none;
 }
 
-#overlay-root[data-state="idle"] {
-  opacity: 0;
+#overlay-root[data-state="recording"],
+#overlay-root[data-state="transcribing"] {
+  opacity: var(--overlay-opacity-active);
+}
+
+/* Debug overlay - temporary for diagnostics */
+#overlay-debug {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  font-family: monospace;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 2px 4px;
+  border-radius: 2px;
+  white-space: nowrap;
+  pointer-events: none;
 }

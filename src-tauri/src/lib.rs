@@ -74,6 +74,8 @@ struct Settings {
   overlay_max_radius: f32,
   overlay_rise_ms: u64,
   overlay_fall_ms: u64,
+  overlay_opacity_inactive: f32,
+  overlay_opacity_active: f32,
   overlay_pos_x: f64,
   overlay_pos_y: f64,
 }
@@ -97,6 +99,8 @@ impl Default for Settings {
       overlay_max_radius: 24.0,
       overlay_rise_ms: 80,
       overlay_fall_ms: 160,
+      overlay_opacity_inactive: 0.2,
+      overlay_opacity_active: 0.8,
       overlay_pos_x: 12.0,
       overlay_pos_y: 12.0,
     }
@@ -279,6 +283,21 @@ fn load_settings(app: &AppHandle) -> Settings {
       if settings.overlay_fall_ms < 20 {
         settings.overlay_fall_ms = 20;
       }
+      if !(0.0..=1.0).contains(&settings.overlay_opacity_inactive) {
+        settings.overlay_opacity_inactive = 0.2;
+      }
+      if !(0.0..=1.0).contains(&settings.overlay_opacity_active) {
+        settings.overlay_opacity_active = 0.8;
+      }
+      if settings.overlay_opacity_inactive < 0.05 {
+        settings.overlay_opacity_inactive = 0.05;
+      }
+      if settings.overlay_opacity_active < 0.05 {
+        settings.overlay_opacity_active = 0.05;
+      }
+      if settings.overlay_opacity_active < settings.overlay_opacity_inactive {
+        settings.overlay_opacity_active = settings.overlay_opacity_inactive;
+      }
       settings
     }
     Err(_) => Settings::default(),
@@ -325,6 +344,8 @@ fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
     max_radius: settings.overlay_max_radius as f64,
     rise_ms: settings.overlay_rise_ms,
     fall_ms: settings.overlay_fall_ms,
+    opacity_inactive: settings.overlay_opacity_inactive as f64,
+    opacity_active: settings.overlay_opacity_active as f64,
     pos_x: settings.overlay_pos_x,
     pos_y: settings.overlay_pos_y,
   }
@@ -457,9 +478,28 @@ impl OverlayLevelEmitter {
       return;
     }
     self.last_emit_ms.store(now_ms, Ordering::Relaxed);
-    let level = level.clamp(0.0, 1.0);
-    let _ = self.app.emit("overlay:level", level);
-    let _ = self.app.emit("audio:level", level);
+
+    let level_clamped = level.clamp(0.0, 1.0);
+
+    // audio:level as float 0.0-1.0 for main UI
+    let _ = self.app.emit("audio:level", level_clamped);
+
+    // Update overlay directly via JS (most reliable method)
+    if let Some(window) = self.app.get_webview_window("overlay") {
+      if let Ok(state) = self.app.state::<AppState>().settings.lock() {
+        let min_radius = state.overlay_min_radius.max(4.0) as f64;
+        let max_radius = state.overlay_max_radius.max(min_radius as f32) as f64;
+        // Use level 0.01-1.0 (never fully zero)
+        let factor = level_clamped.max(0.01) as f64;
+        let radius = min_radius + (max_radius - min_radius) * factor;
+        let size = (radius * 2.0).round();
+        let js = format!(
+          "(function(){{const d=document.getElementById('dot');if(d){{d.style.width='{}px';d.style.height='{}px';}}}})();",
+          size, size
+        );
+        let _ = window.eval(&js);
+      }
+    }
   }
 }
 
@@ -473,7 +513,12 @@ struct VadRuntime {
   audio_cues: bool,
   threshold_scaled: AtomicU64,
   silence_ms: AtomicU64,
+  /// Counter for consecutive chunks above threshold (spike filter)
+  consecutive_above: AtomicU64,
 }
+
+/// Minimum consecutive chunks above threshold to start recording (spike filter)
+const VAD_MIN_CONSECUTIVE_CHUNKS: u64 = 3;
 
 impl VadRuntime {
   fn new(audio_cues: bool, threshold: f32, silence_ms: u64) -> Self {
@@ -487,6 +532,7 @@ impl VadRuntime {
       audio_cues,
       threshold_scaled: AtomicU64::new(scaled),
       silence_ms: AtomicU64::new(silence_ms.max(100)),
+      consecutive_above: AtomicU64::new(0),
     }
   }
 
@@ -812,9 +858,17 @@ fn handle_vad_audio(
   let runtime = &vad_handle.runtime;
   let now = now_ms();
   let threshold = runtime.threshold();
+  let is_recording = runtime.recording.load(Ordering::Relaxed);
+
   if level >= threshold {
+    // Increment consecutive counter (spike filter)
+    let consecutive = runtime.consecutive_above.fetch_add(1, Ordering::Relaxed) + 1;
     runtime.last_voice_ms.store(now, Ordering::Relaxed);
-    if !runtime.recording.swap(true, Ordering::Relaxed) {
+
+    // Only start recording if above threshold for enough consecutive chunks
+    // OR if already recording (don't interrupt)
+    if !is_recording && consecutive >= VAD_MIN_CONSECUTIVE_CHUNKS {
+      runtime.recording.store(true, Ordering::Relaxed);
       runtime.start_ms.store(now, Ordering::Relaxed);
       runtime.pending_flush.store(false, Ordering::Relaxed);
       if let Ok(mut buf) = buffer.lock() {
@@ -826,6 +880,9 @@ fn handle_vad_audio(
         let _ = vad_handle.app.emit("audio:cue", "start");
       }
     }
+  } else {
+    // Reset consecutive counter when below threshold
+    runtime.consecutive_above.store(0, Ordering::Relaxed);
   }
 
   if runtime.recording.load(Ordering::Relaxed) {
@@ -863,7 +920,7 @@ fn build_input_stream_f32(
       config,
       move |data: &[f32], _| {
         let mut mono = Vec::with_capacity(data.len() / channels.max(1));
-        let mut sum_abs = 0.0f32;
+        let mut sum_squared = 0.0f32;
         for frame in data.chunks(channels.max(1)) {
           let mut sum = 0.0f32;
           for &sample in frame {
@@ -871,12 +928,15 @@ fn build_input_stream_f32(
           }
           let sample = sum / channels.max(1) as f32;
           mono.push(sample);
-          sum_abs += sample.abs();
+          sum_squared += sample * sample;
         }
+        // RMS calculation with scaling for better visualization
         let level = if mono.is_empty() {
           0.0
         } else {
-          (sum_abs / mono.len() as f32).min(1.0)
+          let rms = (sum_squared / mono.len() as f32).sqrt();
+          // Scale RMS (typically 0.0-0.2 for speech) to 0.0-1.0 range
+          (rms * 4.0).min(1.0)
         };
         if let Some(emitter) = overlay.as_ref() {
           emitter.emit_level(level);
@@ -909,7 +969,7 @@ fn build_input_stream_i16(
       config,
       move |data: &[i16], _| {
         let mut mono = Vec::with_capacity(data.len() / channels.max(1));
-        let mut sum_abs = 0.0f32;
+        let mut sum_squared = 0.0f32;
         for frame in data.chunks(channels.max(1)) {
           let mut sum = 0.0f32;
           for &sample in frame {
@@ -917,12 +977,14 @@ fn build_input_stream_i16(
           }
           let sample = sum / channels.max(1) as f32;
           mono.push(sample);
-          sum_abs += sample.abs();
+          sum_squared += sample * sample;
         }
+        // RMS calculation with scaling for better visualization
         let level = if mono.is_empty() {
           0.0
         } else {
-          (sum_abs / mono.len() as f32).min(1.0)
+          let rms = (sum_squared / mono.len() as f32).sqrt();
+          (rms * 4.0).min(1.0)
         };
         if let Some(emitter) = overlay.as_ref() {
           emitter.emit_level(level);
@@ -955,7 +1017,7 @@ fn build_input_stream_u16(
       config,
       move |data: &[u16], _| {
         let mut mono = Vec::with_capacity(data.len() / channels.max(1));
-        let mut sum_abs = 0.0f32;
+        let mut sum_squared = 0.0f32;
         for frame in data.chunks(channels.max(1)) {
           let mut sum = 0.0f32;
           for &sample in frame {
@@ -964,12 +1026,14 @@ fn build_input_stream_u16(
           }
           let sample = sum / channels.max(1) as f32;
           mono.push(sample);
-          sum_abs += sample.abs();
+          sum_squared += sample * sample;
         }
+        // RMS calculation with scaling for better visualization
         let level = if mono.is_empty() {
           0.0
         } else {
-          (sum_abs / mono.len() as f32).min(1.0)
+          let rms = (sum_squared / mono.len() as f32).sqrt();
+          (rms * 4.0).min(1.0)
         };
         if let Some(emitter) = overlay.as_ref() {
           emitter.emit_level(level);
@@ -1838,7 +1902,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .setup(|app| {
-      let settings = load_settings(app.handle());
+      let mut settings = load_settings(app.handle());
       let history = load_history(app.handle());
 
       app.manage(AppState {
@@ -1862,7 +1926,23 @@ pub fn run() {
       if let Err(err) = overlay::create_overlay_window(&app.handle()) {
         eprintln!("⚠ Failed to create overlay window: {}", err);
       }
+      let overlay_app = app.handle().clone();
+      app.listen("overlay:ready", move |_| {
+        overlay::mark_overlay_ready();
+        let settings = overlay_app.state::<AppState>().settings.lock().unwrap().clone();
+        let _ = overlay::apply_overlay_settings(&overlay_app, &build_overlay_settings(&settings));
+      });
+      let overlay_settings = build_overlay_settings(&settings);
+      if let Some((pos_x, pos_y)) = overlay::resolve_overlay_position_for_settings(&app.handle(), &overlay_settings) {
+        settings.overlay_pos_x = pos_x;
+        settings.overlay_pos_y = pos_y;
+        if let Ok(mut current) = app.state::<AppState>().settings.lock() {
+          *current = settings.clone();
+        }
+        let _ = save_settings_file(app.handle(), &settings);
+      }
       let _ = overlay::apply_overlay_settings(&app.handle(), &build_overlay_settings(&settings));
+      let _ = overlay::update_overlay_state(&app.handle(), overlay::OverlayState::Idle);
 
       let icon = {
         let paths = [

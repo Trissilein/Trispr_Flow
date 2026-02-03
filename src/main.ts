@@ -7,13 +7,7 @@ interface Settings {
   hotkey_toggle: string;
   input_device: string;
   language_mode: "auto";
-  model:
-    | "whisper-tiny"
-    | "whisper-base"
-    | "whisper-small"
-    | "whisper-medium"
-    | "whisper-large-v3"
-    | "whisper-large-v3-turbo";
+  model: string;
   cloud_fallback: boolean;
   audio_cues: boolean;
   audio_cues_volume: number;
@@ -32,6 +26,8 @@ interface Settings {
   transcribe_chunk_overlap_ms: number;
   transcribe_input_gain_db: number;
   capture_enabled: boolean;
+  model_source: "default" | "custom";
+  model_custom_url: string;
   overlay_color: string;
   overlay_min_radius: number;
   overlay_max_radius: number;
@@ -63,6 +59,10 @@ interface ModelInfo {
   installed: boolean;
   downloading: boolean;
   path?: string;
+  source: string;
+  available: boolean;
+  download_url?: string;
+  removable: boolean;
 }
 
 interface DownloadProgress {
@@ -133,6 +133,7 @@ const engineLabel = $("engine-label");
 const cloudState = $("cloud-state");
 const modeState = $("mode-state");
 const deviceState = $("device-state");
+const modelState = $("model-state");
 const modeSelect = $("mode-select") as HTMLSelectElement | null;
 const pttHotkey = $("ptt-hotkey") as HTMLInputElement | null;
 const pttHotkeyRecord = $("ptt-hotkey-record") as HTMLButtonElement | null;
@@ -141,7 +142,6 @@ const toggleHotkey = $("toggle-hotkey") as HTMLInputElement | null;
 const toggleHotkeyRecord = $("toggle-hotkey-record") as HTMLButtonElement | null;
 const toggleHotkeyStatus = $("toggle-hotkey-status") as HTMLSpanElement | null;
 const deviceSelect = $("device-select") as HTMLSelectElement | null;
-const modelSelect = $("model-select") as HTMLSelectElement | null;
 const languageSelect = $("language-select") as HTMLSelectElement | null;
 const cloudToggle = $("cloud-toggle") as HTMLInputElement | null;
 const audioCuesToggle = $("audio-cues-toggle") as HTMLInputElement | null;
@@ -211,7 +211,12 @@ const historyDetachConversation = $("history-detach-conversation") as HTMLButton
 const conversationFontControls = $("conversation-font-controls");
 const conversationFontSize = $("conversation-font-size") as HTMLInputElement | null;
 const conversationFontSizeValue = $("conversation-font-size-value");
-const modelList = $("model-list");
+const modelSourceSelect = $("model-source-select") as HTMLSelectElement | null;
+const modelCustomUrl = $("model-custom-url") as HTMLInputElement | null;
+const modelCustomUrlField = $("model-custom-url-field") as HTMLDivElement | null;
+const modelRefresh = $("model-refresh") as HTMLButtonElement | null;
+const modelListInstalled = $("model-list-installed");
+const modelListAvailable = $("model-list-available");
 
 function setStatus(state: "idle" | "recording" | "transcribing") {
   currentStatus = state;
@@ -241,6 +246,10 @@ function renderHero() {
   if (modeState) modeState.textContent = settings.mode === "ptt" ? "PTT" : "VAD";
   const device = devices.find((item) => item.id === settings?.input_device);
   if (deviceState) deviceState.textContent = device?.label ?? "Default";
+  if (modelState) {
+    const active = models.find((model) => model.id === settings?.model);
+    modelState.textContent = active?.label ?? settings?.model ?? "—";
+  }
   if (engineLabel) engineLabel.textContent = "whisper.cpp (GPU auto)";
   setStatus(currentStatus);
 }
@@ -254,8 +263,12 @@ function renderSettings() {
   if (hotkeysBlock) hotkeysBlock.classList.toggle("hidden", !hotkeysEnabled);
   if (vadBlock) vadBlock.classList.toggle("hidden", hotkeysEnabled);
   if (deviceSelect) deviceSelect.value = settings.input_device;
-  if (modelSelect) modelSelect.value = settings.model;
   if (languageSelect) languageSelect.value = settings.language_mode;
+  if (modelSourceSelect) modelSourceSelect.value = settings.model_source;
+  if (modelCustomUrl) modelCustomUrl.value = settings.model_custom_url ?? "";
+  if (modelCustomUrlField) {
+    modelCustomUrlField.classList.toggle("hidden", settings.model_source !== "custom");
+  }
   if (cloudToggle) cloudToggle.checked = settings.cloud_fallback;
   if (audioCuesToggle) audioCuesToggle.checked = settings.audio_cues;
   if (pttUseVadToggle) pttUseVadToggle.checked = settings.ptt_use_vad;
@@ -549,60 +562,144 @@ function formatProgress(progress?: DownloadProgress) {
 }
 
 function renderModels() {
-  if (!modelList) return;
-  modelList.innerHTML = "";
+  if (!modelListInstalled || !modelListAvailable) return;
+  modelListInstalled.innerHTML = "";
+  modelListAvailable.innerHTML = "";
 
-  if (!models.length) {
-    modelList.innerHTML =
-      "<div class=\"model-card\"><div class=\"model-title\">No models available</div><div class=\"model-meta\">Check your configuration.</div></div>";
-    return;
+  const installedModels = models.filter((model) => model.installed);
+  const availableModels = models.filter((model) => !model.installed && model.available);
+
+  if (settings && installedModels.length) {
+    const hasActive = installedModels.some((model) => model.id === settings?.model);
+    if (!hasActive) {
+      settings.model = installedModels[0].id;
+      persistSettings();
+    }
   }
 
-  models.forEach((model) => {
-    const card = document.createElement("div");
-    card.className = "model-card";
-    card.dataset.selected = settings?.model === model.id ? "true" : "false";
+  const renderGroup = (container: HTMLElement, group: ModelInfo[], emptyText: string) => {
+    if (!group.length) {
+      container.innerHTML = `<div class="model-item"><div class="model-name">${emptyText}</div></div>`;
+      return;
+    }
 
-    const title = document.createElement("div");
-    title.className = "model-title";
-    title.textContent = model.label;
-
-    const meta = document.createElement("div");
-    meta.className = "model-meta";
-    meta.textContent = `${formatSize(model.size_mb)} • ${model.file_name}`;
-
-    const badge = document.createElement("div");
-    badge.className = "model-badge";
-    badge.textContent = model.installed ? "Installed" : model.downloading ? "Downloading" : "Not installed";
-
-    const actions = document.createElement("div");
-    actions.className = "model-actions";
-
-    const button = document.createElement("button");
-    button.textContent = model.installed ? "Installed" : model.downloading ? "Downloading..." : "Download";
-    button.disabled = model.installed || model.downloading;
-    button.addEventListener("click", async () => {
-      try {
-        await invoke("download_model", { modelId: model.id });
-      } catch (error) {
-        console.error("download_model failed", error);
+    group.forEach((model) => {
+      const item = document.createElement("div");
+      item.className = "model-item";
+      const isActive = settings?.model === model.id;
+      if (isActive) {
+        item.classList.add("selected");
       }
+      if (model.installed) {
+        item.classList.add("selectable");
+        item.addEventListener("click", async () => {
+          if (!settings) return;
+          settings.model = model.id;
+          await persistSettings();
+          renderModels();
+        });
+      }
+
+      const header = document.createElement("div");
+      header.className = "model-header";
+
+      const name = document.createElement("div");
+      name.className = "model-name";
+      name.textContent = model.label;
+
+      const size = document.createElement("div");
+      size.className = "model-size";
+      size.textContent = model.size_mb > 0 ? formatSize(model.size_mb) : "Size unknown";
+
+      header.appendChild(name);
+      header.appendChild(size);
+
+      const meta = document.createElement("div");
+      meta.className = "model-meta";
+      const source = model.source ? ` • ${model.source}` : "";
+      meta.textContent = `${model.file_name}${source}`;
+
+      const pathLine = document.createElement("div");
+      pathLine.className = "model-meta";
+      if (model.path) {
+        pathLine.textContent = model.path;
+      }
+
+      const status = document.createElement("div");
+      status.className = `model-status ${model.installed ? "downloaded" : "available"}${
+        isActive ? " active" : ""
+      }`;
+      status.textContent = model.installed
+        ? isActive
+          ? "Active"
+          : model.removable
+            ? "Installed"
+            : "Installed (external)"
+        : model.downloading
+          ? "Downloading"
+          : "Available";
+
+      const actions = document.createElement("div");
+      actions.className = "model-actions";
+
+      if (model.installed) {
+        const removeBtn = document.createElement("button");
+        removeBtn.textContent = model.removable ? "Remove" : "Locked";
+        removeBtn.disabled = !model.removable;
+        removeBtn.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          if (!model.removable) return;
+          try {
+            await invoke("remove_model", { fileName: model.file_name });
+            await refreshModels();
+          } catch (error) {
+            console.error("remove_model failed", error);
+          }
+        });
+        actions.appendChild(removeBtn);
+      } else {
+        const button = document.createElement("button");
+        button.textContent = model.downloading ? "Downloading..." : "Download";
+        button.disabled = model.downloading;
+        button.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          try {
+            if (!model.download_url) {
+              console.error("No download URL for model", model.id);
+              return;
+            }
+            await invoke("download_model", {
+              modelId: model.id,
+              downloadUrl: model.download_url,
+              fileName: model.file_name,
+            });
+          } catch (error) {
+            console.error("download_model failed", error);
+          }
+        });
+        actions.appendChild(button);
+      }
+
+      const progress = document.createElement("div");
+      progress.className = "model-progress";
+      progress.textContent = formatProgress(modelProgress.get(model.id));
+
+      item.appendChild(header);
+      item.appendChild(meta);
+      item.appendChild(status);
+      if (model.path) {
+        item.appendChild(pathLine);
+      }
+      item.appendChild(actions);
+      item.appendChild(progress);
+
+      container.appendChild(item);
     });
+  };
 
-    const progress = document.createElement("div");
-    progress.className = "model-progress";
-    progress.textContent = formatProgress(modelProgress.get(model.id));
-
-    actions.appendChild(button);
-    actions.appendChild(progress);
-
-    card.appendChild(title);
-    card.appendChild(meta);
-    card.appendChild(badge);
-    card.appendChild(actions);
-
-    modelList.appendChild(card);
-  });
+  renderGroup(modelListInstalled, installedModels, "No installed models");
+  renderGroup(modelListAvailable, availableModels, "No models available");
+  renderHero();
 }
 
 async function refreshModels() {
@@ -754,6 +851,29 @@ function wireEvents() {
     settings.mode = modeSelect.value as Settings["mode"];
     await persistSettings();
     renderHero();
+  });
+
+  modelSourceSelect?.addEventListener("change", async () => {
+    if (!settings || !modelSourceSelect) return;
+    settings.model_source = modelSourceSelect.value as Settings["model_source"];
+    await persistSettings();
+    renderSettings();
+    await refreshModels();
+  });
+
+  modelCustomUrl?.addEventListener("change", async () => {
+    if (!settings || !modelCustomUrl) return;
+    settings.model_custom_url = modelCustomUrl.value.trim();
+    await persistSettings();
+  });
+
+  modelRefresh?.addEventListener("click", async () => {
+    if (!settings) return;
+    if (modelCustomUrl) {
+      settings.model_custom_url = modelCustomUrl.value.trim();
+    }
+    await persistSettings();
+    await refreshModels();
   });
 
   document.querySelectorAll<HTMLButtonElement>(".panel-collapse-btn").forEach((button) => {
@@ -909,12 +1029,6 @@ function wireEvents() {
 
   transcribeGain?.addEventListener("change", async () => {
     if (!settings) return;
-    await persistSettings();
-  });
-
-  modelSelect?.addEventListener("change", async () => {
-    if (!settings) return;
-    settings.model = modelSelect.value as Settings["model"];
     await persistSettings();
   });
 

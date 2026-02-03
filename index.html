@@ -44,6 +44,10 @@
             <span class="hero-label">Input</span>
             <span id="device-state" class="hero-value">Default</span>
           </div>
+          <div class="hero-row">
+            <span class="hero-label">Model</span>
+            <span id="model-state" class="hero-value">—</span>
+          </div>
         </div>
       </header>
 
@@ -289,14 +293,7 @@
           </div>
           <div class="panel-body">
           <div class="panel-grid">
-            <label class="field">
-              <span class="field-label">Model</span>
-              <select id="model-select">
-                <option value="whisper-large-v3">Whisper large-v3 (quality)</option>
-                <option value="whisper-large-v3-turbo">Whisper large-v3-turbo (speed)</option>
-              </select>
-            </label>
-            <label class="field">
+            <label class="field span-2">
               <span class="field-label">Language</span>
               <select id="language-select">
                 <option value="auto">Auto (DE/EN mix)</option>
@@ -309,6 +306,27 @@
               <h3>Model Manager</h3>
               <p>Download and manage local whisper.cpp models.</p>
             </div>
+            <div class="panel-grid model-source-grid">
+              <label class="field">
+                <span class="field-label">Source</span>
+                <select id="model-source-select">
+                  <option value="default">Default (whisper.cpp)</option>
+                  <option value="custom">Custom URL</option>
+                </select>
+              </label>
+              <label class="field span-2" id="model-custom-url-field">
+                <span class="field-label">Custom model URL</span>
+                <div class="hotkey-input-group">
+                  <input
+                    id="model-custom-url"
+                    type="text"
+                    placeholder="https://example.com/models.json or model.bin"
+                  />
+                  <button id="model-refresh" class="hotkey-record-btn">Refresh</button>
+                </div>
+                <span class="field-hint">Supports JSON index or direct model file URL.</span>
+              </label>
+            </div>
             <label class="field toggle">
               <span class="field-label">Claude fallback</span>
               <input id="cloud-toggle" type="checkbox" />
@@ -320,7 +338,14 @@
               <span class="field-label">Backend</span>
               <div class="field-value">whisper.cpp (GPU auto-detect, CPU fallback)</div>
             </div>
-            <div id="model-list" class="model-list"></div>
+            <div class="model-section">
+              <div class="model-section-title">Installed</div>
+              <div id="model-list-installed" class="model-list"></div>
+            </div>
+            <div class="model-section">
+              <div class="model-section-title">Available</div>
+              <div id="model-list-available" class="model-list"></div>
+            </div>
           </div>
           </div>
         </section>

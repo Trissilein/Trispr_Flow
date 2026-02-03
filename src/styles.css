@@ -13,6 +13,7 @@
   --stroke: rgba(255, 255, 255, 0.1);
   --stroke-strong: rgba(255, 255, 255, 0.15);
   --shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  --chevron-size: 1rem;
   --radius: 10px;
   --radius-sm: 6px;
 }
@@ -209,6 +210,16 @@ h1 {
   font-size: 0.75rem;
 }
 
+.model-source-grid {
+  margin-top: 8px;
+}
+
+.field-hint {
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
 /* PANELS - VERY COMPACT */
 .panel {
   background: var(--card);
@@ -249,7 +260,7 @@ h1 {
   width: auto;
   height: auto;
   padding: 4px;
-  font-size: 0.9rem;
+  font-size: var(--chevron-size);
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -311,7 +322,7 @@ h1 {
   list-style: none;
   color: var(--ink-soft);
   position: relative;
-  padding-right: 64px;
+  padding-right: 24px;
   user-select: none;
 }
 
@@ -320,12 +331,12 @@ h1 {
 }
 
 .expander summary::after {
-  content: "▼";
+  content: "▾";
   position: absolute;
   right: 0;
   top: 50%;
   transition: transform 0.2s ease;
-  font-size: 3.6rem;
+  font-size: var(--chevron-size);
   line-height: 1;
   color: var(--muted);
   transform: translateY(-50%);
@@ -841,6 +852,29 @@ button:disabled {
   gap: 6px;
 }
 
+.model-section {
+  margin-top: 10px;
+}
+
+.model-section-title {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.model-meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.model-progress {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
 .model-item {
   display: flex;
   flex-direction: column;
@@ -852,6 +886,10 @@ button:disabled {
   transition: all 0.15s ease;
 }
 
+.model-item.selectable {
+  cursor: pointer;
+}
+
 .model-item.selected {
   background: rgba(29, 166, 160, 0.1);
   border-color: var(--accent-2);
@@ -860,6 +898,10 @@ button:disabled {
 .model-item:hover {
   background: rgba(255, 255, 255, 0.04);
   border-color: rgba(255, 255, 255, 0.15);
+}
+
+.model-item.selectable:hover {
+  border-color: rgba(255, 255, 255, 0.25);
 }
 
 .model-header {
@@ -901,6 +943,12 @@ button:disabled {
   background: rgba(156, 163, 175, 0.15);
   color: var(--muted);
   border: 1px solid rgba(156, 163, 175, 0.2);
+}
+
+.model-status.active {
+  background: rgba(29, 166, 160, 0.2);
+  color: var(--accent-2);
+  border: 1px solid rgba(29, 166, 160, 0.4);
 }
 
 .model-actions {

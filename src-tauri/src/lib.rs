@@ -41,6 +41,27 @@ struct ModelSpec {
   size_mb: u32,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ModelIndex {
+  #[serde(default)]
+  base_url: Option<String>,
+  #[serde(default)]
+  models: Vec<ModelIndexEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ModelIndexEntry {
+  id: String,
+  #[serde(default)]
+  label: String,
+  #[serde(alias = "file", alias = "file_name")]
+  file_name: String,
+  #[serde(default)]
+  size_mb: u32,
+  #[serde(default)]
+  url: Option<String>,
+}
+
 const MODEL_SPECS: &[ModelSpec] = &[
   ModelSpec {
     id: "whisper-large-v3",
@@ -83,6 +104,8 @@ struct Settings {
   transcribe_chunk_overlap_ms: u64,
   transcribe_input_gain_db: f32,
   capture_enabled: bool,
+  model_source: String,
+  model_custom_url: String,
   overlay_color: String,
   overlay_min_radius: f32,
   overlay_max_radius: f32,
@@ -121,6 +144,8 @@ impl Default for Settings {
       transcribe_chunk_overlap_ms: 1000,
       transcribe_input_gain_db: 0.0,
       capture_enabled: true,
+      model_source: "default".to_string(),
+      model_custom_url: "".to_string(),
       overlay_color: "#ff3d2e".to_string(),
       overlay_min_radius: 8.0,
       overlay_max_radius: 24.0,
@@ -157,6 +182,10 @@ struct ModelInfo {
   installed: bool,
   downloading: bool,
   path: Option<String>,
+  source: String,
+  available: bool,
+  download_url: Option<String>,
+  removable: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -380,6 +409,9 @@ fn load_settings(app: &AppHandle) -> Settings {
       if settings.transcribe_vad_silence_ms > 5000 {
         settings.transcribe_vad_silence_ms = 5000;
       }
+      if settings.model_source.trim().is_empty() {
+        settings.model_source = "default".to_string();
+      }
       settings.transcribe_input_gain_db = settings.transcribe_input_gain_db.clamp(0.0, 24.0);
       #[cfg(target_os = "windows")]
       if settings.transcribe_output_device != "default"
@@ -527,7 +559,23 @@ fn resolve_model_path(app: &AppHandle, model_id: &str) -> Option<PathBuf> {
     }
   }
 
-  let spec = model_spec(model_id)?;
+  let spec = model_spec(model_id);
+  if spec.is_none() {
+    let candidates = [
+      model_id.to_string(),
+      format!("{model_id}.bin"),
+      format!("{model_id}.gguf"),
+    ];
+    for candidate in candidates {
+      if let Some(path) = resolve_model_path_by_file(app, &candidate) {
+        info!("Found model by file name: {}", path.display());
+        return Some(path);
+      }
+    }
+    warn!("Model not found for: {}", model_id);
+    return None;
+  }
+  let spec = spec?;
   info!("Looking for model file: {}", spec.file_name);
 
   if let Ok(dir) = std::env::var("TRISPR_WHISPER_MODEL_DIR") {
@@ -585,6 +633,168 @@ fn resolve_model_path(app: &AppHandle, model_id: &str) -> Option<PathBuf> {
 
   warn!("Model not found for: {}", model_id);
   None
+}
+
+#[derive(Debug, Clone)]
+struct SourceModel {
+  id: String,
+  label: String,
+  file_name: String,
+  size_mb: u32,
+  download_url: String,
+  source: String,
+}
+
+fn filename_from_url(url: &str) -> Option<String> {
+  let trimmed = url.split('?').next().unwrap_or(url);
+  trimmed.split('/').last().map(|name| name.to_string())
+}
+
+fn resolve_model_path_by_file(app: &AppHandle, file_name: &str) -> Option<PathBuf> {
+  if let Ok(path) = std::env::var("TRISPR_WHISPER_MODEL") {
+    let candidate = PathBuf::from(&path);
+    if candidate.exists() {
+      if let Some(name) = candidate.file_name().and_then(|s| s.to_str()) {
+        if name.eq_ignore_ascii_case(file_name) {
+          return Some(candidate);
+        }
+      }
+    }
+  }
+
+  if let Ok(dir) = std::env::var("TRISPR_WHISPER_MODEL_DIR") {
+    let dir = PathBuf::from(&dir);
+    let candidate = dir.join(file_name);
+    if candidate.exists() {
+      return Some(candidate);
+    }
+  }
+
+  let models_dir = resolve_models_dir(app);
+  let candidate = models_dir.join(file_name);
+  if candidate.exists() {
+    return Some(candidate);
+  }
+
+  if let Ok(exe_path) = std::env::current_exe() {
+    if let Some(exe_dir) = exe_path.parent() {
+      let exe_search_dirs = [
+        exe_dir.join("models"),
+        exe_dir.join("../models"),
+        exe_dir.join("../whisper.cpp/models"),
+        exe_dir.join("../../whisper.cpp/models"),
+      ];
+      for dir in &exe_search_dirs {
+        let candidate = dir.join(file_name);
+        if candidate.exists() {
+          return Some(candidate);
+        }
+      }
+    }
+  }
+
+  if let Ok(cwd) = std::env::current_dir() {
+    let search_dirs = [
+      cwd.join("models"),
+      cwd.join("../whisper.cpp/models"),
+      cwd.join("../../whisper.cpp/models"),
+    ];
+    for dir in &search_dirs {
+      let candidate = dir.join(file_name);
+      if candidate.exists() {
+        return Some(candidate);
+      }
+    }
+  }
+
+  None
+}
+
+fn load_custom_source_models(custom_url: &str) -> Result<Vec<SourceModel>, String> {
+  if custom_url.trim().is_empty() {
+    return Ok(Vec::new());
+  }
+
+  if custom_url.ends_with(".bin") || custom_url.ends_with(".gguf") {
+    let file_name = filename_from_url(custom_url)
+      .ok_or_else(|| "Invalid model URL".to_string())?;
+    let id = file_name
+      .trim_end_matches(".bin")
+      .trim_end_matches(".gguf")
+      .to_string();
+    let label = file_name.clone();
+    return Ok(vec![SourceModel {
+      id,
+      label,
+      file_name,
+      size_mb: 0,
+      download_url: custom_url.to_string(),
+      source: "custom".to_string(),
+    }]);
+  }
+
+  let response = ureq::get(custom_url)
+    .call()
+    .map_err(|e| format!("Failed to fetch model index: {e}"))?;
+  let mut body = String::new();
+  response
+    .into_reader()
+    .read_to_string(&mut body)
+    .map_err(|e| format!("Failed to read model index: {e}"))?;
+
+  if let Ok(entries) = serde_json::from_str::<Vec<ModelIndexEntry>>(&body) {
+    return Ok(entries
+      .into_iter()
+      .map(|entry| {
+        let label = if entry.label.trim().is_empty() {
+          entry.id.clone()
+        } else {
+          entry.label.clone()
+        };
+        let download_url = entry
+          .url
+          .clone()
+          .unwrap_or_else(|| custom_url.trim_end_matches('/').to_string() + "/" + &entry.file_name);
+        SourceModel {
+          id: entry.id,
+          label,
+          file_name: entry.file_name,
+          size_mb: entry.size_mb,
+          download_url,
+          source: "custom".to_string(),
+        }
+      })
+      .collect());
+  }
+
+  let index: ModelIndex = serde_json::from_str(&body)
+    .map_err(|_| "Unsupported model index format".to_string())?;
+  let base_url = index
+    .base_url
+    .unwrap_or_else(|| custom_url.trim_end_matches('/').to_string());
+  Ok(index
+    .models
+    .into_iter()
+    .map(|entry| {
+      let label = if entry.label.trim().is_empty() {
+        entry.id.clone()
+      } else {
+        entry.label.clone()
+      };
+      let download_url = entry
+        .url
+        .clone()
+        .unwrap_or_else(|| base_url.trim_end_matches('/').to_string() + "/" + &entry.file_name);
+      SourceModel {
+        id: entry.id,
+        label,
+        file_name: entry.file_name,
+        size_mb: entry.size_mb,
+        download_url,
+        source: "custom".to_string(),
+      }
+    })
+    .collect())
 }
 
 fn float_to_i16(sample: f32) -> i16 {
@@ -1048,37 +1258,136 @@ fn list_output_devices() -> Vec<AudioDevice> {
 #[tauri::command]
 fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<ModelInfo> {
   let downloads = state.downloads.lock().unwrap();
-  MODEL_SPECS
-    .iter()
-    .map(|spec| {
-      let path = resolve_model_path(&app, spec.id);
-      ModelInfo {
+  let settings = state.settings.lock().unwrap().clone();
+  let models_dir = resolve_models_dir(&app);
+
+  let source_models: Vec<SourceModel> = if settings.model_source == "custom" {
+    match load_custom_source_models(&settings.model_custom_url) {
+      Ok(list) => list,
+      Err(err) => {
+        warn!("Failed to load custom model source: {}", err);
+        Vec::new()
+      }
+    }
+  } else {
+    let base_url = std::env::var("TRISPR_WHISPER_MODEL_BASE_URL")
+      .unwrap_or_else(|_| DEFAULT_MODEL_BASE_URL.to_string());
+    MODEL_SPECS
+      .iter()
+      .map(|spec| SourceModel {
         id: spec.id.to_string(),
         label: spec.label.to_string(),
         file_name: spec.file_name.to_string(),
         size_mb: spec.size_mb,
+        download_url: format!("{}/{}", base_url.trim_end_matches('/'), spec.file_name),
+        source: "default".to_string(),
+      })
+      .collect()
+  };
+
+  let mut seen_files = HashSet::new();
+  let mut models: Vec<ModelInfo> = source_models
+    .into_iter()
+    .map(|model| {
+      let path = if settings.model_source == "default" {
+        resolve_model_path(&app, &model.id)
+      } else {
+        resolve_model_path_by_file(&app, &model.file_name)
+      };
+      if !model.file_name.is_empty() {
+        seen_files.insert(model.file_name.clone());
+      }
+      let removable = path
+        .as_ref()
+        .map(|p| p.starts_with(&models_dir))
+        .unwrap_or(false);
+      ModelInfo {
+        id: model.id.clone(),
+        label: model.label.clone(),
+        file_name: model.file_name.clone(),
+        size_mb: model.size_mb,
         installed: path.is_some(),
-        downloading: downloads.contains(spec.id),
+        downloading: downloads.contains(&model.id),
         path: path.map(|p| p.to_string_lossy().to_string()),
+        source: model.source.clone(),
+        available: true,
+        download_url: Some(model.download_url.clone()),
+        removable,
       }
     })
-    .collect()
+    .collect();
+
+  if let Ok(entries) = fs::read_dir(&models_dir) {
+    for entry in entries.flatten() {
+      let path = entry.path();
+      let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+      if extension != "bin" && extension != "gguf" {
+        continue;
+      }
+      let file_name = match path.file_name().and_then(|s| s.to_str()) {
+        Some(name) => name.to_string(),
+        None => continue,
+      };
+      if seen_files.contains(&file_name) {
+        continue;
+      }
+      let size_mb = entry
+        .metadata()
+        .map(|m| (m.len() / (1024 * 1024)) as u32)
+        .unwrap_or(0);
+      let id = file_name
+        .trim_end_matches(".bin")
+        .trim_end_matches(".gguf")
+        .to_string();
+      models.push(ModelInfo {
+        id,
+        label: file_name.clone(),
+        file_name: file_name.clone(),
+        size_mb,
+        installed: true,
+        downloading: false,
+        path: Some(path.to_string_lossy().to_string()),
+        source: "local".to_string(),
+        available: false,
+        download_url: None,
+        removable: true,
+      });
+    }
+  }
+
+  models
 }
 
 #[tauri::command]
-fn download_model(app: AppHandle, state: State<'_, AppState>, model_id: String) -> Result<(), String> {
-  let spec = model_spec(&model_id).ok_or_else(|| "Unknown model".to_string())?;
+fn download_model(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  model_id: String,
+  download_url: Option<String>,
+  file_name: Option<String>,
+) -> Result<(), String> {
+  let (url, name) = if let Some(url) = download_url.clone() {
+    let name = file_name
+      .or_else(|| filename_from_url(&url))
+      .ok_or_else(|| "Missing file name for custom download".to_string())?;
+    (url, name)
+  } else {
+    let spec = model_spec(&model_id).ok_or_else(|| "Unknown model".to_string())?;
+    let base_url = std::env::var("TRISPR_WHISPER_MODEL_BASE_URL")
+      .unwrap_or_else(|_| DEFAULT_MODEL_BASE_URL.to_string());
+    (format!("{}/{}", base_url.trim_end_matches('/'), spec.file_name), spec.file_name.to_string())
+  };
   {
     let mut downloads = state.downloads.lock().unwrap();
-    if downloads.contains(spec.id) {
+    if downloads.contains(&model_id) {
       return Err("Download already in progress".to_string());
     }
-    downloads.insert(spec.id.to_string());
+    downloads.insert(model_id.clone());
   }
 
   let app_handle = app.clone();
   thread::spawn(move || {
-    let result = download_model_file(&app_handle, &model_id);
+    let result = download_model_file(&app_handle, &model_id, &url, &name);
     match result {
       Ok(path) => {
         let _ = app_handle.emit(
@@ -1105,6 +1414,20 @@ fn download_model(app: AppHandle, state: State<'_, AppState>, model_id: String) 
     downloads.remove(&model_id);
   });
 
+  Ok(())
+}
+
+#[tauri::command]
+fn remove_model(app: AppHandle, file_name: String) -> Result<(), String> {
+  if file_name.trim().is_empty() {
+    return Err("Missing model file name".to_string());
+  }
+  let models_dir = resolve_models_dir(&app);
+  let target = models_dir.join(&file_name);
+  if !target.exists() {
+    return Err("Model file not found in app cache".to_string());
+  }
+  fs::remove_file(&target).map_err(|e| e.to_string())?;
   Ok(())
 }
 
@@ -2388,20 +2711,21 @@ fn encode_wav_i16(samples: &[i16], sample_rate: u32) -> Vec<u8> {
   wav
 }
 
-fn download_model_file(app: &AppHandle, model_id: &str) -> Result<PathBuf, String> {
-  let spec = model_spec(model_id).ok_or_else(|| "Unknown model".to_string())?;
+fn download_model_file(
+  app: &AppHandle,
+  model_id: &str,
+  download_url: &str,
+  file_name: &str,
+) -> Result<PathBuf, String> {
   let models_dir = resolve_models_dir(app);
-  let dest_path = models_dir.join(spec.file_name);
+  let dest_path = models_dir.join(file_name);
   if dest_path.exists() {
     return Ok(dest_path);
   }
 
-  let base_url = std::env::var("TRISPR_WHISPER_MODEL_BASE_URL").unwrap_or_else(|_| DEFAULT_MODEL_BASE_URL.to_string());
-  let url = format!("{}/{}", base_url.trim_end_matches('/'), spec.file_name);
-
-  let tmp_path = dest_path.with_extension("bin.part");
+  let tmp_path = dest_path.with_extension("part");
   let result = (|| -> Result<PathBuf, String> {
-    let response = ureq::get(&url).call().map_err(|e| e.to_string())?;
+    let response = ureq::get(download_url).call().map_err(|e| e.to_string())?;
     let total = response
       .header("Content-Length")
       .and_then(|value| value.parse::<u64>().ok());
@@ -2907,6 +3231,7 @@ pub fn run() {
       list_output_devices,
       list_models,
       download_model,
+      remove_model,
       get_history,
       get_transcribe_history,
       add_history_entry,

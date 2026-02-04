@@ -13,10 +13,11 @@ use errors::{AppError, ErrorEvent};
 use overlay::{OverlayState, update_overlay_state};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
+use std::net::{IpAddr, ToSocketAddrs};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -26,6 +27,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::CheckMenuItem;
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use url::Url;
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const MIN_AUDIO_MS: u64 = 250;
@@ -36,60 +38,169 @@ const VAD_MIN_VOICE_MS: u64 = 250;
 const DEFAULT_MODEL_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 const MAX_MODEL_SIZE_BYTES: u64 = 5 * 1024 * 1024 * 1024; // 5 GB
 const DOWNLOAD_TIMEOUT_SECS: u64 = 30; // Timeout for stalled downloads
+const DOWNLOAD_CONNECT_TIMEOUT_SECS: u64 = 10;
+const DOWNLOAD_READ_TIMEOUT_SECS: u64 = 30;
+const DOWNLOAD_REDIRECT_LIMIT: u32 = 5;
 
 // Allowed domains for model downloads (security: SSRF prevention)
 const ALLOWED_MODEL_DOMAINS: &[&str] = &[
   "huggingface.co",
-  "cdn-lfs.huggingface.co",
-  "huggingface.co",
-  "distil-whisper",
+  "ggml.ggerganov.com",
 ];
 
-/// Validates that a URL is safe for model downloads
-/// - Must use HTTPS
-/// - Must be from an allowed domain
-/// - Blocks dangerous schemes (file://, localhost, etc.)
-fn is_url_safe(url: &str) -> Result<(), String> {
-  // Check for dangerous schemes
-  if url.starts_with("file://") || url.starts_with("ftp://") {
-    return Err("Dangerous URL scheme not allowed (file://, ftp://, etc.)".to_string());
-  }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UrlSafety {
+  Basic,
+  Strict,
+}
 
-  // Check for localhost variations
-  if url.contains("localhost")
-    || url.contains("127.0.0.1")
-    || url.contains("0.0.0.0")
-    || url.contains("::1") {
-    return Err("Localhost/loopback URLs not allowed for security reasons".to_string());
-  }
+fn is_allowed_host(host: &str) -> bool {
+  ALLOWED_MODEL_DOMAINS
+    .iter()
+    .any(|allowed| host == *allowed || host.ends_with(&format!(".{}", allowed)))
+}
 
-  // Must use HTTPS
-  if !url.starts_with("https://") {
+fn validate_model_url(url: &str, mode: UrlSafety) -> Result<Url, String> {
+  let parsed = Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))?;
+
+  if parsed.scheme() != "https" {
     return Err("Only HTTPS URLs allowed (not HTTP)".to_string());
   }
 
-  // Extract domain from URL
-  let domain = url
-    .strip_prefix("https://")
-    .and_then(|rest| rest.split('/').next())
-    .and_then(|host| host.split(':').next()) // Remove port if present
-    .ok_or_else(|| "Invalid URL format".to_string())?;
-
-  // Check against whitelist
-  let is_allowed = ALLOWED_MODEL_DOMAINS.iter().any(|allowed| {
-    // Exact match or subdomain match
-    domain == *allowed || domain.ends_with(&format!(".{}", allowed))
-  });
-
-  if is_allowed {
-    Ok(())
-  } else {
-    Err(format!(
-      "Domain '{}' not in whitelist. Allowed: {}",
-      domain,
-      ALLOWED_MODEL_DOMAINS.join(", ")
-    ))
+  if !parsed.username().is_empty() || parsed.password().is_some() {
+    return Err("URL userinfo is not allowed".to_string());
   }
+
+  let host = parsed
+    .host_str()
+    .ok_or_else(|| "URL missing host".to_string())?
+    .to_lowercase();
+
+  if host == "localhost" || host.ends_with(".localhost") {
+    return Err("Localhost URLs not allowed for security reasons".to_string());
+  }
+
+  if let Some(port) = parsed.port() {
+    if port != 443 {
+      return Err(format!("Only HTTPS port 443 is allowed (got {port})"));
+    }
+  }
+
+  if !is_allowed_host(&host) {
+    return Err(format!(
+      "Domain '{}' not in whitelist. Allowed: {}",
+      host,
+      ALLOWED_MODEL_DOMAINS.join(", ")
+    ));
+  }
+
+  if let Ok(ip) = host.parse::<IpAddr>() {
+    if !ip.is_global() {
+      return Err("IP address is not public".to_string());
+    }
+  } else if mode == UrlSafety::Strict {
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let mut resolved = false;
+    let addrs = (host.as_str(), port)
+      .to_socket_addrs()
+      .map_err(|e| format!("DNS lookup failed for {host}: {e}"))?;
+    for addr in addrs {
+      resolved = true;
+      if !addr.ip().is_global() {
+        return Err(format!(
+          "Resolved IP {} for {} is not public",
+          addr.ip(),
+          host
+        ));
+      }
+    }
+    if !resolved {
+      return Err(format!("DNS lookup returned no results for {host}"));
+    }
+  }
+
+  Ok(parsed)
+}
+
+fn is_url_safe(url: &str, mode: UrlSafety) -> Result<(), String> {
+  validate_model_url(url, mode).map(|_| ())
+}
+
+fn validate_model_file_name(file_name: &str) -> Result<(), String> {
+  if file_name.trim().is_empty() {
+    return Err("Missing model file name".to_string());
+  }
+  if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
+    return Err("Invalid model file name".to_string());
+  }
+  let lower = file_name.to_ascii_lowercase();
+  if !(lower.ends_with(".bin") || lower.ends_with(".gguf")) {
+    return Err("Only .bin or .gguf model files are allowed".to_string());
+  }
+  if !file_name
+    .chars()
+    .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-') {
+    return Err("Model file name contains invalid characters".to_string());
+  }
+  Ok(())
+}
+
+fn resolve_model_base_url() -> String {
+  if let Ok(custom) = std::env::var("TRISPR_WHISPER_MODEL_BASE_URL") {
+    match validate_model_url(&custom, UrlSafety::Basic) {
+      Ok(_) => return custom,
+      Err(err) => warn!("Ignoring unsafe TRISPR_WHISPER_MODEL_BASE_URL: {}", err),
+    }
+  }
+  DEFAULT_MODEL_BASE_URL.to_string()
+}
+
+fn build_download_agent() -> ureq::Agent {
+  ureq::builder()
+    .timeout_connect(Duration::from_secs(DOWNLOAD_CONNECT_TIMEOUT_SECS))
+    .timeout_read(Duration::from_secs(DOWNLOAD_READ_TIMEOUT_SECS))
+    .timeout_write(Duration::from_secs(DOWNLOAD_READ_TIMEOUT_SECS))
+    .redirects(0)
+    .build()
+}
+
+fn http_get_with_redirects(url: &str) -> Result<ureq::Response, String> {
+  let agent = build_download_agent();
+  let mut current = url.to_string();
+
+  for _ in 0..=DOWNLOAD_REDIRECT_LIMIT {
+    let parsed = validate_model_url(&current, UrlSafety::Strict)?;
+    let response = match agent.get(parsed.as_str()).call() {
+      Ok(resp) => resp,
+      Err(ureq::Error::Status(code, resp)) => {
+        if (300..400).contains(&code) {
+          resp
+        } else {
+          return Err(format!("HTTP {code} for {}", parsed.as_str()));
+        }
+      }
+      Err(err) => return Err(err.to_string()),
+    };
+
+    let status = response.status();
+    if (300..400).contains(&status) {
+      let location = response.header("Location").ok_or_else(|| {
+        format!("Redirect without Location header from {}", parsed.as_str())
+      })?;
+      let next = parsed
+        .join(location)
+        .map_err(|e| format!("Invalid redirect URL: {e}"))?;
+      current = next.to_string();
+      continue;
+    }
+
+    return Ok(response);
+  }
+
+  Err(format!(
+    "Too many redirects (>{}) while downloading model",
+    DOWNLOAD_REDIRECT_LIMIT
+  ))
 }
 
 struct ModelSpec {
@@ -140,8 +251,9 @@ const MODEL_SPECS: &[ModelSpec] = &[
 // Format: (file_name, sha256_hex)
 // NOTE: Update these after verifying actual model checksums
 const MODEL_CHECKSUMS: &[(&str, &str)] = &[
-  // "ggml-large-v3.bin" -> Calculate with: sha256sum file.bin
-  // "ggml-large-v3-turbo.bin" -> Calculate with: sha256sum file.bin
+  ("ggml-large-v3.bin", "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2"),
+  ("ggml-large-v3-turbo.bin", "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"),
+  ("ggml-distil-large-v3.bin", "2883a11b90fb10ed592d826edeaee7d2929bf1ab985109fe9e1e7b4d2b69a298"),
 ];
 
 /// Verifies a downloaded model file against its expected SHA256 checksum
@@ -182,6 +294,13 @@ fn verify_model_checksum(path: &std::path::Path, expected_hash: &str) -> Result<
       "Model integrity check failed: checksum mismatch (possible corruption or tampering)"
     ))
   }
+}
+
+fn lookup_model_checksum(file_name: &str) -> Option<&'static str> {
+  MODEL_CHECKSUMS
+    .iter()
+    .find(|(name, _)| name.eq_ignore_ascii_case(file_name))
+    .map(|(_, hash)| *hash)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -999,16 +1118,18 @@ fn resolve_model_path_by_file(app: &AppHandle, file_name: &str) -> Option<PathBu
 }
 
 fn load_custom_source_models(custom_url: &str) -> Result<Vec<SourceModel>, String> {
-  if custom_url.trim().is_empty() {
+  let custom_url = custom_url.trim();
+  if custom_url.is_empty() {
     return Ok(Vec::new());
   }
 
   // Security: Validate custom URL before fetching
-  is_url_safe(custom_url)?;
+  validate_model_url(custom_url, UrlSafety::Strict)?;
 
   if custom_url.ends_with(".bin") || custom_url.ends_with(".gguf") {
     let file_name = filename_from_url(custom_url)
       .ok_or_else(|| "Invalid model URL".to_string())?;
+    validate_model_file_name(&file_name)?;
     let id = file_name
       .trim_end_matches(".bin")
       .trim_end_matches(".gguf")
@@ -1024,8 +1145,7 @@ fn load_custom_source_models(custom_url: &str) -> Result<Vec<SourceModel>, Strin
     }]);
   }
 
-  let response = ureq::get(custom_url)
-    .call()
+  let response = http_get_with_redirects(custom_url)
     .map_err(|e| format!("Failed to fetch model index: {e}"))?;
   let mut body = String::new();
   response
@@ -1034,39 +1154,8 @@ fn load_custom_source_models(custom_url: &str) -> Result<Vec<SourceModel>, Strin
     .map_err(|e| format!("Failed to read model index: {e}"))?;
 
   if let Ok(entries) = serde_json::from_str::<Vec<ModelIndexEntry>>(&body) {
-    return Ok(entries
-      .into_iter()
-      .map(|entry| {
-        let label = if entry.label.trim().is_empty() {
-          entry.id.clone()
-        } else {
-          entry.label.clone()
-        };
-        let download_url = entry
-          .url
-          .clone()
-          .unwrap_or_else(|| custom_url.trim_end_matches('/').to_string() + "/" + &entry.file_name);
-        SourceModel {
-          id: entry.id,
-          label,
-          file_name: entry.file_name,
-          size_mb: entry.size_mb,
-          download_url,
-          source: "custom".to_string(),
-        }
-      })
-      .collect());
-  }
-
-  let index: ModelIndex = serde_json::from_str(&body)
-    .map_err(|_| "Unsupported model index format".to_string())?;
-  let base_url = index
-    .base_url
-    .unwrap_or_else(|| custom_url.trim_end_matches('/').to_string());
-  Ok(index
-    .models
-    .into_iter()
-    .map(|entry| {
+    let mut results = Vec::new();
+    for entry in entries {
       let label = if entry.label.trim().is_empty() {
         entry.id.clone()
       } else {
@@ -1075,17 +1164,70 @@ fn load_custom_source_models(custom_url: &str) -> Result<Vec<SourceModel>, Strin
       let download_url = entry
         .url
         .clone()
-        .unwrap_or_else(|| base_url.trim_end_matches('/').to_string() + "/" + &entry.file_name);
-      SourceModel {
+        .unwrap_or_else(|| custom_url.trim_end_matches('/').to_string() + "/" + &entry.file_name);
+      if let Err(err) = validate_model_file_name(&entry.file_name) {
+        warn!("Skipping model {}: {}", entry.id, err);
+        continue;
+      }
+      if let Err(err) = is_url_safe(&download_url, UrlSafety::Basic) {
+        warn!("Skipping model {}: {}", entry.id, err);
+        continue;
+      }
+      results.push(SourceModel {
         id: entry.id,
         label,
         file_name: entry.file_name,
         size_mb: entry.size_mb,
         download_url,
         source: "custom".to_string(),
+      });
+    }
+    return Ok(results);
+  }
+
+  let index: ModelIndex = serde_json::from_str(&body)
+    .map_err(|_| "Unsupported model index format".to_string())?;
+  let base_url = match index.base_url {
+    Some(url) => match validate_model_url(&url, UrlSafety::Basic) {
+      Ok(_) => url,
+      Err(err) => {
+        warn!("Ignoring unsafe model index base_url: {}", err);
+        custom_url.trim_end_matches('/').to_string()
       }
-    })
-    .collect())
+    },
+    None => custom_url.trim_end_matches('/').to_string(),
+  };
+
+  let mut results = Vec::new();
+  for entry in index.models {
+    let label = if entry.label.trim().is_empty() {
+      entry.id.clone()
+    } else {
+      entry.label.clone()
+    };
+    let download_url = entry
+      .url
+      .clone()
+      .unwrap_or_else(|| base_url.trim_end_matches('/').to_string() + "/" + &entry.file_name);
+    if let Err(err) = validate_model_file_name(&entry.file_name) {
+      warn!("Skipping model {}: {}", entry.id, err);
+      continue;
+    }
+    if let Err(err) = is_url_safe(&download_url, UrlSafety::Basic) {
+      warn!("Skipping model {}: {}", entry.id, err);
+      continue;
+    }
+    results.push(SourceModel {
+      id: entry.id,
+      label,
+      file_name: entry.file_name,
+      size_mb: entry.size_mb,
+      download_url,
+      source: "custom".to_string(),
+    });
+  }
+
+  Ok(results)
 }
 
 fn float_to_i16(sample: f32) -> i16 {
@@ -1662,27 +1804,38 @@ fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<ModelInfo> {
       }
     }
   } else {
-    let base_url = std::env::var("TRISPR_WHISPER_MODEL_BASE_URL")
-      .unwrap_or_else(|_| DEFAULT_MODEL_BASE_URL.to_string());
-    let mut defaults: Vec<SourceModel> = MODEL_SPECS
-      .iter()
-      .map(|spec| SourceModel {
+    let base_url = resolve_model_base_url();
+    let mut defaults: Vec<SourceModel> = Vec::new();
+    for spec in MODEL_SPECS {
+      let download_url = format!("{}/{}", base_url.trim_end_matches('/'), spec.file_name);
+      if let Err(err) = is_url_safe(&download_url, UrlSafety::Basic) {
+        warn!("Skipping unsafe model URL for {}: {}", spec.id, err);
+        continue;
+      }
+      defaults.push(SourceModel {
         id: spec.id.to_string(),
         label: spec.label.to_string(),
         file_name: spec.file_name.to_string(),
         size_mb: spec.size_mb,
-        download_url: format!("{}/{}", base_url.trim_end_matches('/'), spec.file_name),
+        download_url,
         source: "default".to_string(),
-      })
-      .collect();
-    defaults.push(SourceModel {
-      id: "ggml-distil-large-v3".to_string(),
-      label: "Distil-Whisper large-v3 (EN)".to_string(),
-      file_name: "ggml-distil-large-v3.bin".to_string(),
-      size_mb: 1520,
-      download_url: "https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin".to_string(),
-      source: "distil".to_string(),
-    });
+      });
+    }
+
+    let distil_url = "https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin";
+    if let Err(err) = is_url_safe(distil_url, UrlSafety::Basic) {
+      warn!("Skipping unsafe distil model URL: {}", err);
+    } else {
+      defaults.push(SourceModel {
+        id: "ggml-distil-large-v3".to_string(),
+        label: "Distil-Whisper large-v3 (EN)".to_string(),
+        file_name: "ggml-distil-large-v3.bin".to_string(),
+        size_mb: 1520,
+        download_url: distil_url.to_string(),
+        source: "distil".to_string(),
+      });
+    }
+
     defaults
   };
 
@@ -1768,18 +1921,21 @@ fn download_model(
   file_name: Option<String>,
 ) -> Result<(), String> {
   let (url, name) = if let Some(url) = download_url.clone() {
-    // Security: Validate URL before downloading
-    is_url_safe(&url)?;
-
     let name = file_name
       .or_else(|| filename_from_url(&url))
       .ok_or_else(|| "Missing file name for custom download".to_string())?;
+    validate_model_file_name(&name)?;
+    // Security: Validate URL before downloading
+    is_url_safe(&url, UrlSafety::Strict)?;
     (url, name)
   } else {
     let spec = model_spec(&model_id).ok_or_else(|| "Unknown model".to_string())?;
-    let base_url = std::env::var("TRISPR_WHISPER_MODEL_BASE_URL")
-      .unwrap_or_else(|_| DEFAULT_MODEL_BASE_URL.to_string());
-    (format!("{}/{}", base_url.trim_end_matches('/'), spec.file_name), spec.file_name.to_string())
+    let base_url = resolve_model_base_url();
+    let name = spec.file_name.to_string();
+    validate_model_file_name(&name)?;
+    let url = format!("{}/{}", base_url.trim_end_matches('/'), spec.file_name);
+    is_url_safe(&url, UrlSafety::Strict)?;
+    (url, name)
   };
   {
     let mut downloads = state.downloads.lock().unwrap();
@@ -1826,6 +1982,7 @@ fn remove_model(app: AppHandle, file_name: String) -> Result<(), String> {
   if file_name.trim().is_empty() {
     return Err("Missing model file name".to_string());
   }
+  validate_model_file_name(&file_name)?;
   let models_dir = resolve_models_dir(&app);
   let target = models_dir.join(&file_name);
   if !target.exists() {
@@ -3156,6 +3313,7 @@ fn download_model_file(
   download_url: &str,
   file_name: &str,
 ) -> Result<PathBuf, String> {
+  validate_model_file_name(file_name)?;
   let models_dir = resolve_models_dir(app);
   let dest_path = models_dir.join(file_name);
   if dest_path.exists() {
@@ -3164,7 +3322,7 @@ fn download_model_file(
 
   let tmp_path = dest_path.with_extension("part");
   let result = (|| -> Result<PathBuf, String> {
-    let response = ureq::get(download_url).call().map_err(|e| e.to_string())?;
+    let response = http_get_with_redirects(download_url).map_err(|e| e.to_string())?;
     let total = response
       .header("Content-Length")
       .and_then(|value| value.parse::<u64>().ok());
@@ -3208,6 +3366,12 @@ fn download_model_file(
         .write_all(&buffer[..read_bytes])
         .map_err(|e| e.to_string())?;
       downloaded += read_bytes as u64;
+      if downloaded > MAX_MODEL_SIZE_BYTES {
+        return Err(format!(
+          "Model too large: exceeded {} MB limit",
+          MAX_MODEL_SIZE_BYTES / 1024 / 1024
+        ));
+      }
 
       if last_emit.elapsed() >= Duration::from_millis(250) {
         let _ = app.emit(
@@ -3223,21 +3387,18 @@ fn download_model_file(
     }
 
     file.flush().map_err(|e| e.to_string())?;
-    fs::rename(&tmp_path, &dest_path).map_err(|e| e.to_string())?;
+    drop(file);
 
-    // Optional: Verify model checksum if available
+    // Optional: Verify model checksum if available (before renaming into place)
     // This prevents man-in-the-middle attacks and file corruption
-    let checksum = MODEL_CHECKSUMS
-      .iter()
-      .find(|(name, _)| name == &file_name)
-      .map(|(_, hash)| hash);
-
-    if let Some(expected_hash) = checksum {
-      verify_model_checksum(&dest_path, expected_hash)?;
+    if let Some(expected_hash) = lookup_model_checksum(file_name) {
+      verify_model_checksum(&tmp_path, expected_hash)?;
       info!("Model integrity verified for {}", file_name);
     } else {
       warn!("No checksum available for {}: skipping integrity check", file_name);
     }
+
+    fs::rename(&tmp_path, &dest_path).map_err(|e| e.to_string())?;
 
     let _ = app.emit(
       "model:download-progress",

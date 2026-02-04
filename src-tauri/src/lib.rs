@@ -1560,7 +1560,8 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
   drop(recorder);
 
   let _ = app.emit("settings-changed", settings.clone());
-  let _ = app.emit("menu:update-cloud", settings.cloud_fallback.to_string());
+  let _ = app.emit("menu:update-mic", settings.capture_enabled.to_string());
+  let _ = app.emit("menu:update-transcribe", settings.transcribe_enabled.to_string());
   Ok(())
 }
 
@@ -3632,14 +3633,21 @@ pub fn run() {
             "show" => {
               show_main_window(app);
             }
-            "toggle-cloud" => {
+            "toggle-mic" => {
               let state = app.state::<AppState>();
-              let mut current = state.settings.lock().unwrap();
-              current.cloud_fallback = !current.cloud_fallback;
-              let _ = save_settings_file(app, &current);
-              let _ = register_hotkeys(app, &current);
-              let _ = app.emit("settings-changed", current.clone());
-              let _ = app.emit("menu:update-cloud", current.cloud_fallback.to_string());
+              let mut current = state.settings.lock().unwrap().clone();
+              current.capture_enabled = !current.capture_enabled;
+              if let Err(err) = save_settings(app.clone(), state, current) {
+                emit_error(app, AppError::Storage(err), Some("Tray menu"));
+              }
+            }
+            "toggle-transcribe" => {
+              let state = app.state::<AppState>();
+              let mut current = state.settings.lock().unwrap().clone();
+              current.transcribe_enabled = !current.transcribe_enabled;
+              if let Err(err) = save_settings(app.clone(), state, current) {
+                emit_error(app, AppError::Storage(err), Some("Tray menu"));
+              }
             }
             "quit" => {
               app.exit(0);
@@ -3648,19 +3656,34 @@ pub fn run() {
           }
         })
         .menu({
-          let cloud_item = CheckMenuItem::with_id(
+          let mic_item = CheckMenuItem::with_id(
             app,
-            "toggle-cloud",
-            "Claude fallback",
+            "toggle-mic",
+            "Microphone tracking",
             true,
-            settings.cloud_fallback,
+            settings.capture_enabled,
             None::<&str>,
           )?;
 
-          let cloud_item_clone = cloud_item.clone();
-          app.listen("menu:update-cloud", move |event| {
+          let mic_item_clone = mic_item.clone();
+          app.listen("menu:update-mic", move |event| {
             let checked = event.payload() == "true";
-            let _ = cloud_item_clone.set_checked(checked);
+            let _ = mic_item_clone.set_checked(checked);
+          });
+
+          let transcribe_item = CheckMenuItem::with_id(
+            app,
+            "toggle-transcribe",
+            "System audio transcription",
+            true,
+            settings.transcribe_enabled,
+            None::<&str>,
+          )?;
+
+          let transcribe_item_clone = transcribe_item.clone();
+          app.listen("menu:update-transcribe", move |event| {
+            let checked = event.payload() == "true";
+            let _ = transcribe_item_clone.set_checked(checked);
           });
 
           &tauri::menu::Menu::with_items(
@@ -3668,7 +3691,8 @@ pub fn run() {
             &[
               &tauri::menu::MenuItem::with_id(app, "show", "Open Trispr Flow", true, None::<&str>)?,
               &tauri::menu::PredefinedMenuItem::separator(app)?,
-              &cloud_item,
+              &mic_item,
+              &transcribe_item,
               &tauri::menu::PredefinedMenuItem::separator(app)?,
               &tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?,
             ],

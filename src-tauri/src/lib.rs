@@ -70,8 +70,12 @@ fn is_public_ip(ip: IpAddr) -> bool {
         || v4.is_broadcast()
         || v4.is_documentation()
         || v4.is_unspecified()
-        || v4.is_shared()
       {
+        return false;
+      }
+      let oct = v4.octets();
+      // Carrier-grade NAT: 100.64.0.0/10
+      if oct[0] == 100 && (oct[1] & 0b1100_0000) == 0b0100_0000 {
         return false;
       }
       true

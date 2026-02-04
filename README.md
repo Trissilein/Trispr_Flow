@@ -16,9 +16,15 @@ Trispr Flow is a modern desktop dictation app built with Tauri + Rust + TypeScri
 - **📈 Output meters** with dB readout + adjustable thresholds + system input gain
 - **🔒 Privacy-first** (offline by default; cloud fallback is opt-in)
 
-## 🚧 Work in progress
-- Overlay dot (audio-reactive size, opacity, color reliability)
-- Model Manager revamp (sources, install/remove, custom URLs)
+## ✅ Recently Completed
+- **Frontend Modularization**: Split monolithic main.ts into 14 focused modules for better maintainability
+- **Overlay Circle Dot Fix**: Audio-reactive size animation now works correctly
+- **Monitoring Toggles**: UI controls to enable/disable microphone tracking and system audio transcription
+- **Tray Menu Sync**: Checkmarks properly sync between UI toggles and system tray menu
+
+## 🚧 Work in Progress
+- **Security Hardening**: SSRF prevention, model integrity verification, download size limits
+- Model Manager enhancements (custom URLs, source selection)
 - Conversation detach window stability
 
 ## 🚀 Quick Start (Dev)
@@ -58,23 +64,55 @@ npm run tauri dev
 .\scripts\setup-whisper.ps1 -CpuFallback
 ```
 
-## 🧱 Project structure
+## 🧱 Project Structure
 ```
 Trispr_Flow/
-├── src/                 # Frontend TypeScript
-│   ├── main.ts         # Main app logic
-│   ├── overlay.ts      # Overlay state + animation
-│   └── styles.css      # App styling
-├── src-tauri/          # Rust backend
-│   └── src/lib.rs      # Core backend logic
-├── index.html          # Main window UI
-├── overlay.html        # Overlay UI
-├── ROADMAP.md          # Roadmap
-└── STATUS.md           # Current status
+├── src/                      # Frontend TypeScript (Modular Architecture)
+│   ├── main.ts              # App initialization (~220 lines, down from ~1800)
+│   ├── state.ts             # Global application state
+│   ├── types.ts             # TypeScript type definitions
+│   ├── settings.ts          # Settings persistence & UI rendering
+│   ├── devices.ts           # Audio device management
+│   ├── hotkeys.ts           # Hotkey configuration
+│   ├── models.ts            # Model management
+│   ├── history.ts           # Transcript history logic
+│   ├── dom-refs.ts          # Centralized DOM references
+│   ├── event-listeners.ts   # Event handler setup
+│   ├── ui-state.ts          # UI state management
+│   ├── ui-helpers.ts        # UI utility functions
+│   ├── toast.ts             # Toast notifications
+│   ├── accessibility.ts     # Accessibility helpers
+│   ├── audio-cues.ts        # Audio feedback system
+│   ├── overlay.ts           # Overlay state + animation
+│   └── styles.css           # App styling
+├── src-tauri/               # Rust backend
+│   └── src/lib.rs          # Core backend logic (~3700 lines)
+├── index.html               # Main window UI
+├── overlay.html             # Overlay UI
+├── .claude/
+│   └── ROADMAP.md          # Development roadmap
+└── docs/                    # Documentation
+    ├── ARCHITECTURE.md
+    ├── CLOUD_FALLBACK.md
+    └── DEVELOPMENT.md
 ```
 
 ## 🗺️ Roadmap
-See [ROADMAP.md](ROADMAP.md) for milestones and next steps.
+See [.claude/ROADMAP.md](.claude/ROADMAP.md) for detailed milestones and next steps.
+
+**Current Phase:** Security Hardening (CRITICAL Priority)
+- Block 1: SSRF Prevention
+- Block 2: Model Integrity Verification
+- Block 3: Download Size Limits
+
+**Next Phase:** Code Refactoring & Testing
+- Block 6: lib.rs Modularization
+- Block 7: Automated Testing
+- Block 8: Documentation Updates
+
+**Future Features:**
+- Post-Processing Pipeline (punctuation, formatting, normalization)
+- Live Transcript Dump & Chapter Summarization
 
 ## 🤝 Contributing
 PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).

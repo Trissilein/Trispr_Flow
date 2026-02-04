@@ -60,6 +60,44 @@ fn is_allowed_host(host: &str) -> bool {
     .any(|allowed| host == *allowed || host.ends_with(&format!(".{}", allowed)))
 }
 
+fn is_public_ip(ip: IpAddr) -> bool {
+  match ip {
+    IpAddr::V4(v4) => {
+      if v4.is_private()
+        || v4.is_loopback()
+        || v4.is_link_local()
+        || v4.is_multicast()
+        || v4.is_broadcast()
+        || v4.is_documentation()
+        || v4.is_unspecified()
+        || v4.is_shared()
+      {
+        return false;
+      }
+      true
+    }
+    IpAddr::V6(v6) => {
+      if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+        return false;
+      }
+      let seg = v6.segments();
+      // Unique local: fc00::/7
+      if (seg[0] & 0xfe00) == 0xfc00 {
+        return false;
+      }
+      // Link-local: fe80::/10
+      if (seg[0] & 0xffc0) == 0xfe80 {
+        return false;
+      }
+      // Documentation: 2001:db8::/32
+      if seg[0] == 0x2001 && seg[1] == 0x0db8 {
+        return false;
+      }
+      true
+    }
+  }
+}
+
 fn validate_model_url(url: &str, mode: UrlSafety) -> Result<Url, String> {
   let parsed = Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))?;
 
@@ -95,7 +133,7 @@ fn validate_model_url(url: &str, mode: UrlSafety) -> Result<Url, String> {
   }
 
   if let Ok(ip) = host.parse::<IpAddr>() {
-    if !ip.is_global() {
+    if !is_public_ip(ip) {
       return Err("IP address is not public".to_string());
     }
   } else if mode == UrlSafety::Strict {
@@ -106,7 +144,7 @@ fn validate_model_url(url: &str, mode: UrlSafety) -> Result<Url, String> {
       .map_err(|e| format!("DNS lookup failed for {host}: {e}"))?;
     for addr in addrs {
       resolved = true;
-      if !addr.ip().is_global() {
+      if !is_public_ip(addr.ip()) {
         return Err(format!(
           "Resolved IP {} for {} is not public",
           addr.ip(),

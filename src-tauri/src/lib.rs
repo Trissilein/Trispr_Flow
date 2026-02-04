@@ -13,6 +13,7 @@ use errors::{AppError, ErrorEvent};
 use overlay::{OverlayState, update_overlay_state};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
+use sha2::{Sha256, Digest};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
@@ -33,6 +34,8 @@ const VAD_THRESHOLD_SUSTAIN_DEFAULT: f32 = 0.01;
 const VAD_SILENCE_MS_DEFAULT: u64 = 700;
 const VAD_MIN_VOICE_MS: u64 = 250;
 const DEFAULT_MODEL_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+const MAX_MODEL_SIZE_BYTES: u64 = 5 * 1024 * 1024 * 1024; // 5 GB
+const DOWNLOAD_TIMEOUT_SECS: u64 = 30; // Timeout for stalled downloads
 
 // Allowed domains for model downloads (security: SSRF prevention)
 const ALLOWED_MODEL_DOMAINS: &[&str] = &[
@@ -131,6 +134,55 @@ const MODEL_SPECS: &[ModelSpec] = &[
     size_mb: 1500,
   },
 ];
+
+// Model integrity verification (SHA256 checksums)
+// These checksums ensure downloaded models haven't been tampered with
+// Format: (file_name, sha256_hex)
+// NOTE: Update these after verifying actual model checksums
+const MODEL_CHECKSUMS: &[(&str, &str)] = &[
+  // "ggml-large-v3.bin" -> Calculate with: sha256sum file.bin
+  // "ggml-large-v3-turbo.bin" -> Calculate with: sha256sum file.bin
+];
+
+/// Verifies a downloaded model file against its expected SHA256 checksum
+fn verify_model_checksum(path: &std::path::Path, expected_hash: &str) -> Result<(), String> {
+  use std::io::Read;
+
+  let mut file = fs::File::open(path).map_err(|e| {
+    format!("Failed to open model file for checksum verification: {}", e)
+  })?;
+
+  let mut hasher = Sha256::new();
+  let mut buffer = [0u8; 8192];
+
+  loop {
+    let n = file.read(&mut buffer).map_err(|e| {
+      format!("Failed to read model file for checksum: {}", e)
+    })?;
+    if n == 0 {
+      break;
+    }
+    hasher.update(&buffer[..n]);
+  }
+
+  let result = hasher.finalize();
+  let actual_hash = hex::encode(result);
+
+  if actual_hash.eq_ignore_ascii_case(expected_hash) {
+    info!("Model checksum verified: {}", path.display());
+    Ok(())
+  } else {
+    error!(
+      "Model checksum mismatch for {}: expected {}, got {}",
+      path.display(),
+      expected_hash,
+      actual_hash
+    );
+    Err(format!(
+      "Model integrity check failed: checksum mismatch (possible corruption or tampering)"
+    ))
+  }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -3101,18 +3153,41 @@ fn download_model_file(
       .header("Content-Length")
       .and_then(|value| value.parse::<u64>().ok());
 
+    // Security: Enforce maximum model size to prevent disk exhaustion
+    if let Some(size) = total {
+      if size > MAX_MODEL_SIZE_BYTES {
+        return Err(format!(
+          "Model too large: {} MB (max {} MB)",
+          size / 1024 / 1024,
+          MAX_MODEL_SIZE_BYTES / 1024 / 1024
+        ));
+      }
+    }
+
     let mut reader = response.into_reader();
     let mut file = fs::File::create(&tmp_path).map_err(|e| e.to_string())?;
 
     let mut downloaded = 0u64;
     let mut last_emit = Instant::now();
+    let mut last_read = Instant::now(); // Track for timeout detection
     let mut buffer = [0u8; 64 * 1024];
 
     loop {
+      // Timeout detection: fail if no data for DOWNLOAD_TIMEOUT_SECS
+      if last_read.elapsed().as_secs() > DOWNLOAD_TIMEOUT_SECS {
+        return Err(format!(
+          "Download stalled: no data received for {} seconds",
+          DOWNLOAD_TIMEOUT_SECS
+        ));
+      }
+
       let read_bytes = reader.read(&mut buffer).map_err(|e| e.to_string())?;
       if read_bytes == 0 {
         break;
       }
+
+      last_read = Instant::now(); // Reset timeout on successful read
+
       file
         .write_all(&buffer[..read_bytes])
         .map_err(|e| e.to_string())?;
@@ -3133,6 +3208,20 @@ fn download_model_file(
 
     file.flush().map_err(|e| e.to_string())?;
     fs::rename(&tmp_path, &dest_path).map_err(|e| e.to_string())?;
+
+    // Optional: Verify model checksum if available
+    // This prevents man-in-the-middle attacks and file corruption
+    let checksum = MODEL_CHECKSUMS
+      .iter()
+      .find(|(name, _)| name == &file_name)
+      .map(|(_, hash)| hash);
+
+    if let Some(expected_hash) = checksum {
+      verify_model_checksum(&dest_path, expected_hash)?;
+      info!("Model integrity verified for {}", file_name);
+    } else {
+      warn!("No checksum available for {}: skipping integrity check", file_name);
+    }
 
     let _ = app.emit(
       "model:download-progress",

@@ -1412,3 +1412,72 @@ button:disabled {
 .toggle-compact input:checked + .toggle-track .toggle-thumb {
   transform: translateX(18px);
 }
+
+/* ============================================
+   Accessibility Enhancements (WCAG 2.1 AA)
+   ============================================ */
+
+/* Screen reader only content */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* Skip links for keyboard navigation */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--card);
+  color: var(--ink);
+  padding: 8px 16px;
+  z-index: 100;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  transition: top 0.2s ease;
+}
+
+.skip-link:focus {
+  top: 8px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Enhanced focus indicators for all interactive elements */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hotkey-record-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  background: rgba(255, 107, 61, 0.1);
+}
+
+.panel-collapse-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.history-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Ensure range sliders have visible focus */
+input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}

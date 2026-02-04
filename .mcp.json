@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "local-stt-mcp": {
+      "command": "node",
+      "args": ["D:\\GIT\\local-stt-mcp\\mcp-server\\dist\\index.js"],
+      "env": {
+        "WHISPER_CLI_PATH": "D:\\GIT\\whisper.cpp\\build-cuda\\bin\\Release\\whisper-cli.exe",
+        "MODEL_PATH": "D:\\GIT\\whisper.cpp\\models"
+      }
+    }
+  }
+}

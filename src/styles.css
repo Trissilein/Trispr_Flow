@@ -600,8 +600,32 @@ h1 {
   gap: 10px;
 }
 
+/* Toggle with hint (new structure) */
+.toggle-with-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.toggle-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.toggle-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  line-height: 1.4;
+  padding-left: 2px;
+}
+
 .toggle input[type="checkbox"],
-.field.toggle input[type="checkbox"] {
+.field.toggle input[type="checkbox"],
+.toggle-row input[type="checkbox"] {
   position: absolute;
   opacity: 0;
   pointer-events: none;
@@ -619,7 +643,8 @@ h1 {
 }
 
 .field.toggle input:checked + .toggle-track,
-.toggle input:checked + .toggle-track {
+.toggle input:checked + .toggle-track,
+.toggle-row input:checked + .toggle-track {
   background: var(--accent-2);
   border-color: var(--accent-2);
 }
@@ -636,7 +661,8 @@ h1 {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
-.field.toggle input:checked + .toggle-track .toggle-thumb {
+.field.toggle input:checked + .toggle-track .toggle-thumb,
+.toggle-row input:checked + .toggle-track .toggle-thumb {
   transform: translateX(18px);
 }
 

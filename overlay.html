@@ -81,6 +81,10 @@
       let kittMaxWidth = 200;
       let kittHeight = 20;
 
+      // Dot settings
+      let dotMinRadius = 8;
+      let dotMaxRadius = 24;
+
       function updateOpacity() {
         const opacity = isActive ? opacityActive : opacityInactive;
         dot.style.opacity = opacity;
@@ -147,13 +151,30 @@
         debug.textContent = "kitt: " + kittMinWidth + "-" + kittMaxWidth + " h:" + kittHeight;
       };
 
+      window.setDotDimensions = function(minRadius, maxRadius) {
+        dotMinRadius = Math.max(4, Math.min(64, minRadius));
+        dotMaxRadius = Math.max(8, Math.min(96, maxRadius));
+        if (dotMaxRadius < dotMinRadius) {
+          dotMaxRadius = dotMinRadius;
+        }
+        // Set initial size to min radius
+        const size = dotMinRadius * 2;
+        dot.style.width = size + "px";
+        dot.style.height = size + "px";
+        debug.textContent = "dot: " + dotMinRadius + "-" + dotMaxRadius;
+      };
+
       window.setOverlayLevel = function(level) {
         const clamped = Math.max(0, Math.min(1, level));
         if (currentStyle === "kitt") {
           const width = kittMinWidth + (kittMaxWidth - kittMinWidth) * clamped;
           kitt.style.width = width + "px";
         } else {
-          // For dot mode, this is handled differently (size already set by backend)
+          // Dot mode: animate radius from min to max based on level
+          const radius = dotMinRadius + (dotMaxRadius - dotMinRadius) * clamped;
+          const size = Math.max(2, radius * 2);
+          dot.style.width = size + "px";
+          dot.style.height = size + "px";
         }
       };
 
@@ -180,6 +201,8 @@
         const minWidth = payload.overlay_kitt_min_width ?? kittMinWidth;
         const maxWidth = payload.overlay_kitt_max_width ?? kittMaxWidth;
         const height = payload.overlay_kitt_height ?? kittHeight;
+        const minRadius = payload.overlay_min_radius ?? dotMinRadius;
+        const maxRadius = payload.overlay_max_radius ?? dotMaxRadius;
         if (color) {
           window.setOverlayColor(color);
         }
@@ -188,6 +211,7 @@
         }
         window.setOverlayStyle(style);
         window.setKittDimensions(minWidth, maxWidth, height);
+        window.setDotDimensions(minRadius, maxRadius);
       }
 
       const invoke = window.__TAURI__?.core?.invoke;

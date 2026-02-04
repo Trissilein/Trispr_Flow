@@ -1503,9 +1503,9 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
-  let (prev_mode, prev_device) = {
+  let (prev_mode, prev_device, prev_capture_enabled, prev_transcribe_enabled) = {
     let current = state.settings.lock().unwrap();
-    (current.mode.clone(), current.input_device.clone())
+    (current.mode.clone(), current.input_device.clone(), current.capture_enabled, current.transcribe_enabled)
   };
   {
     let mut current = state.settings.lock().unwrap();
@@ -1542,11 +1542,26 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
     }
   }
 
-  if !settings.capture_enabled {
-    stop_vad_monitor(&app, &state);
+  // Handle capture_enabled changes
+  let capture_enabled_changed = prev_capture_enabled != settings.capture_enabled;
+  if capture_enabled_changed {
+    if !settings.capture_enabled {
+      stop_vad_monitor(&app, &state);
+    } else if settings.mode == "vad" {
+      // Start VAD monitor when enabling capture in VAD mode
+      let _ = start_vad_monitor(&app, &state, &settings);
+    }
   }
-  if !settings.transcribe_enabled {
-    stop_transcribe_monitor(&app, &state);
+
+  // Handle transcribe_enabled changes
+  let transcribe_enabled_changed = prev_transcribe_enabled != settings.transcribe_enabled;
+  if transcribe_enabled_changed {
+    if !settings.transcribe_enabled {
+      stop_transcribe_monitor(&app, &state);
+    } else {
+      // Start transcribe monitor when enabling
+      let _ = start_transcribe_monitor(&app, &state, &settings);
+    }
   }
 
   let overlay_settings = build_overlay_settings(&settings);
@@ -1560,8 +1575,8 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
   drop(recorder);
 
   let _ = app.emit("settings-changed", settings.clone());
-  let _ = app.emit("menu:update-mic", settings.capture_enabled.to_string());
-  let _ = app.emit("menu:update-transcribe", settings.transcribe_enabled.to_string());
+  let _ = app.emit("menu:update-mic", settings.capture_enabled);
+  let _ = app.emit("menu:update-transcribe", settings.transcribe_enabled);
   Ok(())
 }
 
@@ -3667,8 +3682,9 @@ pub fn run() {
 
           let mic_item_clone = mic_item.clone();
           app.listen("menu:update-mic", move |event| {
-            let checked = event.payload() == "true";
-            let _ = mic_item_clone.set_checked(checked);
+            if let Ok(checked) = serde_json::from_str::<bool>(event.payload()) {
+              let _ = mic_item_clone.set_checked(checked);
+            }
           });
 
           let transcribe_item = CheckMenuItem::with_id(
@@ -3682,8 +3698,9 @@ pub fn run() {
 
           let transcribe_item_clone = transcribe_item.clone();
           app.listen("menu:update-transcribe", move |event| {
-            let checked = event.payload() == "true";
-            let _ = transcribe_item_clone.set_checked(checked);
+            if let Ok(checked) = serde_json::from_str::<bool>(event.payload()) {
+              let _ = transcribe_item_clone.set_checked(checked);
+            }
           });
 
           &tauri::menu::Menu::with_items(

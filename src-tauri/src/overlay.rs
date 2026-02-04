@@ -5,6 +5,7 @@ use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static OVERLAY_JS_READY: AtomicBool = AtomicBool::new(false);
+static OVERLAY_RETRY_PENDING: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -26,6 +27,10 @@ pub struct OverlaySettings {
     pub opacity_active: f64,
     pub pos_x: f64,
     pub pos_y: f64,
+    pub style: String,
+    pub kitt_min_width: f64,
+    pub kitt_max_width: f64,
+    pub kitt_height: f64,
 }
 
 pub fn mark_overlay_ready() {
@@ -140,7 +145,7 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
     Ok(())
 }
 
-fn resolve_overlay_position(window: &WebviewWindow, settings: &OverlaySettings, size: f64) -> (f64, f64) {
+fn resolve_overlay_position(window: &WebviewWindow, settings: &OverlaySettings, width: f64, height: f64) -> (f64, f64) {
     let mut anchor_x = settings.pos_x;
     let mut anchor_y = settings.pos_y;
 
@@ -159,18 +164,28 @@ fn resolve_overlay_position(window: &WebviewWindow, settings: &OverlaySettings, 
         }
     }
 
-    let pos_x = anchor_x - size * 0.5;
-    let pos_y = anchor_y - size * 0.5;
+    let pos_x = anchor_x - width * 0.5;
+    let pos_y = anchor_y - height * 0.5;
     (pos_x, pos_y)
 }
 
 pub fn resolve_overlay_position_for_settings(app: &AppHandle, settings: &OverlaySettings) -> Option<(f64, f64)> {
     let window = app.get_webview_window("overlay")?;
-    let max_radius = settings.max_radius.max(settings.min_radius).max(4.0);
-    let size = (max_radius * 2.0 + 96.0).max(64.0);
-    let (pos_x, pos_y) = resolve_overlay_position(&window, settings, size);
-    let center_x = pos_x + size * 0.5;
-    let center_y = pos_y + size * 0.5;
+
+    // Calculate size based on style
+    let (width, height) = if settings.style == "kitt" {
+        let w = settings.kitt_max_width.max(settings.kitt_min_width).max(50.0) + 32.0;
+        let h = settings.kitt_height.max(8.0) + 32.0;
+        (w, h)
+    } else {
+        let max_radius = settings.max_radius.max(settings.min_radius).max(4.0);
+        let size = (max_radius * 2.0 + 96.0).max(64.0);
+        (size, size)
+    };
+
+    let (pos_x, pos_y) = resolve_overlay_position(&window, settings, width, height);
+    let center_x = pos_x + width * 0.5;
+    let center_y = pos_y + height * 0.5;
     let changed = (center_x - settings.pos_x).abs() > 0.5 || (center_y - settings.pos_y).abs() > 0.5;
     if changed {
         Some((center_x, center_y))
@@ -185,24 +200,51 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
         None => create_overlay_window(app)?,
     };
 
-    let max_radius = settings.max_radius.max(settings.min_radius).max(4.0);
-    let size = (max_radius * 2.0 + 96.0).max(64.0);
+    // Calculate window size based on style
+    let (width, height) = if settings.style == "kitt" {
+        // KITT mode: rectangular window
+        let w = settings.kitt_max_width.max(settings.kitt_min_width).max(50.0) + 32.0;
+        let h = settings.kitt_height.max(8.0) + 32.0;
+        (w, h)
+    } else {
+        // Dot mode: square window
+        let max_radius = settings.max_radius.max(settings.min_radius).max(4.0);
+        let size = (max_radius * 2.0 + 96.0).max(64.0);
+        (size, size)
+    };
+
     let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
-        width: size,
-        height: size,
+        width,
+        height,
     }));
-    let (pos_x, pos_y) = resolve_overlay_position(&window, settings, size);
+    let (pos_x, pos_y) = resolve_overlay_position(&window, settings, width, height);
     let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition {
         x: pos_x,
         y: pos_y,
     }));
 
+    if !OVERLAY_JS_READY.load(Ordering::Relaxed)
+        && !OVERLAY_RETRY_PENDING.swap(true, Ordering::Relaxed)
+    {
+        let app_handle = app.clone();
+        let settings_clone = settings.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(250));
+            OVERLAY_RETRY_PENDING.store(false, Ordering::Relaxed);
+            let _ = apply_overlay_settings(&app_handle, &settings_clone);
+        });
+    }
+
     // Update overlay via JS functions
     let js = format!(
-        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}",
+        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}if(window.setKittDimensions){{window.setKittDimensions({},{},{});}}",
         settings.color,
         settings.opacity_active,
-        settings.opacity_inactive
+        settings.opacity_inactive,
+        settings.style,
+        settings.kitt_min_width,
+        settings.kitt_max_width,
+        settings.kitt_height
     );
     let _ = window.eval(&js);
 

@@ -11,6 +11,10 @@ type OverlaySettings = {
   fall_ms: number;
   opacity_inactive: number;
   opacity_active: number;
+  style: "dot" | "kitt";
+  kitt_min_width: number;
+  kitt_max_width: number;
+  kitt_height: number;
 };
 
 type AppSettings = {
@@ -21,11 +25,16 @@ type AppSettings = {
   overlay_fall_ms: number;
   overlay_opacity_inactive: number;
   overlay_opacity_active: number;
+  overlay_style: string;
+  overlay_kitt_min_width: number;
+  overlay_kitt_max_width: number;
+  overlay_kitt_height: number;
 };
 
 const root = document.getElementById("overlay-root") as HTMLDivElement | null;
 const ring = document.getElementById("overlay-ring") as HTMLDivElement | null;
 const dot = document.getElementById("overlay-dot") as HTMLDivElement | null;
+const kitt = document.getElementById("overlay-kitt") as HTMLDivElement | null;
 const debug = document.getElementById("overlay-debug") as HTMLDivElement | null;
 
 let currentState: OverlayState = "idle";
@@ -41,13 +50,17 @@ let settings: OverlaySettings = {
   fall_ms: 160,
   opacity_inactive: 0.2,
   opacity_active: 0.8,
+  style: "dot",
+  kitt_min_width: 20,
+  kitt_max_width: 200,
+  kitt_height: 20,
 };
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-function applySettings(next: OverlaySettings) {
+function applySettings(next: Partial<OverlaySettings>) {
   settings = {
     color: next.color || settings.color,
     min_radius: clamp(next.min_radius ?? settings.min_radius, 4, 64),
@@ -56,6 +69,10 @@ function applySettings(next: OverlaySettings) {
     fall_ms: clamp(next.fall_ms ?? settings.fall_ms, 20, 2000),
     opacity_inactive: clamp(next.opacity_inactive ?? settings.opacity_inactive, 0.05, 1),
     opacity_active: clamp(next.opacity_active ?? settings.opacity_active, 0.05, 1),
+    style: (next.style === "kitt" ? "kitt" : "dot"),
+    kitt_min_width: clamp(next.kitt_min_width ?? settings.kitt_min_width, 4, 40),
+    kitt_max_width: clamp(next.kitt_max_width ?? settings.kitt_max_width, 50, 800),
+    kitt_height: clamp(next.kitt_height ?? settings.kitt_height, 8, 40),
   };
   if (settings.max_radius < settings.min_radius) {
     settings.max_radius = settings.min_radius;
@@ -63,13 +80,19 @@ function applySettings(next: OverlaySettings) {
   if (settings.opacity_active < settings.opacity_inactive) {
     settings.opacity_active = settings.opacity_inactive;
   }
+  if (settings.kitt_max_width < settings.kitt_min_width) {
+    settings.kitt_max_width = settings.kitt_min_width;
+  }
   if (root) {
     root.style.setProperty("--dot-color", settings.color);
     root.style.setProperty("--overlay-opacity-idle", settings.opacity_inactive.toString());
     root.style.setProperty("--overlay-opacity-active", settings.opacity_active.toString());
+    root.dataset.style = settings.style;
   }
   // Update ring to show max_radius boundary
   updateRing();
+  // Update KITT element
+  updateKittSize();
 }
 
 function updateRing() {
@@ -77,6 +100,20 @@ function updateRing() {
   const ringSize = settings.max_radius * 2;
   ring.style.width = `${ringSize}px`;
   ring.style.height = `${ringSize}px`;
+}
+
+function updateKittSize() {
+  if (!kitt) return;
+  kitt.style.height = `${settings.kitt_height}px`;
+  // Width will be set dynamically based on level
+}
+
+function updateKitt(level: number) {
+  if (!kitt) return;
+  const clamped = clamp(level, 0, 1);
+  const width = settings.kitt_min_width + (settings.kitt_max_width - settings.kitt_min_width) * clamped;
+  kitt.style.width = `${width}px`;
+  kitt.style.height = `${settings.kitt_height}px`;
 }
 
 function applySettingsFromApp(payload: Partial<AppSettings>) {
@@ -88,6 +125,10 @@ function applySettingsFromApp(payload: Partial<AppSettings>) {
     fall_ms: payload.overlay_fall_ms ?? settings.fall_ms,
     opacity_inactive: payload.overlay_opacity_inactive ?? settings.opacity_inactive,
     opacity_active: payload.overlay_opacity_active ?? settings.opacity_active,
+    style: (payload.overlay_style === "kitt" ? "kitt" : "dot"),
+    kitt_min_width: payload.overlay_kitt_min_width ?? settings.kitt_min_width,
+    kitt_max_width: payload.overlay_kitt_max_width ?? settings.kitt_max_width,
+    kitt_height: payload.overlay_kitt_height ?? settings.kitt_height,
   });
 }
 
@@ -126,7 +167,12 @@ function tick(now: number) {
   const denom = Math.max(1, tau);
   const alpha = 1 - Math.exp(-dt / denom);
   currentLevel = currentLevel + (targetLevel - currentLevel) * alpha;
-  updateDot(currentLevel);
+
+  if (settings.style === "kitt") {
+    updateKitt(currentLevel);
+  } else {
+    updateDot(currentLevel);
+  }
   requestAnimationFrame(tick);
 }
 

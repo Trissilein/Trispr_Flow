@@ -29,6 +29,18 @@
         transition: opacity 0.12s ease-out, width 0.05s ease-out, height 0.05s ease-out;
       }
 
+      #kitt {
+        display: none;
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+        background: #ff3d2e;
+        transition: opacity 0.12s ease-out, width 0.05s ease-out;
+      }
+
+      #container[data-style="kitt"] #dot { display: none; }
+      #container[data-style="kitt"] #kitt { display: block; }
+
       #debug {
         display: none; /* Debug disabled */
         position: fixed;
@@ -44,23 +56,58 @@
     </style>
   </head>
   <body>
-    <div id="container">
+    <div id="container" data-style="dot">
       <div id="dot"></div>
+      <div id="kitt"></div>
     </div>
     <div id="debug">ready</div>
 
     <script>
       // Simple overlay - controlled entirely by backend JS eval
+      const container = document.getElementById("container");
       const dot = document.getElementById("dot");
+      const kitt = document.getElementById("kitt");
       const debug = document.getElementById("debug");
 
       // State
       let isActive = false;
       let opacityActive = 1.0;
       let opacityInactive = 0.25;
+      let baseColor = "#ff3d2e";
+      let currentStyle = "dot";
+
+      // KITT settings
+      let kittMinWidth = 20;
+      let kittMaxWidth = 200;
+      let kittHeight = 20;
 
       function updateOpacity() {
-        dot.style.opacity = isActive ? opacityActive : opacityInactive;
+        const opacity = isActive ? opacityActive : opacityInactive;
+        dot.style.opacity = opacity;
+        kitt.style.opacity = opacity;
+      }
+
+      function hexToRgb(hex) {
+        const value = hex.replace("#", "");
+        if (value.length === 3) {
+          const r = parseInt(value[0] + value[0], 16);
+          const g = parseInt(value[1] + value[1], 16);
+          const b = parseInt(value[2] + value[2], 16);
+          return { r, g, b };
+        }
+        if (value.length !== 6) return null;
+        const r = parseInt(value.slice(0, 2), 16);
+        const g = parseInt(value.slice(2, 4), 16);
+        const b = parseInt(value.slice(4, 6), 16);
+        return { r, g, b };
+      }
+
+      function updateKittGradient() {
+        const rgb = hexToRgb(baseColor);
+        if (!rgb) return;
+        const active = Math.max(0.05, Math.min(1, opacityActive));
+        const inactive = Math.max(0.05, Math.min(1, opacityInactive));
+        kitt.style.background = `linear-gradient(90deg, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${inactive}) 0%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${active}) 50%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${inactive}) 100%)`;
       }
 
       // Called from Rust via window.eval()
@@ -71,7 +118,9 @@
       };
 
       window.setOverlayColor = function(color) {
+        baseColor = color;
         dot.style.background = color;
+        updateKittGradient();
         debug.textContent = "color: " + color;
       };
 
@@ -79,12 +128,74 @@
         opacityActive = Math.max(0.1, Math.min(1, active));
         opacityInactive = Math.max(0.05, Math.min(1, inactive));
         updateOpacity();
+        updateKittGradient();
         debug.textContent = "opacity: " + opacityInactive + "/" + opacityActive;
+      };
+
+      window.setOverlayStyle = function(style) {
+        currentStyle = style;
+        container.dataset.style = style;
+        debug.textContent = "style: " + style;
+      };
+
+      window.setKittDimensions = function(minWidth, maxWidth, height) {
+        kittMinWidth = Math.max(4, Math.min(40, minWidth));
+        kittMaxWidth = Math.max(50, Math.min(800, maxWidth));
+        kittHeight = Math.max(8, Math.min(40, height));
+        kitt.style.height = kittHeight + "px";
+        kitt.style.width = kittMinWidth + "px";
+        debug.textContent = "kitt: " + kittMinWidth + "-" + kittMaxWidth + " h:" + kittHeight;
+      };
+
+      window.setOverlayLevel = function(level) {
+        const clamped = Math.max(0, Math.min(1, level));
+        if (currentStyle === "kitt") {
+          const width = kittMinWidth + (kittMaxWidth - kittMinWidth) * clamped;
+          kitt.style.width = width + "px";
+        } else {
+          // For dot mode, this is handled differently (size already set by backend)
+        }
       };
 
       // Initialize with default opacity
       updateOpacity();
+      updateKittGradient();
       debug.textContent = "ready";
+
+      if (window.__TAURI__?.event?.emit) {
+        window.__TAURI__.event.emit("overlay:ready").catch(() => {});
+      }
+
+      function applySettingsPayload(payload) {
+        if (!payload) return;
+        const style = payload.overlay_style === "kitt" ? "kitt" : "dot";
+        const isKitt = style === "kitt";
+        const color = isKitt ? (payload.overlay_kitt_color || payload.overlay_color) : payload.overlay_color;
+        const activeOpacity = isKitt
+          ? (payload.overlay_kitt_opacity_active ?? payload.overlay_opacity_active)
+          : payload.overlay_opacity_active;
+        const inactiveOpacity = isKitt
+          ? (payload.overlay_kitt_opacity_inactive ?? payload.overlay_opacity_inactive)
+          : payload.overlay_opacity_inactive;
+        const minWidth = payload.overlay_kitt_min_width ?? kittMinWidth;
+        const maxWidth = payload.overlay_kitt_max_width ?? kittMaxWidth;
+        const height = payload.overlay_kitt_height ?? kittHeight;
+        if (color) {
+          window.setOverlayColor(color);
+        }
+        if (typeof activeOpacity === "number" && typeof inactiveOpacity === "number") {
+          window.setOverlayOpacity(activeOpacity, inactiveOpacity);
+        }
+        window.setOverlayStyle(style);
+        window.setKittDimensions(minWidth, maxWidth, height);
+      }
+
+      const invoke = window.__TAURI__?.core?.invoke;
+      if (invoke) {
+        invoke("get_settings")
+          .then(applySettingsPayload)
+          .catch(() => {});
+      }
     </script>
   </body>
 </html>

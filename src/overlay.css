@@ -53,6 +53,30 @@ body {
   pointer-events: none;
 }
 
+/* KITT bar - horizontal bar that expands from center */
+#overlay-kitt {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 20px;  /* set via JS based on level */
+  height: 20px;
+  border-radius: 4px;
+  background: var(--dot-color);
+  pointer-events: none;
+}
+
+/* Style switching */
+#overlay-root[data-style="kitt"] #overlay-dot,
+#overlay-root[data-style="kitt"] #overlay-ring {
+  display: none;
+}
+
+#overlay-root[data-style="kitt"] #overlay-kitt {
+  display: block;
+}
+
 #overlay-root[data-state="recording"],
 #overlay-root[data-state="transcribing"] {
   opacity: var(--overlay-opacity-active);

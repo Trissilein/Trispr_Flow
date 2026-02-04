@@ -1,15 +1,16 @@
 # Trispr Flow - Status
 
-Last updated: 2026-02-03
+Last updated: 2026-02-04
 
 ## Summary
 - Compact dark UI with output tabs (Microphone / System Audio / Conversation).
-- Microphone capture supports PTT + VAD; toggle hotkey is available inside PTT mode.
+- Microphone capture supports PTT + VAD; toggle hotkey remains available inside PTT mode.
 - System audio capture (WASAPI loopback) with transcribe hotkey and separate history.
 - Conversation view merges mic + system entries with timestamps.
-- Output meters with dB readouts + threshold markers; input gain control for system audio.
-- whisper.cpp GPU-first with CPU fallback; cloud fallback toggle wired.
-- Overlay settings UI is present (dot color/size/opacity/position) but behavior still WIP.
+- Output meters with dB readouts + threshold markers; input gain control for mic + system audio (±30 dB).
+- whisper.cpp GPU-first with CPU fallback; cloud fallback toggle + status badge wired.
+- Model Manager revamped with sources, storage path picker, and install/remove actions.
+- Overlay settings UI restructured (style selector visible, config in expander).
 
 ## Working today
 - Settings persistence (JSON in config dir).
@@ -18,12 +19,12 @@ Last updated: 2026-02-03
 - Audio cues with volume control.
 - VAD controls for mic + system audio.
 - Output device selection for system audio (WASAPI).
+- Model sources (default + custom URL) and model storage picker.
 
 ## Known gaps
-- Overlay dot behavior is unreliable (size/opacity/color/audio coupling needs fixes).
-- System audio meter scaling is too low; VAD marker alignment + gain effect need calibration.
+- Hallucination filter still needs tightening (occasional “you/thanks” on noise).
 - Detachable conversation window stability (content + close behavior).
-- Model Manager revamp (sources, install/remove, custom URLs).
+- VAD + meter calibration still needs verification with real input.
 - macOS testing still pending.
 
 ## Build notes
@@ -32,7 +33,7 @@ Last updated: 2026-02-03
 - Tauri dev builds rely on a system WebView runtime.
 
 ## Next focus
-1. Overlay dot: correct rendering + audio-reactive sizing + opacity control.
-2. System audio meter/VAD calibration + input gain effect verification.
-3. Model Manager revamp (source selection + install/remove).
-4. Conversation detach window reliability.
+1. Conversation detach window reliability.
+2. Hallucination filtering improvements.
+3. Verify VAD + meter calibration after gain changes.
+4. Plan AI fallback overhaul (Claude/OpenAI/Gemini).

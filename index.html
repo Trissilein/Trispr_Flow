@@ -17,7 +17,7 @@
     <main class="app">
       <header class="hero" style="--delay: 0.05s">
         <div>
-          <div class="badge">Offline dictation</div>
+          <div class="badge" id="dictation-badge">Offline dictation</div>
           <h1>Trispr Flow</h1>
           <p class="subtitle">
             GPU-first voice capture and transcription for English + Deutsch, with
@@ -31,23 +31,31 @@
             <span id="status-message" class="status-message"></span>
           </div>
         </div>
-        <div class="hero-card">
-          <div class="hero-row">
-            <span class="hero-label">Cloud fallback</span>
-            <span id="cloud-state" class="hero-value">Off</span>
+        <div class="panel hero-card">
+          <div class="hero-item">
+            <span class="hero-label">Claude fallback <span id="cloud-check" class="hero-check">✓</span></span>
+            <label class="hero-checkbox">
+              <input id="cloud-toggle" type="checkbox" />
+              <span id="cloud-state">Claude Off</span>
+            </label>
           </div>
-          <div class="hero-row">
+          <div class="hero-item">
+            <span class="hero-label">Input</span>
+            <span id="device-state" class="hero-value truncate-two">Default</span>
+          </div>
+          <div class="hero-item">
             <span class="hero-label">Mode</span>
             <span id="mode-state" class="hero-value">PTT</span>
           </div>
-          <div class="hero-row">
-            <span class="hero-label">Input</span>
-            <span id="device-state" class="hero-value">Default</span>
+          <div class="hero-item">
+            <span class="hero-label">System audio</span>
+            <span id="transcribe-status" class="hero-value">Idle</span>
           </div>
-          <div class="hero-row">
+          <div class="hero-item">
             <span class="hero-label">Model</span>
-            <span id="model-state" class="hero-value">—</span>
+            <span id="model-state" class="hero-value truncate">—</span>
           </div>
+          <div class="hero-item hero-item-empty"></div>
         </div>
       </header>
 
@@ -158,31 +166,33 @@
                   </div>
                 </div>
               </div>
+              <label class="field range span-2">
+                <span class="field-label">Mic input gain</span>
+                <div class="range-row">
+                  <input id="mic-gain" type="range" min="-30" max="30" step="1" />
+                  <span id="mic-gain-value" class="range-value">+0 dB</span>
+                </div>
+              </label>
             </div>
             <label class="field">
               <span class="field-label">Input device</span>
               <select id="device-select"></select>
             </label>
+            <label class="field toggle span-2">
+              <span class="field-label">Audio cues</span>
+              <input id="audio-cues-toggle" type="checkbox" />
+              <span class="toggle-track">
+                <span class="toggle-thumb"></span>
+              </span>
+            </label>
+            <label class="field range span-2">
+              <span class="field-label">Audio cue volume</span>
+              <div class="range-row">
+                <input id="audio-cues-volume" type="range" min="0" max="100" step="1" />
+                <span id="audio-cues-volume-value" class="range-value">30%</span>
+              </div>
+            </label>
             </div>
-            <details class="expander">
-            <summary>Audio</summary>
-            <div class="expander-body">
-              <label class="field toggle">
-                <span class="field-label">Audio cues</span>
-                <input id="audio-cues-toggle" type="checkbox" />
-                <span class="toggle-track">
-                  <span class="toggle-thumb"></span>
-                </span>
-              </label>
-              <label class="field range">
-                <span class="field-label">Audio cue volume</span>
-                <div class="range-row">
-                  <input id="audio-cues-volume" type="range" min="0" max="100" step="1" />
-                  <span id="audio-cues-volume-value" class="range-value">30%</span>
-                </div>
-              </label>
-            </div>
-          </details>
           </div>
         </section>
 
@@ -198,10 +208,6 @@
           </div>
           <div class="panel-body">
           <div class="panel-grid">
-            <div class="field note">
-              <span class="field-label">Status</span>
-              <div id="transcribe-status" class="field-value">Idle</div>
-            </div>
             <label class="field">
               <span class="field-label">Output device</span>
               <select id="transcribe-device-select"></select>
@@ -258,6 +264,7 @@
             </label>
             <label class="field range" id="transcribe-batch-field">
               <span class="field-label">Chunk interval</span>
+              <span class="field-hint">How often system audio is chunked for transcription.</span>
               <div class="range-row">
                 <input id="transcribe-batch-interval" type="range" min="4000" max="15000" step="1000" />
                 <span id="transcribe-batch-value" class="range-value">8s</span>
@@ -265,6 +272,7 @@
             </label>
             <label class="field range" id="transcribe-overlap-field">
               <span class="field-label">Chunk overlap</span>
+              <span class="field-hint">Shared audio between chunks to keep words from splitting.</span>
               <div class="range-row">
                 <input id="transcribe-chunk-overlap" type="range" min="0" max="3000" step="250" />
                 <span id="transcribe-overlap-value" class="range-value">1s</span>
@@ -273,7 +281,7 @@
             <label class="field range span-2" id="transcribe-gain-field">
               <span class="field-label">Input gain</span>
               <div class="range-row">
-                <input id="transcribe-gain" type="range" min="0" max="24" step="1" />
+                <input id="transcribe-gain" type="range" min="-30" max="30" step="1" />
                 <span id="transcribe-gain-value" class="range-value">+0 dB</span>
               </div>
             </label>
@@ -284,28 +292,15 @@
         <section class="panel transcription-panel" data-panel="model" style="--delay: 0.2s">
           <div class="panel-header">
             <div class="panel-title">
-              <h2>Model</h2>
-              <p>Dictation model, language, and advanced options.</p>
+              <h2>Model Manager</h2>
+              <p>Download and manage local whisper.cpp models.</p>
             </div>
             <div class="panel-actions">
               <button class="panel-collapse-btn" data-panel-collapse="model" title="Collapse">▾</button>
             </div>
           </div>
           <div class="panel-body">
-          <div class="panel-grid">
-            <label class="field span-2">
-              <span class="field-label">Language</span>
-              <select id="language-select">
-                <option value="auto">Auto (DE/EN mix)</option>
-              </select>
-            </label>
-          </div>
-
           <div class="model-manager">
-            <div class="panel-header">
-              <h3>Model Manager</h3>
-              <p>Download and manage local whisper.cpp models.</p>
-            </div>
             <div class="panel-grid model-source-grid">
               <label class="field">
                 <span class="field-label">Source</span>
@@ -327,25 +322,37 @@
                 <span class="field-hint">Supports JSON index or direct model file URL.</span>
               </label>
             </div>
-            <label class="field toggle">
-              <span class="field-label">Claude fallback</span>
-              <input id="cloud-toggle" type="checkbox" />
-              <span class="toggle-track">
-                <span class="toggle-thumb"></span>
-              </span>
-            </label>
-            <div class="field note">
-              <span class="field-label">Backend</span>
-              <div class="field-value">whisper.cpp (GPU auto-detect, CPU fallback)</div>
+            <div class="panel-grid model-storage-grid">
+              <label class="field span-2">
+                <span class="field-label">Model storage</span>
+                <div class="hotkey-input-group">
+                  <input
+                    id="model-storage-path"
+                    type="text"
+                    placeholder="Default (App data/models)"
+                  />
+                  <button id="model-storage-browse" class="hotkey-record-btn">Browse</button>
+                  <button id="model-storage-reset" class="hotkey-record-btn">Reset</button>
+                </div>
+                <span class="field-hint">Choose where downloaded models are stored.</span>
+              </label>
             </div>
             <div class="model-section">
-              <div class="model-section-title">Installed</div>
-              <div id="model-list-installed" class="model-list"></div>
+              <div class="model-section-title">Active</div>
+              <div id="model-list-active" class="model-list"></div>
             </div>
-            <div class="model-section">
-              <div class="model-section-title">Available</div>
-              <div id="model-list-available" class="model-list"></div>
-            </div>
+            <details class="expander model-expander">
+              <summary>Installed</summary>
+              <div class="expander-body">
+                <div id="model-list-installed" class="model-list"></div>
+              </div>
+            </details>
+            <details class="expander model-expander">
+              <summary>Available</summary>
+              <div class="expander-body">
+                <div id="model-list-available" class="model-list"></div>
+              </div>
+            </details>
           </div>
           </div>
         </section>
@@ -361,13 +368,24 @@
             </div>
           </div>
           <div class="panel-body">
+          <div class="panel-grid">
+            <label class="field span-2">
+              <span class="field-label">Overlay</span>
+              <select id="overlay-style">
+                <option value="dot">Circle (Dot)</option>
+                <option value="kitt">KITT by Dox®</option>
+              </select>
+            </label>
+          </div>
           <details class="expander">
-            <summary>Overlay</summary>
+            <summary>Overlay settings</summary>
             <div class="expander-body">
               <label class="field">
-                <span class="field-label">Dot color</span>
+                <span class="field-label">Color</span>
                 <input id="overlay-color" type="color" />
               </label>
+              <!-- Dot mode settings -->
+              <div id="overlay-dot-settings">
               <label class="field range">
                 <span class="field-label">Min radius (px)</span>
                 <div class="range-row">
@@ -382,6 +400,32 @@
                   <span id="overlay-max-radius-value" class="range-value">24</span>
                 </div>
               </label>
+              </div>
+              <!-- KITT mode settings -->
+              <div id="overlay-kitt-settings" style="display: none;">
+              <label class="field range">
+                <span class="field-label">Min width (px)</span>
+                <div class="range-row">
+                  <input id="overlay-kitt-min-width" type="range" min="4" max="40" step="1" />
+                  <span id="overlay-kitt-min-width-value" class="range-value">20</span>
+                </div>
+              </label>
+              <label class="field range">
+                <span class="field-label">Max width (px)</span>
+                <div class="range-row">
+                  <input id="overlay-kitt-max-width" type="range" min="50" max="800" step="10" />
+                  <span id="overlay-kitt-max-width-value" class="range-value">200</span>
+                </div>
+              </label>
+              <label class="field range">
+                <span class="field-label">Height (px)</span>
+                <div class="range-row">
+                  <input id="overlay-kitt-height" type="range" min="8" max="40" step="1" />
+                  <span id="overlay-kitt-height-value" class="range-value">20</span>
+                </div>
+              </label>
+              </div>
+              <!-- Shared settings -->
               <label class="field range">
                 <span class="field-label">Rise smoothing (ms)</span>
                 <div class="range-row">

@@ -19,7 +19,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::CheckMenuItem;
@@ -33,6 +33,61 @@ const VAD_THRESHOLD_SUSTAIN_DEFAULT: f32 = 0.01;
 const VAD_SILENCE_MS_DEFAULT: u64 = 700;
 const VAD_MIN_VOICE_MS: u64 = 250;
 const DEFAULT_MODEL_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+
+// Allowed domains for model downloads (security: SSRF prevention)
+const ALLOWED_MODEL_DOMAINS: &[&str] = &[
+  "huggingface.co",
+  "cdn-lfs.huggingface.co",
+  "huggingface.co",
+  "distil-whisper",
+];
+
+/// Validates that a URL is safe for model downloads
+/// - Must use HTTPS
+/// - Must be from an allowed domain
+/// - Blocks dangerous schemes (file://, localhost, etc.)
+fn is_url_safe(url: &str) -> Result<(), String> {
+  // Check for dangerous schemes
+  if url.starts_with("file://") || url.starts_with("ftp://") {
+    return Err("Dangerous URL scheme not allowed (file://, ftp://, etc.)".to_string());
+  }
+
+  // Check for localhost variations
+  if url.contains("localhost")
+    || url.contains("127.0.0.1")
+    || url.contains("0.0.0.0")
+    || url.contains("::1") {
+    return Err("Localhost/loopback URLs not allowed for security reasons".to_string());
+  }
+
+  // Must use HTTPS
+  if !url.starts_with("https://") {
+    return Err("Only HTTPS URLs allowed (not HTTP)".to_string());
+  }
+
+  // Extract domain from URL
+  let domain = url
+    .strip_prefix("https://")
+    .and_then(|rest| rest.split('/').next())
+    .and_then(|host| host.split(':').next()) // Remove port if present
+    .ok_or_else(|| "Invalid URL format".to_string())?;
+
+  // Check against whitelist
+  let is_allowed = ALLOWED_MODEL_DOMAINS.iter().any(|allowed| {
+    // Exact match or subdomain match
+    domain == *allowed || domain.ends_with(&format!(".{}", allowed))
+  });
+
+  if is_allowed {
+    Ok(())
+  } else {
+    Err(format!(
+      "Domain '{}' not in whitelist. Allowed: {}",
+      domain,
+      ALLOWED_MODEL_DOMAINS.join(", ")
+    ))
+  }
+}
 
 struct ModelSpec {
   id: &'static str,
@@ -103,9 +158,11 @@ struct Settings {
   transcribe_batch_interval_ms: u64,
   transcribe_chunk_overlap_ms: u64,
   transcribe_input_gain_db: f32,
+  mic_input_gain_db: f32,
   capture_enabled: bool,
   model_source: String,
   model_custom_url: String,
+  model_storage_dir: String,
   overlay_color: String,
   overlay_min_radius: f32,
   overlay_max_radius: f32,
@@ -113,8 +170,24 @@ struct Settings {
   overlay_fall_ms: u64,
   overlay_opacity_inactive: f32,
   overlay_opacity_active: f32,
+  overlay_kitt_color: String,
+  overlay_kitt_rise_ms: u64,
+  overlay_kitt_fall_ms: u64,
+  overlay_kitt_opacity_inactive: f32,
+  overlay_kitt_opacity_active: f32,
   overlay_pos_x: f64,
   overlay_pos_y: f64,
+  overlay_kitt_pos_x: f64,
+  overlay_kitt_pos_y: f64,
+  overlay_style: String,        // "dot" | "kitt"
+  overlay_kitt_min_width: f32,
+  overlay_kitt_max_width: f32,
+  overlay_kitt_height: f32,
+  hallucination_filter_enabled: bool,
+  hallucination_rms_threshold: f32,
+  hallucination_max_duration_ms: u64,
+  hallucination_max_words: u32,
+  hallucination_max_chars: u32,
 }
 
 impl Default for Settings {
@@ -143,9 +216,11 @@ impl Default for Settings {
       transcribe_batch_interval_ms: 8000,
       transcribe_chunk_overlap_ms: 1000,
       transcribe_input_gain_db: 0.0,
+      mic_input_gain_db: 0.0,
       capture_enabled: true,
       model_source: "default".to_string(),
       model_custom_url: "".to_string(),
+      model_storage_dir: "".to_string(),
       overlay_color: "#ff3d2e".to_string(),
       overlay_min_radius: 8.0,
       overlay_max_radius: 24.0,
@@ -153,8 +228,24 @@ impl Default for Settings {
       overlay_fall_ms: 160,
       overlay_opacity_inactive: 0.2,
       overlay_opacity_active: 0.8,
+      overlay_kitt_color: "#ff3d2e".to_string(),
+      overlay_kitt_rise_ms: 80,
+      overlay_kitt_fall_ms: 160,
+      overlay_kitt_opacity_inactive: 0.2,
+      overlay_kitt_opacity_active: 0.8,
       overlay_pos_x: 12.0,
       overlay_pos_y: 12.0,
+      overlay_kitt_pos_x: 12.0,
+      overlay_kitt_pos_y: 12.0,
+      overlay_style: "dot".to_string(),
+      overlay_kitt_min_width: 20.0,
+      overlay_kitt_max_width: 200.0,
+      overlay_kitt_height: 20.0,
+      hallucination_filter_enabled: true,
+      hallucination_rms_threshold: HALLUCINATION_RMS_THRESHOLD,
+      hallucination_max_duration_ms: HALLUCINATION_MAX_DURATION_MS,
+      hallucination_max_words: HALLUCINATION_MAX_WORDS as u32,
+      hallucination_max_chars: HALLUCINATION_MAX_CHARS as u32,
     }
   }
 }
@@ -293,6 +384,7 @@ struct Recorder {
   join_handle: Option<thread::JoinHandle<()>>,
   vad_tx: Option<std::sync::mpsc::Sender<VadEvent>>,
   vad_runtime: Option<Arc<VadRuntime>>,
+  input_gain_db: Arc<AtomicI64>,
 }
 
 impl Recorder {
@@ -305,6 +397,7 @@ impl Recorder {
       join_handle: None,
       vad_tx: None,
       vad_runtime: None,
+      input_gain_db: Arc::new(AtomicI64::new(0)),
     }
   }
 }
@@ -412,7 +505,16 @@ fn load_settings(app: &AppHandle) -> Settings {
       if settings.model_source.trim().is_empty() {
         settings.model_source = "default".to_string();
       }
-      settings.transcribe_input_gain_db = settings.transcribe_input_gain_db.clamp(0.0, 24.0);
+      if settings.model_storage_dir.trim().is_empty() {
+        if let Ok(dir) = std::env::var("TRISPR_WHISPER_MODEL_DIR") {
+          settings.model_storage_dir = dir;
+        } else {
+          settings.model_storage_dir = "".to_string();
+        }
+      }
+      sync_model_dir_env(&settings);
+      settings.transcribe_input_gain_db = settings.transcribe_input_gain_db.clamp(-30.0, 30.0);
+      settings.mic_input_gain_db = settings.mic_input_gain_db.clamp(-30.0, 30.0);
       #[cfg(target_os = "windows")]
       if settings.transcribe_output_device != "default"
         && !settings.transcribe_output_device.starts_with("wasapi:")
@@ -449,6 +551,96 @@ fn load_settings(app: &AppHandle) -> Settings {
       if settings.overlay_opacity_active < settings.overlay_opacity_inactive {
         settings.overlay_opacity_active = settings.overlay_opacity_inactive;
       }
+      let defaults = Settings::default();
+      let approx_eq = |a: f32, b: f32| (a - b).abs() < 0.0001;
+      if settings.overlay_kitt_color == defaults.overlay_kitt_color
+        && settings.overlay_color != defaults.overlay_color
+      {
+        settings.overlay_kitt_color = settings.overlay_color.clone();
+      }
+      if settings.overlay_kitt_rise_ms == defaults.overlay_kitt_rise_ms
+        && settings.overlay_rise_ms != defaults.overlay_rise_ms
+      {
+        settings.overlay_kitt_rise_ms = settings.overlay_rise_ms;
+      }
+      if settings.overlay_kitt_fall_ms == defaults.overlay_kitt_fall_ms
+        && settings.overlay_fall_ms != defaults.overlay_fall_ms
+      {
+        settings.overlay_kitt_fall_ms = settings.overlay_fall_ms;
+      }
+      if approx_eq(settings.overlay_kitt_opacity_inactive, defaults.overlay_kitt_opacity_inactive)
+        && !approx_eq(settings.overlay_opacity_inactive, defaults.overlay_opacity_inactive)
+      {
+        settings.overlay_kitt_opacity_inactive = settings.overlay_opacity_inactive;
+      }
+      if approx_eq(settings.overlay_kitt_opacity_active, defaults.overlay_kitt_opacity_active)
+        && !approx_eq(settings.overlay_opacity_active, defaults.overlay_opacity_active)
+      {
+        settings.overlay_kitt_opacity_active = settings.overlay_opacity_active;
+      }
+      if settings.overlay_kitt_pos_x.is_nan() || settings.overlay_kitt_pos_y.is_nan() {
+        settings.overlay_kitt_pos_x = settings.overlay_pos_x;
+        settings.overlay_kitt_pos_y = settings.overlay_pos_y;
+      }
+      if settings.overlay_kitt_pos_x < 0.0 {
+        settings.overlay_kitt_pos_x = 0.0;
+      }
+      if settings.overlay_kitt_pos_y < 0.0 {
+        settings.overlay_kitt_pos_y = 0.0;
+      }
+      if settings.overlay_pos_x < 0.0 {
+        settings.overlay_pos_x = 0.0;
+      }
+      if settings.overlay_pos_y < 0.0 {
+        settings.overlay_pos_y = 0.0;
+      }
+      if (settings.overlay_kitt_pos_x - 12.0).abs() < 0.001
+        && (settings.overlay_kitt_pos_y - 12.0).abs() < 0.001
+        && ((settings.overlay_pos_x - 12.0).abs() > 0.001
+          || (settings.overlay_pos_y - 12.0).abs() > 0.001)
+      {
+        settings.overlay_kitt_pos_x = settings.overlay_pos_x;
+        settings.overlay_kitt_pos_y = settings.overlay_pos_y;
+      }
+      if settings.overlay_kitt_color.trim().is_empty() {
+        settings.overlay_kitt_color = "#ff3d2e".to_string();
+      }
+      if settings.overlay_kitt_min_width < 4.0 {
+        settings.overlay_kitt_min_width = 4.0;
+      }
+      if settings.overlay_kitt_max_width < settings.overlay_kitt_min_width {
+        settings.overlay_kitt_max_width = settings.overlay_kitt_min_width;
+      }
+      if settings.overlay_kitt_max_width > 800.0 {
+        settings.overlay_kitt_max_width = 800.0;
+      }
+      if settings.overlay_kitt_height < 8.0 {
+        settings.overlay_kitt_height = 8.0;
+      }
+      if settings.overlay_kitt_height > 40.0 {
+        settings.overlay_kitt_height = 40.0;
+      }
+      if settings.overlay_kitt_rise_ms < 20 {
+        settings.overlay_kitt_rise_ms = 20;
+      }
+      if settings.overlay_kitt_fall_ms < 20 {
+        settings.overlay_kitt_fall_ms = 20;
+      }
+      if !(0.0..=1.0).contains(&settings.overlay_kitt_opacity_inactive) {
+        settings.overlay_kitt_opacity_inactive = 0.2;
+      }
+      if !(0.0..=1.0).contains(&settings.overlay_kitt_opacity_active) {
+        settings.overlay_kitt_opacity_active = 0.8;
+      }
+      if settings.overlay_kitt_opacity_inactive < 0.05 {
+        settings.overlay_kitt_opacity_inactive = 0.05;
+      }
+      if settings.overlay_kitt_opacity_active < 0.05 {
+        settings.overlay_kitt_opacity_active = 0.05;
+      }
+      if settings.overlay_kitt_opacity_active < settings.overlay_kitt_opacity_inactive {
+        settings.overlay_kitt_opacity_active = settings.overlay_kitt_opacity_inactive;
+      }
       settings.capture_enabled = true;
       settings.transcribe_enabled = true;
       settings
@@ -462,6 +654,15 @@ fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result<(), String
   let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
   fs::write(path, raw).map_err(|e| e.to_string())?;
   Ok(())
+}
+
+fn sync_model_dir_env(settings: &Settings) {
+  let trimmed = settings.model_storage_dir.trim();
+  if trimmed.is_empty() {
+    std::env::remove_var("TRISPR_WHISPER_MODEL_DIR");
+  } else {
+    std::env::set_var("TRISPR_WHISPER_MODEL_DIR", trimmed);
+  }
 }
 
 fn load_history(app: &AppHandle) -> Vec<HistoryEntry> {
@@ -506,20 +707,55 @@ fn model_spec(model_id: &str) -> Option<&'static ModelSpec> {
 }
 
 fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
+  let use_kitt = settings.overlay_style == "kitt";
+  let (color, rise_ms, fall_ms, opacity_inactive, opacity_active, pos_x, pos_y) = if use_kitt {
+    (
+      settings.overlay_kitt_color.clone(),
+      settings.overlay_kitt_rise_ms,
+      settings.overlay_kitt_fall_ms,
+      settings.overlay_kitt_opacity_inactive,
+      settings.overlay_kitt_opacity_active,
+      settings.overlay_kitt_pos_x,
+      settings.overlay_kitt_pos_y,
+    )
+  } else {
+    (
+      settings.overlay_color.clone(),
+      settings.overlay_rise_ms,
+      settings.overlay_fall_ms,
+      settings.overlay_opacity_inactive,
+      settings.overlay_opacity_active,
+      settings.overlay_pos_x,
+      settings.overlay_pos_y,
+    )
+  };
   overlay::OverlaySettings {
-    color: settings.overlay_color.clone(),
+    color,
     min_radius: settings.overlay_min_radius as f64,
     max_radius: settings.overlay_max_radius as f64,
-    rise_ms: settings.overlay_rise_ms,
-    fall_ms: settings.overlay_fall_ms,
-    opacity_inactive: settings.overlay_opacity_inactive as f64,
-    opacity_active: settings.overlay_opacity_active as f64,
-    pos_x: settings.overlay_pos_x,
-    pos_y: settings.overlay_pos_y,
+    rise_ms,
+    fall_ms,
+    opacity_inactive: opacity_inactive as f64,
+    opacity_active: opacity_active as f64,
+    pos_x,
+    pos_y,
+    style: settings.overlay_style.clone(),
+    kitt_min_width: settings.overlay_kitt_min_width as f64,
+    kitt_max_width: settings.overlay_kitt_max_width as f64,
+    kitt_height: settings.overlay_kitt_height as f64,
   }
 }
 
 fn resolve_models_dir(app: &AppHandle) -> PathBuf {
+  if let Ok(dir) = std::env::var("TRISPR_WHISPER_MODEL_DIR") {
+    let trimmed = dir.trim();
+    if !trimmed.is_empty() {
+      let path = PathBuf::from(trimmed);
+      if fs::create_dir_all(&path).is_ok() {
+        return path;
+      }
+    }
+  }
   let base = app
     .path()
     .app_data_dir()
@@ -715,6 +951,9 @@ fn load_custom_source_models(custom_url: &str) -> Result<Vec<SourceModel>, Strin
     return Ok(Vec::new());
   }
 
+  // Security: Validate custom URL before fetching
+  is_url_safe(custom_url)?;
+
   if custom_url.ends_with(".bin") || custom_url.ends_with(".gguf") {
     let file_name = filename_from_url(custom_url)
       .ok_or_else(|| "Invalid model URL".to_string())?;
@@ -890,6 +1129,8 @@ struct OverlayLevelEmitter {
   last_emit_ms: AtomicU64,
   dynamic_threshold: DynamicThreshold,
   last_threshold_emit_ms: AtomicU64,
+  smooth_level: AtomicU64,
+  last_smooth_ms: AtomicU64,
 }
 
 impl OverlayLevelEmitter {
@@ -902,6 +1143,8 @@ impl OverlayLevelEmitter {
       last_emit_ms: AtomicU64::new(0),
       dynamic_threshold: DynamicThreshold::new(min_sustain_threshold, max_threshold),
       last_threshold_emit_ms: AtomicU64::new(0),
+      smooth_level: AtomicU64::new(0),
+      last_smooth_ms: AtomicU64::new(0),
     }
   }
 
@@ -931,17 +1174,49 @@ impl OverlayLevelEmitter {
     // Update overlay directly via JS (most reliable method)
     if let Some(window) = self.app.get_webview_window("overlay") {
       if let Ok(state) = self.app.state::<AppState>().settings.lock() {
-        let min_radius = state.overlay_min_radius.max(4.0) as f64;
-        let max_radius = state.overlay_max_radius.max(min_radius as f32) as f64;
-        // Use level 0.01-1.0 (never fully zero)
-        let factor = level_clamped.max(0.01) as f64;
-        let radius = min_radius + (max_radius - min_radius) * factor;
-        let size = (radius * 2.0).round();
-        let js = format!(
-          "(function(){{const d=document.getElementById('dot');if(d){{d.style.width='{}px';d.style.height='{}px';}}}})();",
-          size, size
-        );
-        let _ = window.eval(&js);
+        let (rise_ms, fall_ms) = if state.overlay_style == "kitt" {
+          (state.overlay_kitt_rise_ms, state.overlay_kitt_fall_ms)
+        } else {
+          (state.overlay_rise_ms, state.overlay_fall_ms)
+        };
+
+        let last_smooth = self.last_smooth_ms.load(Ordering::Relaxed);
+        let mut current = self.smooth_level.load(Ordering::Relaxed) as f32 / 1_000_000.0;
+        if last_smooth == 0 {
+          current = level_clamped;
+        } else {
+          let dt = now_ms.saturating_sub(last_smooth).max(1) as f32;
+          let tau = if level_clamped > current { rise_ms } else { fall_ms };
+          let denom = tau.max(1) as f32;
+          // Linear ramp: full-scale (0->1) takes ~tau ms
+          let max_step = (dt / denom).min(1.0);
+          let delta = level_clamped - current;
+          if delta.abs() <= max_step {
+            current = level_clamped;
+          } else {
+            current += max_step * delta.signum();
+          }
+        }
+        self.last_smooth_ms.store(now_ms, Ordering::Relaxed);
+        let clamped = current.clamp(0.0, 1.0);
+        self.smooth_level.store((clamped * 1_000_000.0) as u64, Ordering::Relaxed);
+
+        if state.overlay_style == "kitt" {
+          let js = format!("if(window.setOverlayLevel){{window.setOverlayLevel({});}}", clamped);
+          let _ = window.eval(&js);
+        } else {
+          let min_radius = state.overlay_min_radius.max(4.0) as f64;
+          let max_radius = state.overlay_max_radius.max(min_radius as f32) as f64;
+          // Use level 0.01-1.0 (never fully zero)
+          let factor = (clamped as f64).max(0.01);
+          let radius = min_radius + (max_radius - min_radius) * factor;
+          let size = (radius * 2.0).round();
+          let js = format!(
+            "(function(){{const d=document.getElementById('dot');if(d){{d.style.width='{}px';d.style.height='{}px';}}}})();",
+            size, size
+          );
+          let _ = window.eval(&js);
+        }
       }
     }
   }
@@ -966,6 +1241,54 @@ struct VadRuntime {
 
 /// Minimum consecutive chunks above threshold to start recording (spike filter)
 const VAD_MIN_CONSECUTIVE_CHUNKS: u64 = 3;
+const HALLUCINATION_RMS_THRESHOLD: f32 = 0.012; // ~ -38 dB
+const HALLUCINATION_MAX_WORDS: usize = 2;
+const HALLUCINATION_MAX_CHARS: usize = 12;
+const HALLUCINATION_MAX_DURATION_MS: u64 = 1200;
+
+const HALLUCINATION_PHRASES: &[&str] = &[
+  "you",
+  "thank you",
+  "thanks",
+  "okay",
+  "ok",
+  "yeah",
+  "yes",
+  "no",
+  "uh",
+  "um",
+  "hmm",
+  "huh",
+];
+
+fn normalize_transcript(text: &str) -> String {
+  text
+    .chars()
+    .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+    .collect::<String>()
+    .to_lowercase()
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+fn should_drop_transcript(text: &str, rms: f32, duration_ms: u64) -> bool {
+  let normalized = normalize_transcript(text);
+  if normalized.is_empty() {
+    return true;
+  }
+  let word_count = normalized.split_whitespace().count();
+  let is_short = word_count <= HALLUCINATION_MAX_WORDS || normalized.len() <= HALLUCINATION_MAX_CHARS;
+  let is_low_energy = rms < HALLUCINATION_RMS_THRESHOLD;
+  let is_short_audio = duration_ms <= HALLUCINATION_MAX_DURATION_MS;
+  let matches_common = HALLUCINATION_PHRASES.iter().any(|p| *p == normalized);
+
+  if matches_common && is_short_audio {
+    return true;
+  }
+
+  is_low_energy && is_short_audio && is_short
+}
 
 impl VadRuntime {
   fn new(audio_cues: bool, threshold_start: f32, threshold_sustain: f32, silence_ms: u64) -> Self {
@@ -1136,9 +1459,15 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
     let mut current = state.settings.lock().unwrap();
     *current = settings.clone();
   }
+  sync_model_dir_env(&settings);
   save_settings_file(&app, &settings)?;
   register_hotkeys(&app, &settings)?;
 
+  if let Ok(recorder) = state.recorder.lock() {
+    recorder
+      .input_gain_db
+      .store((settings.mic_input_gain_db * 1000.0) as i64, Ordering::Relaxed);
+  }
 
   let mode_changed = prev_mode != settings.mode;
   let device_changed = prev_device != settings.input_device;
@@ -1267,7 +1596,7 @@ fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<ModelInfo> {
   } else {
     let base_url = std::env::var("TRISPR_WHISPER_MODEL_BASE_URL")
       .unwrap_or_else(|_| DEFAULT_MODEL_BASE_URL.to_string());
-    MODEL_SPECS
+    let mut defaults: Vec<SourceModel> = MODEL_SPECS
       .iter()
       .map(|spec| SourceModel {
         id: spec.id.to_string(),
@@ -1277,7 +1606,16 @@ fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<ModelInfo> {
         download_url: format!("{}/{}", base_url.trim_end_matches('/'), spec.file_name),
         source: "default".to_string(),
       })
-      .collect()
+      .collect();
+    defaults.push(SourceModel {
+      id: "ggml-distil-large-v3".to_string(),
+      label: "Distil-Whisper large-v3 (EN)".to_string(),
+      file_name: "ggml-distil-large-v3.bin".to_string(),
+      size_mb: 1520,
+      download_url: "https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin".to_string(),
+      source: "distil".to_string(),
+    });
+    defaults
   };
 
   let mut seen_files = HashSet::new();
@@ -1362,6 +1700,9 @@ fn download_model(
   file_name: Option<String>,
 ) -> Result<(), String> {
   let (url, name) = if let Some(url) = download_url.clone() {
+    // Security: Validate URL before downloading
+    is_url_safe(&url)?;
+
     let name = file_name
       .or_else(|| filename_from_url(&url))
       .ok_or_else(|| "Missing file name for custom download".to_string())?;
@@ -1424,6 +1765,18 @@ fn remove_model(app: AppHandle, file_name: String) -> Result<(), String> {
   }
   fs::remove_file(&target).map_err(|e| e.to_string())?;
   Ok(())
+}
+
+#[tauri::command]
+fn pick_model_dir() -> Option<String> {
+  rfd::FileDialog::new()
+    .pick_folder()
+    .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn get_models_dir(app: AppHandle) -> String {
+  resolve_models_dir(&app).to_string_lossy().to_string()
 }
 
 #[tauri::command]
@@ -1651,6 +2004,7 @@ fn build_input_stream_f32(
   buffer: Arc<Mutex<CaptureBuffer>>,
   overlay: Option<Arc<OverlayLevelEmitter>>,
   vad: Option<VadHandle>,
+  gain_db: Arc<AtomicI64>,
 ) -> Result<cpal::Stream, String> {
   let channels = config.channels as usize;
   let sample_rate = config.sample_rate.0;
@@ -1662,12 +2016,14 @@ fn build_input_stream_f32(
       move |data: &[f32], _| {
         let mut mono = Vec::with_capacity(data.len() / channels.max(1));
         let mut sum_squared = 0.0f32;
+        let gain_db = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
+        let gain = (10.0f32).powf(gain_db / 20.0);
         for frame in data.chunks(channels.max(1)) {
           let mut sum = 0.0f32;
           for &sample in frame {
             sum += sample;
           }
-          let sample = sum / channels.max(1) as f32;
+          let sample = (sum / channels.max(1) as f32 * gain).clamp(-1.0, 1.0);
           mono.push(sample);
           sum_squared += sample * sample;
         }
@@ -1700,6 +2056,7 @@ fn build_input_stream_i16(
   buffer: Arc<Mutex<CaptureBuffer>>,
   overlay: Option<Arc<OverlayLevelEmitter>>,
   vad: Option<VadHandle>,
+  gain_db: Arc<AtomicI64>,
 ) -> Result<cpal::Stream, String> {
   let channels = config.channels as usize;
   let sample_rate = config.sample_rate.0;
@@ -1711,12 +2068,14 @@ fn build_input_stream_i16(
       move |data: &[i16], _| {
         let mut mono = Vec::with_capacity(data.len() / channels.max(1));
         let mut sum_squared = 0.0f32;
+        let gain_db = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
+        let gain = (10.0f32).powf(gain_db / 20.0);
         for frame in data.chunks(channels.max(1)) {
           let mut sum = 0.0f32;
           for &sample in frame {
             sum += sample as f32 / i16::MAX as f32;
           }
-          let sample = sum / channels.max(1) as f32;
+          let sample = (sum / channels.max(1) as f32 * gain).clamp(-1.0, 1.0);
           mono.push(sample);
           sum_squared += sample * sample;
         }
@@ -1748,6 +2107,7 @@ fn build_input_stream_u16(
   buffer: Arc<Mutex<CaptureBuffer>>,
   overlay: Option<Arc<OverlayLevelEmitter>>,
   vad: Option<VadHandle>,
+  gain_db: Arc<AtomicI64>,
 ) -> Result<cpal::Stream, String> {
   let channels = config.channels as usize;
   let sample_rate = config.sample_rate.0;
@@ -1759,13 +2119,15 @@ fn build_input_stream_u16(
       move |data: &[u16], _| {
         let mut mono = Vec::with_capacity(data.len() / channels.max(1));
         let mut sum_squared = 0.0f32;
+        let gain_db = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
+        let gain = (10.0f32).powf(gain_db / 20.0);
         for frame in data.chunks(channels.max(1)) {
           let mut sum = 0.0f32;
           for &sample in frame {
             let centered = sample as f32 - 32768.0;
             sum += centered / 32768.0;
           }
-          let sample = sum / channels.max(1) as f32;
+          let sample = (sum / channels.max(1) as f32 * gain).clamp(-1.0, 1.0);
           mono.push(sample);
           sum_squared += sample * sample;
         }
@@ -1810,6 +2172,10 @@ fn start_recording_with_settings(
     buf.reset();
   }
 
+  recorder
+    .input_gain_db
+    .store((settings.mic_input_gain_db * 1000.0) as i64, Ordering::Relaxed);
+  let gain_db = recorder.input_gain_db.clone();
   let buffer = recorder.buffer.clone();
   let overlay_emitter = Arc::new(OverlayLevelEmitter::new(app.clone(), settings.vad_threshold_sustain, settings.vad_threshold_start));
   let device_id = settings.input_device.clone();
@@ -1828,9 +2194,9 @@ fn start_recording_with_settings(
       let overlay = Some(overlay_emitter);
       let vad = None;
       let stream = match config.sample_format() {
-        SampleFormat::F32 => build_input_stream_f32(&device, &stream_config, buffer, overlay.clone(), vad.clone())?,
-        SampleFormat::I16 => build_input_stream_i16(&device, &stream_config, buffer, overlay.clone(), vad.clone())?,
-        SampleFormat::U16 => build_input_stream_u16(&device, &stream_config, buffer, overlay.clone(), vad.clone())?,
+        SampleFormat::F32 => build_input_stream_f32(&device, &stream_config, buffer, overlay.clone(), vad.clone(), gain_db.clone())?,
+        SampleFormat::I16 => build_input_stream_i16(&device, &stream_config, buffer, overlay.clone(), vad.clone(), gain_db.clone())?,
+        SampleFormat::U16 => build_input_stream_u16(&device, &stream_config, buffer, overlay.clone(), vad.clone(), gain_db.clone())?,
         _ => return Err("Unsupported sample format".to_string()),
       };
 
@@ -1895,6 +2261,10 @@ fn start_vad_monitor(
     buf.reset();
   }
 
+  recorder
+    .input_gain_db
+    .store((settings.mic_input_gain_db * 1000.0) as i64, Ordering::Relaxed);
+  let gain_db = recorder.input_gain_db.clone();
   let buffer = recorder.buffer.clone();
   let overlay_emitter = Arc::new(OverlayLevelEmitter::new(app.clone(), settings.vad_threshold_sustain, settings.vad_threshold_start));
   let device_id = settings.input_device.clone();
@@ -1938,10 +2308,11 @@ fn start_vad_monitor(
 
       let overlay = Some(overlay_emitter);
       let vad = Some(vad_handle);
+      let gain_db = gain_db.clone();
       let stream = match config.sample_format() {
-        SampleFormat::F32 => build_input_stream_f32(&device, &stream_config, buffer, overlay.clone(), vad.clone())?,
-        SampleFormat::I16 => build_input_stream_i16(&device, &stream_config, buffer, overlay.clone(), vad.clone())?,
-        SampleFormat::U16 => build_input_stream_u16(&device, &stream_config, buffer, overlay.clone(), vad.clone())?,
+        SampleFormat::F32 => build_input_stream_f32(&device, &stream_config, buffer, overlay.clone(), vad.clone(), gain_db.clone())?,
+        SampleFormat::I16 => build_input_stream_i16(&device, &stream_config, buffer, overlay.clone(), vad.clone(), gain_db.clone())?,
+        SampleFormat::U16 => build_input_stream_u16(&device, &stream_config, buffer, overlay.clone(), vad.clone(), gain_db.clone())?,
         _ => return Err("Unsupported sample format".to_string()),
       };
 
@@ -2057,6 +2428,8 @@ fn process_vad_segment(
   let _ = update_overlay_state(&app_handle, OverlayState::Transcribing);
 
   let result = transcribe_audio(&app_handle, &settings, &samples);
+  let level = rms_i16(&samples);
+  let duration_ms = samples.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64;
 
   if let Ok(mut recorder) = state.recorder.lock() {
     recorder.transcribing = false;
@@ -2079,7 +2452,7 @@ fn process_vad_segment(
 
   match result {
     Ok((text, source)) => {
-      if !text.trim().is_empty() {
+      if !text.trim().is_empty() && !should_drop_transcript(&text, level, duration_ms) {
         if let Ok(updated) = push_history_entry_inner(&app_handle, &state.history, text.clone(), source.clone()) {
           let _ = app_handle.emit("history:updated", updated);
         }
@@ -2153,6 +2526,8 @@ fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
     let _ = update_overlay_state(&app_handle, OverlayState::Transcribing);
 
     let result = transcribe_audio(&app_handle, &settings, &samples);
+    let level = rms_i16(&samples);
+    let duration_ms = samples.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64;
 
     let mut recorder = state.recorder.lock().unwrap();
     recorder.transcribing = false;
@@ -2168,7 +2543,7 @@ fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
 
     match result {
       Ok((text, source)) => {
-        if !text.trim().is_empty() {
+        if !text.trim().is_empty() && !should_drop_transcript(&text, level, duration_ms) {
           if let Ok(updated) = push_history_entry_inner(&app_handle, &state.history, text.clone(), source.clone()) {
             let _ = app_handle.emit("history:updated", updated);
           }
@@ -2371,9 +2746,10 @@ fn transcribe_worker(
     if chunk.len() < min_samples {
       continue;
     }
+    let level = rms_i16(&chunk);
+    let duration_ms = chunk.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64;
 
     if settings.transcribe_vad_mode {
-      let level = rms_i16(&chunk);
       if level < settings.transcribe_vad_threshold {
         continue;
       }
@@ -2388,7 +2764,7 @@ fn transcribe_worker(
 
     match result {
       Ok((text, _source)) => {
-        if !text.trim().is_empty() {
+        if !text.trim().is_empty() && !should_drop_transcript(&text, level, duration_ms) {
           let state = app.state::<AppState>();
           let _ = push_transcribe_entry_inner(&app, &state.history_transcribe, text);
         }
@@ -3104,20 +3480,25 @@ pub fn run() {
         }
       }
 
-      // Create overlay window at startup
-      if let Err(err) = overlay::create_overlay_window(&app.handle()) {
-        eprintln!("⚠ Failed to create overlay window: {}", err);
-      }
       let overlay_app = app.handle().clone();
       app.listen("overlay:ready", move |_| {
         overlay::mark_overlay_ready();
         let settings = overlay_app.state::<AppState>().settings.lock().unwrap().clone();
         let _ = overlay::apply_overlay_settings(&overlay_app, &build_overlay_settings(&settings));
       });
+      // Create overlay window at startup
+      if let Err(err) = overlay::create_overlay_window(&app.handle()) {
+        eprintln!("⚠ Failed to create overlay window: {}", err);
+      }
       let overlay_settings = build_overlay_settings(&settings);
       if let Some((pos_x, pos_y)) = overlay::resolve_overlay_position_for_settings(&app.handle(), &overlay_settings) {
-        settings.overlay_pos_x = pos_x;
-        settings.overlay_pos_y = pos_y;
+        if overlay_settings.style == "kitt" {
+          settings.overlay_kitt_pos_x = pos_x;
+          settings.overlay_kitt_pos_y = pos_y;
+        } else {
+          settings.overlay_pos_x = pos_x;
+          settings.overlay_pos_y = pos_y;
+        }
         if let Ok(mut current) = app.state::<AppState>().settings.lock() {
           *current = settings.clone();
         }
@@ -3227,6 +3608,8 @@ pub fn run() {
       list_models,
       download_model,
       remove_model,
+      pick_model_dir,
+      get_models_dir,
       get_history,
       get_transcribe_history,
       add_history_entry,

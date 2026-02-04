@@ -10,6 +10,7 @@
   --accent-3: #f5b342;
   --card: rgba(30, 35, 42, 0.95);
   --card-hover: rgba(35, 40, 47, 1);
+  --panel: rgba(40, 46, 55, 0.96);
   --stroke: rgba(255, 255, 255, 0.1);
   --stroke-strong: rgba(255, 255, 255, 0.15);
   --shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
@@ -25,6 +26,7 @@
 body {
   margin: 0;
   min-height: 100vh;
+  min-width: 980px;
   background: #1a1f24;
   color: var(--ink);
   line-height: 1.5;
@@ -40,7 +42,8 @@ body {
 }
 
 .app {
-  max-width: 1100px;
+  max-width: 1200px;
+  min-width: 1020px;
   margin: 0 auto;
   padding: 16px 14px 20px;
   display: flex;
@@ -51,7 +54,7 @@ body {
 /* HERO SECTION - COMPACT */
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 240px);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
   gap: 12px;
   align-items: start;
   animation: rise 0.6s ease both;
@@ -71,10 +74,16 @@ body {
   border: 1px solid rgba(255, 107, 61, 0.3);
 }
 
+.badge--online {
+  background: rgba(29, 166, 160, 0.2);
+  color: #4be0d4;
+  border-color: rgba(29, 166, 160, 0.35);
+}
+
 h1 {
   margin: 8px 0 6px;
   font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
-  font-size: 2rem;
+  font-size: 1.75rem;
   line-height: 1.1;
   font-weight: 700;
   color: var(--ink);
@@ -105,46 +114,127 @@ h1 {
   box-shadow: 0 0 0 4px rgba(29, 166, 160, 0.25);
 }
 
-.hero-stats {
-  background: var(--card);
+.hero-stats,
+.hero-card {
+  background: var(--panel);
   border-radius: var(--radius);
   border: 1px solid var(--stroke-strong);
-  padding: 10px 12px;
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.hero-row {
+.hero-card {
   display: grid;
-  grid-template-columns: 110px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-  padding: 4px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  min-width: 320px;
+  padding: 10px 12px;
 }
 
-.hero-row:last-child {
-  border-bottom: none;
+.hero-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.hero-item-empty {
+  visibility: hidden;
+}
+
+.hero-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
 }
 
 .hero-label {
-  font-size: 0.75rem;
-  color: var(--muted);
+  font-size: 10px;
+  color: var(--ink);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  font-weight: 600;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hero-check {
+  display: none;
+  margin-left: 6px;
+  color: var(--accent-2);
+  font-weight: 800;
+}
+
+.hero-check.is-active {
+  display: inline;
 }
 
 .hero-value {
   font-family: "Space Grotesk", sans-serif;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--ink);
-  text-align: right;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   line-height: 1.3;
+  min-width: 0;
+}
+
+.hero-value.is-two-line {
+  font-size: 8px;
+  line-height: 1.2;
+}
+
+.truncate-two {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.hero-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.hero-checkbox input[type="checkbox"] {
+  width: 12px;
+  height: 12px;
+  accent-color: var(--accent-2);
+  cursor: pointer;
+}
+
+.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hero-toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.hero-toggle-row .hero-value {
+  color: var(--muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .hero-footer {
@@ -184,11 +274,15 @@ h1 {
 }
 
 .model-manager {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--stroke);
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
   display: grid;
   gap: 10px;
+}
+
+.model-expander {
+  margin-top: 6px;
 }
 
 .model-manager .panel-header {
@@ -199,7 +293,7 @@ h1 {
 .model-manager h3 {
   margin: 0;
   font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 700;
   color: var(--ink);
 }
@@ -222,7 +316,7 @@ h1 {
 
 /* PANELS - VERY COMPACT */
 .panel {
-  background: var(--card);
+  background: var(--panel);
   border-radius: var(--radius);
   border: 1px solid var(--stroke-strong);
   box-shadow: var(--shadow);
@@ -283,7 +377,7 @@ h1 {
 .panel-header h2 {
   margin: 0;
   font-family: "Space Grotesk", sans-serif;
-  font-size: 1.05rem;
+  font-size: 0.95rem;
   font-weight: 700;
   color: var(--ink);
 }
@@ -328,6 +422,11 @@ h1 {
 
 .expander summary::-webkit-details-marker {
   display: none;
+}
+
+.expander summary::marker {
+  content: "";
+  font-size: 0;
 }
 
 .expander summary::after {
@@ -501,6 +600,7 @@ h1 {
   gap: 10px;
 }
 
+.toggle input[type="checkbox"],
 .field.toggle input[type="checkbox"] {
   position: absolute;
   opacity: 0;
@@ -518,7 +618,8 @@ h1 {
   border: 1px solid var(--stroke);
 }
 
-.field.toggle input:checked + .toggle-track {
+.field.toggle input:checked + .toggle-track,
+.toggle input:checked + .toggle-track {
   background: var(--accent-2);
   border-color: var(--accent-2);
 }
@@ -868,6 +969,12 @@ button:disabled {
   font-size: 0.72rem;
   color: var(--muted);
   word-break: break-all;
+}
+
+.model-desc {
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  line-height: 1.35;
 }
 
 .model-progress {
@@ -1286,4 +1393,22 @@ button:disabled {
     transform: translateX(400px) scale(0.95);
     opacity: 0;
   }
+}
+.toggle-compact .toggle-track {
+  width: 34px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.toggle-compact .toggle-thumb {
+  width: 12px;
+  height: 12px;
+  top: 1px;
+  left: 1px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.toggle-compact input:checked + .toggle-track .toggle-thumb {
+  transform: translateX(18px);
 }

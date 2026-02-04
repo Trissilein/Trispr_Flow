@@ -25,9 +25,11 @@ interface Settings {
   transcribe_batch_interval_ms: number;
   transcribe_chunk_overlap_ms: number;
   transcribe_input_gain_db: number;
+  mic_input_gain_db: number;
   capture_enabled: boolean;
   model_source: "default" | "custom";
   model_custom_url: string;
+  model_storage_dir: string;
   overlay_color: string;
   overlay_min_radius: number;
   overlay_max_radius: number;
@@ -35,8 +37,19 @@ interface Settings {
   overlay_fall_ms: number;
   overlay_opacity_inactive: number;
   overlay_opacity_active: number;
+  overlay_kitt_color: string;
+  overlay_kitt_rise_ms: number;
+  overlay_kitt_fall_ms: number;
+  overlay_kitt_opacity_inactive: number;
+  overlay_kitt_opacity_active: number;
   overlay_pos_x: number;
   overlay_pos_y: number;
+  overlay_kitt_pos_x: number;
+  overlay_kitt_pos_y: number;
+  overlay_style: string;
+  overlay_kitt_min_width: number;
+  overlay_kitt_max_width: number;
+  overlay_kitt_height: number;
 }
 
 interface HistoryEntry {
@@ -109,6 +122,41 @@ let currentStatus: "idle" | "recording" | "transcribing" = "idle";
 let currentHistoryTab: "mic" | "system" | "conversation" = "mic";
 let dynamicSustainThreshold: number = 0.01;
 
+const MODEL_DESCRIPTIONS: Record<
+  string,
+  { summary: string; speed: string; accuracy: string; languages: string }
+> = {
+  "whisper-large-v3": {
+    summary: "Best overall quality. Largest model with highest accuracy.",
+    speed: "Slowest",
+    accuracy: "Highest",
+    languages: "Multilingual",
+  },
+  "whisper-large-v3-turbo": {
+    summary: "Speed-optimized large model with strong accuracy.",
+    speed: "Very fast",
+    accuracy: "High",
+    languages: "Multilingual",
+  },
+  "ggml-distil-large-v3": {
+    summary: "Distilled variant focused on speed with near‑large quality.",
+    speed: "Fastest",
+    accuracy: "High (EN‑focused)",
+    languages: "Primarily English",
+  },
+};
+
+function getModelDescription(model: ModelInfo) {
+  const entry = MODEL_DESCRIPTIONS[model.id];
+  if (entry) {
+    return `${entry.summary} • Speed: ${entry.speed} • Accuracy: ${entry.accuracy} • ${entry.languages}`;
+  }
+  if (model.source === "local" || model.source === "custom") {
+    return "Custom/local model. No benchmark data available.";
+  }
+  return "Model details unavailable.";
+}
+
 // Convert linear level (0-1) to dB (assuming 0dB = 1.0)
 function levelToDb(level: number): number {
   if (level <= 0.00001) return -100;
@@ -131,6 +179,8 @@ const statusDot = $("status-dot") as HTMLSpanElement | null;
 const statusMessage = $("status-message");
 const engineLabel = $("engine-label");
 const cloudState = $("cloud-state");
+const cloudCheck = $("cloud-check");
+const dictationBadge = $("dictation-badge");
 const modeState = $("mode-state");
 const deviceState = $("device-state");
 const modelState = $("model-state");
@@ -148,6 +198,8 @@ const audioCuesToggle = $("audio-cues-toggle") as HTMLInputElement | null;
 const audioCuesVolume = $("audio-cues-volume") as HTMLInputElement | null;
 const pttUseVadToggle = $("ptt-use-vad-toggle") as HTMLInputElement | null;
 const audioCuesVolumeValue = $("audio-cues-volume-value");
+const micGain = $("mic-gain") as HTMLInputElement | null;
+const micGainValue = $("mic-gain-value");
 const hotkeysBlock = $("hotkeys-block");
 const vadBlock = $("vad-block");
 const vadThreshold = $("vad-threshold") as HTMLInputElement | null;
@@ -198,6 +250,15 @@ const overlayOpacityActive = $("overlay-opacity-active") as HTMLInputElement | n
 const overlayOpacityActiveValue = $("overlay-opacity-active-value");
 const overlayPosX = $("overlay-pos-x") as HTMLInputElement | null;
 const overlayPosY = $("overlay-pos-y") as HTMLInputElement | null;
+const overlayStyle = $("overlay-style") as HTMLSelectElement | null;
+const overlayDotSettings = $("overlay-dot-settings") as HTMLDivElement | null;
+const overlayKittSettings = $("overlay-kitt-settings") as HTMLDivElement | null;
+const overlayKittMinWidth = $("overlay-kitt-min-width") as HTMLInputElement | null;
+const overlayKittMinWidthValue = $("overlay-kitt-min-width-value");
+const overlayKittMaxWidth = $("overlay-kitt-max-width") as HTMLInputElement | null;
+const overlayKittMaxWidthValue = $("overlay-kitt-max-width-value");
+const overlayKittHeight = $("overlay-kitt-height") as HTMLInputElement | null;
+const overlayKittHeightValue = $("overlay-kitt-height-value");
 const historyList = $("history-list");
 const historyInput = $("history-input") as HTMLInputElement | null;
 const historyAdd = $("history-add");
@@ -214,6 +275,10 @@ const modelSourceSelect = $("model-source-select") as HTMLSelectElement | null;
 const modelCustomUrl = $("model-custom-url") as HTMLInputElement | null;
 const modelCustomUrlField = $("model-custom-url-field") as HTMLDivElement | null;
 const modelRefresh = $("model-refresh") as HTMLButtonElement | null;
+const modelStoragePath = $("model-storage-path") as HTMLInputElement | null;
+const modelStorageBrowse = $("model-storage-browse") as HTMLButtonElement | null;
+const modelStorageReset = $("model-storage-reset") as HTMLButtonElement | null;
+const modelListActive = $("model-list-active");
 const modelListInstalled = $("model-list-installed");
 const modelListAvailable = $("model-list-available");
 
@@ -241,16 +306,38 @@ function formatTime(timestamp: number) {
 
 function renderHero() {
   if (!settings) return;
-  if (cloudState) cloudState.textContent = settings.cloud_fallback ? "On" : "Off";
+  const cloudOn = settings.cloud_fallback;
+  if (cloudState) cloudState.textContent = cloudOn ? "Claude On" : "Claude Off";
+  if (cloudCheck) cloudCheck.classList.toggle("is-active", cloudOn);
+  if (dictationBadge) {
+    dictationBadge.textContent = cloudOn ? "Online Supported Dictation" : "Offline Dictation";
+    dictationBadge.classList.toggle("badge--online", cloudOn);
+  }
   if (modeState) modeState.textContent = settings.mode === "ptt" ? "PTT" : "VAD";
   const device = devices.find((item) => item.id === settings?.input_device);
   if (deviceState) deviceState.textContent = device?.label ?? "Default";
+  updateDeviceLineClamp();
   if (modelState) {
     const active = models.find((model) => model.id === settings?.model);
     modelState.textContent = active?.label ?? settings?.model ?? "—";
   }
   if (engineLabel) engineLabel.textContent = "whisper.cpp (GPU auto)";
   setStatus(currentStatus);
+}
+
+function updateDeviceLineClamp() {
+  if (!deviceState) return;
+  deviceState.classList.remove("is-two-line");
+  requestAnimationFrame(() => {
+    if (!deviceState) return;
+    const styles = getComputedStyle(deviceState);
+    const lineHeight = parseFloat(styles.lineHeight);
+    if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
+    const height = deviceState.getBoundingClientRect().height;
+    if (height > lineHeight * 1.6) {
+      deviceState.classList.add("is-two-line");
+    }
+  });
 }
 
 function renderSettings() {
@@ -265,6 +352,9 @@ function renderSettings() {
   if (languageSelect) languageSelect.value = settings.language_mode;
   if (modelSourceSelect) modelSourceSelect.value = settings.model_source;
   if (modelCustomUrl) modelCustomUrl.value = settings.model_custom_url ?? "";
+  if (modelStoragePath && settings.model_storage_dir) {
+    modelStoragePath.value = settings.model_storage_dir;
+  }
   if (modelCustomUrlField) {
     modelCustomUrlField.classList.toggle("hidden", settings.model_source !== "custom");
   }
@@ -274,6 +364,11 @@ function renderSettings() {
   if (audioCuesVolume) audioCuesVolume.value = Math.round(settings.audio_cues_volume * 100).toString();
   if (audioCuesVolumeValue) {
     audioCuesVolumeValue.textContent = `${Math.round(settings.audio_cues_volume * 100)}%`;
+  }
+  if (micGain) micGain.value = Math.round(settings.mic_input_gain_db).toString();
+  if (micGainValue) {
+    const gain = Math.round(settings.mic_input_gain_db);
+    micGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
   }
   // Display start threshold in the slider (main user-facing threshold)
   if (vadThreshold) vadThreshold.value = Math.round(settings.vad_threshold_start * 100).toString();
@@ -345,29 +440,87 @@ function renderSettings() {
     transcribeVadSilenceField.classList.toggle("is-disabled", disabled);
     transcribeVadSilence?.toggleAttribute("disabled", disabled);
   }
-  if (overlayColor) overlayColor.value = settings.overlay_color;
   if (overlayMinRadius) overlayMinRadius.value = Math.round(settings.overlay_min_radius).toString();
   if (overlayMinRadiusValue) overlayMinRadiusValue.textContent = `${Math.round(settings.overlay_min_radius)}`;
   if (overlayMaxRadius) overlayMaxRadius.value = Math.round(settings.overlay_max_radius).toString();
   if (overlayMaxRadiusValue) overlayMaxRadiusValue.textContent = `${Math.round(settings.overlay_max_radius)}`;
-  if (overlayRise) overlayRise.value = settings.overlay_rise_ms.toString();
-  if (overlayRiseValue) overlayRiseValue.textContent = `${settings.overlay_rise_ms}`;
-  if (overlayFall) overlayFall.value = settings.overlay_fall_ms.toString();
-  if (overlayFallValue) overlayFallValue.textContent = `${settings.overlay_fall_ms}`;
+  const overlayStyleValue = settings.overlay_style || "dot";
+  if (overlayStyle) overlayStyle.value = overlayStyleValue;
+  updateOverlayStyleVisibility(overlayStyleValue);
+  applyOverlaySharedUi(overlayStyleValue);
+  if (overlayPosX) {
+    overlayPosX.value = Math.round(
+      overlayStyleValue === "kitt" ? settings.overlay_kitt_pos_x : settings.overlay_pos_x
+    ).toString();
+  }
+  if (overlayPosY) {
+    overlayPosY.value = Math.round(
+      overlayStyleValue === "kitt" ? settings.overlay_kitt_pos_y : settings.overlay_pos_y
+    ).toString();
+  }
+  if (overlayKittMinWidth) overlayKittMinWidth.value = Math.round(settings.overlay_kitt_min_width).toString();
+  if (overlayKittMinWidthValue) overlayKittMinWidthValue.textContent = `${Math.round(settings.overlay_kitt_min_width)}`;
+  if (overlayKittMaxWidth) overlayKittMaxWidth.value = Math.round(settings.overlay_kitt_max_width).toString();
+  if (overlayKittMaxWidthValue) overlayKittMaxWidthValue.textContent = `${Math.round(settings.overlay_kitt_max_width)}`;
+  if (overlayKittHeight) overlayKittHeight.value = Math.round(settings.overlay_kitt_height).toString();
+  if (overlayKittHeightValue) overlayKittHeightValue.textContent = `${Math.round(settings.overlay_kitt_height)}`;
+}
+
+function updateOverlayStyleVisibility(style: string) {
+  const isKitt = style === "kitt";
+  if (overlayDotSettings) overlayDotSettings.style.display = isKitt ? "none" : "block";
+  if (overlayKittSettings) overlayKittSettings.style.display = isKitt ? "block" : "none";
+}
+
+function getOverlaySharedSettings(style: string, current: Settings) {
+  if (style === "kitt") {
+    return {
+      color: current.overlay_kitt_color,
+      rise_ms: current.overlay_kitt_rise_ms,
+      fall_ms: current.overlay_kitt_fall_ms,
+      opacity_inactive: current.overlay_kitt_opacity_inactive,
+      opacity_active: current.overlay_kitt_opacity_active,
+    };
+  }
+  return {
+    color: current.overlay_color,
+    rise_ms: current.overlay_rise_ms,
+    fall_ms: current.overlay_fall_ms,
+    opacity_inactive: current.overlay_opacity_inactive,
+    opacity_active: current.overlay_opacity_active,
+  };
+}
+
+function applyOverlaySharedUi(style: string) {
+  if (!settings) return;
+  const shared = getOverlaySharedSettings(style, settings);
+  if (overlayColor) overlayColor.value = shared.color;
+  if (overlayRise) overlayRise.value = shared.rise_ms.toString();
+  if (overlayRiseValue) overlayRiseValue.textContent = `${shared.rise_ms}`;
+  if (overlayFall) overlayFall.value = shared.fall_ms.toString();
+  if (overlayFallValue) overlayFallValue.textContent = `${shared.fall_ms}`;
   if (overlayOpacityInactive) {
-    overlayOpacityInactive.value = Math.round(settings.overlay_opacity_inactive * 100).toString();
+    overlayOpacityInactive.value = Math.round(shared.opacity_inactive * 100).toString();
   }
   if (overlayOpacityInactiveValue) {
-    overlayOpacityInactiveValue.textContent = `${Math.round(settings.overlay_opacity_inactive * 100)}%`;
+    overlayOpacityInactiveValue.textContent = `${Math.round(shared.opacity_inactive * 100)}%`;
   }
   if (overlayOpacityActive) {
-    overlayOpacityActive.value = Math.round(settings.overlay_opacity_active * 100).toString();
+    overlayOpacityActive.value = Math.round(shared.opacity_active * 100).toString();
   }
   if (overlayOpacityActiveValue) {
-    overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_opacity_active * 100)}%`;
+    overlayOpacityActiveValue.textContent = `${Math.round(shared.opacity_active * 100)}%`;
   }
-  if (overlayPosX) overlayPosX.value = Math.round(settings.overlay_pos_x).toString();
-  if (overlayPosY) overlayPosY.value = Math.round(settings.overlay_pos_y).toString();
+  if (overlayPosX) {
+    overlayPosX.value = Math.round(
+      style === "kitt" ? settings.overlay_kitt_pos_x : settings.overlay_pos_x
+    ).toString();
+  }
+  if (overlayPosY) {
+    overlayPosY.value = Math.round(
+      style === "kitt" ? settings.overlay_kitt_pos_y : settings.overlay_pos_y
+    ).toString();
+  }
 }
 
 const TRANSCRIBE_DB_FLOOR = -60;
@@ -561,19 +714,19 @@ function formatProgress(progress?: DownloadProgress) {
 }
 
 function renderModels() {
-  if (!modelListInstalled || !modelListAvailable) return;
+  if (!modelListActive || !modelListInstalled || !modelListAvailable) return;
+  modelListActive.innerHTML = "";
   modelListInstalled.innerHTML = "";
   modelListAvailable.innerHTML = "";
 
   const installedModels = models.filter((model) => model.installed);
   const availableModels = models.filter((model) => !model.installed && model.available);
 
-  if (settings && installedModels.length) {
-    const hasActive = installedModels.some((model) => model.id === settings?.model);
-    if (!hasActive) {
-      settings.model = installedModels[0].id;
-      persistSettings();
-    }
+  let activeModel = settings ? installedModels.find((model) => model.id === settings?.model) : undefined;
+  if (settings && installedModels.length && !activeModel) {
+    settings.model = installedModels[0].id;
+    persistSettings();
+    activeModel = installedModels[0];
   }
 
   const renderGroup = (container: HTMLElement, group: ModelInfo[], emptyText: string) => {
@@ -617,6 +770,10 @@ function renderModels() {
       meta.className = "model-meta";
       const source = model.source ? ` • ${model.source}` : "";
       meta.textContent = `${model.file_name}${source}`;
+
+      const description = document.createElement("div");
+      description.className = "model-desc";
+      description.textContent = getModelDescription(model);
 
       const pathLine = document.createElement("div");
       pathLine.className = "model-meta";
@@ -685,6 +842,7 @@ function renderModels() {
 
       item.appendChild(header);
       item.appendChild(meta);
+      item.appendChild(description);
       item.appendChild(status);
       if (model.path) {
         item.appendChild(pathLine);
@@ -696,7 +854,11 @@ function renderModels() {
     });
   };
 
-  renderGroup(modelListInstalled, installedModels, "No installed models");
+  renderGroup(modelListActive, activeModel ? [activeModel] : [], "No active model");
+  const installedFiltered = activeModel
+    ? installedModels.filter((model) => model.id !== activeModel?.id)
+    : installedModels;
+  renderGroup(modelListInstalled, installedFiltered, "No installed models");
   renderGroup(modelListAvailable, availableModels, "No models available");
   renderHero();
 }
@@ -704,6 +866,19 @@ function renderModels() {
 async function refreshModels() {
   models = await invoke<ModelInfo[]>("list_models");
   renderModels();
+}
+
+async function refreshModelsDir() {
+  if (!modelStoragePath) return;
+  try {
+    const dir = await invoke<string>("get_models_dir");
+    modelStoragePath.value = dir;
+  } catch (error) {
+    console.error("get_models_dir failed", error);
+    if (settings) {
+      modelStoragePath.value = settings.model_storage_dir ?? "";
+    }
+  }
 }
 
 async function persistSettings() {
@@ -875,6 +1050,35 @@ function wireEvents() {
     await refreshModels();
   });
 
+  modelStorageBrowse?.addEventListener("click", async () => {
+    if (!settings) return;
+    const dir = await invoke<string | null>("pick_model_dir");
+    if (!dir) return;
+    settings.model_storage_dir = dir;
+    await persistSettings();
+    await refreshModelsDir();
+    await refreshModels();
+  });
+
+  modelStorageReset?.addEventListener("click", async () => {
+    if (!settings) return;
+    settings.model_storage_dir = "";
+    if (modelStoragePath) {
+      modelStoragePath.value = "";
+    }
+    await persistSettings();
+    await refreshModelsDir();
+    await refreshModels();
+  });
+
+  modelStoragePath?.addEventListener("change", async () => {
+    if (!settings || !modelStoragePath) return;
+    settings.model_storage_dir = modelStoragePath.value.trim();
+    await persistSettings();
+    await refreshModelsDir();
+    await refreshModels();
+  });
+
   document.querySelectorAll<HTMLButtonElement>(".panel-collapse-btn").forEach((button) => {
     const panelId = button.dataset.panelCollapse;
     if (!panelId) return;
@@ -914,6 +1118,8 @@ function wireEvents() {
   setupHotkeyRecorder("ptt", pttHotkey, pttHotkeyRecord, pttHotkeyStatus);
   setupHotkeyRecorder("toggle", toggleHotkey, toggleHotkeyRecord, toggleHotkeyStatus);
   setupHotkeyRecorder("transcribe", transcribeHotkey, transcribeHotkeyRecord, transcribeHotkeyStatus);
+
+  window.addEventListener("resize", () => updateDeviceLineClamp());
 
   deviceSelect?.addEventListener("change", async () => {
     if (!settings) return;
@@ -1019,7 +1225,7 @@ function wireEvents() {
   transcribeGain?.addEventListener("input", () => {
     if (!settings || !transcribeGain) return;
     const value = Number(transcribeGain.value);
-    settings.transcribe_input_gain_db = Math.max(0, Math.min(24, value));
+    settings.transcribe_input_gain_db = Math.max(-30, Math.min(30, value));
     if (transcribeGainValue) {
       const gain = Math.round(settings.transcribe_input_gain_db);
       transcribeGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
@@ -1070,6 +1276,21 @@ function wireEvents() {
     await persistSettings();
   });
 
+  micGain?.addEventListener("input", () => {
+    if (!settings || !micGain) return;
+    const value = Number(micGain.value);
+    settings.mic_input_gain_db = Math.max(-30, Math.min(30, value));
+    if (micGainValue) {
+      const gain = Math.round(settings.mic_input_gain_db);
+      micGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
+    }
+  });
+
+  micGain?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
   vadThreshold?.addEventListener("input", () => {
     if (!settings || !vadThreshold) return;
     const value = Number(vadThreshold.value);
@@ -1109,7 +1330,11 @@ function wireEvents() {
 
   overlayColor?.addEventListener("input", () => {
     if (!settings || !overlayColor) return;
-    settings.overlay_color = overlayColor.value;
+    if ((settings.overlay_style || "dot") === "kitt") {
+      settings.overlay_kitt_color = overlayColor.value;
+    } else {
+      settings.overlay_color = overlayColor.value;
+    }
   });
 
   overlayColor?.addEventListener("change", async () => {
@@ -1159,8 +1384,13 @@ function wireEvents() {
 
   overlayRise?.addEventListener("input", () => {
     if (!settings || !overlayRise) return;
-    settings.overlay_rise_ms = Number(overlayRise.value);
-    if (overlayRiseValue) overlayRiseValue.textContent = `${settings.overlay_rise_ms}`;
+    const value = Number(overlayRise.value);
+    if ((settings.overlay_style || "dot") === "kitt") {
+      settings.overlay_kitt_rise_ms = value;
+    } else {
+      settings.overlay_rise_ms = value;
+    }
+    if (overlayRiseValue) overlayRiseValue.textContent = `${value}`;
   });
 
   overlayRise?.addEventListener("change", async () => {
@@ -1170,8 +1400,13 @@ function wireEvents() {
 
   overlayFall?.addEventListener("input", () => {
     if (!settings || !overlayFall) return;
-    settings.overlay_fall_ms = Number(overlayFall.value);
-    if (overlayFallValue) overlayFallValue.textContent = `${settings.overlay_fall_ms}`;
+    const value = Number(overlayFall.value);
+    if ((settings.overlay_style || "dot") === "kitt") {
+      settings.overlay_kitt_fall_ms = value;
+    } else {
+      settings.overlay_fall_ms = value;
+    }
+    if (overlayFallValue) overlayFallValue.textContent = `${value}`;
   });
 
   overlayFall?.addEventListener("change", async () => {
@@ -1182,16 +1417,30 @@ function wireEvents() {
   overlayOpacityInactive?.addEventListener("input", () => {
     if (!settings || !overlayOpacityInactive || !overlayOpacityActive) return;
     const value = Math.min(1, Math.max(0.05, Number(overlayOpacityInactive.value) / 100));
-    settings.overlay_opacity_inactive = value;
-    if (settings.overlay_opacity_active < settings.overlay_opacity_inactive) {
-      settings.overlay_opacity_active = settings.overlay_opacity_inactive;
-      overlayOpacityActive.value = Math.round(settings.overlay_opacity_active * 100).toString();
-    }
-    if (overlayOpacityInactiveValue) {
-      overlayOpacityInactiveValue.textContent = `${Math.round(settings.overlay_opacity_inactive * 100)}%`;
-    }
-    if (overlayOpacityActiveValue) {
-      overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_opacity_active * 100)}%`;
+    if ((settings.overlay_style || "dot") === "kitt") {
+      settings.overlay_kitt_opacity_inactive = value;
+      if (settings.overlay_kitt_opacity_active < settings.overlay_kitt_opacity_inactive) {
+        settings.overlay_kitt_opacity_active = settings.overlay_kitt_opacity_inactive;
+        overlayOpacityActive.value = Math.round(settings.overlay_kitt_opacity_active * 100).toString();
+      }
+      if (overlayOpacityInactiveValue) {
+        overlayOpacityInactiveValue.textContent = `${Math.round(settings.overlay_kitt_opacity_inactive * 100)}%`;
+      }
+      if (overlayOpacityActiveValue) {
+        overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_kitt_opacity_active * 100)}%`;
+      }
+    } else {
+      settings.overlay_opacity_inactive = value;
+      if (settings.overlay_opacity_active < settings.overlay_opacity_inactive) {
+        settings.overlay_opacity_active = settings.overlay_opacity_inactive;
+        overlayOpacityActive.value = Math.round(settings.overlay_opacity_active * 100).toString();
+      }
+      if (overlayOpacityInactiveValue) {
+        overlayOpacityInactiveValue.textContent = `${Math.round(settings.overlay_opacity_inactive * 100)}%`;
+      }
+      if (overlayOpacityActiveValue) {
+        overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_opacity_active * 100)}%`;
+      }
     }
   });
 
@@ -1202,10 +1451,24 @@ function wireEvents() {
 
   overlayOpacityActive?.addEventListener("input", () => {
     if (!settings || !overlayOpacityActive || !overlayOpacityInactive) return;
-    const value = Math.min(1, Math.max(settings.overlay_opacity_inactive, Number(overlayOpacityActive.value) / 100));
-    settings.overlay_opacity_active = value;
-    if (overlayOpacityActiveValue) {
-      overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_opacity_active * 100)}%`;
+    if ((settings.overlay_style || "dot") === "kitt") {
+      const value = Math.min(
+        1,
+        Math.max(settings.overlay_kitt_opacity_inactive, Number(overlayOpacityActive.value) / 100)
+      );
+      settings.overlay_kitt_opacity_active = value;
+      if (overlayOpacityActiveValue) {
+        overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_kitt_opacity_active * 100)}%`;
+      }
+    } else {
+      const value = Math.min(
+        1,
+        Math.max(settings.overlay_opacity_inactive, Number(overlayOpacityActive.value) / 100)
+      );
+      settings.overlay_opacity_active = value;
+      if (overlayOpacityActiveValue) {
+        overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_opacity_active * 100)}%`;
+      }
     }
   });
 
@@ -1216,13 +1479,62 @@ function wireEvents() {
 
   overlayPosX?.addEventListener("change", async () => {
     if (!settings || !overlayPosX) return;
-    settings.overlay_pos_x = Number(overlayPosX.value);
+    if ((settings.overlay_style || "dot") === "kitt") {
+      settings.overlay_kitt_pos_x = Number(overlayPosX.value);
+    } else {
+      settings.overlay_pos_x = Number(overlayPosX.value);
+    }
     await persistSettings();
   });
 
   overlayPosY?.addEventListener("change", async () => {
     if (!settings || !overlayPosY) return;
-    settings.overlay_pos_y = Number(overlayPosY.value);
+    if ((settings.overlay_style || "dot") === "kitt") {
+      settings.overlay_kitt_pos_y = Number(overlayPosY.value);
+    } else {
+      settings.overlay_pos_y = Number(overlayPosY.value);
+    }
+    await persistSettings();
+  });
+
+  overlayStyle?.addEventListener("change", async () => {
+    if (!settings || !overlayStyle) return;
+    settings.overlay_style = overlayStyle.value;
+    updateOverlayStyleVisibility(overlayStyle.value);
+    applyOverlaySharedUi(overlayStyle.value);
+    await persistSettings();
+  });
+
+  overlayKittMinWidth?.addEventListener("input", () => {
+    if (!settings || !overlayKittMinWidth) return;
+    settings.overlay_kitt_min_width = Number(overlayKittMinWidth.value);
+    if (overlayKittMinWidthValue) overlayKittMinWidthValue.textContent = `${Math.round(settings.overlay_kitt_min_width)}`;
+  });
+
+  overlayKittMinWidth?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  overlayKittMaxWidth?.addEventListener("input", () => {
+    if (!settings || !overlayKittMaxWidth) return;
+    settings.overlay_kitt_max_width = Number(overlayKittMaxWidth.value);
+    if (overlayKittMaxWidthValue) overlayKittMaxWidthValue.textContent = `${Math.round(settings.overlay_kitt_max_width)}`;
+  });
+
+  overlayKittMaxWidth?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  overlayKittHeight?.addEventListener("input", () => {
+    if (!settings || !overlayKittHeight) return;
+    settings.overlay_kitt_height = Number(overlayKittHeight.value);
+    if (overlayKittHeightValue) overlayKittHeightValue.textContent = `${Math.round(settings.overlay_kitt_height)}`;
+  });
+
+  overlayKittHeight?.addEventListener("change", async () => {
+    if (!settings) return;
     await persistSettings();
   });
 
@@ -1419,6 +1731,7 @@ async function bootstrap() {
   setStatus("idle");
   renderHistory();
   renderModels();
+  await refreshModelsDir();
   wireEvents();
   initPanelState();
   initConversationView();
@@ -1428,6 +1741,7 @@ async function bootstrap() {
     renderSettings();
     renderHero();
     renderModels();
+    refreshModelsDir();
   });
 
   await listen<string>("capture:state", (event) => {

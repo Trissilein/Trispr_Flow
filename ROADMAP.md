@@ -13,12 +13,16 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 ✅ **Milestone 2**: Complete (Foundation & Critical UX)
 🔄 **Phase 2**: In Progress (Security Hardening & Code Quality)
 
-**Recent progress (2026-02-04)**
+**Recent progress (2026-02-05)**
 - ✅ **Frontend Modularization**: Split main.ts (~1800 lines) into 14 focused modules (~220 lines)
 - ✅ **Overlay Circle Dot Fix**: Audio-reactive size animation now functional
 - ✅ **Monitoring Toggles**: Enable/disable microphone tracking and system audio transcription via UI
 - ✅ **Tray Menu Sync**: Checkmarks properly sync between UI and system tray
 - ✅ **Monitor Re-initialization**: No restart required when toggling monitoring on/off
+- ✅ **lib.rs Modularization**: Split backend into focused Rust modules
+- ✅ **Security Hardening**: SSRF prevention, checksum verification, download size limits
+- ✅ **System Audio Robustness**: WASAPI loopback fixes + transcribe queue/idle meter
+- ✅ **Activity Indicators**: Separate recording/transcribing indicators + overlay marker
 
 **Previous milestones**
 - ✅ System audio capture via WASAPI (Windows) + transcribe hotkey
@@ -32,7 +36,7 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 
 ---
 
-## Milestone 2 — Foundation & Critical UX (In Progress)
+## Milestone 2 — Foundation & Critical UX (Complete)
 
 ### 2.1 Recording Modes (Mic)
 - **PTT vs VAD** modes (toggle hotkey remains inside PTT)
@@ -79,12 +83,12 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 ## Phase 2 — Security Hardening & Code Quality (In Progress)
 
 ### Critical Security Tasks (This Week)
-- 🔴 **SSRF Prevention**: URL whitelist for model downloads
-- 🔴 **Model Integrity**: SHA256 checksum verification
-- 🔴 **Download Limits**: Size caps and timeout protection
+- ✅ **SSRF Prevention**: URL whitelist for model downloads
+- ✅ **Model Integrity**: SHA256 checksum verification
+- ✅ **Download Limits**: Size caps and timeout protection
 
 ### Code Refactoring (Next Sprint)
-- 🟡 **lib.rs Modularization**: Split 3700+ line file into focused modules
+- ✅ **lib.rs Modularization**: Split 3700+ line file into focused modules
   - Audio module (device management, CPAL)
   - Transcription module (whisper.cpp integration)
   - Models module (download, management)
@@ -105,10 +109,11 @@ For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
 - Restore on same virtual desktop (Windows), if possible
 
 ### Activity Feedback
-- Tray icon pulses to reflect activity (turquoise = Recording, yellow = Transcribing; both pulse when both active)
-- Pulse cadence: ~1.6s loop, ~6 frames
-- Transcribe backlog target: 10 minutes
-- Warn at 80% buffer fill and offer +50% expansion (repeatable)
+- ✅ **In‑app indicators**: Separate recording/transcribing indicators + overlay marker
+- ⏳ **Tray pulse**: turquoise = Recording, yellow = Transcribing; both pulse when both active
+- ⏳ **Pulse cadence**: ~1.6s loop, ~6 frames
+- ⏳ **Transcribe backlog**: target 10 minutes
+- ⏳ **80% warning**: prompt +50% expansion (repeatable)
 
 ### Text Enhancement
 - **Post-Processing Pipeline**:

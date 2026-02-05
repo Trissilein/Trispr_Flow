@@ -61,7 +61,6 @@ export function renderHero() {
     const active = models.find((model) => model.id === settings?.model);
     dom.modelState.textContent = active?.label ?? settings?.model ?? "—";
   }
-  if (dom.engineLabel) dom.engineLabel.textContent = "whisper.cpp (GPU auto)";
   setCaptureStatus(currentCaptureStatus);
   setTranscribeStatus(currentTranscribeStatus);
 }

@@ -10,7 +10,6 @@ export const statusDot = $("status-dot") as HTMLSpanElement | null;
 export const transcribeStatusDot = $("transcribe-dot") as HTMLSpanElement | null;
 export const transcribeStatusLabel = $("transcribe-label");
 export const statusMessage = $("status-message");
-export const engineLabel = $("engine-label");
 export const cloudState = $("cloud-state");
 export const cloudCheck = $("cloud-check");
 export const dictationBadge = $("dictation-badge");

@@ -4,8 +4,11 @@ import {
   formatProgress,
   formatSize,
   getModelDescription,
+  dbToLevel,
   levelToDb,
+  thresholdToDb,
   thresholdToPercent,
+  VAD_DB_FLOOR,
 } from "../ui-helpers";
 
 describe("ui-helpers", () => {
@@ -48,6 +51,17 @@ describe("ui-helpers", () => {
     expect(levelToDb(1)).toBeCloseTo(0);
     expect(levelToDb(0.5)).toBeCloseTo(-6.0206, 3);
     expect(levelToDb(0)).toBe(-100);
+  });
+
+  it("converts thresholds to dB with floor", () => {
+    expect(thresholdToDb(1)).toBeCloseTo(0);
+    expect(thresholdToDb(0.001)).toBeCloseTo(-60, 1);
+    expect(thresholdToDb(0)).toBe(VAD_DB_FLOOR);
+  });
+
+  it("converts dB to linear levels", () => {
+    expect(dbToLevel(0)).toBeCloseTo(1);
+    expect(dbToLevel(-6)).toBeCloseTo(0.501, 2);
   });
 
   it("maps thresholds to 0-100%", () => {

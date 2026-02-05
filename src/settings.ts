@@ -2,8 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { settings } from "./state";
 import * as dom from "./dom-refs";
-
-const TRANSCRIBE_DB_FLOOR = -60;
+import { thresholdToDb, VAD_DB_FLOOR } from "./ui-helpers";
 
 export async function persistSettings() {
   if (!settings) return;
@@ -84,12 +83,12 @@ export function updateTranscribeVadVisibility(enabled: boolean) {
 }
 
 export function updateTranscribeThreshold(threshold: number) {
-  const db = threshold <= 0.00001 ? TRANSCRIBE_DB_FLOOR : Math.max(TRANSCRIBE_DB_FLOOR, 20 * Math.log10(threshold));
+  const db = thresholdToDb(threshold, VAD_DB_FLOOR);
   if (dom.transcribeThresholdDb) {
     dom.transcribeThresholdDb.textContent = `${db.toFixed(1)} dB`;
   }
   if (dom.transcribeMeterThreshold) {
-    const pos = (db - TRANSCRIBE_DB_FLOOR) / (0 - TRANSCRIBE_DB_FLOOR);
+    const pos = (db - VAD_DB_FLOOR) / (0 - VAD_DB_FLOOR);
     dom.transcribeMeterThreshold.style.left = `${Math.round(pos * 100)}%`;
   }
 }
@@ -126,9 +125,10 @@ export function renderSettings() {
     const gain = Math.round(settings.mic_input_gain_db);
     dom.micGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
   }
-  // Display start threshold in the slider (main user-facing threshold)
-  if (dom.vadThreshold) dom.vadThreshold.value = Math.round(settings.vad_threshold_start * 100).toString();
-  if (dom.vadThresholdValue) dom.vadThresholdValue.textContent = `${Math.round(settings.vad_threshold_start * 100)}%`;
+  // Display start threshold in dB (main user-facing threshold)
+  const vadThresholdDb = thresholdToDb(settings.vad_threshold_start, VAD_DB_FLOOR);
+  if (dom.vadThreshold) dom.vadThreshold.value = Math.round(vadThresholdDb).toString();
+  if (dom.vadThresholdValue) dom.vadThresholdValue.textContent = `${Math.round(vadThresholdDb)} dB`;
   if (dom.vadSilence) dom.vadSilence.value = settings.vad_silence_ms.toString();
   if (dom.vadSilenceValue) dom.vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
   if (dom.transcribeStatus && !dom.transcribeStatus.textContent) {
@@ -137,11 +137,12 @@ export function renderSettings() {
   if (dom.transcribeHotkey) dom.transcribeHotkey.value = settings.transcribe_hotkey;
   if (dom.transcribeDeviceSelect) dom.transcribeDeviceSelect.value = settings.transcribe_output_device;
   if (dom.transcribeVadToggle) dom.transcribeVadToggle.checked = settings.transcribe_vad_mode;
+  const transcribeThresholdDb = thresholdToDb(settings.transcribe_vad_threshold, VAD_DB_FLOOR);
   if (dom.transcribeVadThreshold) {
-    dom.transcribeVadThreshold.value = Math.round(settings.transcribe_vad_threshold * 100).toString();
+    dom.transcribeVadThreshold.value = Math.round(transcribeThresholdDb).toString();
   }
   if (dom.transcribeVadThresholdValue) {
-    dom.transcribeVadThresholdValue.textContent = `${Math.round(settings.transcribe_vad_threshold * 100)}%`;
+    dom.transcribeVadThresholdValue.textContent = `${Math.round(transcribeThresholdDb)} dB`;
   }
   if (dom.transcribeVadSilence) {
     dom.transcribeVadSilence.value = settings.transcribe_vad_silence_ms.toString();

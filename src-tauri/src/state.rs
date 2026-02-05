@@ -173,10 +173,10 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
         settings.vad_threshold_sustain = VAD_THRESHOLD_SUSTAIN_DEFAULT;
       }
       // Clamp thresholds to valid range
-      if !(0.001..=0.5).contains(&settings.vad_threshold_start) {
+      if !(0.001..=1.0).contains(&settings.vad_threshold_start) {
         settings.vad_threshold_start = VAD_THRESHOLD_START_DEFAULT;
       }
-      if !(0.001..=0.5).contains(&settings.vad_threshold_sustain) {
+      if !(0.001..=1.0).contains(&settings.vad_threshold_sustain) {
         settings.vad_threshold_sustain = VAD_THRESHOLD_SUSTAIN_DEFAULT;
       }
       // Ensure sustain <= start

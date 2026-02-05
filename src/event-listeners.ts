@@ -12,6 +12,7 @@ import { applyPanelCollapsed, setHistoryTab, buildConversationHistory, buildConv
 import { setupHotkeyRecorder } from "./hotkeys";
 import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
+import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
 
 export function wireEvents() {
   dom.captureEnabledToggle?.addEventListener("change", async () => {
@@ -186,12 +187,13 @@ export function wireEvents() {
 
   dom.transcribeVadThreshold?.addEventListener("input", () => {
     if (!settings || !dom.transcribeVadThreshold) return;
-    const value = Number(dom.transcribeVadThreshold.value);
-    settings.transcribe_vad_threshold = Math.min(1, Math.max(0, value / 100));
+    const rawDb = Number(dom.transcribeVadThreshold.value);
+    const clampedDb = Math.max(VAD_DB_FLOOR, Math.min(0, rawDb));
+    settings.transcribe_vad_threshold = Math.min(1, Math.max(0, dbToLevel(clampedDb)));
     if (dom.transcribeVadThresholdValue) {
-      dom.transcribeVadThresholdValue.textContent = `${Math.round(settings.transcribe_vad_threshold * 100)}%`;
+      dom.transcribeVadThresholdValue.textContent = `${Math.round(clampedDb)} dB`;
     }
-    updateRangeAria("transcribe-vad-threshold", value);
+    updateRangeAria("transcribe-vad-threshold", clampedDb);
     updateTranscribeThreshold(settings.transcribe_vad_threshold);
   });
 
@@ -323,8 +325,9 @@ export function wireEvents() {
 
   dom.vadThreshold?.addEventListener("input", () => {
     if (!settings || !dom.vadThreshold) return;
-    const value = Number(dom.vadThreshold.value);
-    const threshold = Math.min(1, Math.max(0, value / 100));
+    const rawDb = Number(dom.vadThreshold.value);
+    const clampedDb = Math.max(VAD_DB_FLOOR, Math.min(0, rawDb));
+    const threshold = Math.min(1, Math.max(0, dbToLevel(clampedDb)));
 
     // Update the start threshold (main threshold)
     settings.vad_threshold_start = threshold;
@@ -332,10 +335,10 @@ export function wireEvents() {
     settings.vad_threshold = threshold;
 
     if (dom.vadThresholdValue) {
-      dom.vadThresholdValue.textContent = `${Math.round(threshold * 100)}%`;
+      dom.vadThresholdValue.textContent = `${Math.round(clampedDb)} dB`;
     }
 
-    updateRangeAria("vad-threshold", value);
+    updateRangeAria("vad-threshold", clampedDb);
     // Update threshold markers
     updateThresholdMarkers();
   });

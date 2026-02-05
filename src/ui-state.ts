@@ -74,7 +74,9 @@ export function renderHero() {
   if (dom.cloudState) dom.cloudState.textContent = cloudOn ? "Claude On" : "Claude Off";
   if (dom.cloudCheck) dom.cloudCheck.classList.toggle("is-active", cloudOn);
   if (dom.dictationBadge) {
-    dom.dictationBadge.textContent = cloudOn ? "Online Supported Dictation" : "Offline Dictation";
+    dom.dictationBadge.textContent = cloudOn
+      ? "AI-enhanced Mode (Online)"
+      : "Private Mode (Offline)";
     dom.dictationBadge.classList.toggle("badge--online", cloudOn);
   }
   if (dom.modeState) dom.modeState.textContent = settings.mode === "ptt" ? "PTT" : "VAD";

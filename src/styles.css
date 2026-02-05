@@ -65,19 +65,19 @@ body {
   display: inline-flex;
   padding: 3px 10px;
   border-radius: 999px;
-  background: rgba(255, 107, 61, 0.2);
-  color: #ff8866;
+  background: rgba(29, 166, 160, 0.2);
+  color: #4be0d4;
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
   font-size: 0.65rem;
-  border: 1px solid rgba(255, 107, 61, 0.3);
+  border: 1px solid rgba(29, 166, 160, 0.35);
 }
 
 .badge--online {
-  background: rgba(29, 166, 160, 0.2);
-  color: #4be0d4;
-  border-color: rgba(29, 166, 160, 0.35);
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.35);
 }
 
 h1 {

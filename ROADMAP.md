@@ -104,6 +104,12 @@ For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
 - Restore on correct monitor
 - Restore on same virtual desktop (Windows), if possible
 
+### Activity Feedback
+- Tray icon pulses to reflect activity (turquoise = Recording, yellow = Transcribing; both pulse when both active)
+- Pulse cadence: ~1.6s loop, ~6 frames
+- Transcribe backlog target: 10 minutes
+- Warn at 80% buffer fill and offer +50% expansion (repeatable)
+
 ### Text Enhancement
 - **Post-Processing Pipeline**:
   - Punctuation & capitalization (rule-based + AI-powered)

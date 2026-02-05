@@ -16,7 +16,8 @@ export let devices: AudioDevice[] = [];
 export let outputDevices: AudioDevice[] = [];
 export let models: ModelInfo[] = [];
 export const modelProgress = new Map<string, DownloadProgress>();
-export let currentStatus: RecordingState = "idle";
+export let currentCaptureStatus: RecordingState = "idle";
+export let currentTranscribeStatus: RecordingState = "idle";
 export let currentHistoryTab: HistoryTab = "mic";
 export let dynamicSustainThreshold: number = 0.01;
 
@@ -45,8 +46,12 @@ export function setModels(newModels: ModelInfo[]) {
   models = newModels;
 }
 
-export function setCurrentStatus(status: RecordingState) {
-  currentStatus = status;
+export function setCurrentCaptureStatus(status: RecordingState) {
+  currentCaptureStatus = status;
+}
+
+export function setCurrentTranscribeStatus(status: RecordingState) {
+  currentTranscribeStatus = status;
 }
 
 export function setCurrentHistoryTab(tab: HistoryTab) {

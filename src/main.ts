@@ -17,7 +17,7 @@ import {
 import * as dom from "./dom-refs";
 import { renderSettings } from "./settings";
 import { renderDevices, renderOutputDevices } from "./devices";
-import { renderHero, setStatus, updateThresholdMarkers } from "./ui-state";
+import { renderHero, setCaptureStatus, setTranscribeStatus, updateThresholdMarkers } from "./ui-state";
 import { renderHistory, initPanelState, setHistoryTab } from "./history";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
 import { wireEvents } from "./event-listeners";
@@ -81,7 +81,8 @@ async function bootstrap() {
   renderOutputDevices();
   renderSettings();
   renderHero();
-  setStatus("idle");
+  setCaptureStatus("idle");
+  setTranscribeStatus("idle");
   renderHistory();
   renderModels();
   await refreshModelsDir();
@@ -99,15 +100,12 @@ async function bootstrap() {
 
   await listen<string>("capture:state", (event) => {
     const state = event.payload as "idle" | "recording" | "transcribing";
-    setStatus(state ?? "idle");
+    setCaptureStatus(state ?? "idle");
   });
 
   await listen<string>("transcribe:state", (event) => {
-    if (dom.transcribeStatus) {
-      const state = event.payload;
-      dom.transcribeStatus.textContent =
-        state === "recording" ? "Monitoring" : state === "transcribing" ? "Transcribing" : "Idle";
-    }
+    const state = event.payload as "idle" | "recording" | "transcribing";
+    setTranscribeStatus(state ?? "idle");
   });
 
   await listen<number>("transcribe:level", (event) => {
@@ -161,7 +159,7 @@ async function bootstrap() {
 
   await listen<string>("transcription:error", (event) => {
     console.error("transcription error", event.payload);
-    setStatus("idle");
+    setCaptureStatus("idle");
     if (dom.statusMessage) dom.statusMessage.textContent = `Error: ${event.payload}`;
 
     // Show toast for transcription errors
@@ -180,7 +178,7 @@ async function bootstrap() {
 
   // Listen for audio cues (beep on recording start/stop)
   await listen<string>("audio:cue", (event) => {
-    const type = event.payload as "start" | "stop" | "transcribe";
+    const type = event.payload as "start" | "stop";
     import("./state").then(({ settings }) => {
       if (settings?.audio_cues) {
         playAudioCue(type);

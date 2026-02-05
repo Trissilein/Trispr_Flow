@@ -1,20 +1,47 @@
 // UI state management for status and hero sections
 
 import type { RecordingState } from "./types";
-import { settings, currentStatus, setCurrentStatus, devices, models, dynamicSustainThreshold } from "./state";
+import {
+  settings,
+  currentCaptureStatus,
+  currentTranscribeStatus,
+  setCurrentCaptureStatus,
+  setCurrentTranscribeStatus,
+  devices,
+  models,
+  dynamicSustainThreshold
+} from "./state";
 import * as dom from "./dom-refs";
-import { updateRecordingStatus } from "./accessibility";
+import { updateRecordingStatus, updateTranscribeStatus } from "./accessibility";
 import { thresholdToPercent } from "./ui-helpers";
 
-export function setStatus(state: RecordingState) {
-  setCurrentStatus(state);
-  if (dom.statusDot) dom.statusDot.dataset.state = state;
-  if (!dom.statusLabel) return;
-  dom.statusLabel.textContent =
-    state === "idle" ? "Idle" : state === "recording" ? "Recording" : "Transcribing";
+function updateTranscribeIndicator() {
+  const active = currentCaptureStatus === "transcribing" || currentTranscribeStatus === "transcribing";
+  const indicatorState: RecordingState = active ? "transcribing" : "idle";
+  if (dom.transcribeStatusDot) dom.transcribeStatusDot.dataset.state = indicatorState;
+  if (dom.transcribeStatusLabel) {
+    dom.transcribeStatusLabel.textContent = active ? "Transcribing: Active" : "Transcribing: Idle";
+  }
+  updateTranscribeStatus(indicatorState);
+}
+
+export function setCaptureStatus(state: RecordingState) {
+  setCurrentCaptureStatus(state);
+  const isRecording = state === "recording";
+  if (dom.statusDot) dom.statusDot.dataset.state = isRecording ? "recording" : "idle";
+  if (dom.statusLabel) dom.statusLabel.textContent = isRecording ? "Recording: Active" : "Recording: Idle";
   if (dom.statusMessage) dom.statusMessage.textContent = "";
-  // Update accessibility attributes for screen readers
   updateRecordingStatus(state);
+  updateTranscribeIndicator();
+}
+
+export function setTranscribeStatus(state: RecordingState) {
+  setCurrentTranscribeStatus(state);
+  if (dom.transcribeStatus) {
+    dom.transcribeStatus.textContent =
+      state === "recording" ? "Monitoring" : state === "transcribing" ? "Transcribing" : "Idle";
+  }
+  updateTranscribeIndicator();
 }
 
 export function renderHero() {
@@ -35,7 +62,8 @@ export function renderHero() {
     dom.modelState.textContent = active?.label ?? settings?.model ?? "—";
   }
   if (dom.engineLabel) dom.engineLabel.textContent = "whisper.cpp (GPU auto)";
-  setStatus(currentStatus);
+  setCaptureStatus(currentCaptureStatus);
+  setTranscribeStatus(currentTranscribeStatus);
 }
 
 export function updateDeviceLineClamp() {

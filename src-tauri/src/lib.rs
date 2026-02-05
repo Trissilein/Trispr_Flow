@@ -130,7 +130,23 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
     match manager.on_shortcut(hotkey, |app, _shortcut, event| {
       if event.state == ShortcutState::Pressed {
         let app = app.clone();
+        let enabled = app
+          .state::<AppState>()
+          .settings
+          .lock()
+          .map(|settings| settings.transcribe_enabled)
+          .unwrap_or(false);
+        if !enabled {
+          let _ = app.emit("transcribe:state", "idle");
+          return;
+        }
+        let was_active = app
+          .state::<AppState>()
+          .transcribe_active
+          .load(Ordering::Relaxed);
         toggle_transcribe_state(&app);
+        let cue = if was_active { "stop" } else { "start" };
+        let _ = app.emit("audio:cue", cue);
       }
     }) {
       Ok(_) => {

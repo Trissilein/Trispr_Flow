@@ -34,3 +34,20 @@ export function updateRecordingStatus(state: RecordingState): void {
     announcement.textContent = announcements[state];
   }
 }
+
+export function updateTranscribeStatus(state: RecordingState): void {
+  const statusDot = document.getElementById("transcribe-dot");
+  if (statusDot) {
+    statusDot.setAttribute("aria-label", `Transcribing status: ${state}`);
+  }
+
+  const announcement = document.getElementById("transcribe-announcement");
+  if (announcement) {
+    const announcements = {
+      idle: "Transcription idle.",
+      recording: "System audio monitoring active.",
+      transcribing: "Transcription in progress."
+    };
+    announcement.textContent = announcements[state];
+  }
+}

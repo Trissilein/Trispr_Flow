@@ -21,6 +21,10 @@
          role="status"
          aria-live="assertive"
          aria-atomic="true"></div>
+    <div id="transcribe-announcement" class="sr-only"
+         role="status"
+         aria-live="polite"
+         aria-atomic="true"></div>
     <main class="app">
       <header class="hero" style="--delay: 0.05s">
         <div>
@@ -31,9 +35,17 @@
             a privacy-first local pipeline and optional Claude fallback.
           </p>
           <div class="status" role="status" aria-live="polite">
-            <span class="status-dot" id="status-dot" data-state="idle"
-                  aria-label="Recording status: idle"></span>
-            <span id="status-label">Idle</span>
+            <div class="status-item">
+              <span class="status-dot" id="status-dot" data-state="idle"
+                    aria-label="Recording status: idle"></span>
+              <span id="status-label" class="status-label">Recording: Idle</span>
+            </div>
+            <span class="status-divider" aria-hidden="true">•</span>
+            <div class="status-item">
+              <span class="status-dot" id="transcribe-dot" data-state="idle"
+                    aria-label="Transcribing status: idle"></span>
+              <span id="transcribe-label" class="status-label">Transcribing: Idle</span>
+            </div>
             <span class="status-divider" aria-hidden="true">•</span>
             <span id="engine-label">Engine: whisper.cpp (GPU)</span>
             <span id="status-message" class="status-message" role="alert"></span>

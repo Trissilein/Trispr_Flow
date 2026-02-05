@@ -4,6 +4,7 @@ use crate::constants::{MIN_AUDIO_MS, TARGET_SAMPLE_RATE};
 use crate::constants::{TRANSCRIBE_IDLE_METER_MS, TRANSCRIBE_QUEUE_MAX_CHUNKS};
 use crate::errors::AppError;
 use crate::models::resolve_model_path;
+use crate::overlay::{update_overlay_state, OverlayState};
 use crate::paths::resolve_whisper_cli_path;
 use crate::state::{push_transcribe_entry_inner, AppState, Settings};
 use serde::{Deserialize, Serialize};
@@ -79,6 +80,21 @@ fn emit_transcribe_idle(app: &AppHandle) {
   let _ = app.emit("transcribe:db", -60.0f32);
 }
 
+fn update_transcribe_overlay(app: &AppHandle, active: bool) {
+  if let Ok(recorder) = app.state::<AppState>().recorder.lock() {
+    if recorder.active || recorder.transcribing {
+      return;
+    }
+  }
+
+  let state = if active {
+    OverlayState::Transcribing
+  } else {
+    OverlayState::Idle
+  };
+  let _ = update_overlay_state(app, state);
+}
+
 impl TranscribeRecorder {
   pub(crate) fn new() -> Self {
     Self {
@@ -117,6 +133,7 @@ pub(crate) fn start_transcribe_monitor(
         }
         let _ = app_handle.emit("transcribe:state", "idle");
         emit_transcribe_idle(&app_handle);
+        update_transcribe_overlay(&app_handle, false);
       }
       return;
     }
@@ -138,6 +155,7 @@ pub(crate) fn start_transcribe_monitor(
       }
       let _ = app_handle.emit("transcribe:state", "idle");
       emit_transcribe_idle(&app_handle);
+      update_transcribe_overlay(&app_handle, false);
     }
   });
 
@@ -160,6 +178,7 @@ pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppStat
 
   state.transcribe_active.store(false, Ordering::Relaxed);
   let _ = app.emit("transcribe:state", "idle");
+  update_transcribe_overlay(app, false);
   emit_transcribe_idle(app);
 
   if let Some(tx) = stop_tx {
@@ -178,6 +197,7 @@ pub(crate) fn toggle_transcribe_state(app: &AppHandle) {
   if !settings.transcribe_enabled {
     let _ = app.emit("transcribe:state", "idle");
     emit_transcribe_idle(app);
+    update_transcribe_overlay(app, false);
     return;
   }
   let active = state.transcribe_active.load(Ordering::Relaxed);
@@ -274,18 +294,19 @@ fn transcribe_worker(app: AppHandle, settings: Settings, queue: Arc<AudioQueue>)
     }
 
     let _ = app.emit("transcribe:state", "transcribing");
+    update_transcribe_overlay(&app, true);
     let result = transcribe_audio(&app, &settings, &chunk);
 
     if app.state::<AppState>().transcribe_active.load(Ordering::Relaxed) {
       let _ = app.emit("transcribe:state", "recording");
     }
+    update_transcribe_overlay(&app, false);
 
     match result {
       Ok((text, _source)) => {
         if !text.trim().is_empty() && !should_drop_transcript(&text, level, duration_ms) {
           let state = app.state::<AppState>();
           let _ = push_transcribe_entry_inner(&app, &state.history_transcribe, text);
-          let _ = app.emit("audio:cue", "transcribe");
         }
       }
       Err(err) => {

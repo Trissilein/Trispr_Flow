@@ -23,6 +23,7 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 - ✅ **Security Hardening**: SSRF prevention, checksum verification, download size limits
 - ✅ **System Audio Robustness**: WASAPI loopback fixes + transcribe queue/idle meter
 - ✅ **Activity Indicators**: Separate recording/transcribing indicators + overlay marker
+- 🟡 **Automated Testing Baseline**: Unit tests + smoke scripts added (pending local run)
 
 **Previous milestones**
 - ✅ System audio capture via WASAPI (Windows) + transcribe hotkey
@@ -94,8 +95,12 @@ This roadmap tracks the current focus: getting core capture + transcription stab
   - Models module (download, management)
   - State/Settings module
   - Paths/Utilities module
-- 🟡 **Automated Testing**: Unit tests for critical paths
+- 🟡 **Automated Testing**: Unit + smoke baseline added (pending local run)
 - 🟡 **Documentation**: Architecture docs, code comments
+
+### Testing (Ongoing)
+- 🟡 **Automated Testing**: Unit tests + smoke command (`npm run build` + `cargo test`)
+- ⚪ **Tauri E2E Tests (Block 9)**: Optional end-to-end coverage once unit + smoke are stable
 
 For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
 

@@ -330,6 +330,50 @@ fn model_candidates(spec: &ModelSpec) -> Vec<String> {
   candidates
 }
 
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn validate_model_url_accepts_https_allowlist() {
+    let url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin";
+    assert!(validate_model_url(url, UrlSafety::Basic).is_ok());
+  }
+
+  #[test]
+  fn validate_model_url_rejects_http() {
+    let url = "http://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin";
+    assert!(validate_model_url(url, UrlSafety::Basic).is_err());
+  }
+
+  #[test]
+  fn validate_model_url_rejects_userinfo() {
+    let url = "https://user:pass@huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin";
+    assert!(validate_model_url(url, UrlSafety::Basic).is_err());
+  }
+
+  #[test]
+  fn validate_model_url_rejects_unlisted_domain() {
+    let url = "https://example.com/ggml-large-v3.bin";
+    assert!(validate_model_url(url, UrlSafety::Basic).is_err());
+  }
+
+  #[test]
+  fn validate_model_url_rejects_non_standard_port() {
+    let url = "https://huggingface.co:444/ggml-large-v3.bin";
+    assert!(validate_model_url(url, UrlSafety::Basic).is_err());
+  }
+
+  #[test]
+  fn validate_model_file_names() {
+    assert!(validate_model_file_name("ggml-large-v3.bin").is_ok());
+    assert!(validate_model_file_name("ggml-large-v3.gguf").is_ok());
+    assert!(validate_model_file_name("../ggml-large-v3.bin").is_err());
+    assert!(validate_model_file_name("ggml large.bin").is_err());
+    assert!(validate_model_file_name("ggml-large-v3.exe").is_err());
+  }
+}
+
 fn find_model_in_dir(dir: &PathBuf, spec: &ModelSpec) -> Option<PathBuf> {
   for file in model_candidates(spec) {
     let candidate = dir.join(&file);

@@ -75,6 +75,32 @@ impl AudioQueue {
   }
 }
 
+#[cfg(test)]
+mod tests {
+  use super::AudioQueue;
+
+  #[test]
+  fn audio_queue_drops_oldest_when_full() {
+    let queue = AudioQueue::new(2);
+    queue.push(vec![1]);
+    queue.push(vec![2]);
+    queue.push(vec![3]);
+
+    assert_eq!(queue.pop().unwrap(), vec![2]);
+    assert_eq!(queue.pop().unwrap(), vec![3]);
+
+    queue.close();
+    assert!(queue.pop().is_none());
+  }
+
+  #[test]
+  fn audio_queue_close_unblocks_empty() {
+    let queue = AudioQueue::new(1);
+    queue.close();
+    assert!(queue.pop().is_none());
+  }
+}
+
 fn emit_transcribe_idle(app: &AppHandle) {
   let _ = app.emit("transcribe:level", 0.0f32);
   let _ = app.emit("transcribe:db", -60.0f32);

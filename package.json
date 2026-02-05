@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:smoke": "npm run build && cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
     "@tauri-apps/api": "^2"
@@ -15,6 +17,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "vite": "^6.0.3",
-    "typescript": "~5.6.2"
+    "typescript": "~5.6.2",
+    "vitest": "^1.6.0"
   }
 }

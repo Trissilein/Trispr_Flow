@@ -41,6 +41,9 @@ const DOWNLOAD_TIMEOUT_SECS: u64 = 30; // Timeout for stalled downloads
 const DOWNLOAD_CONNECT_TIMEOUT_SECS: u64 = 10;
 const DOWNLOAD_READ_TIMEOUT_SECS: u64 = 30;
 const DOWNLOAD_REDIRECT_LIMIT: u32 = 5;
+const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
+
+static LAST_TRAY_CLICK_MS: AtomicU64 = AtomicU64::new(0);
 
 // Allowed domains for model downloads (security: SSRF prevention)
 const ALLOWED_MODEL_DOMAINS: &[&str] = &[
@@ -3742,6 +3745,16 @@ fn hide_main_window(app: &AppHandle) {
   }
 }
 
+fn should_handle_tray_click() -> bool {
+  let now = now_ms();
+  let last = LAST_TRAY_CLICK_MS.load(Ordering::Relaxed);
+  if now.saturating_sub(last) <= TRAY_CLICK_DEBOUNCE_MS {
+    return false;
+  }
+  LAST_TRAY_CLICK_MS.store(now, Ordering::Relaxed);
+  true
+}
+
 fn toggle_main_window(app: &AppHandle) {
   if let Some(window) = app.get_webview_window("main") {
     let visible = window.is_visible().unwrap_or(true);
@@ -3841,7 +3854,9 @@ pub fn run() {
           use tauri::tray::{MouseButton, TrayIconEvent};
           match event {
             TrayIconEvent::Click { button: MouseButton::Left, .. } => {
-              toggle_main_window(tray.app_handle());
+              if should_handle_tray_click() {
+                toggle_main_window(tray.app_handle());
+              }
             }
             _ => {}
           }

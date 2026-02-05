@@ -148,10 +148,6 @@ h1 {
   box-shadow: none;
 }
 
-.status-dot[data-state="disabled"] {
-  background: #f87171;
-  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.25);
-}
 
 .status-dot[data-state="recording"] {
   background: var(--accent-2);

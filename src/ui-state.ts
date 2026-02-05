@@ -24,16 +24,18 @@ function updateTranscribeIndicator() {
         ? "recording"
         : "idle";
   const labelState: RecordingState = !enabled ? "disabled" : activityState;
-  if (dom.transcribeStatusDot) dom.transcribeStatusDot.dataset.state = activityState;
+  if (dom.transcribeStatusDot) {
+    dom.transcribeStatusDot.dataset.state = enabled ? activityState : "idle";
+  }
   if (dom.transcribeStatusLabel) {
     dom.transcribeStatusLabel.textContent =
       labelState === "disabled"
-        ? "Transcribing: Deactivated"
+        ? "Deactivated"
         : labelState === "recording"
-          ? "Transcribing: Monitoring"
+          ? "Monitoring"
           : labelState === "transcribing"
-            ? "Transcribing: Active"
-            : "Transcribing: Idle";
+            ? "Active"
+            : "Idle";
   }
   if (dom.transcribePill) {
     dom.transcribePill.classList.toggle("status-pill--enabled", enabled);
@@ -48,14 +50,16 @@ export function setCaptureStatus(state: RecordingState) {
   const isRecording = state === "recording";
   const labelState: RecordingState = !enabled ? "disabled" : isRecording ? "recording" : "idle";
   const activityState: RecordingState = isRecording ? "recording" : "idle";
-  if (dom.statusDot) dom.statusDot.dataset.state = activityState;
+  if (dom.statusDot) {
+    dom.statusDot.dataset.state = enabled ? activityState : "idle";
+  }
   if (dom.statusLabel) {
     dom.statusLabel.textContent =
       labelState === "disabled"
-        ? "Recording: Deactivated"
+        ? "Deactivated"
         : isRecording
-          ? "Recording: Active"
-          : "Recording: Idle";
+          ? "Active"
+          : "Idle";
   }
   if (dom.recordingPill) {
     dom.recordingPill.classList.toggle("status-pill--enabled", enabled);

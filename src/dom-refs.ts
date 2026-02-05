@@ -7,8 +7,10 @@ const $ = <T extends HTMLElement>(id: string) =>
 // Status and hero elements
 export const statusLabel = $("status-label");
 export const statusDot = $("status-dot") as HTMLSpanElement | null;
+export const recordingPill = $("recording-pill");
 export const transcribeStatusDot = $("transcribe-dot") as HTMLSpanElement | null;
 export const transcribeStatusLabel = $("transcribe-label");
+export const transcribePill = $("transcribe-pill");
 export const statusMessage = $("status-message");
 export const cloudState = $("cloud-state");
 export const cloudCheck = $("cloud-check");
@@ -49,6 +51,7 @@ export const vadMarkerSustain = $("vad-marker-sustain");
 // System audio / transcribe controls
 export const transcribeEnabledToggle = $("transcribe-enabled-toggle") as HTMLInputElement | null;
 export const transcribeStatus = $("transcribe-status");
+export const transcribeStatusPill = $("transcribe-status-pill");
 export const transcribeHotkey = $("transcribe-hotkey") as HTMLInputElement | null;
 export const transcribeHotkeyRecord = $("transcribe-hotkey-record") as HTMLButtonElement | null;
 export const transcribeHotkeyStatus = $("transcribe-hotkey-status") as HTMLSpanElement | null;

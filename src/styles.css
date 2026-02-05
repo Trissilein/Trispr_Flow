@@ -112,6 +112,30 @@ h1 {
   gap: 6px;
 }
 
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.status-pill--enabled {
+  background: rgba(29, 166, 160, 0.2);
+  color: #4be0d4;
+  border-color: rgba(29, 166, 160, 0.4);
+}
+
+.status-pill--disabled {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
 .status-label {
   white-space: nowrap;
 }
@@ -164,6 +188,12 @@ h1 {
   flex-direction: column;
   gap: 1px;
   min-width: 0;
+}
+
+.hero-item .status-pill {
+  align-self: flex-start;
+  margin-top: 2px;
+  margin-bottom: 2px;
 }
 
 .hero-item-empty {

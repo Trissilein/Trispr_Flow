@@ -19,7 +19,7 @@ function updateTranscribeIndicator() {
   const active = currentCaptureStatus === "transcribing" || currentTranscribeStatus === "transcribing";
   const enabled = settings?.transcribe_enabled ?? false;
   const indicatorState: RecordingState =
-    !enabled && !active ? "disabled" : active ? "transcribing" : "idle";
+    !enabled ? "disabled" : active ? "transcribing" : "idle";
   if (dom.transcribeStatusDot) dom.transcribeStatusDot.dataset.state = indicatorState;
   if (dom.transcribeStatusLabel) {
     dom.transcribeStatusLabel.textContent =
@@ -29,6 +29,10 @@ function updateTranscribeIndicator() {
           ? "Transcribing: Active"
           : "Transcribing: Idle";
   }
+  if (dom.transcribePill) {
+    dom.transcribePill.classList.toggle("status-pill--enabled", enabled);
+    dom.transcribePill.classList.toggle("status-pill--disabled", !enabled);
+  }
   updateTranscribeStatus(indicatorState);
 }
 
@@ -37,7 +41,7 @@ export function setCaptureStatus(state: RecordingState) {
   const enabled = settings?.capture_enabled ?? true;
   const isRecording = state === "recording";
   const indicatorState: RecordingState =
-    !enabled && !isRecording ? "disabled" : isRecording ? "recording" : "idle";
+    !enabled ? "disabled" : isRecording ? "recording" : "idle";
   if (dom.statusDot) dom.statusDot.dataset.state = indicatorState;
   if (dom.statusLabel) {
     dom.statusLabel.textContent =
@@ -46,6 +50,10 @@ export function setCaptureStatus(state: RecordingState) {
         : isRecording
           ? "Recording: Active"
           : "Recording: Idle";
+  }
+  if (dom.recordingPill) {
+    dom.recordingPill.classList.toggle("status-pill--enabled", enabled);
+    dom.recordingPill.classList.toggle("status-pill--disabled", !enabled);
   }
   if (dom.statusMessage) dom.statusMessage.textContent = "";
   updateRecordingStatus(indicatorState);
@@ -56,14 +64,18 @@ export function setTranscribeStatus(state: RecordingState) {
   setCurrentTranscribeStatus(state);
   const enabled = settings?.transcribe_enabled ?? false;
   if (dom.transcribeStatus) {
-    dom.transcribeStatus.textContent =
-      !enabled && state === "idle"
-        ? "Deactivated"
-        : state === "recording"
-          ? "Monitoring"
-          : state === "transcribing"
-            ? "Transcribing"
-            : "Idle";
+    dom.transcribeStatus.textContent = !enabled
+      ? "Disabled"
+      : state === "recording"
+        ? "Monitoring"
+        : state === "transcribing"
+          ? "Transcribing"
+          : "Idle";
+  }
+  if (dom.transcribeStatusPill) {
+    dom.transcribeStatusPill.textContent = enabled ? "Enabled" : "Disabled";
+    dom.transcribeStatusPill.classList.toggle("status-pill--enabled", enabled);
+    dom.transcribeStatusPill.classList.toggle("status-pill--disabled", !enabled);
   }
   updateTranscribeIndicator();
 }

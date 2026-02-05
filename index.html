@@ -36,12 +36,14 @@
           </p>
           <div class="status" role="status" aria-live="polite">
             <div class="status-item">
+              <span id="recording-pill" class="status-pill status-pill--disabled">Recording</span>
               <span class="status-dot" id="status-dot" data-state="idle"
                     aria-label="Recording status: idle"></span>
               <span id="status-label" class="status-label">Recording: Idle</span>
             </div>
             <span class="status-divider" aria-hidden="true">•</span>
             <div class="status-item">
+              <span id="transcribe-pill" class="status-pill status-pill--disabled">Transcribing</span>
               <span class="status-dot" id="transcribe-dot" data-state="idle"
                     aria-label="Transcribing status: idle"></span>
               <span id="transcribe-label" class="status-label">Transcribing: Idle</span>
@@ -67,6 +69,7 @@
           </div>
           <div class="hero-item">
             <span class="hero-label">System audio</span>
+            <span id="transcribe-status-pill" class="status-pill status-pill--disabled">Disabled</span>
             <span id="transcribe-status" class="hero-value">Idle</span>
           </div>
           <div class="hero-item">

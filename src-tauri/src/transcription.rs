@@ -1,5 +1,5 @@
 use crate::audio::CaptureBuffer;
-use crate::constants::{MIN_AUDIO_MS, TARGET_SAMPLE_RATE};
+use crate::constants::{MIN_AUDIO_MS, TARGET_SAMPLE_RATE, VAD_THRESHOLD_SUSTAIN_DEFAULT};
 #[cfg(target_os = "windows")]
 use crate::constants::{TRANSCRIBE_IDLE_METER_MS, TRANSCRIBE_QUEUE_MAX_CHUNKS};
 use crate::errors::AppError;
@@ -191,7 +191,7 @@ pub(crate) fn start_transcribe_monitor(
   state.transcribe_active.store(true, Ordering::Relaxed);
 
   emit_transcribe_idle(app);
-  let _ = app.emit("transcribe:state", "recording");
+  let _ = app.emit("transcribe:state", "idle");
   Ok(())
 }
 
@@ -304,7 +304,12 @@ const HALLUCINATION_PHRASES: &[&str] = &[
   "huh",
 ];
 
-fn transcribe_worker(app: AppHandle, settings: Settings, queue: Arc<AudioQueue>) {
+fn transcribe_worker(
+  app: AppHandle,
+  settings: Settings,
+  queue: Arc<AudioQueue>,
+  transcribing: Arc<AtomicBool>,
+) {
   let min_samples = (TARGET_SAMPLE_RATE as u64 * MIN_AUDIO_MS / 1000) as usize;
   while let Some(chunk) = queue.pop() {
     if chunk.len() < min_samples {
@@ -319,13 +324,11 @@ fn transcribe_worker(app: AppHandle, settings: Settings, queue: Arc<AudioQueue>)
       }
     }
 
+    transcribing.store(true, Ordering::Relaxed);
     let _ = app.emit("transcribe:state", "transcribing");
     update_transcribe_overlay(&app, true);
     let result = transcribe_audio(&app, &settings, &chunk);
-
-    if app.state::<AppState>().transcribe_active.load(Ordering::Relaxed) {
-      let _ = app.emit("transcribe:state", "recording");
-    }
+    transcribing.store(false, Ordering::Relaxed);
     update_transcribe_overlay(&app, false);
 
     match result {
@@ -490,14 +493,30 @@ fn run_transcribe_loopback(
   let worker_app = app.clone();
   let worker_settings = settings.clone();
   let worker_queue = queue.clone();
+  let transcribing = Arc::new(AtomicBool::new(false));
+  let worker_transcribing = transcribing.clone();
   let worker_handle = thread::spawn(move || {
-    transcribe_worker(worker_app, worker_settings, worker_queue);
+    transcribe_worker(worker_app, worker_settings, worker_queue, worker_transcribing);
   });
 
   let mut buffer = CaptureBuffer::default();
   let mut smooth_level = 0.0f32;
   let mut last_emit = Instant::now();
   let mut last_idle_emit = Instant::now();
+  let mut last_activity = Instant::now();
+  let mut has_activity = false;
+  let mut last_state = "idle";
+  let mut was_transcribing = false;
+  let mut monitor_threshold = if vad_enabled {
+    vad_threshold
+  } else {
+    VAD_THRESHOLD_SUSTAIN_DEFAULT
+  };
+  let mut idle_grace_ms = if vad_enabled {
+    vad_silence_ms
+  } else {
+    TRANSCRIBE_IDLE_METER_MS
+  };
 
   loop {
     match stop_rx.try_recv() {
@@ -545,6 +564,16 @@ fn run_transcribe_loopback(
         vad_enabled = current.transcribe_vad_mode;
         vad_threshold = current.transcribe_vad_threshold;
         vad_silence_ms = current.transcribe_vad_silence_ms;
+        monitor_threshold = if vad_enabled {
+          vad_threshold
+        } else {
+          VAD_THRESHOLD_SUSTAIN_DEFAULT
+        };
+        idle_grace_ms = if vad_enabled {
+          vad_silence_ms
+        } else {
+          TRANSCRIBE_IDLE_METER_MS
+        };
       }
       last_settings_check = Instant::now();
     }
@@ -570,6 +599,10 @@ fn run_transcribe_loopback(
       vad_last_hit_ms = Instant::now();
     }
     smooth_level = smooth_level * 0.8 + rms * 0.2;
+    if smooth_level >= monitor_threshold {
+      has_activity = true;
+      last_activity = Instant::now();
+    }
     if last_emit.elapsed() >= Duration::from_millis(50) {
       let db = if smooth_level <= 0.000_01 {
         -60.0
@@ -581,6 +614,20 @@ fn run_transcribe_loopback(
       let _ = app.emit("transcribe:db", db);
       last_emit = Instant::now();
       last_idle_emit = last_emit;
+    }
+    let now_transcribing = transcribing.load(Ordering::Relaxed);
+    if now_transcribing && !was_transcribing {
+      last_state = "transcribing";
+    }
+    was_transcribing = now_transcribing;
+    if !now_transcribing {
+      let active = has_activity
+        && last_activity.elapsed() <= Duration::from_millis(idle_grace_ms);
+      let next_state = if active { "recording" } else { "idle" };
+      if next_state != last_state {
+        let _ = app.emit("transcribe:state", next_state);
+        last_state = next_state;
+      }
     }
 
     buffer.push_samples(&mono, sample_rate);

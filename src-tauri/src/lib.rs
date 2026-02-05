@@ -137,7 +137,15 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
           .map(|settings| settings.transcribe_enabled)
           .unwrap_or(false);
         if !enabled {
-          let _ = app.emit("transcribe:state", "idle");
+          if let Err(err) = set_transcribe_enabled(&app, true) {
+            emit_error(
+              &app,
+              AppError::AudioDevice(err),
+              Some("System Audio"),
+            );
+            return;
+          }
+          let _ = app.emit("audio:cue", "start");
           return;
         }
         let was_active = app
@@ -188,6 +196,40 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
 #[tauri::command]
 fn get_settings(state: State<'_, AppState>) -> Settings {
   state.settings.lock().unwrap().clone()
+}
+
+fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
+  let state = app.state::<AppState>();
+  let settings = {
+    let mut current = state.settings.lock().unwrap();
+    if current.transcribe_enabled == enabled {
+      return Ok(());
+    }
+    current.transcribe_enabled = enabled;
+    current.clone()
+  };
+
+  save_settings_file(app, &settings)?;
+
+  if enabled {
+    if let Err(err) = start_transcribe_monitor(app, &state, &settings) {
+      let reverted = {
+        let mut current = state.settings.lock().unwrap();
+        current.transcribe_enabled = false;
+        current.clone()
+      };
+      let _ = save_settings_file(app, &reverted);
+      let _ = app.emit("settings-changed", reverted.clone());
+      let _ = app.emit("menu:update-transcribe", false);
+      return Err(err);
+    }
+  } else {
+    stop_transcribe_monitor(app, &state);
+  }
+
+  let _ = app.emit("settings-changed", settings.clone());
+  let _ = app.emit("menu:update-transcribe", enabled);
+  Ok(())
 }
 
 #[tauri::command]

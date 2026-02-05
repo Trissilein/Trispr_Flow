@@ -429,11 +429,25 @@ fn run_transcribe_loopback(
   if hr.0 < 0 {
     return Err(format!("WASAPI init error: 0x{:X}", hr.0));
   }
-  let device = resolve_output_device(&settings.transcribe_output_device)
+  let mut device = resolve_output_device(&settings.transcribe_output_device)
     .ok_or_else(|| "Output device not found".to_string())?;
-  let mut audio_client = device
-    .get_iaudioclient()
-    .map_err(|e| format!("WASAPI error: {e}"))?;
+  let mut audio_client = match device.get_iaudioclient() {
+    Ok(client) => client,
+    Err(err) => {
+      if settings.transcribe_output_device != "default" {
+        if let Some(default_device) = resolve_output_device("default") {
+          device = default_device;
+          device
+            .get_iaudioclient()
+            .map_err(|e| format!("WASAPI error: {e}"))?
+        } else {
+          return Err(format!("WASAPI error: {err}"));
+        }
+      } else {
+        return Err(format!("WASAPI error: {err}"));
+      }
+    }
+  };
 
   let format = audio_client
     .get_mixformat()

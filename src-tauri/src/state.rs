@@ -92,7 +92,7 @@ impl Default for Settings {
       vad_threshold_start: VAD_THRESHOLD_START_DEFAULT,
       vad_threshold_sustain: VAD_THRESHOLD_SUSTAIN_DEFAULT,
       vad_silence_ms: VAD_SILENCE_MS_DEFAULT,
-      transcribe_enabled: true,
+      transcribe_enabled: false,
       transcribe_hotkey: "CommandOrControl+Shift+O".to_string(),
       transcribe_output_device: "default".to_string(),
       transcribe_vad_mode: false,
@@ -348,8 +348,6 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
       if settings.overlay_kitt_opacity_active < settings.overlay_kitt_opacity_inactive {
         settings.overlay_kitt_opacity_active = settings.overlay_kitt_opacity_inactive;
       }
-      settings.capture_enabled = true;
-      settings.transcribe_enabled = true;
       settings
     }
     Err(_) => Settings::default(),

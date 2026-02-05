@@ -17,29 +17,53 @@ import { thresholdToPercent } from "./ui-helpers";
 
 function updateTranscribeIndicator() {
   const active = currentCaptureStatus === "transcribing" || currentTranscribeStatus === "transcribing";
-  const indicatorState: RecordingState = active ? "transcribing" : "idle";
+  const enabled = settings?.transcribe_enabled ?? false;
+  const indicatorState: RecordingState =
+    !enabled && !active ? "disabled" : active ? "transcribing" : "idle";
   if (dom.transcribeStatusDot) dom.transcribeStatusDot.dataset.state = indicatorState;
   if (dom.transcribeStatusLabel) {
-    dom.transcribeStatusLabel.textContent = active ? "Transcribing: Active" : "Transcribing: Idle";
+    dom.transcribeStatusLabel.textContent =
+      indicatorState === "disabled"
+        ? "Transcribing: Deactivated"
+        : indicatorState === "transcribing"
+          ? "Transcribing: Active"
+          : "Transcribing: Idle";
   }
   updateTranscribeStatus(indicatorState);
 }
 
 export function setCaptureStatus(state: RecordingState) {
   setCurrentCaptureStatus(state);
+  const enabled = settings?.capture_enabled ?? true;
   const isRecording = state === "recording";
-  if (dom.statusDot) dom.statusDot.dataset.state = isRecording ? "recording" : "idle";
-  if (dom.statusLabel) dom.statusLabel.textContent = isRecording ? "Recording: Active" : "Recording: Idle";
+  const indicatorState: RecordingState =
+    !enabled && !isRecording ? "disabled" : isRecording ? "recording" : "idle";
+  if (dom.statusDot) dom.statusDot.dataset.state = indicatorState;
+  if (dom.statusLabel) {
+    dom.statusLabel.textContent =
+      indicatorState === "disabled"
+        ? "Recording: Deactivated"
+        : isRecording
+          ? "Recording: Active"
+          : "Recording: Idle";
+  }
   if (dom.statusMessage) dom.statusMessage.textContent = "";
-  updateRecordingStatus(state);
+  updateRecordingStatus(indicatorState);
   updateTranscribeIndicator();
 }
 
 export function setTranscribeStatus(state: RecordingState) {
   setCurrentTranscribeStatus(state);
+  const enabled = settings?.transcribe_enabled ?? false;
   if (dom.transcribeStatus) {
     dom.transcribeStatus.textContent =
-      state === "recording" ? "Monitoring" : state === "transcribing" ? "Transcribing" : "Idle";
+      !enabled && state === "idle"
+        ? "Deactivated"
+        : state === "recording"
+          ? "Monitoring"
+          : state === "transcribing"
+            ? "Transcribing"
+            : "Idle";
   }
   updateTranscribeIndicator();
 }

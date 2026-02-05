@@ -120,5 +120,5 @@ export interface ToastOptions {
   icon?: string;
 }
 
-export type RecordingState = "idle" | "recording" | "transcribing";
+export type RecordingState = "disabled" | "idle" | "recording" | "transcribing";
 export type HistoryTab = "mic" | "system" | "conversation";

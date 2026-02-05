@@ -1,8 +1,15 @@
 // DOM element references
 // Centralized DOM queries to avoid repeated getElementById calls
 
-const $ = <T extends HTMLElement>(id: string) =>
-  document.getElementById(id) as T | null;
+const $ = <T extends HTMLElement>(id: string) => {
+  if (typeof document === "undefined") return null;
+  return document.getElementById(id) as T | null;
+};
+
+const $$ = <T extends Element>(selector: string) => {
+  if (typeof document === "undefined") return null;
+  return document.querySelector(selector) as T | null;
+};
 
 // Status and hero elements
 export const statusLabel = $("status-label");
@@ -107,7 +114,7 @@ export const overlayKittHeightValue = $("overlay-kitt-height-value");
 export const historyList = $("history-list");
 export const historyInput = $("history-input") as HTMLInputElement | null;
 export const historyAdd = $("history-add");
-export const historyCompose = document.querySelector(".history-compose") as HTMLDivElement | null;
+export const historyCompose = $$<HTMLDivElement>(".history-compose");
 export const historyTabMic = $("history-tab-mic");
 export const historyTabSystem = $("history-tab-system");
 export const historyTabConversation = $("history-tab-conversation");

@@ -33,14 +33,12 @@ export function applyPanelCollapsed(panelId: string, collapsed: boolean) {
       collapsed ? `Expand ${panelId} panel` : `Collapse ${panelId} panel`
     );
   }
-
-  localStorage.setItem(`panelCollapsed:${panelId}`, collapsed ? "1" : "0");
 }
 
 export function initPanelState() {
   const panelIds = ["output", "capture", "system", "interface", "model"];
   panelIds.forEach((id) => {
-    const collapsed = localStorage.getItem(`panelCollapsed:${id}`) === "1";
+    const collapsed = id !== "output";
     applyPanelCollapsed(id, collapsed);
   });
 }

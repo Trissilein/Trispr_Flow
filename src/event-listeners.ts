@@ -97,6 +97,20 @@ export function wireEvents() {
     });
   });
 
+  document.querySelectorAll<HTMLElement>(".panel-header").forEach((header) => {
+    const panel = header.closest<HTMLElement>(".panel");
+    const panelId = panel?.dataset.panel;
+    if (!panelId) return;
+    header.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest(".panel-actions")) return;
+      if (target.closest("button, input, select, textarea, a, label")) return;
+      const collapsed = panel?.classList.contains("panel-collapsed") ?? false;
+      applyPanelCollapsed(panelId, !collapsed);
+    });
+  });
+
   dom.historyTabMic?.addEventListener("click", () => setHistoryTab("mic"));
   dom.historyTabSystem?.addEventListener("click", () => setHistoryTab("system"));
   dom.historyTabConversation?.addEventListener("click", () => setHistoryTab("conversation"));

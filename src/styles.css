@@ -384,6 +384,7 @@ h1 {
   margin-bottom: 10px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--stroke);
+  cursor: pointer;
 }
 
 .panel-title {
@@ -396,6 +397,7 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  cursor: default;
 }
 
 .panel-collapse-btn {

@@ -98,8 +98,8 @@
           </div>
           <div class="panel-body">
             <div class="history-tabs">
-              <button id="history-tab-mic" class="history-tab active">Microphone</button>
-              <button id="history-tab-system" class="history-tab">System Audio</button>
+              <button id="history-tab-mic" class="history-tab active">Input</button>
+              <button id="history-tab-system" class="history-tab">Output</button>
               <button id="history-tab-conversation" class="history-tab">Conversation</button>
             </div>
             <div class="history-toolbar">
@@ -127,8 +127,8 @@
         <section class="panel capture-panel" data-panel="capture" style="--delay: 0.16s">
           <div class="panel-header">
             <div class="panel-title">
-              <h2>Capture Microphone</h2>
-              <p>Hotkeys, input device, and recording mode.</p>
+              <h2>Capture Input</h2>
+              <p>Hotkeys, input device, recording mode.</p>
             </div>
             <div class="panel-actions">
               <button class="panel-collapse-btn"
@@ -143,13 +143,13 @@
             <div class="panel-grid">
             <div class="field toggle-with-hint span-2">
               <label class="toggle-row">
-                <span class="field-label">Enable microphone tracking</span>
+                <span class="field-label">Enable input capture</span>
                 <input id="capture-enabled-toggle" type="checkbox" />
                 <span class="toggle-track">
                   <span class="toggle-thumb"></span>
                 </span>
               </label>
-              <span class="toggle-hint">When disabled, microphone recording and hotkeys are inactive</span>
+              <span class="toggle-hint">When disabled, input capture and hotkeys are inactive</span>
             </div>
             <label class="field">
               <span class="field-label">Input device</span>
@@ -237,7 +237,7 @@
                          aria-valuemin="-30"
                          aria-valuemax="30"
                          aria-valuenow="0"
-                         aria-label="Microphone input gain"
+                       aria-label="Input gain"
                          aria-describedby="mic-gain-value" />
                   <span id="mic-gain-value" class="range-value" aria-live="polite">+0 dB</span>
                 </div>
@@ -269,8 +269,8 @@
         <section class="panel transcribe-panel" data-panel="system" style="--delay: 0.18s">
           <div class="panel-header">
             <div class="panel-title">
-              <h2>Capture System Audio</h2>
-              <p>Output capture transcription & monitoring.</p>
+              <h2>Capture Output</h2>
+              <p>Output device, transcribe hotkey, detection settings.</p>
             </div>
             <div class="panel-actions">
               <button class="panel-collapse-btn"
@@ -285,16 +285,16 @@
           <div class="panel-grid">
             <div class="field toggle-with-hint span-2">
               <label class="toggle-row">
-                <span class="field-label">Enable system audio transcription</span>
+                <span class="field-label">Enable output transcription</span>
                 <input id="transcribe-enabled-toggle" type="checkbox" />
                 <span class="toggle-track">
                   <span class="toggle-thumb"></span>
                 </span>
               </label>
-              <span class="toggle-hint">When disabled, system audio monitoring and transcription are inactive</span>
+              <span class="toggle-hint">When disabled, output monitoring and transcription are inactive</span>
             </div>
             <label class="field">
-              <span class="field-label">Output device</span>
+                <span class="field-label">Output device</span>
               <select id="transcribe-device-select"></select>
             </label>
             <label class="field toggle">
@@ -321,7 +321,7 @@
                        aria-valuemin="0"
                        aria-valuemax="100"
                        aria-valuenow="4"
-                       aria-label="System audio voice activation threshold"
+                       aria-label="Output voice activation threshold"
                        aria-describedby="transcribe-vad-threshold-value" />
                 <span id="transcribe-vad-threshold-value" class="range-value" aria-live="polite">4%</span>
               </div>

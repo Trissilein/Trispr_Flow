@@ -13,7 +13,7 @@ export function buildConversationHistory(): HistoryEntry[] {
 export function buildConversationText(entries: HistoryEntry[]) {
   return entries
     .map((entry) => {
-      const speaker = entry.source === "output" ? "System Audio" : "Microphone";
+      const speaker = entry.source === "output" ? "Output" : "Input";
       return `[${formatTime(entry.timestamp_ms)}] ${speaker}: ${entry.text}`;
     })
     .join("\n");
@@ -72,9 +72,9 @@ export function renderHistory() {
   if (!dataset.length) {
     const emptyMessage =
       currentHistoryTab === "mic"
-        ? "Start dictating to build your microphone history."
+        ? "Start dictating to build your input history."
         : currentHistoryTab === "system"
-          ? "Start system audio capture to build your output history."
+          ? "Start output capture to build your output history."
           : "Build microphone or system audio entries to generate the conversation view.";
     historyList.innerHTML =
       `<div class="history-item"><div><div class="history-text">No transcripts yet.</div><div class="history-meta">${emptyMessage}</div></div></div>`;
@@ -106,10 +106,10 @@ export function renderHistory() {
     if (currentHistoryTab === "conversation") {
       const speaker =
         entry.source === "output"
-          ? "System Audio"
+          ? "Output"
           : entry.source && entry.source !== "local"
-            ? `Microphone (${entry.source})`
-            : "Microphone";
+            ? `Input (${entry.source})`
+            : "Input";
       meta.textContent = `${formatTime(entry.timestamp_ms)} · ${speaker}`;
     } else {
       meta.textContent = `${formatTime(entry.timestamp_ms)} · ${entry.source}`;

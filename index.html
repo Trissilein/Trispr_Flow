@@ -64,7 +64,7 @@
             <span id="device-state" class="hero-value truncate-two">Default</span>
           </div>
           <div class="hero-item">
-            <span class="hero-label">Mode</span>
+            <span class="hero-label">Capture Mode</span>
             <span id="mode-state" class="hero-value">PTT</span>
           </div>
           <div class="hero-item">
@@ -156,10 +156,10 @@
               <select id="device-select"></select>
             </label>
             <label class="field">
-              <span class="field-label">Mode</span>
+              <span class="field-label">Capture mode</span>
               <select id="mode-select">
                 <option value="ptt">Push-to-talk (PTT)</option>
-                <option value="vad">Voice-Activated (VAD)</option>
+                <option value="vad">Voice Activation</option>
               </select>
             </label>
             <div id="hotkeys-block" class="field-group">
@@ -184,14 +184,14 @@
                       aria-live="polite"></span>
               </div>
               <label class="field toggle">
-                <span class="field-label">Use voice activation in PTT</span>
+                <span class="field-label">Use Voice Activation in PTT</span>
                 <input id="ptt-use-vad-toggle" type="checkbox" />
                 <span class="toggle-hint">Only record when audio exceeds threshold, even while holding PTT key</span>
               </label>
             </div>
             <div id="vad-block" class="field-group hidden">
               <label class="field range">
-                <span class="field-label">VAD threshold</span>
+                <span class="field-label">Voice Activation threshold</span>
                 <div class="range-row">
                   <input id="vad-threshold" type="range" min="0" max="100" step="1"
                          aria-valuemin="0"
@@ -298,7 +298,7 @@
               <select id="transcribe-device-select"></select>
             </label>
             <label class="field toggle">
-              <span class="field-label">Use voice detection (VAD)</span>
+              <span class="field-label">Use Voice Activation</span>
               <input id="transcribe-vad-toggle" type="checkbox" />
               <span class="toggle-track">
                 <span class="toggle-thumb"></span>
@@ -315,7 +315,7 @@
                     aria-live="polite"></span>
             </div>
             <label class="field range" id="transcribe-vad-threshold-field">
-              <span class="field-label">VAD threshold</span>
+              <span class="field-label">Voice Activation threshold</span>
               <div class="range-row">
                 <input id="transcribe-vad-threshold" type="range" min="0" max="100" step="1"
                        aria-valuemin="0"

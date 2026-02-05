@@ -101,7 +101,7 @@ export function renderHero() {
       : "Private Mode (Offline)";
     dom.dictationBadge.classList.toggle("badge--online", cloudOn);
   }
-  if (dom.modeState) dom.modeState.textContent = settings.mode === "ptt" ? "PTT" : "VAD";
+  if (dom.modeState) dom.modeState.textContent = settings.mode === "ptt" ? "PTT" : "Voice Activation";
   const device = devices.find((item) => item.id === settings?.input_device);
   if (dom.deviceState) dom.deviceState.textContent = device?.label ?? "Default";
   updateDeviceLineClamp();

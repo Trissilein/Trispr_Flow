@@ -136,24 +136,16 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
           .lock()
           .map(|settings| settings.transcribe_enabled)
           .unwrap_or(false);
-        if !enabled {
-          if let Err(err) = set_transcribe_enabled(&app, true) {
-            emit_error(
-              &app,
-              AppError::AudioDevice(err),
-              Some("System Audio"),
-            );
-            return;
-          }
-          let _ = app.emit("audio:cue", "start");
+        let target_enabled = !enabled;
+        if let Err(err) = set_transcribe_enabled(&app, target_enabled) {
+          emit_error(
+            &app,
+            AppError::AudioDevice(err),
+            Some("System Audio"),
+          );
           return;
         }
-        let was_active = app
-          .state::<AppState>()
-          .transcribe_active
-          .load(Ordering::Relaxed);
-        toggle_transcribe_state(&app);
-        let cue = if was_active { "stop" } else { "start" };
+        let cue = if target_enabled { "start" } else { "stop" };
         let _ = app.emit("audio:cue", cue);
       }
     }) {

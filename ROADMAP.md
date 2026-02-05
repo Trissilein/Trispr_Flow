@@ -24,7 +24,7 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 - ✅ **System Audio Robustness**: WASAPI loopback fixes + transcribe queue/idle meter
 - ✅ **Activity Indicators**: Separate recording/transcribing indicators + overlay marker
 - 🟡 **Automated Testing Baseline**: Unit tests + smoke scripts added (pending local run)
-- ✅ **Transcribe Default Disabled**: Deactivated by default with hotkey enable path
+- ✅ **Transcribe Default Disabled**: Session-only enable; always deactivated on startup
 
 **Previous milestones**
 - ✅ System audio capture via WASAPI (Windows) + transcribe hotkey

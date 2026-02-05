@@ -348,6 +348,8 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
       if settings.overlay_kitt_opacity_active < settings.overlay_kitt_opacity_inactive {
         settings.overlay_kitt_opacity_active = settings.overlay_kitt_opacity_inactive;
       }
+      // Transcribe enablement is session-only; always start disabled.
+      settings.transcribe_enabled = false;
       settings
     }
     Err(_) => Settings::default(),
@@ -356,7 +358,10 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
 
 pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result<(), String> {
   let path = resolve_config_path(app, "settings.json");
-  let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+  let mut persisted = settings.clone();
+  // Do not persist session-only transcribe enablement.
+  persisted.transcribe_enabled = false;
+  let raw = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
   fs::write(path, raw).map_err(|e| e.to_string())?;
   Ok(())
 }

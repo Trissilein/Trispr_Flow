@@ -209,8 +209,6 @@ fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> 
     current.clone()
   };
 
-  save_settings_file(app, &settings)?;
-
   if enabled {
     if let Err(err) = start_transcribe_monitor(app, &state, &settings) {
       let reverted = {
@@ -218,7 +216,6 @@ fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> 
         current.transcribe_enabled = false;
         current.clone()
       };
-      let _ = save_settings_file(app, &reverted);
       let _ = app.emit("settings-changed", reverted.clone());
       let _ = app.emit("menu:update-transcribe", false);
       return Err(err);

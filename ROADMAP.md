@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-04
+Last updated: 2026-02-05
 
 This roadmap tracks the current focus: getting core capture + transcription stable and tightening UX before expanding features.
 
@@ -98,6 +98,11 @@ For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
 ---
 
 ## Milestone 3 — Quality of Life & Advanced Features (Planned)
+
+### Window Behavior
+- Persist main window position + size across sessions
+- Restore on correct monitor
+- Restore on same virtual desktop (Windows), if possible
 
 ### Text Enhancement
 - **Post-Processing Pipeline**:

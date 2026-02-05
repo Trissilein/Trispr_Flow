@@ -180,7 +180,7 @@ async function bootstrap() {
 
   // Listen for audio cues (beep on recording start/stop)
   await listen<string>("audio:cue", (event) => {
-    const type = event.payload as "start" | "stop";
+    const type = event.payload as "start" | "stop" | "transcribe";
     import("./state").then(({ settings }) => {
       if (settings?.audio_cues) {
         playAudioCue(type);

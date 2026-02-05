@@ -16,18 +16,24 @@ import { updateRecordingStatus, updateTranscribeStatus } from "./accessibility";
 import { thresholdToPercent } from "./ui-helpers";
 
 function updateTranscribeIndicator() {
-  const active = currentCaptureStatus === "transcribing" || currentTranscribeStatus === "transcribing";
   const enabled = settings?.transcribe_enabled ?? false;
-  const indicatorState: RecordingState =
-    !enabled ? "disabled" : active ? "transcribing" : "idle";
+  const indicatorState: RecordingState = !enabled
+    ? "disabled"
+    : currentTranscribeStatus === "transcribing"
+      ? "transcribing"
+      : currentTranscribeStatus === "recording"
+        ? "recording"
+        : "idle";
   if (dom.transcribeStatusDot) dom.transcribeStatusDot.dataset.state = indicatorState;
   if (dom.transcribeStatusLabel) {
     dom.transcribeStatusLabel.textContent =
       indicatorState === "disabled"
         ? "Transcribing: Deactivated"
-        : indicatorState === "transcribing"
-          ? "Transcribing: Active"
-          : "Transcribing: Idle";
+        : indicatorState === "recording"
+          ? "Transcribing: Monitoring"
+          : indicatorState === "transcribing"
+            ? "Transcribing: Active"
+            : "Transcribing: Idle";
   }
   if (dom.transcribePill) {
     dom.transcribePill.classList.toggle("status-pill--enabled", enabled);

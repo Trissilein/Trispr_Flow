@@ -140,6 +140,9 @@ For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
 - **Chapter Summarization**: Automatic segmentation for meetings, lectures
 - **Topic Detection**: Identify and mark topic shifts
 
+### Conversation Window (Later)
+- Make the conversation window configurable (size, position, font size, always-on-top)
+
 ---
 
 ## Planning Queue — AI Fallback Overhaul (Next 3–4 steps, planning only)

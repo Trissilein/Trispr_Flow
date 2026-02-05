@@ -47,7 +47,7 @@ export function updateTranscribeStatus(state: RecordingState): void {
     const announcements = {
       disabled: "Transcription disabled.",
       idle: "Transcription idle.",
-      recording: "System audio monitoring active.",
+      recording: "Output monitoring active.",
       transcribing: "Transcription in progress."
     };
     announcement.textContent = announcements[state];

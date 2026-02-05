@@ -19,7 +19,7 @@ export const modeState = $("mode-state");
 export const deviceState = $("device-state");
 export const modelState = $("model-state");
 
-// Capture microphone controls
+// Capture input controls
 export const captureEnabledToggle = $("capture-enabled-toggle") as HTMLInputElement | null;
 export const modeSelect = $("mode-select") as HTMLSelectElement | null;
 export const pttHotkey = $("ptt-hotkey") as HTMLInputElement | null;
@@ -48,7 +48,7 @@ export const vadLevelDbm = $("vad-level-dbm");
 export const vadMarkerStart = $("vad-marker-start");
 export const vadMarkerSustain = $("vad-marker-sustain");
 
-// System audio / transcribe controls
+// Output / transcribe controls
 export const transcribeEnabledToggle = $("transcribe-enabled-toggle") as HTMLInputElement | null;
 export const transcribeStatus = $("transcribe-status");
 export const transcribeStatusPill = $("transcribe-status-pill");

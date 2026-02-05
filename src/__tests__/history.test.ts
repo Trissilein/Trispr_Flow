@@ -9,7 +9,7 @@ describe("history helpers", () => {
     setTranscribeHistory([]);
   });
 
-  it("combines and sorts mic + system history by newest first", () => {
+  it("combines and sorts input + output history by newest first", () => {
     const mic: HistoryEntry = {
       id: "mic-1",
       text: "Mic entry",
@@ -49,8 +49,8 @@ describe("history helpers", () => {
     ];
 
     const text = buildConversationText(entries);
-    expect(text).toContain("Microphone: Hello");
-    expect(text).toContain("System Audio: World");
+    expect(text).toContain("Input: Hello");
+    expect(text).toContain("Output: World");
     expect(text).toContain("\n");
     expect(text.trim().startsWith("[")).toBe(true);
   });

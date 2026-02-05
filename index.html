@@ -68,7 +68,7 @@
             <span id="mode-state" class="hero-value">PTT</span>
           </div>
           <div class="hero-item">
-            <span class="hero-label">System audio</span>
+            <span class="hero-label">Output</span>
             <span id="transcribe-status-pill" class="status-pill status-pill--disabled">Disabled</span>
             <span id="transcribe-status" class="hero-value">Idle</span>
           </div>
@@ -85,7 +85,7 @@
           <div class="panel-header">
             <div class="panel-title">
               <h2>Output</h2>
-              <p>Latest transcripts. Switch between microphone and system audio.</p>
+              <p>Latest transcripts. Switch between input and output.</p>
             </div>
             <div class="panel-actions">
               <button class="panel-collapse-btn"
@@ -136,7 +136,7 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="capture-panel-body"
-                      aria-label="Collapse capture microphone panel">▾</button>
+                      aria-label="Collapse capture input panel">▾</button>
             </div>
           </div>
           <div class="panel-body">
@@ -278,7 +278,7 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="system-panel-body"
-                      aria-label="Collapse system audio panel">▾</button>
+                      aria-label="Collapse capture output panel">▾</button>
             </div>
           </div>
           <div class="panel-body">
@@ -333,7 +333,7 @@
                        aria-valuemin="200"
                        aria-valuemax="5000"
                        aria-valuenow="900"
-                       aria-label="System audio silence grace period"
+                       aria-label="Output silence grace period"
                        aria-describedby="transcribe-vad-silence-value" />
                 <span id="transcribe-vad-silence-value" class="range-value" aria-live="polite">0.9s</span>
               </div>
@@ -366,7 +366,7 @@
                        aria-valuemin="-30"
                        aria-valuemax="30"
                        aria-valuenow="0"
-                       aria-label="System audio input gain"
+                       aria-label="Output input gain"
                        aria-describedby="transcribe-gain-value" />
                 <span id="transcribe-gain-value" class="range-value" aria-live="polite">+0 dB</span>
               </div>
@@ -379,7 +379,7 @@
                        aria-valuemin="4000"
                        aria-valuemax="15000"
                        aria-valuenow="8000"
-                       aria-label="System audio chunk interval"
+                       aria-label="Output chunk interval"
                        aria-describedby="transcribe-batch-value" />
                 <span id="transcribe-batch-value" class="range-value" aria-live="polite">8s</span>
               </div>
@@ -392,7 +392,7 @@
                        aria-valuemin="0"
                        aria-valuemax="3000"
                        aria-valuenow="1000"
-                       aria-label="System audio chunk overlap duration"
+                       aria-label="Output chunk overlap duration"
                        aria-describedby="transcribe-overlap-value" />
                 <span id="transcribe-overlap-value" class="range-value" aria-live="polite">1s</span>
               </div>

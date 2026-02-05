@@ -75,7 +75,7 @@ export function renderHistory() {
         ? "Start dictating to build your input history."
         : currentHistoryTab === "system"
           ? "Start output capture to build your output history."
-          : "Build microphone or system audio entries to generate the conversation view.";
+          : "Build input or output entries to generate the conversation view.";
     historyList.innerHTML =
       `<div class="history-item"><div><div class="history-text">No transcripts yet.</div><div class="history-meta">${emptyMessage}</div></div></div>`;
     return;

@@ -20,7 +20,7 @@ use state::{AppState, HistoryEntry, Settings};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
@@ -41,14 +41,21 @@ use crate::state::{
   sync_model_dir_env,
 };
 use crate::transcription::{
+  expand_transcribe_backlog as expand_transcribe_backlog_inner,
   start_transcribe_monitor,
   stop_transcribe_monitor,
   toggle_transcribe_state,
 };
 
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
+const TRAY_ICON_ID: &str = "main-tray";
+const TRAY_PULSE_FRAMES: usize = 6;
+const TRAY_PULSE_CYCLE_MS: u64 = 1600;
 
 static LAST_TRAY_CLICK_MS: AtomicU64 = AtomicU64::new(0);
+static TRAY_CAPTURE_STATE: AtomicU8 = AtomicU8::new(0);
+static TRAY_TRANSCRIBE_STATE: AtomicU8 = AtomicU8::new(0);
+static TRAY_PULSE_STARTED: AtomicBool = AtomicBool::new(false);
 
 fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> {
   let manager = app.global_shortcut();
@@ -336,6 +343,11 @@ fn toggle_transcribe(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn expand_transcribe_backlog(app: AppHandle) -> Result<transcription::TranscribeBacklogStatus, String> {
+  expand_transcribe_backlog_inner(&app)
+}
+
+#[tauri::command]
 fn open_conversation_window(app: AppHandle) -> Result<(), String> {
   if app.get_webview_window("conversation").is_some() {
     if let Some(window) = app.get_webview_window("conversation") {
@@ -562,6 +574,142 @@ fn create_fallback_icon() -> tauri::image::Image<'static> {
   Image::new_owned(pixels, 64, 64)
 }
 
+fn parse_tray_state_code(payload: &str) -> u8 {
+  let value = serde_json::from_str::<String>(payload)
+    .ok()
+    .unwrap_or_else(|| payload.trim_matches('"').to_string());
+  match value.as_str() {
+    "recording" => 1,
+    "transcribing" => 2,
+    _ => 0,
+  }
+}
+
+fn draw_circle_rgba(
+  pixels: &mut [u8],
+  size: usize,
+  center_x: f32,
+  center_y: f32,
+  radius: f32,
+  color: [u8; 4],
+) {
+  let radius_sq = radius * radius;
+  let min_x = (center_x - radius).floor().max(0.0) as i32;
+  let max_x = (center_x + radius).ceil().min((size - 1) as f32) as i32;
+  let min_y = (center_y - radius).floor().max(0.0) as i32;
+  let max_y = (center_y + radius).ceil().min((size - 1) as f32) as i32;
+
+  let alpha = color[3] as f32 / 255.0;
+  let inv_alpha = 1.0 - alpha;
+  for y in min_y..=max_y {
+    for x in min_x..=max_x {
+      let dx = (x as f32 + 0.5) - center_x;
+      let dy = (y as f32 + 0.5) - center_y;
+      if dx * dx + dy * dy > radius_sq {
+        continue;
+      }
+      let idx = (y as usize * size + x as usize) * 4;
+      pixels[idx] = (pixels[idx] as f32 * inv_alpha + color[0] as f32 * alpha) as u8;
+      pixels[idx + 1] = (pixels[idx + 1] as f32 * inv_alpha + color[1] as f32 * alpha) as u8;
+      pixels[idx + 2] = (pixels[idx + 2] as f32 * inv_alpha + color[2] as f32 * alpha) as u8;
+      let out_alpha = color[3] as f32 + (pixels[idx + 3] as f32 * inv_alpha);
+      pixels[idx + 3] = out_alpha.min(255.0) as u8;
+    }
+  }
+}
+
+fn create_tray_pulse_icon(frame: usize, recording_active: bool, transcribe_active: bool) -> tauri::image::Image<'static> {
+  use tauri::image::Image;
+
+  let size = 32usize;
+  let mut pixels = vec![0u8; size * size * 4];
+  let frame_mod = frame % TRAY_PULSE_FRAMES;
+  let angle = (frame_mod as f32 / TRAY_PULSE_FRAMES as f32) * std::f32::consts::TAU;
+  let pulse = 0.5 + 0.5 * angle.sin();
+
+  let rec_base = 5.2f32;
+  let trans_base = 5.2f32;
+  let rec_radius = if recording_active {
+    rec_base + (pulse * 1.8)
+  } else {
+    rec_base
+  };
+  let trans_radius = if transcribe_active {
+    trans_base + (pulse * 1.8)
+  } else {
+    trans_base
+  };
+
+  if recording_active {
+    draw_circle_rgba(&mut pixels, size, 10.5, 16.0, rec_radius + 2.4, [29, 166, 160, 88]);
+  }
+  if transcribe_active {
+    draw_circle_rgba(&mut pixels, size, 21.5, 16.0, trans_radius + 2.4, [245, 179, 66, 88]);
+  }
+
+  let rec_color = if recording_active {
+    [29, 166, 160, 245]
+  } else {
+    [29, 166, 160, 185]
+  };
+  let trans_color = if transcribe_active {
+    [245, 179, 66, 245]
+  } else {
+    [245, 179, 66, 185]
+  };
+  draw_circle_rgba(&mut pixels, size, 10.5, 16.0, rec_radius, rec_color);
+  draw_circle_rgba(&mut pixels, size, 21.5, 16.0, trans_radius, trans_color);
+
+  Image::new_owned(pixels, size as u32, size as u32)
+}
+
+fn refresh_tray_icon(app: &AppHandle, frame: usize) {
+  let capture_state = TRAY_CAPTURE_STATE.load(Ordering::Relaxed);
+  let transcribe_state = TRAY_TRANSCRIBE_STATE.load(Ordering::Relaxed);
+  let recording_active = capture_state == 1;
+  let transcribe_active = transcribe_state == 1 || transcribe_state == 2;
+  let effective_frame = if recording_active || transcribe_active {
+    frame
+  } else {
+    0
+  };
+
+  if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
+    let icon = create_tray_pulse_icon(effective_frame, recording_active, transcribe_active);
+    let _ = tray.set_icon(Some(icon));
+  }
+}
+
+fn start_tray_pulse_loop(app: AppHandle) {
+  if TRAY_PULSE_STARTED.swap(true, Ordering::AcqRel) {
+    return;
+  }
+  thread::spawn(move || {
+    let frame_ms = (TRAY_PULSE_CYCLE_MS / TRAY_PULSE_FRAMES as u64).max(120);
+    let mut frame = 0usize;
+    let mut last_signature = (u8::MAX, u8::MAX, usize::MAX);
+
+    loop {
+      let capture_state = TRAY_CAPTURE_STATE.load(Ordering::Relaxed);
+      let transcribe_state = TRAY_TRANSCRIBE_STATE.load(Ordering::Relaxed);
+      let active = capture_state == 1 || transcribe_state == 1 || transcribe_state == 2;
+      let effective_frame = if active { frame } else { 0 };
+      let signature = (capture_state, transcribe_state, effective_frame);
+      if signature != last_signature {
+        refresh_tray_icon(&app, effective_frame);
+        last_signature = signature;
+      }
+
+      thread::sleep(Duration::from_millis(frame_ms));
+      if active {
+        frame = (frame + 1) % TRAY_PULSE_FRAMES;
+      } else {
+        frame = 0;
+      }
+    }
+  });
+}
+
 fn show_main_window(app: &AppHandle) {
   if let Some(window) = app.get_webview_window("main") {
     let _ = window.show();
@@ -680,7 +828,7 @@ pub fn run() {
         loaded_icon.unwrap_or_else(create_fallback_icon)
       };
 
-      let _tray_icon = tauri::tray::TrayIconBuilder::new()
+      let _tray_icon = tauri::tray::TrayIconBuilder::with_id(TRAY_ICON_ID)
         .icon(icon)
         .tooltip("Trispr Flow")
         .on_tray_icon_event(|tray, event| {
@@ -769,6 +917,23 @@ pub fn run() {
         .show_menu_on_left_click(false)
         .build(app);
 
+      let tray_capture_handle = app.handle().clone();
+      app.listen("capture:state", move |event| {
+        let code = parse_tray_state_code(event.payload());
+        TRAY_CAPTURE_STATE.store(code, Ordering::Relaxed);
+        refresh_tray_icon(&tray_capture_handle, 0);
+      });
+
+      let tray_transcribe_handle = app.handle().clone();
+      app.listen("transcribe:state", move |event| {
+        let code = parse_tray_state_code(event.payload());
+        TRAY_TRANSCRIBE_STATE.store(code, Ordering::Relaxed);
+        refresh_tray_icon(&tray_transcribe_handle, 0);
+      });
+
+      refresh_tray_icon(app.handle(), 0);
+      start_tray_pulse_loop(app.handle().clone());
+
       Ok(())
     })
     .on_window_event(|window, event| {
@@ -798,6 +963,7 @@ pub fn run() {
       start_recording,
       stop_recording,
       toggle_transcribe,
+      expand_transcribe_backlog,
       open_conversation_window,
       validate_hotkey,
       test_hotkey,

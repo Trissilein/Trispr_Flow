@@ -3,7 +3,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import type { Settings, HistoryEntry, AudioDevice, ModelInfo, DownloadProgress, DownloadComplete, DownloadError, ErrorEvent } from "./types";
+import type {
+  Settings,
+  HistoryEntry,
+  AudioDevice,
+  ModelInfo,
+  DownloadProgress,
+  DownloadComplete,
+  DownloadError,
+  ErrorEvent,
+  TranscribeBacklogStatus
+} from "./types";
 import {
   setSettings,
   setHistory,
@@ -24,6 +34,8 @@ import { wireEvents } from "./event-listeners";
 import { showToast, showErrorToast } from "./toast";
 import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
+
+let transcribeBacklogPromptOpen = false;
 
 function initConversationView() {
   const params = new URLSearchParams(window.location.search);
@@ -168,6 +180,51 @@ async function bootstrap() {
       title: "Transcription Failed",
       message: event.payload,
       duration: 7000,
+    });
+  });
+
+  await listen<TranscribeBacklogStatus>("transcribe:backlog-warning", async (event) => {
+    const payload = event.payload;
+    if (!payload) return;
+
+    showToast({
+      type: "warning",
+      title: "Output Backlog Near Limit",
+      message: `${payload.percent_used}% used (${payload.queued_chunks}/${payload.capacity_chunks} chunks).`,
+      duration: 7000,
+    });
+
+    if (transcribeBacklogPromptOpen) return;
+    transcribeBacklogPromptOpen = true;
+    try {
+      const shouldExpand = window.confirm(
+        `Output backlog is ${payload.percent_used}% full (${payload.queued_chunks}/${payload.capacity_chunks} chunks).\n\n` +
+        `Expand backlog capacity by 50% to ${payload.suggested_capacity_chunks} chunks?`
+      );
+      if (shouldExpand) {
+        await invoke<TranscribeBacklogStatus>("expand_transcribe_backlog");
+      }
+    } catch (error) {
+      console.error("failed to expand transcribe backlog", error);
+      showToast({
+        type: "error",
+        title: "Backlog Expansion Failed",
+        message: String(error),
+        duration: 7000,
+      });
+    } finally {
+      transcribeBacklogPromptOpen = false;
+    }
+  });
+
+  await listen<TranscribeBacklogStatus>("transcribe:backlog-expanded", (event) => {
+    const payload = event.payload;
+    if (!payload) return;
+    showToast({
+      type: "success",
+      title: "Output Backlog Expanded",
+      message: `New capacity: ${payload.capacity_chunks} chunks (${payload.percent_used}% used).`,
+      duration: 5000,
     });
   });
 

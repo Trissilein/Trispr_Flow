@@ -120,5 +120,13 @@ export interface ToastOptions {
   icon?: string;
 }
 
+export interface TranscribeBacklogStatus {
+  queued_chunks: number;
+  capacity_chunks: number;
+  percent_used: number;
+  dropped_chunks: number;
+  suggested_capacity_chunks: number;
+}
+
 export type RecordingState = "disabled" | "idle" | "recording" | "transcribing";
 export type HistoryTab = "mic" | "system" | "conversation";

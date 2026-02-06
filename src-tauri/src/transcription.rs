@@ -1,7 +1,16 @@
 use crate::audio::CaptureBuffer;
-use crate::constants::{MIN_AUDIO_MS, TARGET_SAMPLE_RATE, VAD_THRESHOLD_SUSTAIN_DEFAULT};
+use crate::constants::{
+  MIN_AUDIO_MS,
+  TARGET_SAMPLE_RATE,
+  TRANSCRIBE_BACKLOG_EXPAND_DENOMINATOR,
+  TRANSCRIBE_BACKLOG_EXPAND_NUMERATOR,
+  TRANSCRIBE_BACKLOG_MIN_CHUNKS,
+  TRANSCRIBE_BACKLOG_TARGET_MS,
+  TRANSCRIBE_BACKLOG_WARNING_PERCENT,
+  VAD_THRESHOLD_SUSTAIN_DEFAULT,
+};
 #[cfg(target_os = "windows")]
-use crate::constants::{TRANSCRIBE_IDLE_METER_MS, TRANSCRIBE_QUEUE_MAX_CHUNKS};
+use crate::constants::TRANSCRIBE_IDLE_METER_MS;
 use crate::errors::AppError;
 use crate::models::resolve_model_path;
 use crate::overlay::{update_overlay_state, OverlayState};
@@ -28,38 +37,76 @@ pub(crate) struct TranscribeRecorder {
   pub(crate) active: bool,
   pub(crate) stop_tx: Option<std::sync::mpsc::Sender<()>>,
   pub(crate) join_handle: Option<thread::JoinHandle<()>>,
+  queue: Option<Arc<AudioQueue>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct TranscribeBacklogStatus {
+  pub(crate) queued_chunks: usize,
+  pub(crate) capacity_chunks: usize,
+  pub(crate) percent_used: u8,
+  pub(crate) dropped_chunks: u64,
+  pub(crate) suggested_capacity_chunks: usize,
+}
+
+struct AudioQueueState {
+  queue: VecDeque<Vec<i16>>,
+  max_chunks: usize,
+  dropped_chunks: u64,
+  warned_for_capacity: usize,
 }
 
 struct AudioQueue {
-  inner: Mutex<VecDeque<Vec<i16>>>,
+  inner: Mutex<AudioQueueState>,
   cond: Condvar,
-  max_chunks: usize,
   closed: AtomicBool,
+  app: Option<AppHandle>,
 }
 
 impl AudioQueue {
-  fn new(max_chunks: usize) -> Arc<Self> {
+  fn new(max_chunks: usize, app: Option<AppHandle>) -> Arc<Self> {
     Arc::new(Self {
-      inner: Mutex::new(VecDeque::new()),
+      inner: Mutex::new(AudioQueueState {
+        queue: VecDeque::new(),
+        max_chunks: max_chunks.max(1),
+        dropped_chunks: 0,
+        warned_for_capacity: 0,
+      }),
       cond: Condvar::new(),
-      max_chunks: max_chunks.max(1),
       closed: AtomicBool::new(false),
+      app,
     })
   }
 
   fn push(&self, chunk: Vec<i16>) {
     let mut queue = self.inner.lock().unwrap();
-    if queue.len() >= self.max_chunks {
-      queue.pop_front();
+    if queue.queue.len() >= queue.max_chunks {
+      queue.queue.pop_front();
+      queue.dropped_chunks = queue.dropped_chunks.saturating_add(1);
     }
-    queue.push_back(chunk);
+    queue.queue.push_back(chunk);
+
+    let warning_threshold = backlog_warning_threshold(queue.max_chunks);
+    let should_warn = queue.warned_for_capacity != queue.max_chunks && queue.queue.len() >= warning_threshold;
+    let warning_payload = if should_warn {
+      queue.warned_for_capacity = queue.max_chunks;
+      Some(backlog_status_from_queue(&queue))
+    } else {
+      None
+    };
+
     self.cond.notify_one();
+    drop(queue);
+
+    if let Some(payload) = warning_payload {
+      self.emit_event("transcribe:backlog-warning", payload);
+    }
   }
 
   fn pop(&self) -> Option<Vec<i16>> {
     let mut queue = self.inner.lock().unwrap();
     loop {
-      if let Some(chunk) = queue.pop_front() {
+      if let Some(chunk) = queue.queue.pop_front() {
         return Some(chunk);
       }
       if self.closed.load(Ordering::Relaxed) {
@@ -73,15 +120,70 @@ impl AudioQueue {
     self.closed.store(true, Ordering::Relaxed);
     self.cond.notify_all();
   }
+
+  fn status(&self) -> TranscribeBacklogStatus {
+    let queue = self.inner.lock().unwrap();
+    backlog_status_from_queue(&queue)
+  }
+
+  fn expand_capacity(&self) -> TranscribeBacklogStatus {
+    let mut queue = self.inner.lock().unwrap();
+    let current = queue.max_chunks;
+    let expanded = expanded_capacity(current);
+    queue.max_chunks = expanded.max(current + 1);
+    let status = backlog_status_from_queue(&queue);
+    drop(queue);
+    self.emit_event("transcribe:backlog-expanded", status.clone());
+    status
+  }
+
+  fn emit_event<T: Serialize + Clone>(&self, name: &str, payload: T) {
+    if let Some(app) = &self.app {
+      let _ = app.emit(name, payload);
+    }
+  }
+}
+
+fn backlog_capacity_for_batch_ms(batch_interval_ms: u64) -> usize {
+  let interval_ms = batch_interval_ms.max(1000);
+  let chunks = ((TRANSCRIBE_BACKLOG_TARGET_MS + interval_ms - 1) / interval_ms) as usize;
+  chunks.max(TRANSCRIBE_BACKLOG_MIN_CHUNKS)
+}
+
+fn backlog_warning_threshold(capacity: usize) -> usize {
+  ((capacity * TRANSCRIBE_BACKLOG_WARNING_PERCENT as usize) + 99) / 100
+}
+
+fn expanded_capacity(current_capacity: usize) -> usize {
+  let numerator = TRANSCRIBE_BACKLOG_EXPAND_NUMERATOR.max(1);
+  let denominator = TRANSCRIBE_BACKLOG_EXPAND_DENOMINATOR.max(1);
+  let expanded = current_capacity
+    .saturating_mul(numerator)
+    .saturating_add(denominator.saturating_sub(1))
+    / denominator;
+  expanded.max(current_capacity + 1)
+}
+
+fn backlog_status_from_queue(queue: &AudioQueueState) -> TranscribeBacklogStatus {
+  let used = queue.queue.len();
+  let capacity = queue.max_chunks.max(1);
+  let percent_used = ((used * 100) / capacity).min(100) as u8;
+  TranscribeBacklogStatus {
+    queued_chunks: used,
+    capacity_chunks: capacity,
+    percent_used,
+    dropped_chunks: queue.dropped_chunks,
+    suggested_capacity_chunks: expanded_capacity(capacity),
+  }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::AudioQueue;
+  use super::{backlog_capacity_for_batch_ms, AudioQueue};
 
   #[test]
   fn audio_queue_drops_oldest_when_full() {
-    let queue = AudioQueue::new(2);
+    let queue = AudioQueue::new(2, None);
     queue.push(vec![1]);
     queue.push(vec![2]);
     queue.push(vec![3]);
@@ -95,9 +197,26 @@ mod tests {
 
   #[test]
   fn audio_queue_close_unblocks_empty() {
-    let queue = AudioQueue::new(1);
+    let queue = AudioQueue::new(1, None);
     queue.close();
     assert!(queue.pop().is_none());
+  }
+
+  #[test]
+  fn audio_queue_expands_capacity() {
+    let queue = AudioQueue::new(6, None);
+    let before = queue.status();
+    assert_eq!(before.capacity_chunks, 6);
+
+    let after = queue.expand_capacity();
+    assert_eq!(after.capacity_chunks, 9);
+  }
+
+  #[test]
+  fn backlog_capacity_targets_ten_minutes() {
+    assert_eq!(backlog_capacity_for_batch_ms(8_000), 75);
+    assert_eq!(backlog_capacity_for_batch_ms(4_000), 150);
+    assert_eq!(backlog_capacity_for_batch_ms(15_000), 40);
   }
 }
 
@@ -127,8 +246,19 @@ impl TranscribeRecorder {
       active: false,
       stop_tx: None,
       join_handle: None,
+      queue: None,
     }
   }
+}
+
+pub(crate) fn expand_transcribe_backlog(app: &AppHandle) -> Result<TranscribeBacklogStatus, String> {
+  let queue = {
+    let state = app.state::<AppState>();
+    let recorder = state.transcribe.lock().unwrap();
+    recorder.queue.clone()
+  };
+  let queue = queue.ok_or_else(|| "Output transcription is not active.".to_string())?;
+  Ok(queue.expand_capacity())
 }
 
 pub(crate) fn start_transcribe_monitor(
@@ -144,11 +274,14 @@ pub(crate) fn start_transcribe_monitor(
   let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
   let app_handle = app.clone();
   let settings = settings.clone();
+  let queue_capacity = backlog_capacity_for_batch_ms(settings.transcribe_batch_interval_ms);
+  let queue = AudioQueue::new(queue_capacity, Some(app_handle.clone()));
+  let worker_queue = queue.clone();
 
   let join_handle = thread::spawn(move || {
     #[cfg(target_os = "windows")]
     {
-      if let Err(err) = run_transcribe_loopback(app_handle.clone(), settings, stop_rx) {
+      if let Err(err) = run_transcribe_loopback(app_handle.clone(), settings, stop_rx, worker_queue) {
         crate::emit_error(&app_handle, AppError::AudioDevice(err), Some("System Audio"));
         let state = app_handle.state::<AppState>();
         state.transcribe_active.store(false, Ordering::Relaxed);
@@ -156,6 +289,7 @@ pub(crate) fn start_transcribe_monitor(
           transcribe.active = false;
           transcribe.stop_tx = None;
           transcribe.join_handle = None;
+          transcribe.queue = None;
         }
         let _ = app_handle.emit("transcribe:state", "idle");
         emit_transcribe_idle(&app_handle);
@@ -178,6 +312,7 @@ pub(crate) fn start_transcribe_monitor(
         transcribe.active = false;
         transcribe.stop_tx = None;
         transcribe.join_handle = None;
+        transcribe.queue = None;
       }
       let _ = app_handle.emit("transcribe:state", "idle");
       emit_transcribe_idle(&app_handle);
@@ -188,6 +323,7 @@ pub(crate) fn start_transcribe_monitor(
   recorder.active = true;
   recorder.stop_tx = Some(stop_tx);
   recorder.join_handle = Some(join_handle);
+  recorder.queue = Some(queue);
   state.transcribe_active.store(true, Ordering::Relaxed);
 
   emit_transcribe_idle(app);
@@ -196,10 +332,14 @@ pub(crate) fn start_transcribe_monitor(
 }
 
 pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppState>) {
-  let (stop_tx, join_handle) = {
+  let (stop_tx, join_handle, queue) = {
     let mut recorder = state.transcribe.lock().unwrap();
     recorder.active = false;
-    (recorder.stop_tx.take(), recorder.join_handle.take())
+    (
+      recorder.stop_tx.take(),
+      recorder.join_handle.take(),
+      recorder.queue.take(),
+    )
   };
 
   state.transcribe_active.store(false, Ordering::Relaxed);
@@ -207,6 +347,9 @@ pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppStat
   update_transcribe_overlay(app, false);
   emit_transcribe_idle(app);
 
+  if let Some(queue) = queue {
+    queue.close();
+  }
   if let Some(tx) = stop_tx {
     let _ = tx.send(());
   }
@@ -427,6 +570,7 @@ fn run_transcribe_loopback(
   app: AppHandle,
   settings: Settings,
   stop_rx: std::sync::mpsc::Receiver<()>,
+  queue: Arc<AudioQueue>,
 ) -> Result<(), String> {
   let hr = wasapi::initialize_mta();
   if hr.0 < 0 {
@@ -489,7 +633,6 @@ fn run_transcribe_loopback(
   let mut last_settings_check = Instant::now();
   let mut vad_last_hit_ms = Instant::now();
 
-  let queue = AudioQueue::new(TRANSCRIBE_QUEUE_MAX_CHUNKS);
   let worker_app = app.clone();
   let worker_settings = settings.clone();
   let worker_queue = queue.clone();

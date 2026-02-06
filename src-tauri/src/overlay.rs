@@ -235,19 +235,9 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
         });
     }
 
-    // Update overlay via JS functions
-    // First set color, opacity, and style
-    let base_js = format!(
-        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}",
-        settings.color,
-        settings.opacity_active,
-        settings.opacity_inactive,
-        settings.style
-    );
-    let _ = window.eval(&base_js);
-
-    // Then set dimensions based on current style
-    let dimensions_js = if settings.style == "kitt" {
+    // Update overlay via JS functions in a single atomic eval
+    // This ensures proper order: color → opacity → style → dimensions
+    let dimensions_call = if settings.style == "kitt" {
         format!(
             "if(window.setKittDimensions){{window.setKittDimensions({},{},{});}}",
             settings.kitt_min_width,
@@ -261,7 +251,16 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
             settings.max_radius
         )
     };
-    let _ = window.eval(&dimensions_js);
+
+    let full_js = format!(
+        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}{}",
+        settings.color,
+        settings.opacity_active,
+        settings.opacity_inactive,
+        settings.style,
+        dimensions_call
+    );
+    let _ = window.eval(&full_js);
 
     Ok(())
 }

@@ -57,7 +57,7 @@ export const vadMarkerSustain = $("vad-marker-sustain");
 
 // Output / transcribe controls
 export const transcribeEnabledToggle = $("transcribe-enabled-toggle") as HTMLInputElement | null;
-export const transcribeStatus = $("transcribe-status");
+export const outputDeviceState = $("output-device-state");
 export const transcribeStatusPill = $("transcribe-status-pill");
 export const transcribeHotkey = $("transcribe-hotkey") as HTMLInputElement | null;
 export const transcribeHotkeyRecord = $("transcribe-hotkey-record") as HTMLButtonElement | null;

@@ -8,6 +8,7 @@ import {
   setCurrentCaptureStatus,
   setCurrentTranscribeStatus,
   devices,
+  outputDevices,
   models,
   dynamicSustainThreshold
 } from "./state";
@@ -73,15 +74,6 @@ export function setCaptureStatus(state: RecordingState) {
 export function setTranscribeStatus(state: RecordingState) {
   setCurrentTranscribeStatus(state);
   const enabled = settings?.transcribe_enabled ?? false;
-  if (dom.transcribeStatus) {
-    dom.transcribeStatus.textContent = !enabled
-      ? "Disabled"
-      : state === "recording"
-        ? "Monitoring"
-        : state === "transcribing"
-          ? "Transcribing"
-          : "Idle";
-  }
   if (dom.transcribeStatusPill) {
     dom.transcribeStatusPill.textContent = enabled ? "Enabled" : "Disabled";
     dom.transcribeStatusPill.classList.toggle("status-pill--enabled", enabled);
@@ -102,9 +94,16 @@ export function renderHero() {
     dom.dictationBadge.classList.toggle("badge--online", cloudOn);
   }
   if (dom.modeState) dom.modeState.textContent = settings.mode === "ptt" ? "PTT" : "Voice Activation";
+
+  // Input device
   const device = devices.find((item) => item.id === settings?.input_device);
   if (dom.deviceState) dom.deviceState.textContent = device?.label ?? "Default";
   updateDeviceLineClamp();
+
+  // Output device
+  const outputDevice = outputDevices.find((item) => item.id === settings?.output_device);
+  if (dom.outputDeviceState) dom.outputDeviceState.textContent = outputDevice?.label ?? "Default";
+
   if (dom.modelState) {
     const active = models.find((model) => model.id === settings?.model);
     dom.modelState.textContent = active?.label ?? settings?.model ?? "—";

@@ -97,12 +97,12 @@ export function renderHero() {
 
   // Input device
   const device = devices.find((item) => item.id === settings?.input_device);
-  if (dom.deviceState) dom.deviceState.textContent = device?.label ?? "Default";
+  if (dom.deviceState) dom.deviceState.textContent = device?.label ?? "Default (System)";
   updateDeviceLineClamp();
 
   // Output device
   const outputDevice = outputDevices.find((item) => item.id === settings?.output_device);
-  if (dom.outputDeviceState) dom.outputDeviceState.textContent = outputDevice?.label ?? "Default";
+  if (dom.outputDeviceState) dom.outputDeviceState.textContent = outputDevice?.label ?? "Default (System)";
 
   if (dom.modelState) {
     const active = models.find((model) => model.id === settings?.model);

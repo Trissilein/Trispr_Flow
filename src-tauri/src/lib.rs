@@ -626,28 +626,30 @@ fn create_tray_pulse_icon(frame: usize, recording_active: bool, transcribe_activ
   let frame_mod = frame % TRAY_PULSE_FRAMES;
   let angle = (frame_mod as f32 / TRAY_PULSE_FRAMES as f32) * std::f32::consts::TAU;
   let pulse = 0.5 + 0.5 * angle.sin();
-  let center_y = 16.0f32;
-  let rec_center_x = 10.5f32;
-  let trans_center_x = 21.5f32;
+  // Keep the brand-like two-circle silhouette: slight diagonal offset, low overlap.
+  let rec_center_x = 9.25f32;
+  let rec_center_y = 17.75f32;
+  let trans_center_x = 22.75f32;
+  let trans_center_y = 14.25f32;
 
-  let rec_base = 9.0f32;
-  let trans_base = 9.0f32;
+  let rec_base = 7.6f32;
+  let trans_base = 7.6f32;
   let rec_radius = if recording_active {
-    rec_base + (pulse * 0.9)
+    rec_base + (pulse * 0.8)
   } else {
     rec_base
   };
   let trans_radius = if transcribe_active {
-    trans_base + (pulse * 0.9)
+    trans_base + (pulse * 0.8)
   } else {
     trans_base
   };
 
   if recording_active {
-    draw_circle_rgba(&mut pixels, size, rec_center_x, center_y, rec_radius + 1.2, [29, 166, 160, 72]);
+    draw_circle_rgba(&mut pixels, size, rec_center_x, rec_center_y, rec_radius + 1.2, [29, 166, 160, 72]);
   }
   if transcribe_active {
-    draw_circle_rgba(&mut pixels, size, trans_center_x, center_y, trans_radius + 1.2, [245, 179, 66, 72]);
+    draw_circle_rgba(&mut pixels, size, trans_center_x, trans_center_y, trans_radius + 1.2, [245, 179, 66, 72]);
   }
 
   let rec_color = if recording_active {
@@ -660,8 +662,8 @@ fn create_tray_pulse_icon(frame: usize, recording_active: bool, transcribe_activ
   } else {
     [245, 179, 66, 185]
   };
-  draw_circle_rgba(&mut pixels, size, rec_center_x, center_y, rec_radius, rec_color);
-  draw_circle_rgba(&mut pixels, size, trans_center_x, center_y, trans_radius, trans_color);
+  draw_circle_rgba(&mut pixels, size, rec_center_x, rec_center_y, rec_radius, rec_color);
+  draw_circle_rgba(&mut pixels, size, trans_center_x, trans_center_y, trans_radius, trans_color);
 
   Image::new_owned(pixels, size as u32, size as u32)
 }

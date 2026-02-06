@@ -41,7 +41,6 @@
                     aria-label="Recording status: idle"></span>
               <span id="status-label" class="status-label">Recording: Idle</span>
             </div>
-            <span class="status-divider" aria-hidden="true">•</span>
             <div class="status-item">
               <span id="transcribe-pill" class="status-pill status-pill--disabled">Transcribing</span>
               <span class="status-dot" id="transcribe-dot" data-state="idle"
@@ -53,7 +52,11 @@
         </div>
         <div class="panel hero-card">
           <div class="hero-item">
-            <span class="hero-label">Claude fallback <span id="cloud-check" class="hero-check">✓</span></span>
+            <span class="hero-label">Claude fallback <span id="cloud-check" class="hero-check">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" style="width: 12px; height: 12px; display: inline-block; vertical-align: middle;">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+              </svg>
+            </span></span>
             <label class="hero-checkbox">
               <input id="cloud-toggle" type="checkbox" />
               <span id="cloud-state">Claude Off</span>
@@ -93,7 +96,11 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="output-panel-body"
-                      aria-label="Collapse output panel">▾</button>
+                      aria-label="Collapse output panel">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </button>
             </div>
           </div>
           <div class="panel-body">
@@ -136,7 +143,11 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="capture-panel-body"
-                      aria-label="Collapse capture input panel">▾</button>
+                      aria-label="Collapse capture input panel">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </button>
             </div>
           </div>
           <div class="panel-body">
@@ -167,7 +178,12 @@
                 <span class="field-label">PTT hotkey (hold)</span>
                 <div class="hotkey-input-group">
                   <input id="ptt-hotkey" type="text" placeholder="CommandOrControl+Shift+Space" readonly />
-                  <button id="ptt-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+                  <button id="ptt-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
+                    </svg>
+                    Record
+                  </button>
                 </div>
                 <span id="ptt-hotkey-status" class="hotkey-status"
                       role="status"
@@ -177,7 +193,12 @@
                 <span class="field-label">Toggle hotkey (click)</span>
                 <div class="hotkey-input-group">
                   <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" readonly />
-                  <button id="toggle-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+                  <button id="toggle-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
+                    </svg>
+                    Record
+                  </button>
                 </div>
                 <span id="toggle-hotkey-status" class="hotkey-status"
                       role="status"
@@ -278,7 +299,11 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="system-panel-body"
-                      aria-label="Collapse capture output panel">▾</button>
+                      aria-label="Collapse capture output panel">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </button>
             </div>
           </div>
           <div class="panel-body">
@@ -308,7 +333,12 @@
               <span class="field-label">Transcribe hotkey</span>
               <div class="hotkey-input-group">
                 <input id="transcribe-hotkey" type="text" readonly />
-                <button id="transcribe-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">🎹 Record</button>
+                <button id="transcribe-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
+                  </svg>
+                  Record
+                </button>
               </div>
               <span id="transcribe-hotkey-status" class="hotkey-status"
                     role="status"
@@ -413,7 +443,11 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="model-panel-body"
-                      aria-label="Collapse model manager panel">▾</button>
+                      aria-label="Collapse model manager panel">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </button>
             </div>
           </div>
           <div class="panel-body">
@@ -486,7 +520,11 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="interface-panel-body"
-                      aria-label="Collapse UI adjustments panel">▾</button>
+                      aria-label="Collapse UI adjustments panel">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </button>
             </div>
           </div>
           <div class="panel-body">

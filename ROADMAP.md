@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-05
+Last updated: 2026-02-06
 
 This roadmap tracks the current focus: getting core capture + transcription stable and tightening UX before expanding features.
 
@@ -23,7 +23,7 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 - ✅ **Security Hardening**: SSRF prevention, checksum verification, download size limits
 - ✅ **System Audio Robustness**: WASAPI loopback fixes + transcribe queue/idle meter
 - ✅ **Activity Indicators**: Separate recording/transcribing indicators + overlay marker
-- 🟡 **Automated Testing Baseline**: Unit tests + smoke scripts added (pending local run)
+- ✅ **Automated Testing Baseline**: Unit tests + smoke scripts verified locally
 - ✅ **Transcribe Default Disabled**: Session-only enable; always deactivated on startup
 
 **Previous milestones**
@@ -96,11 +96,11 @@ This roadmap tracks the current focus: getting core capture + transcription stab
   - Models module (download, management)
   - State/Settings module
   - Paths/Utilities module
-- 🟡 **Automated Testing**: Unit + smoke baseline added (pending local run)
+- ✅ **Automated Testing**: Unit + smoke baseline verified locally
 - 🟡 **Documentation**: Architecture docs, code comments
 
 ### Testing (Ongoing)
-- 🟡 **Automated Testing**: Unit tests + smoke command (`npm run build` + `cargo test`)
+- ✅ **Automated Testing**: Unit tests + smoke command verified (`npm run test` + `npm run test:smoke`)
 - ⚪ **Tauri E2E Tests (Block 9)**: Optional end-to-end coverage once unit + smoke are stable
 
 For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)

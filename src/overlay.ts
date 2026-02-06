@@ -159,6 +159,14 @@ function updateOverlay(state: OverlayState) {
   }
 }
 
+// Track event listeners for cleanup
+let eventUnlisteners: Array<() => void> = [];
+
+function cleanupEventListeners() {
+  eventUnlisteners.forEach((unlisten) => unlisten());
+  eventUnlisteners = [];
+}
+
 function tick(now: number) {
   const dt = Math.max(0, now - lastFrame);
   lastFrame = now;
@@ -179,22 +187,22 @@ function tick(now: number) {
 listen<OverlayState>("overlay:state", (event) => {
   console.log("[overlay] state event:", event.payload);
   updateOverlay(event.payload);
-});
+}).then((unlisten) => eventUnlisteners.push(unlisten));
 
 listen<number>("overlay:level", (event) => {
   console.log("[overlay] level event:", event.payload, "state:", currentState);
   if (currentState !== "recording") return;
   targetLevel = clamp(event.payload ?? 0, 0, 1);
-});
+}).then((unlisten) => eventUnlisteners.push(unlisten));
 
 listen<OverlaySettings>("overlay:settings", (event) => {
   console.log("[overlay] settings event:", event.payload);
   applySettings(event.payload);
-});
+}).then((unlisten) => eventUnlisteners.push(unlisten));
 
 listen<AppSettings>("settings-changed", (event) => {
   applySettingsFromApp(event.payload);
-});
+}).then((unlisten) => eventUnlisteners.push(unlisten));
 
 invoke<AppSettings>("get_settings")
   .then((payload) => {
@@ -212,3 +220,8 @@ emit("overlay:ready").catch(() => {
 applySettings(settings);
 updateOverlay("idle");
 requestAnimationFrame(tick);
+
+// Cleanup event listeners on window unload
+window.addEventListener("beforeunload", () => {
+  cleanupEventListeners();
+});

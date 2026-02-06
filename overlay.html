@@ -242,6 +242,33 @@
           .then(applySettingsPayload)
           .catch(() => {});
       }
+
+      const listen = window.__TAURI__?.event?.listen;
+      if (listen) {
+        // Listen for overlay-specific settings updates (for mode switching)
+        listen("overlay:settings", (event) => {
+          const payload = event?.payload;
+          if (!payload) return;
+          if (payload.style === "kitt" || payload.style === "dot") {
+            applySettingsPayload({
+              overlay_style: payload.style,
+              overlay_color: payload.color,
+              overlay_min_radius: payload.min_radius,
+              overlay_max_radius: payload.max_radius,
+              overlay_opacity_inactive: payload.opacity_inactive,
+              overlay_opacity_active: payload.opacity_active,
+              overlay_kitt_min_width: payload.kitt_min_width,
+              overlay_kitt_max_width: payload.kitt_max_width,
+              overlay_kitt_height: payload.kitt_height,
+            });
+          }
+        }).catch(() => {});
+
+        // Listen for general settings changes
+        listen("settings-changed", (event) => {
+          applySettingsPayload(event?.payload);
+        }).catch(() => {});
+      }
     </script>
   </body>
 </html>

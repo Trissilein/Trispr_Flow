@@ -37,6 +37,14 @@ import { levelToDb, thresholdToPercent } from "./ui-helpers";
 
 let transcribeBacklogPromptOpen = false;
 
+// Track event listeners for cleanup to prevent memory leaks
+let eventUnlisteners: Array<() => void> = [];
+
+function cleanupEventListeners() {
+  eventUnlisteners.forEach((unlisten) => unlisten());
+  eventUnlisteners = [];
+}
+
 function initConversationView() {
   const params = new URLSearchParams(window.location.search);
   const isConversationOnly = params.get("view") === "conversation";
@@ -71,6 +79,9 @@ function initConversationView() {
 }
 
 async function bootstrap() {
+  // Clean up old listeners if re-bootstrapping to prevent memory leaks
+  cleanupEventListeners();
+
   const fetchedSettings = await invoke<Settings>("get_settings");
   setSettings(fetchedSettings);
 
@@ -102,52 +113,52 @@ async function bootstrap() {
   initPanelState();
   initConversationView();
 
-  await listen<Settings>("settings-changed", (event) => {
+  eventUnlisteners.push(await listen<Settings>("settings-changed", (event) => {
     setSettings(event.payload ?? null);
     renderSettings();
     renderHero();
     renderModels();
     refreshModelsDir();
-  });
+  }));
 
-  await listen<string>("capture:state", (event) => {
+  eventUnlisteners.push(await listen<string>("capture:state", (event) => {
     const state = event.payload as "idle" | "recording" | "transcribing";
     setCaptureStatus(state ?? "idle");
-  });
+  }));
 
-  await listen<string>("transcribe:state", (event) => {
+  eventUnlisteners.push(await listen<string>("transcribe:state", (event) => {
     const state = event.payload as "idle" | "recording" | "transcribing";
     setTranscribeStatus(state ?? "idle");
-  });
+  }));
 
-  await listen<number>("transcribe:level", (event) => {
+  eventUnlisteners.push(await listen<number>("transcribe:level", (event) => {
     if (!dom.transcribeMeterFill) return;
     const level = Math.max(0, Math.min(1, event.payload ?? 0));
     dom.transcribeMeterFill.style.width = `${Math.round(level * 100)}%`;
-  });
+  }));
 
-  await listen<number>("transcribe:db", (event) => {
+  eventUnlisteners.push(await listen<number>("transcribe:db", (event) => {
     if (!dom.transcribeMeterDb) return;
     const value = event.payload ?? -60;
     const clamped = Math.max(-60, Math.min(0, value));
     dom.transcribeMeterDb.textContent = `${clamped.toFixed(1)} dB`;
-  });
+  }));
 
-  await listen<HistoryEntry[]>("history:updated", (event) => {
+  eventUnlisteners.push(await listen<HistoryEntry[]>("history:updated", (event) => {
     setHistory(event.payload ?? []);
     renderHistory();
-  });
+  }));
 
-  await listen<HistoryEntry[]>("transcribe:history-updated", (event) => {
+  eventUnlisteners.push(await listen<HistoryEntry[]>("transcribe:history-updated", (event) => {
     setTranscribeHistory(event.payload ?? []);
     renderHistory();
-  });
+  }));
 
-  await listen<{ text: string; source: string }>("transcription:result", () => {
+  eventUnlisteners.push(await listen<{ text: string; source: string }>("transcription:result", () => {
     if (dom.statusMessage) dom.statusMessage.textContent = "";
-  });
+  }));
 
-  await listen<DownloadProgress>("model:download-progress", (event) => {
+  eventUnlisteners.push(await listen<DownloadProgress>("model:download-progress", (event) => {
     modelProgress.set(event.payload.id, event.payload);
     import("./state").then(({ models, setModels }) => {
       const updatedModels = models.map((model) =>
@@ -156,20 +167,20 @@ async function bootstrap() {
       setModels(updatedModels);
       renderModels();
     });
-  });
+  }));
 
-  await listen<DownloadComplete>("model:download-complete", async (event) => {
+  eventUnlisteners.push(await listen<DownloadComplete>("model:download-complete", async (event) => {
     modelProgress.delete(event.payload.id);
     await refreshModels();
-  });
+  }));
 
-  await listen<DownloadError>("model:download-error", async (event) => {
+  eventUnlisteners.push(await listen<DownloadError>("model:download-error", async (event) => {
     console.error("model download error", event.payload.error);
     modelProgress.delete(event.payload.id);
     await refreshModels();
-  });
+  }));
 
-  await listen<string>("transcription:error", (event) => {
+  eventUnlisteners.push(await listen<string>("transcription:error", (event) => {
     console.error("transcription error", event.payload);
     setCaptureStatus("idle");
     if (dom.statusMessage) dom.statusMessage.textContent = `Error: ${event.payload}`;
@@ -181,9 +192,9 @@ async function bootstrap() {
       message: event.payload,
       duration: 7000,
     });
-  });
+  }));
 
-  await listen<TranscribeBacklogStatus>("transcribe:backlog-warning", async (event) => {
+  eventUnlisteners.push(await listen<TranscribeBacklogStatus>("transcribe:backlog-warning", async (event) => {
     const payload = event.payload;
     if (!payload) return;
 
@@ -215,9 +226,9 @@ async function bootstrap() {
     } finally {
       transcribeBacklogPromptOpen = false;
     }
-  });
+  }));
 
-  await listen<TranscribeBacklogStatus>("transcribe:backlog-expanded", (event) => {
+  eventUnlisteners.push(await listen<TranscribeBacklogStatus>("transcribe:backlog-expanded", (event) => {
     const payload = event.payload;
     if (!payload) return;
     showToast({
@@ -226,24 +237,24 @@ async function bootstrap() {
       message: `New capacity: ${payload.capacity_chunks} chunks (${payload.percent_used}% used).`,
       duration: 5000,
     });
-  });
+  }));
 
   // Listen for app-wide errors from backend
-  await listen<ErrorEvent>("app:error", (event) => {
+  eventUnlisteners.push(await listen<ErrorEvent>("app:error", (event) => {
     showErrorToast(event.payload.error, event.payload.context);
-  });
+  }));
 
   // Listen for audio cues (beep on recording start/stop)
-  await listen<string>("audio:cue", (event) => {
+  eventUnlisteners.push(await listen<string>("audio:cue", (event) => {
     const type = event.payload as "start" | "stop";
     import("./state").then(({ settings }) => {
       if (settings?.audio_cues) {
         playAudioCue(type);
       }
     });
-  });
+  }));
 
-  await listen<number>("audio:level", (event) => {
+  eventUnlisteners.push(await listen<number>("audio:level", (event) => {
     if (!dom.vadMeterFill) return;
     const level = Math.max(0, Math.min(1, event.payload ?? 0));
     // Convert to dB scale for display (-60dB to 0dB)
@@ -259,17 +270,22 @@ async function bootstrap() {
         dom.vadLevelDbm.textContent = `${db.toFixed(0)} dB`;
       }
     }
-  });
+  }));
 
   // Listen for dynamic sustain threshold updates from backend
-  await listen<number>("vad:dynamic-threshold", (event) => {
+  eventUnlisteners.push(await listen<number>("vad:dynamic-threshold", (event) => {
     setDynamicSustainThreshold(event.payload ?? 0.01);
     updateThresholdMarkers();
-  });
+  }));
 }
 
 window.addEventListener("DOMContentLoaded", () => {
   bootstrap().catch((error) => {
     console.error("bootstrap failed", error);
   });
+});
+
+// Cleanup event listeners on window unload to prevent memory leaks
+window.addEventListener("beforeunload", () => {
+  cleanupEventListeners();
 });

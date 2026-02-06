@@ -55,7 +55,7 @@ body {
 .hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
-  gap: 12px;
+  gap: 10px;
   align-items: start;
   animation: rise 0.6s ease both;
   animation-delay: var(--delay, 0s);
@@ -174,7 +174,7 @@ h1 {
 .hero-card {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 14px;
+  gap: 10px;
   min-width: 320px;
   padding: 10px 12px;
 }
@@ -301,7 +301,7 @@ h1 {
     "capture system"
     "interface interface"
     "model model";
-  gap: 12px;
+  gap: 10px;
 }
 
 .output-panel {
@@ -446,7 +446,7 @@ h1 {
 .panel-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 12px;
+  gap: 10px;
 }
 
 .span-2 {
@@ -620,8 +620,8 @@ h1 {
 
 .field.range input[type="range"]::-webkit-slider-thumb {
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--accent-2);
   cursor: pointer;
@@ -630,8 +630,8 @@ h1 {
 }
 
 .field.range input[type="range"]::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--accent-2);
   cursor: pointer;
@@ -1475,24 +1475,6 @@ button:disabled {
     transform: translateX(400px) scale(0.95);
     opacity: 0;
   }
-}
-.toggle-compact .toggle-track {
-  width: 34px;
-  height: 16px;
-  background: rgba(255, 255, 255, 0.16);
-  border-color: rgba(255, 255, 255, 0.25);
-}
-
-.toggle-compact .toggle-thumb {
-  width: 12px;
-  height: 12px;
-  top: 1px;
-  left: 1px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-}
-
-.toggle-compact input:checked + .toggle-track .toggle-thumb {
-  transform: translateX(18px);
 }
 
 /* ============================================

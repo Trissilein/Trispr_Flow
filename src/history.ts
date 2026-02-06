@@ -70,6 +70,8 @@ export function renderHistory() {
   }
 
   if (!dataset.length) {
+    const emptyIcon = currentHistoryTab === "mic" ? "🎤" : currentHistoryTab === "system" ? "🔊" : "💬";
+    const emptyTitle = currentHistoryTab === "conversation" ? "No conversation yet" : "No transcripts yet";
     const emptyMessage =
       currentHistoryTab === "mic"
         ? "Start dictating to build your input history."
@@ -77,7 +79,11 @@ export function renderHistory() {
           ? "Start output capture to build your output history."
           : "Build input or output entries to generate the conversation view.";
     historyList.innerHTML =
-      `<div class="history-item"><div><div class="history-text">No transcripts yet.</div><div class="history-meta">${emptyMessage}</div></div></div>`;
+      `<div class="empty-state compact">
+        <div class="empty-state-icon">${emptyIcon}</div>
+        <div class="empty-state-text">${emptyTitle}</div>
+        <div class="empty-state-hint">${emptyMessage}</div>
+      </div>`;
     return;
   }
 

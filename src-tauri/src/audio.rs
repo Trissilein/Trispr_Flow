@@ -280,22 +280,10 @@ impl OverlayLevelEmitter {
           .smooth_level
           .store((clamped * 1_000_000.0) as u64, Ordering::Relaxed);
 
-        if state.overlay_style == "kitt" {
-          let js =
-            format!("if(window.setOverlayLevel){{window.setOverlayLevel({});}}", clamped);
-          let _ = window.eval(&js);
-        } else {
-          let min_radius = state.overlay_min_radius.max(4.0) as f64;
-          let max_radius = state.overlay_max_radius.max(min_radius as f32) as f64;
-          let factor = (clamped as f64).max(0.01);
-          let radius = min_radius + (max_radius - min_radius) * factor;
-          let size = (radius * 2.0).round();
-          let js = format!(
-            "(function(){{const d=document.getElementById('dot');if(d){{d.style.width='{}px';d.style.height='{}px';}}}})();",
-            size, size
-          );
-          let _ = window.eval(&js);
-        }
+        // Use window.setOverlayLevel() for both KITT and Dot modes
+        // This delegates the rendering logic to the frontend, which is cleaner
+        let js = format!("if(window.setOverlayLevel){{window.setOverlayLevel({});}}", clamped);
+        let _ = window.eval(&js);
       }
     }
   }

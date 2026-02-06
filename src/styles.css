@@ -516,6 +516,20 @@ h1 {
   gap: 8px;
 }
 
+.settings-grid-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.settings-grid-2col .field {
+  margin: 0;
+}
+
+.settings-grid-2col .field.span-2 {
+  grid-column: 1 / -1;
+}
+
 /* FIELDS - COMPACT */
 .field {
   display: flex;

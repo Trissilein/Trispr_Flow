@@ -545,7 +545,7 @@
                 <input id="overlay-color" type="color" />
               </label>
               <!-- Dot mode settings -->
-              <div id="overlay-dot-settings">
+              <div id="overlay-dot-settings" class="settings-grid-2col">
               <label class="field range">
                 <span class="field-label">Min radius (px)</span>
                 <div class="range-row">
@@ -572,7 +572,7 @@
               </label>
               </div>
               <!-- KITT mode settings -->
-              <div id="overlay-kitt-settings" style="display: none;">
+              <div id="overlay-kitt-settings" class="settings-grid-2col" style="display: none;">
               <label class="field range">
                 <span class="field-label">Min width (px)</span>
                 <div class="range-row">
@@ -597,7 +597,7 @@
                   <span id="overlay-kitt-max-width-value" class="range-value" aria-live="polite">200</span>
                 </div>
               </label>
-              <label class="field range">
+              <label class="field range span-2">
                 <span class="field-label">Height (px)</span>
                 <div class="range-row">
                   <input id="overlay-kitt-height" type="range" min="8" max="40" step="1"
@@ -611,6 +611,7 @@
               </label>
               </div>
               <!-- Shared settings -->
+              <div class="settings-grid-2col">
               <label class="field range">
                 <span class="field-label">Rise smoothing (ms)</span>
                 <div class="range-row">
@@ -659,6 +660,7 @@
                   <span id="overlay-opacity-active-value" class="range-value" aria-live="polite">80%</span>
                 </div>
               </label>
+              </div>
               <div class="panel-grid">
                 <label class="field">
                   <span class="field-label">Position X</span>

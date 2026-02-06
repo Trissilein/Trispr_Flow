@@ -121,19 +121,19 @@ For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
 - ⏳ **Transcribe backlog**: target 10 minutes
 - ⏳ **80% warning**: prompt +50% expansion (repeatable)
 
+### Capture Enhancements
+- Activation words ("over" / "stop") for continuous capture
+- Language pinning beyond auto-detect
+- Extra hotkeys (paste last, undo, toggle cloud)
+
 ### Text Enhancement
-- **Post-Processing Pipeline**:
+- **Post-Processing Pipeline** (after Capture Enhancements):
   - Punctuation & capitalization (rule-based + AI-powered)
   - Number normalization (digits, dates, currency)
   - Custom vocabulary (technical terms, proper nouns)
   - Domain-aware corrections
   - Optional Claude API integration for advanced processing
 - **Language-specific rules** (English, German)
-
-### Capture Enhancements
-- Activation words ("over" / "stop") for continuous capture
-- Language pinning beyond auto-detect
-- Extra hotkeys (paste last, undo, toggle cloud)
 
 ### Long-Form Transcription
 - **Live Transcript Dump**: Export ongoing transcripts (TXT, MD, JSON)

@@ -23,9 +23,9 @@ Trispr Flow is a modern desktop dictation app built with Tauri + Rust + TypeScri
 - **Tray Menu Sync**: Checkmarks properly sync between UI toggles and system tray menu
 
 ## 🚧 Work in Progress
-- **Security Hardening**: SSRF prevention, model integrity verification, download size limits
-- Model Manager enhancements (custom URLs, source selection)
-- Conversation detach window stability
+- **Documentation Updates**: Architecture docs + development/test workflow sync
+- **Activity Feedback**: tray pulse + backlog handling
+- **Capture Enhancements**: activation words, language pinning, extra hotkeys
 
 ## 🚀 Quick Start (Dev)
 ```bash
@@ -36,13 +36,13 @@ npm run tauri dev
 ```
 
 ## 🎮 Usage
-### Microphone dictation
-1. Select **Capture Microphone** mode (PTT or VAD).
+### Input transcription
+1. Select **Capture Input** mode (PTT or Voice Activation).
 2. Configure **PTT hotkey** and optional **Toggle hotkey**.
 3. Hold PTT to record; release to transcribe + paste.
 
-### System audio transcription (Windows)
-1. Select your **Output device** in **Capture System Audio**.
+### Output transcription (Windows)
+1. Select your **Output device** in **Capture Output**.
 2. Press the **Transcribe hotkey** to start/stop monitoring.
 3. System audio transcripts appear in the **System Audio** tab, and the combined **Conversation** tab.
 
@@ -86,7 +86,14 @@ Trispr_Flow/
 │   ├── overlay.ts           # Overlay state + animation
 │   └── styles.css           # App styling
 ├── src-tauri/               # Rust backend
-│   └── src/lib.rs          # Core backend logic (~3700 lines)
+│   ├── src/lib.rs           # App wiring + Tauri commands
+│   ├── src/audio.rs         # Mic capture + VAD runtime
+│   ├── src/transcription.rs # System audio transcription pipeline
+│   ├── src/models.rs        # Model download/install/validation
+│   ├── src/state.rs         # Settings + app state
+│   ├── src/hotkeys.rs       # Hotkey parsing/validation
+│   ├── src/overlay.rs       # Overlay control
+│   └── src/paths.rs         # Config/data paths
 ├── index.html               # Main window UI
 ├── overlay.html             # Overlay UI
 ├── .claude/
@@ -100,19 +107,32 @@ Trispr_Flow/
 ## 🗺️ Roadmap
 See [.claude/ROADMAP.md](.claude/ROADMAP.md) for detailed milestones and next steps.
 
-**Current Phase:** Security Hardening (CRITICAL Priority)
-- Block 1: SSRF Prevention
-- Block 2: Model Integrity Verification
-- Block 3: Download Size Limits
+**Current Phase:** Documentation Updates
+- Block 8: Architecture/docs refresh
+- Keep local test workflow documented and reproducible
 
 **Next Phase:** Code Refactoring & Testing
 - Block 6: lib.rs Modularization
 - Block 7: Automated Testing
-- Block 8: Documentation Updates
+- Block 9: Tauri E2E (optional)
 
 **Future Features:**
+- Capture Enhancements (activation words, language pinning, hotkeys)
 - Post-Processing Pipeline (punctuation, formatting, normalization)
 - Live Transcript Dump & Chapter Summarization
+
+## 🧪 Testing
+### Unit tests
+```bash
+npm run test
+```
+
+### Smoke test (frontend build + Rust tests)
+```bash
+npm run test:smoke
+```
+
+If you run in WSL/Linux, install the system dependencies listed in `docs/DEVELOPMENT.md` first.
 
 ## 🤝 Contributing
 PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).

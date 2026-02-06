@@ -1,55 +1,53 @@
 # Architecture
 
-Last updated: 2026-02-03
+Last updated: 2026-02-06
 
-## Data flow (Microphone - PTT)
-1. Hotkey pressed
-2. Audio capture starts (selected input device)
-3. Ring buffer collects PCM frames
-4. Hotkey released
-5. Audio chunk finalized
-6. ASR backend transcribes
-7. Transcript pasted into active field
-8. Transcript stored in history (mic)
+## Frontend architecture
+- Stack: Tauri 2 + vanilla TypeScript + Vite
+- Entry: `src/main.ts` bootstraps settings/devices/history/models, then wires listeners and UI rendering.
+- State model: centralized mutable state in `src/state.ts` with explicit setter functions.
+- UI model: direct DOM updates through dedicated modules (`src/settings.ts`, `src/ui-state.ts`, `src/history.ts`, `src/models.ts`).
+- Event wiring: all user interactions are bound in `src/event-listeners.ts`.
 
-## Data flow (Microphone - VAD)
-1. VAD monitor starts
-2. Audio capture runs continuously
-3. VAD gates chunk start/stop with silence grace
-4. ASR backend transcribes each chunk
-5. Transcript pasted + stored
+## Backend architecture (`src-tauri/src`)
+- `lib.rs`: command registration, app startup, tray/window integration, module wiring.
+- `audio.rs`: microphone capture, VAD runtime, overlay level emission.
+- `transcription.rs`: system audio transcription pipeline (WASAPI loopback, queue/chunking, post-capture flow).
+- `models.rs`: model index, download, checksum and safety validation.
+- `state.rs`: persisted settings defaults/migrations and shared app state.
+- `hotkeys.rs`: hotkey normalization, validation, conflict checks.
+- `overlay.rs`: overlay window lifecycle and state updates.
+- `paths.rs`: app config/data path resolution.
 
-## Data flow (System Audio - WASAPI loopback)
-1. Transcribe hotkey toggles monitoring
-2. WASAPI loopback capture reads system output
-3. Chunker segments audio (interval + overlap)
-4. Optional VAD gate for system audio
-5. ASR backend transcribes per chunk
-6. Transcript stored in system history
+## Core data flows
+### Input capture (PTT)
+1. PTT hotkey down starts mic capture.
+2. PCM samples are buffered and level/meter events are emitted.
+3. PTT release finalizes the chunk.
+4. Whisper backend transcribes.
+5. Result is persisted to mic history and emitted to UI for display/paste.
 
-## Conversation view
-- Combines mic + system histories into a single time‑ordered stream.
-- Rendered in the Output panel (Conversation tab).
-- Optional detachable window (WIP).
+### Input capture (Voice Activation)
+1. VAD monitor runs continuously while input capture is enabled.
+2. Threshold + silence grace gate segment boundaries.
+3. Finalized segments are transcribed and written to history.
 
-## Core components
-- **HotkeyService**: global hotkey registration (PTT / Toggle / Transcribe)
-- **AudioCapture (mic)**: cpal input capture, resampling to 16 kHz mono
-- **AudioCapture (system)**: WASAPI loopback (Windows)
-- **Chunker**: splits audio for system transcription (interval + overlap)
-- **VAD**: threshold + silence grace gating for mic/system
-- **BackendSelector**: local whisper.cpp or cloud fallback
-- **AsrBackend**: whisper-cli process runner
-- **PasteService**: clipboard-safe paste to focused field
-- **HistoryStore**: mic + system histories + conversation rendering
-- **Overlay**: separate always-on-top window (WIP)
+### Output capture/transcription (Windows)
+1. Transcribe hotkey toggles output monitoring for the selected device.
+2. WASAPI loopback stream feeds chunker/VAD.
+3. Chunks are transcribed and appended to output history.
+4. UI receives `transcribe:state`, meter (`transcribe:level`/`transcribe:db`), and history update events.
 
-## Local backend
-- `whisper-cli` invoked with a temporary WAV file.
-- Model path resolved via env vars or `whisper.cpp/models`.
-- GPU builds validated (CUDA on Windows); CPU fallback supported.
+### Conversation view
+- Conversation tab merges mic + output histories into a single time-ordered stream.
+- Detachable conversation window is supported and configurable work is planned on roadmap.
 
-## Cloud backend (optional)
-- HTTP endpoint + token
-- Used only when cloud fallback is enabled
+## Runtime events (selected)
+- `capture:state`, `audio:level`, `vad:dynamic-threshold`
+- `transcribe:state`, `transcribe:level`, `transcribe:db`
+- `history:updated`, `transcribe:history-updated`
+- `settings-changed`, `audio:cue`, `app:error`
 
+## Quality status
+- Unit tests and smoke test workflow are in place and locally verified.
+- Optional Tauri E2E coverage remains backlog work.

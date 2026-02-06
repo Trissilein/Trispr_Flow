@@ -49,13 +49,10 @@ use crate::transcription::{
 
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
-const TRAY_PULSE_FRAMES: usize = 6;
-const TRAY_PULSE_CYCLE_MS: u64 = 1600;
 
 static LAST_TRAY_CLICK_MS: AtomicU64 = AtomicU64::new(0);
 static TRAY_CAPTURE_STATE: AtomicU8 = AtomicU8::new(0);
 static TRAY_TRANSCRIBE_STATE: AtomicU8 = AtomicU8::new(0);
-static TRAY_PULSE_STARTED: AtomicBool = AtomicBool::new(false);
 
 fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> {
   let manager = app.global_shortcut();
@@ -618,14 +615,11 @@ fn draw_circle_rgba(
   }
 }
 
-fn create_tray_pulse_icon(frame: usize, recording_active: bool, transcribe_active: bool) -> tauri::image::Image<'static> {
+fn create_tray_pulse_icon(recording_active: bool, transcribe_active: bool) -> tauri::image::Image<'static> {
   use tauri::image::Image;
 
   let size = 32usize;
   let mut pixels = vec![0u8; size * size * 4];
-  let frame_mod = frame % TRAY_PULSE_FRAMES;
-  let angle = (frame_mod as f32 / TRAY_PULSE_FRAMES as f32) * std::f32::consts::TAU;
-  let pulse = 0.5 + 0.5 * angle.sin();
   // Keep the brand-like two-circle silhouette: slight diagonal offset, low overlap.
   let rec_center_x = 10.0f32;
   let rec_center_y = 22.0f32;
@@ -635,22 +629,14 @@ fn create_tray_pulse_icon(frame: usize, recording_active: bool, transcribe_activ
   // +30% compared to the previous 7.6 radius.
   let rec_base = 9.9f32;
   let trans_base = 9.9f32;
-  let rec_radius = if recording_active {
-    rec_base + (pulse * 0.35)
-  } else {
-    rec_base
-  };
-  let trans_radius = if transcribe_active {
-    trans_base + (pulse * 0.35)
-  } else {
-    trans_base
-  };
+  let rec_radius = rec_base;
+  let trans_radius = trans_base;
 
   if recording_active {
-    draw_circle_rgba(&mut pixels, size, rec_center_x, rec_center_y, rec_radius + 0.45, [29, 166, 160, 72]);
+    draw_circle_rgba(&mut pixels, size, rec_center_x, rec_center_y, rec_radius + 0.55, [29, 166, 160, 72]);
   }
   if transcribe_active {
-    draw_circle_rgba(&mut pixels, size, trans_center_x, trans_center_y, trans_radius + 0.45, [245, 179, 66, 72]);
+    draw_circle_rgba(&mut pixels, size, trans_center_x, trans_center_y, trans_radius + 0.55, [245, 179, 66, 72]);
   }
 
   let rec_color = if recording_active {
@@ -669,51 +655,16 @@ fn create_tray_pulse_icon(frame: usize, recording_active: bool, transcribe_activ
   Image::new_owned(pixels, size as u32, size as u32)
 }
 
-fn refresh_tray_icon(app: &AppHandle, frame: usize) {
+fn refresh_tray_icon(app: &AppHandle) {
   let capture_state = TRAY_CAPTURE_STATE.load(Ordering::Relaxed);
   let transcribe_state = TRAY_TRANSCRIBE_STATE.load(Ordering::Relaxed);
   let recording_active = capture_state == 1;
   let transcribe_active = transcribe_state == 1 || transcribe_state == 2;
-  let effective_frame = if recording_active || transcribe_active {
-    frame
-  } else {
-    0
-  };
 
   if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
-    let icon = create_tray_pulse_icon(effective_frame, recording_active, transcribe_active);
+    let icon = create_tray_pulse_icon(recording_active, transcribe_active);
     let _ = tray.set_icon(Some(icon));
   }
-}
-
-fn start_tray_pulse_loop(app: AppHandle) {
-  if TRAY_PULSE_STARTED.swap(true, Ordering::AcqRel) {
-    return;
-  }
-  thread::spawn(move || {
-    let frame_ms = (TRAY_PULSE_CYCLE_MS / TRAY_PULSE_FRAMES as u64).max(120);
-    let mut frame = 0usize;
-    let mut last_signature = (u8::MAX, u8::MAX, usize::MAX);
-
-    loop {
-      let capture_state = TRAY_CAPTURE_STATE.load(Ordering::Relaxed);
-      let transcribe_state = TRAY_TRANSCRIBE_STATE.load(Ordering::Relaxed);
-      let active = capture_state == 1 || transcribe_state == 1 || transcribe_state == 2;
-      let effective_frame = if active { frame } else { 0 };
-      let signature = (capture_state, transcribe_state, effective_frame);
-      if signature != last_signature {
-        refresh_tray_icon(&app, effective_frame);
-        last_signature = signature;
-      }
-
-      thread::sleep(Duration::from_millis(frame_ms));
-      if active {
-        frame = (frame + 1) % TRAY_PULSE_FRAMES;
-      } else {
-        frame = 0;
-      }
-    }
-  });
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -927,18 +878,17 @@ pub fn run() {
       app.listen("capture:state", move |event| {
         let code = parse_tray_state_code(event.payload());
         TRAY_CAPTURE_STATE.store(code, Ordering::Relaxed);
-        refresh_tray_icon(&tray_capture_handle, 0);
+        refresh_tray_icon(&tray_capture_handle);
       });
 
       let tray_transcribe_handle = app.handle().clone();
       app.listen("transcribe:state", move |event| {
         let code = parse_tray_state_code(event.payload());
         TRAY_TRANSCRIBE_STATE.store(code, Ordering::Relaxed);
-        refresh_tray_icon(&tray_transcribe_handle, 0);
+        refresh_tray_icon(&tray_transcribe_handle);
       });
 
-      refresh_tray_icon(app.handle(), 0);
-      start_tray_pulse_loop(app.handle().clone());
+      refresh_tray_icon(app.handle());
 
       Ok(())
     })

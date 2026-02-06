@@ -237,14 +237,16 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
 
     // Update overlay via JS functions
     let js = format!(
-        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}if(window.setKittDimensions){{window.setKittDimensions({},{},{});}}",
+        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}if(window.setKittDimensions){{window.setKittDimensions({},{},{});}}if(window.setDotDimensions){{window.setDotDimensions({},{});}}",
         settings.color,
         settings.opacity_active,
         settings.opacity_inactive,
         settings.style,
         settings.kitt_min_width,
         settings.kitt_max_width,
-        settings.kitt_height
+        settings.kitt_height,
+        settings.min_radius,
+        settings.max_radius
     );
     let _ = window.eval(&js);
 

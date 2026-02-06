@@ -236,19 +236,32 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
     }
 
     // Update overlay via JS functions
-    let js = format!(
-        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}if(window.setKittDimensions){{window.setKittDimensions({},{},{});}}if(window.setDotDimensions){{window.setDotDimensions({},{});}}",
+    // First set color, opacity, and style
+    let base_js = format!(
+        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}",
         settings.color,
         settings.opacity_active,
         settings.opacity_inactive,
-        settings.style,
-        settings.kitt_min_width,
-        settings.kitt_max_width,
-        settings.kitt_height,
-        settings.min_radius,
-        settings.max_radius
+        settings.style
     );
-    let _ = window.eval(&js);
+    let _ = window.eval(&base_js);
+
+    // Then set dimensions based on current style
+    let dimensions_js = if settings.style == "kitt" {
+        format!(
+            "if(window.setKittDimensions){{window.setKittDimensions({},{},{});}}",
+            settings.kitt_min_width,
+            settings.kitt_max_width,
+            settings.kitt_height
+        )
+    } else {
+        format!(
+            "if(window.setDotDimensions){{window.setDotDimensions({},{});}}",
+            settings.min_radius,
+            settings.max_radius
+        )
+    };
+    let _ = window.eval(&dimensions_js);
 
     Ok(())
 }

@@ -11,6 +11,17 @@ npm install
 npm run tauri dev
 ```
 
+## Installer rebuild (Windows)
+Use the repo-root batch script to build the NSIS installer:
+
+```bat
+rebuild-installer.bat
+```
+
+Notes:
+- The script anchors to the repo root, so it works regardless of the current working directory.
+- If Vite complains about HTML asset paths, confirm `vite.config.ts` keeps `root` and HTML inputs inside the repo root.
+
 ## Test workflow
 ### Unit tests
 ```bash

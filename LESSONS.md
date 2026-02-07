@@ -142,6 +142,12 @@
 **Solution**: Emit events when UI toggles change. Update tray menu.
 **Outcome**: Tray menu now accurately reflects UI state ✓.
 
+### Session 5: Installer Build Robustness (Feb 2026)
+**Issue**: Installer rebuild failed with Vite errors when HTML inputs were emitted with `../` paths.
+**Root cause**: Vite was invoked with an unexpected CWD, and Rollup treated HTML inputs outside the root.
+**Solution**: Anchor the rebuild script to repo root and set Vite `root` + HTML inputs inside repo root.
+**Outcome**: `rebuild-installer.bat` completes successfully in a clean environment ✓.
+
 ---
 
 ## 🎨 Design Patterns to Maintain
@@ -232,4 +238,3 @@
 ---
 
 **Last updated**: 2026-02-06
-

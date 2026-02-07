@@ -20,6 +20,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs;
 use std::process::{Command, Stdio};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -869,6 +871,10 @@ fn transcribe_local(
   let threads = std::thread::available_parallelism()
     .map(|n| n.get().to_string())
     .unwrap_or_else(|_| "4".to_string());
+
+  // Hide console window on Windows
+  #[cfg(target_os = "windows")]
+  command.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
   command
     .arg("-m")

@@ -118,10 +118,10 @@ impl Default for Settings {
       overlay_kitt_fall_ms: 160,
       overlay_kitt_opacity_inactive: 0.2,
       overlay_kitt_opacity_active: 0.8,
-      overlay_pos_x: 12.0,
-      overlay_pos_y: 12.0,
-      overlay_kitt_pos_x: 12.0,
-      overlay_kitt_pos_y: 12.0,
+      overlay_pos_x: 50.0,          // 50% = horizontal center
+      overlay_pos_y: 90.0,          // 90% = bottom area
+      overlay_kitt_pos_x: 50.0,     // 50% = horizontal center
+      overlay_kitt_pos_y: 90.0,     // 90% = bottom area
       overlay_style: "dot".to_string(),
       overlay_kitt_min_width: 20.0,
       overlay_kitt_max_width: 200.0,

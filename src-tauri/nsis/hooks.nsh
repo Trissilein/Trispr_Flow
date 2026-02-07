@@ -19,9 +19,17 @@ Var GpuRadioCuda
 Var GpuRadioVulkan
 Var GpuBackendChoice
 
+; Variables for the capture mode page
+Var CaptureModeDialog
+Var CaptureModeLabel
+Var CaptureModeRadioPtt
+Var CaptureModeRadioVad
+Var CaptureModeChoice
+
 ; --- Custom page declarations (top-level, included before MUI pages) ---
 Page custom OverlayStylePage OverlayStylePageLeave
 Page custom GpuBackendPage GpuBackendPageLeave
+Page custom CaptureModePage CaptureModePageLeave
 
 ; =====================================================================
 ; Page 1: Overlay Style Selection
@@ -90,6 +98,39 @@ Function GpuBackendPageLeave
 FunctionEnd
 
 ; =====================================================================
+; Page 3: Capture Mode Selection
+; =====================================================================
+
+Function CaptureModePage
+  nsDialogs::Create 1018
+  Pop $CaptureModeDialog
+  ${If} $CaptureModeDialog == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateLabel} 0 0 100% 60u "Choose how you want to activate voice recording.$\\r$\\n$\\r$\\nPush-to-Talk: Hold a hotkey to record$\\r$\\nVoice Activation: Automatic recording when you speak$\\r$\\n$\\r$\\nYou can change this later in the app settings."
+  Pop $CaptureModeLabel
+
+  ${NSD_CreateRadioButton} 10u 70u 100% 14u "Push-to-Talk (PTT) - recommended"
+  Pop $CaptureModeRadioPtt
+  ${NSD_SetState} $CaptureModeRadioPtt ${BST_CHECKED}
+
+  ${NSD_CreateRadioButton} 10u 88u 100% 14u "Voice Activation (VAD) - automatic"
+  Pop $CaptureModeRadioVad
+
+  nsDialogs::Show
+FunctionEnd
+
+Function CaptureModePageLeave
+  ${NSD_GetState} $CaptureModeRadioPtt $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $CaptureModeChoice "ptt"
+  ${Else}
+    StrCpy $CaptureModeChoice "vad"
+  ${EndIf}
+FunctionEnd
+
+; =====================================================================
 ; Post-install: write settings + clean up unused GPU backend
 ; =====================================================================
 
@@ -99,7 +140,7 @@ FunctionEnd
   CreateDirectory "$APPDATA\com.trispr.flow"
   FileOpen $0 "$APPDATA\com.trispr.flow\settings.json" w
   FileWrite $0 '{'
-  FileWrite $0 '"mode":"ptt",'
+  FileWrite $0 '"mode":"$CaptureModeChoice",'
   FileWrite $0 '"hotkey_ptt":"CommandOrControl+Shift+Space",'
   FileWrite $0 '"hotkey_toggle":"CommandOrControl+Shift+M",'
   FileWrite $0 '"input_device":"default",'

@@ -3,9 +3,12 @@ import { resolve } from "path";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+const rootDir = resolve(__dirname);
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  // Ensure Vite always treats repo root as the project root, regardless of CWD.
+  root: rootDir,
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
@@ -31,8 +34,8 @@ export default defineConfig(async () => ({
   build: {
     rollupOptions: {
       input: {
-        main: resolve(__dirname, "index.html"),
-        overlay: resolve(__dirname, "overlay.html"),
+        main: resolve(rootDir, "index.html"),
+        overlay: resolve(rootDir, "overlay.html"),
       },
       output: {
         // Ensure all HTML files output with simple names (no paths)

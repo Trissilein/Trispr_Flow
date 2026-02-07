@@ -131,9 +131,6 @@ export function renderSettings() {
   if (dom.vadThresholdValue) dom.vadThresholdValue.textContent = `${Math.round(vadThresholdDb)} dB`;
   if (dom.vadSilence) dom.vadSilence.value = settings.vad_silence_ms.toString();
   if (dom.vadSilenceValue) dom.vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
-  if (dom.transcribeStatus && !dom.transcribeStatus.textContent) {
-    dom.transcribeStatus.textContent = "Idle";
-  }
   if (dom.transcribeHotkey) dom.transcribeHotkey.value = settings.transcribe_hotkey;
   if (dom.transcribeDeviceSelect) dom.transcribeDeviceSelect.value = settings.transcribe_output_device;
   if (dom.transcribeVadToggle) dom.transcribeVadToggle.checked = settings.transcribe_vad_mode;

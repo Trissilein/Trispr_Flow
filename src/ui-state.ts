@@ -3,10 +3,6 @@
 import type { RecordingState } from "./types";
 import {
   settings,
-  currentCaptureStatus,
-  currentTranscribeStatus,
-  setCurrentCaptureStatus,
-  setCurrentTranscribeStatus,
   devices,
   outputDevices,
   models,
@@ -15,71 +11,57 @@ import {
 import * as dom from "./dom-refs";
 import { updateRecordingStatus, updateTranscribeStatus } from "./accessibility";
 import { thresholdToPercent } from "./ui-helpers";
+import {
+  applyFeedbackSettings,
+  getFeedbackView,
+  transitionCaptureRuntime,
+  transitionTranscribeRuntime,
+} from "./feedback-state";
 
-function updateTranscribeIndicator() {
-  const enabled = settings?.transcribe_enabled ?? false;
-  const activityState: RecordingState =
-    currentTranscribeStatus === "transcribing"
-      ? "transcribing"
-      : currentTranscribeStatus === "recording"
-        ? "recording"
-        : "idle";
-  const labelState: RecordingState = !enabled ? "disabled" : activityState;
+function renderFeedbackIndicators() {
+  const { capture, transcribe } = getFeedbackView();
+
+  if (dom.statusDot) {
+    dom.statusDot.dataset.state = capture.activityState;
+  }
+  if (dom.statusLabel) {
+    dom.statusLabel.textContent = capture.labelText;
+  }
+  if (dom.recordingPill) {
+    dom.recordingPill.classList.toggle("status-pill--enabled", capture.enabled);
+    dom.recordingPill.classList.toggle("status-pill--disabled", !capture.enabled);
+  }
+  if (dom.statusMessage) {
+    dom.statusMessage.textContent = "";
+  }
+  updateRecordingStatus(capture.labelState);
+
   if (dom.transcribeStatusDot) {
-    dom.transcribeStatusDot.dataset.state = enabled ? activityState : "idle";
+    dom.transcribeStatusDot.dataset.state = transcribe.activityState;
   }
   if (dom.transcribeStatusLabel) {
-    dom.transcribeStatusLabel.textContent =
-      labelState === "disabled"
-        ? "Deactivated"
-        : labelState === "recording"
-          ? "Monitoring"
-          : labelState === "transcribing"
-            ? "Active"
-            : "Idle";
+    dom.transcribeStatusLabel.textContent = transcribe.labelText;
   }
   if (dom.transcribePill) {
-    dom.transcribePill.classList.toggle("status-pill--enabled", enabled);
-    dom.transcribePill.classList.toggle("status-pill--disabled", !enabled);
+    dom.transcribePill.classList.toggle("status-pill--enabled", transcribe.enabled);
+    dom.transcribePill.classList.toggle("status-pill--disabled", !transcribe.enabled);
   }
-  updateTranscribeStatus(labelState);
+  if (dom.transcribeStatusPill) {
+    dom.transcribeStatusPill.textContent = transcribe.enabled ? "Enabled" : "Disabled";
+    dom.transcribeStatusPill.classList.toggle("status-pill--enabled", transcribe.enabled);
+    dom.transcribeStatusPill.classList.toggle("status-pill--disabled", !transcribe.enabled);
+  }
+  updateTranscribeStatus(transcribe.labelState);
 }
 
 export function setCaptureStatus(state: RecordingState) {
-  setCurrentCaptureStatus(state);
-  const enabled = settings?.capture_enabled ?? true;
-  const isRecording = state === "recording";
-  const labelState: RecordingState = !enabled ? "disabled" : isRecording ? "recording" : "idle";
-  const activityState: RecordingState = isRecording ? "recording" : "idle";
-  if (dom.statusDot) {
-    dom.statusDot.dataset.state = enabled ? activityState : "idle";
-  }
-  if (dom.statusLabel) {
-    dom.statusLabel.textContent =
-      labelState === "disabled"
-        ? "Deactivated"
-        : isRecording
-          ? "Active"
-          : "Idle";
-  }
-  if (dom.recordingPill) {
-    dom.recordingPill.classList.toggle("status-pill--enabled", enabled);
-    dom.recordingPill.classList.toggle("status-pill--disabled", !enabled);
-  }
-  if (dom.statusMessage) dom.statusMessage.textContent = "";
-  updateRecordingStatus(labelState);
-  updateTranscribeIndicator();
+  transitionCaptureRuntime(state);
+  renderFeedbackIndicators();
 }
 
 export function setTranscribeStatus(state: RecordingState) {
-  setCurrentTranscribeStatus(state);
-  const enabled = settings?.transcribe_enabled ?? false;
-  if (dom.transcribeStatusPill) {
-    dom.transcribeStatusPill.textContent = enabled ? "Enabled" : "Disabled";
-    dom.transcribeStatusPill.classList.toggle("status-pill--enabled", enabled);
-    dom.transcribeStatusPill.classList.toggle("status-pill--disabled", !enabled);
-  }
-  updateTranscribeIndicator();
+  transitionTranscribeRuntime(state);
+  renderFeedbackIndicators();
 }
 
 export function renderHero() {
@@ -101,15 +83,16 @@ export function renderHero() {
   updateDeviceLineClamp();
 
   // Output device
-  const outputDevice = outputDevices.find((item) => item.id === settings?.output_device);
+  const outputDevice = outputDevices.find((item) => item.id === settings?.transcribe_output_device);
   if (dom.outputDeviceState) dom.outputDeviceState.textContent = outputDevice?.label ?? "Default (System)";
 
   if (dom.modelState) {
     const active = models.find((model) => model.id === settings?.model);
     dom.modelState.textContent = active?.label ?? settings?.model ?? "—";
   }
-  setCaptureStatus(currentCaptureStatus);
-  setTranscribeStatus(currentTranscribeStatus);
+
+  applyFeedbackSettings(settings);
+  renderFeedbackIndicators();
 }
 
 export function updateDeviceLineClamp() {

@@ -58,6 +58,21 @@
         transform: scale(1);
       }
 
+      /* KITT-specific transcribe indicator styling */
+      #container[data-style="kitt"] #transcribe-indicator {
+        width: 24px;
+        height: 12px;
+        border-radius: 3px;
+        top: -16px;
+        left: 50%;
+        transform: translateX(-50%) scale(0.8);
+      }
+
+      #container[data-style="kitt"][data-state="transcribing"] #transcribe-indicator {
+        opacity: 1;
+        transform: translateX(-50%) scale(1);
+      }
+
       /* Dot mode (default): show dot, hide kitt */
       #container[data-style="dot"] #dot { display: block; }
       #container[data-style="dot"] #kitt { display: none; }
@@ -122,6 +137,12 @@
         return { r, g, b };
       }
 
+      function updateDotGradient() {
+        const rgb = hexToRgb(baseColor);
+        if (!rgb) return;
+        dot.style.background = `radial-gradient(circle, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1) 0%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.4) 60%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0) 100%)`;
+      }
+
       function updateKittGradient() {
         const rgb = hexToRgb(baseColor);
         if (!rgb) return;
@@ -140,7 +161,7 @@
 
       window.setOverlayColor = function(color) {
         baseColor = color;
-        dot.style.background = color;
+        updateDotGradient();
         updateKittGradient();
       };
 
@@ -148,6 +169,7 @@
         opacityActive = Math.max(0.1, Math.min(1, active));
         opacityInactive = Math.max(0.05, Math.min(1, inactive));
         updateOpacity();
+        updateDotGradient();
         updateKittGradient();
       };
 
@@ -191,6 +213,7 @@
       // --- Initialization ---
 
       updateOpacity();
+      updateDotGradient();
       updateKittGradient();
 
       // Signal readiness to Rust backend

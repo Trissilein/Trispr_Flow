@@ -58,21 +58,13 @@
         transform: scale(1);
       }
 
+      /* Dot mode (default): show dot, hide kitt */
+      #container[data-style="dot"] #dot { display: block; }
+      #container[data-style="dot"] #kitt { display: none; }
+
+      /* KITT mode: show kitt, hide dot */
       #container[data-style="kitt"] #dot { display: none; }
       #container[data-style="kitt"] #kitt { display: block; }
-
-      #debug {
-        display: none; /* Debug disabled */
-        position: fixed;
-        bottom: 4px;
-        left: 4px;
-        font: 10px monospace;
-        color: #0f0;
-        background: rgba(0,0,0,0.85);
-        padding: 3px 6px;
-        border-radius: 3px;
-        z-index: 999;
-      }
     </style>
   </head>
   <body>
@@ -81,14 +73,17 @@
       <div id="kitt"></div>
       <div id="transcribe-indicator"></div>
     </div>
-    <div id="debug">ready</div>
 
     <script>
-      // Simple overlay - controlled entirely by backend JS eval
+      // Overlay controlled by Rust backend via window.eval() and Tauri events.
+      // Settings flow:
+      //   1. Rust calls window.eval() with set* functions (primary path)
+      //   2. Tauri "settings-changed" event as backup (from save_settings)
+      //   3. Initial settings loaded via invoke("get_settings") on page load
+
       const container = document.getElementById("container");
       const dot = document.getElementById("dot");
       const kitt = document.getElementById("kitt");
-      const debug = document.getElementById("debug");
 
       // State
       let isActive = false;
@@ -135,9 +130,9 @@
         kitt.style.background = `linear-gradient(90deg, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${inactive}) 0%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${active}) 50%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${inactive}) 100%)`;
       }
 
-      // Called from Rust via window.eval()
+      // --- Public API called from Rust via window.eval() ---
+
       window.setOverlayState = function(state) {
-        debug.textContent = "state: " + state;
         isActive = (state === "recording" || state === "transcribing");
         container.dataset.state = state;
         updateOpacity();
@@ -147,7 +142,6 @@
         baseColor = color;
         dot.style.background = color;
         updateKittGradient();
-        debug.textContent = "color: " + color;
       };
 
       window.setOverlayOpacity = function(active, inactive) {
@@ -155,13 +149,11 @@
         opacityInactive = Math.max(0.05, Math.min(1, inactive));
         updateOpacity();
         updateKittGradient();
-        debug.textContent = "opacity: " + opacityInactive + "/" + opacityActive;
       };
 
       window.setOverlayStyle = function(style) {
         currentStyle = style;
         container.dataset.style = style;
-        debug.textContent = "style: " + style;
       };
 
       window.setKittDimensions = function(minWidth, maxWidth, height) {
@@ -170,7 +162,6 @@
         kittHeight = Math.max(8, Math.min(40, height));
         kitt.style.height = kittHeight + "px";
         kitt.style.width = kittMinWidth + "px";
-        debug.textContent = "kitt: " + kittMinWidth + "-" + kittMaxWidth + " h:" + kittHeight;
       };
 
       window.setDotDimensions = function(minRadius, maxRadius) {
@@ -179,11 +170,9 @@
         if (dotMaxRadius < dotMinRadius) {
           dotMaxRadius = dotMinRadius;
         }
-        // Set initial size to min radius
         const size = dotMinRadius * 2;
         dot.style.width = size + "px";
         dot.style.height = size + "px";
-        debug.textContent = "dot: " + dotMinRadius + "-" + dotMaxRadius;
       };
 
       window.setOverlayLevel = function(level) {
@@ -192,7 +181,6 @@
           const width = kittMinWidth + (kittMaxWidth - kittMinWidth) * clamped;
           kitt.style.width = width + "px";
         } else {
-          // Dot mode: animate radius from min to max based on level
           const radius = dotMinRadius + (dotMaxRadius - dotMinRadius) * clamped;
           const size = Math.max(2, radius * 2);
           dot.style.width = size + "px";
@@ -200,15 +188,17 @@
         }
       };
 
-      // Initialize with default opacity
+      // --- Initialization ---
+
       updateOpacity();
       updateKittGradient();
-      debug.textContent = "ready";
 
+      // Signal readiness to Rust backend
       if (window.__TAURI__?.event?.emit) {
         window.__TAURI__.event.emit("overlay:ready").catch(() => {});
       }
 
+      // Apply full settings payload from app settings object
       function applySettingsPayload(payload) {
         if (!payload) return;
         const style = payload.overlay_style === "kitt" ? "kitt" : "dot";
@@ -236,6 +226,7 @@
         window.setDotDimensions(minRadius, maxRadius);
       }
 
+      // Load initial settings from backend
       const invoke = window.__TAURI__?.core?.invoke;
       if (invoke) {
         invoke("get_settings")
@@ -243,9 +234,9 @@
           .catch(() => {});
       }
 
+      // Listen for settings changes (backup path - primary is window.eval from Rust)
       const listen = window.__TAURI__?.event?.listen;
       if (listen) {
-        // Listen for overlay-specific settings updates (for mode switching)
         listen("overlay:settings", (event) => {
           const payload = event?.payload;
           if (!payload) return;
@@ -264,7 +255,6 @@
           }
         }).catch(() => {});
 
-        // Listen for general settings changes
         listen("settings-changed", (event) => {
           applySettingsPayload(event?.payload);
         }).catch(() => {});

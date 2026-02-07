@@ -2,10 +2,6 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WindowEvent}
 use serde::{Deserialize, Serialize};
 use std::thread;
 use std::time::Duration;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-static OVERLAY_JS_READY: AtomicBool = AtomicBool::new(false);
-static OVERLAY_RETRY_PENDING: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -33,23 +29,16 @@ pub struct OverlaySettings {
     pub kitt_height: f64,
 }
 
-pub fn mark_overlay_ready() {
-    OVERLAY_JS_READY.store(true, Ordering::Relaxed);
-}
+/// Called when the overlay webview signals readiness.
+/// Settings are applied via the overlay:ready listener in lib.rs.
+pub fn mark_overlay_ready() {}
 
 /// Creates and configures the overlay window for recording status
 pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
-    use tracing::info;
-
-    info!("create_overlay_window called");
-
-    // Check if overlay already exists
+    // Return existing window if already created
     if let Some(existing) = app.get_webview_window("overlay") {
-        info!("Overlay window already exists, returning existing");
         return Ok(existing);
     }
-
-    info!("Creating new overlay window");
 
     let window = tauri::WebviewWindowBuilder::new(
         app,
@@ -69,7 +58,6 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     .build()
     .map_err(|e| format!("Failed to create overlay window: {}", e))?;
 
-    // Default position (may be overridden by overlay settings)
     let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition {
         x: 12.0,
         y: 12.0,
@@ -77,11 +65,10 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
 
     let _ = window.set_ignore_cursor_events(true);
 
-    // Handle window events
+    // Prevent closing - hide instead
     let app_handle = app.clone();
     window.on_window_event(move |event| {
         if let WindowEvent::CloseRequested { api, .. } = event {
-            // Prevent closing, just hide instead
             api.prevent_close();
             if let Some(window) = app_handle.get_webview_window("overlay") {
                 let _ = window.hide();
@@ -94,35 +81,18 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
 
 /// Updates the overlay state and shows/hides it accordingly
 pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), String> {
-    use tracing::{info, error, warn};
-
-    info!("update_overlay_state called with state: {:?}", state);
-
-    // Get or create overlay window
     let window = match app.get_webview_window("overlay") {
-        Some(w) => {
-            info!("Overlay window found");
-            w
-        }
-        None => {
-            warn!("Overlay window not found, creating new one");
-            create_overlay_window(app)?
-        }
+        Some(w) => w,
+        None => create_overlay_window(app)?,
     };
 
-    info!("Emitting overlay state: {:?}", state);
-    // Emit state directly to overlay window (broadcast as fallback)
+    // Emit state event to overlay window
     let _ = window.emit("overlay:state", &state);
     let _ = app.emit("overlay:state", &state);
 
-    // Keep overlay visible; visual state is handled by CSS opacity.
-    info!("Showing overlay ({:?} state)", state);
-    window.show().map_err(|e| {
-        error!("Failed to show overlay: {}", e);
-        format!("Failed to show overlay: {}", e)
-    })?;
+    // Keep overlay visible; visual state is handled by CSS opacity
+    window.show().map_err(|e| format!("Failed to show overlay: {}", e))?;
     let _ = window.set_always_on_top(true);
-    info!("Overlay window.show() succeeded");
 
     let state_str = match state {
         OverlayState::Idle => "idle",
@@ -130,11 +100,10 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
         OverlayState::Recording => "recording",
         OverlayState::Transcribing => "transcribing",
     };
-    // Call setOverlayState JS function (new simple overlay)
     let js = format!("if(window.setOverlayState){{window.setOverlayState('{}');}}", state_str);
     let _ = window.eval(&js);
 
-    // Re-emit after a short delay to ensure the overlay webview is ready.
+    // Re-emit after a short delay to ensure the overlay webview is ready
     let app_handle = app.clone();
     let state_clone = state.clone();
     thread::spawn(move || {
@@ -172,7 +141,6 @@ fn resolve_overlay_position(window: &WebviewWindow, settings: &OverlaySettings, 
 pub fn resolve_overlay_position_for_settings(app: &AppHandle, settings: &OverlaySettings) -> Option<(f64, f64)> {
     let window = app.get_webview_window("overlay")?;
 
-    // Calculate size based on style
     let (width, height) = if settings.style == "kitt" {
         let w = settings.kitt_max_width.max(settings.kitt_min_width).max(50.0) + 32.0;
         let h = settings.kitt_height.max(8.0) + 32.0;
@@ -194,6 +162,8 @@ pub fn resolve_overlay_position_for_settings(app: &AppHandle, settings: &Overlay
     }
 }
 
+/// Applies overlay settings by resizing/repositioning the window and updating
+/// the frontend via window.eval(). This is the primary settings application path.
 pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Result<(), String> {
     let window = match app.get_webview_window("overlay") {
         Some(w) => w,
@@ -202,12 +172,10 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
 
     // Calculate window size based on style
     let (width, height) = if settings.style == "kitt" {
-        // KITT mode: rectangular window
         let w = settings.kitt_max_width.max(settings.kitt_min_width).max(50.0) + 32.0;
         let h = settings.kitt_height.max(8.0) + 32.0;
         (w, h)
     } else {
-        // Dot mode: square window
         let max_radius = settings.max_radius.max(settings.min_radius).max(4.0);
         let size = (max_radius * 2.0 + 96.0).max(64.0);
         (size, size)
@@ -223,28 +191,18 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
         y: pos_y,
     }));
 
-    if !OVERLAY_JS_READY.load(Ordering::Relaxed)
-        && !OVERLAY_RETRY_PENDING.swap(true, Ordering::Relaxed)
-    {
-        let app_handle = app.clone();
-        let settings_clone = settings.clone();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(250));
-            OVERLAY_RETRY_PENDING.store(false, Ordering::Relaxed);
-            let _ = apply_overlay_settings(&app_handle, &settings_clone);
-        });
-    }
-
     // Update overlay via JS functions
     let js = format!(
-        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}if(window.setKittDimensions){{window.setKittDimensions({},{},{});}}",
+        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}if(window.setKittDimensions){{window.setKittDimensions({},{},{});}}if(window.setDotDimensions){{window.setDotDimensions({},{});}}",
         settings.color,
         settings.opacity_active,
         settings.opacity_inactive,
         settings.style,
         settings.kitt_min_width,
         settings.kitt_max_width,
-        settings.kitt_height
+        settings.kitt_height,
+        settings.min_radius,
+        settings.max_radius
     );
     let _ = window.eval(&js);
 

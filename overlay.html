@@ -16,28 +16,27 @@
       #container {
         width: 100vw;
         height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         position: relative;
       }
 
       #dot {
-        position: absolute;
         width: 16px;
         height: 16px;
         border-radius: 50%;
         background: #ff3d2e;
         transition: opacity 0.12s ease-out, width 0.05s ease-out, height 0.05s ease-out;
-        transform: translate(-50%, -50%);
       }
 
       #kitt {
-        position: absolute;
         display: none;
         width: 20px;
         height: 20px;
         border-radius: 4px;
         background: #ff3d2e;
         transition: opacity 0.12s ease-out, width 0.05s ease-out;
-        transform: translate(-50%, -50%);
       }
 
       #transcribe-indicator {
@@ -198,18 +197,6 @@
         dot.style.height = size + "px";
       };
 
-      window.setOverlayPosition = function(percentX, percentY) {
-        // Convert percentage (0-100) to pixels based on window size
-        const clampedX = Math.max(0, Math.min(100, percentX));
-        const clampedY = Math.max(0, Math.min(100, percentY));
-        const pixelX = (window.innerWidth * clampedX) / 100;
-        const pixelY = (window.innerHeight * clampedY) / 100;
-        dot.style.left = pixelX + "px";
-        dot.style.top = pixelY + "px";
-        kitt.style.left = pixelX + "px";
-        kitt.style.top = pixelY + "px";
-      };
-
       window.setOverlayLevel = function(level) {
         const clamped = Math.max(0, Math.min(1, level));
         if (currentStyle === "kitt") {
@@ -246,8 +233,6 @@
         const inactiveOpacity = isKitt
           ? (payload.overlay_kitt_opacity_inactive ?? payload.overlay_opacity_inactive)
           : payload.overlay_opacity_inactive;
-        const posX = isKitt ? (payload.overlay_kitt_pos_x ?? payload.overlay_pos_x) : payload.overlay_pos_x;
-        const posY = isKitt ? (payload.overlay_kitt_pos_y ?? payload.overlay_pos_y) : payload.overlay_pos_y;
         const minWidth = payload.overlay_kitt_min_width ?? kittMinWidth;
         const maxWidth = payload.overlay_kitt_max_width ?? kittMaxWidth;
         const height = payload.overlay_kitt_height ?? kittHeight;
@@ -262,9 +247,7 @@
         window.setOverlayStyle(style);
         window.setKittDimensions(minWidth, maxWidth, height);
         window.setDotDimensions(minRadius, maxRadius);
-        if (typeof posX === "number" && typeof posY === "number") {
-          window.setOverlayPosition(posX, posY);
-        }
+        // Position is handled by Rust via window.set_position() - no JS positioning needed
       }
 
       // Load initial settings from backend

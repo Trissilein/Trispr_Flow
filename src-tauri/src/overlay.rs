@@ -115,27 +115,35 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
 }
 
 fn resolve_overlay_position(window: &WebviewWindow, settings: &OverlaySettings, width: f64, height: f64) -> (f64, f64) {
-    let mut anchor_x = settings.pos_x;
-    let mut anchor_y = settings.pos_y;
+    // pos_x and pos_y are stored as percentages (0-100)
+    // Convert to absolute monitor coordinates, then to window position
 
-    let is_default = anchor_x <= 16.0 && anchor_y <= 16.0;
-    if is_default {
-        if let Some(monitor) = window.current_monitor().ok().flatten().or_else(|| window.primary_monitor().ok().flatten()) {
-            let scale = monitor.scale_factor();
-            let size_px = monitor.size();
-            let pos_px = monitor.position();
-            let width = size_px.width as f64 / scale;
-            let height = size_px.height as f64 / scale;
-            let origin_x = pos_px.x as f64 / scale;
-            let origin_y = pos_px.y as f64 / scale;
-            anchor_x = origin_x + width * 0.5;
-            anchor_y = origin_y + height - 30.0;
-        }
+    if let Some(monitor) = window.current_monitor().ok().flatten().or_else(|| window.primary_monitor().ok().flatten()) {
+        let scale = monitor.scale_factor();
+        let size_px = monitor.size();
+        let pos_px = monitor.position();
+
+        // Monitor dimensions in logical pixels
+        let monitor_width = size_px.width as f64 / scale;
+        let monitor_height = size_px.height as f64 / scale;
+        let origin_x = pos_px.x as f64 / scale;
+        let origin_y = pos_px.y as f64 / scale;
+
+        // Convert percentage (0-100) to absolute screen coordinate
+        let percent_x = settings.pos_x.max(0.0).min(100.0);
+        let percent_y = settings.pos_y.max(0.0).min(100.0);
+
+        let anchor_x = origin_x + (monitor_width * percent_x / 100.0);
+        let anchor_y = origin_y + (monitor_height * percent_y / 100.0);
+
+        // Position window so its center is at the anchor point
+        let pos_x = anchor_x - width * 0.5;
+        let pos_y = anchor_y - height * 0.5;
+        (pos_x, pos_y)
+    } else {
+        // Fallback if monitor info unavailable (shouldn't happen)
+        (0.0, 0.0)
     }
-
-    let pos_x = anchor_x - width * 0.5;
-    let pos_y = anchor_y - height * 0.5;
-    (pos_x, pos_y)
 }
 
 pub fn resolve_overlay_position_for_settings(app: &AppHandle, settings: &OverlaySettings) -> Option<(f64, f64)> {

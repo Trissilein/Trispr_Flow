@@ -40,6 +40,7 @@ pub(crate) fn resolve_models_dir(app: &AppHandle) -> PathBuf {
 }
 
 pub(crate) fn resolve_whisper_cli_path() -> Option<PathBuf> {
+  // 1. Explicit env var override
   if let Ok(path) = std::env::var("TRISPR_WHISPER_CLI") {
     let candidate = PathBuf::from(path);
     if candidate.exists() {
@@ -48,19 +49,40 @@ pub(crate) fn resolve_whisper_cli_path() -> Option<PathBuf> {
   }
 
   let mut candidates = Vec::new();
+
+  // 2. Next to our own executable (installed app)
+  //    Installer places binaries in bin/cuda/ or bin/vulkan/ based on GPU choice.
+  if let Ok(exe) = std::env::current_exe() {
+    if let Some(exe_dir) = exe.parent() {
+      // Backend subdirectories (installed app)
+      for backend in &["cuda", "vulkan"] {
+        candidates.push(exe_dir.join(format!("bin/{}/whisper-cli.exe", backend)));
+        candidates.push(exe_dir.join(format!("bin/{}/whisper-cli", backend)));
+      }
+      // Flat layout fallback
+      candidates.push(exe_dir.join("bin/whisper-cli.exe"));
+      candidates.push(exe_dir.join("bin/whisper-cli"));
+      candidates.push(exe_dir.join("whisper-cli.exe"));
+      candidates.push(exe_dir.join("whisper-cli"));
+    }
+  }
+
+  // 3. Relative to CWD (dev mode)
   if let Ok(cwd) = std::env::current_dir() {
-    candidates.push(cwd.join("whisper-cli"));
     candidates.push(cwd.join("whisper-cli.exe"));
-    candidates.push(cwd.join("../whisper.cpp/build/bin/whisper-cli"));
-    candidates.push(cwd.join("../whisper.cpp/build/bin/whisper-cli.exe"));
-    candidates.push(cwd.join("../whisper.cpp/build/bin/Release/whisper-cli.exe"));
-    candidates.push(cwd.join("../whisper.cpp/build-cpu/bin/whisper-cli"));
-    candidates.push(cwd.join("../whisper.cpp/build-cpu/bin/whisper-cli.exe"));
-    candidates.push(cwd.join("../whisper.cpp/build-cpu/bin/Release/whisper-cli.exe"));
-    candidates.push(cwd.join("../whisper.cpp/build-cuda/bin/whisper-cli"));
-    candidates.push(cwd.join("../whisper.cpp/build-cuda/bin/whisper-cli.exe"));
-    candidates.push(cwd.join("../whisper.cpp/build-cuda/bin/Release/whisper-cli.exe"));
-    candidates.push(cwd.join("../../whisper.cpp/build/bin/whisper-cli"));
+    candidates.push(cwd.join("whisper-cli"));
+    for build_dir in &[
+      "../whisper.cpp/build/bin",
+      "../whisper.cpp/build/bin/Release",
+      "../whisper.cpp/build-cpu/bin",
+      "../whisper.cpp/build-cpu/bin/Release",
+      "../whisper.cpp/build-cuda/bin",
+      "../whisper.cpp/build-cuda/bin/Release",
+      "../whisper.cpp/build-vulkan/bin",
+      "../whisper.cpp/build-vulkan/bin/Release",
+    ] {
+      candidates.push(cwd.join(format!("{}/whisper-cli.exe", build_dir)));
+    }
   }
 
   for path in candidates {

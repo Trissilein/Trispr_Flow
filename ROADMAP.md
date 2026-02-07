@@ -143,6 +143,36 @@ For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
   - Optional Claude API integration for advanced processing
 - **Language-specific rules** (English, German)
 
+### Speaker-Aware Meeting Transcription (VibeVoice-ASR Integration)
+
+- **Goal**: After a meeting/recording session, analyze the full audio and produce a speaker-diarized transcript
+- **Model**: Microsoft VibeVoice-ASR 7B (MIT license, open-source)
+  - Up to 60 minutes continuous audio in a single pass
+  - Built-in speaker diarization (who spoke when)
+  - Timestamps per segment
+  - 50+ languages, customizable hotwords
+  - Requires ~14-16 GB VRAM (FP16) or ~7-8 GB (INT8 quantized)
+- **Architecture**: Python FastAPI sidecar in `sidecar/vibevoice-asr/`
+  - Runs as background process on localhost (no user-facing UI)
+  - Lazy model loading (first "Analyse" click loads model into VRAM)
+  - Tauri manages sidecar lifecycle (start/stop/health-check)
+  - Packaged as standalone `.exe` via PyInstaller (no Python required on user machine)
+- **Audio Format**: WAV (16-bit, 24kHz mono, ~170 MB/60 min) — simplest to capture, universally compatible. Migration to Opus possible later if storage matters.
+- **Workflow**:
+  1. Output Capture records meeting audio → saves WAV file in background
+  2. User clicks "Analyse" button after meeting
+  3. WAV sent to local VibeVoice-ASR server → POST `/transcribe`
+  4. Server returns JSON: `{ segments: [{ speaker_id, start_time, end_time, text }] }`
+  5. Frontend renders speaker-diarized transcript (color-coded by speaker)
+- **Coexistence with Whisper**: Sequential — Whisper handles live transcription during recording, VibeVoice-ASR does post-session analysis with speaker separation
+- **Tasks**:
+  - ⚪ Set up `sidecar/vibevoice-asr/` project structure (FastAPI + requirements)
+  - ⚪ Implement `/transcribe` endpoint with VibeVoice-ASR model
+  - ⚪ Add WAV recording to Output Capture pipeline (save alongside live transcription)
+  - ⚪ Rust: sidecar process management (start/stop/health)
+  - ⚪ Frontend: "Analyse" button + speaker-diarized transcript view
+  - ⚪ PyInstaller packaging for standalone sidecar executable
+
 ### Long-Form Transcription
 - **Live Transcript Dump**: Export ongoing transcripts (TXT, MD, JSON)
 - **Chapter Summarization**: Automatic segmentation for meetings, lectures

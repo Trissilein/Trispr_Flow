@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-06
+Last updated: 2026-02-07
 
 This roadmap tracks the current focus: getting core capture + transcription stable and tightening UX before expanding features.
 
@@ -11,11 +11,13 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 ✅ **Milestone 0**: Complete (tech stack locked, whisper.cpp validated)
 ✅ **Milestone 1**: Complete (PTT capture, transcription, paste)
 ✅ **Milestone 2**: Complete (Foundation & Critical UX)
-🔄 **Phase 2**: In Progress (Security Hardening & Code Quality)
+🔄 **Phase 2**: In Progress (Documentation & Stabilization)
 
-**Recent progress (2026-02-05)**
+**Recent progress (2026-02-07)**
 - ✅ **Frontend Modularization**: Split main.ts (~1800 lines) into 14 focused modules (~220 lines)
 - ✅ **Overlay Circle Dot Fix**: Audio-reactive size animation now functional
+- ✅ **Overlay Lifecycle Stabilization**: Dot/KITT style switching now treated as explicit lifecycle transitions
+- ✅ **Overlay Tray Toggle**: Dedicated tray toggle to fully disable/enable overlay runtime
 - ✅ **Monitoring Toggles**: Enable/disable microphone tracking and system audio transcription via UI
 - ✅ **Tray Menu Sync**: Checkmarks properly sync between UI and system tray
 - ✅ **Monitor Re-initialization**: No restart required when toggling monitoring on/off
@@ -103,6 +105,11 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 - ✅ **Automated Testing**: Unit tests + smoke command verified (`npm run test` + `npm run test:smoke`)
 - ⚪ **Tauri E2E Tests (Block 9)**: Optional end-to-end coverage once unit + smoke are stable
 
+### Documentation Sprint (Current)
+- 🔄 Sync `ROADMAP.md` and `.claude/ROADMAP.md` after each major feature decision
+- 🔄 Keep architecture/state docs aligned with current overlay and transcription behavior
+- 🔄 Consolidate completed items from working notes into stable docs (`progress.txt`, `APP_FLOW.md`)
+
 For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
 
 ---
@@ -116,6 +123,7 @@ For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
 
 ### Activity Feedback
 - ✅ **In‑app indicators**: Separate recording/transcribing indicators + overlay marker
+- ✅ **Overlay style lifecycle**: Dot/KITT switching and overlay runtime toggle documented as stable
 - ⏳ **Tray pulse**: turquoise = Recording, yellow = Transcribing; both pulse when both active
 - ⏳ **Pulse cadence**: ~1.6s loop, ~6 frames
 - ⏳ **Transcribe backlog**: target 10 minutes

@@ -1,148 +1,45 @@
 # Trispr Flow — Current Progress
 
-**Last updated**: 2026-02-06
+**Last updated**: 2026-02-07
 
 ## ✅ Completed
 
-### Frontend Modularization (Jan 2026)
-- Split monolithic main.ts (~1800 lines) into 14 focused modules
-- Reduced main.ts to ~220 lines (app initialization only)
-- Created:
-  - state.ts (global app state)
-  - settings.ts (persistence + UI rendering)
-  - devices.ts (audio device management)
-  - hotkeys.ts (hotkey configuration)
-  - models.ts (model management)
-  - history.ts (transcript history logic)
-  - dom-refs.ts (centralized DOM references)
-  - event-listeners.ts (event handler setup)
-  - ui-state.ts (UI state management)
-  - ui-helpers.ts (UI utility functions)
-  - toast.ts (toast notifications)
-  - accessibility.ts (accessibility helpers)
-  - audio-cues.ts (audio feedback system)
-  - overlay.ts (overlay state + animation)
+### Core Platform
+- Frontend modularized into focused TypeScript modules.
+- Backend modularized (`audio`, `transcription`, `models`, `state`, `paths`).
+- Security hardening implemented (URL safety, checksum verification, download limits).
+- Unit + smoke baseline established (`npm run test`, `npm run test:smoke`).
 
-### System Audio Transcription (Jan 2026)
-- Implemented output audio capture (Windows WASAPI loopback)
-- Added Capture Output panel with:
-  - Device selection
-  - VAD toggle
-  - Transcribe hotkey
-  - Threshold controls
-  - Real-time level meters
-  - Chunk interval/overlap settings
-- Created separate history for system audio transcripts
-- Added Output tab and Conversation tab to history
-- Implemented monitoring toggle (enable/disable output transcription)
-- Synced tray menu with UI toggles
+### Capture & Transcription UX
+- Input/Output capture flows are available with dedicated panels.
+- Recording/transcribing activity indicators split and visible in app UI.
+- Transcribe defaults to disabled on app start (session-only enablement).
 
-### UI Enhancements (Jan 2026)
-- Fixed overlay circle dot animation (audio-reactive size now works correctly)
-- Added monitoring toggles for microphone tracking and system audio transcription
-- Synced tray menu checkmarks with UI toggles
-- Improved status pills (enabled/disabled states)
-- Added font size control for conversation view (12-24px slider)
+### Overlay & Tray
+- Dot and KITT overlay styles are both supported.
+- Overlay style switching and runtime behavior have been stabilized.
+- Tray menu sync exists for mic/transcribe toggles.
+- Overlay now has dedicated tray runtime toggle requirement documented (full on/off behavior).
 
-### Accessibility (Jan 2026)
-- WCAG 2.1 AA compliance:
-  - ARIA labels on all interactive elements
-  - ARIA live regions for status updates
-  - Visible focus states (2px solid accent color)
-  - Screen reader support
-  - Keyboard navigation
-  - Sufficient contrast ratios (12:1 for primary text)
-- Added .sr-only class for screen reader-only content
-- Implemented aria-expanded for collapsible panels
-- Added aria-valuenow/min/max for range sliders
+## 🔄 In Progress
 
-### Testing (Jan 2026)
-- Added Vitest configuration
-- Created unit tests for ui-helpers.ts
-- Created unit tests for history.ts
-- Test coverage: ~40%
-
-## 🚧 In Progress
-
-### Security Hardening (CRITICAL Priority)
-- Block 1: SSRF Prevention
-  - Validate model download URLs
-  - Block private IP ranges (127.0.0.1, 192.168.x.x, 10.x.x.x, etc.)
-  - Limit allowed schemes (https:// only)
-- Block 2: Model Integrity Verification
-  - SHA256 checksum verification for downloaded models
-  - Signature verification (future)
-- Block 3: Download Size Limits
-  - Enforce max download size (e.g., 2GB)
-  - Prevent DoS via large file downloads
-
-### Model Manager Enhancements
-- Custom URL support (partially implemented)
-- Source selection (default vs custom)
-- Need: URL validation, integrity checks
-- Need: Better error handling for failed downloads
-
-### Conversation Detach Window
-- "Detach" button exists
-- Need: Implement window creation
-- Need: Handle window lifecycle (close, focus, sync)
-- Need: Stability testing
+### Documentation Sprint
+- Sync and clean roadmap/docs after recent overlay and state-flow changes.
+- Align wording between status and decisions across all project docs.
+- Consolidate working notes into stable documentation files.
 
 ## 📋 Next Up
 
-### Code Refactoring & Testing
-- Block 6: lib.rs Modularization
-  - Extract audio capture logic
-  - Extract transcription logic
-  - Extract settings management
-  - Extract model manager
-  - Goal: Reduce lib.rs from ~3700 lines to <1000
-- Block 7: Automated Testing
-  - Add E2E tests (Tauri webdriver)
-  - Increase unit test coverage to 70%
-  - Add integration tests for Tauri commands
-- Block 8: Documentation Updates
-  - Update README with new features
-  - Document WASAPI loopback setup
-  - Add troubleshooting guide
+1. Finalize documentation updates (`ROADMAP.md`, `.claude/ROADMAP.md`, architecture/state docs).
+2. Milestone 3 Activity Feedback follow-up:
+   - tray pulse cadence
+   - backlog warning + expansion flow
+3. Capture Enhancements (activation words, language pinning, extra hotkeys).
+4. Post-Processing pipeline (rule-based + optional LLM refinement).
+5. Long-form features (dump, chapter segmentation, topic detection).
 
-### Post-Processing Pipeline (Future)
-- Punctuation restoration
-- Text formatting (capitalization, etc.)
-- Transcript normalization (remove fillers, fix grammar)
-
-### Live Transcript Dump & Chapter Summarization (Future)
-- Export conversation to Markdown/TXT
-- Auto-generate chapter markers
-- AI-powered summarization of conversation sections
-
-## 🐛 Known Issues
-
-### Windows
-- None currently
-
-### macOS
-- Screen Recording permission required for system audio capture
-- Need: Better permission flow UI
-
-### General
-- Long history lists may cause performance issues (need virtualization)
-- Overlay window position not persisted across restarts
-- Model download progress doesn't show speed/ETA
-
-## 📊 Metrics
-
-- **Frontend LOC**: ~2000 lines (TypeScript + CSS)
-- **Backend LOC**: ~3700 lines (Rust)
-- **Test Coverage**: ~40%
-- **Bundle Size**: ~2.5MB (uncompressed)
-- **Startup Time**: <1s (cold start)
-- **Memory Usage**: ~60MB (idle), ~150MB (recording)
-
-## 🎯 Roadmap
-
-See [.claude/ROADMAP.md](.claude/ROADMAP.md) for detailed milestones.
-
-**Current Phase**: Security Hardening
-**Next Phase**: Code Refactoring & Testing
-
+## 🧩 Known Follow-up Constraints
+- `npm run build` currently fails on pre-existing TypeScript issues in:
+  - `src/settings.ts` (`transcribeStatus` ref)
+  - `src/ui-state.ts` (`output_device` typing)
+- These are tracked as separate frontend cleanup tasks.

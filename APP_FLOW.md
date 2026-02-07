@@ -11,7 +11,7 @@ Trispr Flow is a **single-page desktop app** (no routes/navigation). All functio
 ### Windows
 1. **Main Window** (`index.html`) — Primary UI with all panels
 2. **Overlay Window** (`overlay.html`) — Always-on-top visual feedback during recording
-3. **Conversation Detach Window** (planned) — Standalone conversation view
+3. **Conversation Detach Window** — Standalone conversation view
 
 ---
 
@@ -58,7 +58,7 @@ Trispr Flow is a **single-page desktop app** (no routes/navigation). All functio
 **Purpose**: High-level status + quick stats
 
 **Elements**:
-- **Badge**: "Offline dictation" (or "Claude fallback" when cloud is enabled)
+- **Badge**: "Private Mode (Offline)" (or "AI-enhanced Mode (Online)")
 - **Title**: Trispr Flow
 - **Subtitle**: App description
 - **Status Pills**:
@@ -66,14 +66,14 @@ Trispr Flow is a **single-page desktop app** (no routes/navigation). All functio
   - Transcribing pill (Transcribing / Idle)
   - Status dots (animated, color-coded)
 - **Hero Card**:
-  - Claude fallback toggle
+  - AI fallback toggle
   - Input Transcription status
   - Capture Mode (PTT / VAD)
   - Output Transcription status
   - Model name
 
 **User Actions**:
-- Toggle Claude fallback
+- Toggle AI fallback
 - View current state at a glance
 
 ---

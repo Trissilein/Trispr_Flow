@@ -4,6 +4,19 @@
 
 ---
 
+## Overlay Runtime State (Current)
+
+The overlay now has an explicit runtime enable/disable state and style separation:
+
+- `overlay_enabled`: global runtime gate (on/off)
+- `overlay_style`: selected style (`dot` or `kitt`)
+- style-specific config remains separate (`overlay_*` vs `overlay_kitt_*`)
+
+Behavioral rule:
+- Switching style should be treated as a lifecycle transition (load target style runtime, unload previous style runtime), not as a simple visual hide/show.
+
+---
+
 ## 🔄 Loading States
 
 ### Button Loading

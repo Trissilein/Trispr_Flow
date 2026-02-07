@@ -108,7 +108,7 @@ Function CaptureModePage
     Abort
   ${EndIf}
 
-  ${NSD_CreateLabel} 0 0 100% 60u "Choose how you want to activate voice recording.$\\r$\\n$\\r$\\nPush-to-Talk: Hold a hotkey to record$\\r$\\nVoice Activation: Automatic recording when you speak$\\r$\\n$\\r$\\nYou can change this later in the app settings."
+  ${NSD_CreateLabel} 0 0 100% 60u "Choose how you want to activate voice recording.$\r$\nPush-to-Talk: Hold a hotkey to record$\r$\nVoice Activation: Automatic recording when you speak$\r$\n$\r$\nYou can change this later in the app settings."
   Pop $CaptureModeLabel
 
   ${NSD_CreateRadioButton} 10u 70u 100% 14u "Push-to-Talk (PTT) - recommended"
@@ -138,6 +138,8 @@ FunctionEnd
   ; Write initial settings.json with all required fields and defaults.
   ; Only overlay_style is overridden by user choice; other fields use defaults.
   CreateDirectory "$APPDATA\com.trispr.flow"
+  ; Delete old settings.json to ensure fresh defaults on reinstalls/updates
+  Delete "$APPDATA\com.trispr.flow\settings.json"
   FileOpen $0 "$APPDATA\com.trispr.flow\settings.json" w
   FileWrite $0 '{'
   FileWrite $0 '"mode":"$CaptureModeChoice",'

@@ -1,5 +1,5 @@
 import { defineConfig } from "vite";
-import { resolve, basename } from "path";
+import { resolve } from "path";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -31,17 +31,14 @@ export default defineConfig(async () => ({
   build: {
     rollupOptions: {
       input: {
-        main: resolve(__dirname, 'index.html'),
-        overlay: resolve(__dirname, 'overlay.html'),
+        main: resolve(__dirname, "index.html"),
+        overlay: resolve(__dirname, "overlay.html"),
       },
       output: {
-        assetFileNames: (assetInfo) => {
-          // Ensure HTML files use flat names without paths
-          if (assetInfo.name && assetInfo.name.endsWith('.html')) {
-            return basename(assetInfo.name);
-          }
-          return 'assets/[name]-[hash][extname]';
-        },
+        // Ensure all HTML files output with simple names (no paths)
+        entryFileNames: "[name].js",
+        chunkFileNames: "assets/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash][extname]",
       },
     },
   },

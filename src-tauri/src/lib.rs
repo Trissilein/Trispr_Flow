@@ -782,9 +782,16 @@ pub fn run() {
       }
 
       if settings.mode == "vad" && settings.capture_enabled {
-        if let Err(err) = crate::audio::start_vad_monitor(app.handle(), &app.state::<AppState>(), &settings) {
-          eprintln!("⚠ Failed to start VAD monitor: {}", err);
-        }
+        // Delay VAD start by 2 seconds to allow models to load on first startup
+        let app_handle = app.handle().clone();
+        let settings_clone = settings.clone();
+        std::thread::spawn(move || {
+          std::thread::sleep(std::time::Duration::from_secs(2));
+          let state = app_handle.state::<AppState>();
+          if let Err(err) = crate::audio::start_vad_monitor(&app_handle, &state, &settings_clone) {
+            eprintln!("⚠ Failed to start VAD monitor: {}", err);
+          }
+        });
       }
 
       let overlay_app = app.handle().clone();
@@ -797,22 +804,7 @@ pub fn run() {
         eprintln!("⚠ Failed to create overlay window: {}", err);
       }
       let overlay_settings = build_overlay_settings(&settings);
-      if let Some((pos_x, pos_y)) =
-        overlay::resolve_overlay_position_for_settings(&app.handle(), &overlay_settings)
-      {
-        if overlay_settings.style == "kitt" {
-          settings.overlay_kitt_pos_x = pos_x;
-          settings.overlay_kitt_pos_y = pos_y;
-        } else {
-          settings.overlay_pos_x = pos_x;
-          settings.overlay_pos_y = pos_y;
-        }
-        if let Ok(mut current) = app.state::<AppState>().settings.lock() {
-          *current = settings.clone();
-        }
-        let _ = save_settings_file(app.handle(), &settings);
-      }
-      let _ = overlay::apply_overlay_settings(&app.handle(), &build_overlay_settings(&settings));
+      let _ = overlay::apply_overlay_settings(&app.handle(), &overlay_settings);
       let _ = overlay::update_overlay_state(&app.handle(), overlay::OverlayState::Idle);
 
       let icon = {

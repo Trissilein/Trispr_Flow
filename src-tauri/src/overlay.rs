@@ -151,11 +151,11 @@ pub fn resolve_overlay_position_for_settings(app: &AppHandle, settings: &Overlay
 
     let (width, height) = if settings.style == "kitt" {
         let w = settings.kitt_max_width.max(settings.kitt_min_width).max(50.0) + 32.0;
-        let h = settings.kitt_height.max(8.0) + 32.0;
+        let h = settings.kitt_height.max(8.0) + 32.0 + 18.0;  // +18px for transcribe indicator
         (w, h)
     } else {
         let max_radius = settings.max_radius.max(settings.min_radius).max(4.0);
-        let size = (max_radius * 2.0 + 96.0).max(64.0);
+        let size = (max_radius * 2.0 + 96.0 + 20.0).max(64.0);  // +20px for transcribe indicator
         (size, size)
     };
 
@@ -179,13 +179,14 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
     };
 
     // Calculate window size based on style
+    // Add extra height for transcribe indicator positioned above the main element
     let (width, height) = if settings.style == "kitt" {
         let w = settings.kitt_max_width.max(settings.kitt_min_width).max(50.0) + 32.0;
-        let h = settings.kitt_height.max(8.0) + 32.0;
+        let h = settings.kitt_height.max(8.0) + 32.0 + 18.0;  // +18px for transcribe indicator
         (w, h)
     } else {
         let max_radius = settings.max_radius.max(settings.min_radius).max(4.0);
-        let size = (max_radius * 2.0 + 96.0).max(64.0);
+        let size = (max_radius * 2.0 + 96.0 + 20.0).max(64.0);  // +20px for transcribe indicator
         (size, size)
     };
 

@@ -48,16 +48,14 @@
         background: rgba(245, 179, 66, 0.15);
         box-shadow: 0 0 8px rgba(245, 179, 66, 0.6);
         opacity: 0;
-        top: -14px;
-        left: 50%;
-        transform: translateX(-50%) scale(0.8);
+        transform: scale(0.8);
         transition: opacity 0.16s ease-out, transform 0.16s ease-out;
         pointer-events: none;
       }
 
       #container[data-state="transcribing"] #transcribe-indicator {
         opacity: 1;
-        transform: translateX(-50%) scale(1);
+        transform: scale(1);
       }
 
       /* KITT-specific transcribe indicator styling */
@@ -65,12 +63,12 @@
         width: 24px;
         height: 12px;
         border-radius: 3px;
-        top: -16px;
+        transform: scale(0.8);
       }
 
       #container[data-style="kitt"][data-state="transcribing"] #transcribe-indicator {
         opacity: 1;
-        transform: translateX(-50%) scale(1);
+        transform: scale(1);
       }
 
       /* Dot mode (default): show dot, hide kitt */

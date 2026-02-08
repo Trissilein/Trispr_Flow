@@ -69,6 +69,18 @@ Function InstallModePageLeave
     StrCpy $InstallModeChoice "install"
   ${Else}
     StrCpy $InstallModeChoice "uninstall"
+    ; User chose uninstall - run uninstaller and quit installer
+    MessageBox MB_YESNO "Do you want to uninstall Trispr Flow?" IDYES DoUninstall
+    Abort  ; Cancel if user clicks No
+
+    DoUninstall:
+      ; Check if uninstaller exists
+      IfFileExists "$INSTDIR\uninstall.exe" +1 NoUninstaller
+        ExecWait '"$INSTDIR\uninstall.exe" _?=$INSTDIR'
+        Quit
+      NoUninstaller:
+        MessageBox MB_OK|MB_ICONEXCLAMATION "Uninstaller not found. The application may not be installed."
+        Quit
   ${EndIf}
 FunctionEnd
 
@@ -194,7 +206,7 @@ FunctionEnd
   FileWrite $0 '"hotkey_toggle":"CommandOrControl+Shift+M",'
   FileWrite $0 '"input_device":"default",'
   FileWrite $0 '"language_mode":"auto",'
-  FileWrite $0 '"model":"whisper-large-v3",'
+  FileWrite $0 '"model":"whisper-large-v3-turbo",'
   FileWrite $0 '"cloud_fallback":false,'
   FileWrite $0 '"audio_cues":true,'
   FileWrite $0 '"audio_cues_volume":0.3,'
@@ -254,6 +266,9 @@ FunctionEnd
     ; Keep vulkan, remove cuda
     RMDir /r "$INSTDIR\bin\cuda"
   ${EndIf}
+
+  ; Create models directory for future use (app will download model on first start)
+  CreateDirectory "$APPDATA\com.trispr.flow\models"
 
   SkipPostInstall:
 !macroend

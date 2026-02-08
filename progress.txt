@@ -23,6 +23,13 @@
 - Tray menu sync exists for mic/transcribe toggles.
 - Overlay now has dedicated tray runtime toggle requirement documented (full on/off behavior).
 
+### Model Optimization
+- Quantizer (quantize.exe from whisper.cpp) integrated for model compression to q5_0 format (~30% size reduction).
+- Optimize button added to Model Manager for user-initiated quantization.
+- Model descriptions for all q5_0 variants (large-v3-turbo, large-v3, distil-large-v3, german-turbo).
+- Quantizer bundled in NSIS installer; build-quantize.bat script for manual builds.
+- Hero model display expanded to 2 lines for longer quantized model names.
+
 ## 🔄 In Progress
 
 ### Documentation Sprint

@@ -30,6 +30,9 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 - ✅ **Model Manager**: Single-list layout, active-first ordering, 2-column grid
 - ✅ **Model Downloads**: German turbo URL fix + filename mapping
 - ✅ **Model Removal**: Delete (internal) vs Remove (external) with rescan on Refresh
+- ✅ **Model Quantization**: Optimize button for q5_0 compression (~30% size reduction), all variants labeled
+- ✅ **Quantizer Bundling**: quantize.exe integrated into NSIS installer, build scripts for updates
+- ✅ **Hero UI**: Model display expanded to 2 lines for longer quantized model names
 
 **Previous milestones**
 - ✅ System audio capture via WASAPI (Windows) + transcribe hotkey

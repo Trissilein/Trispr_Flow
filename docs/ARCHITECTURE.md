@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-02-06
+Last updated: 2026-02-08
 
 ## Frontend architecture
 - Stack: Tauri 2 + vanilla TypeScript + Vite
@@ -13,11 +13,11 @@ Last updated: 2026-02-06
 - `lib.rs`: command registration, app startup, tray/window integration, module wiring.
 - `audio.rs`: microphone capture, VAD runtime, overlay level emission.
 - `transcription.rs`: system audio transcription pipeline (WASAPI loopback, queue/chunking, post-capture flow).
-- `models.rs`: model index, download, checksum and safety validation.
+- `models.rs`: model index, download, checksum and safety validation, model quantization (q5_0 format).
 - `state.rs`: persisted settings defaults/migrations and shared app state.
 - `hotkeys.rs`: hotkey normalization, validation, conflict checks.
 - `overlay.rs`: overlay window lifecycle and state updates.
-- `paths.rs`: app config/data path resolution.
+- `paths.rs`: app config/data path resolution, quantize.exe resolution.
 
 ## Core data flows
 ### Input capture (PTT)
@@ -37,6 +37,13 @@ Last updated: 2026-02-06
 2. WASAPI loopback stream feeds chunker/VAD.
 3. Chunks are transcribed and appended to output history.
 4. UI receives `transcribe:state`, meter (`transcribe:level`/`transcribe:db`), and history update events.
+
+### Model Manager & Optimization
+
+1. Users browse installed and available models in the Model Manager panel.
+2. **Optimize** button quantizes full-size `.bin` models to `q5_0` format (~30% size reduction).
+3. Quantized model is created as separate entry (e.g., `model-q5_0.bin`) without restart.
+4. Users can apply quantized models immediately for faster inference with minimal accuracy loss.
 
 ### Conversation view
 - Conversation tab merges mic + output histories into a single time-ordered stream.

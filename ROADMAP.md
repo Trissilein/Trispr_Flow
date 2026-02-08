@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-07
+Last updated: 2026-02-08
 
 This roadmap tracks the current focus: getting core capture + transcription stable and tightening UX before expanding features.
 
@@ -13,7 +13,7 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 ✅ **Milestone 2**: Complete (Foundation & Critical UX)
 🔄 **Phase 2**: In Progress (Documentation & Stabilization)
 
-**Recent progress (2026-02-07)**
+**Recent progress (2026-02-08)**
 - ✅ **Frontend Modularization**: Split main.ts (~1800 lines) into 14 focused modules (~220 lines)
 - ✅ **Overlay Circle Dot Fix**: Audio-reactive size animation now functional
 - ✅ **Overlay Lifecycle Stabilization**: Dot/KITT style switching now treated as explicit lifecycle transitions
@@ -22,11 +22,14 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 - ✅ **Tray Menu Sync**: Checkmarks properly sync between UI and system tray
 - ✅ **Monitor Re-initialization**: No restart required when toggling monitoring on/off
 - ✅ **lib.rs Modularization**: Split backend into focused Rust modules
-- ✅ **Security Hardening**: SSRF prevention, checksum verification, download size limits
+- ✅ **Security Hardening**: URL safety (no whitelist), checksum verification, download size limits
 - ✅ **System Audio Robustness**: WASAPI loopback fixes + transcribe queue/idle meter
 - ✅ **Activity Indicators**: Separate recording/transcribing indicators + overlay marker
 - ✅ **Automated Testing Baseline**: Unit tests + smoke scripts verified locally
 - ✅ **Transcribe Default Disabled**: Session-only enable; always deactivated on startup
+- ✅ **Model Manager**: Single-list layout, active-first ordering, 2-column grid
+- ✅ **Model Downloads**: German turbo URL fix + filename mapping
+- ✅ **Model Removal**: Delete (internal) vs Remove (external) with rescan on Refresh
 
 **Previous milestones**
 - ✅ System audio capture via WASAPI (Windows) + transcribe hotkey
@@ -87,7 +90,7 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 ## Phase 2 — Security Hardening & Code Quality (In Progress)
 
 ### Critical Security Tasks (This Week)
-- ✅ **SSRF Prevention**: URL whitelist for model downloads
+- ✅ **SSRF Prevention**: URL safety checks (no whitelist) for model downloads
 - ✅ **Model Integrity**: SHA256 checksum verification
 - ✅ **Download Limits**: Size caps and timeout protection
 
@@ -128,6 +131,9 @@ For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
 - ⏳ **Pulse cadence**: ~1.6s loop, ~6 frames
 - ⏳ **Transcribe backlog**: target 10 minutes
 - ⏳ **80% warning**: prompt +50% expansion (repeatable)
+
+### Model Manager QoL
+- Apply model immediately without restart (unload/load or apply action)
 
 ### Capture Enhancements
 - Activation words ("over" / "stop") for continuous capture

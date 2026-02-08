@@ -1,6 +1,6 @@
 # Trispr Flow - Status
 
-Last updated: 2026-02-06
+Last updated: 2026-02-08
 
 ## Summary
 - Milestones 0-2 are complete; current phase is documentation updates.
@@ -10,13 +10,12 @@ Last updated: 2026-02-06
 - Voice Activation thresholds are controlled in dB (-60..0) and persisted as linear values.
 - Transcribe enablement is session-only and starts deactivated on each app launch.
 - whisper.cpp remains primary (GPU-first, CPU fallback); cloud/AI fallback remains optional.
-- Model manager supports default/custom sources, storage path picker, install/remove.
+- Model manager uses a single list with active-first ordering and internal Delete vs external Remove.
 
 ## Working today
 - Settings and histories persist to app config/data directories.
-- Unit tests pass (`npm run test`).
-- Smoke test passes (`npm run test:smoke`).
-- Documentation refreshed for architecture, development, and contribution workflow.
+- Unit + smoke baseline is available when needed (`npm run test`, `npm run test:smoke`).
+- Documentation refresh is in progress.
 
 ## Known gaps
 - Tray pulse feedback and backlog handling are still pending.
@@ -25,6 +24,7 @@ Last updated: 2026-02-06
 - Conversation window configurability (size/position/font/always-on-top) is pending.
 - Optional Tauri E2E coverage is pending.
 - macOS testing still pending.
+- Model switching requires restart; needs apply/unload flow.
 
 ## Build notes
 - whisper.cpp must be built separately (CUDA for NVIDIA; CPU fallback ok).

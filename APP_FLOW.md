@@ -40,9 +40,8 @@ Trispr Flow is a **single-page desktop app** (no routes/navigation). All functio
 ├──────────────────┴──────────────────────────────┤
 │ Model Manager                                   │
 │ ├── Source Selection                           │
-│ ├── Active Models                              │
-│ ├── Installed Models (expander)                │
-│ └── Available Models (expander)                │
+│ ├── Storage Path + Refresh                     │
+│ └── Model List (active border, available dim)  │
 ├─────────────────────────────────────────────────┤
 │ UX / UI Adjustments                            │
 │ ├── Overlay Style (Dot / KITT)                 │
@@ -198,31 +197,25 @@ Trispr Flow is a **single-page desktop app** (no routes/navigation). All functio
   - "Browse" button
   - "Reset" button
   - Hint: "Choose where downloaded models are stored"
-- **Active section**: Currently loaded model
-  - Model name
-  - Model size
-  - "Active" badge
-  - Model description
-- **Installed expander**: Downloaded models
-  - List of installed models
-  - Each shows: name, size, description
-  - "Select" button (to activate)
-  - "Delete" button
-- **Available expander**: Models to download
-  - List of remote models
-  - Each shows: name, size, description
-  - "Download" button
-  - Progress bar (during download)
+- **Model list** (single list):
+  - Active model has teal border
+  - Installed models show normal opacity
+  - Available models are dimmed
+  - Status pill: Active / Installed / Available / Downloading
+  - Path line shown for installed models
+  - Actions:
+    - **Delete** (internal installs) removes the file from disk
+    - **Remove** (external installs) hides the card until Refresh
+    - **Download** for available models
 
 **User Journey**:
 1. User opens Model Manager panel
-2. User sees active model (e.g., "ggml-tiny.en.bin")
-3. User expands "Available"
-4. User clicks "Download" on "ggml-base.en.bin"
-5. Progress bar shows download progress
-6. Model moves to "Installed" section
-7. User clicks "Select" → model becomes active
-8. Hero card updates to show new model name
+2. User sees active model (teal border)
+3. User clicks "Download" on an available model
+4. Progress bar shows download progress
+5. Model becomes installed and selectable
+6. User clicks model card → it becomes active
+7. Hero card updates to show new model name
 
 ---
 
@@ -421,4 +414,3 @@ Trispr Flow is a **single-page desktop app** (no routes/navigation). All functio
 
 **Last updated**: 2026-02-06
 **Version**: 1.0
-

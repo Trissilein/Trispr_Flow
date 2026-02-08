@@ -1,6 +1,6 @@
 # Trispr Flow — Current Progress
 
-**Last updated**: 2026-02-07
+**Last updated**: 2026-02-08
 
 ## ✅ Completed
 
@@ -9,6 +9,8 @@
 - Backend modularized (`audio`, `transcription`, `models`, `state`, `paths`).
 - Security hardening implemented (URL safety, checksum verification, download limits).
 - Unit + smoke baseline established (`npm run test`, `npm run test:smoke`).
+- Model manager refined (single list, active-first sorting, 2-column grid).
+- Model downloads fixed for DE turbo; delete vs remove semantics for internal/external models.
 
 ### Capture & Transcription UX
 - Input/Output capture flows are available with dedicated panels.

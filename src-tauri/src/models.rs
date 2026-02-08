@@ -336,11 +336,7 @@ fn extra_model_file(model_id: &str) -> Option<&'static str> {
 }
 
 fn model_candidates(spec: &ModelSpec) -> Vec<String> {
-  let mut candidates = vec![spec.file_name.to_string()];
-  if let Some(stripped) = spec.file_name.strip_suffix(".bin") {
-    candidates.push(format!("{stripped}-q5_0.bin"));
-  }
-  candidates
+  vec![spec.file_name.to_string()]
 }
 
 #[cfg(test)]
@@ -836,6 +832,10 @@ pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<Mod
       if seen_files.contains(&file_name) {
         continue;
       }
+      let label = match file_name.as_str() {
+        "ggml-large-v3-turbo-q5_0.bin" => "Whisper large-v3-turbo (q5_0)".to_string(),
+        _ => file_name.clone(),
+      };
       let size_mb = entry
         .metadata()
         .map(|m| (m.len() / (1024 * 1024)) as u32)
@@ -846,7 +846,7 @@ pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<Mod
         .to_string();
       models.push(ModelInfo {
         id,
-        label: file_name.clone(),
+        label,
         file_name: file_name.clone(),
         size_mb,
         installed: true,

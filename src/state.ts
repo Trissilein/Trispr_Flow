@@ -85,4 +85,10 @@ export const MODEL_DESCRIPTIONS: Record<
     accuracy: "High (EN‑focused)",
     languages: "Primarily English",
   },
+  "ggml-large-v3-turbo-q5_0": {
+    summary: "Quantized large-v3-turbo for smaller size and faster runtime.",
+    speed: "Fast",
+    accuracy: "Slightly lower",
+    languages: "Multilingual",
+  },
 };

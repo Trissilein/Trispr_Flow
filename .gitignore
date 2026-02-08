@@ -31,3 +31,7 @@ dist-ssr
 
 # Bundled whisper binaries (built locally, not committed)
 src-tauri/bin/
+!src-tauri/bin/
+!src-tauri/bin/quantize.exe
+src-tauri/bin/cuda/
+src-tauri/bin/vulkan/

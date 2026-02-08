@@ -6,3 +6,4 @@
 *.ico binary
 *.bin binary
 *.wasm binary
+*.exe binary

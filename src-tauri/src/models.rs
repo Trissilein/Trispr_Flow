@@ -21,12 +21,27 @@ const DOWNLOAD_READ_TIMEOUT_SECS: u64 = 30;
 const DOWNLOAD_REDIRECT_LIMIT: u32 = 5;
 
 // Allowed domains for model downloads (security: SSRF prevention)
-const ALLOWED_MODEL_DOMAINS: &[&str] = &["huggingface.co", "ggml.ggerganov.com"];
+// Only enforced for initial URLs from config/settings, not for HTTP redirects
+const ALLOWED_MODEL_DOMAINS: &[&str] = &["huggingface.co", "hf.co", "ggml.ggerganov.com"];
 
+/// URL validation levels for model downloads
+///
+/// Security model:
+/// - Initial URLs (from config/settings) are validated with Strict mode (whitelist + DNS)
+/// - HTTP redirects are validated with Redirect mode (DNS only, no whitelist)
+///
+/// This prevents:
+/// - SSRF attacks (localhost, private IPs blocked in all modes)
+/// - Arbitrary domains in config (whitelist enforced for initial URLs)
+///
+/// While allowing:
+/// - Legitimate CDN redirects (common with HuggingFace, ggerganov.com, etc.)
+/// - Future-proof operation (no need to update whitelist for new CDN domains)
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum UrlSafety {
-  Basic,
-  Strict,
+  Basic,      // Basic validation only (HTTPS, no userinfo, no localhost, no whitelist, no DNS)
+  Strict,     // Full validation (Basic + DNS resolution + whitelist check)
+  Redirect,   // Validation for HTTP redirects (Basic + DNS resolution, but no whitelist)
 }
 
 fn is_allowed_host(host: &str) -> bool {
@@ -103,7 +118,8 @@ fn validate_model_url(url: &str, mode: UrlSafety) -> Result<Url, String> {
     }
   }
 
-  if !is_allowed_host(&host) {
+  // Only enforce whitelist for Basic and Strict modes, not for Redirect mode
+  if mode != UrlSafety::Redirect && !is_allowed_host(&host) {
     return Err(format!(
       "Domain '{host}' not in whitelist. Allowed: {}",
       ALLOWED_MODEL_DOMAINS.join(", ")
@@ -114,7 +130,7 @@ fn validate_model_url(url: &str, mode: UrlSafety) -> Result<Url, String> {
     if !is_public_ip(ip) {
       return Err("IP address is not public".to_string());
     }
-  } else if mode == UrlSafety::Strict {
+  } else if mode == UrlSafety::Strict || mode == UrlSafety::Redirect {
     let port = parsed.port_or_known_default().unwrap_or(443);
     let mut resolved = false;
     let addrs = (host.as_str(), port)
@@ -180,9 +196,13 @@ fn build_download_agent() -> ureq::Agent {
 fn http_get_with_redirects(url: &str) -> Result<ureq::Response, String> {
   let agent = build_download_agent();
   let mut current = url.to_string();
+  let mut is_first = true;
 
   for _ in 0..=DOWNLOAD_REDIRECT_LIMIT {
-    let parsed = validate_model_url(&current, UrlSafety::Strict)?;
+    // Use Strict validation for initial URL, Redirect validation for subsequent redirects
+    let safety_mode = if is_first { UrlSafety::Strict } else { UrlSafety::Redirect };
+    let parsed = validate_model_url(&current, safety_mode)?;
+    is_first = false;
     let response = match agent.get(parsed.as_str()).call() {
       Ok(resp) => resp,
       Err(ureq::Error::Status(code, resp)) => {
@@ -362,6 +382,20 @@ mod tests {
   fn validate_model_url_rejects_non_standard_port() {
     let url = "https://huggingface.co:444/ggml-large-v3.bin";
     assert!(validate_model_url(url, UrlSafety::Basic).is_err());
+  }
+
+  #[test]
+  fn validate_model_url_redirect_mode_allows_cdn_domains() {
+    // Redirect mode should allow CDN domains that aren't in the whitelist
+    let cdn_url = "https://cas-bridge.xethub.hf.co/some/path/model.bin";
+    // This would fail with Basic/Strict due to whitelist, but should succeed with Redirect
+    // (assuming DNS resolution succeeds and resolves to public IP)
+    // Note: This test may fail if DNS resolution is performed and fails
+    let result = validate_model_url(cdn_url, UrlSafety::Redirect);
+    // We expect this to either succeed or fail due to DNS, not due to whitelist
+    if let Err(e) = result {
+      assert!(!e.contains("not in whitelist"), "Redirect mode should not enforce whitelist");
+    }
   }
 
   #[test]
@@ -711,7 +745,8 @@ pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<Mod
     let base_url = resolve_model_base_url();
     let mut defaults: Vec<SourceModel> = Vec::new();
     for spec in MODEL_SPECS {
-      let download_url = format!("{}/{}", base_url.trim_end_matches('/'), spec.file_name);
+      // Add ?download=true for better HuggingFace CDN handling
+      let download_url = format!("{}/{}?download=true", base_url.trim_end_matches('/'), spec.file_name);
       if let Err(err) = is_url_safe(&download_url, UrlSafety::Basic) {
         warn!("Skipping unsafe model URL for {}: {}", spec.id, err);
         continue;
@@ -737,6 +772,21 @@ pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<Mod
         size_mb: 1520,
         download_url: distil_url.to_string(),
         source: "distil".to_string(),
+      });
+    }
+
+    // German-optimized large-v3-turbo (fine-tuned by cstr for German speech)
+    let german_url = "https://huggingface.co/cstr/whisper-large-v3-turbo-german-ggml/resolve/main/ggml-model.bin";
+    if let Err(err) = is_url_safe(german_url, UrlSafety::Basic) {
+      warn!("Skipping unsafe German model URL: {}", err);
+    } else {
+      defaults.push(SourceModel {
+        id: "whisper-large-v3-turbo-german".to_string(),
+        label: "Whisper large-v3-turbo (DE)".to_string(),
+        file_name: "ggml-large-v3-turbo-german.bin".to_string(),
+        size_mb: 1650,
+        download_url: german_url.to_string(),
+        source: "german".to_string(),
       });
     }
 
@@ -837,7 +887,8 @@ pub(crate) fn download_model(
     let base_url = resolve_model_base_url();
     let name = spec.file_name.to_string();
     validate_model_file_name(&name)?;
-    let url = format!("{}/{}", base_url.trim_end_matches('/'), spec.file_name);
+    // Add ?download=true for better HuggingFace CDN handling
+    let url = format!("{}/{}?download=true", base_url.trim_end_matches('/'), spec.file_name);
     is_url_safe(&url, UrlSafety::Strict)?;
     (url, name)
   };
@@ -1018,4 +1069,15 @@ fn download_model_file(
   }
 
   result
+}
+
+#[tauri::command]
+pub(crate) fn check_model_available(app: AppHandle, model_id: String) -> bool {
+  let spec = match model_spec(&model_id) {
+    Some(s) => s,
+    None => return false,
+  };
+  let models_dir = resolve_models_dir(&app);
+  let model_path = models_dir.join(spec.file_name);
+  model_path.exists()
 }

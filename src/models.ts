@@ -126,6 +126,7 @@ export function renderModels() {
             });
           } catch (error) {
             console.error("download_model failed", error);
+            alert(`Download failed: ${error}`);
           }
         });
         actions.appendChild(button);

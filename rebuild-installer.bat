@@ -50,6 +50,10 @@ if not exist "%ROOT%\src-tauri\bin" (
 
 set "QUANTIZE_SRC="
 for %%P in (
+    "%ROOT%\..\whisper.cpp\build-cpu\bin\Release\whisper-quantize.exe"
+    "%ROOT%\..\whisper.cpp\build\bin\Release\whisper-quantize.exe"
+    "%ROOT%\..\whisper.cpp\build-cuda\bin\Release\whisper-quantize.exe"
+    "%ROOT%\..\whisper.cpp\build-vulkan\bin\Release\whisper-quantize.exe"
     "%ROOT%\..\whisper.cpp\build\bin\Release\quantize.exe"
     "%ROOT%\..\whisper.cpp\build\bin\quantize.exe"
     "%ROOT%\..\whisper.cpp\build-cpu\bin\Release\quantize.exe"

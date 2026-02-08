@@ -91,4 +91,22 @@ export const MODEL_DESCRIPTIONS: Record<
     accuracy: "Slightly lower",
     languages: "Multilingual",
   },
+  "ggml-large-v3-q5_0": {
+    summary: "Quantized large-v3 for balanced quality and size reduction.",
+    speed: "Moderately slow",
+    accuracy: "Slightly lower than full",
+    languages: "Multilingual",
+  },
+  "ggml-distil-large-v3-q5_0": {
+    summary: "Quantized distil model for ultra-fast inference with minimal accuracy loss.",
+    speed: "Fastest",
+    accuracy: "Medium (EN-focused)",
+    languages: "Primarily English",
+  },
+  "ggml-large-v3-turbo-german-q5_0": {
+    summary: "Quantized German-optimized model for efficient German speech recognition.",
+    speed: "Fast",
+    accuracy: "Slightly lower",
+    languages: "German-optimized",
+  },
 };

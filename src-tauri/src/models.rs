@@ -362,7 +362,6 @@ mod tests {
   }
 
   #[test]
-  #[test]
   fn validate_model_url_rejects_non_standard_port() {
     let url = "https://huggingface.co:444/ggml-large-v3.bin";
     assert!(validate_model_url(url, UrlSafety::Basic).is_err());

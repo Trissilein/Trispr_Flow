@@ -151,13 +151,16 @@ export function renderModels() {
     });
   };
 
+  const byName = (a: ModelInfo, b: ModelInfo) =>
+    (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: "base" });
+
   const installedFiltered = activeModel
     ? installedModels.filter((model) => model.id !== activeModel?.id)
     : installedModels;
   const orderedModels = [
     ...(activeModel ? [activeModel] : []),
-    ...installedFiltered,
-    ...availableModels,
+    ...installedFiltered.sort(byName),
+    ...availableModels.sort(byName),
   ];
 
   renderGroup(dom.modelList, orderedModels, "No models available");

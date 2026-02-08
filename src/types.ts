@@ -29,6 +29,7 @@ export interface Settings {
   model_source: "default" | "custom";
   model_custom_url: string;
   model_storage_dir: string;
+  hidden_external_models?: string[];
   overlay_color: string;
   overlay_min_radius: number;
   overlay_max_radius: number;

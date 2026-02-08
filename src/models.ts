@@ -7,6 +7,7 @@ import * as dom from "./dom-refs";
 import { getModelDescription, formatSize, formatProgress } from "./ui-helpers";
 import { persistSettings } from "./settings";
 import { renderHero } from "./ui-state";
+import { showToast } from "./toast";
 
 export function renderModels() {
   if (!dom.modelList) return;
@@ -96,16 +97,37 @@ export function renderModels() {
 
       if (model.installed) {
         const removeBtn = document.createElement("button");
-        removeBtn.textContent = model.removable ? "Remove" : "Locked";
-        removeBtn.disabled = !model.removable;
+        const isExternal = !model.removable;
+        removeBtn.textContent = isExternal ? "Remove" : "Delete";
         removeBtn.addEventListener("click", async (event) => {
           event.stopPropagation();
-          if (!model.removable) return;
           try {
-            await invoke("remove_model", { fileName: model.file_name });
+            if (isExternal) {
+              if (!model.path) {
+                showToast({
+                  title: "Remove failed",
+                  message: "External model path missing.",
+                  type: "warning",
+                });
+                return;
+              }
+              await invoke("hide_external_model", { path: model.path });
+              showToast({
+                title: "Removed",
+                message: "External model removed from list.",
+                type: "success",
+              });
+            } else {
+              await invoke("remove_model", { fileName: model.file_name });
+            }
             await refreshModels();
           } catch (error) {
             console.error("remove_model failed", error);
+            showToast({
+              title: "Remove failed",
+              message: String(error),
+              type: "error",
+            });
           }
         });
         actions.appendChild(removeBtn);

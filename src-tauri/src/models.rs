@@ -1,5 +1,5 @@
 use crate::paths::resolve_models_dir;
-use crate::state::AppState;
+use crate::state::{save_settings_file, AppState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -721,6 +721,7 @@ pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<Mod
   let downloads = state.downloads.lock().unwrap();
   let settings = state.settings.lock().unwrap().clone();
   let models_dir = resolve_models_dir(&app);
+  let hidden_external = settings.hidden_external_models.clone();
 
   let source_models: Vec<SourceModel> = if settings.model_source == "custom" {
     match load_custom_source_models(&settings.model_custom_url) {
@@ -786,7 +787,7 @@ pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<Mod
   let mut models: Vec<ModelInfo> = source_models
     .into_iter()
     .map(|model| {
-      let path = if settings.model_source == "default" {
+      let mut path = if settings.model_source == "default" {
         resolve_model_path(&app, &model.id)
       } else {
         resolve_model_path_by_file(&app, &model.file_name)
@@ -794,10 +795,17 @@ pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<Mod
       if !model.file_name.is_empty() {
         seen_files.insert(model.file_name.clone());
       }
-      let removable = path
+      let mut removable = path
         .as_ref()
         .map(|p| p.starts_with(&models_dir))
         .unwrap_or(false);
+      if let Some(p) = path.as_ref() {
+        let path_str = p.to_string_lossy().to_string();
+        if !removable && hidden_external.contains(&path_str) {
+          path = None;
+          removable = false;
+        }
+      }
       ModelInfo {
         id: model.id.clone(),
         label: model.label.clone(),
@@ -933,6 +941,23 @@ pub(crate) fn remove_model(app: AppHandle, file_name: String) -> Result<(), Stri
     return Err("Model file not found in app cache".to_string());
   }
   fs::remove_file(&target).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn hide_external_model(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  path: String,
+) -> Result<(), String> {
+  if path.trim().is_empty() {
+    return Err("Missing model path".to_string());
+  }
+  let mut settings = state.settings.lock().unwrap();
+  settings.hidden_external_models.insert(path);
+  let persisted = settings.clone();
+  drop(settings);
+  save_settings_file(&app, &persisted)?;
   Ok(())
 }
 

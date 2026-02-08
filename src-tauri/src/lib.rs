@@ -31,7 +31,10 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tracing::{error, info};
 
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
-use crate::models::{check_model_available, download_model, get_models_dir, list_models, pick_model_dir, remove_model};
+use crate::models::{
+  check_model_available, download_model, get_models_dir, hide_external_model, list_models,
+  pick_model_dir, remove_model,
+};
 use crate::state::{
   load_history,
   load_settings,
@@ -1020,6 +1023,7 @@ pub fn run() {
       download_model,
       check_model_available,
       remove_model,
+      hide_external_model,
       pick_model_dir,
       get_models_dir,
       get_history,

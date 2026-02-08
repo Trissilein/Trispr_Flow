@@ -1116,6 +1116,10 @@ button:disabled {
   border-color: var(--accent-2);
 }
 
+.model-item--available {
+  opacity: 0.6;
+}
+
 .model-item:hover {
   background: rgba(255, 255, 255, 0.04);
   border-color: rgba(255, 255, 255, 0.15);
@@ -1170,6 +1174,12 @@ button:disabled {
   background: rgba(29, 166, 160, 0.2);
   color: var(--accent-2);
   border: 1px solid rgba(29, 166, 160, 0.4);
+}
+
+.model-hint {
+  margin-top: 8px;
+  font-size: 0.72rem;
+  color: var(--muted);
 }
 
 .model-actions {

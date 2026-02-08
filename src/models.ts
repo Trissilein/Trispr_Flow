@@ -9,10 +9,8 @@ import { persistSettings } from "./settings";
 import { renderHero } from "./ui-state";
 
 export function renderModels() {
-  if (!dom.modelListActive || !dom.modelListInstalled || !dom.modelListAvailable) return;
-  dom.modelListActive.innerHTML = "";
-  dom.modelListInstalled.innerHTML = "";
-  dom.modelListAvailable.innerHTML = "";
+  if (!dom.modelList) return;
+  dom.modelList.innerHTML = "";
 
   const installedModels = models.filter((model) => model.installed);
   const availableModels = models.filter((model) => !model.installed && model.available);
@@ -36,6 +34,9 @@ export function renderModels() {
       const isActive = settings?.model === model.id;
       if (isActive) {
         item.classList.add("selected");
+      }
+      if (!model.installed) {
+        item.classList.add("model-item--available");
       }
       if (model.installed) {
         item.classList.add("selectable");
@@ -150,12 +151,16 @@ export function renderModels() {
     });
   };
 
-  renderGroup(dom.modelListActive, activeModel ? [activeModel] : [], "No active model");
   const installedFiltered = activeModel
     ? installedModels.filter((model) => model.id !== activeModel?.id)
     : installedModels;
-  renderGroup(dom.modelListInstalled, installedFiltered, "No installed models");
-  renderGroup(dom.modelListAvailable, availableModels, "No models available");
+  const orderedModels = [
+    ...(activeModel ? [activeModel] : []),
+    ...installedFiltered,
+    ...availableModels,
+  ];
+
+  renderGroup(dom.modelList, orderedModels, "No models available");
   renderHero();
 }
 

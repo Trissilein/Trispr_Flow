@@ -132,6 +132,4 @@ export const modelRefresh = $("model-refresh") as HTMLButtonElement | null;
 export const modelStoragePath = $("model-storage-path") as HTMLInputElement | null;
 export const modelStorageBrowse = $("model-storage-browse") as HTMLButtonElement | null;
 export const modelStorageReset = $("model-storage-reset") as HTMLButtonElement | null;
-export const modelListActive = $("model-list-active");
-export const modelListInstalled = $("model-list-installed");
-export const modelListAvailable = $("model-list-available");
+export const modelList = $("model-list");

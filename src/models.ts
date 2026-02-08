@@ -9,6 +9,8 @@ import { persistSettings } from "./settings";
 import { renderHero } from "./ui-state";
 import { showToast } from "./toast";
 
+const optimizingModels = new Set<string>();
+
 export function renderModels() {
   if (!dom.modelList) return;
   dom.modelList.innerHTML = "";
@@ -96,6 +98,43 @@ export function renderModels() {
       actions.className = "model-actions";
 
       if (model.installed) {
+        const canOptimize =
+          model.removable &&
+          model.file_name.endsWith(".bin") &&
+          !model.file_name.includes("-q5_0");
+
+        if (canOptimize) {
+          const optimizeBtn = document.createElement("button");
+          const isOptimizing = optimizingModels.has(model.id);
+          optimizeBtn.textContent = isOptimizing ? "Optimizing..." : "Optimize";
+          optimizeBtn.disabled = isOptimizing;
+          optimizeBtn.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            if (optimizingModels.has(model.id)) return;
+            optimizingModels.add(model.id);
+            renderModels();
+            try {
+              await invoke("quantize_model", { fileName: model.file_name, quant: "q5_0" });
+              showToast({
+                title: "Optimized",
+                message: "Quantized model created (q5_0).",
+                type: "success",
+              });
+              await refreshModels();
+            } catch (error) {
+              showToast({
+                title: "Optimize failed",
+                message: String(error),
+                type: "error",
+              });
+            } finally {
+              optimizingModels.delete(model.id);
+              renderModels();
+            }
+          });
+          actions.appendChild(optimizeBtn);
+        }
+
         const removeBtn = document.createElement("button");
         const isExternal = !model.removable;
         removeBtn.textContent = isExternal ? "Remove" : "Delete";

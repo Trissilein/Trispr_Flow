@@ -93,3 +93,53 @@ pub(crate) fn resolve_whisper_cli_path() -> Option<PathBuf> {
 
   None
 }
+
+pub(crate) fn resolve_quantize_path(app: &AppHandle) -> Option<PathBuf> {
+  if let Ok(path) = std::env::var("TRISPR_WHISPER_QUANTIZE") {
+    let candidate = PathBuf::from(path);
+    if candidate.exists() {
+      return Some(candidate);
+    }
+  }
+
+  let mut candidates = Vec::new();
+
+  // 1. Bundled resources (installed app)
+  if let Ok(resource_dir) = app.path().resource_dir() {
+    candidates.push(resource_dir.join("bin/quantize.exe"));
+    candidates.push(resource_dir.join("quantize.exe"));
+  }
+
+  // 2. Next to our own executable
+  if let Ok(exe) = std::env::current_exe() {
+    if let Some(exe_dir) = exe.parent() {
+      candidates.push(exe_dir.join("bin/quantize.exe"));
+      candidates.push(exe_dir.join("quantize.exe"));
+    }
+  }
+
+  // 3. Relative to CWD (dev mode)
+  if let Ok(cwd) = std::env::current_dir() {
+    candidates.push(cwd.join("quantize.exe"));
+    for build_dir in &[
+      "../whisper.cpp/build/bin",
+      "../whisper.cpp/build/bin/Release",
+      "../whisper.cpp/build-cpu/bin",
+      "../whisper.cpp/build-cpu/bin/Release",
+      "../whisper.cpp/build-cuda/bin",
+      "../whisper.cpp/build-cuda/bin/Release",
+      "../whisper.cpp/build-vulkan/bin",
+      "../whisper.cpp/build-vulkan/bin/Release",
+    ] {
+      candidates.push(cwd.join(format!("{}/quantize.exe", build_dir)));
+    }
+  }
+
+  for path in candidates {
+    if path.exists() {
+      return Some(path);
+    }
+  }
+
+  None
+}

@@ -43,6 +43,35 @@ echo.
 echo Estimated time: 30-60 seconds
 echo.
 
+REM Try to bundle quantize.exe if available
+if not exist "%ROOT%\src-tauri\bin" (
+    mkdir "%ROOT%\src-tauri\bin" >nul 2>&1
+)
+
+set "QUANTIZE_SRC="
+for %%P in (
+    "%ROOT%\..\whisper.cpp\build\bin\Release\quantize.exe"
+    "%ROOT%\..\whisper.cpp\build\bin\quantize.exe"
+    "%ROOT%\..\whisper.cpp\build-cpu\bin\Release\quantize.exe"
+    "%ROOT%\..\whisper.cpp\build-cpu\bin\quantize.exe"
+    "%ROOT%\..\whisper.cpp\build-cuda\bin\Release\quantize.exe"
+    "%ROOT%\..\whisper.cpp\build-cuda\bin\quantize.exe"
+    "%ROOT%\..\whisper.cpp\build-vulkan\bin\Release\quantize.exe"
+    "%ROOT%\..\whisper.cpp\build-vulkan\bin\quantize.exe"
+) do (
+    if exist "%%~P" (
+        set "QUANTIZE_SRC=%%~P"
+    )
+)
+
+if defined QUANTIZE_SRC (
+    echo Bundling quantize.exe from:
+    echo   %QUANTIZE_SRC%
+    copy /Y "%QUANTIZE_SRC%" "%ROOT%\src-tauri\bin\quantize.exe" >nul 2>&1
+) else (
+    echo WARNING: quantize.exe not found. Optimize button will be unavailable in installer.
+)
+
 REM Run the build command
 call npm run tauri build
 

@@ -1,4 +1,4 @@
-use crate::paths::resolve_models_dir;
+use crate::paths::{resolve_models_dir, resolve_quantize_path};
 use crate::state::{save_settings_file, AppState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -941,6 +941,59 @@ pub(crate) fn remove_model(app: AppHandle, file_name: String) -> Result<(), Stri
     return Err("Model file not found in app cache".to_string());
   }
   fs::remove_file(&target).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn quantize_model(
+  app: AppHandle,
+  file_name: String,
+  quant: Option<String>,
+) -> Result<(), String> {
+  if file_name.trim().is_empty() {
+    return Err("Missing model file name".to_string());
+  }
+  validate_model_file_name(&file_name)?;
+
+  if !file_name.ends_with(".bin") {
+    return Err("Only .bin models can be quantized".to_string());
+  }
+  if file_name.contains("-q5_0") {
+    return Err("Model already looks quantized".to_string());
+  }
+
+  let quant_type = quant.unwrap_or_else(|| "q5_0".to_string());
+  if quant_type != "q5_0" {
+    return Err("Only q5_0 is supported for now".to_string());
+  }
+
+  let models_dir = resolve_models_dir(&app);
+  let input_path = models_dir.join(&file_name);
+  if !input_path.exists() {
+    return Err("Model file not found in app cache".to_string());
+  }
+
+  let output_name = file_name.trim_end_matches(".bin").to_string() + "-q5_0.bin";
+  validate_model_file_name(&output_name)?;
+  let output_path = models_dir.join(&output_name);
+  if output_path.exists() {
+    return Err("Quantized model already exists".to_string());
+  }
+
+  let quantize_path = resolve_quantize_path(&app)
+    .ok_or_else(|| "quantize.exe not found. Install/bundle it or set TRISPR_WHISPER_QUANTIZE.".to_string())?;
+
+  let status = std::process::Command::new(quantize_path)
+    .arg(&input_path)
+    .arg(&output_path)
+    .arg(&quant_type)
+    .status()
+    .map_err(|e| format!("Failed to launch quantize: {e}"))?;
+
+  if !status.success() {
+    return Err(format!("Quantize failed with exit code {}", status));
+  }
+
   Ok(())
 }
 

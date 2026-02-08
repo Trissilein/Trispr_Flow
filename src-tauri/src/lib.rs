@@ -460,7 +460,8 @@ fn open_conversation_window(app: AppHandle) -> Result<(), String> {
   .resizable(true)
   .decorations(true)
   .transparent(false)
-  .visible(true);
+  .visible(true)
+  .always_on_top(settings.conv_window_always_on_top);
 
   // Restore geometry if available
   if let (Some(x), Some(y), Some(w), Some(h)) = (
@@ -506,6 +507,18 @@ fn open_conversation_window(app: AppHandle) -> Result<(), String> {
     "window.__TRISPR_VIEW__='conversation'; window.dispatchEvent(new CustomEvent('trispr:view', { detail: 'conversation' }));",
   );
 
+  Ok(())
+}
+
+#[tauri::command]
+fn set_conversation_window_always_on_top(app: AppHandle, state: State<'_, AppState>, always_on_top: bool) -> Result<(), String> {
+  if let Some(window) = app.get_webview_window("conversation") {
+    let _ = window.set_always_on_top(always_on_top).map_err(|e| e.to_string())?;
+  }
+  let mut settings = state.settings.lock().unwrap();
+  settings.conv_window_always_on_top = always_on_top;
+  drop(settings);
+  save_settings_file(&app, &state.settings.lock().unwrap())?;
   Ok(())
 }
 
@@ -1209,6 +1222,7 @@ pub fn run() {
       toggle_transcribe,
       expand_transcribe_backlog,
       open_conversation_window,
+      set_conversation_window_always_on_top,
       validate_hotkey,
       test_hotkey,
       get_hotkey_conflicts,

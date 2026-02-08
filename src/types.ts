@@ -50,6 +50,18 @@ export interface Settings {
   overlay_kitt_min_width: number;
   overlay_kitt_max_width: number;
   overlay_kitt_height: number;
+  // Window state fields from backend
+  main_window_x?: number | null;
+  main_window_y?: number | null;
+  main_window_width?: number | null;
+  main_window_height?: number | null;
+  main_window_monitor?: string | null;
+  conv_window_x?: number | null;
+  conv_window_y?: number | null;
+  conv_window_width?: number | null;
+  conv_window_height?: number | null;
+  conv_window_monitor?: string | null;
+  conv_window_always_on_top?: boolean;
 }
 
 export interface HistoryEntry {

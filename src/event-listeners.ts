@@ -145,6 +145,18 @@ export function wireEvents() {
     localStorage.setItem("conversationFontSize", size.toString());
   });
 
+  dom.convWindowAlwaysOnTop?.addEventListener("change", async () => {
+    if (!dom.convWindowAlwaysOnTop) return;
+    try {
+      await invoke("set_conversation_window_always_on_top", {
+        always_on_top: dom.convWindowAlwaysOnTop.checked,
+      });
+    } catch (error) {
+      console.error("Failed to set conversation window always-on-top:", error);
+      dom.convWindowAlwaysOnTop.checked = !dom.convWindowAlwaysOnTop.checked;
+    }
+  });
+
   // Hotkey recording functionality
   setupHotkeyRecorder("ptt", dom.pttHotkey, dom.pttHotkeyRecord, dom.pttHotkeyStatus);
   setupHotkeyRecorder("toggle", dom.toggleHotkey, dom.toggleHotkeyRecord, dom.toggleHotkeyStatus);

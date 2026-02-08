@@ -86,6 +86,7 @@ pub(crate) struct Settings {
   pub(crate) conv_window_width: Option<u32>,
   pub(crate) conv_window_height: Option<u32>,
   pub(crate) conv_window_monitor: Option<String>,
+  pub(crate) conv_window_always_on_top: bool,
 }
 
 impl Default for Settings {
@@ -155,6 +156,7 @@ impl Default for Settings {
       conv_window_width: None,
       conv_window_height: None,
       conv_window_monitor: None,
+      conv_window_always_on_top: false,
     }
   }
 }

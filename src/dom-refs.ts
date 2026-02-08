@@ -124,6 +124,9 @@ export const conversationFontControls = $("conversation-font-controls");
 export const conversationFontSize = $("conversation-font-size") as HTMLInputElement | null;
 export const conversationFontSizeValue = $("conversation-font-size-value");
 
+// Conversation window controls
+export const convWindowAlwaysOnTop = $("conv-window-always-on-top") as HTMLInputElement | null;
+
 // Model manager controls
 export const modelSourceSelect = $("model-source-select") as HTMLSelectElement | null;
 export const modelCustomUrl = $("model-custom-url") as HTMLInputElement | null;

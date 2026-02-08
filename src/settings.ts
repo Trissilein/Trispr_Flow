@@ -212,4 +212,5 @@ export function renderSettings() {
   if (dom.overlayKittMaxWidthValue) dom.overlayKittMaxWidthValue.textContent = `${Math.round(settings.overlay_kitt_max_width)}`;
   if (dom.overlayKittHeight) dom.overlayKittHeight.value = Math.round(settings.overlay_kitt_height).toString();
   if (dom.overlayKittHeightValue) dom.overlayKittHeightValue.textContent = `${Math.round(settings.overlay_kitt_height)}`;
+  if (dom.convWindowAlwaysOnTop) dom.convWindowAlwaysOnTop.checked = settings.conv_window_always_on_top ?? false;
 }

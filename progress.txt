@@ -1,6 +1,6 @@
 # Trispr Flow — Current Progress
 
-**Last updated**: 2026-02-08
+**Last updated**: 2026-02-08 (Task 3 verified complete)
 
 ## ✅ Completed
 
@@ -38,21 +38,27 @@
 - 500ms debounce prevents excessive I/O during resizing.
 - Works correctly across Windows virtual desktops (implicit OS behavior).
 
+### Activity Feedback
+- Tray icon pulsing implemented (turquoise=Recording, yellow=Transcribing).
+- Pulse cadence: ~1.6s loop with 6 frames.
+- Both active indicators pulse simultaneously when both active.
+- Thread-safe state management with atomic variables.
+- Event-driven updates via capture:state and transcribe:state emissions.
+
 ## 🔄 In Progress
 
-### Task 3: Activity Feedback - Tray Pulse
-- Implement tray icon pulsing (turquoise=Recording, yellow=Transcribing)
-- Pulse cadence ~1.6s loop with ~6 frames
-- Both active indicators pulse simultaneously when both active
+### Task 4: Conversation Window Config
+- Persist conversation window size/position across sessions
+- Make conversation window configuration user-editable
+- Add always-on-top toggle for window
 
 ## 📋 Next Up
 
-1. Complete Tray Pulse animation (Task 3).
-2. Conversation Window Config (Task 4) - persist size/position, make configurable.
-3. Model Manager QoL - Hot Swap (Task 5) - apply model without restart.
-4. Capture Enhancements (activation words, language pinning, extra hotkeys).
-5. Post-Processing pipeline (rule-based + optional LLM refinement).
-6. Long-form features (dump, chapter segmentation, topic detection).
+1. Complete Conversation Window Config (Task 4) - make configurable with always-on-top.
+2. Model Manager QoL - Hot Swap (Task 5) - apply model without restart.
+3. Capture Enhancements (activation words, language pinning, extra hotkeys).
+4. Post-Processing pipeline (rule-based + optional LLM refinement).
+5. Long-form features (dump, chapter segmentation, topic detection).
 
 ## 🧩 Known Follow-up Constraints
 - `npm run build` currently fails on pre-existing TypeScript issues in:

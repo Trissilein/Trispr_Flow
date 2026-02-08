@@ -1,6 +1,6 @@
 # Trispr Flow — Current Progress
 
-**Last updated**: 2026-02-08 (Task 3 verified complete)
+**Last updated**: 2026-02-08 (Tasks 3-4 complete)
 
 ## ✅ Completed
 
@@ -45,20 +45,26 @@
 - Thread-safe state management with atomic variables.
 - Event-driven updates via capture:state and transcribe:state emissions.
 
+### Conversation Window Configuration
+- Conversation window geometry persisted across sessions (from Task 2).
+- Always-on-top toggle added for user convenience.
+- Setting persisted in config with Tauri command integration.
+- UI checkbox in conversation window settings expander.
+- Window position/size restoration with monitor awareness.
+
 ## 🔄 In Progress
 
-### Task 4: Conversation Window Config
-- Persist conversation window size/position across sessions
-- Make conversation window configuration user-editable
-- Add always-on-top toggle for window
+### Task 5: Model Manager QoL - Hot Swap
+- Apply model without requiring app restart
+- Unload current model and load new one seamlessly
 
 ## 📋 Next Up
 
-1. Complete Conversation Window Config (Task 4) - make configurable with always-on-top.
-2. Model Manager QoL - Hot Swap (Task 5) - apply model without restart.
-3. Capture Enhancements (activation words, language pinning, extra hotkeys).
-4. Post-Processing pipeline (rule-based + optional LLM refinement).
-5. Long-form features (dump, chapter segmentation, topic detection).
+1. Complete Model Manager QoL - Hot Swap (Task 5) - apply model without restart.
+2. Capture Enhancements (activation words, language pinning, extra hotkeys).
+3. Post-Processing pipeline (rule-based + optional LLM refinement).
+4. Long-form features (dump, chapter segmentation, topic detection).
+5. VibeVoice-ASR integration for speaker diarization (Python sidecar).
 
 ## 🧩 Known Follow-up Constraints
 - `npm run build` currently fails on pre-existing TypeScript issues in:

@@ -35,8 +35,6 @@ import { showToast, showErrorToast } from "./toast";
 import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
 
-let transcribeBacklogPromptOpen = false;
-
 // Track event listeners for cleanup to prevent memory leaks
 let eventUnlisteners: Array<() => void> = [];
 
@@ -194,40 +192,6 @@ async function bootstrap() {
     });
   }));
 
-  eventUnlisteners.push(await listen<TranscribeBacklogStatus>("transcribe:backlog-warning", async (event) => {
-    const payload = event.payload;
-    if (!payload) return;
-
-    showToast({
-      type: "warning",
-      title: "Output Backlog Near Limit",
-      message: `${payload.percent_used}% used (${payload.queued_chunks}/${payload.capacity_chunks} chunks).`,
-      duration: 7000,
-    });
-
-    if (transcribeBacklogPromptOpen) return;
-    transcribeBacklogPromptOpen = true;
-    try {
-      const shouldExpand = window.confirm(
-        `Output backlog is ${payload.percent_used}% full (${payload.queued_chunks}/${payload.capacity_chunks} chunks).\n\n` +
-        `Expand backlog capacity by 50% to ${payload.suggested_capacity_chunks} chunks?`
-      );
-      if (shouldExpand) {
-        await invoke<TranscribeBacklogStatus>("expand_transcribe_backlog");
-      }
-    } catch (error) {
-      console.error("failed to expand transcribe backlog", error);
-      showToast({
-        type: "error",
-        title: "Backlog Expansion Failed",
-        message: String(error),
-        duration: 7000,
-      });
-    } finally {
-      transcribeBacklogPromptOpen = false;
-    }
-  }));
-
   eventUnlisteners.push(await listen<TranscribeBacklogStatus>("transcribe:backlog-expanded", (event) => {
     const payload = event.payload;
     if (!payload) return;
@@ -279,10 +243,54 @@ async function bootstrap() {
   }));
 }
 
+async function checkModelOnStartup() {
+  try {
+    const settings = await invoke<Settings>("get_settings");
+    const modelAvailable = await invoke<boolean>("check_model_available", {
+      modelId: settings.model,
+    });
+
+    if (!modelAvailable) {
+      showToast({
+        type: "error",
+        title: "Speech Model Missing",
+        message: `The selected model "${settings.model}" is not installed. Please download it from the Model Manager panel to enable speech recognition.`,
+        duration: 15000, // 15 seconds
+      });
+
+      // Scroll to model manager panel and expand it after a short delay
+      setTimeout(() => {
+        const modelPanel = document.querySelector('[data-panel="model"]');
+        if (modelPanel) {
+          // Expand the panel if it's collapsed
+          const collapseButton = modelPanel.querySelector('[data-panel-collapse="model"]') as HTMLButtonElement;
+          const panelBody = modelPanel.querySelector('.panel-body') as HTMLElement;
+          if (collapseButton && panelBody && panelBody.style.display === 'none') {
+            collapseButton.click(); // Trigger the collapse/expand toggle
+          }
+
+          // Scroll to the panel
+          modelPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+
+          // Highlight the panel briefly
+          modelPanel.classList.add('panel-highlight');
+          setTimeout(() => {
+            modelPanel.classList.remove('panel-highlight');
+          }, 2000);
+        }
+      }, 1000);
+    }
+  } catch (error) {
+    console.error("Failed to check model availability:", error);
+  }
+}
+
 window.addEventListener("DOMContentLoaded", () => {
-  bootstrap().catch((error) => {
-    console.error("bootstrap failed", error);
-  });
+  bootstrap()
+    .then(() => checkModelOnStartup())
+    .catch((error) => {
+      console.error("bootstrap failed", error);
+    });
 });
 
 // Cleanup event listeners on window unload to prevent memory leaks

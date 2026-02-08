@@ -24,13 +24,14 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
-use tauri::menu::CheckMenuItem;
+use tauri::menu::{CheckMenuItem, MenuItem};
+use tauri::Wry;
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tracing::{error, info};
 
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
-use crate::models::{download_model, get_models_dir, list_models, pick_model_dir, remove_model};
+use crate::models::{check_model_available, download_model, get_models_dir, list_models, pick_model_dir, remove_model};
 use crate::state::{
   load_history,
   load_settings,
@@ -51,11 +52,50 @@ const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
 const TRAY_PULSE_FRAMES: usize = 6;
 const TRAY_PULSE_CYCLE_MS: u64 = 1600;
+const BACKLOG_AUTOEXPAND_TIMEOUT_MS: u64 = 5_000;
 
 static LAST_TRAY_CLICK_MS: AtomicU64 = AtomicU64::new(0);
 static TRAY_CAPTURE_STATE: AtomicU8 = AtomicU8::new(0);
 static TRAY_TRANSCRIBE_STATE: AtomicU8 = AtomicU8::new(0);
 static TRAY_PULSE_STARTED: AtomicBool = AtomicBool::new(false);
+static BACKLOG_PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
+static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+fn schedule_backlog_auto_expand(app: AppHandle, cancel_item: MenuItem<Wry>) {
+  if BACKLOG_PROMPT_ACTIVE.swap(true, Ordering::AcqRel) {
+    return;
+  }
+  BACKLOG_PROMPT_CANCELLED.store(false, Ordering::Release);
+  if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
+    let _ = tray.set_show_menu_on_left_click(true);
+  }
+  let _ = cancel_item.set_enabled(true);
+  let _ = cancel_item.set_text(format!(
+    "Cancel Auto-Expand ({}s)",
+    BACKLOG_AUTOEXPAND_TIMEOUT_MS / 1000
+  ));
+
+  std::thread::spawn(move || {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(BACKLOG_AUTOEXPAND_TIMEOUT_MS);
+    while std::time::Instant::now() < deadline {
+      if BACKLOG_PROMPT_CANCELLED.load(Ordering::Acquire) {
+        break;
+      }
+      std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    if !BACKLOG_PROMPT_CANCELLED.load(Ordering::Acquire) {
+      let _ = expand_transcribe_backlog_inner(&app);
+    }
+
+    let _ = cancel_item.set_enabled(false);
+    let _ = cancel_item.set_text("Cancel Auto-Expand");
+    if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
+      let _ = tray.set_show_menu_on_left_click(false);
+    }
+    BACKLOG_PROMPT_ACTIVE.store(false, Ordering::Release);
+  });
+}
 
 fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> {
   let manager = app.global_shortcut();
@@ -761,7 +801,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .setup(|app| {
-      let mut settings = load_settings(app.handle());
+      let settings = load_settings(app.handle());
       let history = load_history(app.handle());
       let history_transcribe = load_transcribe_history(app.handle());
 
@@ -826,6 +866,16 @@ pub fn run() {
         loaded_icon.unwrap_or_else(create_fallback_icon)
       };
 
+      let cancel_backlog_item = MenuItem::with_id(
+        app,
+        "cancel-backlog-expand",
+        "Cancel Auto-Expand",
+        false,
+        None::<&str>,
+      )?;
+      let cancel_backlog_item_menu = cancel_backlog_item.clone();
+      let cancel_backlog_item_event = cancel_backlog_item.clone();
+
       let _tray_icon = tauri::tray::TrayIconBuilder::with_id(TRAY_ICON_ID)
         .icon(icon)
         .tooltip("Trispr Flow")
@@ -833,6 +883,9 @@ pub fn run() {
           use tauri::tray::{MouseButton, TrayIconEvent};
           match event {
             TrayIconEvent::Click { button: MouseButton::Left, .. } => {
+              if BACKLOG_PROMPT_ACTIVE.load(Ordering::Acquire) {
+                return;
+              }
               if should_handle_tray_click() {
                 toggle_main_window(tray.app_handle());
               }
@@ -840,7 +893,7 @@ pub fn run() {
             _ => {}
           }
         })
-        .on_menu_event(|app, event| {
+        .on_menu_event(move |app, event| {
           match event.id.as_ref() {
             "show" => {
               show_main_window(app);
@@ -860,6 +913,12 @@ pub fn run() {
               if let Err(err) = save_settings(app.clone(), state, current) {
                 emit_error(app, AppError::Storage(err), Some("Tray menu"));
               }
+            }
+            "cancel-backlog-expand" => {
+              BACKLOG_PROMPT_CANCELLED.store(true, Ordering::Release);
+              BACKLOG_PROMPT_ACTIVE.store(false, Ordering::Release);
+              let _ = cancel_backlog_item_event.set_enabled(false);
+              let _ = cancel_backlog_item_event.set_text("Cancel Auto-Expand");
             }
             "quit" => {
               app.exit(0);
@@ -908,6 +967,8 @@ pub fn run() {
               &mic_item,
               &transcribe_item,
               &tauri::menu::PredefinedMenuItem::separator(app)?,
+              &cancel_backlog_item_menu,
+              &tauri::menu::PredefinedMenuItem::separator(app)?,
               &tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?,
             ],
           )?
@@ -927,6 +988,12 @@ pub fn run() {
         let code = parse_tray_state_code(event.payload());
         TRAY_TRANSCRIBE_STATE.store(code, Ordering::Relaxed);
         refresh_tray_icon(&tray_transcribe_handle, 0);
+      });
+
+      let backlog_prompt_handle = app.handle().clone();
+      let cancel_backlog_item_prompt = cancel_backlog_item.clone();
+      app.listen("transcribe:backlog-warning", move |_event| {
+        schedule_backlog_auto_expand(backlog_prompt_handle.clone(), cancel_backlog_item_prompt.clone());
       });
 
       refresh_tray_icon(app.handle(), 0);
@@ -951,6 +1018,7 @@ pub fn run() {
       list_output_devices,
       list_models,
       download_model,
+      check_model_available,
       remove_model,
       pick_model_dir,
       get_models_dir,

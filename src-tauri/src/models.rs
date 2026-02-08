@@ -260,6 +260,10 @@ const MODEL_SPECS: &[ModelSpec] = &[
   },
 ];
 
+const EXTRA_MODEL_FILES: &[(&str, &str)] = &[
+  ("whisper-large-v3-turbo-german", "ggml-large-v3-turbo-german.bin"),
+];
+
 // Model integrity verification (SHA256 checksums)
 // These checksums ensure downloaded models haven't been tampered with
 // Format: (file_name, sha256_hex)
@@ -322,6 +326,13 @@ fn lookup_model_checksum(file_name: &str) -> Option<&'static str> {
 
 fn model_spec(model_id: &str) -> Option<&'static ModelSpec> {
   MODEL_SPECS.iter().find(|spec| spec.id == model_id)
+}
+
+fn extra_model_file(model_id: &str) -> Option<&'static str> {
+  EXTRA_MODEL_FILES
+    .iter()
+    .find(|(id, _)| *id == model_id)
+    .map(|(_, file)| *file)
 }
 
 fn model_candidates(spec: &ModelSpec) -> Vec<String> {
@@ -408,11 +419,13 @@ pub(crate) fn resolve_model_path(app: &AppHandle, model_id: &str) -> Option<Path
 
   let spec = model_spec(model_id);
   if spec.is_none() {
-    let candidates = [
-      model_id.to_string(),
-      format!("{model_id}.bin"),
-      format!("{model_id}.gguf"),
-    ];
+    let mut candidates = Vec::new();
+    if let Some(extra) = extra_model_file(model_id) {
+      candidates.push(extra.to_string());
+    }
+    candidates.push(model_id.to_string());
+    candidates.push(format!("{model_id}.bin"));
+    candidates.push(format!("{model_id}.gguf"));
     for candidate in candidates {
       if let Some(path) = resolve_model_path_by_file(app, &candidate) {
         info!("Found model by file name: {}", path.display());
@@ -752,7 +765,7 @@ pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<Mod
     }
 
     // German-optimized large-v3-turbo (fine-tuned by cstr for German speech)
-    let german_url = "https://huggingface.co/cstr/whisper-large-v3-turbo-german-ggml/resolve/main/ggml-model.bin";
+    let german_url = "https://huggingface.co/cstr/whisper-large-v3-turbo-german-ggml/resolve/main/ggml-model.bin?download=true";
     if let Err(err) = is_url_safe(german_url, UrlSafety::Basic) {
       warn!("Skipping unsafe German model URL: {}", err);
     } else {
@@ -1049,11 +1062,5 @@ fn download_model_file(
 
 #[tauri::command]
 pub(crate) fn check_model_available(app: AppHandle, model_id: String) -> bool {
-  let spec = match model_spec(&model_id) {
-    Some(s) => s,
-    None => return false,
-  };
-  let models_dir = resolve_models_dir(&app);
-  let model_path = models_dir.join(spec.file_name);
-  model_path.exists()
+  resolve_model_path(&app, &model_id).is_some()
 }

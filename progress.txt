@@ -1,6 +1,6 @@
 # Trispr Flow — Current Progress
 
-**Last updated**: 2026-02-08 (Tasks 3-4 complete)
+**Last updated**: 2026-02-08 (Tasks 3-5 complete)
 
 ## ✅ Completed
 
@@ -52,19 +52,26 @@
 - UI checkbox in conversation window settings expander.
 - Window position/size restoration with monitor awareness.
 
+### Model Manager QoL - Hot Swap
+- Model switching without app restart via apply_model command.
+- Seamless transcription restart if currently active.
+- Rollback to previous model on apply failure.
+- \"Apply\" button visible for non-active installed models.
+- Success/error toast feedback on model switch.
+- Event emission for model change tracking.
+
 ## 🔄 In Progress
 
-### Task 5: Model Manager QoL - Hot Swap
-- Apply model without requiring app restart
-- Unload current model and load new one seamlessly
+### Next Feature Work
+- Ready for Capture Enhancements or Post-Processing pipeline
 
-## 📋 Next Up
+## 📋 Next Up (Prioritized)
 
-1. Complete Model Manager QoL - Hot Swap (Task 5) - apply model without restart.
-2. Capture Enhancements (activation words, language pinning, extra hotkeys).
-3. Post-Processing pipeline (rule-based + optional LLM refinement).
-4. Long-form features (dump, chapter segmentation, topic detection).
-5. VibeVoice-ASR integration for speaker diarization (Python sidecar).
+1. Capture Enhancements (activation words, language pinning, extra hotkeys).
+2. Post-Processing pipeline (rule-based + optional LLM refinement).
+3. Long-form features (dump, chapter segmentation, topic detection).
+4. VibeVoice-ASR integration for speaker diarization (Python sidecar).
+5. AI Fallback overhaul (multi-provider, user-selectable models).
 
 ## 🧩 Known Follow-up Constraints
 - `npm run build` currently fails on pre-existing TypeScript issues in:

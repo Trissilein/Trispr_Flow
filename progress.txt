@@ -30,22 +30,29 @@
 - Quantizer bundled in NSIS installer; build-quantize.bat script for manual builds.
 - Hero model display expanded to 2 lines for longer quantized model names.
 
+### Window Behavior
+- Main window position/size persisted across sessions with monitor validation.
+- Conversation window geometry restored on reopen.
+- Monitor-aware restoration with fallback to primary monitor if unplugged.
+- Restoration logic properly integrated into Tauri setup phase.
+- 500ms debounce prevents excessive I/O during resizing.
+- Works correctly across Windows virtual desktops (implicit OS behavior).
+
 ## 🔄 In Progress
 
-### Documentation Sprint
-- Sync and clean roadmap/docs after recent overlay and state-flow changes.
-- Align wording between status and decisions across all project docs.
-- Consolidate working notes into stable documentation files.
+### Task 3: Activity Feedback - Tray Pulse
+- Implement tray icon pulsing (turquoise=Recording, yellow=Transcribing)
+- Pulse cadence ~1.6s loop with ~6 frames
+- Both active indicators pulse simultaneously when both active
 
 ## 📋 Next Up
 
-1. Finalize documentation updates (`ROADMAP.md`, `.claude/ROADMAP.md`, architecture/state docs).
-2. Milestone 3 Activity Feedback follow-up:
-   - tray pulse cadence
-   - backlog warning + expansion flow
-3. Capture Enhancements (activation words, language pinning, extra hotkeys).
-4. Post-Processing pipeline (rule-based + optional LLM refinement).
-5. Long-form features (dump, chapter segmentation, topic detection).
+1. Complete Tray Pulse animation (Task 3).
+2. Conversation Window Config (Task 4) - persist size/position, make configurable.
+3. Model Manager QoL - Hot Swap (Task 5) - apply model without restart.
+4. Capture Enhancements (activation words, language pinning, extra hotkeys).
+5. Post-Processing pipeline (rule-based + optional LLM refinement).
+6. Long-form features (dump, chapter segmentation, topic detection).
 
 ## 🧩 Known Follow-up Constraints
 - `npm run build` currently fails on pre-existing TypeScript issues in:

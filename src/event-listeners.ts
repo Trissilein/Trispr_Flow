@@ -56,6 +56,13 @@ export function wireEvents() {
       settings.model_custom_url = dom.modelCustomUrl.value.trim();
     }
     await persistSettings();
+    if (settings.model_source === "default") {
+      try {
+        await invoke("clear_hidden_external_models");
+      } catch (error) {
+        console.error("clear_hidden_external_models failed", error);
+      }
+    }
     await refreshModels();
   });
 

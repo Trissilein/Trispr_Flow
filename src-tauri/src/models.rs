@@ -962,6 +962,19 @@ pub(crate) fn hide_external_model(
 }
 
 #[tauri::command]
+pub(crate) fn clear_hidden_external_models(
+  app: AppHandle,
+  state: State<'_, AppState>,
+) -> Result<(), String> {
+  let mut settings = state.settings.lock().unwrap();
+  settings.hidden_external_models.clear();
+  let persisted = settings.clone();
+  drop(settings);
+  save_settings_file(&app, &persisted)?;
+  Ok(())
+}
+
+#[tauri::command]
 pub(crate) fn pick_model_dir() -> Option<String> {
   rfd::FileDialog::new()
     .pick_folder()

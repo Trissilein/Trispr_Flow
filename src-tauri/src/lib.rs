@@ -32,8 +32,8 @@ use tracing::{error, info};
 
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
 use crate::models::{
-  check_model_available, download_model, get_models_dir, hide_external_model, list_models,
-  pick_model_dir, remove_model,
+  check_model_available, clear_hidden_external_models, download_model, get_models_dir,
+  hide_external_model, list_models, pick_model_dir, remove_model,
 };
 use crate::state::{
   load_history,
@@ -1024,6 +1024,7 @@ pub fn run() {
       check_model_available,
       remove_model,
       hide_external_model,
+      clear_hidden_external_models,
       pick_model_dir,
       get_models_dir,
       get_history,

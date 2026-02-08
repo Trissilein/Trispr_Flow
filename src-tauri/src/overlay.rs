@@ -146,30 +146,6 @@ fn resolve_overlay_position(window: &WebviewWindow, settings: &OverlaySettings, 
     }
 }
 
-pub fn resolve_overlay_position_for_settings(app: &AppHandle, settings: &OverlaySettings) -> Option<(f64, f64)> {
-    let window = app.get_webview_window("overlay")?;
-
-    let (width, height) = if settings.style == "kitt" {
-        let w = settings.kitt_max_width.max(settings.kitt_min_width).max(50.0) + 32.0;
-        let h = settings.kitt_height.max(8.0) + 32.0 + 18.0;  // +18px for transcribe indicator
-        (w, h)
-    } else {
-        let max_radius = settings.max_radius.max(settings.min_radius).max(4.0);
-        let size = (max_radius * 2.0 + 96.0 + 20.0).max(64.0);  // +20px for transcribe indicator
-        (size, size)
-    };
-
-    let (pos_x, pos_y) = resolve_overlay_position(&window, settings, width, height);
-    let center_x = pos_x + width * 0.5;
-    let center_y = pos_y + height * 0.5;
-    let changed = (center_x - settings.pos_x).abs() > 0.5 || (center_y - settings.pos_y).abs() > 0.5;
-    if changed {
-        Some((center_x, center_y))
-    } else {
-        None
-    }
-}
-
 /// Applies overlay settings by resizing/repositioning the window and updating
 /// the frontend via window.eval(). This is the primary settings application path.
 pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Result<(), String> {

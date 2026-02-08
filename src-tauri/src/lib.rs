@@ -360,6 +360,9 @@ fn save_window_state(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
+    info!("[save_window_state] Called for window '{}': x={}, y={}, w={}, h={}",
+          window_label, x, y, width, height);
+
     let monitor_name = if let Some(window) = app.get_webview_window(&window_label) {
         window.current_monitor()
             .ok()
@@ -368,6 +371,8 @@ fn save_window_state(
     } else {
         None
     };
+
+    info!("[save_window_state] Monitor: {:?}", monitor_name);
 
     let mut current = state.settings.lock().unwrap();
 
@@ -378,6 +383,7 @@ fn save_window_state(
             current.main_window_width = Some(width);
             current.main_window_height = Some(height);
             current.main_window_monitor = monitor_name;
+            info!("[save_window_state] Updated main window settings");
         }
         "conversation" => {
             current.conv_window_x = Some(x);
@@ -385,6 +391,7 @@ fn save_window_state(
             current.conv_window_width = Some(width);
             current.conv_window_height = Some(height);
             current.conv_window_monitor = monitor_name;
+            info!("[save_window_state] Updated conversation window settings");
         }
         _ => return Err("Unknown window label".to_string()),
     }
@@ -392,7 +399,12 @@ fn save_window_state(
     let settings = current.clone();
     drop(current);
 
-    save_settings_file(&app, &settings)?;
+    save_settings_file(&app, &settings).map_err(|e| {
+        error!("[save_window_state] Failed to save settings: {}", e);
+        e
+    })?;
+
+    info!("[save_window_state] Successfully saved settings for '{}'", window_label);
     Ok(())
 }
 

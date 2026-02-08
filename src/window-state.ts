@@ -9,13 +9,6 @@ async function saveWindowState() {
         const position = await window.outerPosition();
         const size = await window.outerSize();
 
-        console.log(`[window-state] Saving ${window.label} state:`, {
-            x: Math.round(position.x),
-            y: Math.round(position.y),
-            width: Math.round(size.width),
-            height: Math.round(size.height),
-        });
-
         await invoke("save_window_state", {
             windowLabel: window.label,
             x: Math.round(position.x),
@@ -23,10 +16,8 @@ async function saveWindowState() {
             width: Math.round(size.width),
             height: Math.round(size.height),
         });
-
-        console.log(`[window-state] Successfully saved ${window.label} state`);
     } catch (error) {
-        console.error(`[window-state] Failed to save window state:`, error);
+        console.error(`Failed to save window state:`, error);
     }
 }
 

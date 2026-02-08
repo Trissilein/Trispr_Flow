@@ -360,9 +360,6 @@ fn save_window_state(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
-    info!("[save_window_state] Called for window '{}': x={}, y={}, w={}, h={}",
-          window_label, x, y, width, height);
-
     let monitor_name = if let Some(window) = app.get_webview_window(&window_label) {
         window.current_monitor()
             .ok()
@@ -371,8 +368,6 @@ fn save_window_state(
     } else {
         None
     };
-
-    info!("[save_window_state] Monitor: {:?}", monitor_name);
 
     let mut current = state.settings.lock().unwrap();
 
@@ -383,7 +378,6 @@ fn save_window_state(
             current.main_window_width = Some(width);
             current.main_window_height = Some(height);
             current.main_window_monitor = monitor_name;
-            info!("[save_window_state] Updated main window settings");
         }
         "conversation" => {
             current.conv_window_x = Some(x);
@@ -391,7 +385,6 @@ fn save_window_state(
             current.conv_window_width = Some(width);
             current.conv_window_height = Some(height);
             current.conv_window_monitor = monitor_name;
-            info!("[save_window_state] Updated conversation window settings");
         }
         _ => return Err("Unknown window label".to_string()),
     }
@@ -399,12 +392,7 @@ fn save_window_state(
     let settings = current.clone();
     drop(current);
 
-    save_settings_file(&app, &settings).map_err(|e| {
-        error!("[save_window_state] Failed to save settings: {}", e);
-        e
-    })?;
-
-    info!("[save_window_state] Successfully saved settings for '{}'", window_label);
+    save_settings_file(&app, &settings)?;
     Ok(())
 }
 
@@ -862,13 +850,7 @@ fn show_main_window(app: &AppHandle) {
   if let Some(window) = app.get_webview_window("main") {
     // Restore window geometry on first show
     if !MAIN_WINDOW_RESTORED.swap(true, Ordering::AcqRel) {
-      info!("[show_main_window] First show, attempting to restore window state");
       let settings = load_settings(app);
-
-      info!("[show_main_window] Loaded settings - x: {:?}, y: {:?}, w: {:?}, h: {:?}, monitor: {:?}",
-            settings.main_window_x, settings.main_window_y,
-            settings.main_window_width, settings.main_window_height,
-            settings.main_window_monitor);
 
       if let (Some(x), Some(y), Some(w), Some(h)) = (
         settings.main_window_x,
@@ -876,20 +858,15 @@ fn show_main_window(app: &AppHandle) {
         settings.main_window_width,
         settings.main_window_height,
       ) {
-        info!("[show_main_window] Geometry found: x={}, y={}, w={}, h={}", x, y, w, h);
-
         // Validate monitor still exists
         let monitor_valid = window.available_monitors()
           .ok()
           .map(|monitors| {
             if let Some(monitor_name) = &settings.main_window_monitor {
-              let found = monitors.iter().any(|m| {
+              monitors.iter().any(|m| {
                 m.name().as_ref().map(|n| n.as_str()) == Some(monitor_name.as_str())
-              });
-              info!("[show_main_window] Monitor '{}' valid: {}", monitor_name, found);
-              found
+              })
             } else {
-              info!("[show_main_window] No monitor saved, using any available");
               true  // No specific monitor was saved, so any monitor is valid
             }
           })
@@ -897,35 +874,26 @@ fn show_main_window(app: &AppHandle) {
 
         if monitor_valid {
           // Restore saved geometry
-          info!("[show_main_window] Restoring saved geometry: position=({}, {}), size=({}, {})", x, y, w, h);
           let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
           let _ = window.set_size(tauri::PhysicalSize::new(w, h));
         } else {
           // Fallback: center on primary monitor
-          info!("[show_main_window] Monitor not found, falling back to primary monitor center");
           if let Ok(Some(primary)) = window.primary_monitor() {
             let primary_size = primary.size();
             let window_w = w.max(980);
             let window_h = h.max(640);
             let center_x = (primary_size.width as i32 - window_w as i32) / 2;
             let center_y = (primary_size.height as i32 - window_h as i32) / 2;
-            info!("[show_main_window] Centering at: x={}, y={}", center_x, center_y);
             let _ = window.set_position(tauri::PhysicalPosition::new(center_x, center_y));
             let _ = window.set_size(tauri::PhysicalSize::new(window_w, window_h));
           }
         }
-      } else {
-        info!("[show_main_window] No window geometry saved, using defaults");
       }
-    } else {
-      info!("[show_main_window] Window already restored, not restoring again");
     }
 
     let _ = window.show();
     let _ = window.set_skip_taskbar(false);
     let _ = window.set_focus();
-  } else {
-    error!("[show_main_window] Main window not found!");
   }
 }
 
@@ -1166,7 +1134,6 @@ pub fn run() {
 
       // Restore main window geometry
       if let Some(window) = app.get_webview_window("main") {
-        info!("[setup] Restoring main window geometry");
         let window_settings = load_settings(app.handle());
 
         if let (Some(x), Some(y), Some(w), Some(h)) = (
@@ -1175,47 +1142,35 @@ pub fn run() {
           window_settings.main_window_width,
           window_settings.main_window_height,
         ) {
-          info!("[setup] Found saved geometry: x={}, y={}, w={}, h={}", x, y, w, h);
-
           // Validate monitor still exists
           let monitor_valid = window.available_monitors()
             .ok()
             .map(|monitors| {
               if let Some(monitor_name) = &window_settings.main_window_monitor {
-                let found = monitors.iter().any(|m| {
+                monitors.iter().any(|m| {
                   m.name().as_ref().map(|n| n.as_str()) == Some(monitor_name.as_str())
-                });
-                info!("[setup] Monitor '{}' valid: {}", monitor_name, found);
-                found
+                })
               } else {
-                info!("[setup] No monitor saved, using any available");
                 true
               }
             })
             .unwrap_or(false);
 
           if monitor_valid {
-            info!("[setup] Restoring window to saved position and size");
             let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
             let _ = window.set_size(tauri::PhysicalSize::new(w, h));
           } else {
-            info!("[setup] Monitor not found, falling back to primary monitor center");
             if let Ok(Some(primary)) = window.primary_monitor() {
               let primary_size = primary.size();
               let window_w = w.max(980);
               let window_h = h.max(640);
               let center_x = (primary_size.width as i32 - window_w as i32) / 2;
               let center_y = (primary_size.height as i32 - window_h as i32) / 2;
-              info!("[setup] Centering on primary monitor at: x={}, y={}", center_x, center_y);
               let _ = window.set_position(tauri::PhysicalPosition::new(center_x, center_y));
               let _ = window.set_size(tauri::PhysicalSize::new(window_w, window_h));
             }
           }
-        } else {
-          info!("[setup] No saved window geometry found");
         }
-      } else {
-        info!("[setup] Main window not yet available in setup");
       }
 
       Ok(())

@@ -287,10 +287,8 @@ async function checkModelOnStartup() {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
-  console.log("[main] DOMContentLoaded fired");
   bootstrap()
     .then(() => {
-      console.log("[main] bootstrap completed, initializing window persistence");
       initWindowStatePersistence();
       return checkModelOnStartup();
     })

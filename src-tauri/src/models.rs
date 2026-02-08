@@ -20,34 +20,24 @@ const DOWNLOAD_CONNECT_TIMEOUT_SECS: u64 = 10;
 const DOWNLOAD_READ_TIMEOUT_SECS: u64 = 30;
 const DOWNLOAD_REDIRECT_LIMIT: u32 = 5;
 
-// Allowed domains for model downloads (security: SSRF prevention)
-// Only enforced for initial URLs from config/settings, not for HTTP redirects
-const ALLOWED_MODEL_DOMAINS: &[&str] = &["huggingface.co", "hf.co", "ggml.ggerganov.com"];
-
 /// URL validation levels for model downloads
 ///
 /// Security model:
-/// - Initial URLs (from config/settings) are validated with Strict mode (whitelist + DNS)
-/// - HTTP redirects are validated with Redirect mode (DNS only, no whitelist)
+/// - Enforce HTTPS, no userinfo, no localhost/private IPs.
+/// - DNS validation for Strict/Redirect modes.
+/// - No domain whitelist (URLs are only sourced from curated model lists).
 ///
 /// This prevents:
 /// - SSRF attacks (localhost, private IPs blocked in all modes)
-/// - Arbitrary domains in config (whitelist enforced for initial URLs)
 ///
 /// While allowing:
 /// - Legitimate CDN redirects (common with HuggingFace, ggerganov.com, etc.)
-/// - Future-proof operation (no need to update whitelist for new CDN domains)
+/// - Future-proof operation (no whitelist maintenance)
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum UrlSafety {
-  Basic,      // Basic validation only (HTTPS, no userinfo, no localhost, no whitelist, no DNS)
-  Strict,     // Full validation (Basic + DNS resolution + whitelist check)
-  Redirect,   // Validation for HTTP redirects (Basic + DNS resolution, but no whitelist)
-}
-
-fn is_allowed_host(host: &str) -> bool {
-  ALLOWED_MODEL_DOMAINS
-    .iter()
-    .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
+  Basic,      // Basic validation only (HTTPS, no userinfo, no localhost, no DNS)
+  Strict,     // Full validation (Basic + DNS resolution)
+  Redirect,   // Validation for HTTP redirects (Basic + DNS resolution)
 }
 
 fn is_public_ip(ip: IpAddr) -> bool {
@@ -116,14 +106,6 @@ fn validate_model_url(url: &str, mode: UrlSafety) -> Result<Url, String> {
     if port != 443 {
       return Err(format!("Only HTTPS port 443 is allowed (got {port})"));
     }
-  }
-
-  // Only enforce whitelist for Basic and Strict modes, not for Redirect mode
-  if mode != UrlSafety::Redirect && !is_allowed_host(&host) {
-    return Err(format!(
-      "Domain '{host}' not in whitelist. Allowed: {}",
-      ALLOWED_MODEL_DOMAINS.join(", ")
-    ));
   }
 
   if let Ok(ip) = host.parse::<IpAddr>() {
@@ -355,7 +337,7 @@ mod tests {
   use super::*;
 
   #[test]
-  fn validate_model_url_accepts_https_allowlist() {
+  fn validate_model_url_accepts_https() {
     let url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin";
     assert!(validate_model_url(url, UrlSafety::Basic).is_ok());
   }
@@ -373,11 +355,6 @@ mod tests {
   }
 
   #[test]
-  fn validate_model_url_rejects_unlisted_domain() {
-    let url = "https://example.com/ggml-large-v3.bin";
-    assert!(validate_model_url(url, UrlSafety::Basic).is_err());
-  }
-
   #[test]
   fn validate_model_url_rejects_non_standard_port() {
     let url = "https://huggingface.co:444/ggml-large-v3.bin";
@@ -386,15 +363,14 @@ mod tests {
 
   #[test]
   fn validate_model_url_redirect_mode_allows_cdn_domains() {
-    // Redirect mode should allow CDN domains that aren't in the whitelist
     let cdn_url = "https://cas-bridge.xethub.hf.co/some/path/model.bin";
-    // This would fail with Basic/Strict due to whitelist, but should succeed with Redirect
-    // (assuming DNS resolution succeeds and resolves to public IP)
-    // Note: This test may fail if DNS resolution is performed and fails
+    // This should either succeed or fail due to DNS or IP checks.
     let result = validate_model_url(cdn_url, UrlSafety::Redirect);
-    // We expect this to either succeed or fail due to DNS, not due to whitelist
     if let Err(e) = result {
-      assert!(!e.contains("not in whitelist"), "Redirect mode should not enforce whitelist");
+      assert!(
+        !e.contains("not in whitelist"),
+        "Whitelist checks should not be enforced"
+      );
     }
   }
 

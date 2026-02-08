@@ -98,6 +98,32 @@ export function renderModels() {
       actions.className = "model-actions";
 
       if (model.installed) {
+        // Add Apply button if model is not currently active
+        if (!isActive) {
+          const applyBtn = document.createElement("button");
+          applyBtn.className = "button primary";
+          applyBtn.textContent = "Apply";
+          applyBtn.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            try {
+              await invoke("apply_model", { modelId: model.id });
+              showToast({
+                title: "Applied",
+                message: `Model switched to ${model.label}.`,
+                type: "success",
+              });
+              renderModels();
+            } catch (error) {
+              showToast({
+                title: "Apply failed",
+                message: String(error),
+                type: "error",
+              });
+            }
+          });
+          actions.appendChild(applyBtn);
+        }
+
         const canOptimize =
           model.removable &&
           model.file_name.endsWith(".bin") &&

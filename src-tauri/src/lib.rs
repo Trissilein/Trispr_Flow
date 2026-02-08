@@ -523,6 +523,35 @@ fn set_conversation_window_always_on_top(app: AppHandle, state: State<'_, AppSta
 }
 
 #[tauri::command]
+fn apply_model(app: AppHandle, state: State<'_, AppState>, model_id: String) -> Result<(), String> {
+  let mut settings = state.settings.lock().unwrap();
+  let old_model = settings.model.clone();
+  settings.model = model_id.clone();
+  drop(settings);
+
+  // Save the new model setting
+  save_settings_file(&app, &state.settings.lock().unwrap())?;
+
+  // If transcription is active, restart it with the new model
+  if state.transcribe_active.load(Ordering::Relaxed) {
+    stop_transcribe_monitor(&app, &state);
+    let new_settings = state.settings.lock().unwrap().clone();
+    if let Err(err) = start_transcribe_monitor(&app, &state, &new_settings) {
+      // Restore old model if restart fails
+      let mut settings = state.settings.lock().unwrap();
+      settings.model = old_model;
+      drop(settings);
+      let _ = save_settings_file(&app, &state.settings.lock().unwrap());
+      state.transcribe_active.store(false, Ordering::Relaxed);
+      return Err(format!("Failed to apply model: {}", err));
+    }
+  }
+
+  let _ = app.emit("model:changed", model_id);
+  Ok(())
+}
+
+#[tauri::command]
 fn validate_hotkey(key: String) -> hotkeys::ValidationResult {
   hotkeys::validate_hotkey_format(&key)
 }
@@ -1223,6 +1252,7 @@ pub fn run() {
       expand_transcribe_backlog,
       open_conversation_window,
       set_conversation_window_always_on_top,
+      apply_model,
       validate_hotkey,
       test_hotkey,
       get_hotkey_conflicts,

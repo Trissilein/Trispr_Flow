@@ -1,9 +1,16 @@
 ; Trispr Flow NSIS Installer Hooks
-; Adds custom pages for overlay style and GPU backend selection.
+; Adds custom pages for install/uninstall selection, overlay style, GPU backend, and capture mode.
 ; This file is included at the top level of the installer script by Tauri.
 
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
+
+; Variables for the install/uninstall page
+Var InstallModeDialog
+Var InstallModeLabel
+Var InstallModeRadioInstall
+Var InstallModeRadioUninstall
+Var InstallModeChoice
 
 ; Variables for the overlay style page
 Var OverlayStyleDialog
@@ -27,12 +34,46 @@ Var CaptureModeRadioVad
 Var CaptureModeChoice
 
 ; --- Custom page declarations (top-level, included before MUI pages) ---
+Page custom InstallModePage InstallModePageLeave
 Page custom OverlayStylePage OverlayStylePageLeave
 Page custom GpuBackendPage GpuBackendPageLeave
 Page custom CaptureModePage CaptureModePageLeave
 
 ; =====================================================================
-; Page 1: Overlay Style Selection
+; Page 1: Install/Uninstall Mode Selection
+; =====================================================================
+
+Function InstallModePage
+  nsDialogs::Create 1018
+  Pop $InstallModeDialog
+  ${If} $InstallModeDialog == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateLabel} 0 0 100% 36u "Choose whether to install or uninstall Trispr Flow."
+  Pop $InstallModeLabel
+
+  ${NSD_CreateRadioButton} 10u 46u 100% 14u "Install Trispr Flow"
+  Pop $InstallModeRadioInstall
+  ${NSD_SetState} $InstallModeRadioInstall ${BST_CHECKED}
+
+  ${NSD_CreateRadioButton} 10u 64u 100% 14u "Uninstall Trispr Flow"
+  Pop $InstallModeRadioUninstall
+
+  nsDialogs::Show
+FunctionEnd
+
+Function InstallModePageLeave
+  ${NSD_GetState} $InstallModeRadioInstall $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $InstallModeChoice "install"
+  ${Else}
+    StrCpy $InstallModeChoice "uninstall"
+  ${EndIf}
+FunctionEnd
+
+; =====================================================================
+; Page 2: Overlay Style Selection
 ; =====================================================================
 
 Function OverlayStylePage
@@ -65,7 +106,7 @@ Function OverlayStylePageLeave
 FunctionEnd
 
 ; =====================================================================
-; Page 2: GPU Backend Selection
+; Page 3: GPU Backend Selection
 ; =====================================================================
 
 Function GpuBackendPage
@@ -98,7 +139,7 @@ Function GpuBackendPageLeave
 FunctionEnd
 
 ; =====================================================================
-; Page 3: Capture Mode Selection
+; Page 4: Capture Mode Selection
 ; =====================================================================
 
 Function CaptureModePage
@@ -135,6 +176,12 @@ FunctionEnd
 ; =====================================================================
 
 !macro NSIS_HOOK_POSTINSTALL
+  ; Check install mode - only proceed if user selected "install"
+  ${If} $InstallModeChoice == "uninstall"
+    ; User selected uninstall, skip post-install configuration
+    Goto SkipPostInstall
+  ${EndIf}
+
   ; Write initial settings.json with all required fields and defaults.
   ; Only overlay_style is overridden by user choice; other fields use defaults.
   CreateDirectory "$APPDATA\com.trispr.flow"
@@ -207,4 +254,6 @@ FunctionEnd
     ; Keep vulkan, remove cuda
     RMDir /r "$INSTDIR\bin\cuda"
   ${EndIf}
+
+  SkipPostInstall:
 !macroend

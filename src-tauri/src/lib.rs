@@ -63,6 +63,7 @@ static TRAY_TRANSCRIBE_STATE: AtomicU8 = AtomicU8::new(0);
 static TRAY_PULSE_STARTED: AtomicBool = AtomicBool::new(false);
 static BACKLOG_PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
+static MAIN_WINDOW_RESTORED: AtomicBool = AtomicBool::new(false);
 
 fn schedule_backlog_auto_expand(app: AppHandle, cancel_item: MenuItem<Wry>) {
   if BACKLOG_PROMPT_ACTIVE.swap(true, Ordering::AcqRel) {
@@ -350,6 +351,52 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
 }
 
 #[tauri::command]
+fn save_window_state(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    window_label: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let monitor_name = if let Some(window) = app.get_webview_window(&window_label) {
+        window.current_monitor()
+            .ok()
+            .flatten()
+            .and_then(|m| m.name().map(|n| n.clone()))
+    } else {
+        None
+    };
+
+    let mut current = state.settings.lock().unwrap();
+
+    match window_label.as_str() {
+        "main" => {
+            current.main_window_x = Some(x);
+            current.main_window_y = Some(y);
+            current.main_window_width = Some(width);
+            current.main_window_height = Some(height);
+            current.main_window_monitor = monitor_name;
+        }
+        "conversation" => {
+            current.conv_window_x = Some(x);
+            current.conv_window_y = Some(y);
+            current.conv_window_width = Some(width);
+            current.conv_window_height = Some(height);
+            current.conv_window_monitor = monitor_name;
+        }
+        _ => return Err("Unknown window label".to_string()),
+    }
+
+    let settings = current.clone();
+    drop(current);
+
+    save_settings_file(&app, &settings)?;
+    Ok(())
+}
+
+#[tauri::command]
 fn get_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
   state.history.lock().unwrap().clone()
 }
@@ -400,7 +447,9 @@ fn open_conversation_window(app: AppHandle) -> Result<(), String> {
     return Ok(());
   }
 
-  let window = tauri::WebviewWindowBuilder::new(
+  let settings = load_settings(&app);
+
+  let mut builder = tauri::WebviewWindowBuilder::new(
     &app,
     "conversation",
     tauri::WebviewUrl::App("index.html".into()),
@@ -411,9 +460,47 @@ fn open_conversation_window(app: AppHandle) -> Result<(), String> {
   .resizable(true)
   .decorations(true)
   .transparent(false)
-  .visible(true)
-  .build()
-  .map_err(|e| e.to_string())?;
+  .visible(true);
+
+  // Restore geometry if available
+  if let (Some(x), Some(y), Some(w), Some(h)) = (
+    settings.conv_window_x,
+    settings.conv_window_y,
+    settings.conv_window_width,
+    settings.conv_window_height,
+  ) {
+    builder = builder
+      .position(x as f64, y as f64)
+      .inner_size(w as f64, h as f64);
+  }
+
+  let window = builder.build().map_err(|e| e.to_string())?;
+
+  // Validate monitor after creation
+  let monitor_valid = window.available_monitors()
+    .ok()
+    .map(|monitors| {
+      if let Some(monitor_name) = &settings.conv_window_monitor {
+        monitors.iter().any(|m| {
+          m.name().as_ref().map(|n| n.as_str()) == Some(monitor_name.as_str())
+        })
+      } else {
+        true  // No specific monitor was saved, so any monitor is valid
+      }
+    })
+    .unwrap_or(false);
+
+  if !monitor_valid {
+    // Fallback: center on primary monitor
+    if let Ok(Some(primary)) = window.primary_monitor() {
+      let primary_size = primary.size();
+      let window_w = settings.conv_window_width.unwrap_or(860).max(640);
+      let window_h = settings.conv_window_height.unwrap_or(680).max(420);
+      let center_x = (primary_size.width as i32 - window_w as i32) / 2;
+      let center_y = (primary_size.height as i32 - window_h as i32) / 2;
+      let _ = window.set_position(tauri::PhysicalPosition::new(center_x, center_y));
+    }
+  }
 
   let _ = window.eval(
     "window.__TRISPR_VIEW__='conversation'; window.dispatchEvent(new CustomEvent('trispr:view', { detail: 'conversation' }));",
@@ -761,6 +848,49 @@ fn start_tray_pulse_loop(app: AppHandle) {
 
 fn show_main_window(app: &AppHandle) {
   if let Some(window) = app.get_webview_window("main") {
+    // Restore window geometry on first show
+    if !MAIN_WINDOW_RESTORED.swap(true, Ordering::AcqRel) {
+      let settings = load_settings(app);
+
+      if let (Some(x), Some(y), Some(w), Some(h)) = (
+        settings.main_window_x,
+        settings.main_window_y,
+        settings.main_window_width,
+        settings.main_window_height,
+      ) {
+        // Validate monitor still exists
+        let monitor_valid = window.available_monitors()
+          .ok()
+          .map(|monitors| {
+            if let Some(monitor_name) = &settings.main_window_monitor {
+              monitors.iter().any(|m| {
+                m.name().as_ref().map(|n| n.as_str()) == Some(monitor_name.as_str())
+              })
+            } else {
+              true  // No specific monitor was saved, so any monitor is valid
+            }
+          })
+          .unwrap_or(false);
+
+        if monitor_valid {
+          // Restore saved geometry
+          let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+          let _ = window.set_size(tauri::PhysicalSize::new(w, h));
+        } else {
+          // Fallback: center on primary monitor
+          if let Ok(Some(primary)) = window.primary_monitor() {
+            let primary_size = primary.size();
+            let window_w = w.max(980);
+            let window_h = h.max(640);
+            let center_x = (primary_size.width as i32 - window_w as i32) / 2;
+            let center_y = (primary_size.height as i32 - window_h as i32) / 2;
+            let _ = window.set_position(tauri::PhysicalPosition::new(center_x, center_y));
+            let _ = window.set_size(tauri::PhysicalSize::new(window_w, window_h));
+          }
+        }
+      }
+    }
+
     let _ = window.show();
     let _ = window.set_skip_taskbar(false);
     let _ = window.set_focus();
@@ -1017,6 +1147,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       get_settings,
       save_settings,
+      save_window_state,
       list_audio_devices,
       list_output_devices,
       list_models,

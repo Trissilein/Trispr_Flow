@@ -74,6 +74,18 @@ pub(crate) struct Settings {
   pub(crate) hallucination_max_duration_ms: u64,
   pub(crate) hallucination_max_words: u32,
   pub(crate) hallucination_max_chars: u32,
+  // Main window state
+  pub(crate) main_window_x: Option<i32>,
+  pub(crate) main_window_y: Option<i32>,
+  pub(crate) main_window_width: Option<u32>,
+  pub(crate) main_window_height: Option<u32>,
+  pub(crate) main_window_monitor: Option<String>,
+  // Conversation window state
+  pub(crate) conv_window_x: Option<i32>,
+  pub(crate) conv_window_y: Option<i32>,
+  pub(crate) conv_window_width: Option<u32>,
+  pub(crate) conv_window_height: Option<u32>,
+  pub(crate) conv_window_monitor: Option<String>,
 }
 
 impl Default for Settings {
@@ -133,6 +145,16 @@ impl Default for Settings {
       hallucination_max_duration_ms: HALLUCINATION_MAX_DURATION_MS,
       hallucination_max_words: HALLUCINATION_MAX_WORDS as u32,
       hallucination_max_chars: HALLUCINATION_MAX_CHARS as u32,
+      main_window_x: None,
+      main_window_y: None,
+      main_window_width: None,
+      main_window_height: None,
+      main_window_monitor: None,
+      conv_window_x: None,
+      conv_window_y: None,
+      conv_window_width: None,
+      conv_window_height: None,
+      conv_window_monitor: None,
     }
   }
 }

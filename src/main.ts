@@ -2,6 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { initWindowStatePersistence } from "./window-state";
 
 import type {
   Settings,
@@ -287,7 +288,10 @@ async function checkModelOnStartup() {
 
 window.addEventListener("DOMContentLoaded", () => {
   bootstrap()
-    .then(() => checkModelOnStartup())
+    .then(() => {
+      initWindowStatePersistence();
+      return checkModelOnStartup();
+    })
     .catch((error) => {
       console.error("bootstrap failed", error);
     });

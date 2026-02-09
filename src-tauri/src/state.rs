@@ -11,7 +11,7 @@ use crate::constants::{
 use crate::paths::{resolve_config_path, resolve_data_path};
 use crate::transcription::TranscribeRecorder;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
@@ -25,6 +25,7 @@ pub(crate) struct Settings {
   pub(crate) hotkey_toggle: String,
   pub(crate) input_device: String,
   pub(crate) language_mode: String,
+  pub(crate) language_pinned: bool,
   pub(crate) model: String,
   pub(crate) cloud_fallback: bool,
   pub(crate) audio_cues: bool,
@@ -36,6 +37,7 @@ pub(crate) struct Settings {
   pub(crate) vad_silence_ms: u64,
   pub(crate) transcribe_enabled: bool,
   pub(crate) transcribe_hotkey: String,
+  pub(crate) hotkey_toggle_activation_words: String,
   pub(crate) transcribe_output_device: String,
   pub(crate) transcribe_vad_mode: bool,
   pub(crate) transcribe_vad_threshold: f32,
@@ -74,6 +76,21 @@ pub(crate) struct Settings {
   pub(crate) hallucination_max_duration_ms: u64,
   pub(crate) hallucination_max_words: u32,
   pub(crate) hallucination_max_chars: u32,
+  pub(crate) activation_words_enabled: bool,
+  pub(crate) activation_words: Vec<String>,
+  // Post-processing settings
+  pub(crate) postproc_enabled: bool,
+  pub(crate) postproc_language: String,
+  pub(crate) postproc_punctuation_enabled: bool,
+  pub(crate) postproc_capitalization_enabled: bool,
+  pub(crate) postproc_numbers_enabled: bool,
+  pub(crate) postproc_custom_vocab_enabled: bool,
+  pub(crate) postproc_custom_vocab: HashMap<String, String>,
+  pub(crate) postproc_llm_enabled: bool,
+  pub(crate) postproc_llm_provider: String,
+  pub(crate) postproc_llm_api_key: String,
+  pub(crate) postproc_llm_model: String,
+  pub(crate) postproc_llm_prompt: String,
   // Main window state
   pub(crate) main_window_x: Option<i32>,
   pub(crate) main_window_y: Option<i32>,
@@ -97,6 +114,7 @@ impl Default for Settings {
       hotkey_toggle: "CommandOrControl+Shift+M".to_string(),
       input_device: "default".to_string(),
       language_mode: "auto".to_string(),
+      language_pinned: false,
       model: "whisper-large-v3".to_string(),
       cloud_fallback: false,
       audio_cues: true,
@@ -108,6 +126,7 @@ impl Default for Settings {
       vad_silence_ms: VAD_SILENCE_MS_DEFAULT,
       transcribe_enabled: false,
       transcribe_hotkey: "CommandOrControl+Shift+O".to_string(),
+      hotkey_toggle_activation_words: "CommandOrControl+Shift+A".to_string(),
       transcribe_output_device: "default".to_string(),
       transcribe_vad_mode: false,
       transcribe_vad_threshold: 0.04,
@@ -146,6 +165,20 @@ impl Default for Settings {
       hallucination_max_duration_ms: HALLUCINATION_MAX_DURATION_MS,
       hallucination_max_words: HALLUCINATION_MAX_WORDS as u32,
       hallucination_max_chars: HALLUCINATION_MAX_CHARS as u32,
+      activation_words_enabled: false,
+      activation_words: vec!["computer".to_string(), "hey assistant".to_string()],
+      postproc_enabled: false,
+      postproc_language: "en".to_string(),
+      postproc_punctuation_enabled: true,
+      postproc_capitalization_enabled: true,
+      postproc_numbers_enabled: true,
+      postproc_custom_vocab_enabled: false,
+      postproc_custom_vocab: HashMap::new(),
+      postproc_llm_enabled: false,
+      postproc_llm_provider: "claude".to_string(),
+      postproc_llm_api_key: String::new(),
+      postproc_llm_model: "claude-3-5-sonnet-20241022".to_string(),
+      postproc_llm_prompt: "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
       main_window_x: None,
       main_window_y: None,
       main_window_width: None,
@@ -234,6 +267,11 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
       }
       if settings.transcribe_vad_silence_ms > 5000 {
         settings.transcribe_vad_silence_ms = 5000;
+      }
+      // Validate language_mode
+      let valid_languages = ["auto", "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "ko", "zh", "ar", "tr", "hi"];
+      if !valid_languages.contains(&settings.language_mode.as_str()) {
+        settings.language_mode = "auto".to_string();
       }
       if settings.model_source.trim().is_empty() {
         settings.model_source = "default".to_string();

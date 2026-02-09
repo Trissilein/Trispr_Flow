@@ -37,6 +37,7 @@ export const toggleHotkeyRecord = $("toggle-hotkey-record") as HTMLButtonElement
 export const toggleHotkeyStatus = $("toggle-hotkey-status") as HTMLSpanElement | null;
 export const deviceSelect = $("device-select") as HTMLSelectElement | null;
 export const languageSelect = $("language-select") as HTMLSelectElement | null;
+export const languagePinnedToggle = $("language-pinned-toggle") as HTMLInputElement | null;
 export const cloudToggle = $("cloud-toggle") as HTMLInputElement | null;
 export const audioCuesToggle = $("audio-cues-toggle") as HTMLInputElement | null;
 export const audioCuesVolume = $("audio-cues-volume") as HTMLInputElement | null;
@@ -54,6 +55,12 @@ export const vadMeterFill = $("vad-meter-fill");
 export const vadLevelDbm = $("vad-level-dbm");
 export const vadMarkerStart = $("vad-marker-start");
 export const vadMarkerSustain = $("vad-marker-sustain");
+
+// Text filtering controls
+export const hallucinationFilterToggle = $("hallucination-filter-toggle") as HTMLInputElement | null;
+export const activationWordsToggle = $("activation-words-toggle") as HTMLInputElement | null;
+export const activationWordsConfig = $("activation-words-config") as HTMLDivElement | null;
+export const activationWordsList = $("activation-words-list") as HTMLTextAreaElement | null;
 
 // Output / transcribe controls
 export const transcribeEnabledToggle = $("transcribe-enabled-toggle") as HTMLInputElement | null;
@@ -124,8 +131,10 @@ export const conversationFontControls = $("conversation-font-controls");
 export const conversationFontSize = $("conversation-font-size") as HTMLInputElement | null;
 export const conversationFontSizeValue = $("conversation-font-size-value");
 
-// Conversation window controls
-export const convWindowAlwaysOnTop = $("conv-window-always-on-top") as HTMLInputElement | null;
+// Extra hotkeys controls
+export const toggleActivationWordsHotkey = $("toggle-activation-words-hotkey") as HTMLInputElement | null;
+export const toggleActivationWordsHotkeyRecord = $("toggle-activation-words-hotkey-record") as HTMLButtonElement | null;
+export const toggleActivationWordsHotkeyStatus = $("toggle-activation-words-hotkey-status") as HTMLSpanElement | null;
 
 // Model manager controls
 export const modelSourceSelect = $("model-source-select") as HTMLSelectElement | null;

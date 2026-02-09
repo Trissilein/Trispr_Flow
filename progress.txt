@@ -1,6 +1,6 @@
 # Trispr Flow — Current Progress
 
-**Last updated**: 2026-02-08 (Tasks 3-5 complete)
+**Last updated**: 2026-02-09 (Task 6 - Capture Enhancements complete)
 
 ## ✅ Completed
 
@@ -60,18 +60,65 @@
 - Success/error toast feedback on model switch.
 - Event emission for model change tracking.
 
-## 🔄 In Progress
+### Capture Enhancements
+- Language Pinning: Fixed critical bug in transcription.rs (line 887 hardcoded "auto").
+- Language dropdown with 16 languages (English, German, French, Spanish, Italian, Portuguese, Dutch, Polish, Russian, Japanese, Korean, Chinese, Arabic, Turkish, Hindi).
+- Pin language toggle to force selected language instead of auto-detection.
+- Activation Words: Word boundary matching filter (case-insensitive).
+- Default activation word list: ["computer", "hey assistant"].
+- Activation words UI with toggle + textarea for word list configuration.
+- Filter integration in 3 transcription paths (PTT mode, toggle mode, transcribe worker).
+- Hallucination Filter UI: Toggle for existing backend filter (previously JSON-only).
+- Extra Hotkey: Ctrl+Shift+A to toggle activation words on/off.
+- Hotkey handler with audio cues and settings persistence.
+- Full frontend wiring (DOM refs, event listeners, rendering).
 
-### Next Feature Work
-- Ready for Capture Enhancements or Post-Processing pipeline
+## 🔄 Next Up
 
-## 📋 Next Up (Prioritized)
+### Version 0.4.0 — Post-Processing Pipeline
+**Goal**: Enhance transcription quality with intelligent text refinement
 
-1. Capture Enhancements (activation words, language pinning, extra hotkeys).
-2. Post-Processing pipeline (rule-based + optional LLM refinement).
-3. Long-form features (dump, chapter segmentation, topic detection).
-4. VibeVoice-ASR integration for speaker diarization (Python sidecar).
-5. AI Fallback overhaul (multi-provider, user-selectable models).
+**Features**:
+- Rule-based punctuation & capitalization (English, German)
+- Number normalization (digits, dates, currency)
+- Custom vocabulary support (technical terms, proper nouns)
+- Domain-aware corrections
+- Optional LLM refinement via Claude API
+
+**Status**: Planning phase
+
+### Version 0.5.0 — Long-Form Features
+**Goal**: Support extended recording sessions with organization tools
+
+**Features**:
+- Live transcript dump (export as TXT, MD, JSON)
+- Chapter segmentation (automatic for meetings/lectures)
+- Topic detection and marking
+- Transcript search and navigation
+
+**Status**: Spec phase
+
+### Version 0.6.0 — VibeVoice-ASR Integration
+**Goal**: Speaker diarization for recorded meetings
+
+**Features**:
+- Python FastAPI sidecar for VibeVoice-ASR 7B
+- Post-session speaker-diarized transcripts
+- WAV recording alongside live transcription
+- Color-coded speaker view in UI
+
+**Status**: Research phase
+
+### Version 0.7.0 — AI Fallback Overhaul
+**Goal**: Multi-provider cloud transcription with user choice
+
+**Features**:
+- OpenAI Whisper API, Anthropic, Groq support
+- User-selectable models per provider
+- Streaming transcription for real-time cloud fallback
+- Cost tracking and usage analytics
+
+**Status**: Concept phase
 
 ## 🧩 Known Follow-up Constraints
 - `npm run build` currently fails on pre-existing TypeScript issues in:

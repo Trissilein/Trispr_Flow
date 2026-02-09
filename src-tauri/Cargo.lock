@@ -4865,13 +4865,14 @@ dependencies = [
 
 [[package]]
 name = "trispr-flow"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "cpal",
  "enigo",
  "hex",
  "image 0.24.9",
+ "regex",
  "rfd",
  "serde",
  "serde_json",

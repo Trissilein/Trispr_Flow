@@ -5,6 +5,7 @@ use crate::constants::{
   VAD_MIN_VOICE_MS,
 };
 use crate::overlay::{update_overlay_state, OverlayState};
+use crate::postprocessing::process_transcript;
 use crate::state::{push_history_entry_inner, AppState, Settings};
 use crate::transcription::{rms_i16, should_drop_transcript, transcribe_audio, TranscriptionResult};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -1012,20 +1013,37 @@ fn process_vad_segment(
 
   match result {
     Ok((text, source)) => {
-      if !text.trim().is_empty() && !should_drop_transcript(&text, level, duration_ms) {
+      let settings = state.settings.lock().unwrap().clone();
+      if !text.trim().is_empty()
+        && !should_drop_transcript(&text, level, duration_ms)
+        && !crate::transcription::should_drop_by_activation_words(&text, &settings.activation_words, settings.activation_words_enabled) {
+
+        // Apply post-processing if enabled
+        let processed_text = if settings.postproc_enabled {
+          match process_transcript(&text, &settings, &app_handle) {
+            Ok(processed) => processed,
+            Err(e) => {
+              error!("Post-processing failed: {}", e);
+              text.clone() // Fallback to original
+            }
+          }
+        } else {
+          text.clone()
+        };
+
         if let Ok(updated) =
-          push_history_entry_inner(&app_handle, &state.history, text.clone(), source.clone())
+          push_history_entry_inner(&app_handle, &state.history, processed_text.clone(), source.clone())
         {
           let _ = app_handle.emit("history:updated", updated);
         }
         let _ = app_handle.emit(
           "transcription:result",
           TranscriptionResult {
-            text: text.clone(),
+            text: processed_text.clone(),
             source: source.clone(),
           },
         );
-        if let Err(err) = crate::paste_text(&text) {
+        if let Err(err) = crate::paste_text(&processed_text) {
           let _ = app_handle.emit("transcription:error", err);
         }
       }
@@ -1104,20 +1122,37 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
 
     match result {
       Ok((text, source)) => {
-        if !text.trim().is_empty() && !should_drop_transcript(&text, level, duration_ms) {
+        let settings = state.settings.lock().unwrap().clone();
+        if !text.trim().is_empty()
+          && !should_drop_transcript(&text, level, duration_ms)
+          && !crate::transcription::should_drop_by_activation_words(&text, &settings.activation_words, settings.activation_words_enabled) {
+
+          // Apply post-processing if enabled
+          let processed_text = if settings.postproc_enabled {
+            match process_transcript(&text, &settings, &app_handle) {
+              Ok(processed) => processed,
+              Err(e) => {
+                error!("Post-processing failed: {}", e);
+                text.clone() // Fallback to original
+              }
+            }
+          } else {
+            text.clone()
+          };
+
           if let Ok(updated) =
-            push_history_entry_inner(&app_handle, &state.history, text.clone(), source.clone())
+            push_history_entry_inner(&app_handle, &state.history, processed_text.clone(), source.clone())
           {
             let _ = app_handle.emit("history:updated", updated);
           }
           let _ = app_handle.emit(
             "transcription:result",
             TranscriptionResult {
-              text: text.clone(),
+              text: processed_text.clone(),
               source: source.clone(),
             },
           );
-          if let Err(err) = crate::paste_text(&text) {
+          if let Err(err) = crate::paste_text(&processed_text) {
             let _ = app_handle.emit("transcription:error", err);
           }
         }

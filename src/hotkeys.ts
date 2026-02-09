@@ -6,7 +6,7 @@ import { settings } from "./state";
 import { persistSettings } from "./settings";
 
 export function setupHotkeyRecorder(
-  type: "ptt" | "toggle" | "transcribe",
+  type: "ptt" | "toggle" | "transcribe" | "toggleActivationWords",
   input: HTMLInputElement | null,
   recordBtn: HTMLButtonElement | null,
   statusEl: HTMLSpanElement | null
@@ -98,8 +98,10 @@ export function setupHotkeyRecorder(
           settings.hotkey_ptt = hotkeyString;
         } else if (type === "toggle") {
           settings.hotkey_toggle = hotkeyString;
-        } else {
+        } else if (type === "transcribe") {
           settings.transcribe_hotkey = hotkeyString;
+        } else if (type === "toggleActivationWords") {
+          settings.hotkey_toggle_activation_words = hotkeyString;
         }
         await persistSettings();
       }

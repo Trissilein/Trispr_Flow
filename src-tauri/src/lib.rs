@@ -9,6 +9,7 @@ mod models;
 mod overlay;
 mod paths;
 mod state;
+mod postprocessing;
 mod transcription;
 mod util;
 
@@ -232,6 +233,29 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
   }
 
   register_transcribe()?;
+
+  // Register Toggle Activation Words hotkey
+  let hotkey = settings.hotkey_toggle_activation_words.trim();
+  if !hotkey.is_empty() {
+    match manager.on_shortcut(hotkey, |app, _shortcut, event| {
+      if event.state == ShortcutState::Pressed {
+        toggle_activation_words_async(app.clone());
+      }
+    }) {
+      Ok(_) => {},
+      Err(e) => {
+        error!("Failed to register Toggle Activation Words hotkey '{}': {}", hotkey, e);
+        emit_error(
+          app,
+          AppError::Hotkey(format!(
+            "Could not register Toggle Activation Words hotkey '{}': {}",
+            hotkey, e
+          )),
+          Some("Hotkey Registration"),
+        );
+      }
+    }
+  }
 
   Ok(())
 }
@@ -954,6 +978,27 @@ fn should_handle_tray_click() -> bool {
   }
   LAST_TRAY_CLICK_MS.store(now, Ordering::Relaxed);
   true
+}
+
+pub(crate) fn toggle_activation_words_async(app: AppHandle) {
+  thread::spawn(move || {
+    let state = app.state::<AppState>();
+    let new_enabled = {
+      let mut settings = state.settings.lock().unwrap();
+      settings.activation_words_enabled = !settings.activation_words_enabled;
+      let enabled = settings.activation_words_enabled;
+      let _ = save_settings_file(&app, &settings);
+      enabled
+    };
+
+    let cue = if new_enabled { "start" } else { "stop" };
+    let _ = app.emit("audio:cue", cue);
+    let _ = app.emit("settings:updated", {
+      let settings = state.settings.lock().unwrap().clone();
+      settings
+    });
+    info!("Activation words toggled to: {}", new_enabled);
+  });
 }
 
 fn toggle_main_window(app: &AppHandle) {

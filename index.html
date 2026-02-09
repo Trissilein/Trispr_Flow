@@ -173,6 +173,37 @@
                 <option value="vad">Voice Activation</option>
               </select>
             </label>
+            <label class="field">
+              <span class="field-label">Language</span>
+              <select id="language-select">
+                <option value="auto">Auto-detect</option>
+                <option value="en">English</option>
+                <option value="de">Deutsch (German)</option>
+                <option value="fr">Français (French)</option>
+                <option value="es">Español (Spanish)</option>
+                <option value="it">Italiano (Italian)</option>
+                <option value="pt">Português (Portuguese)</option>
+                <option value="nl">Nederlands (Dutch)</option>
+                <option value="pl">Polski (Polish)</option>
+                <option value="ru">Русский (Russian)</option>
+                <option value="ja">日本語 (Japanese)</option>
+                <option value="ko">한국어 (Korean)</option>
+                <option value="zh">中文 (Chinese)</option>
+                <option value="ar">العربية (Arabic)</option>
+                <option value="tr">Türkçe (Turkish)</option>
+                <option value="hi">हिन्दी (Hindi)</option>
+              </select>
+            </label>
+            <label class="field toggle">
+              <div class="toggle-row">
+                <span class="field-label">Pin language</span>
+                <input id="language-pinned-toggle" type="checkbox" />
+                <span class="toggle-track">
+                  <span class="toggle-thumb"></span>
+                </span>
+              </div>
+              <span class="toggle-hint">Force selected language instead of auto-detection</span>
+            </label>
             <div id="hotkeys-block" class="field-group">
               <div class="field hotkey-field">
                 <span class="field-label">PTT hotkey (hold)</span>
@@ -263,6 +294,33 @@
                   <span id="mic-gain-value" class="range-value" aria-live="polite">+0 dB</span>
                 </div>
               </label>
+            </div>
+            <div class="field toggle span-2">
+              <div class="toggle-row">
+                <span class="field-label">Hallucination Filter</span>
+                <input id="hallucination-filter-toggle" type="checkbox" />
+                <span class="toggle-track">
+                  <span class="toggle-thumb"></span>
+                </span>
+              </div>
+              <span class="toggle-hint">Filter out low-energy noise and common hallucinations</span>
+            </div>
+            <div class="field toggle span-2">
+              <div class="toggle-row">
+                <span class="field-label">Activation Words</span>
+                <input id="activation-words-toggle" type="checkbox" />
+                <span class="toggle-track">
+                  <span class="toggle-thumb"></span>
+                </span>
+              </div>
+              <span class="toggle-hint">Only process transcripts containing trigger words</span>
+            </div>
+            <div id="activation-words-config" class="field span-2 hidden">
+              <label class="field-label">Word list (one per line)</label>
+              <textarea id="activation-words-list" rows="4"
+                placeholder="computer&#10;hey assistant"
+                class="activation-words-textarea"></textarea>
+              <span class="field-hint">Case-insensitive word matching</span>
             </div>
             <label class="field toggle span-2">
               <span class="field-label">Audio cues</span>
@@ -431,7 +489,7 @@
           </div>
         </section>
 
-        <section class="panel transcription-panel" data-panel="model" style="--delay: 0.2s">
+        <section class="panel transcription-panel" data-panel="model" style="--delay: 0.18s">
           <div class="panel-header">
             <div class="panel-title">
               <h2>Model Manager</h2>
@@ -518,17 +576,32 @@
           </div>
           <div class="panel-body">
           <div class="panel-grid">
-            <label class="field span-2">
-              <span class="field-label">Overlay</span>
-              <select id="overlay-style">
-                <option value="dot">HAL 9000 by Space:2001®</option>
-                <option value="kitt">KITT by Dox®</option>
-              </select>
-            </label>
+            <div class="field hotkey-field span-2">
+              <span class="field-label">Toggle activation words</span>
+              <div class="hotkey-input-group">
+                <input id="toggle-activation-words-hotkey" type="text" readonly />
+                <button id="toggle-activation-words-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
+                  </svg>
+                  Record
+                </button>
+              </div>
+              <span id="toggle-activation-words-hotkey-status" class="hotkey-status"
+                    role="status"
+                    aria-live="polite"></span>
+            </div>
           </div>
           <details class="expander">
-            <summary>Overlay settings</summary>
+            <summary>Overlay</summary>
             <div class="expander-body">
+              <label class="field">
+                <span class="field-label">Style</span>
+                <select id="overlay-style">
+                  <option value="dot">HAL 9000 by Space:2001®</option>
+                  <option value="kitt">KITT by Dox®</option>
+                </select>
+              </label>
               <label class="field">
                 <span class="field-label">Color</span>
                 <input id="overlay-color" type="color" />
@@ -661,16 +734,6 @@
                 </label>
               </div>
               <button id="apply-overlay-btn" class="button primary" style="margin-top: 12px; width: 100%;">Apply Overlay Settings</button>
-            </div>
-          </details>
-          <details class="expander">
-            <summary>Conversation window</summary>
-            <div class="expander-body">
-              <label class="field checkbox">
-                <input id="conv-window-always-on-top" type="checkbox" />
-                <span class="field-label">Always on top</span>
-                <span class="checkbox-description">Keep conversation window above other windows</span>
-              </label>
             </div>
           </details>
           </div>

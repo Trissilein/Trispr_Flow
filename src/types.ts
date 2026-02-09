@@ -5,7 +5,8 @@ export interface Settings {
   hotkey_ptt: string;
   hotkey_toggle: string;
   input_device: string;
-  language_mode: "auto";
+  language_mode: "auto" | "en" | "de" | "fr" | "es" | "it" | "pt" | "nl" | "pl" | "ru" | "ja" | "ko" | "zh" | "ar" | "tr" | "hi";
+  language_pinned: boolean;
   model: string;
   cloud_fallback: boolean;
   audio_cues: boolean;
@@ -17,6 +18,7 @@ export interface Settings {
   vad_silence_ms: number;
   transcribe_enabled: boolean;
   transcribe_hotkey: string;
+  hotkey_toggle_activation_words: string;
   transcribe_output_device: string;
   transcribe_vad_mode: boolean;
   transcribe_vad_threshold: number;
@@ -50,6 +52,22 @@ export interface Settings {
   overlay_kitt_min_width: number;
   overlay_kitt_max_width: number;
   overlay_kitt_height: number;
+  hallucination_filter_enabled: boolean;
+  activation_words_enabled: boolean;
+  activation_words: string[];
+  // Post-processing settings
+  postproc_enabled: boolean;
+  postproc_language: string;
+  postproc_punctuation_enabled: boolean;
+  postproc_capitalization_enabled: boolean;
+  postproc_numbers_enabled: boolean;
+  postproc_custom_vocab_enabled: boolean;
+  postproc_custom_vocab: Record<string, string>;
+  postproc_llm_enabled: boolean;
+  postproc_llm_provider: string;
+  postproc_llm_api_key: string;
+  postproc_llm_model: string;
+  postproc_llm_prompt: string;
   // Window state fields from backend
   main_window_x?: number | null;
   main_window_y?: number | null;

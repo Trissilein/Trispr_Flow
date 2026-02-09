@@ -15,6 +15,7 @@ use crate::errors::AppError;
 use crate::models::resolve_model_path;
 use crate::overlay::{update_overlay_state, OverlayState};
 use crate::paths::resolve_whisper_cli_path;
+use crate::postprocessing::process_transcript;
 use crate::state::{push_transcribe_entry_inner, AppState, Settings};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -27,6 +28,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tracing::error;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct TranscriptionResult {
@@ -434,6 +436,30 @@ pub(crate) fn should_drop_transcript(text: &str, rms: f32, duration_ms: u64) -> 
   is_low_energy && is_short_audio && is_short
 }
 
+pub(crate) fn should_drop_by_activation_words(
+  text: &str,
+  activation_words: &[String],
+  enabled: bool,
+) -> bool {
+  if !enabled || activation_words.is_empty() {
+    return false; // Don't drop
+  }
+
+  let normalized_text = normalize_transcript(text);
+  let words: Vec<&str> = normalized_text.split_whitespace().collect();
+
+  // Check if any activation word exists as complete word
+  for activation_word in activation_words {
+    for word in &words {
+      if *word == activation_word.as_str() {
+        return false; // Found activation word, don't drop
+      }
+    }
+  }
+
+  true // No activation word found, drop
+}
+
 const HALLUCINATION_PHRASES: &[&str] = &[
   "you",
   "thank you",
@@ -478,9 +504,25 @@ fn transcribe_worker(
 
     match result {
       Ok((text, _source)) => {
-        if !text.trim().is_empty() && !should_drop_transcript(&text, level, duration_ms) {
+        if !text.trim().is_empty()
+          && !should_drop_transcript(&text, level, duration_ms)
+          && !should_drop_by_activation_words(&text, &settings.activation_words, settings.activation_words_enabled) {
+
+          // Apply post-processing if enabled
+          let processed_text = if settings.postproc_enabled {
+            match process_transcript(&text, &settings, &app) {
+              Ok(processed) => processed,
+              Err(e) => {
+                error!("Post-processing failed: {}", e);
+                text.clone() // Fallback to original
+              }
+            }
+          } else {
+            text.clone()
+          };
+
           let state = app.state::<AppState>();
-          let _ = push_transcribe_entry_inner(&app, &state.history_transcribe, text);
+          let _ = push_transcribe_entry_inner(&app, &state.history_transcribe, processed_text);
         }
       }
       Err(err) => {
@@ -884,7 +926,11 @@ fn transcribe_local(
     .arg("-t")
     .arg(threads)
     .arg("-l")
-    .arg("auto")
+    .arg(if settings.language_pinned {
+      &settings.language_mode
+    } else {
+      "auto"
+    })
     .arg("-nt")
     .arg("-otxt")
     .arg("-of")

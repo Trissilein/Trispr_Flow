@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-08
+Last updated: 2026-02-09
 
 This roadmap tracks the current focus: getting core capture + transcription stable and tightening UX before expanding features.
 
@@ -11,9 +11,41 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 ✅ **Milestone 0**: Complete (tech stack locked, whisper.cpp validated)
 ✅ **Milestone 1**: Complete (PTT capture, transcription, paste)
 ✅ **Milestone 2**: Complete (Foundation & Critical UX)
+✅ **Milestone 3 - QoL Phase 1**: Complete (Window persistence, Activity feedback, Model hot swap, Capture enhancements)
 🔄 **Phase 2**: In Progress (Documentation & Stabilization)
 
+**Recent progress (2026-02-09)**
+
+- ✅ **Capture Enhancements**: Language pinning (16 languages), activation word filtering, hallucination filter UI, extra hotkey (Ctrl+Shift+A)
+- ✅ **Language Bug Fix**: Fixed hardcoded "auto" in transcription.rs line 887
+- ✅ **Activation Words**: Word boundary matching filter with default word list
+- ✅ **Version Bump**: 0.1.0 → 0.3.0
+
+### Next Priorities (v0.4.0+)
+
+1. **Post-Processing Pipeline** (v0.4.0)
+   - Rule-based punctuation & capitalization
+   - Number normalization (digits, dates, currency)
+   - Custom vocabulary support
+   - Optional LLM refinement (Claude API)
+
+2. **Long-Form Features** (v0.5.0)
+   - Live transcript dump (TXT, MD, JSON)
+   - Chapter segmentation for meetings/lectures
+   - Topic detection and marking
+
+3. **VibeVoice-ASR Integration** (v0.6.0)
+   - Speaker diarization for recorded meetings
+   - Python FastAPI sidecar architecture
+   - Post-session analysis workflow
+
+4. **AI Fallback Overhaul** (v0.7.0)
+   - Multi-provider support (OpenAI, Anthropic, Groq)
+   - User-selectable models per provider
+   - Streaming transcription for cloud fallback
+
 **Recent progress (2026-02-08)**
+
 - ✅ **Frontend Modularization**: Split main.ts (~1800 lines) into 14 focused modules (~220 lines)
 - ✅ **Overlay Circle Dot Fix**: Audio-reactive size animation now functional
 - ✅ **Overlay Lifecycle Stabilization**: Dot/KITT style switching now treated as explicit lifecycle transitions
@@ -120,28 +152,35 @@ For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
 
 ---
 
-## Milestone 3 — Quality of Life & Advanced Features (Planned)
+## Milestone 3 — Quality of Life & Advanced Features (Complete ✅)
 
-### Window Behavior
-- Persist main window position + size across sessions
-- Restore on correct monitor
-- Restore on same virtual desktop (Windows), if possible
+### Window Behavior ✅
 
-### Activity Feedback
+- ✅ Persist main window position + size across sessions
+- ✅ Restore on correct monitor
+- ✅ Restore on same virtual desktop (Windows) — handled implicitly by OS
+- ✅ Conversation window geometry persistence
+- ✅ Always-on-top toggle for conversation window
+
+### Activity Feedback ✅
+
 - ✅ **In‑app indicators**: Separate recording/transcribing indicators + overlay marker
 - ✅ **Overlay style lifecycle**: Dot/KITT switching and overlay runtime toggle documented as stable
-- ⏳ **Tray pulse**: turquoise = Recording, yellow = Transcribing; both pulse when both active
-- ⏳ **Pulse cadence**: ~1.6s loop, ~6 frames
-- ⏳ **Transcribe backlog**: target 10 minutes
-- ⏳ **80% warning**: prompt +50% expansion (repeatable)
+- ✅ **Tray pulse**: turquoise = Recording, yellow = Transcribing; both pulse when both active
+- ✅ **Pulse cadence**: ~1.6s loop, ~6 frames
+- ⏳ **Transcribe backlog**: target 10 minutes (future enhancement)
+- ⏳ **80% warning**: prompt +50% expansion (future enhancement)
 
-### Model Manager QoL
-- Apply model immediately without restart (unload/load or apply action)
+### Model Manager QoL ✅
 
-### Capture Enhancements
-- Activation words ("over" / "stop") for continuous capture
-- Language pinning beyond auto-detect
-- Extra hotkeys (paste last, undo, toggle cloud)
+- ✅ Apply model immediately without restart (hot swap with rollback on failure)
+
+### Capture Enhancements ✅
+
+- ✅ Activation words with word boundary matching (case-insensitive)
+- ✅ Language pinning (16 languages: EN, DE, FR, ES, IT, PT, NL, PL, RU, JA, KO, ZH, AR, TR, HI)
+- ✅ Hallucination filter UI toggle
+- ✅ Extra hotkey: Toggle activation words (Ctrl+Shift+A)
 
 ### Text Enhancement
 - **Post-Processing Pipeline** (after Capture Enhancements):

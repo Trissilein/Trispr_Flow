@@ -105,6 +105,7 @@ export function renderSettings() {
   if (dom.vadBlock) dom.vadBlock.classList.toggle("hidden", hotkeysEnabled);
   if (dom.deviceSelect) dom.deviceSelect.value = settings.input_device;
   if (dom.languageSelect) dom.languageSelect.value = settings.language_mode;
+  if (dom.languagePinnedToggle) dom.languagePinnedToggle.checked = settings.language_pinned;
   if (dom.modelSourceSelect) dom.modelSourceSelect.value = settings.model_source;
   if (dom.modelCustomUrl) dom.modelCustomUrl.value = settings.model_custom_url ?? "";
   if (dom.modelStoragePath && settings.model_storage_dir) {
@@ -120,6 +121,18 @@ export function renderSettings() {
   if (dom.audioCuesVolumeValue) {
     dom.audioCuesVolumeValue.textContent = `${Math.round(settings.audio_cues_volume * 100)}%`;
   }
+  if (dom.hallucinationFilterToggle) {
+    dom.hallucinationFilterToggle.checked = settings.hallucination_filter_enabled;
+  }
+  if (dom.activationWordsToggle) {
+    dom.activationWordsToggle.checked = settings.activation_words_enabled;
+  }
+  if (dom.activationWordsList) {
+    dom.activationWordsList.value = settings.activation_words.join('\n');
+  }
+  if (dom.activationWordsConfig) {
+    dom.activationWordsConfig.classList.toggle('hidden', !settings.activation_words_enabled);
+  }
   if (dom.micGain) dom.micGain.value = Math.round(settings.mic_input_gain_db).toString();
   if (dom.micGainValue) {
     const gain = Math.round(settings.mic_input_gain_db);
@@ -132,6 +145,7 @@ export function renderSettings() {
   if (dom.vadSilence) dom.vadSilence.value = settings.vad_silence_ms.toString();
   if (dom.vadSilenceValue) dom.vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
   if (dom.transcribeHotkey) dom.transcribeHotkey.value = settings.transcribe_hotkey;
+  if (dom.toggleActivationWordsHotkey) dom.toggleActivationWordsHotkey.value = settings.hotkey_toggle_activation_words;
   if (dom.transcribeDeviceSelect) dom.transcribeDeviceSelect.value = settings.transcribe_output_device;
   if (dom.transcribeVadToggle) dom.transcribeVadToggle.checked = settings.transcribe_vad_mode;
   const transcribeThresholdDb = thresholdToDb(settings.transcribe_vad_threshold, VAD_DB_FLOOR);
@@ -212,5 +226,4 @@ export function renderSettings() {
   if (dom.overlayKittMaxWidthValue) dom.overlayKittMaxWidthValue.textContent = `${Math.round(settings.overlay_kitt_max_width)}`;
   if (dom.overlayKittHeight) dom.overlayKittHeight.value = Math.round(settings.overlay_kitt_height).toString();
   if (dom.overlayKittHeightValue) dom.overlayKittHeightValue.textContent = `${Math.round(settings.overlay_kitt_height)}`;
-  if (dom.convWindowAlwaysOnTop) dom.convWindowAlwaysOnTop.checked = settings.conv_window_always_on_top ?? false;
 }

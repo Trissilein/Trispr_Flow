@@ -145,22 +145,11 @@ export function wireEvents() {
     localStorage.setItem("conversationFontSize", size.toString());
   });
 
-  dom.convWindowAlwaysOnTop?.addEventListener("change", async () => {
-    if (!dom.convWindowAlwaysOnTop) return;
-    try {
-      await invoke("set_conversation_window_always_on_top", {
-        always_on_top: dom.convWindowAlwaysOnTop.checked,
-      });
-    } catch (error) {
-      console.error("Failed to set conversation window always-on-top:", error);
-      dom.convWindowAlwaysOnTop.checked = !dom.convWindowAlwaysOnTop.checked;
-    }
-  });
-
   // Hotkey recording functionality
   setupHotkeyRecorder("ptt", dom.pttHotkey, dom.pttHotkeyRecord, dom.pttHotkeyStatus);
   setupHotkeyRecorder("toggle", dom.toggleHotkey, dom.toggleHotkeyRecord, dom.toggleHotkeyStatus);
   setupHotkeyRecorder("transcribe", dom.transcribeHotkey, dom.transcribeHotkeyRecord, dom.transcribeHotkeyStatus);
+  setupHotkeyRecorder("toggleActivationWords", dom.toggleActivationWordsHotkey, dom.toggleActivationWordsHotkeyRecord, dom.toggleActivationWordsHotkeyStatus);
 
   window.addEventListener("resize", () => updateDeviceLineClamp());
 
@@ -292,6 +281,12 @@ export function wireEvents() {
     await persistSettings();
   });
 
+  dom.languagePinnedToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.language_pinned = dom.languagePinnedToggle!.checked;
+    await persistSettings();
+  });
+
   dom.cloudToggle?.addEventListener("change", async () => {
     if (!settings) return;
     settings.cloud_fallback = dom.cloudToggle!.checked;
@@ -323,6 +318,29 @@ export function wireEvents() {
 
   dom.audioCuesVolume?.addEventListener("change", async () => {
     if (!settings) return;
+    await persistSettings();
+  });
+
+  dom.hallucinationFilterToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.hallucination_filter_enabled = dom.hallucinationFilterToggle!.checked;
+    await persistSettings();
+  });
+
+  dom.activationWordsToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.activation_words_enabled = dom.activationWordsToggle!.checked;
+    await persistSettings();
+    renderSettings();
+  });
+
+  dom.activationWordsList?.addEventListener("change", async () => {
+    if (!settings || !dom.activationWordsList) return;
+    const lines = dom.activationWordsList.value
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
+    settings.activation_words = lines;
     await persistSettings();
   });
 

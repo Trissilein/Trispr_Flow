@@ -3,6 +3,7 @@
 Trispr Flow is a Windows-first desktop dictation app built with Tauri + Rust + TypeScript. It combines GPU-accelerated offline transcription (whisper.cpp) with a compact UI and optional cloud fallback.
 
 ## Quick links
+- Read Me First: `../../READ_ME_FIRST.md`
 - Roadmap: `Roadmap.md`
 - Getting Started: `Getting-Started.md`
 - Architecture: `Architecture.md`

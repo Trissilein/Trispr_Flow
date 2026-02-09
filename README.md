@@ -8,6 +8,9 @@
 
 Trispr Flow is a modern desktop dictation app built with Tauri + Rust + TypeScript. It combines local GPU-accelerated transcription (whisper.cpp) with a compact, responsive UI and optional cloud fallback.
 
+## Read Me First
+Before changing documentation, read `READ_ME_FIRST.md`.
+
 ## Key Capabilities
 - Microphone capture with global hotkeys (PTT + Voice Activation)
 - GPU-accelerated transcription (whisper.cpp) with CPU fallback
@@ -65,6 +68,7 @@ npm run tauri dev
 3. System audio transcripts appear in the System Audio tab and the Conversation tab.
 
 ## Documentation
+- `READ_ME_FIRST.md`
 - `ROADMAP.md`
 - `docs/ARCHITECTURE.md`
 - `docs/DEVELOPMENT.md`

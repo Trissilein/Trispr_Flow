@@ -41,15 +41,8 @@ export function renderModels() {
       if (!model.installed) {
         item.classList.add("model-item--available");
       }
-      if (model.installed) {
-        item.classList.add("selectable");
-        item.addEventListener("click", async () => {
-          if (!settings) return;
-          settings.model = model.id;
-          await persistSettings();
-          renderModels();
-        });
-      }
+      // Removed click-to-select behavior - only Apply button switches models
+      // This prevents confusion between selecting and applying
 
       const header = document.createElement("div");
       header.className = "model-header";
@@ -101,24 +94,67 @@ export function renderModels() {
         // Add Apply button if model is not currently active
         if (!isActive) {
           const applyBtn = document.createElement("button");
-          applyBtn.className = "button primary";
-          applyBtn.textContent = "Apply";
+          applyBtn.className = "btn-apply-model";
+          applyBtn.innerHTML = `
+            <span class="btn-apply-icon">⚡</span>
+            <span class="btn-apply-text">Apply Model</span>
+          `;
           applyBtn.addEventListener("click", async (event) => {
             event.stopPropagation();
+
+            // Add loading state
+            applyBtn.classList.add("is-loading");
+            applyBtn.innerHTML = `
+              <span class="btn-apply-spinner"></span>
+              <span class="btn-apply-text">Applying...</span>
+            `;
+            applyBtn.disabled = true;
+
             try {
               await invoke("apply_model", { modelId: model.id });
+
+              // Success state with animation
+              applyBtn.classList.remove("is-loading");
+              applyBtn.classList.add("is-success");
+              applyBtn.innerHTML = `
+                <span class="btn-apply-icon">✓</span>
+                <span class="btn-apply-text">Applied!</span>
+              `;
+
               showToast({
-                title: "Applied",
-                message: `Model switched to ${model.label}.`,
+                title: "Model Activated",
+                message: `Now using ${model.label} for transcription.`,
                 type: "success",
               });
-              renderModels();
+
+              // Re-render after brief delay to show success state
+              setTimeout(() => {
+                renderModels();
+              }, 800);
             } catch (error) {
+              // Error state
+              applyBtn.classList.remove("is-loading");
+              applyBtn.classList.add("is-error");
+              applyBtn.innerHTML = `
+                <span class="btn-apply-icon">✕</span>
+                <span class="btn-apply-text">Failed</span>
+              `;
+              applyBtn.disabled = false;
+
               showToast({
-                title: "Apply failed",
+                title: "Model Switch Failed",
                 message: String(error),
                 type: "error",
               });
+
+              // Reset button after delay
+              setTimeout(() => {
+                applyBtn.classList.remove("is-error");
+                applyBtn.innerHTML = `
+                  <span class="btn-apply-icon">⚡</span>
+                  <span class="btn-apply-text">Apply Model</span>
+                `;
+              }, 2000);
             }
           });
           actions.appendChild(applyBtn);

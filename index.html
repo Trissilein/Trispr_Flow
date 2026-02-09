@@ -104,29 +104,31 @@
             </div>
           </div>
           <div class="panel-body">
-            <div class="history-tabs">
-              <button id="history-tab-mic" class="history-tab active">Input</button>
-              <button id="history-tab-system" class="history-tab">Output</button>
-              <button id="history-tab-conversation" class="history-tab">Conversation</button>
-            </div>
             <div class="history-toolbar">
-              <button id="history-copy-conversation" class="ghost-btn">Copy conversation</button>
-              <button id="history-detach-conversation" class="ghost-btn">Detach</button>
-              <div id="conversation-font-controls" class="font-controls">
-                <span class="font-label">Font</span>
-                <input id="conversation-font-size" type="range" min="12" max="24" step="1"
-                       aria-valuemin="12"
-                       aria-valuemax="24"
-                       aria-valuenow="16"
-                       aria-label="Conversation font size"
-                       aria-describedby="conversation-font-size-value" />
-                <span id="conversation-font-size-value" class="font-value" aria-live="polite">16px</span>
+              <div class="history-tabs">
+                <button id="history-tab-mic" class="history-tab active">Input</button>
+                <button id="history-tab-system" class="history-tab">Output</button>
+                <button id="history-tab-conversation" class="history-tab">Conv</button>
+              </div>
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <button id="history-copy-conversation" class="ghost-btn">Copy</button>
+                <button id="history-detach-conversation" class="ghost-btn">Detach</button>
+                <div id="conversation-font-controls" class="font-controls" title="Adjust conversation font size">
+                  <span class="font-label">Font</span>
+                  <input id="conversation-font-size" type="range" min="12" max="24" step="1"
+                         aria-valuemin="12"
+                         aria-valuemax="24"
+                         aria-valuenow="16"
+                         aria-label="Conversation font size"
+                         aria-describedby="conversation-font-size-value" />
+                  <span id="conversation-font-size-value" class="font-value" aria-live="polite">16px</span>
+                </div>
               </div>
             </div>
             <div id="history-list" class="history-list"></div>
             <div class="history-compose">
-              <input id="history-input" type="text" placeholder="Type a test entry..." />
-              <button id="history-add">Add to history</button>
+              <input id="history-input" type="text" placeholder="Test entry..." />
+              <button id="history-add">Add</button>
             </div>
           </div>
         </section>

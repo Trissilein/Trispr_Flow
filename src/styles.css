@@ -1793,70 +1793,295 @@ input[type="range"]:focus-visible {
   }
 }
 
-/* Custom vocabulary table */
+/* Post-Processing Panel Enhancements */
+#postproc-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--stroke);
+  animation: fadeInSettings 0.3s ease backwards;
+}
+
+@keyframes fadeInSettings {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Rule toggles group styling */
+#postproc-settings .field.toggle {
+  background: rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  transition: all 0.2s ease;
+}
+
+#postproc-settings .field.toggle:hover {
+  background: rgba(0, 0, 0, 0.18);
+  border-color: var(--stroke-strong);
+  transform: translateX(2px);
+}
+
+#postproc-settings .field.toggle .toggle-hint {
+  font-size: 11px;
+  margin-top: 4px;
+  opacity: 0.7;
+  line-height: 1.3;
+}
+
+/* Language selector enhancement */
+#postproc-settings > label.field {
+  background: rgba(29, 166, 160, 0.05);
+  border: 1px solid rgba(29, 166, 160, 0.15);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+#postproc-settings > label.field select {
+  background-color: rgba(30, 35, 42, 0.8);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* Custom Vocabulary Expander Enhancement */
+#postproc-settings .expander {
+  background: rgba(29, 166, 160, 0.04);
+  border: 1px solid rgba(29, 166, 160, 0.2);
+  margin-top: 12px;
+  transition: all 0.2s ease;
+}
+
+#postproc-settings .expander:hover {
+  background: rgba(29, 166, 160, 0.06);
+  border-color: rgba(29, 166, 160, 0.3);
+}
+
+#postproc-settings .expander summary {
+  color: var(--accent-2);
+  font-weight: 700;
+  font-size: 0.9rem;
+  letter-spacing: 0.01em;
+}
+
+#postproc-settings .expander[open] {
+  background: rgba(29, 166, 160, 0.06);
+  border-color: rgba(29, 166, 160, 0.3);
+}
+
+#postproc-settings .expander[open] summary {
+  border-bottom-color: rgba(29, 166, 160, 0.25);
+}
+
+/* Custom vocabulary table - Refined */
 .custom-vocab-table {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   margin-top: 12px;
+  background: rgba(0, 0, 0, 0.15);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  position: relative;
+  overflow: hidden;
+}
+
+.custom-vocab-table::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(29, 166, 160, 0.03) 0%, transparent 50%);
+  pointer-events: none;
 }
 
 .vocab-header {
   display: grid;
-  grid-template-columns: 1fr 1fr 32px;
+  grid-template-columns: 1fr 1fr 36px;
   gap: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-weight: 500;
-  padding: 0 4px;
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid var(--stroke);
+  margin-bottom: 2px;
+  position: relative;
+  z-index: 1;
 }
 
 .vocab-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 32px;
+  grid-template-columns: 1fr 1fr 36px;
   gap: 8px;
   align-items: center;
+  position: relative;
+  z-index: 1;
+  animation: slideInVocab 0.25s ease backwards;
 }
 
+@keyframes slideInVocab {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.vocab-row:nth-child(1) { animation-delay: 0.02s; }
+.vocab-row:nth-child(2) { animation-delay: 0.04s; }
+.vocab-row:nth-child(3) { animation-delay: 0.06s; }
+.vocab-row:nth-child(4) { animation-delay: 0.08s; }
+.vocab-row:nth-child(5) { animation-delay: 0.10s; }
+
 .vocab-input {
-  padding: 6px 10px;
+  padding: 7px 11px;
   font-size: 13px;
-  color: var(--text-primary);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  transition: all 0.15s ease;
-  font-family: var(--font-mono);
+  color: var(--ink);
+  background: rgba(30, 35, 42, 0.7);
+  border: 1px solid var(--stroke);
+  border-radius: 5px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-family: "Space Grotesk", monospace;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.vocab-input::placeholder {
+  color: var(--muted);
+  opacity: 0.5;
+  font-weight: 400;
 }
 
 .vocab-input:hover {
-  border-color: var(--border-hover);
+  border-color: var(--stroke-strong);
+  background: rgba(30, 35, 42, 0.9);
+  transform: translateY(-1px);
 }
 
 .vocab-input:focus {
   outline: none;
-  border-color: var(--accent);
-  background: var(--bg-primary);
+  border-color: var(--accent-2);
+  background: rgba(30, 35, 42, 1);
+  box-shadow: 0 0 0 3px rgba(29, 166, 160, 0.1);
+  transform: translateY(-1px);
 }
 
 .vocab-remove {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-secondary);
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 5px;
+  color: rgba(248, 113, 113, 0.7);
   cursor: pointer;
-  transition: all 0.15s ease;
-  font-size: 18px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-size: 20px;
   line-height: 1;
+  font-weight: 300;
+  position: relative;
+}
+
+.vocab-remove::before {
+  content: '×';
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .vocab-remove:hover {
-  background: var(--danger-hover);
-  border-color: var(--danger);
-  color: var(--danger);
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #f87171;
+  transform: translateY(-1px) scale(1.05);
+}
+
+.vocab-remove:hover::before {
+  transform: rotate(90deg);
+}
+
+.vocab-remove:active {
+  transform: translateY(0) scale(0.98);
+}
+
+/* Empty state for vocabulary table */
+.vocab-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  color: var(--muted);
+  text-align: center;
+  gap: 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.vocab-empty-icon {
+  font-size: 32px;
+  opacity: 0.4;
+  margin-bottom: 4px;
+}
+
+.vocab-empty-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.vocab-empty-hint {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 280px;
+  line-height: 1.4;
+}
+
+/* Add Entry Button */
+#postproc-vocab-add {
+  background: rgba(29, 166, 160, 0.12);
+  border: 1px solid rgba(29, 166, 160, 0.3);
+  color: var(--accent-2);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+#postproc-vocab-add::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(29, 166, 160, 0.2) 0%, transparent 100%);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+#postproc-vocab-add:hover {
+  background: rgba(29, 166, 160, 0.18);
+  border-color: rgba(29, 166, 160, 0.5);
+  color: #4be0d4;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(29, 166, 160, 0.2);
+}
+
+#postproc-vocab-add:hover::before {
+  opacity: 1;
+}
+
+#postproc-vocab-add:active {
+  transform: translateY(-1px) scale(0.98);
 }

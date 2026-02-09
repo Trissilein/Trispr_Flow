@@ -75,9 +75,24 @@ export function renderVocabulary() {
   // Clear existing rows
   dom.postprocVocabRows.innerHTML = "";
 
-  // Add rows from settings
-  for (const [original, replacement] of Object.entries(settings.postproc_custom_vocab || {})) {
-    addVocabRow(original, replacement);
+  // Check if vocabulary is empty
+  const vocabEntries = Object.entries(settings.postproc_custom_vocab || {});
+
+  if (vocabEntries.length === 0) {
+    // Show empty state
+    const emptyState = document.createElement("div");
+    emptyState.className = "vocab-empty-state";
+    emptyState.innerHTML = `
+      <div class="vocab-empty-icon">📝</div>
+      <div class="vocab-empty-text">No vocabulary entries yet</div>
+      <div class="vocab-empty-hint">Click "Add Entry" to define custom word replacements</div>
+    `;
+    dom.postprocVocabRows.appendChild(emptyState);
+  } else {
+    // Add rows from settings
+    for (const [original, replacement] of vocabEntries) {
+      addVocabRow(original, replacement);
+    }
   }
 }
 

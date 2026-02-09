@@ -574,18 +574,23 @@
                       <span class="toggle-hint">Replace specific words or phrases</span>
                     </div>
                     <div id="postproc-custom-vocab-config" style="display: none;">
-                      <p class="field-hint" style="margin-bottom: 8px;">Define word replacements with word boundary matching. Example: "api" → "API" (but "apikey" stays "apikey")</p>
+                      <p class="field-hint" style="margin-bottom: 10px;">
+                        Define word replacements with word boundary matching.
+                        <span style="opacity: 0.7;">Example: <code style="font-size: 11px; padding: 2px 5px; background: rgba(255,255,255,0.05); border-radius: 3px;">api</code> → <code style="font-size: 11px; padding: 2px 5px; background: rgba(255,255,255,0.05); border-radius: 3px;">API</code></span>
+                      </p>
                       <div class="custom-vocab-table">
                         <div class="vocab-header">
-                          <span>Original</span>
-                          <span>Replacement</span>
-                          <span></span>
+                          <span>Match Word</span>
+                          <span>Replace With</span>
+                          <span aria-label="Actions"></span>
                         </div>
                         <div id="postproc-vocab-rows">
                           <!-- Dynamically populated -->
                         </div>
                       </div>
-                      <button id="postproc-vocab-add" class="btn-secondary" style="margin-top: 8px;">+ Add Entry</button>
+                      <button id="postproc-vocab-add" class="btn-secondary" style="margin-top: 10px; font-size: 13px; font-weight: 600;">
+                        <span style="font-size: 16px; margin-right: 4px; line-height: 1;">+</span> Add Entry
+                      </button>
                     </div>
                   </div>
                 </details>

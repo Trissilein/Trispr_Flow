@@ -29,7 +29,7 @@ use tauri::menu::{CheckMenuItem, MenuItem};
 use tauri::Wry;
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
 use crate::models::{
@@ -104,7 +104,16 @@ fn schedule_backlog_auto_expand(app: AppHandle, cancel_item: MenuItem<Wry>) {
 
 fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> {
   let manager = app.global_shortcut();
-  let _ = manager.unregister_all();
+
+  // Unregister all existing hotkeys to prevent conflicts
+  if let Err(e) = manager.unregister_all() {
+    warn!("Failed to unregister all hotkeys (may be OK if none registered): {}", e);
+  } else {
+    info!("Successfully unregistered all hotkeys");
+  }
+
+  // Collect registration errors instead of failing early
+  let mut errors = Vec::new();
 
   let register_ptt = || -> Result<(), String> {
     let ptt = settings.hotkey_ptt.trim();
@@ -222,17 +231,27 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
 
   match settings.mode.as_str() {
     "ptt" => {
-      register_ptt()?;
-      register_toggle()?;
+      if let Err(e) = register_ptt() {
+        errors.push(format!("PTT: {}", e));
+      }
+      if let Err(e) = register_toggle() {
+        errors.push(format!("Toggle: {}", e));
+      }
     }
     "vad" => {}
     _ => {
-      register_ptt()?;
-      register_toggle()?;
+      if let Err(e) = register_ptt() {
+        errors.push(format!("PTT: {}", e));
+      }
+      if let Err(e) = register_toggle() {
+        errors.push(format!("Toggle: {}", e));
+      }
     }
   }
 
-  register_transcribe()?;
+  if let Err(e) = register_transcribe() {
+    errors.push(format!("Transcribe: {}", e));
+  }
 
   // Register Toggle Activation Words hotkey
   let hotkey = settings.hotkey_toggle_activation_words.trim();
@@ -242,9 +261,12 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         toggle_activation_words_async(app.clone());
       }
     }) {
-      Ok(_) => {},
+      Ok(_) => {
+        info!("Toggle Activation Words hotkey registered successfully");
+      },
       Err(e) => {
         error!("Failed to register Toggle Activation Words hotkey '{}': {}", hotkey, e);
+        errors.push(format!("Toggle Activation Words: {}", e));
         emit_error(
           app,
           AppError::Hotkey(format!(
@@ -257,7 +279,16 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
     }
   }
 
-  Ok(())
+  // Report all errors if any occurred, but don't fail completely
+  if !errors.is_empty() {
+    let error_msg = format!("Some hotkeys failed to register: {}", errors.join(", "));
+    warn!("{}", error_msg);
+    // Return Ok to prevent blocking the app, errors already emitted to UI
+    Ok(())
+  } else {
+    info!("All hotkeys registered successfully");
+    Ok(())
+  }
 }
 
 #[tauri::command]

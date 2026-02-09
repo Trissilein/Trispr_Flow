@@ -59,6 +59,10 @@ pub(crate) fn process_transcript(
 ///
 /// German rules:
 /// - Similar logic with German-specific conjunction rules
+///
+/// Multilingual mode ("multi"):
+/// - Applies both English AND German rules simultaneously
+/// - Ideal for code-switching and bilingual users
 fn apply_punctuation(text: &str, lang: &str) -> String {
     if text.is_empty() {
         return text.to_string();
@@ -67,7 +71,7 @@ fn apply_punctuation(text: &str, lang: &str) -> String {
     let mut result = text.to_string();
 
     // English-specific rules
-    if lang == "en" {
+    if lang == "en" || lang == "multi" {
         // Add commas before common conjunctions (only if not already present)
         // Check for " and " not preceded by comma
         result = result.replace(", and ", " and "); // Remove existing to standardize
@@ -79,9 +83,9 @@ fn apply_punctuation(text: &str, lang: &str) -> String {
         result = result.replace(", or ", " or ");
         result = result.replace(" or ", ", or ");
 
-        // Detect questions by looking at sentence start (case-insensitive)
+        // English question detection (case-insensitive)
         let lower_text = result.to_lowercase();
-        let is_question = lower_text.starts_with("what ")
+        let is_en_question = lower_text.starts_with("what ")
             || lower_text.starts_with("how ")
             || lower_text.starts_with("why ")
             || lower_text.starts_with("when ")
@@ -99,19 +103,23 @@ fn apply_punctuation(text: &str, lang: &str) -> String {
             || lower_text.starts_with("does ")
             || lower_text.starts_with("did ");
 
-        // Add sentence-ending punctuation if missing
-        if !result.ends_with('.') && !result.ends_with('!') && !result.ends_with('?') {
-            if is_question {
+        // For single-language mode, apply punctuation now
+        if lang == "en" {
+            if !result.ends_with('.') && !result.ends_with('!') && !result.ends_with('?') {
+                if is_en_question {
+                    result.push('?');
+                } else {
+                    result.push('.');
+                }
+            } else if is_en_question && result.ends_with('.') {
+                result.pop();
                 result.push('?');
-            } else {
-                result.push('.');
             }
-        } else if is_question && result.ends_with('.') {
-            // Replace period with question mark for questions
-            result.pop();
-            result.push('?');
         }
-    } else if lang == "de" {
+    }
+
+    // German-specific rules
+    if lang == "de" || lang == "multi" {
         // German-specific rules (similar approach)
         result = result.replace(", und ", " und ");
         result = result.replace(" und ", ", und ");
@@ -122,15 +130,63 @@ fn apply_punctuation(text: &str, lang: &str) -> String {
         result = result.replace(", oder ", " oder ");
         result = result.replace(" oder ", ", oder ");
 
-        // German question detection
+        // German question detection (case-insensitive)
         let lower_text = result.to_lowercase();
-        let is_question = lower_text.starts_with("was ")
+        let is_de_question = lower_text.starts_with("was ")
             || lower_text.starts_with("wie ")
             || lower_text.starts_with("warum ")
             || lower_text.starts_with("wann ")
             || lower_text.starts_with("wo ")
             || lower_text.starts_with("wer ")
             || lower_text.starts_with("welch");
+
+        // For single-language mode, apply punctuation now
+        if lang == "de" {
+            if !result.ends_with('.') && !result.ends_with('!') && !result.ends_with('?') {
+                if is_de_question {
+                    result.push('?');
+                } else {
+                    result.push('.');
+                }
+            } else if is_de_question && result.ends_with('.') {
+                result.pop();
+                result.push('?');
+            }
+        }
+    }
+
+    // Multi-language mode: Apply combined question detection
+    if lang == "multi" {
+        let lower_text = result.to_lowercase();
+
+        // Check both English and German question patterns
+        let is_en_question = lower_text.starts_with("what ")
+            || lower_text.starts_with("how ")
+            || lower_text.starts_with("why ")
+            || lower_text.starts_with("when ")
+            || lower_text.starts_with("where ")
+            || lower_text.starts_with("who ")
+            || lower_text.starts_with("which ")
+            || lower_text.starts_with("whose ")
+            || lower_text.starts_with("can ")
+            || lower_text.starts_with("could ")
+            || lower_text.starts_with("would ")
+            || lower_text.starts_with("should ")
+            || lower_text.starts_with("is ")
+            || lower_text.starts_with("are ")
+            || lower_text.starts_with("do ")
+            || lower_text.starts_with("does ")
+            || lower_text.starts_with("did ");
+
+        let is_de_question = lower_text.starts_with("was ")
+            || lower_text.starts_with("wie ")
+            || lower_text.starts_with("warum ")
+            || lower_text.starts_with("wann ")
+            || lower_text.starts_with("wo ")
+            || lower_text.starts_with("wer ")
+            || lower_text.starts_with("welch");
+
+        let is_question = is_en_question || is_de_question;
 
         if !result.ends_with('.') && !result.ends_with('!') && !result.ends_with('?') {
             if is_question {
@@ -153,6 +209,9 @@ fn apply_punctuation(text: &str, lang: &str) -> String {
 /// - Capitalize first letter
 /// - Capitalize after sentence-ending punctuation (. ! ?)
 /// - Language-specific rules (e.g., English "I" always capitalized)
+///
+/// Multilingual mode ("multi"):
+/// - Applies both English AND German capitalization rules
 fn apply_capitalization(text: &str, lang: &str) -> String {
     if text.is_empty() {
         return text.to_string();
@@ -189,7 +248,7 @@ fn apply_capitalization(text: &str, lang: &str) -> String {
     }
 
     // English-specific: "I" always capitalized as standalone word
-    if lang == "en" {
+    if lang == "en" || lang == "multi" {
         // Replace " i " with " I " (word boundaries)
         result = result.replace(" i ", " I ");
         // Handle "i " at start
@@ -207,6 +266,12 @@ fn apply_capitalization(text: &str, lang: &str) -> String {
         }
     }
 
+    // German-specific rules could go here in the future
+    // (e.g., noun capitalization with NLP)
+    // if lang == "de" || lang == "multi" {
+    //     // Future: Capitalize German nouns
+    // }
+
     result
 }
 
@@ -216,6 +281,9 @@ fn apply_capitalization(text: &str, lang: &str) -> String {
 /// - "one" → "1", "two" → "2", etc.
 /// - Future: Date normalization ("twenty twenty six" → "2026")
 /// - Future: Currency normalization ("fifty dollars" → "$50")
+///
+/// Multilingual mode ("multi"):
+/// - Applies both English AND German number normalizations
 fn normalize_numbers(text: &str, lang: &str) -> String {
     if text.is_empty() {
         return text.to_string();
@@ -224,7 +292,7 @@ fn normalize_numbers(text: &str, lang: &str) -> String {
     let mut result = text.to_string();
 
     // English number words (0-20 plus common tens)
-    if lang == "en" {
+    if lang == "en" || lang == "multi" {
         let number_words = [
             (" zero ", " 0 "),
             (" one ", " 1 "),
@@ -267,8 +335,10 @@ fn normalize_numbers(text: &str, lang: &str) -> String {
 
         // Remove the added spaces
         result = working_text.trim().to_string();
-    } else if lang == "de" {
-        // German number words (0-20)
+    }
+
+    // German number words (0-20)
+    if lang == "de" || lang == "multi" {
         let number_words = [
             (" null ", " 0 "),
             (" eins ", " 1 "),
@@ -582,5 +652,81 @@ mod tests {
     // Helper function alias for consistency
     fn apply_numbers(text: &str, lang: &str) -> String {
         normalize_numbers(text, lang)
+    }
+
+    // ========== Multilingual Mode Tests ==========
+
+    #[test]
+    fn test_multi_punctuation_en_conjunction() {
+        let input = "I like cats and dogs";
+        let output = apply_punctuation(input, "multi");
+        assert!(output.contains(", and "));
+    }
+
+    #[test]
+    fn test_multi_punctuation_de_conjunction() {
+        let input = "ich mag katzen und hunde";
+        let output = apply_punctuation(input, "multi");
+        assert!(output.contains(", und "));
+    }
+
+    #[test]
+    fn test_multi_punctuation_en_question() {
+        let input = "what is your name";
+        let output = apply_punctuation(input, "multi");
+        assert!(output.ends_with('?'));
+    }
+
+    #[test]
+    fn test_multi_punctuation_de_question() {
+        let input = "wie geht es dir";
+        let output = apply_punctuation(input, "multi");
+        assert!(output.ends_with('?'));
+    }
+
+    #[test]
+    fn test_multi_capitalization_en_i() {
+        let input = "i think i am happy";
+        let output = apply_capitalization(input, "multi");
+        assert!(output.contains(" I "));
+    }
+
+    #[test]
+    fn test_multi_numbers_en() {
+        let input = "I have three apples";
+        let output = normalize_numbers(input, "multi");
+        assert_eq!(output, "I have 3 apples");
+    }
+
+    #[test]
+    fn test_multi_numbers_de() {
+        let input = "ich habe drei äpfel";
+        let output = normalize_numbers(input, "multi");
+        assert_eq!(output, "ich habe 3 äpfel");
+    }
+
+    #[test]
+    fn test_multi_code_switching() {
+        // Mixed English/German sentence
+        let input = "I have drei apples and five äpfel";
+        let output = normalize_numbers(input, "multi");
+        assert_eq!(output, "I have 3 apples and 5 äpfel");
+    }
+
+    #[test]
+    fn test_multi_full_pipeline_code_switching() {
+        // Realistic code-switching scenario
+        let input = "ich think we have three äpfel und five oranges";
+
+        let result = apply_punctuation(input, "multi");
+        let result = apply_capitalization(&result, "multi");
+        let result = apply_numbers(&result, "multi");
+
+        // Should have: capitalized first letter, commas before conjunctions, numbers converted
+        assert!(result.starts_with("Ich") || result.starts_with("I"));
+        assert!(result.contains(", und ") || result.contains(", and "));
+        assert!(result.contains('3'));
+        assert!(result.contains('5'));
+        assert!(result.ends_with('.'));
     }
 }

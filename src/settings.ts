@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { settings } from "./state";
 import * as dom from "./dom-refs";
 import { thresholdToDb, VAD_DB_FLOOR } from "./ui-helpers";
+import { renderVocabulary } from "./event-listeners";
 
 export async function persistSettings() {
   if (!settings) return;
@@ -226,4 +227,31 @@ export function renderSettings() {
   if (dom.overlayKittMaxWidthValue) dom.overlayKittMaxWidthValue.textContent = `${Math.round(settings.overlay_kitt_max_width)}`;
   if (dom.overlayKittHeight) dom.overlayKittHeight.value = Math.round(settings.overlay_kitt_height).toString();
   if (dom.overlayKittHeightValue) dom.overlayKittHeightValue.textContent = `${Math.round(settings.overlay_kitt_height)}`;
+
+  // Post-processing settings
+  if (dom.postprocEnabled) {
+    dom.postprocEnabled.checked = settings.postproc_enabled;
+  }
+  if (dom.postprocSettings) {
+    dom.postprocSettings.style.display = settings.postproc_enabled ? "block" : "none";
+  }
+  if (dom.postprocLanguage) {
+    dom.postprocLanguage.value = settings.postproc_language;
+  }
+  if (dom.postprocPunctuation) {
+    dom.postprocPunctuation.checked = settings.postproc_punctuation_enabled;
+  }
+  if (dom.postprocCapitalization) {
+    dom.postprocCapitalization.checked = settings.postproc_capitalization_enabled;
+  }
+  if (dom.postprocNumbers) {
+    dom.postprocNumbers.checked = settings.postproc_numbers_enabled;
+  }
+  if (dom.postprocCustomVocabEnabled) {
+    dom.postprocCustomVocabEnabled.checked = settings.postproc_custom_vocab_enabled;
+  }
+  if (dom.postprocCustomVocabConfig) {
+    dom.postprocCustomVocabConfig.style.display = settings.postproc_custom_vocab_enabled ? "block" : "none";
+  }
+  renderVocabulary();
 }

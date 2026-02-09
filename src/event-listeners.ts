@@ -14,6 +14,73 @@ import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
 
+// Custom vocabulary helper functions
+function addVocabRow(original: string, replacement: string) {
+  if (!dom.postprocVocabRows) return;
+
+  const row = document.createElement("div");
+  row.className = "vocab-row";
+
+  const originalInput = document.createElement("input");
+  originalInput.type = "text";
+  originalInput.value = original;
+  originalInput.placeholder = "api";
+  originalInput.className = "vocab-input";
+
+  const replacementInput = document.createElement("input");
+  replacementInput.type = "text";
+  replacementInput.value = replacement;
+  replacementInput.placeholder = "API";
+  replacementInput.className = "vocab-input";
+
+  const removeBtn = document.createElement("button");
+  removeBtn.textContent = "×";
+  removeBtn.className = "vocab-remove";
+  removeBtn.title = "Remove entry";
+
+  // Update settings when inputs change
+  const updateVocab = async () => {
+    if (!settings) return;
+    const rows = dom.postprocVocabRows?.querySelectorAll(".vocab-row");
+    const vocab: Record<string, string> = {};
+    rows?.forEach((r) => {
+      const inputs = r.querySelectorAll("input");
+      const orig = inputs[0]?.value.trim();
+      const repl = inputs[1]?.value.trim();
+      if (orig && repl) {
+        vocab[orig] = repl;
+      }
+    });
+    settings.postproc_custom_vocab = vocab;
+    await persistSettings();
+  };
+
+  originalInput.addEventListener("change", updateVocab);
+  replacementInput.addEventListener("change", updateVocab);
+
+  removeBtn.addEventListener("click", async () => {
+    row.remove();
+    await updateVocab();
+  });
+
+  row.appendChild(originalInput);
+  row.appendChild(replacementInput);
+  row.appendChild(removeBtn);
+  dom.postprocVocabRows.appendChild(row);
+}
+
+export function renderVocabulary() {
+  if (!settings || !dom.postprocVocabRows) return;
+
+  // Clear existing rows
+  dom.postprocVocabRows.innerHTML = "";
+
+  // Add rows from settings
+  for (const [original, replacement] of Object.entries(settings.postproc_custom_vocab || {})) {
+    addVocabRow(original, replacement);
+  }
+}
+
 export function wireEvents() {
   dom.captureEnabledToggle?.addEventListener("change", async () => {
     if (!settings) return;
@@ -342,6 +409,49 @@ export function wireEvents() {
       .filter(line => line.length > 0);
     settings.activation_words = lines;
     await persistSettings();
+  });
+
+  // Post-processing event listeners
+  dom.postprocEnabled?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.postproc_enabled = dom.postprocEnabled!.checked;
+    await persistSettings();
+    renderSettings();
+  });
+
+  dom.postprocLanguage?.addEventListener("change", async () => {
+    if (!settings || !dom.postprocLanguage) return;
+    settings.postproc_language = dom.postprocLanguage.value;
+    await persistSettings();
+  });
+
+  dom.postprocPunctuation?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.postproc_punctuation_enabled = dom.postprocPunctuation!.checked;
+    await persistSettings();
+  });
+
+  dom.postprocCapitalization?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.postproc_capitalization_enabled = dom.postprocCapitalization!.checked;
+    await persistSettings();
+  });
+
+  dom.postprocNumbers?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.postproc_numbers_enabled = dom.postprocNumbers!.checked;
+    await persistSettings();
+  });
+
+  dom.postprocCustomVocabEnabled?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.postproc_custom_vocab_enabled = dom.postprocCustomVocabEnabled!.checked;
+    await persistSettings();
+    renderSettings();
+  });
+
+  dom.postprocVocabAdd?.addEventListener("click", () => {
+    addVocabRow("", "");
   });
 
   dom.micGain?.addEventListener("input", () => {

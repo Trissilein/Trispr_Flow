@@ -489,6 +489,112 @@
           </div>
         </section>
 
+        <section class="panel" data-panel="postprocessing" style="--delay: 0.19s">
+          <div class="panel-header">
+            <div class="panel-title">
+              <h2>Post-Processing</h2>
+              <p>Enhance transcription quality with intelligent text refinement</p>
+            </div>
+            <div class="panel-actions">
+              <button class="panel-collapse-btn"
+                      data-panel-collapse="postprocessing"
+                      title="Collapse"
+                      aria-expanded="true"
+                      aria-controls="postprocessing-panel-body"
+                      aria-label="Collapse post-processing panel">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="panel-grid">
+
+              <!-- Master toggle -->
+              <div class="field toggle span-2">
+                <label class="toggle-row">
+                  <span class="field-label">Enable post-processing</span>
+                  <input id="postproc-enabled" type="checkbox" />
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
+                <span class="toggle-hint">Apply intelligent text enhancements to transcriptions</span>
+              </div>
+
+              <div id="postproc-settings" class="span-2" style="display: none;">
+
+                <!-- Language -->
+                <label class="field">
+                  <span class="field-label">Processing language</span>
+                  <select id="postproc-language">
+                    <option value="en">English</option>
+                    <option value="de">Deutsch (German)</option>
+                  </select>
+                  <span class="field-hint">Language-specific rules for punctuation and capitalization</span>
+                </label>
+
+                <!-- Rule-based toggles -->
+                <div class="field toggle">
+                  <label class="toggle-row">
+                    <span class="field-label">Punctuation</span>
+                    <input id="postproc-punctuation" type="checkbox" />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </label>
+                  <span class="toggle-hint">Add periods, commas, question marks</span>
+                </div>
+
+                <div class="field toggle">
+                  <label class="toggle-row">
+                    <span class="field-label">Capitalization</span>
+                    <input id="postproc-capitalization" type="checkbox" />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </label>
+                  <span class="toggle-hint">Capitalize sentences and proper words</span>
+                </div>
+
+                <div class="field toggle">
+                  <label class="toggle-row">
+                    <span class="field-label">Number normalization</span>
+                    <input id="postproc-numbers" type="checkbox" />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </label>
+                  <span class="toggle-hint">Convert number words to digits (e.g., "three" → "3")</span>
+                </div>
+
+                <!-- Custom Vocabulary -->
+                <details class="expander span-2">
+                  <summary>Custom Vocabulary</summary>
+                  <div class="expander-content">
+                    <div class="field toggle">
+                      <label class="toggle-row">
+                        <span class="field-label">Enable custom vocabulary</span>
+                        <input id="postproc-custom-vocab-enabled" type="checkbox" />
+                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                      </label>
+                      <span class="toggle-hint">Replace specific words or phrases</span>
+                    </div>
+                    <div id="postproc-custom-vocab-config" style="display: none;">
+                      <p class="field-hint" style="margin-bottom: 8px;">Define word replacements with word boundary matching. Example: "api" → "API" (but "apikey" stays "apikey")</p>
+                      <div class="custom-vocab-table">
+                        <div class="vocab-header">
+                          <span>Original</span>
+                          <span>Replacement</span>
+                          <span></span>
+                        </div>
+                        <div id="postproc-vocab-rows">
+                          <!-- Dynamically populated -->
+                        </div>
+                      </div>
+                      <button id="postproc-vocab-add" class="btn-secondary" style="margin-top: 8px;">+ Add Entry</button>
+                    </div>
+                  </div>
+                </details>
+
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section class="panel transcription-panel" data-panel="model" style="--delay: 0.18s">
           <div class="panel-header">
             <div class="panel-title">

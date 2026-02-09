@@ -62,6 +62,18 @@ export const activationWordsToggle = $("activation-words-toggle") as HTMLInputEl
 export const activationWordsConfig = $("activation-words-config") as HTMLDivElement | null;
 export const activationWordsList = $("activation-words-list") as HTMLTextAreaElement | null;
 
+// Post-processing controls
+export const postprocEnabled = $("postproc-enabled") as HTMLInputElement | null;
+export const postprocSettings = $("postproc-settings") as HTMLDivElement | null;
+export const postprocLanguage = $("postproc-language") as HTMLSelectElement | null;
+export const postprocPunctuation = $("postproc-punctuation") as HTMLInputElement | null;
+export const postprocCapitalization = $("postproc-capitalization") as HTMLInputElement | null;
+export const postprocNumbers = $("postproc-numbers") as HTMLInputElement | null;
+export const postprocCustomVocabEnabled = $("postproc-custom-vocab-enabled") as HTMLInputElement | null;
+export const postprocCustomVocabConfig = $("postproc-custom-vocab-config") as HTMLDivElement | null;
+export const postprocVocabRows = $("postproc-vocab-rows") as HTMLDivElement | null;
+export const postprocVocabAdd = $("postproc-vocab-add") as HTMLButtonElement | null;
+
 // Output / transcribe controls
 export const transcribeEnabledToggle = $("transcribe-enabled-toggle") as HTMLInputElement | null;
 export const outputDeviceState = $("output-device-state");

@@ -1794,6 +1794,36 @@ input[type="range"]:focus-visible {
 }
 
 /* Post-Processing Panel Enhancements */
+/* Master toggle styling */
+[data-panel="postprocessing"] .field.toggle.span-2 {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+[data-panel="postprocessing"] .field.toggle.span-2 .toggle-row {
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+}
+
+[data-panel="postprocessing"] .field.toggle.span-2 .field-label {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+[data-panel="postprocessing"] .field.toggle.span-2 .toggle-hint {
+  font-size: 11px;
+  margin: 0;
+  padding: 0;
+  opacity: 0.7;
+  line-height: 1.4;
+  color: var(--muted);
+  text-align: left;
+  align-self: flex-start;
+}
+
 #postproc-settings {
   display: flex;
   flex-direction: column;
@@ -1822,6 +1852,9 @@ input[type="range"]:focus-visible {
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 #postproc-settings .field.toggle:hover {
@@ -1830,11 +1863,29 @@ input[type="range"]:focus-visible {
   transform: translateX(2px);
 }
 
+#postproc-settings .field.toggle .toggle-row {
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#postproc-settings .field.toggle .field-label {
+  flex: 0 0 auto;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+}
+
 #postproc-settings .field.toggle .toggle-hint {
   font-size: 11px;
-  margin-top: 4px;
+  margin: 0;
+  padding: 0;
   opacity: 0.7;
-  line-height: 1.3;
+  line-height: 1.4;
+  color: var(--muted);
+  order: 3;
+  text-align: left;
+  align-self: flex-start;
 }
 
 /* Language selector enhancement */
@@ -1878,6 +1929,41 @@ input[type="range"]:focus-visible {
 
 #postproc-settings .expander[open] summary {
   border-bottom-color: rgba(29, 166, 160, 0.25);
+}
+
+/* Custom vocabulary toggle inside expander */
+#postproc-settings .expander .field.toggle {
+  background: transparent;
+  border: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+#postproc-settings .expander .field.toggle:hover {
+  background: transparent;
+  transform: none;
+}
+
+#postproc-settings .expander .field.toggle .toggle-row {
+  width: 100%;
+  justify-content: space-between;
+}
+
+#postproc-settings .expander .field.toggle .field-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+#postproc-settings .expander .field.toggle .toggle-hint {
+  font-size: 11px;
+  opacity: 0.7;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  align-self: flex-start;
 }
 
 /* Custom vocabulary table - Refined */

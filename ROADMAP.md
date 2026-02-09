@@ -11,35 +11,32 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 ✅ **Milestone 0**: Complete (tech stack locked, whisper.cpp validated)
 ✅ **Milestone 1**: Complete (PTT capture, transcription, paste)
 ✅ **Milestone 2**: Complete (Foundation & Critical UX)
-✅ **Milestone 3 - QoL Phase 1**: Complete (Window persistence, Activity feedback, Model hot swap, Capture enhancements)
+✅ **Milestone 3**: Complete (Window persistence, Activity feedback, Model hot swap, Capture enhancements, Post-processing pipeline)
 🔄 **Phase 2**: In Progress (Documentation & Stabilization)
 
 **Recent progress (2026-02-09)**
 
-- ✅ **Capture Enhancements**: Language pinning (16 languages), activation word filtering, hallucination filter UI, extra hotkey (Ctrl+Shift+A)
+- ✅ **Post-Processing Pipeline (v0.4.0)**: Rule-based text enhancements, custom vocabulary, settings-driven architecture
+- ✅ **Rule-Based Enhancements**: Punctuation, capitalization, number normalization (English/German)
+- ✅ **Custom Vocabulary**: HashMap-based replacements with word boundary regex matching
+- ✅ **Post-Processing UI**: Master toggle, language selector, rule toggles, dynamic vocabulary table
+- ✅ **Capture Enhancements (v0.3.0)**: Language pinning (16 languages), activation word filtering, hallucination filter UI
 - ✅ **Language Bug Fix**: Fixed hardcoded "auto" in transcription.rs line 887
-- ✅ **Activation Words**: Word boundary matching filter with default word list
-- ✅ **Version Bump**: 0.1.0 → 0.3.0
+- ✅ **Version Bumps**: 0.1.0 → 0.3.0 → 0.4.0
 
-### Next Priorities (v0.4.0+)
+### Next Priorities (v0.5.0+)
 
-1. **Post-Processing Pipeline** (v0.4.0)
-   - Rule-based punctuation & capitalization
-   - Number normalization (digits, dates, currency)
-   - Custom vocabulary support
-   - Optional LLM refinement (Claude API)
-
-2. **Long-Form Features** (v0.5.0)
+1. **Long-Form Features** (v0.5.0)
    - Live transcript dump (TXT, MD, JSON)
    - Chapter segmentation for meetings/lectures
    - Topic detection and marking
 
-3. **VibeVoice-ASR Integration** (v0.6.0)
+2. **VibeVoice-ASR Integration** (v0.6.0)
    - Speaker diarization for recorded meetings
    - Python FastAPI sidecar architecture
    - Post-session analysis workflow
 
-4. **AI Fallback Overhaul** (v0.7.0)
+3. **AI Fallback Overhaul** (v0.7.0)
    - Multi-provider support (OpenAI, Anthropic, Groq)
    - User-selectable models per provider
    - Streaming transcription for cloud fallback
@@ -182,14 +179,16 @@ For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
 - ✅ Hallucination filter UI toggle
 - ✅ Extra hotkey: Toggle activation words (Ctrl+Shift+A)
 
-### Text Enhancement
-- **Post-Processing Pipeline** (after Capture Enhancements):
-  - Punctuation & capitalization (rule-based + AI-powered)
-  - Number normalization (digits, dates, currency)
-  - Custom vocabulary (technical terms, proper nouns)
-  - Domain-aware corrections
-  - Optional Claude API integration for advanced processing
-- **Language-specific rules** (English, German)
+### Text Enhancement ✅
+
+- ✅ **Post-Processing Pipeline** (v0.4.0):
+  - ✅ Rule-based punctuation & capitalization (English, German)
+  - ✅ Number normalization (0-100 + common tens)
+  - ✅ Custom vocabulary with word boundary matching
+  - ✅ Settings-driven with backward compatibility
+  - ✅ Complete UI panel with master toggle, language selector, rule toggles
+  - ✅ Dynamic vocabulary table with add/remove functionality
+  - ⏳ Optional Claude API integration (planned for future release)
 
 ### Speaker-Aware Meeting Transcription (VibeVoice-ASR Integration)
 

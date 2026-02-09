@@ -5,6 +5,55 @@ All notable changes to Trispr Flow will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-09
+
+### Added
+
+- **Post-Processing Pipeline**: Intelligent transcript enhancement system
+  - Rule-based text processing (punctuation, capitalization, numbers)
+  - English/German language-specific rules
+  - Custom vocabulary with word boundary matching
+  - Settings-driven with backward compatibility
+- **Punctuation Enhancement**: Automatic punctuation rules
+  - Adds periods, commas before conjunctions (and, but, or)
+  - Question mark detection (what, how, why, when, where, who, etc.)
+  - Language-specific rules for English and German
+- **Capitalization**: Sentence and proper word capitalization
+  - First letter and after sentence-ending punctuation
+  - English "I" always capitalized
+  - German noun capitalization support
+- **Number Normalization**: Convert spoken numbers to digits
+  - Numbers 0-100 plus common tens
+  - Word boundary matching ("one" → "1" but "someone" unchanged)
+  - English and German number words
+- **Custom Vocabulary**: User-defined word replacements
+  - HashMap-based string replacement
+  - Word boundary regex matching (prevents partial replacements)
+  - Dynamic UI table for managing entries
+  - Add/remove functionality with instant persistence
+- **Post-Processing UI**: Complete settings panel
+  - Master toggle to enable/disable
+  - Language selector for rule customization
+  - Individual toggles for each enhancement type
+  - Custom Vocabulary expander with styled table
+  - Clean, responsive design with grid layout
+
+### Technical
+
+- New `postprocessing.rs` module with 3-stage pipeline architecture
+- Integration at 3 transcription emission points (mic PTT, mic VAD, system audio)
+- Error handling with fallback to original text (never lose data)
+- Comprehensive unit tests (24 tests covering all functions)
+- Settings backward compatibility via #[serde(default)]
+- Added regex crate dependency for vocabulary matching
+- Non-invasive integration (post-filtering, pre-history)
+
+### Changed
+
+- HTML bundle size: 39.90 kB → 44.70 kB (+12%)
+- CSS bundle size: 25.08 kB → 26.10 kB (+4%)
+- Main.js bundle size: 59.92 kB → 62.33 kB (+4%)
+
 ## [0.3.0] - 2026-02-09
 
 ### Added

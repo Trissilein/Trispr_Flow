@@ -6,11 +6,6 @@ const $ = <T extends HTMLElement>(id: string) => {
   return document.getElementById(id) as T | null;
 };
 
-const $$ = <T extends Element>(selector: string) => {
-  if (typeof document === "undefined") return null;
-  return document.querySelector(selector) as T | null;
-};
-
 // Status and hero elements
 export const statusLabel = $("status-label");
 export const statusDot = $("status-dot") as HTMLSpanElement | null;
@@ -131,17 +126,23 @@ export const overlayKittHeightValue = $("overlay-kitt-height-value");
 
 // History controls
 export const historyList = $("history-list");
-export const historyInput = $("history-input") as HTMLInputElement | null;
-export const historyAdd = $("history-add");
-export const historyCompose = $$<HTMLDivElement>(".history-compose");
 export const historyTabMic = $("history-tab-mic");
 export const historyTabSystem = $("history-tab-system");
 export const historyTabConversation = $("history-tab-conversation");
 export const historyCopyConversation = $("history-copy-conversation") as HTMLButtonElement | null;
-export const historyDetachConversation = $("history-detach-conversation") as HTMLButtonElement | null;
+export const historyExport = $("history-export") as HTMLButtonElement | null;
+export const exportFormat = $("export-format") as HTMLSelectElement | null;
+export const historySearch = $("history-search") as HTMLInputElement | null;
+export const historySearchClear = $("history-search-clear") as HTMLButtonElement | null;
 export const conversationFontControls = $("conversation-font-controls");
 export const conversationFontSize = $("conversation-font-size") as HTMLInputElement | null;
 export const conversationFontSizeValue = $("conversation-font-size-value");
+
+// Chapter controls
+export const chaptersContainer = $("chapters-container") as HTMLDivElement | null;
+export const chaptersList = $("chapters-list") as HTMLDivElement | null;
+export const chapterMethodSelect = $("chapter-method") as HTMLSelectElement | null;
+export const chaptersToggle = $("chapters-toggle") as HTMLButtonElement | null;
 
 // Extra hotkeys controls
 export const toggleActivationWordsHotkey = $("toggle-activation-words-hotkey") as HTMLInputElement | null;

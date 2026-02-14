@@ -112,7 +112,14 @@
               </div>
               <div style="display: flex; gap: 6px; align-items: center;">
                 <button id="history-copy-conversation" class="ghost-btn">Copy</button>
-                <button id="history-detach-conversation" class="ghost-btn">Detach</button>
+                <div class="export-controls">
+                  <select id="export-format" class="export-format" title="Select export format">
+                    <option value="txt">TXT</option>
+                    <option value="md">Markdown</option>
+                    <option value="json">JSON</option>
+                  </select>
+                  <button id="history-export" class="ghost-btn" title="Export transcript">Export</button>
+                </div>
                 <div id="conversation-font-controls" class="font-controls" title="Adjust conversation font size">
                   <span class="font-label">Font</span>
                   <input id="conversation-font-size" type="range" min="12" max="24" step="1"
@@ -125,11 +132,25 @@
                 </div>
               </div>
             </div>
-            <div id="history-list" class="history-list"></div>
-            <div class="history-compose">
-              <input id="history-input" type="text" placeholder="Test entry..." />
-              <button id="history-add">Add</button>
+            <div class="history-search-container">
+              <input id="history-search" type="text" class="history-search-input" placeholder="Search transcripts..." />
+              <button id="history-search-clear" class="history-search-clear" title="Clear search">×</button>
             </div>
+            <div id="chapters-container" class="chapters-container" style="display: none;">
+              <div class="chapters-header">
+                <span class="chapters-title">📑 Chapters</span>
+                <div class="chapters-controls">
+                  <select id="chapter-method" class="chapter-method-select" title="Chapter generation method">
+                    <option value="silence">Silence-based</option>
+                    <option value="time">Time-based (5min)</option>
+                    <option value="hybrid">Hybrid</option>
+                  </select>
+                  <button id="chapters-toggle" class="ghost-btn" title="Hide chapters">Hide</button>
+                </div>
+              </div>
+              <div id="chapters-list" class="chapters-list"></div>
+            </div>
+            <div id="history-list" class="history-list"></div>
           </div>
         </section>
 
@@ -392,7 +413,7 @@
             <div class="field hotkey-field span-2">
               <span class="field-label">Transcribe hotkey</span>
               <div class="hotkey-input-group">
-                <input id="transcribe-hotkey" type="text" readonly />
+                <input id="transcribe-hotkey" type="text" placeholder="CommandOrControl+Shift+T" readonly />
                 <button id="transcribe-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />

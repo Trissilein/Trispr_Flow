@@ -16,11 +16,13 @@ import type {
   TranscribeBacklogStatus
 } from "./types";
 import {
+  settings,
   setSettings,
   setHistory,
   setTranscribeHistory,
   setDevices,
   setOutputDevices,
+  models,
   setModels,
   setDynamicSustainThreshold,
   modelProgress
@@ -32,16 +34,20 @@ import { renderHero, setCaptureStatus, setTranscribeStatus, updateThresholdMarke
 import { renderHistory, initPanelState, setHistoryTab } from "./history";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
 import { wireEvents } from "./event-listeners";
-import { showToast, showErrorToast } from "./toast";
+import { dismissToast, showToast, showErrorToast } from "./toast";
 import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
+import { initChaptersUI, refreshChapters } from "./chapters";
 
 // Track event listeners for cleanup to prevent memory leaks
 let eventUnlisteners: Array<() => void> = [];
+let backlogWarningToastId: string | null = null;
 
 function cleanupEventListeners() {
   eventUnlisteners.forEach((unlisten) => unlisten());
   eventUnlisteners = [];
+  dismissToast(backlogWarningToastId);
+  backlogWarningToastId = null;
 }
 
 function initConversationView() {
@@ -111,6 +117,7 @@ async function bootstrap() {
   wireEvents();
   initPanelState();
   initConversationView();
+  initChaptersUI();
 
   eventUnlisteners.push(await listen<Settings>("settings-changed", (event) => {
     setSettings(event.payload ?? null);
@@ -146,11 +153,13 @@ async function bootstrap() {
   eventUnlisteners.push(await listen<HistoryEntry[]>("history:updated", (event) => {
     setHistory(event.payload ?? []);
     renderHistory();
+    refreshChapters();
   }));
 
   eventUnlisteners.push(await listen<HistoryEntry[]>("transcribe:history-updated", (event) => {
     setTranscribeHistory(event.payload ?? []);
     renderHistory();
+    refreshChapters();
   }));
 
   eventUnlisteners.push(await listen<{ text: string; source: string }>("transcription:result", () => {
@@ -159,13 +168,11 @@ async function bootstrap() {
 
   eventUnlisteners.push(await listen<DownloadProgress>("model:download-progress", (event) => {
     modelProgress.set(event.payload.id, event.payload);
-    import("./state").then(({ models, setModels }) => {
-      const updatedModels = models.map((model) =>
-        model.id === event.payload.id ? { ...model, downloading: true } : model
-      );
-      setModels(updatedModels);
-      renderModels();
-    });
+    const updatedModels = models.map((model) =>
+      model.id === event.payload.id ? { ...model, downloading: true } : model
+    );
+    setModels(updatedModels);
+    renderModels();
   }));
 
   eventUnlisteners.push(await listen<DownloadComplete>("model:download-complete", async (event) => {
@@ -196,11 +203,43 @@ async function bootstrap() {
   eventUnlisteners.push(await listen<TranscribeBacklogStatus>("transcribe:backlog-expanded", (event) => {
     const payload = event.payload;
     if (!payload) return;
+    dismissToast(backlogWarningToastId);
+    backlogWarningToastId = null;
     showToast({
       type: "success",
       title: "Output Backlog Expanded",
       message: `New capacity: ${payload.capacity_chunks} chunks (${payload.percent_used}% used).`,
       duration: 5000,
+    });
+  }));
+
+  eventUnlisteners.push(await listen<TranscribeBacklogStatus>("transcribe:backlog-warning", (event) => {
+    const payload = event.payload;
+    if (!payload) return;
+
+    dismissToast(backlogWarningToastId);
+
+    const droppedSuffix = payload.dropped_chunks > 0 ? ` Dropped chunks: ${payload.dropped_chunks}.` : "";
+    backlogWarningToastId = showToast({
+      type: "warning",
+      title: "Output Backlog Near Capacity",
+      message: `Queue at ${payload.percent_used}% (${payload.queued_chunks}/${payload.capacity_chunks} chunks). Auto-expand is scheduled.${droppedSuffix}`,
+      duration: 0,
+      actionLabel: "Expand now",
+      actionDismiss: false,
+      onAction: async () => {
+        try {
+          await invoke<TranscribeBacklogStatus>("expand_transcribe_backlog");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          showToast({
+            type: "error",
+            title: "Backlog Expansion Failed",
+            message,
+            duration: 7000,
+          });
+        }
+      },
     });
   }));
 
@@ -212,11 +251,9 @@ async function bootstrap() {
   // Listen for audio cues (beep on recording start/stop)
   eventUnlisteners.push(await listen<string>("audio:cue", (event) => {
     const type = event.payload as "start" | "stop";
-    import("./state").then(({ settings }) => {
-      if (settings?.audio_cues) {
-        playAudioCue(type);
-      }
-    });
+    if (settings?.audio_cues) {
+      playAudioCue(type);
+    }
   }));
 
   eventUnlisteners.push(await listen<number>("audio:level", (event) => {

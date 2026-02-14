@@ -36,15 +36,6 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "bin/cuda/whisper-cli.exe",
-      "bin/cuda/whisper.dll",
-      "bin/cuda/ggml.dll",
-      "bin/cuda/ggml-base.dll",
-      "bin/cuda/ggml-cpu.dll",
-      "bin/cuda/ggml-cuda.dll",
-      "bin/cuda/cublas64_13.dll",
-      "bin/cuda/cublasLt64_13.dll",
-      "bin/cuda/cudart64_13.dll",
       "bin/vulkan/whisper-cli.exe",
       "bin/vulkan/whisper.dll",
       "bin/vulkan/ggml.dll",
@@ -59,7 +50,7 @@
         "installerIcon": "icons/icon.ico",
         "languages": ["English", "German"],
         "installMode": "currentUser",
-        "installerHooks": "nsis/hooks.nsh"
+        "installerHooks": "nsis/hooks.vulkan.nsh"
       }
     }
   }

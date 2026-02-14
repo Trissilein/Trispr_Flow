@@ -89,6 +89,15 @@ h1 {
   color: var(--ink);
 }
 
+.app-version {
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: var(--muted);
+  opacity: 0.6;
+  margin-left: 8px;
+  letter-spacing: 0.02em;
+}
+
 .subtitle {
   margin: 0 0 10px;
   color: var(--muted);

@@ -20,6 +20,7 @@ export const dictationBadge = $("dictation-badge");
 export const modeState = $("mode-state");
 export const deviceState = $("device-state");
 export const modelState = $("model-state");
+export const appVersion = $("app-version") as HTMLSpanElement | null;
 
 // Capture input controls
 export const captureEnabledToggle = $("capture-enabled-toggle") as HTMLInputElement | null;

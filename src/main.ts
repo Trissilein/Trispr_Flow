@@ -2,6 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { initWindowStatePersistence } from "./window-state";
 
 import type {
@@ -118,6 +119,16 @@ async function bootstrap() {
   initPanelState();
   initConversationView();
   initChaptersUI();
+
+  // Display app version
+  if (dom.appVersion) {
+    try {
+      const version = await getVersion();
+      dom.appVersion.textContent = `v${version}`;
+    } catch (error) {
+      console.warn("Failed to get app version:", error);
+    }
+  }
 
   eventUnlisteners.push(await listen<Settings>("settings-changed", (event) => {
     setSettings(event.payload ?? null);

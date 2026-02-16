@@ -228,6 +228,23 @@ export function renderSettings() {
   if (dom.overlayKittHeight) dom.overlayKittHeight.value = Math.round(settings.overlay_kitt_height).toString();
   if (dom.overlayKittHeightValue) dom.overlayKittHeightValue.textContent = `${Math.round(settings.overlay_kitt_height)}`;
 
+  // Quality & Encoding settings
+  if (dom.opusEnabledToggle) {
+    dom.opusEnabledToggle.checked = settings.opus_enabled ?? true;
+  }
+  if (dom.opusBitrateSelect) {
+    dom.opusBitrateSelect.value = (settings.opus_bitrate_kbps ?? 64).toString();
+  }
+  if (dom.vibevoicePrecisionSelect) {
+    dom.vibevoicePrecisionSelect.value = settings.vibevoice_precision ?? "fp16";
+  }
+  if (dom.autoSaveSystemAudioToggle) {
+    dom.autoSaveSystemAudioToggle.checked = settings.auto_save_system_audio ?? false;
+  }
+  if (dom.parallelModeToggle) {
+    dom.parallelModeToggle.checked = settings.parallel_mode ?? false;
+  }
+
   // Post-processing settings
   if (dom.postprocEnabled) {
     dom.postprocEnabled.checked = settings.postproc_enabled;
@@ -254,4 +271,62 @@ export function renderSettings() {
     dom.postprocCustomVocabConfig.style.display = settings.postproc_custom_vocab_enabled ? "block" : "none";
   }
   renderVocabulary();
+
+  // Chapter settings
+  if (dom.chaptersEnabled) {
+    dom.chaptersEnabled.checked = settings.chapters_enabled ?? false;
+  }
+  if (dom.chaptersSettings) {
+    dom.chaptersSettings.style.display = (settings.chapters_enabled ?? false) ? "block" : "none";
+  }
+  if (dom.chaptersShowIn) {
+    dom.chaptersShowIn.value = settings.chapters_show_in ?? "conversation";
+  }
+  if (dom.chaptersMethod) {
+    dom.chaptersMethod.value = settings.chapters_method ?? "hybrid";
+  }
+
+  renderTopicKeywords();
+}
+
+/**
+ * Render topic keyword editor in settings
+ */
+export async function renderTopicKeywords(): Promise<void> {
+  if (!dom.topicKeywordsList) return;
+  const { getTopicKeywords } = await import("./history");
+  const keywords = getTopicKeywords();
+
+  dom.topicKeywordsList.innerHTML = "";
+
+  Object.entries(keywords).forEach(([topic, words]) => {
+    const container = document.createElement("div");
+    container.className = "field";
+    container.style.marginBottom = "12px";
+
+    const label = document.createElement("span");
+    label.className = "field-label";
+    label.textContent = `${topic.charAt(0).toUpperCase() + topic.slice(1)} keywords`;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = words.join(", ");
+    input.placeholder = "Separate keywords with commas";
+    input.addEventListener("change", async () => {
+      const { setTopicKeywords } = await import("./history");
+      const updated = { ...keywords };
+      updated[topic] = input.value
+        .split(",")
+        .map((w) => w.trim())
+        .filter((w) => w.length > 0);
+      setTopicKeywords(updated);
+      await persistSettings();
+    });
+
+    container.appendChild(label);
+    container.appendChild(input);
+    if (dom.topicKeywordsList) {
+      dom.topicKeywordsList.appendChild(container);
+    }
+  });
 }

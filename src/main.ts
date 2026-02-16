@@ -32,12 +32,13 @@ import * as dom from "./dom-refs";
 import { renderSettings } from "./settings";
 import { renderDevices, renderOutputDevices } from "./devices";
 import { renderHero, setCaptureStatus, setTranscribeStatus, updateThresholdMarkers } from "./ui-state";
-import { renderHistory, initPanelState, setHistoryTab } from "./history";
+import { renderHistory, initPanelState, setHistoryTab, initSpeakerLabelEditing } from "./history";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
-import { wireEvents } from "./event-listeners";
+import { wireEvents, initMainTab } from "./event-listeners";
 import { dismissToast, showToast, showErrorToast } from "./toast";
 import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
+import { initLiveDump } from "./live-dump";
 import { initChaptersUI, refreshChapters } from "./chapters";
 
 // Track event listeners for cleanup to prevent memory leaks
@@ -116,9 +117,11 @@ async function bootstrap() {
   renderModels();
   await refreshModelsDir();
   wireEvents();
+  initMainTab();
   initPanelState();
   initConversationView();
   initChaptersUI();
+  initSpeakerLabelEditing();
 
   // Display app version
   if (dom.appVersion) {
@@ -161,16 +164,22 @@ async function bootstrap() {
     dom.transcribeMeterDb.textContent = `${clamped.toFixed(1)} dB`;
   }));
 
-  eventUnlisteners.push(await listen<HistoryEntry[]>("history:updated", (event) => {
+  eventUnlisteners.push(await listen<HistoryEntry[]>("history:updated", async (event) => {
     setHistory(event.payload ?? []);
     renderHistory();
     refreshChapters();
+    // Live dump to file for crash recovery
+    const { dumpHistoryToFile } = await import("./live-dump");
+    dumpHistoryToFile().catch(() => {});
   }));
 
-  eventUnlisteners.push(await listen<HistoryEntry[]>("transcribe:history-updated", (event) => {
+  eventUnlisteners.push(await listen<HistoryEntry[]>("transcribe:history-updated", async (event) => {
     setTranscribeHistory(event.payload ?? []);
     renderHistory();
     refreshChapters();
+    // Live dump to file for crash recovery
+    const { dumpHistoryToFile } = await import("./live-dump");
+    dumpHistoryToFile().catch(() => {});
   }));
 
   eventUnlisteners.push(await listen<{ text: string; source: string }>("transcription:result", () => {
@@ -290,6 +299,9 @@ async function bootstrap() {
     setDynamicSustainThreshold(event.payload ?? 0.01);
     updateThresholdMarkers();
   }));
+
+  // Initialize live transcript dump for crash recovery
+  initLiveDump();
 }
 
 async function checkModelOnStartup() {
@@ -340,10 +352,43 @@ window.addEventListener("DOMContentLoaded", () => {
       initWindowStatePersistence();
       return checkModelOnStartup();
     })
+    .then(() => {
+      // Check for VibeVoice model updates (weekly check)
+      checkVibeVoiceUpdates();
+    })
     .catch((error) => {
       console.error("bootstrap failed", error);
     });
 });
+
+// Check for VibeVoice-ASR model updates
+async function checkVibeVoiceUpdates() {
+  try {
+    // Only check once per week
+    const lastCheck = localStorage.getItem("vibevoice-last-check");
+    const now = Date.now();
+    const week = 7 * 24 * 60 * 60 * 1000;
+
+    if (lastCheck && now - parseInt(lastCheck) < week) {
+      return; // Checked recently
+    }
+
+    const result = await invoke<any>("check_vibevoice_updates");
+
+    if (result.update_available) {
+      showToast({
+        type: "info",
+        title: `VibeVoice-ASR v${result.latest_version} available`,
+        message: result.release_notes || "New version with improvements available",
+        duration: 10000,
+      });
+    }
+
+    localStorage.setItem("vibevoice-last-check", now.toString());
+  } catch (error) {
+    console.error("Failed to check for VibeVoice updates:", error);
+  }
+}
 
 // Cleanup event listeners on window unload to prevent memory leaks
 window.addEventListener("beforeunload", () => {

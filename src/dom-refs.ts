@@ -6,6 +6,12 @@ const $ = <T extends HTMLElement>(id: string) => {
   return document.getElementById(id) as T | null;
 };
 
+// Main tabs
+export const tabBtnTranscription = $("tab-btn-transcription") as HTMLButtonElement | null;
+export const tabBtnSettings = $("tab-btn-settings") as HTMLButtonElement | null;
+export const tabTranscription = $("tab-transcription") as HTMLDivElement | null;
+export const tabSettings = $("tab-settings") as HTMLDivElement | null;
+
 // Status and hero elements
 export const statusLabel = $("status-label");
 export const statusDot = $("status-dot") as HTMLSpanElement | null;
@@ -131,6 +137,9 @@ export const historyTabMic = $("history-tab-mic");
 export const historyTabSystem = $("history-tab-system");
 export const historyTabConversation = $("history-tab-conversation");
 export const historyCopyConversation = $("history-copy-conversation") as HTMLButtonElement | null;
+export const analyseButton = $("analyse-button") as HTMLButtonElement | null;
+export const analyseButtonText = $("analyse-button-text") as HTMLSpanElement | null;
+export const analyseSpinner = $("analyse-spinner") as HTMLSpanElement | null;
 export const historyExport = $("history-export") as HTMLButtonElement | null;
 export const exportFormat = $("export-format") as HTMLSelectElement | null;
 export const historySearch = $("history-search") as HTMLInputElement | null;
@@ -139,16 +148,33 @@ export const conversationFontControls = $("conversation-font-controls");
 export const conversationFontSize = $("conversation-font-size") as HTMLInputElement | null;
 export const conversationFontSizeValue = $("conversation-font-size-value");
 
-// Chapter controls
+// Chapter controls (Transcription tab)
 export const chaptersContainer = $("chapters-container") as HTMLDivElement | null;
 export const chaptersList = $("chapters-list") as HTMLDivElement | null;
 export const chapterMethodSelect = $("chapter-method") as HTMLSelectElement | null;
 export const chaptersToggle = $("chapters-toggle") as HTMLButtonElement | null;
 
+// Chapter settings (Settings tab)
+export const chaptersEnabled = $("chapters-enabled") as HTMLInputElement | null;
+export const chaptersSettings = $("chapters-settings") as HTMLDivElement | null;
+export const chaptersShowIn = $("chapters-show-in") as HTMLSelectElement | null;
+export const chaptersMethod = $("chapters-method") as HTMLSelectElement | null;
+
 // Extra hotkeys controls
 export const toggleActivationWordsHotkey = $("toggle-activation-words-hotkey") as HTMLInputElement | null;
 export const toggleActivationWordsHotkeyRecord = $("toggle-activation-words-hotkey-record") as HTMLButtonElement | null;
 export const toggleActivationWordsHotkeyStatus = $("toggle-activation-words-hotkey-status") as HTMLSpanElement | null;
+
+// Topic keywords controls (Settings tab)
+export const topicKeywordsList = $("topic-keywords-list") as HTMLDivElement | null;
+export const topicKeywordsReset = $("topic-keywords-reset") as HTMLButtonElement | null;
+
+// Quality & Encoding controls
+export const opusEnabledToggle = $("opus-enabled-toggle") as HTMLInputElement | null;
+export const opusBitrateSelect = $("opus-bitrate-select") as HTMLSelectElement | null;
+export const vibevoicePrecisionSelect = $("vibevoice-precision-select") as HTMLSelectElement | null;
+export const autoSaveSystemAudioToggle = $("auto-save-system-audio-toggle") as HTMLInputElement | null;
+export const parallelModeToggle = $("parallel-mode-toggle") as HTMLInputElement | null;
 
 // Model manager controls
 export const modelSourceSelect = $("model-source-select") as HTMLSelectElement | null;

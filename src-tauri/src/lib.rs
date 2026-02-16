@@ -6,8 +6,12 @@ mod constants;
 mod errors;
 mod hotkeys;
 mod models;
+mod opus;
 mod overlay;
 mod paths;
+mod auto_processing;
+mod sidecar;
+mod sidecar_process;
 mod state;
 mod postprocessing;
 mod transcription;
@@ -50,6 +54,7 @@ use crate::transcription::{
   start_transcribe_monitor,
   stop_transcribe_monitor,
   toggle_transcribe_state,
+  transcribe_audio,
 };
 
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
@@ -65,6 +70,13 @@ static TRAY_PULSE_STARTED: AtomicBool = AtomicBool::new(false);
 static BACKLOG_PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
 static MAIN_WINDOW_RESTORED: AtomicBool = AtomicBool::new(false);
+
+fn cancel_backlog_auto_expand(app: &AppHandle) {
+  BACKLOG_PROMPT_CANCELLED.store(true, Ordering::Release);
+  if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
+    let _ = tray.set_show_menu_on_left_click(false);
+  }
+}
 
 fn schedule_backlog_auto_expand(app: AppHandle, cancel_item: MenuItem<Wry>) {
   if BACKLOG_PROMPT_ACTIVE.swap(true, Ordering::AcqRel) {
@@ -137,15 +149,18 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
       }
       Err(e) => {
         error!("Failed to register PTT hotkey '{}': {}", ptt, e);
+        // Warn user but don't block - they might want to use it anyway
         emit_error(
           app,
           AppError::Hotkey(format!(
-            "Could not register PTT hotkey '{}': {}. Try a different key.",
+            "Warning: PTT hotkey '{}' may conflict with another application ({}). It might still work.",
             ptt, e
           )),
           Some("Hotkey Registration"),
         );
-        Err(e.to_string())
+        // Return Ok to allow app to continue
+        warn!("Continuing despite PTT hotkey registration failure");
+        Ok(())
       }
     }
   };
@@ -169,15 +184,17 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
       }
       Err(e) => {
         error!("Failed to register Toggle hotkey '{}': {}", toggle, e);
+        // Warn user but don't block
         emit_error(
           app,
           AppError::Hotkey(format!(
-            "Could not register Toggle hotkey '{}': {}. Try a different key.",
+            "Warning: Toggle hotkey '{}' may conflict with another application ({}). It might still work.",
             toggle, e
           )),
           Some("Hotkey Registration"),
         );
-        Err(e.to_string())
+        warn!("Continuing despite Toggle hotkey registration failure");
+        Ok(())
       }
     }
   };
@@ -216,15 +233,17 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
       }
       Err(e) => {
         error!("Failed to register Transcribe hotkey '{}': {}", hotkey, e);
+        // Warn user but don't block
         emit_error(
           app,
           AppError::Hotkey(format!(
-            "Could not register Transcribe hotkey '{}': {}. Try a different key.",
+            "Warning: Transcribe hotkey '{}' may conflict with another application ({}). It might still work.",
             hotkey, e
           )),
           Some("Hotkey Registration"),
         );
-        Err(e.to_string())
+        warn!("Continuing despite Transcribe hotkey registration failure");
+        Ok(())
       }
     }
   };
@@ -406,6 +425,17 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings)
 }
 
 #[tauri::command]
+fn save_window_visibility_state(
+    app: AppHandle,
+    visibility: String,
+) {
+  // "normal" or "minimized" from frontend; "tray" is set by hide_main_window
+  if ["normal", "minimized"].contains(&visibility.as_str()) {
+    save_window_visibility(&app, &visibility);
+  }
+}
+
+#[tauri::command]
 fn save_window_state(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -415,6 +445,20 @@ fn save_window_state(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
+    // Validate window state: reject if window is minimized or has invalid dimensions
+    // Windows uses ~-32000 for minimized window positions
+    const MINIMIZED_THRESHOLD: i32 = -30000;
+
+    if x < MINIMIZED_THRESHOLD || y < MINIMIZED_THRESHOLD {
+        // Window is minimized, don't save this state
+        return Ok(());
+    }
+
+    // Reject if dimensions are too small (below minimum from tauri.conf.json)
+    if width < 980 || height < 640 {
+        return Ok(());
+    }
+
     let monitor_name = if let Some(window) = app.get_webview_window(&window_label) {
         window.current_monitor()
             .ok()
@@ -433,13 +477,6 @@ fn save_window_state(
             current.main_window_width = Some(width);
             current.main_window_height = Some(height);
             current.main_window_monitor = monitor_name;
-        }
-        "conversation" => {
-            current.conv_window_x = Some(x);
-            current.conv_window_y = Some(y);
-            current.conv_window_width = Some(width);
-            current.conv_window_height = Some(height);
-            current.conv_window_monitor = monitor_name;
         }
         _ => return Err("Unknown window label".to_string()),
     }
@@ -482,6 +519,71 @@ fn add_transcribe_entry(
 }
 
 #[tauri::command]
+fn get_chapters(state: State<'_, AppState>) -> Vec<state::Chapter> {
+  state.chapters.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn add_chapter(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  id: String,
+  label: String,
+  timestamp_ms: u64,
+  entry_count: u32,
+) -> Result<Vec<state::Chapter>, String> {
+  let new_chapter = state::Chapter {
+    id,
+    label,
+    timestamp_ms,
+    entry_count,
+  };
+
+  let mut chapters = state.chapters.lock().unwrap();
+  chapters.push(new_chapter);
+  let updated = chapters.clone();
+  drop(chapters);
+
+  state::save_chapters_file(&app, &updated)?;
+  Ok(updated)
+}
+
+#[tauri::command]
+fn update_chapter(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  id: String,
+  label: String,
+) -> Result<Vec<state::Chapter>, String> {
+  let mut chapters = state.chapters.lock().unwrap();
+
+  if let Some(chapter) = chapters.iter_mut().find(|c| c.id == id) {
+    chapter.label = label;
+  }
+
+  let updated = chapters.clone();
+  drop(chapters);
+
+  state::save_chapters_file(&app, &updated)?;
+  Ok(updated)
+}
+
+#[tauri::command]
+fn delete_chapter(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  id: String,
+) -> Result<Vec<state::Chapter>, String> {
+  let mut chapters = state.chapters.lock().unwrap();
+  chapters.retain(|c| c.id != id);
+  let updated = chapters.clone();
+  drop(chapters);
+
+  state::save_chapters_file(&app, &updated)?;
+  Ok(updated)
+}
+
+#[tauri::command]
 fn toggle_transcribe(app: AppHandle) -> Result<(), String> {
   toggle_transcribe_state(&app);
   Ok(())
@@ -489,92 +591,8 @@ fn toggle_transcribe(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn expand_transcribe_backlog(app: AppHandle) -> Result<transcription::TranscribeBacklogStatus, String> {
+  cancel_backlog_auto_expand(&app);
   expand_transcribe_backlog_inner(&app)
-}
-
-#[tauri::command]
-fn open_conversation_window(app: AppHandle) -> Result<(), String> {
-  if app.get_webview_window("conversation").is_some() {
-    if let Some(window) = app.get_webview_window("conversation") {
-      let _ = window.show();
-      let _ = window.set_focus();
-    }
-    return Ok(());
-  }
-
-  let settings = load_settings(&app);
-
-  let mut builder = tauri::WebviewWindowBuilder::new(
-    &app,
-    "conversation",
-    tauri::WebviewUrl::App("index.html".into()),
-  )
-  .title("Trispr Flow · Conversation")
-  .inner_size(860.0, 680.0)
-  .min_inner_size(640.0, 420.0)
-  .resizable(true)
-  .decorations(true)
-  .transparent(false)
-  .visible(true)
-  .always_on_top(settings.conv_window_always_on_top);
-
-  // Restore geometry if available
-  if let (Some(x), Some(y), Some(w), Some(h)) = (
-    settings.conv_window_x,
-    settings.conv_window_y,
-    settings.conv_window_width,
-    settings.conv_window_height,
-  ) {
-    builder = builder
-      .position(x as f64, y as f64)
-      .inner_size(w as f64, h as f64);
-  }
-
-  let window = builder.build().map_err(|e| e.to_string())?;
-
-  // Validate monitor after creation
-  let monitor_valid = window.available_monitors()
-    .ok()
-    .map(|monitors| {
-      if let Some(monitor_name) = &settings.conv_window_monitor {
-        monitors.iter().any(|m| {
-          m.name().as_ref().map(|n| n.as_str()) == Some(monitor_name.as_str())
-        })
-      } else {
-        true  // No specific monitor was saved, so any monitor is valid
-      }
-    })
-    .unwrap_or(false);
-
-  if !monitor_valid {
-    // Fallback: center on primary monitor
-    if let Ok(Some(primary)) = window.primary_monitor() {
-      let primary_size = primary.size();
-      let window_w = settings.conv_window_width.unwrap_or(860).max(640);
-      let window_h = settings.conv_window_height.unwrap_or(680).max(420);
-      let center_x = (primary_size.width as i32 - window_w as i32) / 2;
-      let center_y = (primary_size.height as i32 - window_h as i32) / 2;
-      let _ = window.set_position(tauri::PhysicalPosition::new(center_x, center_y));
-    }
-  }
-
-  let _ = window.eval(
-    "window.__TRISPR_VIEW__='conversation'; window.dispatchEvent(new CustomEvent('trispr:view', { detail: 'conversation' }));",
-  );
-
-  Ok(())
-}
-
-#[tauri::command]
-fn set_conversation_window_always_on_top(app: AppHandle, state: State<'_, AppState>, always_on_top: bool) -> Result<(), String> {
-  if let Some(window) = app.get_webview_window("conversation") {
-    let _ = window.set_always_on_top(always_on_top).map_err(|e| e.to_string())?;
-  }
-  let mut settings = state.settings.lock().unwrap();
-  settings.conv_window_always_on_top = always_on_top;
-  drop(settings);
-  save_settings_file(&app, &state.settings.lock().unwrap())?;
-  Ok(())
 }
 
 #[tauri::command]
@@ -625,6 +643,406 @@ fn get_hotkey_conflicts(state: State<'_, AppState>) -> Vec<hotkeys::ConflictInfo
     settings.transcribe_hotkey.clone(),
   ];
   hotkeys::detect_conflicts(hotkeys)
+}
+
+#[tauri::command]
+fn save_transcript(
+  filename: String,
+  content: String,
+  format: String,
+) -> Result<String, String> {
+  // Determine file extension based on format
+  let extension = match format.as_str() {
+    "txt" => "txt",
+    "md" => "md",
+    "json" => "json",
+    _ => "txt", // fallback
+  };
+
+  // Show save file dialog
+  let file_path = rfd::FileDialog::new()
+    .set_file_name(&filename)
+    .add_filter(&format.to_uppercase(), &[extension])
+    .save_file()
+    .ok_or("File save cancelled")?;
+
+  // Write content to file
+  std::fs::write(&file_path, content)
+    .map_err(|e| format!("Failed to write file: {}", e))?;
+
+  // Return the saved file path
+  Ok(file_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn save_crash_recovery(content: String) -> Result<(), String> {
+  use std::fs;
+  use std::env;
+
+  // Use %TEMP% or /tmp for crash recovery file
+  let temp_dir = if cfg!(windows) {
+    env::var("TEMP").unwrap_or_else(|_| "C:\\Users\\AppData\\Local\\Temp".to_string())
+  } else {
+    env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
+  };
+
+  let crash_recovery_file = PathBuf::from(&temp_dir).join("trispr_crash_recovery.json");
+
+  // Write JSON content to crash recovery file
+  fs::write(&crash_recovery_file, content)
+    .map_err(|e| format!("Failed to save crash recovery: {}", e))?;
+
+  Ok(())
+}
+
+#[tauri::command]
+fn clear_crash_recovery() -> Result<(), String> {
+  use std::fs;
+  use std::env;
+
+  // Use %TEMP% or /tmp for crash recovery file
+  let temp_dir = if cfg!(windows) {
+    env::var("TEMP").unwrap_or_else(|_| "C:\\Users\\AppData\\Local\\Temp".to_string())
+  } else {
+    env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
+  };
+
+  let crash_recovery_file = PathBuf::from(&temp_dir).join("trispr_crash_recovery.json");
+
+  // Delete crash recovery file if it exists
+  if crash_recovery_file.exists() {
+    fs::remove_file(&crash_recovery_file)
+      .map_err(|e| format!("Failed to clear crash recovery: {}", e))?;
+  }
+
+  Ok(())
+}
+
+#[tauri::command]
+fn encode_to_opus(
+  input_path: String,
+  output_path: String,
+  bitrate_kbps: Option<u32>,
+) -> Result<opus::OpusEncodeResult, String> {
+  use std::path::Path;
+
+  let input = Path::new(&input_path);
+  let output = Path::new(&output_path);
+
+  if let Some(bitrate) = bitrate_kbps {
+    let mut config = opus::OpusEncoderConfig::default();
+    config.bitrate_kbps = bitrate;
+    opus::encode_wav_to_opus(input, output, &config)
+  } else {
+    opus::encode_wav_to_opus_default(input, output)
+  }
+}
+
+#[tauri::command]
+fn check_ffmpeg() -> Result<bool, String> {
+  Ok(opus::check_ffmpeg_available())
+}
+
+#[tauri::command]
+fn get_ffmpeg_version_info() -> Result<String, String> {
+  opus::get_ffmpeg_version()
+}
+
+#[tauri::command]
+fn start_sidecar() -> Result<(), String> {
+  sidecar_process::start_sidecar(None, None)
+}
+
+#[tauri::command]
+fn stop_sidecar() -> Result<(), String> {
+  sidecar_process::stop_sidecar()
+}
+
+#[tauri::command]
+fn sidecar_health() -> Result<serde_json::Value, String> {
+  let client = sidecar_process::get_sidecar_client()?;
+  match client.health_check() {
+    Ok(health) => serde_json::to_value(&health).map_err(|e| e.to_string()),
+    Err(e) => Err(e.to_string()),
+  }
+}
+
+#[tauri::command]
+fn sidecar_transcribe(
+  audio_path: String,
+  precision: Option<String>,
+  language: Option<String>,
+) -> Result<serde_json::Value, String> {
+  let client = sidecar_process::get_sidecar_client()?;
+  let path = std::path::Path::new(&audio_path);
+
+  match client.transcribe(
+    path,
+    precision.as_deref(),
+    language.as_deref(),
+  ) {
+    Ok(result) => serde_json::to_value(&result).map_err(|e| e.to_string()),
+    Err(e) => Err(e.to_string()),
+  }
+}
+
+#[tauri::command]
+fn parallel_transcribe(
+  app: AppHandle,
+  audio_path: String,
+  precision: Option<String>,
+  language: Option<String>,
+) -> Result<serde_json::Value, String> {
+  use std::thread;
+
+  let audio_path_clone = audio_path.clone();
+  let precision_clone = precision.clone();
+  let language_clone = language.clone();
+
+  // Run VibeVoice sidecar transcription in a separate thread
+  let sidecar_handle = thread::spawn(move || -> Result<serde_json::Value, String> {
+    let client = sidecar_process::get_sidecar_client()?;
+    let path = std::path::Path::new(&audio_path_clone);
+    match client.transcribe(path, precision_clone.as_deref(), language_clone.as_deref()) {
+      Ok(result) => serde_json::to_value(&result).map_err(|e| e.to_string()),
+      Err(e) => Err(e.to_string()),
+    }
+  });
+
+  // Run Whisper transcription on main thread (reads audio from file)
+  let whisper_result = {
+    let path = std::path::Path::new(&audio_path);
+    let samples = read_audio_file_as_i16(path)?;
+    let state = app.state::<AppState>();
+    let settings = state.settings.lock().unwrap().clone();
+    match transcribe_audio(&app, &settings, &samples) {
+      Ok((text, source)) => {
+        serde_json::json!({ "text": text, "source": source })
+      }
+      Err(e) => serde_json::json!({ "error": e }),
+    }
+  };
+
+  // Wait for sidecar result
+  let sidecar_result = sidecar_handle.join()
+    .map_err(|_| "Sidecar thread panicked".to_string())?;
+
+  Ok(serde_json::json!({
+    "whisper": whisper_result,
+    "vibevoice": sidecar_result.unwrap_or_else(|e| serde_json::json!({ "error": e })),
+  }))
+}
+
+/// Read an audio file (WAV/OPUS) as i16 samples at 16kHz
+fn read_audio_file_as_i16(path: &std::path::Path) -> Result<Vec<i16>, String> {
+  let ext = path.extension()
+    .and_then(|e| e.to_str())
+    .unwrap_or("")
+    .to_lowercase();
+
+  match ext.as_str() {
+    "wav" => {
+      let reader = hound::WavReader::open(path)
+        .map_err(|e| format!("Failed to open WAV: {}", e))?;
+      let spec = reader.spec();
+      let samples: Vec<i16> = if spec.sample_format == hound::SampleFormat::Float {
+        reader.into_samples::<f32>()
+          .filter_map(|s| s.ok())
+          .map(|s| (s * i16::MAX as f32) as i16)
+          .collect()
+      } else {
+        reader.into_samples::<i16>()
+          .filter_map(|s| s.ok())
+          .collect()
+      };
+      Ok(samples)
+    }
+    _ => Err(format!("Unsupported audio format for parallel mode: .{}", ext)),
+  }
+}
+
+#[tauri::command]
+fn get_last_recording_path(
+  source: String, // "mic" or "output"
+  state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+  let path = if source == "output" || source == "system" {
+    state.last_system_recording_path.lock().unwrap().clone()
+  } else {
+    state.last_mic_recording_path.lock().unwrap().clone()
+  };
+  Ok(path)
+}
+
+#[tauri::command]
+fn get_recordings_directory(app: AppHandle) -> Result<String, String> {
+  let data_dir = app.path().app_data_dir()
+    .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+  let recordings_dir = data_dir.join("recordings");
+
+  // Create directory if it doesn't exist
+  std::fs::create_dir_all(&recordings_dir)
+    .map_err(|e| format!("Failed to create recordings dir: {}", e))?;
+
+  Ok(recordings_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn open_recordings_directory(app: AppHandle) -> Result<(), String> {
+  let recordings_dir = get_recordings_directory(app.clone())?;
+
+  #[cfg(target_os = "windows")]
+  {
+    std::process::Command::new("explorer")
+      .arg(&recordings_dir)
+      .spawn()
+      .map_err(|e| format!("Failed to open directory: {}", e))?;
+  }
+
+  #[cfg(target_os = "macos")]
+  {
+    std::process::Command::new("open")
+      .arg(&recordings_dir)
+      .spawn()
+      .map_err(|e| format!("Failed to open directory: {}", e))?;
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    std::process::Command::new("xdg-open")
+      .arg(&recordings_dir)
+      .spawn()
+      .map_err(|e| format!("Failed to open directory: {}", e))?;
+  }
+
+  Ok(())
+}
+
+#[tauri::command]
+fn check_vibevoice_updates() -> Result<serde_json::Value, String> {
+  // Check for VibeVoice-ASR model updates via GitHub Releases API
+  // TODO: Implement actual GitHub API check in production
+
+  let update_info = serde_json::json!({
+    "update_available": false,
+    "current_version": "1.0.0",
+    "latest_version": "1.0.0",
+    "release_notes": "",
+    "download_url": ""
+  });
+
+  Ok(update_info)
+}
+
+/// Sanitize session name for filename
+fn sanitize_session_name(name: &str) -> String {
+  name
+    .chars()
+    .map(|c| {
+      if c.is_alphanumeric() || c == '-' || c == '_' {
+        c
+      } else if c.is_whitespace() {
+        '-'
+      } else {
+        '_'
+      }
+    })
+    .collect::<String>()
+    .chars()
+    .take(30) // Max 30 chars
+    .collect()
+}
+
+/// Save audio samples as OPUS file for later analysis
+/// This is used to enable VibeVoice-ASR speaker diarization on recorded audio
+///
+/// # Arguments
+/// * `app` - App handle
+/// * `samples` - Audio samples (i16, 16kHz)
+/// * `source` - "mic", "output", or "mixed"
+/// * `session_name` - Optional user-provided session name
+pub(crate) fn save_recording_opus(
+  app: &AppHandle,
+  samples: &[i16],
+  source: &str,
+  session_name: Option<&str>,
+) -> Result<String, String> {
+
+  // Generate human-readable filename
+  let now = chrono::Local::now();
+  let duration_s = samples.len() as f64 / 16000.0; // 16kHz sample rate
+  let duration_label = if duration_s < 60.0 {
+    format!("{}s", duration_s.round() as u32)
+  } else {
+    let mins = (duration_s / 60.0).floor() as u32;
+    let secs = (duration_s % 60.0).round() as u32;
+    if secs > 0 {
+      format!("{}m{}s", mins, secs)
+    } else {
+      format!("{}m", mins)
+    }
+  };
+
+  // Build base filename
+  let prefix = match source {
+    "mixed" => "call",
+    "output" => "system",
+    _ => "mic",
+  };
+
+  let base_filename = if let Some(name) = session_name {
+    // User-provided name: call_TeamStandup_20260215_1430_15m
+    let sanitized = sanitize_session_name(name);
+    let date = now.format("%Y%m%d").to_string();
+    let time = now.format("%H%M").to_string();
+    format!("{}_{}_{}_{}_{}", prefix, sanitized, date, time, duration_label)
+  } else {
+    // Fallback: Compact timestamp ID: call_0215T1430_15m
+    let timestamp_id = now.format("%m%dT%H%M").to_string();
+    format!("{}_{}_{}", prefix, timestamp_id, duration_label)
+  };
+
+  // Save to app data dir: ~/.local/share/trispr-flow/recordings/
+  let data_dir = app.path().app_data_dir()
+    .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+  let recordings_dir = data_dir.join("recordings");
+
+  std::fs::create_dir_all(&recordings_dir)
+    .map_err(|e| format!("Failed to create recordings dir: {}", e))?;
+
+  let wav_filename = format!("{}.wav", base_filename);
+  let wav_path = recordings_dir.join(&wav_filename);
+
+  // Write WAV file
+  let spec = hound::WavSpec {
+    channels: 1,
+    sample_rate: 16000,
+    bits_per_sample: 16,
+    sample_format: hound::SampleFormat::Int,
+  };
+
+  let mut wav_writer = hound::WavWriter::create(&wav_path, spec)
+    .map_err(|e| format!("Failed to create WAV file: {}", e))?;
+
+  for &sample in samples {
+    wav_writer.write_sample(sample)
+      .map_err(|e| format!("Failed to write WAV sample: {}", e))?;
+  }
+
+  wav_writer.finalize()
+    .map_err(|e| format!("Failed to finalize WAV: {}", e))?;
+
+  // Convert WAV to OPUS
+  let opus_filename = format!("{}.opus", base_filename);
+  let opus_path = recordings_dir.join(&opus_filename);
+
+  opus::encode_wav_to_opus_default(&wav_path, &opus_path)
+    .map_err(|e| format!("Failed to encode OPUS: {}", e))?;
+
+  // Delete WAV file (we only need OPUS)
+  let _ = std::fs::remove_file(&wav_path);
+
+  Ok(opus_path.to_string_lossy().to_string())
 }
 
 fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
@@ -943,6 +1361,25 @@ fn start_tray_pulse_loop(app: AppHandle) {
   });
 }
 
+/// Validates window state to prevent restoring minimized or invalid window positions
+fn is_valid_window_state(x: i32, y: i32, width: u32, height: u32) -> bool {
+  const MINIMIZED_THRESHOLD: i32 = -30000;
+  const MIN_WIDTH: u32 = 980;
+  const MIN_HEIGHT: u32 = 640;
+
+  // Reject minimized window positions (Windows uses ~-32000 for minimized)
+  if x < MINIMIZED_THRESHOLD || y < MINIMIZED_THRESHOLD {
+    return false;
+  }
+
+  // Reject dimensions smaller than minimum
+  if width < MIN_WIDTH || height < MIN_HEIGHT {
+    return false;
+  }
+
+  true
+}
+
 fn show_main_window(app: &AppHandle) {
   if let Some(window) = app.get_webview_window("main") {
     // Restore window geometry on first show
@@ -955,6 +1392,9 @@ fn show_main_window(app: &AppHandle) {
         settings.main_window_width,
         settings.main_window_height,
       ) {
+        // Validate window state (reject minimized positions and invalid sizes)
+        let state_valid = is_valid_window_state(x, y, w, h);
+
         // Validate monitor still exists
         let monitor_valid = window.available_monitors()
           .ok()
@@ -969,7 +1409,7 @@ fn show_main_window(app: &AppHandle) {
           })
           .unwrap_or(false);
 
-        if monitor_valid {
+        if state_valid && monitor_valid {
           // Restore saved geometry
           let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
           let _ = window.set_size(tauri::PhysicalSize::new(w, h));
@@ -991,6 +1431,7 @@ fn show_main_window(app: &AppHandle) {
     let _ = window.show();
     let _ = window.set_skip_taskbar(false);
     let _ = window.set_focus();
+    save_window_visibility(app, "normal");
   }
 }
 
@@ -998,6 +1439,19 @@ fn hide_main_window(app: &AppHandle) {
   if let Some(window) = app.get_webview_window("main") {
     let _ = window.hide();
     let _ = window.set_skip_taskbar(true);
+    save_window_visibility(app, "tray");
+  }
+}
+
+/// Persist the window visibility state ("normal", "minimized", "tray") to settings
+fn save_window_visibility(app: &AppHandle, visibility: &str) {
+  let state = app.state::<AppState>();
+  let mut settings = state.settings.lock().unwrap();
+  if settings.main_window_start_state != visibility {
+    settings.main_window_start_state = visibility.to_string();
+    let s = settings.clone();
+    drop(settings);
+    let _ = save_settings_file(app, &s);
   }
 }
 
@@ -1051,19 +1505,24 @@ pub fn run() {
   info!("Starting Trispr Flow application");
   tauri::Builder::default()
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+    .plugin(tauri_plugin_dialog::init())
     .setup(|app| {
       let settings = load_settings(app.handle());
       let history = load_history(app.handle());
       let history_transcribe = load_transcribe_history(app.handle());
+      let chapters = state::load_chapters(app.handle());
 
       app.manage(AppState {
         settings: Mutex::new(settings.clone()),
         history: Mutex::new(history),
         history_transcribe: Mutex::new(history_transcribe),
+        chapters: Mutex::new(chapters),
         recorder: Mutex::new(crate::audio::Recorder::new()),
         transcribe: Mutex::new(crate::transcription::TranscribeRecorder::new()),
         downloads: Mutex::new(HashSet::new()),
         transcribe_active: AtomicBool::new(false),
+        last_mic_recording_path: Mutex::new(None),
+        last_system_recording_path: Mutex::new(None),
       });
 
       let _ = app.emit("transcribe:state", "idle");
@@ -1166,8 +1625,7 @@ pub fn run() {
               }
             }
             "cancel-backlog-expand" => {
-              BACKLOG_PROMPT_CANCELLED.store(true, Ordering::Release);
-              BACKLOG_PROMPT_ACTIVE.store(false, Ordering::Release);
+              cancel_backlog_auto_expand(app);
               let _ = cancel_backlog_item_event.set_enabled(false);
               let _ = cancel_backlog_item_event.set_text("Cancel Auto-Expand");
             }
@@ -1250,7 +1708,7 @@ pub fn run() {
       refresh_tray_icon(app.handle(), 0);
       start_tray_pulse_loop(app.handle().clone());
 
-      // Restore main window geometry
+      // Restore main window geometry and visibility state
       if let Some(window) = app.get_webview_window("main") {
         let window_settings = load_settings(app.handle());
 
@@ -1260,6 +1718,9 @@ pub fn run() {
           window_settings.main_window_width,
           window_settings.main_window_height,
         ) {
+          // Validate window state (reject minimized positions and invalid sizes)
+          let state_valid = is_valid_window_state(x, y, w, h);
+
           // Validate monitor still exists
           let monitor_valid = window.available_monitors()
             .ok()
@@ -1274,7 +1735,7 @@ pub fn run() {
             })
             .unwrap_or(false);
 
-          if monitor_valid {
+          if state_valid && monitor_valid {
             let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
             let _ = window.set_size(tauri::PhysicalSize::new(w, h));
           } else {
@@ -1287,6 +1748,24 @@ pub fn run() {
               let _ = window.set_position(tauri::PhysicalPosition::new(center_x, center_y));
               let _ = window.set_size(tauri::PhysicalSize::new(window_w, window_h));
             }
+          }
+        }
+
+        // Restore window visibility state from last session
+        match window_settings.main_window_start_state.as_str() {
+          "tray" => {
+            // Start hidden in system tray
+            info!("Restoring window state: hidden in system tray");
+            let _ = window.hide();
+            let _ = window.set_skip_taskbar(true);
+          }
+          "minimized" => {
+            // Start minimized
+            info!("Restoring window state: minimized");
+            let _ = window.minimize();
+          }
+          _ => {
+            // "normal" — default behavior, window shows normally
           }
         }
       }
@@ -1307,6 +1786,8 @@ pub fn run() {
       get_settings,
       save_settings,
       save_window_state,
+      save_window_visibility_state,
+      save_transcript,
       list_audio_devices,
       list_output_devices,
       list_models,
@@ -1322,16 +1803,32 @@ pub fn run() {
       get_transcribe_history,
       add_history_entry,
       add_transcribe_entry,
+      get_chapters,
+      add_chapter,
+      update_chapter,
+      delete_chapter,
       start_recording,
       stop_recording,
       toggle_transcribe,
       expand_transcribe_backlog,
-      open_conversation_window,
-      set_conversation_window_always_on_top,
       apply_model,
       validate_hotkey,
       test_hotkey,
       get_hotkey_conflicts,
+      save_crash_recovery,
+      clear_crash_recovery,
+      encode_to_opus,
+      check_ffmpeg,
+      get_ffmpeg_version_info,
+      start_sidecar,
+      stop_sidecar,
+      sidecar_health,
+      sidecar_transcribe,
+      parallel_transcribe,
+      get_last_recording_path,
+      get_recordings_directory,
+      open_recordings_directory,
+      check_vibevoice_updates,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

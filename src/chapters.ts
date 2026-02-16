@@ -14,13 +14,41 @@ import {
   chapterMethodSelect,
   chaptersToggle,
   historyList,
+  historyTabConversation,
 } from "./dom-refs";
+import { settings } from "./state";
 
 type ChapterMethod = "silence" | "time" | "hybrid";
 
 let currentChapters: Chapter[] = [];
 let activeChapterId: string | null = null;
 let isChaptersVisible = false;
+
+/**
+ * Check if chapters should be shown based on settings and active tab
+ */
+function shouldShowChapters(): boolean {
+  // Check if chapters are enabled in settings (default: false per DEC-018)
+  if (!settings || !settings.chapters_enabled) {
+    return false;
+  }
+
+  // Check which tab should show chapters
+  const showIn = settings.chapters_show_in || "conversation";
+
+  if (showIn === "all") {
+    // Show in all tabs
+    return true;
+  }
+
+  // Show only in conversation tab
+  if (showIn === "conversation") {
+    // Check if conversation tab is active
+    return historyTabConversation?.classList.contains("active") ?? false;
+  }
+
+  return false;
+}
 
 /**
  * Initialize chapter UI and event listeners
@@ -81,18 +109,19 @@ function regenerateChapters(): void {
 function renderChapters(): void {
   if (!chaptersList || !chaptersContainer) return;
 
-  // If no chapters, hide the container
-  if (currentChapters.length === 0) {
+  // Check if chapters should be shown based on settings
+  const shouldShow = shouldShowChapters();
+
+  // If chapters are disabled or wrong tab, hide the container
+  if (!shouldShow || currentChapters.length === 0) {
     chaptersContainer.style.display = "none";
     isChaptersVisible = false;
     return;
   }
 
-  // Show container if hidden
-  if (!isChaptersVisible) {
-    chaptersContainer.style.display = "block";
-    isChaptersVisible = true;
-  }
+  // Show container
+  chaptersContainer.style.display = "block";
+  isChaptersVisible = true;
 
   // Clear existing chapters
   chaptersList.innerHTML = "";
@@ -235,6 +264,14 @@ function toggleChaptersVisibility(): void {
  */
 export function refreshChapters(): void {
   regenerateChapters();
+}
+
+/**
+ * Update chapters visibility based on current settings and active tab
+ * Call this when tab changes or settings change
+ */
+export function updateChaptersVisibility(): void {
+  renderChapters();
 }
 
 /**

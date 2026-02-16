@@ -28,7 +28,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tracing::error;
+use tracing::{error, info};
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct TranscriptionResult {
@@ -270,6 +270,12 @@ pub(crate) fn start_transcribe_monitor(
   state: &State<'_, AppState>,
   settings: &Settings,
 ) -> Result<(), String> {
+  // CRITICAL SECURITY CHECK: Only start if explicitly enabled
+  if !settings.transcribe_enabled {
+    error!("SECURITY: Attempted to start transcribe monitor while transcribe_enabled=false. Blocking.");
+    return Err("Transcription is disabled in settings".to_string());
+  }
+
   let mut recorder = state.transcribe.lock().unwrap();
   if recorder.active {
     return Ok(());
@@ -475,6 +481,35 @@ const HALLUCINATION_PHRASES: &[&str] = &[
   "huh",
 ];
 
+/// Auto-save accumulated system audio as OPUS
+fn flush_system_audio_buffer(app: &AppHandle, buffer: &mut Vec<i16>) {
+  if buffer.is_empty() {
+    return;
+  }
+  let duration_ms = buffer.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64;
+  if duration_ms < 10_000 {
+    // Don't save recordings shorter than 10 seconds
+    buffer.clear();
+    return;
+  }
+  info!(
+    "Auto-saving system audio: {} samples ({} ms)",
+    buffer.len(),
+    duration_ms
+  );
+  match crate::save_recording_opus(app, buffer, "output", None) {
+    Ok(opus_path) => {
+      let state = app.state::<AppState>();
+      *state.last_system_recording_path.lock().unwrap() = Some(opus_path);
+      info!("System audio auto-saved successfully");
+    }
+    Err(e) => {
+      error!("Failed to auto-save system audio: {}", e);
+    }
+  }
+  buffer.clear();
+}
+
 fn transcribe_worker(
   app: AppHandle,
   settings: Settings,
@@ -482,10 +517,25 @@ fn transcribe_worker(
   transcribing: Arc<AtomicBool>,
 ) {
   let min_samples = (TARGET_SAMPLE_RATE as u64 * MIN_AUDIO_MS / 1000) as usize;
+  // System audio auto-save buffer (accumulates chunks for OPUS saving)
+  let auto_save = settings.auto_save_system_audio && settings.opus_enabled;
+  let mut save_buffer: Vec<i16> = if auto_save { Vec::new() } else { Vec::new() };
+  // Flush every 60 seconds of audio
+  let flush_threshold = TARGET_SAMPLE_RATE as usize * 60;
+
   while let Some(chunk) = queue.pop() {
     if chunk.len() < min_samples {
       continue;
     }
+
+    // Accumulate chunks for system audio auto-save
+    if auto_save {
+      save_buffer.extend_from_slice(&chunk);
+      if save_buffer.len() >= flush_threshold {
+        flush_system_audio_buffer(&app, &mut save_buffer);
+      }
+    }
+
     let level = rms_i16(&chunk);
     let duration_ms = chunk.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64;
 
@@ -529,6 +579,11 @@ fn transcribe_worker(
         let _ = app.emit("transcription:error", err);
       }
     }
+  }
+
+  // Flush remaining audio on worker exit
+  if auto_save {
+    flush_system_audio_buffer(&app, &mut save_buffer);
   }
 }
 
@@ -705,6 +760,11 @@ fn run_transcribe_loopback(
     TRANSCRIBE_IDLE_METER_MS
   };
 
+  // Chapter silence detection state
+  let mut chapter_silence_enabled = settings.chapter_silence_enabled;
+  let mut chapter_silence_threshold_ms = settings.chapter_silence_threshold_ms;
+  let mut chapter_detected_for_current_silence = false;
+
   loop {
     match stop_rx.try_recv() {
       Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
@@ -751,6 +811,8 @@ fn run_transcribe_loopback(
         vad_enabled = current.transcribe_vad_mode;
         vad_threshold = current.transcribe_vad_threshold;
         vad_silence_ms = current.transcribe_vad_silence_ms;
+        chapter_silence_enabled = current.chapter_silence_enabled;
+        chapter_silence_threshold_ms = current.chapter_silence_threshold_ms;
         monitor_threshold = if vad_enabled {
           vad_threshold
         } else {
@@ -814,6 +876,21 @@ fn run_transcribe_loopback(
       if next_state != last_state {
         let _ = app.emit("transcribe:state", next_state);
         last_state = next_state;
+      }
+
+      // Chapter silence detection
+      if chapter_silence_enabled && !active {
+        let silence_duration_ms = last_activity.elapsed().as_millis() as u64;
+        if silence_duration_ms >= chapter_silence_threshold_ms && !chapter_detected_for_current_silence {
+          let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+          let _ = app.emit("chapter:detected", timestamp_ms);
+          chapter_detected_for_current_silence = true;
+        }
+      } else if active {
+        chapter_detected_for_current_silence = false;
       }
     }
 

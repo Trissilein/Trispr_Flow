@@ -1109,6 +1109,15 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
     let level = rms_i16(&samples);
     let duration_ms = samples.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64;
 
+    // Save recording as OPUS for later VibeVoice analysis
+    // Only save if duration > 10 seconds (avoid short dictations)
+    if duration_ms >= 10_000 {
+      if let Ok(opus_path) = crate::save_recording_opus(&app_handle, &samples, "mic", None) {
+        let state_ref = app_handle.state::<crate::state::AppState>();
+        *state_ref.last_mic_recording_path.lock().unwrap() = Some(opus_path);
+      }
+    }
+
     let mut recorder = state.recorder.lock().unwrap();
     recorder.transcribing = false;
     drop(recorder);

@@ -1,6 +1,7 @@
 // DOM event listeners setup
 
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { Settings } from "./types";
 import { settings } from "./state";
 import * as dom from "./dom-refs";
@@ -8,11 +9,12 @@ import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, up
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
 import { refreshModels, refreshModelsDir } from "./models";
-import { applyPanelCollapsed, setHistoryTab, buildConversationHistory, buildConversationText, renderHistory } from "./history";
+import { applyPanelCollapsed, setHistoryTab, buildConversationHistory, buildConversationText, buildExportText, setSearchQuery } from "./history";
 import { setupHotkeyRecorder } from "./hotkeys";
 import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
+import { updateChaptersVisibility } from "./chapters";
 
 // Custom vocabulary helper functions
 function addVocabRow(original: string, replacement: string) {
@@ -69,6 +71,53 @@ function addVocabRow(original: string, replacement: string) {
   dom.postprocVocabRows.appendChild(row);
 }
 
+// Main tab switching
+type MainTab = "transcription" | "settings";
+
+function switchMainTab(tab: MainTab) {
+  // Update button states
+  const isTranscription = tab === "transcription";
+
+  dom.tabBtnTranscription?.classList.toggle("active", isTranscription);
+  dom.tabBtnSettings?.classList.toggle("active", !isTranscription);
+
+  dom.tabBtnTranscription?.setAttribute("aria-selected", isTranscription.toString());
+  dom.tabBtnSettings?.setAttribute("aria-selected", (!isTranscription).toString());
+
+  // Update tab content visibility — clear any inline display styles first
+  if (dom.tabTranscription) {
+    dom.tabTranscription.style.removeProperty("display");
+    dom.tabTranscription.classList.toggle("active", isTranscription);
+  }
+  if (dom.tabSettings) {
+    dom.tabSettings.style.removeProperty("display");
+    dom.tabSettings.classList.toggle("active", !isTranscription);
+  }
+
+  // Persist to localStorage
+  try {
+    localStorage.setItem("trispr-active-tab", tab);
+  } catch (error) {
+    console.error("Failed to persist active tab", error);
+  }
+}
+
+// Initialize tab state from localStorage
+export function initMainTab() {
+  try {
+    const savedTab = localStorage.getItem("trispr-active-tab") as MainTab | null;
+    if (savedTab === "settings" || savedTab === "transcription") {
+      switchMainTab(savedTab);
+    } else {
+      // Default to transcription tab
+      switchMainTab("transcription");
+    }
+  } catch (error) {
+    console.error("Failed to load active tab", error);
+    switchMainTab("transcription");
+  }
+}
+
 export function renderVocabulary() {
   if (!settings || !dom.postprocVocabRows) return;
 
@@ -97,6 +146,15 @@ export function renderVocabulary() {
 }
 
 export function wireEvents() {
+  // Main tab switching
+  dom.tabBtnTranscription?.addEventListener("click", () => {
+    switchMainTab("transcription");
+  });
+
+  dom.tabBtnSettings?.addEventListener("click", () => {
+    switchMainTab("settings");
+  });
+
   dom.captureEnabledToggle?.addEventListener("change", async () => {
     if (!settings) return;
     settings.capture_enabled = dom.captureEnabledToggle!.checked;
@@ -212,8 +270,224 @@ export function wireEvents() {
     await navigator.clipboard.writeText(transcript);
   });
 
-  dom.historyDetachConversation?.addEventListener("click", async () => {
-    await invoke("open_conversation_window");
+  dom.analyseButton?.addEventListener("click", async () => {
+    if (!dom.analyseButton || !dom.analyseButtonText || !dom.analyseSpinner) return;
+
+    // Show loading state
+    dom.analyseButtonText.style.display = "none";
+    dom.analyseSpinner.style.display = "inline-block";
+    dom.analyseButton.disabled = true;
+
+    try {
+      // Get current history tab to determine audio source
+      const activeTab = localStorage.getItem("trispr-history-tab") || "mic";
+      const source = activeTab === "system" ? "output" : "mic";
+
+      // Get last recording path
+      let audioPath = await invoke<string | null>("get_last_recording_path", { source });
+
+      // If no auto-saved recording, prompt user to select from recordings folder
+      if (!audioPath) {
+        try {
+          // Get recordings directory path
+          const recordingsDir = await invoke<string>("get_recordings_directory");
+
+          showToast({
+            type: "info",
+            title: "Select recording",
+            message: "Please select an OPUS or WAV file to analyze.",
+            duration: 4000,
+          });
+
+          // Open file picker starting in recordings directory
+          const selected = await openDialog({
+            title: "Select Audio File for Analysis",
+            filters: [{
+              name: "Audio Files",
+              extensions: ["opus", "wav", "mp3", "m4a"]
+            }],
+            multiple: false,
+            directory: false,
+            defaultPath: recordingsDir
+          });
+
+          if (!selected) {
+            return; // User cancelled
+          }
+
+          audioPath = selected as string;
+        } catch (err) {
+          showToast({
+            type: "error",
+            title: "File selection failed",
+            message: String(err),
+            duration: 4000,
+          });
+          return;
+        }
+      }
+
+      const isParallel = settings?.parallel_mode ?? false;
+
+      if (isParallel) {
+        // Parallel mode: run both Whisper and VibeVoice simultaneously
+        await invoke("start_sidecar");
+        showToast({
+          type: "info",
+          title: "Parallel analysis",
+          message: "Running Whisper + VibeVoice simultaneously...",
+          duration: 3000,
+        });
+
+        const result = await invoke<any>("parallel_transcribe", {
+          audio_path: audioPath,
+          precision: settings?.vibevoice_precision || "fp16",
+          language: settings?.language_mode || "auto"
+        });
+
+        const { displayAnalysisResults, displayParallelResults } = await import("./history");
+
+        // Show VibeVoice speaker diarization if available
+        if (result.vibevoice && !result.vibevoice.error) {
+          const analysis = {
+            segments: result.vibevoice.segments.map((seg: any) => ({
+              speaker_id: seg.speaker,
+              start_time: seg.start_time,
+              end_time: seg.end_time,
+              text: seg.text
+            })),
+            duration_s: result.vibevoice.metadata.duration,
+            total_speakers: result.vibevoice.metadata.num_speakers,
+            processing_time_ms: result.vibevoice.metadata.processing_time * 1000
+          };
+          displayAnalysisResults(analysis);
+        }
+
+        // Show Whisper result as comparison
+        if (result.whisper && !result.whisper.error) {
+          displayParallelResults(result.whisper.text, "Whisper");
+        }
+
+        showToast({
+          type: "success",
+          title: "Parallel analysis complete",
+          message: "Both Whisper and VibeVoice results displayed",
+          duration: 5000,
+        });
+      } else {
+        // Standard mode: VibeVoice sidecar only
+        await invoke("start_sidecar");
+
+        showToast({
+          type: "info",
+          title: "Starting analysis",
+          message: "Loading VibeVoice-ASR model...",
+          duration: 3000,
+        });
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        const result = await invoke<any>("sidecar_transcribe", {
+          audio_path: audioPath,
+          precision: settings?.vibevoice_precision || "fp16",
+          language: settings?.language_mode || "auto"
+        });
+
+        const { displayAnalysisResults } = await import("./history");
+        const analysis = {
+          segments: result.segments.map((seg: any) => ({
+            speaker_id: seg.speaker,
+            start_time: seg.start_time,
+            end_time: seg.end_time,
+            text: seg.text
+          })),
+          duration_s: result.metadata.duration,
+          total_speakers: result.metadata.num_speakers,
+          processing_time_ms: result.metadata.processing_time * 1000
+        };
+
+        displayAnalysisResults(analysis);
+
+        showToast({
+          type: "success",
+          title: "Analysis complete",
+          message: `Found ${analysis.total_speakers} speaker(s) in ${Math.floor(analysis.duration_s / 60)}m ${Math.floor(analysis.duration_s % 60)}s`,
+          duration: 5000,
+        });
+      }
+    } catch (error) {
+      console.error("Analysis failed:", error);
+      showToast({
+        type: "error",
+        title: "Analysis failed",
+        message: String(error),
+        duration: 5000,
+      });
+    } finally {
+      // Reset button state
+      if (dom.analyseButtonText && dom.analyseSpinner && dom.analyseButton) {
+        dom.analyseButtonText.style.display = "inline";
+        dom.analyseSpinner.style.display = "none";
+        dom.analyseButton.disabled = false;
+      }
+    }
+  });
+
+  dom.historyExport?.addEventListener("click", async () => {
+    const entries = buildConversationHistory();
+    if (!entries.length) {
+      showToast({
+        type: "warning",
+        title: "Nothing to export",
+        message: "No transcript entries available",
+        duration: 3000,
+      });
+      return;
+    }
+
+    const format = (dom.exportFormat?.value as "txt" | "md" | "json") || "txt";
+    const exportContent = buildExportText(entries, format);
+
+    // Determine file extension
+    const ext = format === "md" ? "md" : format;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const filename = `transcript-${timestamp}.${ext}`;
+
+    try {
+      // Save file using Tauri
+      await invoke("save_transcript", {
+        filename,
+        content: exportContent,
+        format,
+      });
+
+      showToast({
+        type: "success",
+        title: "Export successful",
+        message: `Transcript saved as ${filename}`,
+        duration: 4000,
+      });
+    } catch (error) {
+      console.error("Export failed:", error);
+      showToast({
+        type: "error",
+        title: "Export failed",
+        message: String(error),
+        duration: 5000,
+      });
+    }
+  });
+
+  dom.historySearch?.addEventListener("input", () => {
+    if (!dom.historySearch) return;
+    const query = dom.historySearch.value;
+    setSearchQuery(query);
+  });
+
+  dom.historySearchClear?.addEventListener("click", () => {
+    if (!dom.historySearch) return;
+    dom.historySearch.value = "";
+    setSearchQuery("");
+    dom.historySearch.focus();
   });
 
   dom.conversationFontSize?.addEventListener("input", () => {
@@ -423,6 +697,37 @@ export function wireEvents() {
       .map(line => line.trim())
       .filter(line => line.length > 0);
     settings.activation_words = lines;
+    await persistSettings();
+  });
+
+  // Quality & Encoding event listeners
+  dom.opusEnabledToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.opus_enabled = dom.opusEnabledToggle!.checked;
+    await persistSettings();
+  });
+
+  dom.opusBitrateSelect?.addEventListener("change", async () => {
+    if (!settings || !dom.opusBitrateSelect) return;
+    settings.opus_bitrate_kbps = parseInt(dom.opusBitrateSelect.value, 10);
+    await persistSettings();
+  });
+
+  dom.vibevoicePrecisionSelect?.addEventListener("change", async () => {
+    if (!settings || !dom.vibevoicePrecisionSelect) return;
+    settings.vibevoice_precision = dom.vibevoicePrecisionSelect.value as "fp16" | "int8";
+    await persistSettings();
+  });
+
+  dom.autoSaveSystemAudioToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.auto_save_system_audio = dom.autoSaveSystemAudioToggle!.checked;
+    await persistSettings();
+  });
+
+  dom.parallelModeToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.parallel_mode = dom.parallelModeToggle!.checked;
     await persistSettings();
   });
 
@@ -752,14 +1057,41 @@ export function wireEvents() {
     showToast({ title: "Applied", message: "Overlay settings applied", type: "success" });
   });
 
-  dom.historyAdd?.addEventListener("click", async () => {
-    if (!dom.historyInput?.value.trim()) return;
-    const newHistory = await invoke<typeof import("./state").history>("add_history_entry", {
-      text: dom.historyInput.value.trim(),
-      source: settings?.cloud_fallback ? "cloud" : "local",
-    });
-    import("./state").then(({ setHistory }) => setHistory(newHistory));
-    dom.historyInput.value = "";
-    renderHistory();
+  // Chapter settings
+  dom.chaptersEnabled?.addEventListener("change", async () => {
+    if (!settings || !dom.chaptersEnabled) return;
+    settings.chapters_enabled = dom.chaptersEnabled.checked;
+
+    // Toggle visibility of chapter settings
+    if (dom.chaptersSettings) {
+      dom.chaptersSettings.style.display = dom.chaptersEnabled.checked ? "block" : "none";
+    }
+
+    await persistSettings();
+    renderSettings();
+    updateChaptersVisibility();
+  });
+
+  dom.chaptersShowIn?.addEventListener("change", async () => {
+    if (!settings || !dom.chaptersShowIn) return;
+    settings.chapters_show_in = dom.chaptersShowIn.value as "conversation" | "all";
+    await persistSettings();
+    updateChaptersVisibility();
+  });
+
+  dom.chaptersMethod?.addEventListener("change", async () => {
+    if (!settings || !dom.chaptersMethod) return;
+    settings.chapters_method = dom.chaptersMethod.value as "silence" | "time" | "hybrid";
+    await persistSettings();
+    updateChaptersVisibility();
+  });
+
+  // Topic keywords reset
+  dom.topicKeywordsReset?.addEventListener("click", async () => {
+    const { setTopicKeywords, DEFAULT_TOPICS } = await import("./history");
+    const { renderTopicKeywords, persistSettings } = await import("./settings");
+    setTopicKeywords(DEFAULT_TOPICS);
+    await renderTopicKeywords();
+    await persistSettings();
   });
 }

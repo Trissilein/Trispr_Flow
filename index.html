@@ -71,7 +71,7 @@
             <span id="mode-state" class="hero-value">PTT</span>
           </div>
           <div class="hero-item">
-            <span class="hero-label">Output Transcription</span>
+            <span class="hero-label">System Audio Transcription</span>
             <span id="transcribe-status-pill" class="status-pill status-pill--disabled">Disabled</span>
             <span id="output-device-state" class="hero-value truncate-two">Default (System)</span>
           </div>
@@ -83,12 +83,24 @@
         </div>
       </header>
 
+      <!-- Main navigation tabs -->
+      <div class="main-tabs" role="tablist" aria-label="Main navigation">
+        <button id="tab-btn-transcription" class="main-tab-btn active" role="tab" aria-selected="true" aria-controls="tab-transcription">
+          Transcription
+        </button>
+        <button id="tab-btn-settings" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-settings">
+          Settings
+        </button>
+      </div>
+
       <div class="layout-grid">
-        <section class="panel output-panel" data-panel="output" style="--delay: 0.12s">
+        <!-- Transcription Tab -->
+        <div id="tab-transcription" class="main-tab-content active" role="tabpanel" aria-labelledby="tab-btn-transcription">
+        <section class="panel output-panel" data-panel="transcription" style="--delay: 0.12s">
           <div class="panel-header">
             <div class="panel-title">
-              <h2>Output</h2>
-              <p>Latest transcripts. Switch between input and output.</p>
+              <h2>Transcription</h2>
+              <p>Latest transcripts. Switch between input and system audio.</p>
             </div>
             <div class="panel-actions">
               <button class="panel-collapse-btn"
@@ -96,7 +108,7 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="output-panel-body"
-                      aria-label="Collapse output panel">
+                      aria-label="Collapse transcription panel">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                 </svg>
@@ -107,11 +119,15 @@
             <div class="history-toolbar">
               <div class="history-tabs">
                 <button id="history-tab-mic" class="history-tab active">Input</button>
-                <button id="history-tab-system" class="history-tab">Output</button>
+                <button id="history-tab-system" class="history-tab">System Audio</button>
                 <button id="history-tab-conversation" class="history-tab">Conv</button>
               </div>
               <div style="display: flex; gap: 6px; align-items: center;">
                 <button id="history-copy-conversation" class="ghost-btn">Copy</button>
+                <button id="analyse-button" class="ghost-btn" title="Analyse recording with speaker diarization">
+                  <span id="analyse-button-text">Analyse</span>
+                  <span id="analyse-spinner" class="spinner" style="display: none;"></span>
+                </button>
                 <div class="export-controls">
                   <select id="export-format" class="export-format" title="Select export format">
                     <option value="txt">TXT</option>
@@ -153,7 +169,10 @@
             <div id="history-list" class="history-list"></div>
           </div>
         </section>
+        </div>
 
+        <!-- Settings Tab -->
+        <div id="tab-settings" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-settings">
         <section class="panel capture-panel" data-panel="capture" style="--delay: 0.16s">
           <div class="panel-header">
             <div class="panel-title">
@@ -371,8 +390,8 @@
         <section class="panel transcribe-panel" data-panel="system" style="--delay: 0.18s">
           <div class="panel-header">
             <div class="panel-title">
-              <h2>Capture Output</h2>
-              <p>Output device, transcribe hotkey, detection settings.</p>
+              <h2>System Audio Capture</h2>
+              <p>System audio device, transcribe hotkey, detection settings.</p>
             </div>
             <div class="panel-actions">
               <button class="panel-collapse-btn"
@@ -380,7 +399,7 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="system-panel-body"
-                      aria-label="Collapse capture output panel">
+                      aria-label="Collapse system audio capture panel">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                 </svg>
@@ -391,16 +410,16 @@
           <div class="panel-grid">
             <div class="field toggle-with-hint span-2">
               <label class="toggle-row">
-                <span class="field-label">Enable output transcription</span>
+                <span class="field-label">Enable system audio transcription</span>
                 <input id="transcribe-enabled-toggle" type="checkbox" />
                 <span class="toggle-track">
                   <span class="toggle-thumb"></span>
                 </span>
               </label>
-              <span class="toggle-hint">When disabled, output monitoring and transcription are inactive</span>
+              <span class="toggle-hint">When disabled, system audio monitoring and transcription are inactive</span>
             </div>
             <label class="field">
-                <span class="field-label">Output device</span>
+                <span class="field-label">System audio device</span>
               <select id="transcribe-device-select"></select>
             </label>
             <label class="field toggle">
@@ -432,7 +451,7 @@
                        aria-valuemin="-60"
                        aria-valuemax="0"
                        aria-valuenow="-28"
-                       aria-label="Output voice activation threshold"
+                       aria-label="System audio voice activation threshold"
                        aria-describedby="transcribe-vad-threshold-value" />
                 <span id="transcribe-vad-threshold-value" class="range-value" aria-live="polite">-28 dB</span>
               </div>
@@ -444,13 +463,13 @@
                        aria-valuemin="200"
                        aria-valuemax="5000"
                        aria-valuenow="900"
-                       aria-label="Output silence grace period"
+                       aria-label="System audio silence grace period"
                        aria-describedby="transcribe-vad-silence-value" />
                 <span id="transcribe-vad-silence-value" class="range-value" aria-live="polite">0.9s</span>
               </div>
             </label>
             <div class="field span-2">
-              <span class="field-label">Output level</span>
+              <span class="field-label">System audio level</span>
               <div class="meter-stack">
                 <div class="meter-row">
                   <div id="transcribe-meter" class="vad-meter">
@@ -477,7 +496,7 @@
                        aria-valuemin="-30"
                        aria-valuemax="30"
                        aria-valuenow="0"
-                       aria-label="Output input gain"
+                       aria-label="System audio input gain"
                        aria-describedby="transcribe-gain-value" />
                 <span id="transcribe-gain-value" class="range-value" aria-live="polite">+0 dB</span>
               </div>
@@ -490,7 +509,7 @@
                        aria-valuemin="4000"
                        aria-valuemax="15000"
                        aria-valuenow="8000"
-                       aria-label="Output chunk interval"
+                       aria-label="System audio chunk interval"
                        aria-describedby="transcribe-batch-value" />
                 <span id="transcribe-batch-value" class="range-value" aria-live="polite">8s</span>
               </div>
@@ -503,11 +522,58 @@
                        aria-valuemin="0"
                        aria-valuemax="3000"
                        aria-valuenow="1000"
-                       aria-label="Output chunk overlap duration"
+                       aria-label="System audio chunk overlap duration"
                        aria-describedby="transcribe-overlap-value" />
                 <span id="transcribe-overlap-value" class="range-value" aria-live="polite">1s</span>
               </div>
             </label>
+            <details class="expander span-2">
+              <summary>Quality &amp; Encoding</summary>
+              <div class="expander-content">
+                <div class="field toggle">
+                  <label class="toggle-row">
+                    <span class="field-label">Save recordings as OPUS</span>
+                    <input id="opus-enabled-toggle" type="checkbox" />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </label>
+                  <span class="toggle-hint">Auto-save recordings longer than 10s for later analysis</span>
+                </div>
+                <label class="field">
+                  <span class="field-label">OPUS bitrate</span>
+                  <select id="opus-bitrate-select">
+                    <option value="32">32 kbps (smallest)</option>
+                    <option value="64">64 kbps (recommended)</option>
+                    <option value="96">96 kbps (high quality)</option>
+                    <option value="128">128 kbps (best quality)</option>
+                  </select>
+                  <span class="field-hint">Higher bitrate = better audio quality but larger files</span>
+                </label>
+                <label class="field">
+                  <span class="field-label">VibeVoice precision</span>
+                  <select id="vibevoice-precision-select">
+                    <option value="fp16">FP16 (higher accuracy)</option>
+                    <option value="int8">INT8 (faster, less VRAM)</option>
+                  </select>
+                  <span class="field-hint">INT8 uses ~50% less VRAM with minimal quality loss</span>
+                </label>
+                <div class="field toggle">
+                  <label class="toggle-row">
+                    <span class="field-label">Auto-save system audio</span>
+                    <input id="auto-save-system-audio-toggle" type="checkbox" />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </label>
+                  <span class="toggle-hint">Save system audio chunks as OPUS for speaker diarization</span>
+                </div>
+                <div class="field toggle">
+                  <label class="toggle-row">
+                    <span class="field-label">Parallel mode (Whisper + VibeVoice)</span>
+                    <input id="parallel-mode-toggle" type="checkbox" />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </label>
+                  <span class="toggle-hint">Run both Whisper and VibeVoice simultaneously for comparison</span>
+                </div>
+              </div>
+            </details>
           </div>
           </div>
         </section>
@@ -871,8 +937,53 @@
               <button id="apply-overlay-btn" class="button primary" style="margin-top: 12px; width: 100%;">Apply Overlay Settings</button>
             </div>
           </details>
+          <details class="expander">
+            <summary>Chapters</summary>
+            <div class="expander-body">
+              <div class="field toggle">
+                <label class="toggle-row">
+                  <span class="field-label">Enable chapters</span>
+                  <input id="chapters-enabled" type="checkbox" />
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
+                <span class="toggle-hint">Show chapter markers in long transcripts</span>
+              </div>
+              <div id="chapters-settings" style="display: none;">
+                <label class="field">
+                  <span class="field-label">Show chapters in</span>
+                  <select id="chapters-show-in">
+                    <option value="conversation">Conversation tab only</option>
+                    <option value="all">All tabs</option>
+                  </select>
+                  <span class="field-hint">Conversation mode recommended for meetings and lectures</span>
+                </label>
+                <label class="field">
+                  <span class="field-label">Chapter generation method</span>
+                  <select id="chapters-method">
+                    <option value="silence">Silence-based</option>
+                    <option value="time">Time-based (5min)</option>
+                    <option value="hybrid">Hybrid (recommended)</option>
+                  </select>
+                  <span class="field-hint">Hybrid combines silence detection with time-based fallback</span>
+                </label>
+              </div>
+            </div>
+          </details>
+          <details class="expander">
+            <summary>Topic Keywords</summary>
+            <div class="expander-body">
+              <div id="topic-keywords-list"></div>
+              <button id="topic-keywords-reset" class="btn-secondary" style="width: 100%; margin-top: 8px;">
+                Reset to Defaults
+              </button>
+              <span class="field-hint" style="display: block; margin-top: 8px;">
+                Customize keywords for automatic topic detection. Topics are shown as badges on conversation entries.
+              </span>
+            </div>
+          </details>
           </div>
         </section>
+        </div>
 
       </div>
     </main>

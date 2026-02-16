@@ -5,6 +5,91 @@ All notable changes to Trispr Flow will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.6.0] - 2026-02-16
+
+### Added
+
+- **VibeVoice-ASR Integration**: Speaker-diarized transcription via Python FastAPI sidecar
+  - Microsoft VibeVoice-ASR 7B model support (MIT license)
+  - Python sidecar with `/transcribe`, `/health`, `/reload-model` endpoints
+  - HTTP client in Rust (`sidecar.rs`) with timeout and retry handling
+  - Sidecar process management (start/stop/health/restart)
+  - Auto-processing pipeline (chapters, minutes, summary)
+- **Speaker Diarization UI** (E19): Color-coded speaker segments in transcript view
+  - 8-color palette for distinct speakers
+  - Editable speaker labels (click to rename)
+  - Speaker-attributed export support
+- **Analyse Button** (E24): Manual trigger for VibeVoice analysis
+  - File picker with recordings directory default path
+  - Auto-save mic recordings as OPUS (>10s threshold)
+  - Progress indicator with loading spinner
+  - Speaker diarization result rendering
+- **Quality Preset Controls** (E26): OPUS + VibeVoice configuration UI
+  - OPUS bitrate dropdown (32/64/96/128 kbps)
+  - VibeVoice precision selector (FP16/INT8)
+  - OPUS encoding toggle
+  - System audio auto-save toggle
+- **Parallel Mode** (E27): Run Whisper + VibeVoice simultaneously
+  - `parallel_transcribe` command runs both engines concurrently
+  - Side-by-side results display
+  - System audio auto-save with 60s flush intervals
+- **Model Monitoring** (E28): Weekly VibeVoice update check on startup
+  - Toast notification when new version available
+  - localStorage-based check interval (7 days)
+- **PyInstaller Packaging** (E29): Standalone sidecar executable
+  - PyInstaller spec file with hidden imports
+  - Build script with `--onedir` and `--clean` flags
+  - Sidecar auto-detects bundled exe vs Python fallback
+- **OPUS Audio Encoding**: FFmpeg-based WAV→OPUS pipeline
+  - Configurable bitrate, VBR, compression level
+  - Smart filenames with session name or timestamp fallback
+  - Bundled FFmpeg support + system PATH fallback
+- **Recording Auto-Save**: Automatic OPUS saving for later analysis
+  - Mic recordings >10s auto-saved on stop
+  - System audio chunks accumulated and flushed every 60s
+  - Recordings stored in `~/.local/share/trispr-flow/recordings/`
+
+### Technical
+
+- New Rust modules: `opus.rs`, `sidecar.rs`, `sidecar_process.rs`, `auto_processing.rs`
+- New Cargo dependencies: `hound`, `chrono`, `tauri-plugin-dialog`
+- New npm dependency: `@tauri-apps/plugin-dialog`
+- Tauri v2 dialog plugin with capability permissions
+- Python sidecar: FastAPI + uvicorn + transformers + torch + librosa
+- 22 new E2E tests (block-e-e2e.test.ts)
+
+## [0.5.0] - 2026-02-15
+
+### Added
+
+- **Tab-Based UI**: Transcription + Settings tabs (DEC-016)
+  - Two-tab layout replacing single-page design
+  - localStorage tab persistence
+- **System Audio Rename**: "Output" renamed to "System Audio" (DEC-017)
+- **Chapter Segmentation**: Automatic chapter markers in long transcripts
+  - Silence-based, time-based (5min), and hybrid detection methods
+  - Chapter settings in Settings tab
+  - Conversation-only display by default (DEC-018)
+- **Topic Detection**: Automatic topic badges on conversation entries
+  - Keyword-based detection (tech, business, personal, creative, health)
+  - Customizable keywords in Settings
+  - Topic filter buttons in transcript view
+- **Live Transcript Dump**: Crash recovery buffering via 5-sec intervals
+- **Test Coverage**: Toast system (35+) and accessibility (25+) test suites
+
+### Changed
+
+- Conversation window detach functionality removed
+- Import optimization: dynamic → static imports (bundle size reduced)
+
+### Fixed
+
+- Window state bug: invisible/minimized window on startup
+  - Validates window position and dimensions before saving
+  - Prevents saving minimized state (position ~-32000)
+
 ## [0.4.0] - 2026-02-09
 
 ### Added
@@ -138,23 +223,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Release Notes
 
-### v0.3.0 Highlights
+### v0.6.0 Highlights
 
-This release focuses on **Capture Enhancements** to give users better control over transcription quality and workflow:
+This release delivers **VibeVoice-ASR Integration** for speaker-aware meeting transcription:
 
-- **16-language support** with pinning (no more forced auto-detection!)
-- **Activation word filtering** to only process relevant speech
-- **Hallucination filter** now accessible via UI
-- **Bug fix**: Language setting is now properly respected
-
-These features complete **Milestone 3** (Quality of Life & Advanced Features), making Trispr Flow significantly more flexible for diverse use cases.
+- **Speaker diarization** with color-coded segments and editable labels
+- **Analyse button** for manual VibeVoice analysis with file picker
+- **OPUS audio encoding** (75% size reduction vs WAV)
+- **Parallel mode** for simultaneous Whisper + VibeVoice transcription
+- **Quality presets** for OPUS bitrate and VibeVoice precision
+- **PyInstaller packaging** for standalone sidecar deployment
 
 ### What's Next?
 
-Version 0.4.0 will introduce the **Post-Processing Pipeline** with:
-- Rule-based punctuation & capitalization
-- Number normalization
-- Custom vocabulary support
-- Optional LLM refinement via Claude API
+Version 0.7.0 will introduce the **AI Fallback Overhaul** with:
+
+- Multi-provider support (Claude, OpenAI, Gemini)
+- User-editable post-processing prompts
+- Per-provider model selection and API key management
 
 See [ROADMAP.md](ROADMAP.md) for the full development plan.

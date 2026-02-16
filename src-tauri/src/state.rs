@@ -91,19 +91,29 @@ pub(crate) struct Settings {
   pub(crate) postproc_llm_api_key: String,
   pub(crate) postproc_llm_model: String,
   pub(crate) postproc_llm_prompt: String,
+  // Chapter settings (v0.5.0)
+  pub(crate) chapters_enabled: bool,
+  pub(crate) chapters_show_in: String, // "conversation" | "all"
+  pub(crate) chapters_method: String, // "silence" | "time" | "hybrid"
+  // Legacy chapter detection settings
+  pub(crate) chapter_silence_enabled: bool,
+  pub(crate) chapter_silence_threshold_ms: u64,
+  // VibeVoice-ASR settings (v0.6.0)
+  pub(crate) vibevoice_precision: String, // "fp16" | "int8"
+  pub(crate) vibevoice_language: String, // "auto" | "en" | "de" | ...
+  pub(crate) vibevoice_auto_start: bool,
+  pub(crate) opus_enabled: bool,
+  pub(crate) opus_bitrate_kbps: u32,
+  pub(crate) parallel_mode: bool, // Run Whisper + VibeVoice simultaneously
+  pub(crate) auto_save_system_audio: bool, // Auto-save system audio as OPUS
   // Main window state
   pub(crate) main_window_x: Option<i32>,
   pub(crate) main_window_y: Option<i32>,
   pub(crate) main_window_width: Option<u32>,
   pub(crate) main_window_height: Option<u32>,
   pub(crate) main_window_monitor: Option<String>,
-  // Conversation window state
-  pub(crate) conv_window_x: Option<i32>,
-  pub(crate) conv_window_y: Option<i32>,
-  pub(crate) conv_window_width: Option<u32>,
-  pub(crate) conv_window_height: Option<u32>,
-  pub(crate) conv_window_monitor: Option<String>,
-  pub(crate) conv_window_always_on_top: bool,
+  /// Window visibility state at shutdown: "normal", "minimized", or "tray"
+  pub(crate) main_window_start_state: String,
 }
 
 impl Default for Settings {
@@ -125,7 +135,7 @@ impl Default for Settings {
       vad_threshold_sustain: VAD_THRESHOLD_SUSTAIN_DEFAULT,
       vad_silence_ms: VAD_SILENCE_MS_DEFAULT,
       transcribe_enabled: false,
-      transcribe_hotkey: "CommandOrControl+Shift+O".to_string(),
+      transcribe_hotkey: "CommandOrControl+Shift+T".to_string(),
       hotkey_toggle_activation_words: "CommandOrControl+Shift+A".to_string(),
       transcribe_output_device: "default".to_string(),
       transcribe_vad_mode: false,
@@ -135,7 +145,7 @@ impl Default for Settings {
       transcribe_chunk_overlap_ms: 1000,
       transcribe_input_gain_db: 0.0,
       mic_input_gain_db: 0.0,
-      capture_enabled: true,
+      capture_enabled: false,
       model_source: "default".to_string(),
       model_custom_url: "".to_string(),
       model_storage_dir: "".to_string(),
@@ -179,17 +189,27 @@ impl Default for Settings {
       postproc_llm_api_key: String::new(),
       postproc_llm_model: "claude-3-5-sonnet-20241022".to_string(),
       postproc_llm_prompt: "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
+      // Chapter settings (v0.5.0) - disabled by default per DEC-018
+      chapters_enabled: false,
+      chapters_show_in: "conversation".to_string(),
+      chapters_method: "hybrid".to_string(),
+      // Legacy chapter settings
+      chapter_silence_enabled: false,
+      chapter_silence_threshold_ms: 10000, // 10 seconds
+      // VibeVoice-ASR defaults
+      vibevoice_precision: "fp16".to_string(),
+      vibevoice_language: "auto".to_string(),
+      vibevoice_auto_start: false,
+      opus_enabled: true,
+      opus_bitrate_kbps: 64,
+      parallel_mode: false,
+      auto_save_system_audio: false,
       main_window_x: None,
       main_window_y: None,
       main_window_width: None,
       main_window_height: None,
       main_window_monitor: None,
-      conv_window_x: None,
-      conv_window_y: None,
-      conv_window_width: None,
-      conv_window_height: None,
-      conv_window_monitor: None,
-      conv_window_always_on_top: false,
+      main_window_start_state: "normal".to_string(),
     }
   }
 }
@@ -202,14 +222,27 @@ pub(crate) struct HistoryEntry {
   pub(crate) source: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Chapter {
+  pub(crate) id: String,
+  pub(crate) label: String,
+  pub(crate) timestamp_ms: u64,
+  pub(crate) entry_count: u32,
+}
+
 pub(crate) struct AppState {
   pub(crate) settings: Mutex<Settings>,
   pub(crate) history: Mutex<Vec<HistoryEntry>>,
   pub(crate) history_transcribe: Mutex<Vec<HistoryEntry>>,
+  pub(crate) chapters: Mutex<Vec<Chapter>>,
   pub(crate) recorder: Mutex<Recorder>,
   pub(crate) transcribe: Mutex<TranscribeRecorder>,
   pub(crate) downloads: Mutex<HashSet<String>>,
   pub(crate) transcribe_active: AtomicBool,
+  /// Last recorded OPUS file path for mic input (for VibeVoice analysis)
+  pub(crate) last_mic_recording_path: Mutex<Option<String>>,
+  /// Last recorded OPUS file path for system audio (for VibeVoice analysis)
+  pub(crate) last_system_recording_path: Mutex<Option<String>>,
 }
 
 pub(crate) fn load_settings(app: &AppHandle) -> Settings {
@@ -412,6 +445,10 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
       if settings.overlay_kitt_opacity_active < settings.overlay_kitt_opacity_inactive {
         settings.overlay_kitt_opacity_active = settings.overlay_kitt_opacity_inactive;
       }
+      // Validate main_window_start_state
+      if !["normal", "minimized", "tray"].contains(&settings.main_window_start_state.as_str()) {
+        settings.main_window_start_state = "normal".to_string();
+      }
       // Transcribe enablement is session-only; always start disabled.
       settings.transcribe_enabled = false;
       settings
@@ -450,6 +487,21 @@ pub(crate) fn load_history(app: &AppHandle) -> Vec<HistoryEntry> {
 pub(crate) fn save_history_file(app: &AppHandle, history: &[HistoryEntry]) -> Result<(), String> {
   let path = resolve_data_path(app, "history.json");
   let raw = serde_json::to_string_pretty(history).map_err(|e| e.to_string())?;
+  fs::write(path, raw).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+pub(crate) fn load_chapters(app: &AppHandle) -> Vec<Chapter> {
+  let path = resolve_data_path(app, "chapters.json");
+  match fs::read_to_string(path) {
+    Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+    Err(_) => Vec::new(),
+  }
+}
+
+pub(crate) fn save_chapters_file(app: &AppHandle, chapters: &[Chapter]) -> Result<(), String> {
+  let path = resolve_data_path(app, "chapters.json");
+  let raw = serde_json::to_string_pretty(chapters).map_err(|e| e.to_string())?;
   fs::write(path, raw).map_err(|e| e.to_string())?;
   Ok(())
 }

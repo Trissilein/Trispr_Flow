@@ -1,6 +1,6 @@
 # Trispr Flow — Current Progress
 
-**Last updated**: 2026-02-09 (v0.4.0 - Post-Processing Pipeline complete)
+**Last updated**: 2026-02-12 (v0.4.0 - Post-Processing Pipeline complete, Window State Bug Fixed)
 
 ## ✅ Completed
 
@@ -37,6 +37,8 @@
 - Restoration logic properly integrated into Tauri setup phase.
 - 500ms debounce prevents excessive I/O during resizing.
 - Works correctly across Windows virtual desktops (implicit OS behavior).
+- Window state validation prevents saving minimized positions (-32000) and invalid sizes.
+- Restore logic validates window state before applying (prevents invisible window bug).
 
 ### Activity Feedback
 - Tray icon pulsing implemented (turquoise=Recording, yellow=Transcribing).
@@ -126,7 +128,5 @@
 **Status**: Concept phase
 
 ## 🧩 Known Follow-up Constraints
-- `npm run build` currently fails on pre-existing TypeScript issues in:
-  - `src/settings.ts` (`transcribeStatus` ref)
-  - `src/ui-state.ts` (`output_device` typing)
-- These are tracked as separate frontend cleanup tasks.
+- TypeScript build is working correctly (`npm run build` passes).
+- Minor warning about dynamic imports in state.ts (not blocking).

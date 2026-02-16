@@ -21,6 +21,14 @@ async function saveWindowState() {
     }
 }
 
+async function saveWindowVisibility(visibility: "normal" | "minimized") {
+    try {
+        await invoke("save_window_visibility_state", { visibility });
+    } catch (error) {
+        console.error(`Failed to save window visibility:`, error);
+    }
+}
+
 function debouncedSave() {
     if (saveTimeout !== null) {
         clearTimeout(saveTimeout);
@@ -36,8 +44,8 @@ export function initWindowStatePersistence() {
 
     console.log(`[window-state] Initializing for window: ${window.label}`);
 
-    // Only track main and conversation windows
-    if (window.label !== "main" && window.label !== "conversation") {
+    // Only track main window
+    if (window.label !== "main") {
         console.log(`[window-state] Skipping - not a tracked window`);
         return;
     }
@@ -55,8 +63,26 @@ export function initWindowStatePersistence() {
         debouncedSave();
     });
 
+    // Track minimized state: save "minimized" when window is minimized,
+    // "normal" when restored (tray state is saved on the Rust side)
+    const unlistenFocus = window.onFocusChanged(async ({ payload: focused }) => {
+        if (!focused) {
+            // Check if window was minimized (not just lost focus)
+            try {
+                const minimized = await window.isMinimized();
+                if (minimized) {
+                    console.log(`[window-state] Window minimized`);
+                    saveWindowVisibility("minimized");
+                }
+            } catch (_) { /* ignore */ }
+        } else {
+            // Window regained focus → it's in normal visible state
+            saveWindowVisibility("normal");
+        }
+    });
+
     console.log(`[window-state] Event listeners registered for ${window.label}`);
 
     // Store unlisteners for potential cleanup
-    return { unlistenMoved, unlistenResized };
+    return { unlistenMoved, unlistenResized, unlistenFocus };
 }

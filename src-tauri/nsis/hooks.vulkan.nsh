@@ -1,5 +1,5 @@
-; Trispr Flow NSIS Installer Hooks
-; Adds custom pages for install/uninstall selection, overlay style, GPU backend, and capture mode.
+; Trispr Flow NSIS Installer Hooks - Vulkan Only Edition
+; Adds custom pages for install/uninstall selection, overlay style, and capture mode.
 ; This file is included at the top level of the installer script by Tauri.
 
 !include "nsDialogs.nsh"
@@ -19,13 +19,6 @@ Var OverlayRadioHal
 Var OverlayRadioKitt
 Var OverlayStyleChoice
 
-; Variables for the GPU backend page
-Var GpuDialog
-Var GpuLabel
-Var GpuRadioCuda
-Var GpuRadioVulkan
-Var GpuBackendChoice
-
 ; Variables for the capture mode page
 Var CaptureModeDialog
 Var CaptureModeLabel
@@ -36,7 +29,6 @@ Var CaptureModeChoice
 ; --- Custom page declarations (top-level, included before MUI pages) ---
 Page custom InstallModePage InstallModePageLeave
 Page custom OverlayStylePage OverlayStylePageLeave
-Page custom GpuBackendPage GpuBackendPageLeave
 Page custom CaptureModePage CaptureModePageLeave
 
 ; =====================================================================
@@ -118,40 +110,7 @@ Function OverlayStylePageLeave
 FunctionEnd
 
 ; =====================================================================
-; Page 3: GPU Backend Selection
-; =====================================================================
-
-Function GpuBackendPage
-  nsDialogs::Create 1018
-  Pop $GpuDialog
-  ${If} $GpuDialog == error
-    Abort
-  ${EndIf}
-
-  ${NSD_CreateLabel} 0 0 100% 48u "Choose the GPU backend for speech recognition.$\r$\n$\r$\nCUDA is fastest on NVIDIA GPUs.$\r$\nVulkan works on both AMD and NVIDIA GPUs."
-  Pop $GpuLabel
-
-  ${NSD_CreateRadioButton} 10u 58u 100% 14u "NVIDIA CUDA (recommended for NVIDIA GPUs)"
-  Pop $GpuRadioCuda
-  ${NSD_SetState} $GpuRadioCuda ${BST_CHECKED}
-
-  ${NSD_CreateRadioButton} 10u 76u 100% 14u "Vulkan (AMD, Intel, or NVIDIA GPUs)"
-  Pop $GpuRadioVulkan
-
-  nsDialogs::Show
-FunctionEnd
-
-Function GpuBackendPageLeave
-  ${NSD_GetState} $GpuRadioCuda $0
-  ${If} $0 == ${BST_CHECKED}
-    StrCpy $GpuBackendChoice "cuda"
-  ${Else}
-    StrCpy $GpuBackendChoice "vulkan"
-  ${EndIf}
-FunctionEnd
-
-; =====================================================================
-; Page 4: Capture Mode Selection
+; Page 3: Capture Mode Selection
 ; =====================================================================
 
 Function CaptureModePage
@@ -184,7 +143,7 @@ Function CaptureModePageLeave
 FunctionEnd
 
 ; =====================================================================
-; Post-install: write settings + clean up unused GPU backend
+; Post-install: write settings (Vulkan-only, no GPU backend cleanup)
 ; =====================================================================
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -195,7 +154,7 @@ FunctionEnd
   ${EndIf}
 
   ; Write initial settings.json with all required fields and defaults.
-  ; Only overlay_style is overridden by user choice; other fields use defaults.
+  ; GPU backend is hardcoded to "vulkan" in this edition.
   CreateDirectory "$APPDATA\com.trispr.flow"
   ; Delete old settings.json to ensure fresh defaults on reinstalls/updates
   Delete "$APPDATA\com.trispr.flow\settings.json"
@@ -257,15 +216,7 @@ FunctionEnd
   FileWrite $0 '}'
   FileClose $0
 
-  ; Remove the GPU backend that was NOT chosen to save disk space.
-  ; Both backends are bundled in the installer, but only the selected one stays.
-  ${If} $GpuBackendChoice == "cuda"
-    ; Keep cuda, remove vulkan
-    RMDir /r "$INSTDIR\bin\vulkan"
-  ${Else}
-    ; Keep vulkan, remove cuda
-    RMDir /r "$INSTDIR\bin\cuda"
-  ${EndIf}
+  ; Vulkan-only edition: No GPU backend cleanup needed (only Vulkan is bundled)
 
   ; Create models directory for future use (app will download model on first start)
   CreateDirectory "$APPDATA\com.trispr.flow\models"

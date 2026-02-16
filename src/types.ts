@@ -68,6 +68,18 @@ export interface Settings {
   postproc_llm_api_key: string;
   postproc_llm_model: string;
   postproc_llm_prompt: string;
+  // Chapter settings
+  chapters_enabled?: boolean;
+  chapters_show_in?: "conversation" | "all";
+  chapters_method?: "silence" | "time" | "hybrid";
+  // VibeVoice-ASR settings
+  vibevoice_precision?: "fp16" | "int8";
+  vibevoice_language?: string;
+  vibevoice_auto_start?: boolean;
+  opus_enabled?: boolean;
+  opus_bitrate_kbps?: number;
+  parallel_mode?: boolean;
+  auto_save_system_audio?: boolean;
   // Window state fields from backend
   main_window_x?: number | null;
   main_window_y?: number | null;
@@ -80,6 +92,7 @@ export interface Settings {
   conv_window_height?: number | null;
   conv_window_monitor?: string | null;
   conv_window_always_on_top?: boolean;
+  main_window_start_state?: "normal" | "minimized" | "tray";
 }
 
 export interface HistoryEntry {
@@ -87,6 +100,21 @@ export interface HistoryEntry {
   text: string;
   timestamp_ms: number;
   source: string;
+}
+
+export interface SpeakerSegment {
+  speaker_id: string;
+  speaker_label?: string; // Custom label (e.g., "John" instead of "Speaker 1")
+  start_time: number;
+  end_time: number;
+  text: string;
+}
+
+export interface TranscriptionAnalysis {
+  segments: SpeakerSegment[];
+  duration_s: number;
+  total_speakers: number;
+  processing_time_ms: number;
 }
 
 export interface AudioDevice {
@@ -149,6 +177,9 @@ export interface ToastOptions {
   message: string;
   duration?: number;
   icon?: string;
+  actionLabel?: string;
+  onAction?: () => void | Promise<void>;
+  actionDismiss?: boolean;
 }
 
 export interface TranscribeBacklogStatus {

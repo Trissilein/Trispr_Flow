@@ -15,6 +15,7 @@ export function setupHotkeyRecorder(
 
   let isRecording = false;
   let recordedKeys: Set<string> = new Set();
+  let finalizeTimeout: number | null = null;
 
   const updateStatus = (message: string, type: "success" | "error" | "info") => {
     statusEl.textContent = message;
@@ -51,6 +52,12 @@ export function setupHotkeyRecorder(
     input.classList.remove("recording");
     document.removeEventListener("keydown", handleKeyDown);
     document.removeEventListener("keyup", handleKeyUp);
+
+    // Clear any pending finalization
+    if (finalizeTimeout !== null) {
+      clearTimeout(finalizeTimeout);
+      finalizeTimeout = null;
+    }
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -83,31 +90,51 @@ export function setupHotkeyRecorder(
     input.value = hotkeyString;
   };
 
-  const handleKeyUp = async (e: KeyboardEvent) => {
-    // When all keys are released, finalize the hotkey
-    if (!e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && recordedKeys.size > 1) {
-      stopRecording();
-
-      const hotkeyString = Array.from(recordedKeys).join("+");
-
-      // Validate
-      const isValid = await validateHotkey(hotkeyString);
-
-      if (isValid && settings) {
-        if (type === "ptt") {
-          settings.hotkey_ptt = hotkeyString;
-        } else if (type === "toggle") {
-          settings.hotkey_toggle = hotkeyString;
-        } else if (type === "transcribe") {
-          settings.transcribe_hotkey = hotkeyString;
-        } else if (type === "toggleActivationWords") {
-          settings.hotkey_toggle_activation_words = hotkeyString;
-        }
-        await persistSettings();
-      }
-
-      recordedKeys.clear();
+  const finalizeHotkey = async () => {
+    if (recordedKeys.size < 2) {
+      updateStatus("Need at least modifier + key", "error");
+      return;
     }
+
+    stopRecording();
+
+    const hotkeyString = Array.from(recordedKeys).join("+");
+
+    // Validate
+    const isValid = await validateHotkey(hotkeyString);
+
+    if (isValid && settings) {
+      if (type === "ptt") {
+        settings.hotkey_ptt = hotkeyString;
+      } else if (type === "toggle") {
+        settings.hotkey_toggle = hotkeyString;
+      } else if (type === "transcribe") {
+        settings.transcribe_hotkey = hotkeyString;
+      } else if (type === "toggleActivationWords") {
+        settings.hotkey_toggle_activation_words = hotkeyString;
+      }
+      await persistSettings();
+    }
+
+    recordedKeys.clear();
+  };
+
+  const handleKeyUp = async (_e: KeyboardEvent) => {
+    // Clear any pending finalization
+    if (finalizeTimeout !== null) {
+      clearTimeout(finalizeTimeout);
+    }
+
+    // Wait 150ms for all keys to be released, then finalize
+    // This handles both simultaneous and sequential key releases
+    finalizeTimeout = window.setTimeout(async () => {
+      // Check if all modifier keys are now released
+      // Use a fresh keyboard state check instead of the event
+      if (recordedKeys.size > 1) {
+        await finalizeHotkey();
+      }
+      finalizeTimeout = null;
+    }, 150);
   };
 
   // Record button click

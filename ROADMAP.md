@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-09
+Last updated: 2026-02-16
 
 This roadmap tracks the current focus: getting core capture + transcription stable and tightening UX before expanding features.
 
@@ -8,255 +8,339 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 
 ## Current Status
 
-✅ **Milestone 0**: Complete (tech stack locked, whisper.cpp validated)
-✅ **Milestone 1**: Complete (PTT capture, transcription, paste)
-✅ **Milestone 2**: Complete (Foundation & Critical UX)
-✅ **Milestone 3**: Complete (Window persistence, Activity feedback, Model hot swap, Capture enhancements, Post-processing pipeline)
-🔄 **Phase 2**: In Progress (Documentation & Stabilization)
+- **Milestone 0**: Complete (tech stack locked, whisper.cpp validated)
+- **Milestone 1**: Complete (PTT capture, transcription, paste)
+- **Milestone 2**: Complete (Foundation & Critical UX)
+- **Milestone 3**: Complete (Window persistence, Activity feedback, Model hot swap, Capture enhancements, Post-processing pipeline)
+- **v0.4.0**: Complete (Post-processing pipeline, custom vocabulary, rule-based enhancements)
+- **v0.4.1**: Complete (Security hardening, CUDA distribution, Hotkey UX)
+- **v0.5.0 Block A**: Complete (Export features, schema design, documentation)
+- **v0.5.0 Block B**: Complete (Tab-Based UI Refactor, Chapter UI, Topic detection, live dump, naming cleanup)
+- **v0.6.0 Block C**: Complete (VibeVoice research, sidecar structure, OPUS design)
+- **v0.6.0 Block D**: Complete (Integration layer, model loading, sidecar process management, auto-processing)
+- **v0.6.0 Block E (Sonnet)**: Complete (Speaker UI, Analyse button, quality presets, model monitoring)
+- **v0.6.0 Block E (Opus)**: Complete (Parallel mode, PyInstaller packaging, E2E tests)
 
-**Recent progress (2026-02-09)**
+**Recent progress (2026-02-16)**
 
-- ✅ **Post-Processing Pipeline (v0.4.0)**: Rule-based text enhancements, custom vocabulary, settings-driven architecture
-- ✅ **Rule-Based Enhancements**: Punctuation, capitalization, number normalization (English/German)
-- ✅ **Custom Vocabulary**: HashMap-based replacements with word boundary regex matching
-- ✅ **Post-Processing UI**: Master toggle, language selector, rule toggles, dynamic vocabulary table
-- ✅ **Capture Enhancements (v0.3.0)**: Language pinning (16 languages), activation word filtering, hallucination filter UI
-- ✅ **Language Bug Fix**: Fixed hardcoded "auto" in transcription.rs line 887
-- ✅ **Version Bumps**: 0.1.0 → 0.3.0 → 0.4.0
+- **v0.6.0 Released** — VibeVoice-ASR integration complete
+- **Block E Sonnet Sprint Complete**:
+  - E19: Speaker-diarized transcript UI (color-coded segments, editable labels, export)
+  - E24: Analyse button with file picker, auto-save OPUS recordings, progress indicator
+  - E26: Quality preset controls (OPUS bitrate 32/64/96/128 kbps, VibeVoice FP16/INT8)
+  - E28: Model monitoring with weekly update checks and toast notifications
+- **Block E Opus Sprint Complete**:
+  - E27: Parallel mode (Whisper + VibeVoice simultaneous, system audio auto-save 60s flush)
+  - E29: PyInstaller packaging (standalone sidecar exe, auto-detect bundled vs Python fallback)
+  - E30: 22 E2E tests covering full workflow (diarization, analysis, quality presets, parallel mode)
+- **OPUS Audio Pipeline**: FFmpeg-based WAV→OPUS encoding with configurable bitrate
+- **Recording Auto-Save**: Mic recordings >10s auto-saved, system audio flushed every 60s
 
-### Next Priorities (v0.5.0+)
+### Next Priorities (v0.7.0 — AI Fallback Overhaul)
 
-1. **Long-Form Features** (v0.5.0)
-   - Live transcript dump (TXT, MD, JSON)
-   - Chapter segmentation for meetings/lectures
-   - Topic detection and marking
+**Upcoming Tasks:**
 
-2. **VibeVoice-ASR Integration** (v0.6.0)
-   - Speaker diarization for recorded meetings
-   - Python FastAPI sidecar architecture
-   - Post-session analysis workflow
+1. **Task 39: Requirements & UX Decision** — AI Fallback rename, config location
+2. **Task 31: Multi-Provider Architecture** — Design for Claude, OpenAI, Gemini
+3. **Tasks 36-37: Provider Data Model + Config UI** — Settings migration, API key management
+4. **Tasks 32-34: Provider Implementations** — OpenAI, Claude, Gemini integrations
+5. **Task 35: User-Editable Prompts** — Custom post-process prompts per provider
+6. **Task 38: E2E Tests** — Full workflow across all providers
 
-3. **AI Fallback Overhaul** (v0.7.0)
-   - Multi-provider support (OpenAI, Anthropic, Groq)
-   - User-selectable models per provider
-   - Streaming transcription for cloud fallback
+---
 
-**Recent progress (2026-02-08)**
+## Competitor Analysis Integration (Handy.computer)
 
-- ✅ **Frontend Modularization**: Split main.ts (~1800 lines) into 14 focused modules (~220 lines)
-- ✅ **Overlay Circle Dot Fix**: Audio-reactive size animation now functional
-- ✅ **Overlay Lifecycle Stabilization**: Dot/KITT style switching now treated as explicit lifecycle transitions
-- ✅ **Overlay Tray Toggle**: Dedicated tray toggle to fully disable/enable overlay runtime
-- ✅ **Monitoring Toggles**: Enable/disable microphone tracking and system audio transcription via UI
-- ✅ **Tray Menu Sync**: Checkmarks properly sync between UI and system tray
-- ✅ **Monitor Re-initialization**: No restart required when toggling monitoring on/off
-- ✅ **lib.rs Modularization**: Split backend into focused Rust modules
-- ✅ **Security Hardening**: URL safety (no whitelist), checksum verification, download size limits
-- ✅ **System Audio Robustness**: WASAPI loopback fixes + transcribe queue/idle meter
-- ✅ **Activity Indicators**: Separate recording/transcribing indicators + overlay marker
-- ✅ **Automated Testing Baseline**: Unit tests + smoke scripts verified locally
-- ✅ **Transcribe Default Disabled**: Session-only enable; always deactivated on startup
-- ✅ **Model Manager**: Single-list layout, active-first ordering, 2-column grid
-- ✅ **Model Downloads**: German turbo URL fix + filename mapping
-- ✅ **Model Removal**: Delete (internal) vs Remove (external) with rescan on Refresh
-- ✅ **Model Quantization**: Optimize button for q5_0 compression (~30% size reduction), all variants labeled
-- ✅ **Quantizer Bundling**: quantize.exe integrated into NSIS installer, build scripts for updates
-- ✅ **Hero UI**: Model display expanded to 2 lines for longer quantized model names
+**Key Findings from COMPETITOR_ANALYSIS_HANDY.md:**
 
-**Previous milestones**
-- ✅ System audio capture via WASAPI (Windows) + transcribe hotkey
-- ✅ Output tabs: Microphone / System Audio / Conversation
-- ✅ Conversation view combining mic + system transcripts
-- ✅ Output meters with dB readouts + threshold markers
-- ✅ Input gain for mic + system audio (±30 dB)
-- ✅ Panel collapse state + compact layout
-- ✅ Audio cue volume control
-- ✅ Model Manager revamp (sources, storage picker, install/remove)
+### ✅ Areas Where Trispr Flow Leads
+
+- System audio capture (WASAPI)
+- Speaker diarization (v0.6.0)
+- Post-processing pipeline
+- Export formats (TXT/MD/JSON)
+- Chapter detection + topic detection
+- Full-text search
+- Overlay feedback (dot + KITT)
+
+### 🔍 Opportunities from Competitor Analysis
+
+#### 1. Parakeet ASR Engine (v0.6.0+) — **HIGH PRIORITY**
+
+**Why:** NVIDIA Parakeet models are significantly faster than Whisper on NVIDIA hardware
+
+**Integration:**
+- Add as alternative ASR engine alongside Whisper + VibeVoice
+- ONNX Runtime or TensorRT backend (separate from whisper.cpp)
+- Engine selection in model settings: "Whisper" / "Parakeet" / "VibeVoice" / "Auto"
+- Benchmark Parakeet vs Whisper on RTX 5070 Ti
+
+**Roadmap Impact:** Add to v0.6.0 Block E as E31-E34 tasks
+
+**Hardware Fit:** RTX 5070 Ti (16GB VRAM) is ideal for Parakeet models
+
+#### 2. Quick Start Mode (v0.5.0 Complete) — **MEDIUM PRIORITY**
+
+**Status:** Partially addressed by tab-based UI refactor in Block B
+
+**Remaining Work:**
+- First-run wizard: minimal view with big record button
+- Auto-detect best model + GPU configuration
+- One-click setup flow
+- Settings hidden behind "Advanced" tab
+
+**Roadmap Impact:** Add to v0.7.0 as UX polish tasks
+
+#### 3. Cross-Platform Support (v1.0+) — **LOW PRIORITY**
+
+**Current Blocker:** WASAPI capture is Windows-only
+
+**Long-term Plan:**
+- macOS: CoreAudio capture abstraction
+- Linux: PulseAudio/PipeWire abstraction
+- Tauri UI layer is already cross-platform
+
+**Roadmap Impact:** Defer until v1.0+ when core features stabilize
+
+#### 4. Plugin Architecture (v0.7+) — **LOW PRIORITY**
+
+**Possible Hooks:**
+- Post-processing plugins (custom text transforms)
+- Export format plugins
+- ASR engine plugins
+- Analysis plugins (custom meeting analysis)
+
+**Assessment:** Over-engineering risk. Defer until v0.7+ when core features stabilize.
+
+---
+
+## Implementation Schedule
+
+Trispr Flow uses a **batched task schedule strategy** that groups related tasks by AI model (Haiku, Sonnet, Opus) to reduce context-switching overhead.
+
+For detailed task breakdowns, timelines, dependencies, and complexity levels, see:
+**[docs/TASK_SCHEDULE.md](docs/TASK_SCHEDULE.md)**
+
+**Quick Summary**:
+
+- **v0.5.0 Block A** (Haiku): 7 tasks COMPLETE — Export features, documentation, testing
+- **v0.5.0 Block B** (Sonnet): 8 tasks COMPLETE — Tab UI refactor, chapter UI, topic UI, live dump, E2E tests
+- **v0.6.0 Block C** (Haiku): 5 tasks COMPLETE — VibeVoice research, sidecar structure, OPUS design
+- **v0.6.0 Block D** (Opus): 5 tasks COMPLETE — Integration layer, model loading, sidecar mgmt, auto-processing
+- **v0.6.0 Block E** (Sonnet+Opus): 7 tasks COMPLETE — Speaker UI, Analyse button, quality presets, parallel mode, monitoring, packaging, E2E tests
+- **v0.6.0+ Parakeet Integration** (Sonnet): 4 tasks — Research, engine abstraction, integration, benchmarking
+- **v0.7.0**: AI Fallback Overhaul (1 Haiku + 3 Opus + 5 Sonnet tasks = 1 switch)
+- **v0.7.0+**: Quick Start UX (3 Sonnet tasks)
 
 ---
 
 ## Milestone 2 — Foundation & Critical UX (Complete)
 
 ### 2.1 Recording Modes (Mic)
+
 - **PTT vs VAD** modes (toggle hotkey remains inside PTT)
 - VAD thresholds + silence grace
 
 ### 2.2 System Audio Transcription (Windows)
+
 - WASAPI loopback capture
 - Transcribe hotkey toggle
 - VAD option + chunking controls
 - Output meter + dB display
 
-### 2.3 Overlay Redesign (Minimal Dot) ✅
-- Visible dot only (no invisible window artifacts)
-- Audio-reactive size (min/max radius) ✅
-- Color + active/inactive opacity ✅
-- Rise/fall smoothing ✅
-- Position controls (X/Y) ✅
-- **KITT bar mode** (alternative overlay style) ✅
+### 2.3 Overlay Redesign (Minimal Dot)
 
-### 2.4 Conversation View ✅
-- Combined mic/system transcript stream ✅
-- Detachable conversation window (stable content + close) ✅
-- Font size control ✅
+- Audio-reactive size (min/max radius)
+- Color + active/inactive opacity
+- Rise/fall smoothing, Position controls (X/Y)
+- **KITT bar mode** (alternative overlay style)
 
-### 2.5 Model Manager Revamp ✅
-- Source selector (default + custom URL) ✅
-- Show **available** vs **installed** models ✅
-- Install / remove actions ✅
-- Per-model storage path display ✅
+### 2.4 Conversation View
 
-### 2.6 Code Quality & Maintainability ✅
-- Frontend modularization (14 specialized modules) ✅
-- TypeScript type safety improvements ✅
-- DOM reference centralization ✅
-- Event listener organization ✅
+- Combined mic/system transcript stream
+- Font size control
 
-**Definition of Done** ✅
-- System audio meter/gain calibrated and VAD threshold accurate ✅
-- Conversation detach window fully functional ✅
-- Frontend codebase maintainable and modular ✅
+### 2.5 Model Manager Revamp
+
+- Source selector (default + custom URL)
+- Show available vs installed models
+- Install / remove actions
+- Per-model storage path display
+
+### 2.6 Code Quality & Maintainability
+
+- Frontend modularization (14 specialized modules)
+- TypeScript type safety improvements
 
 ---
 
-## Phase 2 — Security Hardening & Code Quality (In Progress)
+## Phase 2 — Security Hardening & Code Quality (Complete)
 
-### Critical Security Tasks (This Week)
-- ✅ **SSRF Prevention**: URL safety checks (no whitelist) for model downloads
-- ✅ **Model Integrity**: SHA256 checksum verification
-- ✅ **Download Limits**: Size caps and timeout protection
-
-### Code Refactoring (Next Sprint)
-- ✅ **lib.rs Modularization**: Split 3700+ line file into focused modules
-  - Audio module (device management, CPAL)
-  - Transcription module (whisper.cpp integration)
-  - Models module (download, management)
-  - State/Settings module
-  - Paths/Utilities module
-- ✅ **Automated Testing**: Unit + smoke baseline verified locally
-- 🟡 **Documentation**: Architecture docs, code comments
-
-### Testing (Ongoing)
-- ✅ **Automated Testing**: Unit tests + smoke command verified (`npm run test` + `npm run test:smoke`)
-- ⚪ **Tauri E2E Tests (Block 9)**: Optional end-to-end coverage once unit + smoke are stable
-
-### Documentation Sprint (Current)
-- 🔄 Sync `ROADMAP.md` and `.claude/ROADMAP.md` after each major feature decision
-- 🔄 Keep architecture/state docs aligned with current overlay and transcription behavior
-- 🔄 Consolidate completed items from working notes into stable docs (`progress.txt`, `APP_FLOW.md`)
-
-For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)
+- **SSRF Prevention**: URL safety checks (no whitelist) for model downloads
+- **Model Integrity**: SHA256 checksum verification
+- **Download Limits**: Size caps and timeout protection
+- **lib.rs Modularization**: Split 3700+ line file into focused modules
+- **Automated Testing**: Unit + smoke baseline verified locally
 
 ---
 
-## Milestone 3 — Quality of Life & Advanced Features (Complete ✅)
+## Milestone 3 — Quality of Life & Advanced Features (Complete)
 
-### Window Behavior ✅
+### Window Behavior
 
-- ✅ Persist main window position + size across sessions
-- ✅ Restore on correct monitor
-- ✅ Restore on same virtual desktop (Windows) — handled implicitly by OS
-- ✅ Conversation window geometry persistence
-- ✅ Always-on-top toggle for conversation window
+- Persist main window position + size across sessions
+- Restore on correct monitor
+- **Persist minimized/tray state** (v0.5.0+) — NEW
 
-### Activity Feedback ✅
+### Activity Feedback
 
-- ✅ **In‑app indicators**: Separate recording/transcribing indicators + overlay marker
-- ✅ **Overlay style lifecycle**: Dot/KITT switching and overlay runtime toggle documented as stable
-- ✅ **Tray pulse**: turquoise = Recording, yellow = Transcribing; both pulse when both active
-- ✅ **Pulse cadence**: ~1.6s loop, ~6 frames
-- ⏳ **Transcribe backlog**: target 10 minutes (future enhancement)
-- ⏳ **80% warning**: prompt +50% expansion (future enhancement)
+- In-app indicators: Separate recording/transcribing indicators + overlay marker
+- Tray pulse: turquoise = Recording, yellow = Transcribing
 
-### Model Manager QoL ✅
+### Model Manager QoL
 
-- ✅ Apply model immediately without restart (hot swap with rollback on failure)
+- Apply model immediately without restart (hot swap with rollback on failure)
 
-### Capture Enhancements ✅
+### Capture Enhancements
 
-- ✅ Activation words with word boundary matching (case-insensitive)
-- ✅ Language pinning (16 languages: EN, DE, FR, ES, IT, PT, NL, PL, RU, JA, KO, ZH, AR, TR, HI)
-- ✅ Hallucination filter UI toggle
-- ✅ Extra hotkey: Toggle activation words (Ctrl+Shift+A)
+- Activation words with word boundary matching (case-insensitive)
+- Language pinning (16 languages)
+- Hallucination filter UI toggle
 
-### Text Enhancement ✅
+### Text Enhancement (v0.4.0)
 
-- ✅ **Post-Processing Pipeline** (v0.4.0):
-  - ✅ Rule-based punctuation & capitalization (English, German)
-  - ✅ Number normalization (0-100 + common tens)
-  - ✅ Custom vocabulary with word boundary matching
-  - ✅ Settings-driven with backward compatibility
-  - ✅ Complete UI panel with master toggle, language selector, rule toggles
-  - ✅ Dynamic vocabulary table with add/remove functionality
-  - ⏳ Optional Claude API integration (planned for future release)
+- Post-Processing Pipeline:
+  - Rule-based punctuation & capitalization (English, German)
+  - Number normalization (0-100 + common tens)
+  - Custom vocabulary with word boundary matching
+  - Settings-driven with backward compatibility
+  - Complete UI panel with master toggle, language selector, rule toggles
 
-### Speaker-Aware Meeting Transcription (VibeVoice-ASR Integration)
+### Export Features (v0.5.0 Block A)
 
-- **Goal**: After a meeting/recording session, analyze the full audio and produce a speaker-diarized transcript
+- Export formats: TXT, Markdown, JSON
+- Export schema with format versioning (v1.0)
+- Tauri command integration with native file dialog
+- 28 unit tests covering all formats and edge cases
+- Comprehensive documentation (EXPORT_GUIDE.md + EXPORT_SCHEMA.md)
+
+### Speaker-Aware Meeting Transcription (v0.6.0 - Complete)
+
 - **Model**: Microsoft VibeVoice-ASR 7B (MIT license, open-source)
-  - Up to 60 minutes continuous audio in a single pass
-  - Built-in speaker diarization (who spoke when)
-  - Timestamps per segment
-  - 50+ languages, customizable hotwords
-  - Requires ~14-16 GB VRAM (FP16) or ~7-8 GB (INT8 quantized)
 - **Architecture**: Python FastAPI sidecar in `sidecar/vibevoice-asr/`
-  - Runs as background process on localhost (no user-facing UI)
-  - Lazy model loading (first "Analyse" click loads model into VRAM)
-  - Tauri manages sidecar lifecycle (start/stop/health-check)
-  - Packaged as standalone `.exe` via PyInstaller (no Python required on user machine)
-- **Audio Format**: WAV (16-bit, 24kHz mono, ~170 MB/60 min) — simplest to capture, universally compatible. Migration to Opus possible later if storage matters.
-- **Workflow**:
-  1. Output Capture records meeting audio → saves WAV file in background
-  2. User clicks "Analyse" button after meeting
-  3. WAV sent to local VibeVoice-ASR server → POST `/transcribe`
-  4. Server returns JSON: `{ segments: [{ speaker_id, start_time, end_time, text }] }`
-  5. Frontend renders speaker-diarized transcript (color-coded by speaker)
-- **Coexistence with Whisper**: Sequential — Whisper handles live transcription during recording, VibeVoice-ASR does post-session analysis with speaker separation
-- **Tasks**:
-  - ⚪ Set up `sidecar/vibevoice-asr/` project structure (FastAPI + requirements)
-  - ⚪ Implement `/transcribe` endpoint with VibeVoice-ASR model
-  - ⚪ Add WAV recording to Output Capture pipeline (save alongside live transcription)
-  - ⚪ Rust: sidecar process management (start/stop/health)
-  - ⚪ Frontend: "Analyse" button + speaker-diarized transcript view
-  - ⚪ PyInstaller packaging for standalone sidecar executable
+- **Audio Format**: OPUS (FFmpeg-based, 75% size reduction vs WAV)
+- **Precision Options**: Configurable FP16 (~14-16 GB VRAM) or INT8 (~7-8 GB VRAM)
+- **Speaker Diarization UI**: Color-coded segments, editable labels, speaker-attributed export
+- **Analyse Button**: File picker, auto-save recordings, progress indicator
+- **Quality Controls**: OPUS bitrate (32/64/96/128 kbps), VibeVoice precision (FP16/INT8)
+- **Parallel Mode**: Whisper + VibeVoice simultaneous with auto-save (60s flush)
+- **Model Monitoring**: Weekly update checks with toast notifications
+- **PyInstaller Packaging**: Standalone sidecar exe (no Python required)
+- **E2E Tests**: 22 tests covering full workflow
 
-### Long-Form Transcription
-- **Live Transcript Dump**: Export ongoing transcripts (TXT, MD, JSON)
-- **Chapter Summarization**: Automatic segmentation for meetings, lectures
-- **Topic Detection**: Identify and mark topic shifts
+### Long-Form Transcription (v0.5.0)
 
-### Conversation Window (Later)
-- Make the conversation window configurable (size, position, font size, always-on-top)
+- **Live Transcript Dump**: Export ongoing transcripts (TXT, MD, JSON) — COMPLETE
+- **Chapter Segmentation**: Automatic segmentation — COMPLETE
+- **Topic Detection**: Identify and mark topic shifts — COMPLETE
 
 ---
 
-## Planning Queue — AI Fallback Overhaul (Next 3–4 steps, planning only)
-Goal: replace “Claude fallback” with **AI Fallback** that supports multiple providers and user‑selectable models.
+## Planning Queue — Parakeet ASR Engine Integration (v0.6.0+)
 
-**Providers**
-- Claude
-- OpenAI (ChatGPT)
-- Gemini
+**Goal**: Add NVIDIA Parakeet as alternative ASR engine for faster inference on NVIDIA hardware
 
-**Planning steps**
-1. **Requirements & UX**  
-   - Rename UI to **AI Fallback** (global status + settings section).  
-   - Decide where config lives (Model panel or dedicated AI section).  
-   - Toggle behavior and when post‑processing runs.
-2. **Provider Config Design**  
-   - Per‑provider model selection.  
-   - API key / account linking flow.  
-   - Provider‑specific limits and validation.
-3. **Data Model & Settings**  
-   - Settings schema for provider, model, key storage, enabled state.  
-   - Migration from existing `cloud_fallback`.
-4. **Prompt Strategy**  
-   - Default post‑process prompt.  
-   - User‑editable prompt with reset.
+**Why Parakeet?**
+- Significantly faster than Whisper on NVIDIA GPUs
+- NVIDIA actively maintains and updates Parakeet
+- Could run Parakeet for real-time transcription + Whisper for batch correction
+- RTX 5070 Ti (16GB VRAM) is ideal hardware for Parakeet
+
+**Technical Approach:**
+- Parakeet uses ONNX Runtime or TensorRT (not whisper.cpp)
+- Needs separate inference backend alongside existing whisper.cpp
+- Offered as alternative engine in model settings
+- Abstract ASR backend interface for multiple engines
+
+**Tasks (v0.6.0 Block E+):**
+
+1. **E31: Research Parakeet Integration** (Sonnet)
+   - Investigate ONNX Runtime vs TensorRT
+   - Evaluate Parakeet-RNNT vs Parakeet-CTC
+   - Benchmark memory requirements on RTX 5070 Ti
+   - Document integration approach
+
+2. **E32: ASR Backend Abstraction** (Sonnet)
+   - Create trait/interface for ASR engines
+   - Refactor existing Whisper backend to use interface
+   - Design engine selection mechanism
+   - Update settings schema
+
+3. **E33: Parakeet Backend Implementation** (Sonnet)
+   - Implement ONNX Runtime backend
+   - Add Parakeet model loading
+   - Integrate with audio pipeline
+   - Add engine selection UI
+
+4. **E34: Parakeet Benchmarking** (Sonnet)
+   - Compare Parakeet vs Whisper speed/quality
+   - Test on RTX 5070 Ti
+   - Document performance metrics
+   - Create user guidance (when to use which engine)
+
+---
+
+## Planning Queue — AI Fallback Overhaul (v0.7.0)
+
+Goal: replace "Claude fallback" with **AI Fallback** that supports multiple providers and user-selectable models.
+
+**Providers**: Claude, OpenAI (ChatGPT), Gemini
+
+**Planning steps**:
+
+1. Requirements & UX — Rename UI to AI Fallback, config location, toggle behavior
+2. Provider Config Design — Per-provider model selection, API key flow, limits
+3. Data Model & Settings — Schema for provider/model/key storage, migration from `cloud_fallback`
+4. Prompt Strategy — Default post-process prompt, user-editable with reset
+
+---
+
+## Planning Queue — Quick Start Mode (v0.7.0+)
+
+**Goal**: Simplify first-run experience with minimal UI and auto-configuration
+
+**Current Problem:**
+- New users see dense settings-heavy UI on first launch
+- Multiple panels, toggles, and options before first transcription
+- Tab-based refactor (v0.5.0 Block B) already improves this
+
+**Proposed Improvements:**
+
+1. **First-Run Wizard**
+   - Minimal view: big record button + shortcut hint
+   - Settings hidden behind "Advanced" or Settings tab
+   - One-click setup: "Download recommended model and start"
+
+2. **Auto-Detection**
+   - Auto-detect best model for user's GPU
+   - Auto-detect CUDA vs Vulkan capability
+   - Auto-select optimal quality preset
+
+3. **Progressive Disclosure**
+   - Start with minimal UI
+   - Reveal advanced features as user explores
+   - Onboarding tips for key features
+
+**Tasks (v0.7.0+):**
+
+- **Q1**: Design first-run wizard flow
+- **Q2**: Implement GPU auto-detection
+- **Q3**: Create minimal "Quick Start" view
 
 ---
 
 ## Milestone 4 — Production Ready (Planned)
+
 - macOS testing + fixes
 - Professional installers + updater
 - Autostart
@@ -265,6 +349,23 @@ Goal: replace “Claude fallback” with **AI Fallback** that supports multiple 
 ---
 
 ## Technical Debt / Risks
-- Split monolithic `lib.rs` into modules
+
 - Improve resampling quality (libsamplerate)
 - Add tests for audio + transcription pipeline
+- `postprocessing` panel missing from CSS grid-area assignments and `initPanelState()` list
+- `wireEvents()` at 810 lines could be split per-panel
+- `renderSettings()` at 160 lines could be split per-panel
+
+---
+
+## Version Release Criteria
+
+Each version is considered **release-ready** when:
+
+- All tasks in final block completed
+- End-to-end integration test passes
+- Code reviewed and merged to main
+- Changelog updated
+- Release notes drafted
+
+For detailed technical roadmap, see [.claude/ROADMAP.md](.claude/ROADMAP.md)

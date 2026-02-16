@@ -2,22 +2,43 @@
 
 Last updated: 2026-02-16
 
-## Summary
+## Executive Summary
 
-- **Current version**: 0.6.0
-- **Current phase**: VibeVoice-ASR Integration Complete
-- **Milestones 0-3**: Complete
-- **v0.4.0**: Complete (Post-processing pipeline)
-- **v0.4.1**: Complete (Security hardening, CUDA distribution)
-- **v0.5.0**: Complete (Tab UI, chapters, topics, export, live dump)
-- **v0.6.0**: Complete (VibeVoice-ASR, speaker diarization, OPUS encoding, parallel mode)
-- Input capture supports PTT + Voice Activation with separate status/activity indicators.
-- Output transcription uses WASAPI loopback with transcribe hotkey and dedicated history.
-- Conversation view merges input/output transcripts into a time-ordered stream.
-- Voice Activation thresholds are controlled in dB (-60..0) and persisted as linear values.
-- Transcribe enablement is session-only and starts deactivated on each app launch.
-- whisper.cpp remains primary (GPU-first, CPU fallback); VibeVoice-ASR available for speaker diarization.
-- Model manager uses a single list with active-first ordering and internal Delete vs external Remove.
+- **Current version**: 0.6.0 (RELEASED)
+- **Current phase**: v0.7.0 Planning Complete (Block F ✅)
+- **Next phase**: Block G Implementation (Opus) — Ready to start
+- **Project scope**: Multi-provider AI-enhanced desktop dictation with speaker diarization
+- **Status**: Production-ready. v0.7.0 planning complete with full architecture documentation
+
+## Version Highlights
+
+### v0.6.0 (RELEASED 2026-02-16)
+- ✅ VibeVoice-ASR 7B speaker diarization
+- ✅ Parallel transcription mode (Whisper + VibeVoice simultaneously)
+- ✅ OPUS audio encoding (75% size reduction vs WAV)
+- ✅ Quality presets (OPUS bitrate + VibeVoice precision)
+- ✅ PyInstaller packaging (standalone sidecar exe)
+- ✅ Professional app icon (Cyan/Gold Yin-Yang design)
+- ✅ 22 E2E tests with full workflow coverage
+- Dual installers: CUDA Edition (92MB) + Vulkan Edition (9.4MB)
+
+### v0.7.0 (Planning Complete — Ready for Implementation)
+- 📋 **Block F (Haiku)**: UX decisions + architecture design ✅ COMPLETE
+  - Decision: "AI Fallback" terminology
+  - Decision: Post-Processing panel expander location
+  - Decision: Execution sequence (Local Rules → AI Fallback)
+  - Full architecture documentation (400+ lines)
+  - Implementation plan for Blocks G & H
+- 🔵 **Block G (Opus)**: Multi-provider architecture ready to start
+  - Task 31: Provider trait + factory design
+  - Task 36: Settings migration (v0.6.0 → v0.7.0)
+  - Task 37: Configuration UI components
+- 🔵 **Block H (Sonnet)**: Provider implementations queued
+  - Task 32: OpenAI client (GPT-4o, GPT-3.5-turbo)
+  - Task 33: Claude client (Claude 3.5 Sonnet, Opus)
+  - Task 34: Gemini client (Gemini 2.0 Pro)
+  - Task 35: Custom prompt strategy
+  - Task 38: E2E tests (all providers)
 
 ## Working today
 

@@ -8,44 +8,59 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 
 ## Current Status
 
-- **Milestone 0**: Complete (tech stack locked, whisper.cpp validated)
-- **Milestone 1**: Complete (PTT capture, transcription, paste)
-- **Milestone 2**: Complete (Foundation & Critical UX)
-- **Milestone 3**: Complete (Window persistence, Activity feedback, Model hot swap, Capture enhancements, Post-processing pipeline)
-- **v0.4.0**: Complete (Post-processing pipeline, custom vocabulary, rule-based enhancements)
-- **v0.4.1**: Complete (Security hardening, CUDA distribution, Hotkey UX)
-- **v0.5.0 Block A**: Complete (Export features, schema design, documentation)
-- **v0.5.0 Block B**: Complete (Tab-Based UI Refactor, Chapter UI, Topic detection, live dump, naming cleanup)
-- **v0.6.0 Block C**: Complete (VibeVoice research, sidecar structure, OPUS design)
-- **v0.6.0 Block D**: Complete (Integration layer, model loading, sidecar process management, auto-processing)
-- **v0.6.0 Block E (Sonnet)**: Complete (Speaker UI, Analyse button, quality presets, model monitoring)
-- **v0.6.0 Block E (Opus)**: Complete (Parallel mode, PyInstaller packaging, E2E tests)
+### Completed Versions
 
-**Recent progress (2026-02-16)**
+- **Milestone 0**: ✅ Complete (tech stack locked, whisper.cpp validated)
+- **Milestone 1**: ✅ Complete (PTT capture, transcription, paste)
+- **Milestone 2**: ✅ Complete (Foundation & Critical UX)
+- **Milestone 3**: ✅ Complete (Window persistence, Activity feedback, Model hot swap, Capture enhancements, Post-processing pipeline)
+- **v0.4.0**: ✅ Complete (Post-processing pipeline, custom vocabulary, rule-based enhancements)
+- **v0.4.1**: ✅ Complete (Security hardening, CUDA distribution, Hotkey UX)
+- **v0.5.0 Block A**: ✅ Complete (Export features, schema design, documentation)
+- **v0.5.0 Block B**: ✅ Complete (Tab-Based UI Refactor, Chapter UI, Topic detection, live dump, naming cleanup)
+- **v0.6.0 Block C**: ✅ Complete (VibeVoice research, sidecar structure, OPUS design)
+- **v0.6.0 Block D**: ✅ Complete (Integration layer, model loading, sidecar process management, auto-processing)
+- **v0.6.0 Block E**: ✅ Complete (Speaker UI, Analyse button, quality presets, parallel mode, PyInstaller, E2E tests)
 
-- **v0.6.0 Released** — VibeVoice-ASR integration complete
-- **Block E Sonnet Sprint Complete**:
-  - E19: Speaker-diarized transcript UI (color-coded segments, editable labels, export)
-  - E24: Analyse button with file picker, auto-save OPUS recordings, progress indicator
-  - E26: Quality preset controls (OPUS bitrate 32/64/96/128 kbps, VibeVoice FP16/INT8)
-  - E28: Model monitoring with weekly update checks and toast notifications
-- **Block E Opus Sprint Complete**:
-  - E27: Parallel mode (Whisper + VibeVoice simultaneous, system audio auto-save 60s flush)
-  - E29: PyInstaller packaging (standalone sidecar exe, auto-detect bundled vs Python fallback)
-  - E30: 22 E2E tests covering full workflow (diarization, analysis, quality presets, parallel mode)
-- **OPUS Audio Pipeline**: FFmpeg-based WAV→OPUS encoding with configurable bitrate
-- **Recording Auto-Save**: Mic recordings >10s auto-saved, system audio flushed every 60s
+### Latest Release: v0.6.0 (2026-02-16)
 
-### Next Priorities (v0.7.0 — AI Fallback Overhaul)
+- ✅ VibeVoice-ASR 7B speaker diarization with color-coded segments
+- ✅ Parallel transcription mode (Whisper + VibeVoice simultaneously, opt-in for 16GB+ VRAM)
+- ✅ OPUS audio encoding with configurable bitrate (32/64/96/128 kbps)
+- ✅ Quality presets (VibeVoice precision: FP16/INT8)
+- ✅ Analyse button with file picker and auto-save recordings
+- ✅ PyInstaller packaging (standalone sidecar exe, no Python dependencies for users)
+- ✅ System audio auto-save with 60-second flush intervals
+- ✅ Model monitoring with weekly VibeVoice update checks
+- ✅ 22 E2E tests covering full diarization workflow
+- ✅ Professional app icon (Cyan/Gold Yin-Yang branding)
+- 📦 Dual installers: CUDA Edition (92MB) + Vulkan Edition (9.4MB)
 
-**Upcoming Tasks:**
+### Next: v0.7.0 (AI Fallback Overhaul) — Planning Complete ✅
 
-1. **Task 39: Requirements & UX Decision** — AI Fallback rename, config location
-2. **Task 31: Multi-Provider Architecture** — Design for Claude, OpenAI, Gemini
-3. **Tasks 36-37: Provider Data Model + Config UI** — Settings migration, API key management
-4. **Tasks 32-34: Provider Implementations** — OpenAI, Claude, Gemini integrations
-5. **Task 35: User-Editable Prompts** — Custom post-process prompts per provider
-6. **Task 38: E2E Tests** — Full workflow across all providers
+**Block F (Haiku) — COMPLETE**:
+1. ✅ **Task 39**: UX decisions finalized
+   - Terminology: "AI Fallback" (neutral, describes optional refinement)
+   - Location: Post-Processing panel expander
+   - Sequence: Raw → Local Rules → AI Fallback → Final
+2. ✅ **Task 39a**: Architecture documented (V0.7.0_ARCHITECTURE.md — 400+ lines)
+   - Provider trait pattern + factory
+   - Tauri command design
+   - Error handling strategy
+3. ✅ **Task 39b**: Design decisions documented (DEC-023, DEC-024, DEC-025 in DECISIONS.md)
+4. ✅ **Task 39c**: Implementation plan for Blocks G & H
+
+**Block G (Opus) — Ready to Start**:
+1. **Task 31**: Multi-provider architecture (provider trait, factory, models)
+2. **Task 36**: Settings migration (v0.6.0 cloud_fallback → v0.7.0 ai_fallback)
+3. **Task 37**: Configuration UI (API key setup, provider selector, model dropdown)
+
+**Block H (Sonnet) — Queued**:
+1. **Task 32**: OpenAI client (ChatGPT/GPT-4o integration)
+2. **Task 33**: Claude client (Anthropic integration)
+3. **Task 34**: Gemini client (Google integration)
+4. **Task 35**: Custom prompt strategy (user-editable with defaults)
+5. **Task 38**: E2E tests (all providers, error scenarios)
 
 ---
 

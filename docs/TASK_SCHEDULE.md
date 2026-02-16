@@ -137,15 +137,23 @@ Instead of context-switching between models for each task, tasks are organized i
 
 ## v0.7.0 Schedule: AI Fallback Overhaul
 
-**Timeline**: 4 weeks | **Model Switches**: 1 (Haiku + Sonnet in sequence)
+**Timeline**: 5 weeks (1 planning + 4 implementation) | **Model Switches**: 2 (Haiku → Opus → Sonnet)
 
-### Block F: Haiku Quick
+### Block F: Haiku Quick ✅ COMPLETE
 
-**Duration**: 0.5 weeks | **Model**: Claude Haiku
+**Duration**: 0.5 weeks | **Model**: Claude Haiku | **Status**: Planning Complete
 
-| Task | Name | Complexity | Dependencies | Description |
-| --- | --- | --- | --- | --- |
-| 39 | Requirements and UX decision (AI Fallback rename) | Low | None | Decide UI terminology, config location, when post-processing runs. |
+| Task | Name | Status | Description |
+| --- | --- | --- | --- |
+| 39 | Requirements and UX decision (AI Fallback rename) | DONE | ✅ Terminology: "AI Fallback" (DEC-023) |
+| 39a | Settings location decision | DONE | ✅ Expander in Post-Processing panel (DEC-024) |
+| 39b | Execution sequence decision | DONE | ✅ Local rules → AI Fallback pipeline (DEC-025) |
+| 39c | V0.7.0 Planning document | DONE | ✅ V0.7.0_PLAN.md with full architecture overview |
+
+**Deliverables**:
+- V0.7.0_PLAN.md: 280 lines, full planning doc with provider architecture, settings schema, UI mockups
+- DECISIONS.md: 3 new decisions (DEC-023, DEC-024, DEC-025)
+- Design decisions documented: terminology, settings layout, execution flow
 
 ### Block G: Opus Sprint
 

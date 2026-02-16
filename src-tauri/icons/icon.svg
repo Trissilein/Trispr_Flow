@@ -1,0 +1,43 @@
+<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <!-- Define gradients for depth -->
+  <defs>
+    <radialGradient id="cyanGradient" cx="35%" cy="35%">
+      <stop offset="0%" style="stop-color:#2DD4E4;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0891B2;stop-opacity:1" />
+    </radialGradient>
+    <radialGradient id="goldGradient" cx="65%" cy="35%">
+      <stop offset="0%" style="stop-color:#FBBF24;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#D97706;stop-opacity:1" />
+    </radialGradient>
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="256" height="256" fill="#FFFFFF"/>
+
+  <!-- Outer ring (Cyan) - top-left arc -->
+  <path d="M 128 20 A 108 108 0 0 1 200 56 A 75 75 0 0 0 128 53 A 75 75 0 0 0 128 203 A 108 108 0 0 1 56 200 A 108 108 0 0 1 128 20 Z" 
+        fill="url(#cyanGradient)" filter="url(#shadow)"/>
+
+  <!-- Outer ring (Gold) - bottom-right arc -->
+  <path d="M 128 53 A 75 75 0 0 1 200 56 A 108 108 0 0 0 236 128 A 108 108 0 0 0 200 200 A 75 75 0 0 1 128 203 A 75 75 0 0 1 128 53 Z" 
+        fill="url(#goldGradient)" filter="url(#shadow)"/>
+
+  <!-- Inner white circle with subtle border -->
+  <circle cx="128" cy="128" r="70" fill="#FFFFFF" stroke="#F0F0F0" stroke-width="0.5"/>
+
+  <!-- Cyan dot (upper) -->
+  <circle cx="105" cy="98" r="20" fill="#17BEDB" filter="url(#shadow)">
+    <animate attributeName="r" values="20;22;20" dur="3s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Gold dot (lower) -->
+  <circle cx="151" cy="158" r="20" fill="#FFC107" filter="url(#shadow)">
+    <animate attributeName="r" values="20;22;20" dur="3s" repeatCount="indefinite" begin="0.5s"/>
+  </circle>
+
+  <!-- Subtle highlight for depth on top-left -->
+  <ellipse cx="100" cy="90" rx="45" ry="50" fill="#FFFFFF" opacity="0.4"/>
+</svg>

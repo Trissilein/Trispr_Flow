@@ -136,6 +136,27 @@ Last updated: 2026-02-16
 - Context: Running both models simultaneously requires significant VRAM (up to 20 GB with FP16). Most users have 8-16 GB VRAM. Sequential mode is safer and sufficient for most workflows.
 - Why: Prevents OOM crashes on hardware with limited VRAM. Power users with 16+ GB can opt in.
 
+### DEC-023 AI Fallback Terminology (v0.7.0 - Block F)
+
+- Status: `accepted`
+- Decision: Use "AI Fallback" as terminology for the multi-provider AI refinement system (not "AI Enhancement" or "Cloud Fallback")
+- Context: Replaces single-provider "Cloud Fallback" with support for Claude, OpenAI, Gemini. Terminology should be neutral and accurately describe the behavior.
+- Why: "Fallback" accurately describes behavior (optional refinement layer), is neutral to provider, aligns with "Post-Processing" terminology, and is a proven pattern in transcription tools.
+
+### DEC-024 AI Fallback Settings Location (v0.7.0 - Block F)
+
+- Status: `accepted`
+- Decision: Place AI Fallback configuration in an expander within the Post-Processing panel (not a separate tab).
+- Context: Post-Processing (local rules) runs first, AI Fallback runs second. Logical grouping reduces settings clutter.
+- Why: Clear data flow (rules → refinement), reduces tab complexity, improves discoverability vs. buried in new tab, single panel for text enhancement workflow.
+
+### DEC-025 AI Fallback Execution Sequence (v0.7.0 - Block F)
+
+- Status: `accepted`
+- Decision: Pipeline execution order: Raw Transcript → Local Post-Processing → AI Fallback (optional) → Final Output
+- Context: Local rules are fast/offline, AI refinement uses polished base text, both can be toggled independently.
+- Why: Respects local-first philosophy (offline fallback works), AI sees better quality input (higher output quality), clear mental model for users.
+
 ## Open Decisions
 
 ### DEC-011 Optional backend scope

@@ -363,6 +363,94 @@ Goal: replace "Claude fallback" with **AI Fallback** that supports multiple prov
 
 ---
 
+## Planning Queue — Capture UI Overhaul (v0.7.0+)
+
+**Priority: HIGH** — Identified 2026-02-17 from real usage
+
+### Problem Statement
+
+The Capture panels (Input + System Audio) are inconsistent in how they handle modes, toggles, and state. Two concrete UX failures:
+
+#### 1. Redundant "Enable System Audio Transcription" Toggle
+
+**Current**: A global toggle at the top of System Audio Capture does the same thing as the transcription hotkey. Both start/stop transcription. Users don't know which one is "in charge."
+
+**Impact**: Confusing. Users toggle it on, then press the hotkey, now they're unsure of the state.
+
+**Fix**: Remove the toggle. The hotkey is the canonical control. A clear status indicator (IDLE / MONITORING / TRANSCRIBING) replaces the toggle. A "Click to activate" hint teaches new users about the hotkey.
+
+---
+
+#### 2. Capture Mode Inconsistency (Input vs. System Audio)
+
+**Current — Capture Input:**
+- Dropdown: "Push to Talk" / "Toggle to Transcribe"
+- Separate "Voice Activation" subsection with threshold slider
+
+**Current — System Audio:**
+- Separate checkboxes: "Use Voice Activation" + "Transcribe Hotkey"
+- Completely different UX pattern for the same concepts
+
+**Impact**: Users switching between tabs get confused. No clear mental model.
+
+**Fix**: Align both panels to the same structure:
+- **Mode selector** (Radio or Dropdown): "Hotkey / Toggle" vs "Always On (VAD-gated)"
+- **VAD threshold** appears only when "Always On" is selected (progressive disclosure)
+- Same visual language, same component patterns
+
+---
+
+#### 3. System Audio Recording Cut-Off Under 8 Seconds
+
+**Current**: Only saves audio chunks ≥ 8s. If a speaker pauses frequently (typical meeting), most audio is silently discarded. Users press "Analyse" and get nothing.
+
+**Impact**: Core VibeVoice feature is essentially broken for real meetings.
+
+**Fix** (Backend + UX):
+- **Continuous buffer**: Always accumulate system audio into a rolling buffer regardless of silence
+- **VAD as gate only**: Use VAD threshold to decide what to *transcribe* (real-time display), but always keep raw audio
+- **Silence stripping on flush**: When saving for analysis, strip silence (< threshold) before writing OPUS — so 10min of audio with 50% silence becomes a tight 5min OPUS file
+- **Analysis-ready indicator**: Visual badge on the Analyse button showing "~4m recorded" when buffer exceeds minimum useful duration (e.g., 30s of non-silence)
+- **Auto-flush on meaningful content**: Flush to file when accumulated non-silence exceeds 30s (not 60s of total time)
+
+---
+
+### Tasks
+
+**UX-1: Unify Capture Mode Controls** (Sonnet)
+- Redesign both capture panels to use consistent mode selector + VAD subsection
+- Remove redundant System Audio global toggle
+- Add status indicator (IDLE / MONITORING / TRANSCRIBING) to System Audio panel
+- Keep settings backward compatible
+
+**UX-2: Continuous System Audio Buffer** (Opus)
+- Decouple transcription buffer (short chunks for Whisper) from recording buffer (continuous accumulation)
+- Implement silence stripping using existing VAD threshold before OPUS flush
+- Lower flush trigger: 30s of non-silence content (not 60s of total audio)
+- Preserve existing mic recording behavior (unchanged)
+
+**UX-3: Analysis-Ready Indicator** (Sonnet)
+- Track accumulated non-silence duration in recording buffer
+- Show badge on Analyse button: "~2m ready" / "~8m ready"
+- Update in real time as audio accumulates
+- Clear when recording is flushed to file
+
+**UX-4: Settings Cleanup** (Haiku)
+- Audit all Capture settings for dead/redundant toggles
+- Consolidate System Audio settings: remove `enable_transcription` toggle, keep VAD threshold, keep hotkey config
+- Update settings migration if fields are removed
+
+---
+
+### Success Criteria
+
+- User can open System Audio panel and immediately understand how to start monitoring (one hotkey, clear status)
+- Input and System Audio panels follow the same control pattern
+- Meeting recordings (speakers with natural pauses) consistently produce analysable OPUS files
+- Analyse button shows readiness without user having to guess
+
+---
+
 ## Technical Debt / Risks
 
 - Improve resampling quality (libsamplerate)

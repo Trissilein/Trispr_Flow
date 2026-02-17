@@ -14,6 +14,12 @@ edition = "2021"
 name = "trispr_flow_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "trispr-flow"
+path = "src/main.rs"
+test = false
+bench = false
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

@@ -4,12 +4,11 @@ Provides speaker-diarized transcription API for Trispr Flow
 """
 
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -233,7 +232,7 @@ async def transcribe_audio(request: TranscribeByPathRequest):
                 duration=duration,
                 language=result.get("metadata", {}).get("language", request.language),
                 processing_time=processing_time,
-                model_precision=request.precision,
+                model_precision=result.get("metadata", {}).get("model_precision", request.precision),
                 num_speakers=len(speakers),
             )
         )

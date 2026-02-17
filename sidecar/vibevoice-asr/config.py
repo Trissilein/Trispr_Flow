@@ -15,7 +15,7 @@ PrecisionMode = Literal["fp16", "int8"]
 DEFAULT_PRECISION: PrecisionMode = "fp16"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
-DEFAULT_MODEL_NAME = "microsoft/vibevoice-asr-7b"
+DEFAULT_MODEL_NAME = "microsoft/VibeVoice-ASR"
 
 # Environment variable overrides
 PRECISION = os.getenv("VIBEVOICE_PRECISION", DEFAULT_PRECISION)

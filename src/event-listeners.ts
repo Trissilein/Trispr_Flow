@@ -273,64 +273,49 @@ export function wireEvents() {
   dom.analyseButton?.addEventListener("click", async () => {
     if (!dom.analyseButton || !dom.analyseButtonText || !dom.analyseSpinner) return;
 
-    // Show loading state
+    // Always prompt file picker — never silently reuse last recording
+    let audioPath: string | null = null;
+    try {
+      const recordingsDir = await invoke<string>("get_recordings_directory");
+      const selected = await openDialog({
+        title: "Select Audio File for Analysis",
+        filters: [{
+          name: "Audio Files",
+          extensions: ["opus", "wav", "mp3", "m4a"]
+        }],
+        multiple: false,
+        directory: false,
+        defaultPath: recordingsDir
+      });
+
+      if (!selected) return; // User cancelled — don't enter loading state
+      audioPath = selected as string;
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "File selection failed",
+        message: String(err),
+        duration: 4000,
+      });
+      return;
+    }
+
+    // Show loading state only after file is selected
     dom.analyseButtonText.style.display = "none";
     dom.analyseSpinner.style.display = "inline-block";
     dom.analyseButton.disabled = true;
 
     try {
-      // Get current history tab to determine audio source
-      const activeTab = localStorage.getItem("trispr-history-tab") || "mic";
-      const source = activeTab === "system" ? "output" : "mic";
-
-      // Get last recording path
-      let audioPath = await invoke<string | null>("get_last_recording_path", { source });
-
-      // If no auto-saved recording, prompt user to select from recordings folder
-      if (!audioPath) {
-        try {
-          // Get recordings directory path
-          const recordingsDir = await invoke<string>("get_recordings_directory");
-
-          showToast({
-            type: "info",
-            title: "Select recording",
-            message: "Please select an OPUS or WAV file to analyze.",
-            duration: 4000,
-          });
-
-          // Open file picker starting in recordings directory
-          const selected = await openDialog({
-            title: "Select Audio File for Analysis",
-            filters: [{
-              name: "Audio Files",
-              extensions: ["opus", "wav", "mp3", "m4a"]
-            }],
-            multiple: false,
-            directory: false,
-            defaultPath: recordingsDir
-          });
-
-          if (!selected) {
-            return; // User cancelled
-          }
-
-          audioPath = selected as string;
-        } catch (err) {
-          showToast({
-            type: "error",
-            title: "File selection failed",
-            message: String(err),
-            duration: 4000,
-          });
-          return;
-        }
-      }
-
       const isParallel = settings?.parallel_mode ?? false;
 
       if (isParallel) {
         // Parallel mode: run both Whisper and VibeVoice simultaneously
+        showToast({
+          type: "info",
+          title: "Starting VibeVoice...",
+          message: "Loading model — this may take up to 30s on first run.",
+          duration: 6000,
+        });
         await invoke("start_sidecar");
         showToast({
           type: "info",
@@ -376,15 +361,13 @@ export function wireEvents() {
         });
       } else {
         // Standard mode: VibeVoice sidecar only
-        await invoke("start_sidecar");
-
         showToast({
           type: "info",
-          title: "Starting analysis",
-          message: "Loading VibeVoice-ASR model...",
-          duration: 3000,
+          title: "Starting VibeVoice...",
+          message: "Loading model — this may take up to 30s on first run.",
+          duration: 6000,
         });
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await invoke("start_sidecar");
 
         const result = await invoke<any>("sidecar_transcribe", {
           audio_path: audioPath,
@@ -416,14 +399,19 @@ export function wireEvents() {
       }
     } catch (error) {
       console.error("Analysis failed:", error);
+      const msg = String(error);
+      // Give a more actionable message for sidecar startup failures
+      const isSidecarError = msg.includes("Sidecar") || msg.includes("sidecar") || msg.includes("pip");
       showToast({
         type: "error",
         title: "Analysis failed",
-        message: String(error),
-        duration: 5000,
+        message: isSidecarError
+          ? "VibeVoice could not start. Run: pip install -r sidecar/vibevoice-asr/requirements.txt"
+          : msg,
+        duration: 8000,
       });
     } finally {
-      // Reset button state
+      // Always reset button — no matter what went wrong
       if (dom.analyseButtonText && dom.analyseSpinner && dom.analyseButton) {
         dom.analyseButtonText.style.display = "inline";
         dom.analyseSpinner.style.display = "none";

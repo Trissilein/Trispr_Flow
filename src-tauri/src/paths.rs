@@ -20,6 +20,16 @@ pub(crate) fn resolve_data_path(app: &AppHandle, filename: &str) -> PathBuf {
   base.join(filename)
 }
 
+pub(crate) fn resolve_recordings_dir(app: &AppHandle) -> PathBuf {
+  let base = app
+    .path()
+    .app_data_dir()
+    .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+  let dir = base.join("recordings");
+  let _ = fs::create_dir_all(&dir);
+  dir
+}
+
 pub(crate) fn resolve_models_dir(app: &AppHandle) -> PathBuf {
   if let Ok(dir) = std::env::var("TRISPR_WHISPER_MODEL_DIR") {
     let trimmed = dir.trim();

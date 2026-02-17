@@ -11,6 +11,7 @@ mod opus;
 mod overlay;
 mod paths;
 mod postprocessing;
+mod session_manager;
 mod sidecar;
 mod sidecar_process;
 mod state;
@@ -1748,6 +1749,24 @@ pub fn run() {
             });
 
             let _ = app.emit("transcribe:state", "idle");
+
+            // Initialise session manager with the recordings directory
+            {
+                let recordings_dir = paths::resolve_recordings_dir(app.handle());
+                session_manager::init(recordings_dir.clone());
+
+                // Surface any incomplete sessions from a previous crash as a warning
+                let incomplete = session_manager::scan_incomplete(&recordings_dir);
+                if !incomplete.is_empty() {
+                    warn!(
+                        "{} incomplete audio session(s) found from a previous run: {:?}",
+                        incomplete.len(),
+                        incomplete
+                    );
+                    // Emit so the frontend can show a recovery toast (future work)
+                    let _ = app.emit("session:recovery-available", incomplete.len());
+                }
+            }
 
             if let Err(err) = register_hotkeys(app.handle(), &settings) {
                 eprintln!("⚠ Failed to register hotkeys: {}", err);

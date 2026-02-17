@@ -14,7 +14,7 @@ use crate::constants::TRANSCRIBE_IDLE_METER_MS;
 use crate::errors::AppError;
 use crate::models::resolve_model_path;
 use crate::overlay::{update_overlay_state, OverlayState};
-use crate::paths::resolve_whisper_cli_path;
+use crate::paths::{resolve_recordings_dir, resolve_whisper_cli_path};
 use crate::postprocessing::process_transcript;
 use crate::state::{push_transcribe_entry_inner, AppState, Settings};
 use serde::{Deserialize, Serialize};
@@ -481,31 +481,26 @@ const HALLUCINATION_PHRASES: &[&str] = &[
   "huh",
 ];
 
-/// Auto-save accumulated system audio as OPUS
-fn flush_system_audio_buffer(app: &AppHandle, buffer: &mut Vec<i16>) {
+/// Flush accumulated system audio as a session chunk via SessionManager.
+/// Replaces the old per-flush file approach: chunks go to a temp session dir
+/// and are merged into a single session.opus when the session ends.
+fn flush_system_audio_to_session(buffer: &mut Vec<i16>) {
   if buffer.is_empty() {
     return;
   }
   let duration_ms = buffer.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64;
   if duration_ms < 10_000 {
-    // Don't save recordings shorter than 10 seconds
+    // Don't save chunks shorter than 10 seconds
     buffer.clear();
     return;
   }
   info!(
-    "Auto-saving system audio: {} samples ({} ms)",
+    "Flushing system audio chunk: {} samples ({} ms)",
     buffer.len(),
     duration_ms
   );
-  match crate::save_recording_opus(app, buffer, "output", None) {
-    Ok(opus_path) => {
-      let state = app.state::<AppState>();
-      *state.last_system_recording_path.lock().unwrap() = Some(opus_path);
-      info!("System audio auto-saved successfully");
-    }
-    Err(e) => {
-      error!("Failed to auto-save system audio: {}", e);
-    }
+  if let Err(e) = crate::session_manager::flush_chunk(buffer, "output") {
+    error!("Failed to flush system audio chunk: {}", e);
   }
   buffer.clear();
 }
@@ -517,22 +512,28 @@ fn transcribe_worker(
   transcribing: Arc<AtomicBool>,
 ) {
   let min_samples = (TARGET_SAMPLE_RATE as u64 * MIN_AUDIO_MS / 1000) as usize;
-  // System audio auto-save buffer (accumulates chunks for OPUS saving)
+  // System audio auto-save buffer (accumulates chunks before flushing to session)
   let auto_save = settings.auto_save_system_audio && settings.opus_enabled;
-  let mut save_buffer: Vec<i16> = if auto_save { Vec::new() } else { Vec::new() };
-  // Flush every 60 seconds of audio
+  let mut save_buffer: Vec<i16> = Vec::new();
+  // Flush every 60 seconds of audio (960_000 samples at 16kHz)
   let flush_threshold = TARGET_SAMPLE_RATE as usize * 60;
+
+  // Initialise SessionManager with the recordings directory for this session
+  if auto_save {
+    let recordings_dir = resolve_recordings_dir(&app);
+    crate::session_manager::init(recordings_dir);
+  }
 
   while let Some(chunk) = queue.pop() {
     if chunk.len() < min_samples {
       continue;
     }
 
-    // Accumulate chunks for system audio auto-save
+    // Accumulate chunks for system audio session
     if auto_save {
       save_buffer.extend_from_slice(&chunk);
       if save_buffer.len() >= flush_threshold {
-        flush_system_audio_buffer(&app, &mut save_buffer);
+        flush_system_audio_to_session(&mut save_buffer);
       }
     }
 
@@ -581,9 +582,18 @@ fn transcribe_worker(
     }
   }
 
-  // Flush remaining audio on worker exit
+  // Flush remaining buffer and finalize the session on worker exit
   if auto_save {
-    flush_system_audio_buffer(&app, &mut save_buffer);
+    flush_system_audio_to_session(&mut save_buffer);
+    match crate::session_manager::finalize() {
+      Ok(Some(path)) => {
+        let state = app.state::<AppState>();
+        *state.last_system_recording_path.lock().unwrap() = Some(path.to_string_lossy().to_string());
+        info!("System audio session finalized");
+      }
+      Ok(None) => info!("System audio session ended with no chunks"),
+      Err(e) => error!("Failed to finalize system audio session: {}", e),
+    }
   }
 }
 

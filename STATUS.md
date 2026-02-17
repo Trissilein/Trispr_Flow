@@ -1,6 +1,6 @@
 # Trispr Flow - Status
 
-Last updated: 2026-02-16
+Last updated: 2026-02-17
 
 ## Executive Summary
 
@@ -34,8 +34,14 @@ Last updated: 2026-02-16
 - ✅ **Sidecar path resolution**: Fixed dev vs installed path detection
 - ✅ **Sidecar stderr logging**: Engine errors now surfaced in app logs and error messages
 - ✅ **Analyse button**: Always opens file picker — never silently reuses last file
+- ✅ **Audio consolidation (Phase 1-2)**: Session-based chunk aggregation for system audio
+  - SessionManager singleton for crash-safe temporary chunk accumulation
+  - FFmpeg concat merge at session end → single `session.opus` + `manifest.json`
+  - Reduces file count: 60 files/hour → 1 file per session
+  - Crash recovery: incomplete sessions detected on app start
+  - Settings ready: session idle timeout, PTT grouping config (Phase 2)
 
-### v0.7.0 (Planning Complete — Ready for Implementation)
+### v0.7.0 (Planning Complete — Implementation Starting)
 
 - 📋 **Block F (Haiku)**: UX decisions + architecture design ✅ COMPLETE
   - Decision: "AI Fallback" terminology

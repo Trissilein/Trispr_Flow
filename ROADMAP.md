@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-16 (post-release fixes)
+Last updated: 2026-02-17 (audio consolidation Phase 1-2)
 
 This roadmap tracks the current focus: getting core capture + transcription stable and tightening UX before expanding features.
 
@@ -32,6 +32,10 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 - ✅ Analyse button with file picker — always prompts, never silently reuses last file
 - ✅ PyInstaller packaging (standalone sidecar exe, no Python dependencies for users)
 - ✅ System audio auto-save with 60-second flush intervals
+- ✅ **Audio consolidation (v0.7.0 In Progress)**:
+  - Phase 1: SessionManager for crash-safe chunk aggregation + FFmpeg merge
+  - Phase 2: Settings (session timeout, PTT grouping) + grouping API
+  - Result: 60 files/hour → 1 session.opus + manifest.json (UX-2 partial)
 - ✅ Model monitoring with weekly VibeVoice update checks
 - ✅ 22 E2E tests covering full Voice Analysis workflow
 - ✅ Professional app icon (Cyan/Gold Yin-Yang branding)

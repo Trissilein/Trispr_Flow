@@ -1,9 +1,10 @@
 // Sidecar Process Manager
 // Handles spawning, stopping, and health-checking the Python FastAPI process
 
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 
@@ -24,6 +25,8 @@ pub struct SidecarProcess {
   client: SidecarClient,
   python_path: Option<PathBuf>,
   sidecar_dir: Option<PathBuf>,
+  /// Last stderr lines from sidecar (for error reporting)
+  stderr_log: Arc<Mutex<Vec<String>>>,
 }
 
 impl SidecarProcess {
@@ -33,6 +36,7 @@ impl SidecarProcess {
       client: SidecarClient::new(),
       python_path: None,
       sidecar_dir: None,
+      stderr_log: Arc::new(Mutex::new(Vec::new())),
     }
   }
 
@@ -112,6 +116,25 @@ impl SidecarProcess {
     };
 
     info!("Sidecar process started (PID: {})", child.id());
+
+    // Spawn background thread to read and log sidecar stderr
+    let mut child = child;
+    if let Some(stderr) = child.stderr.take() {
+      let log = Arc::clone(&self.stderr_log);
+      std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+          error!("[sidecar] {}", line);
+          let mut log = log.lock().unwrap();
+          log.push(line);
+          // Keep last 50 lines
+          if log.len() > 50 {
+            log.remove(0);
+          }
+        }
+      });
+    }
+
     self.child = Some(child);
 
     // Wait for sidecar to become ready
@@ -176,7 +199,25 @@ impl SidecarProcess {
         );
         Ok(())
       }
-      Err(e) => Err(format!("Sidecar failed to start: {}", e)),
+      Err(e) => {
+        // Collect last stderr lines to surface the real error
+        let log = self.stderr_log.lock().unwrap();
+        let last_lines: Vec<&str> = log.iter().rev().take(10).rev().map(|s| s.as_str()).collect();
+        if last_lines.is_empty() {
+          Err(format!(
+            "Sidecar failed to start: {}. \
+            Make sure Python dependencies are installed: \
+            cd sidecar/vibevoice-asr && pip install -r requirements.txt",
+            e
+          ))
+        } else {
+          Err(format!(
+            "Sidecar failed to start: {}.\nPython output:\n{}",
+            e,
+            last_lines.join("\n")
+          ))
+        }
+      }
     }
   }
 

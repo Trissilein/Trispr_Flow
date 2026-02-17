@@ -982,10 +982,19 @@ pub(crate) fn quantize_model(
   let quantize_path = resolve_quantize_path(&app)
     .ok_or_else(|| "quantize.exe not found. Install/bundle it or set TRISPR_WHISPER_QUANTIZE.".to_string())?;
 
-  let status = std::process::Command::new(quantize_path)
+  let mut quantize_cmd = std::process::Command::new(quantize_path);
+  quantize_cmd
     .arg(&input_path)
     .arg(&output_path)
-    .arg(&quant_type)
+    .arg(&quant_type);
+
+  #[cfg(target_os = "windows")]
+  {
+    use std::os::windows::process::CommandExt;
+    quantize_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+  }
+
+  let status = quantize_cmd
     .status()
     .map_err(|e| format!("Failed to launch quantize: {e}"))?;
 

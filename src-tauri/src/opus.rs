@@ -117,6 +117,13 @@ pub fn encode_wav_to_opus(
   // Build FFmpeg command
   let mut cmd = Command::new(&ffmpeg_path);
 
+  // Hide console window on Windows (prevents focus steal during paste)
+  #[cfg(target_os = "windows")]
+  {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+  }
+
   cmd
     .arg("-i")
     .arg(input_path)
@@ -201,8 +208,16 @@ pub fn check_ffmpeg_available() -> bool {
 pub fn get_ffmpeg_version() -> Result<String, String> {
   let ffmpeg_path = find_ffmpeg()?;
 
-  let output = Command::new(&ffmpeg_path)
-    .arg("-version")
+  let mut version_cmd = Command::new(&ffmpeg_path);
+  version_cmd.arg("-version");
+
+  #[cfg(target_os = "windows")]
+  {
+    use std::os::windows::process::CommandExt;
+    version_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+  }
+
+  let output = version_cmd
     .output()
     .map_err(|e| format!("Failed to run FFmpeg: {}", e))?;
 

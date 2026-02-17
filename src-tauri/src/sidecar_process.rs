@@ -69,11 +69,16 @@ impl SidecarProcess {
     let child = if bundled_exe.exists() {
       // Use bundled executable
       info!("Starting bundled sidecar: {:?}", bundled_exe);
-      Command::new(&bundled_exe)
-        .current_dir(&sidecar_dir)
+      let mut cmd = Command::new(&bundled_exe);
+      cmd.current_dir(&sidecar_dir)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+      #[cfg(target_os = "windows")]
+      {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+      }
+      cmd.spawn()
         .map_err(|e| format!("Failed to start bundled sidecar: {}", e))?
     } else {
       // Fall back to Python + main.py
@@ -92,12 +97,17 @@ impl SidecarProcess {
       });
 
       info!("Starting sidecar: {:?} {:?}", python_path, main_py);
-      Command::new(&python_path)
-        .arg(&main_py)
+      let mut cmd = Command::new(&python_path);
+      cmd.arg(&main_py)
         .current_dir(&sidecar_dir)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+      #[cfg(target_os = "windows")]
+      {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+      }
+      cmd.spawn()
         .map_err(|e| format!("Failed to start sidecar process: {}", e))?
     };
 

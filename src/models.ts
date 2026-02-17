@@ -113,6 +113,9 @@ export function renderModels() {
             try {
               await invoke("apply_model", { modelId: model.id });
 
+              // Update frontend state immediately so re-render reflects new active model
+              if (settings) settings.model = model.id;
+
               // Success state with animation
               applyBtn.classList.remove("is-loading");
               applyBtn.classList.add("is-success");
@@ -120,6 +123,9 @@ export function renderModels() {
                 <span class="btn-apply-icon">✓</span>
                 <span class="btn-apply-text">Applied!</span>
               `;
+
+              // Update hero card immediately
+              renderHero();
 
               showToast({
                 title: "Model Activated",

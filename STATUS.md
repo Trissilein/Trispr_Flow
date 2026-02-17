@@ -36,6 +36,7 @@ Last updated: 2026-02-16
 - ✅ **Analyse button**: Always opens file picker — never silently reuses last file
 
 ### v0.7.0 (Planning Complete — Ready for Implementation)
+
 - 📋 **Block F (Haiku)**: UX decisions + architecture design ✅ COMPLETE
   - Decision: "AI Fallback" terminology
   - Decision: Post-Processing panel expander location
@@ -84,8 +85,9 @@ Last updated: 2026-02-16
 - Optional Tauri E2E coverage is pending.
 - macOS testing still pending.
 - Sidecar exe not yet bundled in NSIS installer (manual setup for now).
-- Voice Analysis Python deps require manual install for dev:
-  `pip install -r sidecar/vibevoice-asr/requirements.txt`
+- Voice Analysis Python deps require manual install for dev (Python 3.11–3.13 required,
+  Python 3.14 lacks pydantic-core wheels):
+  `py -3.13 -m pip install -r sidecar/vibevoice-asr/requirements.txt`
 - Capture UI inconsistencies planned for overhaul (UX-1 to UX-4, see ROADMAP.md).
 - System audio cut-off under 8s means short-silence meetings may not produce analysable files.
 

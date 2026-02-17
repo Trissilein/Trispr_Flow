@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-16
+Last updated: 2026-02-16 (post-release fixes)
 
 This roadmap tracks the current focus: getting core capture + transcription stable and tightening UX before expanding features.
 
@@ -22,18 +22,20 @@ This roadmap tracks the current focus: getting core capture + transcription stab
 - **v0.6.0 Block D**: ✅ Complete (Integration layer, model loading, sidecar process management, auto-processing)
 - **v0.6.0 Block E**: ✅ Complete (Speaker UI, Analyse button, quality presets, parallel mode, PyInstaller, E2E tests)
 
-### Latest Release: v0.6.0 (2026-02-16)
+### Latest Release: v0.6.0 (2026-02-16) + Post-Release Fixes
 
-- ✅ VibeVoice-ASR 7B speaker diarization with color-coded segments
+- ✅ VibeVoice-ASR 7B Voice Analysis (identifies who said what) with color-coded speaker segments
+- ✅ **Voice Analysis dialog**: dedicated full-screen modal with progress stages and Copy transcript
 - ✅ Parallel transcription mode (Whisper + VibeVoice simultaneously, opt-in for 16GB+ VRAM)
 - ✅ OPUS audio encoding with configurable bitrate (32/64/96/128 kbps)
 - ✅ Quality presets (VibeVoice precision: FP16/INT8)
-- ✅ Analyse button with file picker and auto-save recordings
+- ✅ Analyse button with file picker — always prompts, never silently reuses last file
 - ✅ PyInstaller packaging (standalone sidecar exe, no Python dependencies for users)
 - ✅ System audio auto-save with 60-second flush intervals
 - ✅ Model monitoring with weekly VibeVoice update checks
-- ✅ 22 E2E tests covering full diarization workflow
+- ✅ 22 E2E tests covering full Voice Analysis workflow
 - ✅ Professional app icon (Cyan/Gold Yin-Yang branding)
+- ✅ No more console windows stealing focus (CREATE_NO_WINDOW on all subprocesses)
 - 📦 Dual installers: CUDA Edition (92MB) + Vulkan Edition (9.4MB)
 
 ### Next: v0.7.0 (AI Fallback Overhaul) — Planning Complete ✅

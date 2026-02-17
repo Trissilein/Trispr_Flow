@@ -157,6 +157,20 @@ Last updated: 2026-02-16
 - Context: Local rules are fast/offline, AI refinement uses polished base text, both can be toggled independently.
 - Why: Respects local-first philosophy (offline fallback works), AI sees better quality input (higher output quality), clear mental model for users.
 
+### DEC-026 Voice Analysis Terminology (v0.6.0 post-release)
+
+- Status: `implemented`
+- Decision: Rename "Speaker Diarization" to "Voice Analysis" in all user-facing UI, installer text, and export headers.
+- Context: "Speaker diarization" is a technical NLP term that non-technical users don't recognise. Early testers asked "what is speaker diarization?" — the feature name was blocking adoption.
+- Why: "Voice Analysis" immediately communicates the value ("identifies who said what") without prior knowledge. Technical name (VibeVoice-ASR, diarization) is kept in developer docs and internal code. Rule: feature names should describe the *outcome*, not the *algorithm*.
+
+### DEC-027 Voice Analysis — Dedicated Dialog vs Inline Results (v0.6.0 post-release)
+
+- Status: `implemented`
+- Decision: Open a dedicated full-screen modal dialog for Voice Analysis instead of injecting results inline into the history list.
+- Context: Previous approach showed results directly in the transcript history, with no feedback during the (potentially 30s) engine startup phase. Users were left with a spinning button and no indication of what was happening.
+- Why: Analysis is a multi-step async operation (file pick → engine start → speaker identification). A dedicated dialog allows showing step-by-step progress (pending / active / done / error per stage), surfacing errors with actionable messages, and presenting results without cluttering the transcript history. Inline toast notifications are insufficient for operations with multiple stages and multi-minute runtimes.
+
 ## Open Decisions
 
 ### DEC-011 Optional backend scope

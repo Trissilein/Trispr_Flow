@@ -106,6 +106,10 @@ pub(crate) struct Settings {
   pub(crate) opus_bitrate_kbps: u32,
   pub(crate) parallel_mode: bool, // Run Whisper + VibeVoice simultaneously
   pub(crate) auto_save_system_audio: bool, // Auto-save system audio as OPUS
+  // Session consolidation settings (v0.7.0)
+  pub(crate) session_idle_timeout_ms: u64, // Auto-finalize session after N ms of silence
+  pub(crate) ptt_session_grouping_enabled: bool, // Group multiple PTT presses into one session
+  pub(crate) ptt_session_group_timeout_s: u64, // PTT presses within this window → same session
   // Main window state
   pub(crate) main_window_x: Option<i32>,
   pub(crate) main_window_y: Option<i32>,
@@ -204,6 +208,9 @@ impl Default for Settings {
       opus_bitrate_kbps: 64,
       parallel_mode: false,
       auto_save_system_audio: false,
+      session_idle_timeout_ms: 60_000,       // 60 seconds
+      ptt_session_grouping_enabled: true,
+      ptt_session_group_timeout_s: 120,      // 2 minutes
       main_window_x: None,
       main_window_y: None,
       main_window_width: None,

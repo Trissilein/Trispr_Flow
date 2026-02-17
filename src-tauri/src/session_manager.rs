@@ -318,6 +318,16 @@ impl SessionManager {
     pub fn is_active(&self) -> bool {
         self.active.is_some()
     }
+
+    /// Check if a session is active for a given source and hasn't expired.
+    /// Used for session grouping (e.g., multiple PTT presses within a time window).
+    pub fn is_active_for(&self, source: &str) -> bool {
+        if let Some(ref session) = self.active {
+            session.source == source
+        } else {
+            false
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -349,6 +359,14 @@ pub fn finalize() -> Result<Option<PathBuf>, String> {
     get().lock()
         .map_err(|e| e.to_string())?
         .finalize_session()
+}
+
+/// Check if a session is currently active for a given source (e.g., "mic", "output").
+/// Used for session grouping logic (e.g., PTT presses within a time window).
+pub fn is_active_for(source: &str) -> bool {
+    get().lock()
+        .map(|mgr| mgr.is_active_for(source))
+        .unwrap_or(false)
 }
 
 /// Scan for incomplete (crash-recovered) sessions in the recordings directory.

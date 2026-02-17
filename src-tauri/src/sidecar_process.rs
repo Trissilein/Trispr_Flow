@@ -10,6 +10,41 @@ use tracing::{error, info, warn};
 
 use crate::sidecar::SidecarClient;
 
+/// Find a Python interpreter that has the sidecar dependencies installed.
+///
+/// On Windows: tries `py -3.13`, `py -3.12`, `py -3.11` via the Windows py launcher
+/// before falling back to generic `python`/`python3`. This avoids picking up Python
+/// 3.14+ where pydantic-core and other packages may lack pre-built wheels.
+fn find_suitable_python() -> PathBuf {
+  // On Windows, use the py launcher to find a specific compatible version
+  #[cfg(target_os = "windows")]
+  if let Ok(py_launcher) = which::which("py") {
+    for version in &["3.13", "3.12", "3.11"] {
+      let flag = format!("-{}", version);
+      if let Ok(output) = Command::new(&py_launcher)
+        .args([&flag as &str, "-c", "import sys; print(sys.executable)"])
+        .output()
+      {
+        if output.status.success() {
+          let exe = String::from_utf8_lossy(&output.stdout).trim().to_string();
+          if !exe.is_empty() {
+            let candidate = PathBuf::from(&exe);
+            if candidate.exists() {
+              info!("Using Python {} at {:?}", version, candidate);
+              return candidate;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Generic fallback: whatever `python` or `python3` resolves to in PATH
+  which::which("python")
+    .or_else(|_| which::which("python3"))
+    .unwrap_or_else(|_| PathBuf::from("python"))
+}
+
 /// Default sidecar port
 const SIDECAR_PORT: u16 = 8765;
 
@@ -95,9 +130,7 @@ impl SidecarProcess {
       }
 
       let python_path = self.python_path.clone().unwrap_or_else(|| {
-        which::which("python")
-          .or_else(|_| which::which("python3"))
-          .unwrap_or_else(|_| PathBuf::from("python"))
+        find_suitable_python()
       });
 
       info!("Starting sidecar: {:?} {:?}", python_path, main_py);

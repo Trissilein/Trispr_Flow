@@ -744,8 +744,31 @@ fn get_ffmpeg_version_info() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn start_sidecar() -> Result<(), String> {
-    sidecar_process::start_sidecar(None, None)
+fn start_sidecar(app: AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+
+    // Dev mode: locate sidecar relative to workspace root at compile time
+    #[cfg(debug_assertions)]
+    {
+        let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("sidecar")
+            .join("vibevoice-asr");
+        if dev_path.exists() {
+            let canonical = dev_path
+                .canonicalize()
+                .map_err(|e| format!("Failed to resolve dev sidecar path: {}", e))?;
+            return sidecar_process::start_sidecar(None, Some(canonical));
+        }
+    }
+
+    // Installed mode: sidecar lives in Tauri resource dir
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
+    let sidecar_dir = resource_dir.join("sidecar").join("vibevoice-asr");
+    sidecar_process::start_sidecar(None, Some(sidecar_dir))
 }
 
 #[tauri::command]

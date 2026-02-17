@@ -869,11 +869,27 @@ fn read_audio_file_as_i16(path: &std::path::Path) -> Result<Vec<i16>, String> {
             ));
 
             std::process::Command::new(&ffmpeg)
-                .args(&["-i", &path.to_string_lossy(), "-f", "wav", "-"])
+                .args(&[
+                    "-i",
+                    &path.to_string_lossy().to_string(),
+                    "-acodec",
+                    "pcm_s16le",
+                    "-ar",
+                    "16000",
+                    "-f",
+                    "wav",
+                    "-",
+                ])
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
                 .output()
                 .and_then(|out| {
+                    if !out.status.success() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "FFmpeg decoding failed",
+                        ));
+                    }
                     std::fs::write(&temp_wav, out.stdout)?;
                     Ok(())
                 })

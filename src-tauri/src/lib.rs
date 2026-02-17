@@ -856,30 +856,62 @@ fn read_audio_file_as_i16(path: &std::path::Path) -> Result<Vec<i16>, String> {
         .unwrap_or("")
         .to_lowercase();
 
-    match ext.as_str() {
-        "wav" => {
-            let reader =
-                hound::WavReader::open(path).map_err(|e| format!("Failed to open WAV: {}", e))?;
-            let spec = reader.spec();
-            let samples: Vec<i16> = if spec.sample_format == hound::SampleFormat::Float {
-                reader
-                    .into_samples::<f32>()
-                    .filter_map(|s| s.ok())
-                    .map(|s| (s * i16::MAX as f32) as i16)
-                    .collect()
-            } else {
-                reader
-                    .into_samples::<i16>()
-                    .filter_map(|s| s.ok())
-                    .collect()
-            };
-            Ok(samples)
+    let wav_path = match ext.as_str() {
+        "wav" => path.to_path_buf(),
+        "opus" => {
+            // Decode OPUS to temporary WAV using FFmpeg
+            let ffmpeg = crate::opus::find_ffmpeg()
+                .map_err(|e| format!("FFmpeg required for OPUS decoding: {}", e))?;
+
+            let temp_wav = std::env::temp_dir().join(format!(
+                "opus_decode_{}.wav",
+                std::process::id()
+            ));
+
+            std::process::Command::new(&ffmpeg)
+                .args(&["-i", &path.to_string_lossy(), "-f", "wav", "-"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .and_then(|out| {
+                    std::fs::write(&temp_wav, out.stdout)?;
+                    Ok(())
+                })
+                .map_err(|e| format!("Failed to decode OPUS with FFmpeg: {}", e))?;
+
+            temp_wav
         }
-        _ => Err(format!(
-            "Unsupported audio format for parallel mode: .{}",
-            ext
-        )),
+        _ => {
+            return Err(format!(
+                "Unsupported audio format for parallel mode: .{}",
+                ext
+            ))
+        }
+    };
+
+    // Read the WAV file
+    let reader = hound::WavReader::open(&wav_path)
+        .map_err(|e| format!("Failed to open WAV: {}", e))?;
+    let spec = reader.spec();
+    let samples: Vec<i16> = if spec.sample_format == hound::SampleFormat::Float {
+        reader
+            .into_samples::<f32>()
+            .filter_map(|s| s.ok())
+            .map(|s| (s * i16::MAX as f32) as i16)
+            .collect()
+    } else {
+        reader
+            .into_samples::<i16>()
+            .filter_map(|s| s.ok())
+            .collect()
+    };
+
+    // Clean up temporary WAV if we created one
+    if ext == "opus" {
+        let _ = std::fs::remove_file(&wav_path);
     }
+
+    Ok(samples)
 }
 
 #[tauri::command]

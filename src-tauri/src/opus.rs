@@ -60,7 +60,7 @@ impl OpusApplication {
 }
 
 /// Find FFmpeg executable
-fn find_ffmpeg() -> Result<PathBuf, String> {
+pub fn find_ffmpeg() -> Result<PathBuf, String> {
   // Try bundled FFmpeg first (Windows)
   #[cfg(target_os = "windows")]
   {

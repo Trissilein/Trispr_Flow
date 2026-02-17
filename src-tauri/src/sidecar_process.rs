@@ -6,9 +6,29 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::sidecar::SidecarClient;
+
+/// Log a sidecar stderr line at the appropriate level.
+///
+/// Python's logging format: `2026-02-17 11:56:29 - name - LEVEL - message`
+/// uvicorn format:           `LEVEL:     message`
+/// Python warnings:          `file.py:42: DeprecationWarning: ...`
+fn log_sidecar_line(line: &str) {
+  let t = line.trim_start();
+  let is_error = t.starts_with("ERROR:") || t.contains(" - ERROR - ") || t.contains(" - CRITICAL - ");
+  let is_warn = t.starts_with("WARNING:") || t.contains(" - WARNING - ")
+    || t.contains("DeprecationWarning")
+    || t.contains("UserWarning");
+  if is_error {
+    error!("[sidecar] {}", line);
+  } else if is_warn {
+    warn!("[sidecar] {}", line);
+  } else {
+    debug!("[sidecar] {}", line);
+  }
+}
 
 /// Find a Python interpreter that has the sidecar dependencies installed.
 ///
@@ -157,7 +177,7 @@ impl SidecarProcess {
       std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
         for line in reader.lines().map_while(Result::ok) {
-          error!("[sidecar] {}", line);
+          log_sidecar_line(&line);
           let mut log = log.lock().unwrap();
           log.push(line);
           // Keep last 50 lines

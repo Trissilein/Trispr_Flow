@@ -404,7 +404,7 @@ export function wireEvents() {
 
       if (isParallel) {
         const result = await invoke<any>("parallel_transcribe", {
-          audio_path: audioPath,
+          audioPath,
           precision: settings?.vibevoice_precision || "fp16",
           language: settings?.language_mode || "auto",
         });
@@ -428,7 +428,7 @@ export function wireEvents() {
         }
       } else {
         const result = await invoke<any>("sidecar_transcribe", {
-          audio_path: audioPath,
+          audioPath,
           precision: settings?.vibevoice_precision || "fp16",
           language: settings?.language_mode || "auto",
         });

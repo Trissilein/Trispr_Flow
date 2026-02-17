@@ -17,7 +17,7 @@ mod state;
 mod transcription;
 mod util;
 
-use arboard::Clipboard;
+use arboard::{Clipboard, ImageData};
 use enigo::{Enigo, Key, KeyboardControllable};
 use errors::{AppError, ErrorEvent};
 use overlay::{update_overlay_state, OverlayState};
@@ -1246,23 +1246,56 @@ fn load_local_env() {
     }
 }
 
+/// Snapshot of clipboard content before we overwrite it.
+enum ClipboardSnapshot {
+    Text(String),
+    Image { width: usize, height: usize, bytes: Vec<u8> },
+    Empty,
+}
+
 pub(crate) fn paste_text(text: &str) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
-    let previous = clipboard.get_text().ok();
-    clipboard
-        .set_text(text.to_string())
-        .map_err(|e| e.to_string())?;
+
+    // Save whatever is currently in the clipboard (text or image).
+    let snapshot = if let Ok(t) = clipboard.get_text() {
+        ClipboardSnapshot::Text(t)
+    } else if let Ok(img) = clipboard.get_image() {
+        ClipboardSnapshot::Image {
+            width: img.width,
+            height: img.height,
+            bytes: img.bytes.into_owned(),
+        }
+    } else {
+        ClipboardSnapshot::Empty
+    };
+
+    clipboard.set_text(text.to_string()).map_err(|e| e.to_string())?;
 
     send_paste_keystroke()?;
 
-    if let Some(previous) = previous {
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(150));
-            if let Ok(mut clipboard) = Clipboard::new() {
-                let _ = clipboard.set_text(previous);
+    // Restore the clipboard after the target app has had time to read it.
+    //
+    // We cannot restore immediately: send_paste_keystroke() only queues the
+    // Ctrl+V event — the foreground app reads the clipboard asynchronously
+    // when it processes WM_KEYDOWN. 300 ms is conservative enough for most
+    // apps even under load; the ideal fix would be WaitForInputIdle() but
+    // that requires windows-sys and adds complexity.
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(300));
+        if let Ok(mut cb) = Clipboard::new() {
+            match snapshot {
+                ClipboardSnapshot::Text(t) => { let _ = cb.set_text(t); }
+                ClipboardSnapshot::Image { width, height, bytes } => {
+                    let _ = cb.set_image(ImageData {
+                        width,
+                        height,
+                        bytes: std::borrow::Cow::Owned(bytes),
+                    });
+                }
+                ClipboardSnapshot::Empty => {}
             }
-        });
-    }
+        }
+    });
 
     Ok(())
 }

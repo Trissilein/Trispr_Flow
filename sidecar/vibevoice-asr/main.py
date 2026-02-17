@@ -5,6 +5,7 @@ Provides speaker-diarized transcription API for Trispr Flow
 
 import logging
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -22,11 +23,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global model loader instance
+model_loader: Optional[ModelLoader] = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan: startup and shutdown."""
+    global model_loader
+    logger.info("Starting VibeVoice-ASR sidecar...")
+    logger.info(f"Configuration: {model_config}")
+    try:
+        model_loader = ModelLoader(model_config)
+        logger.info("Model loader initialized (lazy loading on first request)")
+    except Exception as e:
+        logger.error(f"Failed to initialize model loader: {e}")
+        raise
+    yield
+    logger.info("Shutting down VibeVoice-ASR sidecar...")
+    if model_loader:
+        model_loader.unload_model()
+
+
 # Initialize FastAPI app
 app = FastAPI(
     title="VibeVoice-ASR Sidecar",
     description="Speaker-diarized transcription API",
-    version="0.6.0"
+    version="0.6.0",
+    lifespan=lifespan,
 )
 
 # CORS (development only)
@@ -38,33 +62,6 @@ if server_config.cors_enabled:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-# Global model loader instance
-model_loader: Optional[ModelLoader] = None
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize model on startup"""
-    global model_loader
-    logger.info("Starting VibeVoice-ASR sidecar...")
-    logger.info(f"Configuration: {model_config}")
-
-    try:
-        model_loader = ModelLoader(model_config)
-        logger.info("Model loader initialized (lazy loading on first request)")
-    except Exception as e:
-        logger.error(f"Failed to initialize model loader: {e}")
-        raise
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    global model_loader
-    logger.info("Shutting down VibeVoice-ASR sidecar...")
-    if model_loader:
-        model_loader.unload_model()
 
 
 # ============================================================================

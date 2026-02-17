@@ -152,7 +152,7 @@ FunctionEnd
 
 ; =====================================================================
 ; =====================================================================
-; Page 4: Speaker Diarization (VibeVoice) Opt-In
+; Page 4: Voice Analysis (VibeVoice) Opt-In
 ; =====================================================================
 
 Function VibeVoicePage
@@ -162,7 +162,7 @@ Function VibeVoicePage
     Abort
   ${EndIf}
 
-  ${NSD_CreateLabel} 0 0 100% 72u "Speaker Diarization identifies WHO said WHAT in recordings.$\r$\n$\r$\nThis feature uses VibeVoice-ASR and requires Python 3.11 or newer.$\r$\nPython is NOT included in this installer to keep download size small.$\r$\n$\r$\nDo you want to use Speaker Diarization?"
+  ${NSD_CreateLabel} 0 0 100% 72u "Voice Analysis identifies WHO said WHAT in recordings.$\r$\n$\r$\nThis feature uses VibeVoice-ASR and requires Python 3.11 or newer.$\r$\nPython is NOT included in this installer to keep download size small.$\r$\n$\r$\nDo you want to enable Voice Analysis?"
   Pop $VibeVoiceLabel
 
   ${NSD_CreateRadioButton} 10u 82u 100% 14u "Yes — I will install Python if needed"
@@ -188,7 +188,7 @@ Function VibeVoicePageLeave
     ${If} $1 != 0
       ; Python not found — offer to open download page
       MessageBox MB_YESNO|MB_ICONINFORMATION \
-        "Python was not found on your system.$\r$\n$\r$\nSpeaker Diarization requires Python 3.11 or newer.$\r$\n$\r$\nClick Yes to open the Python download page in your browser.$\r$\nYou can install it after this setup completes.$\r$\n$\r$\nClick No to continue without installing Python now." \
+        "Python was not found on your system.$\r$\n$\r$\nVoice Analysis requires Python 3.11 or newer.$\r$\n$\r$\nClick Yes to open the Python download page in your browser.$\r$\nYou can install it after this setup completes.$\r$\n$\r$\nClick No to continue without installing Python now." \
         IDYES OpenPythonDownload IDNO SkipPythonDownload
 
       OpenPythonDownload:

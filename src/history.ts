@@ -319,7 +319,7 @@ export function buildExportJson(entries: HistoryEntry[], exportDate: string): st
  */
 export function buildSpeakerExportTxt(analysis: TranscriptionAnalysis): string {
   const lines = [
-    "Trispr Flow - Speaker-Diarized Transcript",
+    "Trispr Flow - Voice Analysis",
     `Date: ${new Date().toISOString()}`,
     `Duration: ${Math.floor(analysis.duration_s / 60)}m ${Math.floor(analysis.duration_s % 60)}s`,
     `Speakers: ${analysis.total_speakers}`,
@@ -344,7 +344,7 @@ export function buildSpeakerExportTxt(analysis: TranscriptionAnalysis): string {
  */
 export function buildSpeakerExportMarkdown(analysis: TranscriptionAnalysis): string {
   const lines = [
-    "# Speaker-Diarized Transcript",
+    "# Voice Analysis",
     "",
     `**Date:** ${new Date().toISOString()}  `,
     `**Duration:** ${Math.floor(analysis.duration_s / 60)}m ${Math.floor(analysis.duration_s % 60)}s  `,
@@ -929,7 +929,7 @@ export function displayAnalysisResults(analysis: TranscriptionAnalysis): void {
   analysisContainer.className = "analysis-results";
   analysisContainer.innerHTML = `
     <div class="analysis-header">
-      <h3>Speaker Diarization Results</h3>
+      <h3>Voice Analysis Results</h3>
       <div class="analysis-meta">
         <span>Duration: ${Math.floor(analysis.duration_s / 60)}m ${Math.floor(analysis.duration_s % 60)}s</span>
         <span>•</span>

@@ -2,19 +2,109 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { Settings } from "./types";
+import type { Settings, TranscriptionAnalysis } from "./types";
 import { settings } from "./state";
 import * as dom from "./dom-refs";
 import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, updateTranscribeVadVisibility, updateTranscribeThreshold } from "./settings";
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
 import { refreshModels, refreshModelsDir } from "./models";
-import { applyPanelCollapsed, setHistoryTab, buildConversationHistory, buildConversationText, buildExportText, setSearchQuery } from "./history";
+import { applyPanelCollapsed, setHistoryTab, buildConversationHistory, buildConversationText, buildExportText, setSearchQuery, renderSpeakerSegments, buildSpeakerExportTxt } from "./history";
 import { setupHotkeyRecorder } from "./hotkeys";
 import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
 import { updateChaptersVisibility } from "./chapters";
+
+// =====================================================================
+// Voice Analysis Dialog helpers
+// =====================================================================
+
+let lastAnalysisResults: TranscriptionAnalysis | null = null;
+let analysisInProgress = false;
+
+function openAnalysisDialog() {
+  const dialog = document.getElementById("analysis-dialog");
+  if (!dialog) return;
+  dialog.style.display = "flex";
+  // Reset all stages
+  setAnalysisStage("file", "pending");
+  setAnalysisStage("engine", "pending");
+  setAnalysisStage("run", "pending");
+  const fileDetail = document.getElementById("stage-detail-file");
+  if (fileDetail) fileDetail.textContent = "";
+  const runDetail = document.getElementById("stage-detail-run");
+  if (runDetail) runDetail.textContent = "";
+  // Hide results and footer
+  const results = document.getElementById("analysis-results-area");
+  const footer = document.getElementById("analysis-dialog-footer");
+  if (results) { results.style.display = "none"; results.innerHTML = ""; }
+  if (footer) footer.style.display = "none";
+  // Show copy button in case it was hidden on previous error
+  const copyBtn = document.getElementById("analysis-copy-btn");
+  if (copyBtn) (copyBtn as HTMLElement).style.display = "";
+  lastAnalysisResults = null;
+}
+
+function closeAnalysisDialog() {
+  const dialog = document.getElementById("analysis-dialog");
+  if (dialog) dialog.style.display = "none";
+  analysisInProgress = false;
+}
+
+function setAnalysisStage(id: string, state: "pending" | "active" | "done" | "error") {
+  const el = document.getElementById(`analysis-stage-${id}`);
+  if (!el) return;
+  el.className = `analysis-stage ${state}`;
+}
+
+function showAnalysisResultsInDialog(analysis: TranscriptionAnalysis) {
+  const results = document.getElementById("analysis-results-area");
+  const footer = document.getElementById("analysis-dialog-footer");
+  if (!results || !footer) return;
+
+  const mins = Math.floor(analysis.duration_s / 60);
+  const secs = Math.floor(analysis.duration_s % 60);
+  const segmentsHtml = renderSpeakerSegments(analysis.segments);
+
+  results.innerHTML = `
+    <div class="analysis-results-meta">
+      <span>${mins}m ${secs}s</span>
+      <span>•</span>
+      <span>${analysis.total_speakers} speaker(s)</span>
+      <span>•</span>
+      <span>${analysis.segments.length} segment(s)</span>
+    </div>
+    ${segmentsHtml}
+  `;
+  results.style.display = "block";
+  footer.style.display = "flex";
+  lastAnalysisResults = analysis;
+}
+
+function showAnalysisErrorInDialog(message: string, isSidecarError: boolean) {
+  const results = document.getElementById("analysis-results-area");
+  const footer = document.getElementById("analysis-dialog-footer");
+  if (!results || !footer) return;
+
+  const bodyText = isSidecarError
+    ? `Voice Analysis engine could not start.<br>Run: <code>pip install -r sidecar/vibevoice-asr/requirements.txt</code>`
+    : message;
+
+  results.innerHTML = `
+    <div class="analysis-error">
+      <p class="analysis-error-title">Analysis failed</p>
+      <p class="analysis-error-msg">${bodyText}</p>
+    </div>
+  `;
+  results.style.display = "block";
+
+  // Hide copy button — nothing to copy on error
+  const copyBtn = document.getElementById("analysis-copy-btn");
+  if (copyBtn) (copyBtn as HTMLElement).style.display = "none";
+
+  footer.style.display = "flex";
+}
 
 // Custom vocabulary helper functions
 function addVocabRow(original: string, replacement: string) {
@@ -271,153 +361,128 @@ export function wireEvents() {
   });
 
   dom.analyseButton?.addEventListener("click", async () => {
-    if (!dom.analyseButton || !dom.analyseButtonText || !dom.analyseSpinner) return;
+    if (analysisInProgress) return; // Prevent re-entry while analysis is running
 
-    // Always prompt file picker — never silently reuse last recording
+    // Step 1: File picker — before opening dialog so Cancel doesn't flash the UI
     let audioPath: string | null = null;
     try {
       const recordingsDir = await invoke<string>("get_recordings_directory");
       const selected = await openDialog({
-        title: "Select Audio File for Analysis",
-        filters: [{
-          name: "Audio Files",
-          extensions: ["opus", "wav", "mp3", "m4a"]
-        }],
+        title: "Select Audio File for Voice Analysis",
+        filters: [{ name: "Audio Files", extensions: ["opus", "wav", "mp3", "m4a"] }],
         multiple: false,
         directory: false,
-        defaultPath: recordingsDir
+        defaultPath: recordingsDir,
       });
-
-      if (!selected) return; // User cancelled — don't enter loading state
+      if (!selected) return; // User cancelled
       audioPath = selected as string;
     } catch (err) {
-      showToast({
-        type: "error",
-        title: "File selection failed",
-        message: String(err),
-        duration: 4000,
-      });
+      showToast({ type: "error", title: "File selection failed", message: String(err), duration: 4000 });
       return;
     }
 
-    // Show loading state only after file is selected
-    dom.analyseButtonText.style.display = "none";
-    dom.analyseSpinner.style.display = "inline-block";
-    dom.analyseButton.disabled = true;
+    // Step 2: Open dialog and mark in-progress
+    analysisInProgress = true;
+    openAnalysisDialog();
+
+    // Mark file stage done
+    const fileName = (audioPath as string).split(/[/\\]/).pop() ?? audioPath;
+    setAnalysisStage("file", "done");
+    const fileDetail = document.getElementById("stage-detail-file");
+    if (fileDetail) fileDetail.textContent = fileName;
 
     try {
       const isParallel = settings?.parallel_mode ?? false;
 
-      if (isParallel) {
-        // Parallel mode: run both Whisper and VibeVoice simultaneously
-        showToast({
-          type: "info",
-          title: "Starting VibeVoice...",
-          message: "Loading model — this may take up to 30s on first run.",
-          duration: 6000,
-        });
-        await invoke("start_sidecar");
-        showToast({
-          type: "info",
-          title: "Parallel analysis",
-          message: "Running Whisper + VibeVoice simultaneously...",
-          duration: 3000,
-        });
+      // Step 3: Start engine
+      setAnalysisStage("engine", "active");
+      await invoke("start_sidecar");
+      setAnalysisStage("engine", "done");
 
+      // Step 4: Run analysis
+      setAnalysisStage("run", "active");
+
+      if (isParallel) {
         const result = await invoke<any>("parallel_transcribe", {
           audio_path: audioPath,
           precision: settings?.vibevoice_precision || "fp16",
-          language: settings?.language_mode || "auto"
+          language: settings?.language_mode || "auto",
         });
 
-        const { displayAnalysisResults, displayParallelResults } = await import("./history");
-
-        // Show VibeVoice speaker diarization if available
         if (result.vibevoice && !result.vibevoice.error) {
-          const analysis = {
+          const analysis: TranscriptionAnalysis = {
             segments: result.vibevoice.segments.map((seg: any) => ({
               speaker_id: seg.speaker,
               start_time: seg.start_time,
               end_time: seg.end_time,
-              text: seg.text
+              text: seg.text,
             })),
             duration_s: result.vibevoice.metadata.duration,
             total_speakers: result.vibevoice.metadata.num_speakers,
-            processing_time_ms: result.vibevoice.metadata.processing_time * 1000
+            processing_time_ms: result.vibevoice.metadata.processing_time * 1000,
           };
-          displayAnalysisResults(analysis);
+          setAnalysisStage("run", "done");
+          showAnalysisResultsInDialog(analysis);
+        } else {
+          throw new Error("Parallel analysis returned no VibeVoice results");
         }
-
-        // Show Whisper result as comparison
-        if (result.whisper && !result.whisper.error) {
-          displayParallelResults(result.whisper.text, "Whisper");
-        }
-
-        showToast({
-          type: "success",
-          title: "Parallel analysis complete",
-          message: "Both Whisper and VibeVoice results displayed",
-          duration: 5000,
-        });
       } else {
-        // Standard mode: VibeVoice sidecar only
-        showToast({
-          type: "info",
-          title: "Starting VibeVoice...",
-          message: "Loading model — this may take up to 30s on first run.",
-          duration: 6000,
-        });
-        await invoke("start_sidecar");
-
         const result = await invoke<any>("sidecar_transcribe", {
           audio_path: audioPath,
           precision: settings?.vibevoice_precision || "fp16",
-          language: settings?.language_mode || "auto"
+          language: settings?.language_mode || "auto",
         });
 
-        const { displayAnalysisResults } = await import("./history");
-        const analysis = {
+        const analysis: TranscriptionAnalysis = {
           segments: result.segments.map((seg: any) => ({
             speaker_id: seg.speaker,
             start_time: seg.start_time,
             end_time: seg.end_time,
-            text: seg.text
+            text: seg.text,
           })),
           duration_s: result.metadata.duration,
           total_speakers: result.metadata.num_speakers,
-          processing_time_ms: result.metadata.processing_time * 1000
+          processing_time_ms: result.metadata.processing_time * 1000,
         };
-
-        displayAnalysisResults(analysis);
-
-        showToast({
-          type: "success",
-          title: "Analysis complete",
-          message: `Found ${analysis.total_speakers} speaker(s) in ${Math.floor(analysis.duration_s / 60)}m ${Math.floor(analysis.duration_s % 60)}s`,
-          duration: 5000,
-        });
+        setAnalysisStage("run", "done");
+        showAnalysisResultsInDialog(analysis);
       }
     } catch (error) {
-      console.error("Analysis failed:", error);
+      console.error("Voice Analysis failed:", error);
       const msg = String(error);
-      // Give a more actionable message for sidecar startup failures
-      const isSidecarError = msg.includes("Sidecar") || msg.includes("sidecar") || msg.includes("pip");
-      showToast({
-        type: "error",
-        title: "Analysis failed",
-        message: isSidecarError
-          ? "VibeVoice could not start. Run: pip install -r sidecar/vibevoice-asr/requirements.txt"
-          : msg,
-        duration: 8000,
+      const isSidecarError =
+        msg.includes("Sidecar") || msg.includes("sidecar") ||
+        msg.includes("pip") || msg.includes("fastapi") ||
+        msg.includes("No module");
+
+      // Mark the active stage as error
+      ["file", "engine", "run"].forEach((id) => {
+        const el = document.getElementById(`analysis-stage-${id}`);
+        if (el?.classList.contains("active")) setAnalysisStage(id, "error");
       });
+
+      showAnalysisErrorInDialog(msg, isSidecarError);
     } finally {
-      // Always reset button — no matter what went wrong
-      if (dom.analyseButtonText && dom.analyseSpinner && dom.analyseButton) {
-        dom.analyseButtonText.style.display = "inline";
-        dom.analyseSpinner.style.display = "none";
-        dom.analyseButton.disabled = false;
-      }
+      // analysisInProgress is reset by closeAnalysisDialog() when user clicks Done/X
+      // But if dialog never opened (shouldn't happen), unblock anyway:
     }
+  });
+
+  // Voice Analysis dialog — close buttons
+  document.getElementById("analysis-dialog-close")?.addEventListener("click", closeAnalysisDialog);
+  document.getElementById("analysis-done-btn")?.addEventListener("click", closeAnalysisDialog);
+
+  // Close on backdrop click
+  document.getElementById("analysis-dialog")?.addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeAnalysisDialog();
+  });
+
+  // Copy transcript
+  document.getElementById("analysis-copy-btn")?.addEventListener("click", async () => {
+    if (!lastAnalysisResults) return;
+    const text = buildSpeakerExportTxt(lastAnalysisResults);
+    await navigator.clipboard.writeText(text);
+    showToast({ type: "success", title: "Copied", message: "Voice Analysis transcript copied to clipboard", duration: 2500 });
   });
 
   dom.historyExport?.addEventListener("click", async () => {

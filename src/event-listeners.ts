@@ -22,6 +22,76 @@ import { updateChaptersVisibility } from "./chapters";
 
 let lastAnalysisResults: TranscriptionAnalysis | null = null;
 let analysisInProgress = false;
+const ANALYSIS_ENGINE_DETAIL_DEFAULT = "May take up to 30s on first run";
+
+type AnalysisRequest = {
+  audioPath: string;
+  precision: "fp16" | "int8";
+  language: string;
+  parallel: boolean;
+};
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function nlToBr(text: string): string {
+  return escapeHtml(text).replace(/\n/g, "<br>");
+}
+
+function extractSetupCommand(message: string): string | null {
+  const match = message.match(/powershell[^\r\n]*-File\s+"[^"]+"/i);
+  return match ? match[0] : null;
+}
+
+async function runAnalysisRequest(request: AnalysisRequest): Promise<TranscriptionAnalysis> {
+  if (request.parallel) {
+    const result = await invoke<any>("parallel_transcribe", {
+      audioPath: request.audioPath,
+      precision: request.precision,
+      language: request.language,
+    });
+
+    if (!result?.vibevoice || result.vibevoice.error) {
+      throw new Error(String(result?.vibevoice?.error ?? "Parallel analysis returned no VibeVoice results"));
+    }
+
+    return {
+      segments: result.vibevoice.segments.map((seg: any) => ({
+        speaker_id: seg.speaker,
+        start_time: seg.start_time,
+        end_time: seg.end_time,
+        text: seg.text,
+      })),
+      duration_s: result.vibevoice.metadata.duration,
+      total_speakers: result.vibevoice.metadata.num_speakers,
+      processing_time_ms: result.vibevoice.metadata.processing_time * 1000,
+    };
+  }
+
+  const result = await invoke<any>("sidecar_transcribe", {
+    audioPath: request.audioPath,
+    precision: request.precision,
+    language: request.language,
+  });
+
+  return {
+    segments: result.segments.map((seg: any) => ({
+      speaker_id: seg.speaker,
+      start_time: seg.start_time,
+      end_time: seg.end_time,
+      text: seg.text,
+    })),
+    duration_s: result.metadata.duration,
+    total_speakers: result.metadata.num_speakers,
+    processing_time_ms: result.metadata.processing_time * 1000,
+  };
+}
 
 function openAnalysisDialog() {
   const dialog = document.getElementById("analysis-dialog");
@@ -33,6 +103,8 @@ function openAnalysisDialog() {
   setAnalysisStage("run", "pending");
   const fileDetail = document.getElementById("stage-detail-file");
   if (fileDetail) fileDetail.textContent = "";
+  const engineDetail = document.getElementById("stage-detail-engine");
+  if (engineDetail) engineDetail.textContent = ANALYSIS_ENGINE_DETAIL_DEFAULT;
   const runDetail = document.getElementById("stage-detail-run");
   if (runDetail) runDetail.textContent = "";
   // Hide results and footer
@@ -46,10 +118,22 @@ function openAnalysisDialog() {
   lastAnalysisResults = null;
 }
 
+function setAnalysisBusy(isBusy: boolean) {
+  analysisInProgress = isBusy;
+  if (dom.analyseButton) {
+    dom.analyseButton.disabled = isBusy;
+  }
+  if (dom.analyseButtonText) {
+    dom.analyseButtonText.textContent = isBusy ? "Analysing..." : "Analyse";
+  }
+  if (dom.analyseSpinner) {
+    dom.analyseSpinner.style.display = isBusy ? "inline-block" : "none";
+  }
+}
+
 function closeAnalysisDialog() {
   const dialog = document.getElementById("analysis-dialog");
   if (dialog) dialog.style.display = "none";
-  analysisInProgress = false;
 }
 
 function setAnalysisStage(id: string, state: "pending" | "active" | "done" | "error") {
@@ -78,23 +162,48 @@ function showAnalysisResultsInDialog(analysis: TranscriptionAnalysis) {
     ${segmentsHtml}
   `;
   results.style.display = "block";
+  const copyBtn = document.getElementById("analysis-copy-btn");
+  if (copyBtn) (copyBtn as HTMLElement).style.display = "";
   footer.style.display = "flex";
   lastAnalysisResults = analysis;
 }
 
-function showAnalysisErrorInDialog(message: string, isSidecarError: boolean) {
+function showAnalysisErrorInDialog(
+  message: string,
+  isSidecarError: boolean,
+  retryRequest?: AnalysisRequest,
+) {
   const results = document.getElementById("analysis-results-area");
   const footer = document.getElementById("analysis-dialog-footer");
   if (!results || !footer) return;
 
+  const setupCommand =
+    extractSetupCommand(message)
+    ?? 'powershell -ExecutionPolicy Bypass -File "sidecar/vibevoice-asr/setup-vibevoice.ps1"';
+
   const bodyText = isSidecarError
-    ? `Voice Analysis engine could not start.<br>Run: <code>pip install -r sidecar/vibevoice-asr/requirements.txt</code>`
-    : message;
+    ? `Voice Analysis engine could not start.<br>`
+      + `Install missing components with this command:<br>`
+      + `<code>${escapeHtml(setupCommand)}</code><br>`
+      + `If Python is missing, install Python 3.11+ from `
+      + `<a href="https://www.python.org/downloads/" target="_blank" rel="noreferrer">python.org</a>, `
+      + `then run the command again.<br><br>`
+      + `${nlToBr(message)}`
+    : nlToBr(message);
+  const installActionHtml = isSidecarError && retryRequest
+    ? `
+      <div class="analysis-error-actions">
+        <button id="analysis-install-btn" class="btn-primary">Install Voice Analysis</button>
+        <p id="analysis-install-status" class="analysis-install-status"></p>
+      </div>
+    `
+    : "";
 
   results.innerHTML = `
     <div class="analysis-error">
       <p class="analysis-error-title">Analysis failed</p>
       <p class="analysis-error-msg">${bodyText}</p>
+      ${installActionHtml}
     </div>
   `;
   results.style.display = "block";
@@ -104,6 +213,49 @@ function showAnalysisErrorInDialog(message: string, isSidecarError: boolean) {
   if (copyBtn) (copyBtn as HTMLElement).style.display = "none";
 
   footer.style.display = "flex";
+
+  if (isSidecarError && retryRequest) {
+    const installBtn = document.getElementById("analysis-install-btn") as HTMLButtonElement | null;
+    const installStatus = document.getElementById("analysis-install-status");
+    installBtn?.addEventListener("click", async () => {
+      if (!installBtn || installBtn.disabled) return;
+      setAnalysisBusy(true);
+      installBtn.disabled = true;
+      installBtn.textContent = "Installing...";
+      if (installStatus) {
+        installStatus.textContent = "Installing dependencies. This can take a few minutes.";
+      }
+      setAnalysisStage("engine", "active");
+      setAnalysisStage("run", "pending");
+
+      try {
+        await invoke("install_vibevoice_dependencies", { prefetchModel: false });
+        if (installStatus) {
+          installStatus.textContent = "Dependencies installed. Restarting analysis engine...";
+        }
+
+        await invoke("start_sidecar");
+        setAnalysisStage("engine", "done");
+        setAnalysisStage("run", "active");
+
+        const analysis = await runAnalysisRequest(retryRequest);
+        setAnalysisStage("run", "done");
+        showAnalysisResultsInDialog(analysis);
+        showToast({
+          type: "success",
+          title: "Voice Analysis ready",
+          message: "Dependencies installed and analysis retried successfully.",
+          duration: 3500,
+        });
+      } catch (err) {
+        const installMsg = String(err);
+        console.error("Voice Analysis install/retry failed:", err);
+        showAnalysisErrorInDialog(installMsg, true, retryRequest);
+      } finally {
+        setAnalysisBusy(false);
+      }
+    });
+  }
 }
 
 // Custom vocabulary helper functions
@@ -361,7 +513,15 @@ export function wireEvents() {
   });
 
   dom.analyseButton?.addEventListener("click", async () => {
-    if (analysisInProgress) return; // Prevent re-entry while analysis is running
+    if (analysisInProgress) {
+      showToast({
+        type: "info",
+        title: "Analysis already running",
+        message: "Please wait until the current analysis run completes.",
+        duration: 2500,
+      });
+      return;
+    }
 
     // Step 1: File picker — before opening dialog so Cancel doesn't flash the UI
     let audioPath: string | null = null;
@@ -382,7 +542,7 @@ export function wireEvents() {
     }
 
     // Step 2: Open dialog and mark in-progress
-    analysisInProgress = true;
+    setAnalysisBusy(true);
     openAnalysisDialog();
 
     // Mark file stage done
@@ -391,9 +551,14 @@ export function wireEvents() {
     const fileDetail = document.getElementById("stage-detail-file");
     if (fileDetail) fileDetail.textContent = fileName;
 
-    try {
-      const isParallel = settings?.parallel_mode ?? false;
+    const analysisRequest: AnalysisRequest = {
+      audioPath: audioPath as string,
+      precision: settings?.vibevoice_precision || "fp16",
+      language: settings?.language_mode || "auto",
+      parallel: settings?.parallel_mode ?? false,
+    };
 
+    try {
       // Step 3: Start engine
       setAnalysisStage("engine", "active");
       await invoke("start_sidecar");
@@ -401,59 +566,20 @@ export function wireEvents() {
 
       // Step 4: Run analysis
       setAnalysisStage("run", "active");
-
-      if (isParallel) {
-        const result = await invoke<any>("parallel_transcribe", {
-          audioPath,
-          precision: settings?.vibevoice_precision || "fp16",
-          language: settings?.language_mode || "auto",
-        });
-
-        if (result.vibevoice && !result.vibevoice.error) {
-          const analysis: TranscriptionAnalysis = {
-            segments: result.vibevoice.segments.map((seg: any) => ({
-              speaker_id: seg.speaker,
-              start_time: seg.start_time,
-              end_time: seg.end_time,
-              text: seg.text,
-            })),
-            duration_s: result.vibevoice.metadata.duration,
-            total_speakers: result.vibevoice.metadata.num_speakers,
-            processing_time_ms: result.vibevoice.metadata.processing_time * 1000,
-          };
-          setAnalysisStage("run", "done");
-          showAnalysisResultsInDialog(analysis);
-        } else {
-          throw new Error("Parallel analysis returned no VibeVoice results");
-        }
-      } else {
-        const result = await invoke<any>("sidecar_transcribe", {
-          audioPath,
-          precision: settings?.vibevoice_precision || "fp16",
-          language: settings?.language_mode || "auto",
-        });
-
-        const analysis: TranscriptionAnalysis = {
-          segments: result.segments.map((seg: any) => ({
-            speaker_id: seg.speaker,
-            start_time: seg.start_time,
-            end_time: seg.end_time,
-            text: seg.text,
-          })),
-          duration_s: result.metadata.duration,
-          total_speakers: result.metadata.num_speakers,
-          processing_time_ms: result.metadata.processing_time * 1000,
-        };
-        setAnalysisStage("run", "done");
-        showAnalysisResultsInDialog(analysis);
-      }
+      const analysis = await runAnalysisRequest(analysisRequest);
+      setAnalysisStage("run", "done");
+      showAnalysisResultsInDialog(analysis);
     } catch (error) {
       console.error("Voice Analysis failed:", error);
       const msg = String(error);
       const isSidecarError =
         msg.includes("Sidecar") || msg.includes("sidecar") ||
         msg.includes("pip") || msg.includes("fastapi") ||
-        msg.includes("No module");
+        msg.includes("setup-vibevoice") || msg.includes("Voice Analysis setup") ||
+        msg.includes("No module") ||
+        msg.includes("Unrecognized processing class") ||
+        msg.includes("Can't instantiate a processor") ||
+        msg.includes("Failed to load model");
 
       // Mark the active stage as error
       ["file", "engine", "run"].forEach((id) => {
@@ -461,10 +587,9 @@ export function wireEvents() {
         if (el?.classList.contains("active")) setAnalysisStage(id, "error");
       });
 
-      showAnalysisErrorInDialog(msg, isSidecarError);
+      showAnalysisErrorInDialog(msg, isSidecarError, analysisRequest);
     } finally {
-      // analysisInProgress is reset by closeAnalysisDialog() when user clicks Done/X
-      // But if dialog never opened (shouldn't happen), unblock anyway:
+      setAnalysisBusy(false);
     }
   });
 

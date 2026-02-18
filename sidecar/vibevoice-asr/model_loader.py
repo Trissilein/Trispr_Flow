@@ -137,6 +137,10 @@ class ModelLoader:
 
         return kwargs, actual
 
+    def _is_vibevoice_asr_model(self) -> bool:
+        name = str(self.config.model_name).lower()
+        return "vibevoice-asr" in name
+
     def _load_vibevoice_native(self, model_kwargs: dict[str, Any]) -> bool:
         """
         Try loading the official VibeVoice processor/model classes.
@@ -148,13 +152,15 @@ class ModelLoader:
             )
             from vibevoice.processor.vibevoice_asr_processor import VibeVoiceASRProcessor
         except Exception as exc:
-            logger.info("Native VibeVoice imports unavailable: %s", exc)
+            logger.warning("Native VibeVoice imports unavailable: %s", exc)
             return False
 
+        lm_model = os.getenv("VIBEVOICE_LM_MODEL", "Qwen/Qwen2.5-1.5B")
         processor = VibeVoiceASRProcessor.from_pretrained(
             self.config.model_name,
             cache_dir=self.config.cache_dir,
             trust_remote_code=True,
+            language_model_pretrained_name=lm_model,
         )
 
         native_kwargs = dict(model_kwargs)
@@ -248,6 +254,13 @@ class ModelLoader:
 
             loaded = self._load_vibevoice_native(model_kwargs)
             if not loaded:
+                if self._is_vibevoice_asr_model():
+                    raise RuntimeError(
+                        "Native VibeVoice runtime is unavailable. "
+                        "microsoft/VibeVoice-ASR does not provide a generic AutoProcessor fallback. "
+                        "Run setup-vibevoice.ps1 to install sidecar dependencies and ensure local "
+                        "VibeVoice source is available."
+                    )
                 self._load_transformers_fallback(model_kwargs)
 
             if not self.model or not self.processor:

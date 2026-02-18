@@ -36,6 +36,19 @@ fn log_sidecar_line(line: &str) {
 /// before falling back to generic `python`/`python3`. This avoids picking up Python
 /// 3.14+ where pydantic-core and other packages may lack pre-built wheels.
 fn find_suitable_python() -> PathBuf {
+  // Prefer the dedicated per-user venv created by setup-vibevoice.ps1.
+  if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+    let venv_python = PathBuf::from(local_app_data)
+      .join("com.trispr.flow")
+      .join("vibevoice-venv")
+      .join("Scripts")
+      .join("python.exe");
+    if venv_python.exists() {
+      info!("Using VibeVoice venv Python at {:?}", venv_python);
+      return venv_python;
+    }
+  }
+
   // On Windows, use the py launcher to find a specific compatible version
   #[cfg(target_os = "windows")]
   if let Ok(py_launcher) = which::which("py") {
@@ -117,6 +130,7 @@ impl SidecarProcess {
         .join("sidecar")
         .join("vibevoice-asr")
     });
+    self.sidecar_dir = Some(sidecar_dir.clone());
 
     // Try bundled executable first (PyInstaller build)
     let bundled_exe = if cfg!(windows) {
@@ -256,18 +270,28 @@ impl SidecarProcess {
         // Collect last stderr lines to surface the real error
         let log = self.stderr_log.lock().unwrap();
         let last_lines: Vec<&str> = log.iter().rev().take(10).rev().map(|s| s.as_str()).collect();
+        let setup_hint = self
+          .sidecar_dir
+          .as_ref()
+          .map(|dir| dir.join("setup-vibevoice.ps1").display().to_string())
+          .unwrap_or_else(|| "sidecar/vibevoice-asr/setup-vibevoice.ps1".to_string());
+        let setup_cmd = format!(
+          "powershell -ExecutionPolicy Bypass -File \"{}\"",
+          setup_hint
+        );
         if last_lines.is_empty() {
           Err(format!(
             "Sidecar failed to start: {}. \
-            Make sure Python dependencies are installed: \
-            cd sidecar/vibevoice-asr && pip install -r requirements.txt",
-            e
+            Install dependencies without Git via PowerShell: \
+            {}",
+            e, setup_cmd
           ))
         } else {
           Err(format!(
-            "Sidecar failed to start: {}.\nPython output:\n{}",
+            "Sidecar failed to start: {}.\nPython output:\n{}\n\nInstall dependencies without Git via PowerShell:\n{}",
             e,
-            last_lines.join("\n")
+            last_lines.join("\n"),
+            setup_cmd
           ))
         }
       }

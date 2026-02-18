@@ -744,32 +744,133 @@ fn get_ffmpeg_version_info() -> Result<String, String> {
     opus::get_ffmpeg_version()
 }
 
-#[tauri::command]
-fn start_sidecar(app: AppHandle) -> Result<(), String> {
-    use tauri::Manager;
-
-    // Dev mode: locate sidecar relative to workspace root at compile time
+fn resolve_sidecar_dir(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
     {
-        let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("sidecar")
             .join("vibevoice-asr");
         if dev_path.exists() {
-            let canonical = dev_path
+            return dev_path
                 .canonicalize()
-                .map_err(|e| format!("Failed to resolve dev sidecar path: {}", e))?;
-            return sidecar_process::start_sidecar(None, Some(canonical));
+                .map_err(|e| format!("Failed to resolve dev sidecar path: {}", e));
         }
     }
 
-    // Installed mode: sidecar lives in Tauri resource dir
     let resource_dir = app
         .path()
         .resource_dir()
         .map_err(|e| format!("Failed to get resource dir: {}", e))?;
-    let sidecar_dir = resource_dir.join("sidecar").join("vibevoice-asr");
+    Ok(resource_dir.join("sidecar").join("vibevoice-asr"))
+}
+
+#[cfg(target_os = "windows")]
+fn tail_output_lines(raw: &str, max_lines: usize) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if max_lines == 0 {
+        return String::new();
+    }
+    let lines: Vec<&str> = trimmed.lines().collect();
+    if lines.len() <= max_lines {
+        return trimmed.to_string();
+    }
+    format!("...\n{}", lines[lines.len() - max_lines..].join("\n"))
+}
+
+#[tauri::command]
+fn start_sidecar(app: AppHandle) -> Result<(), String> {
+    let sidecar_dir = resolve_sidecar_dir(&app)?;
     sidecar_process::start_sidecar(None, Some(sidecar_dir))
+}
+
+#[tauri::command]
+fn install_vibevoice_dependencies(
+    app: AppHandle,
+    prefetch_model: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let sidecar_dir = resolve_sidecar_dir(&app)?;
+    let setup_script = sidecar_dir.join("setup-vibevoice.ps1");
+    if !setup_script.exists() {
+        return Err(format!(
+            "Voice Analysis setup script not found: {}",
+            setup_script.display()
+        ));
+    }
+
+    let use_prefetch = prefetch_model.unwrap_or(false);
+    let mut cmd_args = vec![
+        "-NoProfile".to_string(),
+        "-ExecutionPolicy".to_string(),
+        "Bypass".to_string(),
+        "-File".to_string(),
+        setup_script.display().to_string(),
+    ];
+    if use_prefetch {
+        cmd_args.push("-PrefetchModel".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = std::process::Command::new("powershell");
+        cmd.args(&cmd_args)
+            .current_dir(&sidecar_dir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+
+        let output = cmd
+            .output()
+            .map_err(|e| format!("Failed to run Voice Analysis setup: {}", e))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout_tail = tail_output_lines(&stdout, 120);
+        let stderr_tail = tail_output_lines(&stderr, 120);
+        let setup_cmd = format!("powershell {}", cmd_args.join(" "));
+
+        if !output.status.success() {
+            let status = output
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "terminated".to_string());
+            let mut detail = String::new();
+            if !stderr_tail.is_empty() {
+                detail.push_str(&stderr_tail);
+            } else if !stdout_tail.is_empty() {
+                detail.push_str(&stdout_tail);
+            }
+            if detail.is_empty() {
+                detail.push_str("No installer output captured.");
+            }
+            return Err(format!(
+                "Voice Analysis setup failed (exit code {}).\n{}\n\nRun manually:\n{}",
+                status, detail, setup_cmd
+            ));
+        }
+
+        return Ok(serde_json::json!({
+          "status": "success",
+          "prefetch_model": use_prefetch,
+          "setup_script": setup_script.to_string_lossy().to_string(),
+          "stdout": stdout_tail,
+          "stderr": stderr_tail
+        }));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = use_prefetch;
+        let _ = cmd_args;
+        Err("Automatic Voice Analysis setup is currently supported on Windows only.".to_string())
+    }
 }
 
 #[tauri::command]
@@ -2091,6 +2192,7 @@ pub fn run() {
             check_ffmpeg,
             get_ffmpeg_version_info,
             start_sidecar,
+            install_vibevoice_dependencies,
             stop_sidecar,
             sidecar_health,
             sidecar_transcribe,

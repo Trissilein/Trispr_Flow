@@ -242,7 +242,7 @@ Function VibeVoicePageLeave
         ; Could not read version string — proceed anyway
       ${Else}
         MessageBox MB_OK|MB_ICONINFORMATION \
-          "Python found: $2$\r$\n$\r$\nAfter installation, run this command to install VibeVoice dependencies:$\r$\n  pip install -r sidecar\vibevoice-asr\requirements.txt"
+          "Python found: $2$\r$\n$\r$\nAfter installation, run this command to install Voice Analysis dependencies (no Git required):$\r$\n  powershell -ExecutionPolicy Bypass -File $\"$INSTDIR\resources\sidecar\vibevoice-asr\setup-vibevoice.ps1$\""
       ${EndIf}
     ${EndIf}
   ${Else}
@@ -336,6 +336,30 @@ FunctionEnd
 
   ; Create models directory for future use (app will download model on first start)
   CreateDirectory "$APPDATA\com.trispr.flow\models"
+
+  ; If user opted in, run Voice Analysis dependency setup automatically.
+  ${If} $VibeVoiceChoice == "yes"
+    MessageBox MB_OK|MB_ICONINFORMATION \
+      "Trispr Flow will now install optional Voice Analysis dependencies.$\r$\n$\r$\nThis can take a few minutes."
+
+    IfFileExists "$INSTDIR\resources\sidecar\vibevoice-asr\setup-vibevoice.ps1" RunVibeVoiceSetup MissingVibeVoiceSetup
+
+    RunVibeVoiceSetup:
+      nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\sidecar\vibevoice-asr\setup-vibevoice.ps1"'
+      Pop $0 ; exit code
+      Pop $1 ; script output (last line)
+      ${If} $0 != 0
+        MessageBox MB_OK|MB_ICONEXCLAMATION \
+          "Voice Analysis setup did not complete automatically.$\r$\n$\r$\nYou can run it later with:$\r$\n  powershell -ExecutionPolicy Bypass -File $\"$INSTDIR\resources\sidecar\vibevoice-asr\setup-vibevoice.ps1$\""
+      ${EndIf}
+      Goto VibeVoiceSetupDone
+
+    MissingVibeVoiceSetup:
+      MessageBox MB_OK|MB_ICONEXCLAMATION \
+        "Voice Analysis setup script was not found in the installation.$\r$\n$\r$\nRun manual setup from:$\r$\n  $INSTDIR\resources\sidecar\vibevoice-asr\setup-vibevoice.ps1"
+
+    VibeVoiceSetupDone:
+  ${EndIf}
 
   SkipPostInstall:
 !macroend

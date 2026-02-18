@@ -5,7 +5,7 @@ uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
 
 # Machine Learning
-transformers>=4.51.3
+transformers>=4.51.3,<5.0.0
 torch>=2.2.0
 torchaudio>=2.2.0
 accelerate>=0.26.1
@@ -19,6 +19,7 @@ pydub>=0.25.1
 
 # Utilities
 numpy>=1.26.3
+tqdm>=4.66.0
 # pydantic 2.9+ required for Python 3.13 wheels (pydantic-core Rust extension)
 pydantic>=2.9.0
 python-dotenv>=1.0.0

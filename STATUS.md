@@ -5,7 +5,7 @@ Last updated: 2026-02-18
 ## Snapshot
 
 - **Current release**: `v0.6.0` (released 2026-02-16)
-- **Current planning phase**: `v0.7.0` Block F complete; Block G/H pending
+- **Current planning phase**: `v0.7.0` Block F complete; Block A complete; Block B in progress
 - **Canonical next steps**: see `ROADMAP.md`
 
 ## Working State
@@ -15,15 +15,17 @@ Last updated: 2026-02-18
 - Sidecar runtime supports two modes:
   - bundled executable (if present)
   - Python fallback (`main.py`) with per-user venv preferred
-- Installer currently bundles sidecar Python files plus `setup-vibevoice.ps1` for optional dependency setup.
+- Installer bundles sidecar Python files plus `setup-vibevoice.ps1` for optional dependency setup.
+- NSIS Voice Analysis setup flow is unified across CUDA/Vulkan and soft-fail by default.
+- In-app Voice Analysis failure dialog exposes `Install Voice Analysis` and retries analysis after successful install.
 
 ## Known Gaps
 
-- Voice Analysis dependency path is not fully zero-touch in all setups yet (installer/setup hardening still ongoing).
+- Guided first-use setup UX (size/storage/progress wizard on first Analyse click) is not fully shipped yet (D2).
 - Model/runtime edge cases still need hardening (dependency pinning, prefetch guardrails, clearer fallback behavior).
-- Retry/reset behavior after failed analysis needs additional UX hardening.
+- Release-vs-dev source discovery split (D3) is not complete yet.
 - Some legacy docs still contain historical assumptions; `ROADMAP.md` is now the source of truth for priority and sequencing.
-- Policy decisions D1-D4 are locked; implementation is pending in Blocks A-C.
+- Policy decisions D1-D4 are locked; Block A is complete, B/C remain.
 
 ## Privacy + Network Notes
 
@@ -32,7 +34,6 @@ Last updated: 2026-02-18
 
 ## Next Focus
 
-1. Block A: installer and setup automation hardening.
-2. Block B: VibeVoice runtime/dependency hardening (incl. release-vs-dev source discovery policy).
-3. Block C: Voice Analysis retry/reset and first-use guided setup UX.
-4. Block D: v0.7.0 AI Fallback implementation.
+1. Block B: VibeVoice runtime/dependency hardening (incl. release-vs-dev source discovery policy).
+2. Block C: Voice Analysis retry/reset and first-use guided setup UX.
+3. Block D: v0.7.0 AI Fallback implementation.

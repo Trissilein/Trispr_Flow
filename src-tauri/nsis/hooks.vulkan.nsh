@@ -4,6 +4,7 @@
 
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
+!include "${__FILEDIR__}\voice_analysis_shared.nsh"
 
 ; Variables for the install/uninstall page
 Var InstallModeDialog
@@ -25,13 +26,6 @@ Var CaptureModeLabel
 Var CaptureModeRadioPtt
 Var CaptureModeRadioVad
 Var CaptureModeChoice
-
-; Variables for the VibeVoice opt-in page
-Var VibeVoiceDialog
-Var VibeVoiceLabel
-Var VibeVoiceRadioYes
-Var VibeVoiceRadioNo
-Var VibeVoiceChoice
 
 ; --- Custom page declarations (top-level, included before MUI pages) ---
 Page custom InstallModePage InstallModePageLeave
@@ -150,63 +144,6 @@ Function CaptureModePageLeave
   ${EndIf}
 FunctionEnd
 
-; =====================================================================
-; =====================================================================
-; Page 4: Voice Analysis (VibeVoice) Opt-In
-; =====================================================================
-
-Function VibeVoicePage
-  nsDialogs::Create 1018
-  Pop $VibeVoiceDialog
-  ${If} $VibeVoiceDialog == error
-    Abort
-  ${EndIf}
-
-  ${NSD_CreateLabel} 0 0 100% 72u "Voice Analysis identifies WHO said WHAT in recordings.$\r$\n$\r$\nThis feature uses VibeVoice-ASR and requires Python 3.11 or newer.$\r$\nPython is NOT included in this installer to keep download size small.$\r$\n$\r$\nDo you want to enable Voice Analysis?"
-  Pop $VibeVoiceLabel
-
-  ${NSD_CreateRadioButton} 10u 82u 100% 14u "Yes — I will install Python if needed"
-  Pop $VibeVoiceRadioYes
-
-  ${NSD_CreateRadioButton} 10u 100u 100% 14u "No — I only need standard transcription"
-  Pop $VibeVoiceRadioNo
-  ${NSD_SetState} $VibeVoiceRadioNo ${BST_CHECKED}
-
-  nsDialogs::Show
-FunctionEnd
-
-Function VibeVoicePageLeave
-  ${NSD_GetState} $VibeVoiceRadioYes $0
-  ${If} $0 == ${BST_CHECKED}
-    StrCpy $VibeVoiceChoice "yes"
-
-    ; Check if Python 3.x is available
-    nsExec::ExecToStack 'python --version'
-    Pop $1  ; exit code
-    Pop $2  ; output ("Python 3.x.x" or error)
-
-    ${If} $1 != 0
-      ; Python not found — offer to open download page
-      MessageBox MB_YESNO|MB_ICONINFORMATION \
-        "Python was not found on your system.$\r$\n$\r$\nVoice Analysis requires Python 3.11 or newer.$\r$\n$\r$\nClick Yes to open the Python download page in your browser.$\r$\nYou can install it after this setup completes.$\r$\n$\r$\nClick No to continue without installing Python now." \
-        IDYES OpenPythonDownload IDNO SkipPythonDownload
-
-      OpenPythonDownload:
-        ExecShell "open" "https://www.python.org/downloads/"
-
-      SkipPythonDownload:
-    ${Else}
-      ; Python found — inform user about next step
-      ${If} $2 != ""
-        MessageBox MB_OK|MB_ICONINFORMATION \
-          "Python found: $2$\r$\n$\r$\nAfter installation, run this command to install Voice Analysis dependencies (no Git required):$\r$\n  powershell -ExecutionPolicy Bypass -File $\"$INSTDIR\resources\sidecar\vibevoice-asr\setup-vibevoice.ps1$\""
-      ${EndIf}
-    ${EndIf}
-  ${Else}
-    StrCpy $VibeVoiceChoice "no"
-  ${EndIf}
-FunctionEnd
-
 ; Post-install: write settings (Vulkan-only, no GPU backend cleanup)
 ; =====================================================================
 
@@ -285,29 +222,8 @@ FunctionEnd
   ; Create models directory for future use (app will download model on first start)
   CreateDirectory "$APPDATA\com.trispr.flow\models"
 
-  ; If user opted in, run Voice Analysis dependency setup automatically.
-  ${If} $VibeVoiceChoice == "yes"
-    MessageBox MB_OK|MB_ICONINFORMATION \
-      "Trispr Flow will now install optional Voice Analysis dependencies.$\r$\n$\r$\nThis can take a few minutes."
-
-    IfFileExists "$INSTDIR\resources\sidecar\vibevoice-asr\setup-vibevoice.ps1" RunVibeVoiceSetup MissingVibeVoiceSetup
-
-    RunVibeVoiceSetup:
-      nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\sidecar\vibevoice-asr\setup-vibevoice.ps1"'
-      Pop $0  ; exit code
-      Pop $1  ; script output (last line)
-      ${If} $0 != 0
-        MessageBox MB_OK|MB_ICONEXCLAMATION \
-          "Voice Analysis setup did not complete automatically.$\r$\n$\r$\nYou can run it later with:$\r$\n  powershell -ExecutionPolicy Bypass -File $\"$INSTDIR\resources\sidecar\vibevoice-asr\setup-vibevoice.ps1$\""
-      ${EndIf}
-      Goto VibeVoiceSetupDone
-
-    MissingVibeVoiceSetup:
-      MessageBox MB_OK|MB_ICONEXCLAMATION \
-        "Voice Analysis setup script was not found in the installation.$\r$\n$\r$\nRun manual setup from:$\r$\n  $INSTDIR\resources\sidecar\vibevoice-asr\setup-vibevoice.ps1"
-
-    VibeVoiceSetupDone:
-  ${EndIf}
+  ; Optional Voice Analysis setup (soft-fail)
+  !insertmacro TRISPR_VIBEVOICE_POSTINSTALL
 
   SkipPostInstall:
 !macroend

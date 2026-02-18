@@ -793,15 +793,22 @@ fn install_vibevoice_dependencies(
     prefetch_model: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let sidecar_dir = resolve_sidecar_dir(&app)?;
+    let use_prefetch = prefetch_model.unwrap_or(false);
     let setup_script = sidecar_dir.join("setup-vibevoice.ps1");
+    let mut setup_cmd =
+        format!("powershell -NoProfile -ExecutionPolicy Bypass -File \"{}\"", setup_script.display());
+    if use_prefetch {
+        setup_cmd.push_str(" -PrefetchModel");
+    }
+
     if !setup_script.exists() {
         return Err(format!(
-            "Voice Analysis setup script not found: {}",
-            setup_script.display()
+            "Voice Analysis setup script not found: {}.\nReinstall Trispr Flow to restore sidecar setup files.\nRun manually:\n{}",
+            setup_script.display(),
+            setup_cmd
         ));
     }
 
-    let use_prefetch = prefetch_model.unwrap_or(false);
     let mut cmd_args = vec![
         "-NoProfile".to_string(),
         "-ExecutionPolicy".to_string(),
@@ -825,16 +832,17 @@ fn install_vibevoice_dependencies(
             cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
         }
 
-        let output = cmd
-            .output()
-            .map_err(|e| format!("Failed to run Voice Analysis setup: {}", e))?;
+        let output = cmd.output().map_err(|e| {
+            format!(
+                "Failed to run Voice Analysis setup: {}.\nRun manually:\n{}",
+                e, setup_cmd
+            )
+        })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let stdout_tail = tail_output_lines(&stdout, 120);
         let stderr_tail = tail_output_lines(&stderr, 120);
-        let setup_cmd = format!("powershell {}", cmd_args.join(" "));
-
         if !output.status.success() {
             let status = output
                 .status
@@ -860,6 +868,8 @@ fn install_vibevoice_dependencies(
           "status": "success",
           "prefetch_model": use_prefetch,
           "setup_script": setup_script.to_string_lossy().to_string(),
+          "run_manual_command": setup_cmd,
+          "message": "Voice Analysis setup completed successfully.",
           "stdout": stdout_tail,
           "stderr": stderr_tail
         }));

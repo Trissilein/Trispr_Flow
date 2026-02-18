@@ -179,7 +179,7 @@ function showAnalysisErrorInDialog(
 
   const setupCommand =
     extractSetupCommand(message)
-    ?? 'powershell -ExecutionPolicy Bypass -File "sidecar/vibevoice-asr/setup-vibevoice.ps1"';
+    ?? 'powershell -NoProfile -ExecutionPolicy Bypass -File "sidecar/vibevoice-asr/setup-vibevoice.ps1"';
 
   const bodyText = isSidecarError
     ? `Voice Analysis engine could not start.<br>`

@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-18 (docs sync + contradiction cleanup)
+Last updated: 2026-02-18 (Block A complete: installer/setup hardening)
 
 This file is the canonical source for priorities, dependencies, and "what is next."
 
@@ -9,12 +9,14 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 ## Canonical Current State
 
 - **Released**: `v0.6.0` (2026-02-16) with post-release fixes.
-- **Current phase**: `v0.7.0` planning complete (Block F done), implementation pending (Block G/H).
+- **Current phase**: `v0.7.0` planning complete; Block A complete, Block B in progress.
 - **Voice Analysis runtime reality**:
   - Rust side supports both `bundled sidecar exe` and `Python main.py` fallback.
-  - Current NSIS installers bundle the Python sidecar files + `setup-vibevoice.ps1`.
-  - Optional install-time Voice Analysis setup runs the PowerShell script automatically when opted in.
-  - If setup is missing/failed, app error output includes an actionable setup command.
+  - NSIS CUDA/Vulkan now share one Voice Analysis setup flow (`voice_analysis_shared.nsh`).
+  - Install-time Voice Analysis setup is optional and soft-fail by policy (D4).
+  - `setup-vibevoice.ps1` now emits deterministic non-zero exit codes per failure phase.
+  - Backend command `install_vibevoice_dependencies` is the stable adapter for UI + retry.
+  - If setup is missing/failed, installer and app show actionable `Run manually` remediation.
 - **Hugging Face traffic**:
   - Used for model/tokenizer download and cache checks.
   - No user audio is uploaded to Hugging Face by Trispr Flow.
@@ -23,7 +25,7 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 
 | Block | Focus | Complexity | Depends on | Status |
 | --- | --- | --- | --- | --- |
-| **A** | Installer + setup automation hardening (NSIS page flow, setup script reliability, clear recovery paths) | **High** | - | Ready |
+| **A** | Installer + setup automation hardening (NSIS page flow, setup script reliability, clear recovery paths) | **High** | - | Complete |
 | **B** | VibeVoice runtime hardening (model loading, dependency pinning, cache/prefetch guardrails, HF warning UX) | **High** | A | In progress |
 | **C** | Voice Analysis UX resilience (retry/reset after failure, actionable dialog states, no stale error replay) | **High** | A, B | Planned |
 | **D** | v0.7.0 AI Fallback implementation (Tasks 31/36/37 then 32/33/34/35/38) | **High** | C | Queued |
@@ -49,6 +51,7 @@ The following decisions are now fixed; implementation is tracked in Blocks A-C:
 - Block G implementation handover: `docs/NEXT_BLOCK_G.md`
 - v0.7 architecture: `docs/V0.7.0_ARCHITECTURE.md`
 - Decision log: `docs/DECISIONS.md`
+- Voice Analysis installer QA matrix: `docs/VOICE_ANALYSIS_SETUP_QA_MATRIX.md`
 
 ---
 

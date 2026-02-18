@@ -10,6 +10,7 @@ This document describes the current installer editions and the Voice Analysis de
 
 - Config: `src-tauri/tauri.conf.json`
 - NSIS hooks: `src-tauri/nsis/hooks.nsh`
+- Shared Voice Analysis setup logic: `src-tauri/nsis/voice_analysis_shared.nsh`
 - Includes CUDA + Vulkan whisper runtimes (installer lets user choose backend)
 - Recommended for NVIDIA users
 
@@ -17,6 +18,7 @@ This document describes the current installer editions and the Voice Analysis de
 
 - Config: `src-tauri/tauri.conf.vulkan.json`
 - NSIS hooks: `src-tauri/nsis/hooks.vulkan.nsh`
+- Shared Voice Analysis setup logic: `src-tauri/nsis/voice_analysis_shared.nsh`
 - Includes Vulkan whisper runtime only
 - Recommended for AMD/Intel users and minimal GPU runtime footprint
 
@@ -39,7 +41,8 @@ To avoid shipping a much larger installer, the following is true by design:
 - Base installer stays slim; Voice Analysis remains optional.
 - Prefetch is default OFF.
 - Voice Analysis setup failures are soft-fail (installer completes, remediation is shown).
-- Guided first-use setup flow on Analyse click is planned and tracked in roadmap blocks (not fully shipped yet).
+- In-app remediation path is available: `Install Voice Analysis` triggers backend setup + retry.
+- Guided first-use setup flow on Analyse click (size/storage/progress wizard) is still planned.
 
 ## Installer User Flow (Voice Analysis)
 
@@ -50,7 +53,15 @@ To avoid shipping a much larger installer, the following is true by design:
    - if missing, installer offers to open python.org download page,
    - post-install, setup script is executed automatically when available.
 4. If auto-setup fails, user gets a remediation command:
-   - `powershell -ExecutionPolicy Bypass -File "<install_path>\resources\sidecar\vibevoice-asr\setup-vibevoice.ps1"`
+   - `powershell -NoProfile -ExecutionPolicy Bypass -File "<install_path>\resources\sidecar\vibevoice-asr\setup-vibevoice.ps1"`
+   - installer continues (no hard fail)
+
+## Setup Script + Backend Contracts
+
+- `setup-vibevoice.ps1` is idempotent and returns deterministic exit codes by failure class.
+- Backend command `install_vibevoice_dependencies` returns:
+  - success JSON: `status`, `prefetch_model`, `setup_script`, `run_manual_command`, `stdout`, `stderr`
+  - failure string with clear details and a `Run manually` command
 
 ## What Gets Downloaded at Runtime
 
@@ -85,4 +96,5 @@ cargo tauri build --config tauri.conf.vulkan.json
 ## Notes
 
 - Canonical priority/planning is in `ROADMAP.md`.
+- Support/QA scenarios are in `docs/VOICE_ANALYSIS_SETUP_QA_MATRIX.md`.
 - This file is distribution-focused only.

@@ -19,19 +19,20 @@ Trispr Flow (Rust/Tauri) -> HTTP localhost -> FastAPI sidecar -> VibeVoice runti
 - Python 3.11 / 3.12 / 3.13
 - Windows GPU recommended for practical speed
 - Disk headroom for Python deps + HF model caches (can be many GB)
+- VibeVoice ASR runtime (`vibevoice` from Microsoft GitHub archive, installed via `requirements.txt`)
 
 ## Setup
 
 ### Recommended (Windows)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\setup-vibevoice.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup-vibevoice.ps1
 ```
 
 Optional model prefetch:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\setup-vibevoice.ps1 -PrefetchModel
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup-vibevoice.ps1 -PrefetchModel
 ```
 
 ### Manual
@@ -94,9 +95,8 @@ Switches precision (`fp16`/`int8`) by reloading model.
 
 ## Local VibeVoice Runtime Source
 
-`model_loader.py` attempts native VibeVoice imports and auto-discovers local `VibeVoice` source folders.
-
-Planned policy: keep this auto-discovery in dev workflows, but disable it for release builds unless explicitly overridden.
+`setup-vibevoice.ps1` installs a pinned VibeVoice runtime from Microsoft GitHub archive.
+`model_loader.py` still supports local source auto-discovery for dev workflows as an override.
 
 If needed, set explicitly:
 
@@ -104,19 +104,17 @@ If needed, set explicitly:
 $env:VIBEVOICE_SOURCE_DIR = "D:\GIT\VibeVoice"
 ```
 
-This resolves errors like:
-
-- `Unrecognized processing class in microsoft/VibeVoice-ASR`
+Primary fix path remains rerunning setup script; local source override is optional for development.
 
 ## Troubleshooting
 
 ### `Unrecognized processing class ...`
 
-Cause: generic HF auto-processor path is insufficient for this model without native VibeVoice runtime.
+Cause: native VibeVoice ASR runtime is missing or incompatible.
 
 Fix:
-- ensure local VibeVoice source is available and importable,
 - rerun setup script,
+- ensure the installed runtime is not legacy `vibevoice==0.0.x`,
 - restart sidecar/app.
 
 ### HF unauthenticated warning
@@ -131,5 +129,5 @@ Optional. Not required for local processing.
 
 ## Notes
 
-- `requirements.txt` currently pins `transformers` to `<5.0.0` for compatibility.
+- `requirements.txt` pins `transformers==4.51.3` and a commit-pinned VibeVoice runtime source for compatibility.
 - This README is sidecar-focused; product roadmap lives in `../../ROADMAP.md`.

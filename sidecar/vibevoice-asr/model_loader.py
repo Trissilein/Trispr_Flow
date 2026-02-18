@@ -6,9 +6,11 @@ Handles model initialization, precision selection, and end-to-end transcription.
 from __future__ import annotations
 
 import gc
+import importlib
 import logging
 import os
 import sys
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Optional
 
@@ -23,6 +25,8 @@ from inference import (
 )
 
 logger = logging.getLogger(__name__)
+VIBEVOICE_ARCHIVE_URL = "https://github.com/microsoft/VibeVoice/archive/1807b858d4f7dffdd286249a01616c243e488c9e.zip"
+MANUAL_SETUP_COMMAND = 'powershell -NoProfile -ExecutionPolicy Bypass -File "setup-vibevoice.ps1"'
 
 
 def get_gpu_info() -> dict[str, Any]:
@@ -66,6 +70,7 @@ class ModelLoader:
         self._backend: str = "unknown"
         self._actual_precision: str = config.precision
         self._target_sample_rate: int = config.sample_rate
+        self._last_native_error: Optional[str] = None
 
         logger.info("ModelLoader initialized with config: %s", config)
 
@@ -141,38 +146,105 @@ class ModelLoader:
         name = str(self.config.model_name).lower()
         return "vibevoice-asr" in name
 
+    @staticmethod
+    def _vibevoice_runtime_modules() -> tuple[str, ...]:
+        return (
+            "vibevoice.modular.modeling_vibevoice_asr",
+            "vibevoice.processor.vibevoice_asr_processor",
+        )
+
+    def _vibevoice_runtime_status(self) -> tuple[bool, str]:
+        details: list[str] = []
+        try:
+            version = importlib_metadata.version("vibevoice")
+            details.append(f"Installed vibevoice package version: {version}")
+            if str(version).startswith("0.0."):
+                details.append(
+                    "Detected legacy vibevoice package 0.0.x, which does not include ASR runtime modules."
+                )
+        except importlib_metadata.PackageNotFoundError:
+            details.append("Package 'vibevoice' is not installed.")
+            return False, "\n".join(details)
+        except Exception as exc:
+            details.append(f"Could not read vibevoice package metadata: {exc}")
+
+        missing_modules: list[str] = []
+        for module_name in self._vibevoice_runtime_modules():
+            try:
+                importlib.import_module(module_name)
+            except Exception as exc:
+                missing_modules.append(f"{module_name}: {exc}")
+
+        if missing_modules:
+            details.append("Required VibeVoice-ASR modules are unavailable:")
+            details.extend([f"- {item}" for item in missing_modules])
+            return False, "\n".join(details)
+
+        return True, "\n".join(details)
+
+    def _format_vibevoice_runtime_error(self, runtime_details: str = "") -> str:
+        lines = [
+            "VibeVoice-ASR runtime is unavailable or incompatible.",
+            f"Model: {self.config.model_name}",
+        ]
+        if runtime_details:
+            lines.append(runtime_details)
+        if self._last_native_error:
+            lines.append(f"Last native loader error: {self._last_native_error}")
+        lines.extend(
+            [
+                "Run setup-vibevoice.ps1 to install or repair dependencies.",
+                "Run manually:",
+                MANUAL_SETUP_COMMAND,
+                f"Expected pinned runtime source: {VIBEVOICE_ARCHIVE_URL}",
+            ]
+        )
+        return "\n".join(lines)
+
     def _load_vibevoice_native(self, model_kwargs: dict[str, Any]) -> bool:
         """
         Try loading the official VibeVoice processor/model classes.
         """
+        self._last_native_error = None
         try:
             self._inject_local_vibevoice_path()
-            from vibevoice.modular.modeling_vibevoice_asr import (
-                VibeVoiceASRForConditionalGeneration,
+            modeling_module = importlib.import_module("vibevoice.modular.modeling_vibevoice_asr")
+            processor_module = importlib.import_module("vibevoice.processor.vibevoice_asr_processor")
+            VibeVoiceASRForConditionalGeneration = getattr(
+                modeling_module, "VibeVoiceASRForConditionalGeneration"
             )
-            from vibevoice.processor.vibevoice_asr_processor import VibeVoiceASRProcessor
+            VibeVoiceASRProcessor = getattr(processor_module, "VibeVoiceASRProcessor")
         except Exception as exc:
+            self._last_native_error = f"native import failed: {exc}"
             logger.warning("Native VibeVoice imports unavailable: %s", exc)
             return False
 
         lm_model = os.getenv("VIBEVOICE_LM_MODEL", "Qwen/Qwen2.5-1.5B")
-        processor = VibeVoiceASRProcessor.from_pretrained(
-            self.config.model_name,
-            cache_dir=self.config.cache_dir,
-            trust_remote_code=True,
-            language_model_pretrained_name=lm_model,
-        )
+        try:
+            processor = VibeVoiceASRProcessor.from_pretrained(
+                self.config.model_name,
+                cache_dir=self.config.cache_dir,
+                trust_remote_code=True,
+                language_model_pretrained_name=lm_model,
+            )
+        except Exception as exc:
+            self._last_native_error = f"processor initialization failed: {exc}"
+            raise RuntimeError(f"Failed to initialize VibeVoice ASR processor: {exc}") from exc
 
         native_kwargs = dict(model_kwargs)
         if "torch_dtype" in native_kwargs:
             native_kwargs["dtype"] = native_kwargs.pop("torch_dtype")
 
-        model = VibeVoiceASRForConditionalGeneration.from_pretrained(
-            self.config.model_name,
-            cache_dir=self.config.cache_dir,
-            trust_remote_code=True,
-            **native_kwargs,
-        )
+        try:
+            model = VibeVoiceASRForConditionalGeneration.from_pretrained(
+                self.config.model_name,
+                cache_dir=self.config.cache_dir,
+                trust_remote_code=True,
+                **native_kwargs,
+            )
+        except Exception as exc:
+            self._last_native_error = f"model initialization failed: {exc}"
+            raise RuntimeError(f"Failed to initialize VibeVoice ASR model: {exc}") from exc
 
         if self._actual_precision != "int8":
             model = model.to(self.config.device)
@@ -251,16 +323,17 @@ class ModelLoader:
         try:
             model_kwargs, actual_precision = self._build_model_load_kwargs()
             self._actual_precision = actual_precision
+            runtime_details = ""
+
+            if self._is_vibevoice_asr_model():
+                runtime_ok, runtime_details = self._vibevoice_runtime_status()
+                if not runtime_ok:
+                    raise RuntimeError(self._format_vibevoice_runtime_error(runtime_details))
 
             loaded = self._load_vibevoice_native(model_kwargs)
             if not loaded:
                 if self._is_vibevoice_asr_model():
-                    raise RuntimeError(
-                        "Native VibeVoice runtime is unavailable. "
-                        "microsoft/VibeVoice-ASR does not provide a generic AutoProcessor fallback. "
-                        "Run setup-vibevoice.ps1 to install sidecar dependencies and ensure local "
-                        "VibeVoice source is available."
-                    )
+                    raise RuntimeError(self._format_vibevoice_runtime_error(runtime_details))
                 self._load_transformers_fallback(model_kwargs)
 
             if not self.model or not self.processor:

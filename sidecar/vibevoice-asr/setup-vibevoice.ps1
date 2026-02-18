@@ -12,6 +12,7 @@ $EXIT_VENV_CREATE = 20
 $EXIT_VENV_PYTHON_MISSING = 21
 $EXIT_PIP_UPGRADE = 30
 $EXIT_PIP_INSTALL = 31
+$EXIT_RUNTIME_VALIDATE = 32
 $EXIT_PREFETCH = 40
 $EXIT_UNKNOWN = 99
 
@@ -110,6 +111,54 @@ function Install-Dependencies([string]$pythonExe, [string]$venvDir, [string]$req
   return [string]$venvPython
 }
 
+function Assert-VibeVoiceRuntime([string]$venvPython) {
+  Write-Step "Validating VibeVoice runtime"
+
+  $validationScript = Join-Path ([System.IO.Path]::GetTempPath()) ("trispr-vibevoice-validate-" + [guid]::NewGuid().ToString("N") + ".py")
+  $code = @'
+import importlib
+import importlib.metadata
+import sys
+
+required_modules = [
+    "vibevoice.modular.modeling_vibevoice_asr",
+    "vibevoice.processor.vibevoice_asr_processor",
+]
+
+version = "unknown"
+try:
+    version = importlib.metadata.version("vibevoice")
+except importlib.metadata.PackageNotFoundError:
+    print("vibevoice package is not installed")
+    sys.exit(1)
+
+missing = []
+for module_name in required_modules:
+    try:
+        importlib.import_module(module_name)
+    except Exception as exc:
+        missing.append(f"{module_name}: {exc}")
+
+if missing:
+    print(f"vibevoice {version} is installed but missing required ASR modules:")
+    for item in missing:
+        print(f"  - {item}")
+    sys.exit(1)
+
+print(f"vibevoice runtime OK (version {version})")
+'@
+  Set-Content -Path $validationScript -Value $code -Encoding UTF8
+
+  try {
+    & $venvPython $validationScript | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+      Throw-SetupError $EXIT_RUNTIME_VALIDATE "VibeVoice runtime validation failed after dependency install"
+    }
+  } finally {
+    Remove-Item $validationScript -ErrorAction SilentlyContinue
+  }
+}
+
 function Prefetch-Model([string]$venvPython) {
   Write-Step "Prefetching VibeVoice model (this can take a while)"
   $prefetchScript = Join-Path ([System.IO.Path]::GetTempPath()) ("trispr-vibevoice-prefetch-" + [guid]::NewGuid().ToString("N") + ".py")
@@ -163,6 +212,8 @@ try {
   if (-not (Test-Path $venvPython)) {
     Throw-SetupError $EXIT_VENV_PYTHON_MISSING "Virtual environment Python not found after setup: $venvPython"
   }
+
+  Assert-VibeVoiceRuntime -venvPython $venvPython
 
   if ($PrefetchModel) {
     Prefetch-Model -venvPython $venvPython

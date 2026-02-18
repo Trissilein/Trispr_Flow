@@ -1,15 +1,19 @@
 # FastAPI and web server
-# Pin lower bound only — allows newer patch versions with Python 3.11-3.13 wheels
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
 
 # Machine Learning
-transformers>=4.51.3,<5.0.0
+# NOTE:
+# - microsoft/VibeVoice-ASR requires the VibeVoice ASR runtime modules.
+# - `vibevoice==0.0.1` from PyPI is outdated and does NOT include those ASR modules.
+# - Use the pinned GitHub archive (no local Git install required for users).
+vibevoice @ https://github.com/microsoft/VibeVoice/archive/1807b858d4f7dffdd286249a01616c243e488c9e.zip
+transformers==4.51.3
+accelerate==1.6.0
+huggingface_hub>=0.30.0,<1.0.0
 torch>=2.2.0
 torchaudio>=2.2.0
-accelerate>=0.26.1
-huggingface_hub>=0.28.0
 safetensors>=0.4.2
 
 # Audio processing

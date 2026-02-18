@@ -9,6 +9,7 @@ import gc
 import importlib
 import logging
 import os
+import re
 import sys
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -27,6 +28,18 @@ from inference import (
 logger = logging.getLogger(__name__)
 VIBEVOICE_ARCHIVE_URL = "https://github.com/microsoft/VibeVoice/archive/1807b858d4f7dffdd286249a01616c243e488c9e.zip"
 MANUAL_SETUP_COMMAND = 'powershell -NoProfile -ExecutionPolicy Bypass -File "setup-vibevoice.ps1"'
+TRISPR_DEV_BUILD_ENV = "TRISPR_DEV_BUILD"
+VIBEVOICE_LOCAL_SOURCE_OVERRIDE_ENV = "VIBEVOICE_ALLOW_LOCAL_SOURCE"
+EXACT_DEPENDENCY_VERSIONS = {
+    "transformers": "4.51.3",
+    "accelerate": "1.6.0",
+}
+MIN_DEPENDENCY_VERSIONS = {
+    "torch": (2, 2, 0),
+    "torchaudio": (2, 2, 0),
+}
+HF_HUB_MIN_VERSION = (0, 30, 0)
+HF_HUB_MAX_EXCLUSIVE = (1, 0, 0)
 
 
 def get_gpu_info() -> dict[str, Any]:
@@ -91,7 +104,10 @@ class ModelLoader:
 
     def _candidate_local_vibevoice_dirs(self) -> list[Path]:
         sidecar_dir = Path(__file__).resolve().parent
-        candidates = [Path(os.getenv("VIBEVOICE_SOURCE_DIR", "")).expanduser()]
+        candidates: list[Path] = []
+        explicit_source = os.getenv("VIBEVOICE_SOURCE_DIR", "").strip()
+        if explicit_source:
+            candidates.append(Path(explicit_source).expanduser())
 
         parents = list(sidecar_dir.parents)
         if len(parents) >= 3:
@@ -102,7 +118,44 @@ class ModelLoader:
         candidates.append(Path.cwd() / "VibeVoice")
         return candidates
 
+    @staticmethod
+    def _parse_bool_env(value: Optional[str]) -> Optional[bool]:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        return None
+
+    def _is_local_source_discovery_enabled(self) -> bool:
+        # Explicit source path is always allowed (operator override).
+        if os.getenv("VIBEVOICE_SOURCE_DIR", "").strip():
+            return True
+
+        # Manual override has priority over build mode defaults.
+        override = self._parse_bool_env(os.getenv(VIBEVOICE_LOCAL_SOURCE_OVERRIDE_ENV))
+        if override is not None:
+            return override
+
+        # Build-mode default: enabled in dev, disabled in release.
+        dev_mode = self._parse_bool_env(os.getenv(TRISPR_DEV_BUILD_ENV))
+        if dev_mode is not None:
+            return dev_mode
+
+        # Safe default for unknown launch contexts.
+        return False
+
     def _inject_local_vibevoice_path(self) -> None:
+        if not self._is_local_source_discovery_enabled():
+            logger.info(
+                "Local VibeVoice source auto-discovery is disabled. "
+                "Set %s=1 or VIBEVOICE_SOURCE_DIR to enable override.",
+                VIBEVOICE_LOCAL_SOURCE_OVERRIDE_ENV,
+            )
+            return
+
         for candidate in self._candidate_local_vibevoice_dirs():
             if not candidate or str(candidate) == ".":
                 continue
@@ -142,6 +195,35 @@ class ModelLoader:
 
         return kwargs, actual
 
+    @staticmethod
+    def _sanitize_native_model_kwargs(model_kwargs: dict[str, Any]) -> dict[str, Any]:
+        """
+        Normalize kwargs for native VibeVoice runtime loading.
+
+        Native config serialization expects `torch_dtype` and should never receive
+        `dtype` directly.
+        """
+        native_kwargs = dict(model_kwargs)
+        if "dtype" in native_kwargs and "torch_dtype" not in native_kwargs:
+            native_kwargs["torch_dtype"] = native_kwargs["dtype"]
+        native_kwargs.pop("dtype", None)
+        return native_kwargs
+
+    @staticmethod
+    def _torch_dtype_to_serializable(value: Any) -> str:
+        """
+        Convert torch dtype-like values to a JSON-serializable representation.
+        """
+        if isinstance(value, str):
+            return value
+        name = getattr(value, "name", None)
+        if isinstance(name, str) and name:
+            return name
+        text = str(value)
+        if text.startswith("torch."):
+            return text.split(".", 1)[1]
+        return text
+
     def _is_vibevoice_asr_model(self) -> bool:
         name = str(self.config.model_name).lower()
         return "vibevoice-asr" in name
@@ -152,6 +234,82 @@ class ModelLoader:
             "vibevoice.modular.modeling_vibevoice_asr",
             "vibevoice.processor.vibevoice_asr_processor",
         )
+
+    @staticmethod
+    def _parse_version_tuple(version: str) -> Optional[tuple[int, int, int]]:
+        matches = re.findall(r"\d+", str(version))
+        if not matches:
+            return None
+
+        parts = [int(item) for item in matches[:3]]
+        while len(parts) < 3:
+            parts.append(0)
+        return tuple(parts[:3])
+
+    def _dependency_runtime_status(self) -> tuple[bool, str]:
+        details: list[str] = []
+        ok = True
+
+        for package_name, expected in EXACT_DEPENDENCY_VERSIONS.items():
+            try:
+                installed = importlib_metadata.version(package_name)
+            except importlib_metadata.PackageNotFoundError:
+                ok = False
+                details.append(f"Package '{package_name}' is not installed (expected {expected}).")
+                continue
+
+            if installed != expected:
+                ok = False
+                details.append(
+                    f"{package_name} version mismatch: expected {expected}, found {installed}."
+                )
+            else:
+                details.append(f"{package_name} version OK: {installed}")
+
+        for package_name, minimum in MIN_DEPENDENCY_VERSIONS.items():
+            try:
+                installed = importlib_metadata.version(package_name)
+            except importlib_metadata.PackageNotFoundError:
+                ok = False
+                details.append(
+                    f"Package '{package_name}' is not installed (minimum {minimum[0]}.{minimum[1]}.{minimum[2]})."
+                )
+                continue
+
+            installed_tuple = self._parse_version_tuple(installed)
+            if installed_tuple is None:
+                ok = False
+                details.append(f"Could not parse {package_name} version: {installed}")
+                continue
+
+            if installed_tuple < minimum:
+                ok = False
+                details.append(
+                    f"{package_name} version too old: minimum {minimum[0]}.{minimum[1]}.{minimum[2]}, found {installed}."
+                )
+            else:
+                details.append(f"{package_name} version OK: {installed}")
+
+        try:
+            hf_hub_version = importlib_metadata.version("huggingface_hub")
+        except importlib_metadata.PackageNotFoundError:
+            ok = False
+            details.append("Package 'huggingface_hub' is not installed (required >=0.30.0,<1.0.0).")
+        else:
+            parsed_hf_hub = self._parse_version_tuple(hf_hub_version)
+            if parsed_hf_hub is None:
+                ok = False
+                details.append(f"Could not parse huggingface_hub version: {hf_hub_version}")
+            elif parsed_hf_hub < HF_HUB_MIN_VERSION or parsed_hf_hub >= HF_HUB_MAX_EXCLUSIVE:
+                ok = False
+                details.append(
+                    "huggingface_hub version out of supported range "
+                    f"(>=0.30.0,<1.0.0): found {hf_hub_version}."
+                )
+            else:
+                details.append(f"huggingface_hub version OK: {hf_hub_version}")
+
+        return ok, "\n".join(details)
 
     def _vibevoice_runtime_status(self) -> tuple[bool, str]:
         details: list[str] = []
@@ -180,6 +338,12 @@ class ModelLoader:
             details.extend([f"- {item}" for item in missing_modules])
             return False, "\n".join(details)
 
+        deps_ok, deps_details = self._dependency_runtime_status()
+        if deps_details:
+            details.append(deps_details)
+        if not deps_ok:
+            return False, "\n".join(details)
+
         return True, "\n".join(details)
 
     def _format_vibevoice_runtime_error(self, runtime_details: str = "") -> str:
@@ -194,6 +358,7 @@ class ModelLoader:
         lines.extend(
             [
                 "Run setup-vibevoice.ps1 to install or repair dependencies.",
+                "Transformers fallback is disabled for microsoft/VibeVoice-ASR until native runtime modules are healthy.",
                 "Run manually:",
                 MANUAL_SETUP_COMMAND,
                 f"Expected pinned runtime source: {VIBEVOICE_ARCHIVE_URL}",
@@ -231,9 +396,7 @@ class ModelLoader:
             self._last_native_error = f"processor initialization failed: {exc}"
             raise RuntimeError(f"Failed to initialize VibeVoice ASR processor: {exc}") from exc
 
-        native_kwargs = dict(model_kwargs)
-        if "torch_dtype" in native_kwargs:
-            native_kwargs["dtype"] = native_kwargs.pop("torch_dtype")
+        native_kwargs = self._sanitize_native_model_kwargs(model_kwargs)
 
         try:
             model = VibeVoiceASRForConditionalGeneration.from_pretrained(
@@ -243,8 +406,37 @@ class ModelLoader:
                 **native_kwargs,
             )
         except Exception as exc:
-            self._last_native_error = f"model initialization failed: {exc}"
-            raise RuntimeError(f"Failed to initialize VibeVoice ASR model: {exc}") from exc
+            error_text = str(exc)
+            is_dtype_json_error = (
+                "dtype" in error_text.lower() and "not json serializable" in error_text.lower()
+            )
+            if is_dtype_json_error and "torch_dtype" in native_kwargs:
+                retry_kwargs = dict(native_kwargs)
+                retry_kwargs["torch_dtype"] = self._torch_dtype_to_serializable(
+                    retry_kwargs["torch_dtype"]
+                )
+                logger.warning(
+                    "Native model load hit non-serializable dtype; retrying with torch_dtype=%s",
+                    retry_kwargs["torch_dtype"],
+                )
+                try:
+                    model = VibeVoiceASRForConditionalGeneration.from_pretrained(
+                        self.config.model_name,
+                        cache_dir=self.config.cache_dir,
+                        trust_remote_code=True,
+                        **retry_kwargs,
+                    )
+                except Exception as retry_exc:
+                    self._last_native_error = (
+                        "model initialization failed after dtype retry: "
+                        f"{retry_exc}"
+                    )
+                    raise RuntimeError(
+                        f"Failed to initialize VibeVoice ASR model: {retry_exc}"
+                    ) from retry_exc
+            else:
+                self._last_native_error = f"model initialization failed: {exc}"
+                raise RuntimeError(f"Failed to initialize VibeVoice ASR model: {exc}") from exc
 
         if self._actual_precision != "int8":
             model = model.to(self.config.device)

@@ -98,10 +98,17 @@ Switches precision (`fp16`/`int8`) by reloading model.
 `setup-vibevoice.ps1` installs a pinned VibeVoice runtime from Microsoft GitHub archive.
 `model_loader.py` still supports local source auto-discovery for dev workflows as an override.
 
+Policy:
+- Dev builds: local `VibeVoice` source auto-discovery is enabled by default.
+- Release builds: local source auto-discovery is disabled by default.
+- Explicit override: set `VIBEVOICE_ALLOW_LOCAL_SOURCE=1` (or provide `VIBEVOICE_SOURCE_DIR`).
+
 If needed, set explicitly:
 
 ```powershell
 $env:VIBEVOICE_SOURCE_DIR = "D:\GIT\VibeVoice"
+# Optional toggle override:
+$env:VIBEVOICE_ALLOW_LOCAL_SOURCE = "1"
 ```
 
 Primary fix path remains rerunning setup script; local source override is optional for development.
@@ -115,6 +122,17 @@ Cause: native VibeVoice ASR runtime is missing or incompatible.
 Fix:
 - rerun setup script,
 - ensure the installed runtime is not legacy `vibevoice==0.0.x`,
+- verify runtime dependency versions (notably `transformers==4.51.3`, `accelerate==1.6.0`, `huggingface_hub<1.0.0`),
+- restart sidecar/app.
+
+### `Object of type dtype is not JSON serializable`
+
+Cause: model-load kwargs reached native VibeVoice init with a non-serializable dtype object.
+This happens during model initialization, before audio decoding, so it is not WAV/OPUS specific.
+
+Fix:
+- update to the latest sidecar hotfix (native kwargs sanitizing),
+- rerun setup script if runtime files are stale,
 - restart sidecar/app.
 
 ### HF unauthenticated warning

@@ -15,6 +15,7 @@ $EXIT_PIP_INSTALL = 31
 $EXIT_RUNTIME_VALIDATE = 32
 $EXIT_PREFETCH = 40
 $EXIT_UNKNOWN = 99
+$PREFETCH_MIN_FREE_GB = 55
 
 $script:SetupExitCode = $EXIT_UNKNOWN
 
@@ -159,8 +160,50 @@ print(f"vibevoice runtime OK (version {version})")
   }
 }
 
+function Resolve-HfHubCachePath {
+  if (-not [string]::IsNullOrWhiteSpace($env:HUGGINGFACE_HUB_CACHE)) {
+    return [Environment]::ExpandEnvironmentVariables($env:HUGGINGFACE_HUB_CACHE)
+  }
+  if (-not [string]::IsNullOrWhiteSpace($env:HF_HOME)) {
+    return Join-Path ([Environment]::ExpandEnvironmentVariables($env:HF_HOME)) "hub"
+  }
+  if (-not [string]::IsNullOrWhiteSpace($env:XDG_CACHE_HOME)) {
+    return Join-Path ([Environment]::ExpandEnvironmentVariables($env:XDG_CACHE_HOME)) "huggingface\hub"
+  }
+  if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+    return Join-Path $env:USERPROFILE ".cache\huggingface\hub"
+  }
+  return Join-Path $env:LOCALAPPDATA "huggingface\hub"
+}
+
+function Assert-PrefetchDiskHeadroom([string]$cachePath, [int]$requiredGb) {
+  $resolvedPath = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($cachePath))
+  $driveRoot = [System.IO.Path]::GetPathRoot($resolvedPath)
+  if ([string]::IsNullOrWhiteSpace($driveRoot)) {
+    Throw-SetupError $EXIT_PREFETCH "Unable to resolve drive for Hugging Face cache path: $resolvedPath"
+  }
+
+  try {
+    $drive = New-Object System.IO.DriveInfo($driveRoot)
+  } catch {
+    Throw-SetupError $EXIT_PREFETCH "Unable to inspect free space for drive $driveRoot"
+  }
+
+  $freeGb = [math]::Floor($drive.AvailableFreeSpace / 1GB)
+  Write-Host ("Hugging Face cache path: {0}" -f $resolvedPath)
+  Write-Host ("Drive {0} free space: {1} GB" -f $drive.Name, $freeGb)
+
+  if ($freeGb -lt $requiredGb) {
+    $message = "Insufficient free disk space for model prefetch. Required at least {0} GB on drive {1}, found {2} GB. Run setup without -PrefetchModel, or set HF_HOME/HUGGINGFACE_HUB_CACHE to a larger drive and retry." -f $requiredGb, $drive.Name, $freeGb
+    Throw-SetupError $EXIT_PREFETCH $message
+  }
+}
+
 function Prefetch-Model([string]$venvPython) {
   Write-Step "Prefetching VibeVoice model (this can take a while)"
+  Write-Host ("Prefetch disk guardrail: requires at least {0} GB free" -f $PREFETCH_MIN_FREE_GB)
+  $hfCachePath = Resolve-HfHubCachePath
+  Assert-PrefetchDiskHeadroom -cachePath $hfCachePath -requiredGb $PREFETCH_MIN_FREE_GB
   $prefetchScript = Join-Path ([System.IO.Path]::GetTempPath()) ("trispr-vibevoice-prefetch-" + [guid]::NewGuid().ToString("N") + ".py")
   $code = @'
 import os

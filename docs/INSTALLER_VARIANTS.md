@@ -72,6 +72,7 @@ When Voice Analysis dependencies are installed and model cache is cold:
 
 Important:
 - This can consume **significant disk space** (often many GB, depending on cache state and model revisions).
+- `setup-vibevoice.ps1 -PrefetchModel` now checks HF cache drive free space and aborts prefetch with remediation if headroom is below guardrail.
 - Trispr Flow does **not** upload user audio to Hugging Face.
 - Hugging Face calls are for model/tokenizer retrieval and cache checks.
 

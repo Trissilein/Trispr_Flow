@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-18 (Block A complete: installer/setup hardening)
+Last updated: 2026-02-18 (Block B complete: runtime/dependency hardening)
 
 This file is the canonical source for priorities, dependencies, and "what is next."
 
@@ -9,7 +9,7 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 ## Canonical Current State
 
 - **Released**: `v0.6.0` (2026-02-16) with post-release fixes.
-- **Current phase**: `v0.7.0` planning complete; Block A complete, Block B in progress.
+- **Current phase**: `v0.7.0` planning complete; Block A and Block B complete, Block C in progress.
 - **Voice Analysis runtime reality**:
   - Rust side supports both `bundled sidecar exe` and `Python main.py` fallback.
   - NSIS CUDA/Vulkan now share one Voice Analysis setup flow (`voice_analysis_shared.nsh`).
@@ -26,8 +26,8 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 | Block | Focus | Complexity | Depends on | Status |
 | --- | --- | --- | --- | --- |
 | **A** | Installer + setup automation hardening (NSIS page flow, setup script reliability, clear recovery paths) | **High** | - | Complete |
-| **B** | VibeVoice runtime hardening (model loading, dependency pinning, cache/prefetch guardrails, HF warning UX) | **High** | A | In progress |
-| **C** | Voice Analysis UX resilience (retry/reset after failure, actionable dialog states, no stale error replay) | **High** | A, B | Planned |
+| **B** | VibeVoice runtime hardening (model loading, dependency pinning, cache/prefetch guardrails, HF warning UX) | **High** | A | Complete |
+| **C** | Voice Analysis UX resilience (retry/reset after failure, actionable dialog states, no stale error replay) | **High** | A, B | In progress |
 | **D** | v0.7.0 AI Fallback implementation (Tasks 31/36/37 then 32/33/34/35/38) | **High** | C | Queued |
 
 ## Locked Decisions (2026-02-18)
@@ -52,6 +52,8 @@ The following decisions are now fixed; implementation is tracked in Blocks A-C:
 - v0.7 architecture: `docs/V0.7.0_ARCHITECTURE.md`
 - Decision log: `docs/DECISIONS.md`
 - Voice Analysis installer QA matrix: `docs/VOICE_ANALYSIS_SETUP_QA_MATRIX.md`
+- Voice Analysis runtime QA matrix: `docs/VOICE_ANALYSIS_RUNTIME_QA_MATRIX.md`
+- Voice Analysis UX QA matrix: `docs/VOICE_ANALYSIS_UX_QA_MATRIX.md`
 
 ---
 

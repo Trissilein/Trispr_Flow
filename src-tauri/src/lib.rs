@@ -49,12 +49,20 @@ use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, start_transcribe_monitor,
     stop_transcribe_monitor, toggle_transcribe_state, transcribe_audio,
 };
+#[cfg(target_os = "windows")]
+use std::io::{BufRead, BufReader};
 
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
 const TRAY_PULSE_FRAMES: usize = 6;
 const TRAY_PULSE_CYCLE_MS: u64 = 1600;
 const BACKLOG_AUTOEXPAND_TIMEOUT_MS: u64 = 5_000;
+const CLIPBOARD_RETRY_INTERVAL_MS: u64 = 50;
+const CLIPBOARD_CAPTURE_TIMEOUT_MS: u64 = 1_000;
+const CLIPBOARD_RESTORE_DELAY_MS: u64 = 350;
+const CLIPBOARD_RESTORE_TIMEOUT_MS: u64 = 3_000;
+#[cfg(target_os = "windows")]
+const VOICE_ANALYSIS_SETUP_RECOMMENDED_FREE_GB: u64 = 55;
 
 static LAST_TRAY_CLICK_MS: AtomicU64 = AtomicU64::new(0);
 static TRAY_CAPTURE_STATE: AtomicU8 = AtomicU8::new(0);
@@ -63,6 +71,7 @@ static TRAY_PULSE_STARTED: AtomicBool = AtomicBool::new(false);
 static BACKLOG_PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
 static MAIN_WINDOW_RESTORED: AtomicBool = AtomicBool::new(false);
+static CLIPBOARD_PASTE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn cancel_backlog_auto_expand(app: &AppHandle) {
     BACKLOG_PROMPT_CANCELLED.store(true, Ordering::Release);
@@ -781,6 +790,419 @@ fn tail_output_lines(raw: &str, max_lines: usize) -> String {
     format!("...\n{}", lines[lines.len() - max_lines..].join("\n"))
 }
 
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+enum SetupStreamSource {
+    Stdout,
+    Stderr,
+}
+
+#[cfg(target_os = "windows")]
+enum SetupStreamEvent {
+    Line {
+        source: SetupStreamSource,
+        line: String,
+    },
+    End,
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_setup_stream_reader<R: std::io::Read + Send + 'static>(
+    reader: R,
+    source: SetupStreamSource,
+    tx: std::sync::mpsc::Sender<SetupStreamEvent>,
+) {
+    std::thread::spawn(move || {
+        let mut buffered = BufReader::new(reader);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match buffered.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let normalized = line.trim_end_matches(['\r', '\n']).to_string();
+                    let _ = tx.send(SetupStreamEvent::Line {
+                        source,
+                        line: normalized,
+                    });
+                }
+                Err(err) => {
+                    let _ = tx.send(SetupStreamEvent::Line {
+                        source,
+                        line: format!("stream read error: {}", err),
+                    });
+                    break;
+                }
+            }
+        }
+        let _ = tx.send(SetupStreamEvent::End);
+    });
+}
+
+#[cfg(target_os = "windows")]
+fn emit_voice_analysis_setup_progress(app: &AppHandle, phase: &str, message: &str, done: bool) {
+    let _ = app.emit(
+        "voice-analysis:setup-progress",
+        serde_json::json!({
+            "phase": phase,
+            "message": message,
+            "done": done,
+        }),
+    );
+}
+
+#[cfg(target_os = "windows")]
+fn map_setup_progress_from_line(line: &str) -> Option<(&'static str, String)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.starts_with("== ") && trimmed.ends_with(" ==") {
+        let step = trimmed
+            .trim_start_matches("== ")
+            .trim_end_matches(" ==")
+            .trim()
+            .to_string();
+        let phase = match step.to_lowercase().as_str() {
+            "locating python" => "locating_python",
+            "creating virtual environment" => "creating_venv",
+            "upgrading pip" => "upgrading_pip",
+            "installing vibevoice dependencies" => "installing_dependencies",
+            "validating vibevoice runtime" => "validating_runtime",
+            "prefetching vibevoice model (this can take a while)" => "prefetching_model",
+            "setup complete" => "setup_complete",
+            "setup failed" => "setup_failed",
+            _ => "setup",
+        };
+        return Some((phase, step));
+    }
+
+    if trimmed.starts_with("[E") {
+        return Some(("error", trimmed.to_string()));
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn parse_python_version_tuple(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version
+        .trim()
+        .split('.')
+        .filter_map(|part| part.parse::<u64>().ok());
+    let major = parts.next()?;
+    let minor = parts.next().unwrap_or(0);
+    let patch = parts.next().unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+#[cfg(target_os = "windows")]
+fn is_supported_python_version(version: &str) -> bool {
+    if let Some((major, minor, _)) = parse_python_version_tuple(version) {
+        return major == 3 && minor >= 11;
+    }
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn run_python_probe(command: &str, prefix_args: &[&str]) -> Option<(String, String)> {
+    let mut args: Vec<&str> = prefix_args.to_vec();
+    args.push("-c");
+    args.push("import sys; print(sys.executable); print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')");
+
+    let output = std::process::Command::new(command).args(&args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines().map(str::trim).filter(|line| !line.is_empty());
+    let exe = lines.next()?.to_string();
+    let version = lines.next()?.to_string();
+    if exe.is_empty() || version.is_empty() {
+        return None;
+    }
+    Some((exe, version))
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_python_for_preflight() -> Option<(String, String)> {
+    let candidates: [(&str, &[&str]); 5] = [
+        ("py", &["-3.13"]),
+        ("py", &["-3.12"]),
+        ("py", &["-3.11"]),
+        ("python", &[]),
+        ("python3", &[]),
+    ];
+
+    for (cmd, prefix_args) in candidates {
+        if let Some((exe, version)) = run_python_probe(cmd, prefix_args) {
+            return Some((exe, version));
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_hf_cache_path_for_preflight() -> PathBuf {
+    if let Ok(path) = std::env::var("HUGGINGFACE_HUB_CACHE") {
+        if !path.trim().is_empty() {
+            return PathBuf::from(path);
+        }
+    }
+    if let Ok(hf_home) = std::env::var("HF_HOME") {
+        if !hf_home.trim().is_empty() {
+            return PathBuf::from(hf_home).join("hub");
+        }
+    }
+    if let Ok(xdg_cache_home) = std::env::var("XDG_CACHE_HOME") {
+        if !xdg_cache_home.trim().is_empty() {
+            return PathBuf::from(xdg_cache_home).join("huggingface").join("hub");
+        }
+    }
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+        if !user_profile.trim().is_empty() {
+            return PathBuf::from(user_profile)
+                .join(".cache")
+                .join("huggingface")
+                .join("hub");
+        }
+    }
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        if !local_app_data.trim().is_empty() {
+            return PathBuf::from(local_app_data)
+                .join("huggingface")
+                .join("hub");
+        }
+    }
+    PathBuf::from(".")
+}
+
+#[cfg(target_os = "windows")]
+fn free_space_gb_for_path(path: &std::path::Path) -> Result<u64, String> {
+    let escaped = path.to_string_lossy().replace('\'', "''");
+    let script = format!(
+        "$p='{escaped}'; \
+         $full=[System.IO.Path]::GetFullPath($p); \
+         $root=[System.IO.Path]::GetPathRoot($full); \
+         if ([string]::IsNullOrWhiteSpace($root)) {{ throw 'No drive root for path' }}; \
+         $drive=New-Object System.IO.DriveInfo($root); \
+         [math]::Floor($drive.AvailableFreeSpace / 1GB)"
+    );
+    let output = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
+        .output()
+        .map_err(|err| format!("Failed to inspect free disk space: {}", err))?;
+
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            "Disk inspection failed without stderr output".to_string()
+        } else {
+            detail
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value = stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .ok_or_else(|| "Disk inspection returned empty output".to_string())?;
+    value
+        .parse::<u64>()
+        .map_err(|err| format!("Failed to parse disk free space '{}': {}", value, err))
+}
+
+#[cfg(target_os = "windows")]
+fn expected_vibevoice_venv_python() -> Option<PathBuf> {
+    let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
+    Some(
+        PathBuf::from(local_app_data)
+            .join("com.trispr.flow")
+            .join("vibevoice-venv")
+            .join("Scripts")
+            .join("python.exe"),
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn check_vibevoice_runtime_ready(venv_python: &std::path::Path) -> Result<(), String> {
+    let output = std::process::Command::new(venv_python)
+        .args([
+            "-c",
+            r#"
+import importlib
+import sys
+required = [
+    "vibevoice.modular.modeling_vibevoice_asr",
+    "vibevoice.processor.vibevoice_asr_processor",
+]
+missing = []
+for module_name in required:
+    try:
+        importlib.import_module(module_name)
+    except Exception as exc:
+        missing.append(f"{module_name}: {exc}")
+if missing:
+    print("\n".join(missing))
+    sys.exit(1)
+print("runtime_ok")
+"#,
+        ])
+        .output()
+        .map_err(|err| format!("Failed to run runtime validation: {}", err))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stderr.is_empty() {
+        return Err(stderr);
+    }
+    if !stdout.is_empty() {
+        return Err(stdout);
+    }
+    Err("Runtime validation failed without output".to_string())
+}
+
+#[tauri::command]
+fn voice_analysis_setup_preflight(app: AppHandle) -> Result<serde_json::Value, String> {
+    let sidecar_dir = resolve_sidecar_dir(&app)?;
+    let setup_script = sidecar_dir.join("setup-vibevoice.ps1");
+    let setup_cmd = format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -File \"{}\"",
+        setup_script.display()
+    );
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut status = "ok";
+        let mut message = "Voice Analysis runtime looks ready.".to_string();
+        let mut python_found = false;
+        let mut python_path: Option<String> = None;
+        let mut python_version: Option<String> = None;
+        let mut python_supported = false;
+
+        if !setup_script.exists() {
+            status = "script_missing";
+            message = format!(
+                "Voice Analysis setup script not found: {}. Reinstall Trispr Flow.",
+                setup_script.display()
+            );
+        }
+
+        if status == "ok" {
+            if let Some((exe, version)) = resolve_python_for_preflight() {
+                python_found = true;
+                python_path = Some(exe);
+                python_supported = is_supported_python_version(&version);
+                python_version = Some(version.clone());
+                if !python_supported {
+                    status = "unsupported_python";
+                    message = format!(
+                        "Detected Python {}. Use Python 3.11, 3.12, or 3.13.",
+                        version
+                    );
+                }
+            } else {
+                status = "missing_python";
+                message =
+                    "Python 3.11+ not found. Install Python from https://www.python.org/downloads/"
+                        .to_string();
+            }
+        }
+
+        let cache_dir = resolve_hf_cache_path_for_preflight();
+        let free_space = free_space_gb_for_path(&cache_dir).ok();
+        let enough_for_prefetch = free_space.map(|gb| gb >= VOICE_ANALYSIS_SETUP_RECOMMENDED_FREE_GB);
+
+        let mut runtime_ready = false;
+        let mut runtime_detail: Option<String> = None;
+        let mut venv_python_path: Option<String> = None;
+
+        if status == "ok" {
+            if let Some(venv_python) = expected_vibevoice_venv_python() {
+                venv_python_path = Some(venv_python.to_string_lossy().to_string());
+                if venv_python.exists() {
+                    match check_vibevoice_runtime_ready(&venv_python) {
+                        Ok(()) => {
+                            runtime_ready = true;
+                            runtime_detail = Some("Native runtime modules available.".to_string());
+                        }
+                        Err(detail) => {
+                            status = "runtime_invalid";
+                            message = "Voice Analysis runtime is installed but invalid. Setup repair is required.".to_string();
+                            runtime_detail = Some(detail);
+                        }
+                    }
+                } else {
+                    status = "setup_required";
+                    message = "Voice Analysis dependencies are not installed yet. Run setup first."
+                        .to_string();
+                    runtime_detail = Some(format!(
+                        "Virtual environment Python not found at {}",
+                        venv_python.display()
+                    ));
+                }
+            } else {
+                status = "setup_required";
+                message = "Could not resolve LOCALAPPDATA for expected sidecar environment."
+                    .to_string();
+            }
+        }
+
+        return Ok(serde_json::json!({
+            "status": status,
+            "message": message,
+            "platform": "windows",
+            "automatic_setup_supported": true,
+            "prefetch_default": false,
+            "setup_script": setup_script.to_string_lossy().to_string(),
+            "run_manual_command": setup_cmd,
+            "python": {
+                "found": python_found,
+                "supported": python_supported,
+                "path": python_path,
+                "version": python_version,
+            },
+            "runtime": {
+                "ready": runtime_ready,
+                "venv_python": venv_python_path,
+                "detail": runtime_detail,
+            },
+            "storage": {
+                "cache_dir": cache_dir.to_string_lossy().to_string(),
+                "free_gb": free_space,
+                "recommended_free_gb": VOICE_ANALYSIS_SETUP_RECOMMENDED_FREE_GB,
+                "enough_for_prefetch": enough_for_prefetch,
+            },
+        }));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(serde_json::json!({
+            "status": "unsupported_platform",
+            "message": "Automatic Voice Analysis setup is currently supported on Windows only.",
+            "platform": std::env::consts::OS,
+            "automatic_setup_supported": false,
+            "prefetch_default": false,
+            "setup_script": setup_script.to_string_lossy().to_string(),
+            "run_manual_command": setup_cmd,
+        }))
+    }
+}
+
 #[tauri::command]
 fn start_sidecar(app: AppHandle) -> Result<(), String> {
     let sidecar_dir = resolve_sidecar_dir(&app)?;
@@ -832,20 +1254,68 @@ fn install_vibevoice_dependencies(
             cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
         }
 
-        let output = cmd.output().map_err(|e| {
+        let mut child = cmd.spawn().map_err(|e| {
             format!(
                 "Failed to run Voice Analysis setup: {}.\nRun manually:\n{}",
                 e, setup_cmd
             )
         })?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        emit_voice_analysis_setup_progress(&app, "start", "Starting Voice Analysis setup...", false);
+
+        let (tx, rx) = std::sync::mpsc::channel::<SetupStreamEvent>();
+        let mut reader_count = 0usize;
+
+        if let Some(stdout) = child.stdout.take() {
+            reader_count += 1;
+            spawn_setup_stream_reader(stdout, SetupStreamSource::Stdout, tx.clone());
+        }
+        if let Some(stderr) = child.stderr.take() {
+            reader_count += 1;
+            spawn_setup_stream_reader(stderr, SetupStreamSource::Stderr, tx.clone());
+        }
+        drop(tx);
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut ended_readers = 0usize;
+
+        let output_status = child.wait().map_err(|e| {
+            format!(
+                "Voice Analysis setup process failed to complete: {}.\nRun manually:\n{}",
+                e, setup_cmd
+            )
+        })?;
+
+        while ended_readers < reader_count {
+            match rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(SetupStreamEvent::Line { source, line }) => {
+                    match source {
+                        SetupStreamSource::Stdout => {
+                            stdout.push_str(&line);
+                            stdout.push('\n');
+                        }
+                        SetupStreamSource::Stderr => {
+                            stderr.push_str(&line);
+                            stderr.push('\n');
+                        }
+                    }
+                    if let Some((phase, message)) = map_setup_progress_from_line(&line) {
+                        emit_voice_analysis_setup_progress(&app, phase, &message, false);
+                    }
+                }
+                Ok(SetupStreamEvent::End) => {
+                    ended_readers = ended_readers.saturating_add(1);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+
         let stdout_tail = tail_output_lines(&stdout, 120);
         let stderr_tail = tail_output_lines(&stderr, 120);
-        if !output.status.success() {
-            let status = output
-                .status
+        if !output_status.success() {
+            let status = output_status
                 .code()
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "terminated".to_string());
@@ -858,11 +1328,24 @@ fn install_vibevoice_dependencies(
             if detail.is_empty() {
                 detail.push_str("No installer output captured.");
             }
+            emit_voice_analysis_setup_progress(
+                &app,
+                "error",
+                &format!("Voice Analysis setup failed (exit code {})", status),
+                true,
+            );
             return Err(format!(
                 "Voice Analysis setup failed (exit code {}).\n{}\n\nRun manually:\n{}",
                 status, detail, setup_cmd
             ));
         }
+
+        emit_voice_analysis_setup_progress(
+            &app,
+            "complete",
+            "Voice Analysis setup completed successfully.",
+            true,
+        );
 
         return Ok(serde_json::json!({
           "status": "success",
@@ -1413,47 +1896,161 @@ enum ClipboardSnapshot {
     Empty,
 }
 
-pub(crate) fn paste_text(text: &str) -> Result<(), String> {
-    let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
+fn capture_clipboard_snapshot_with_retry() -> ClipboardSnapshot {
+    let deadline = std::time::Instant::now() + Duration::from_millis(CLIPBOARD_CAPTURE_TIMEOUT_MS);
 
-    // Save whatever is currently in the clipboard (text or image).
-    let snapshot = if let Ok(t) = clipboard.get_text() {
-        ClipboardSnapshot::Text(t)
-    } else if let Ok(img) = clipboard.get_image() {
-        ClipboardSnapshot::Image {
-            width: img.width,
-            height: img.height,
-            bytes: img.bytes.into_owned(),
-        }
-    } else {
-        ClipboardSnapshot::Empty
-    };
-
-    clipboard.set_text(text.to_string()).map_err(|e| e.to_string())?;
-
-    send_paste_keystroke()?;
-
-    // Restore the clipboard after the target app has had time to read it.
-    //
-    // We cannot restore immediately: send_paste_keystroke() only queues the
-    // Ctrl+V event — the foreground app reads the clipboard asynchronously
-    // when it processes WM_KEYDOWN. 300 ms is conservative enough for most
-    // apps even under load; the ideal fix would be WaitForInputIdle() but
-    // that requires windows-sys and adds complexity.
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(300));
-        if let Ok(mut cb) = Clipboard::new() {
-            match snapshot {
-                ClipboardSnapshot::Text(t) => { let _ = cb.set_text(t); }
-                ClipboardSnapshot::Image { width, height, bytes } => {
-                    let _ = cb.set_image(ImageData {
-                        width,
-                        height,
-                        bytes: std::borrow::Cow::Owned(bytes),
-                    });
+    loop {
+        match Clipboard::new() {
+            Ok(mut clipboard) => {
+                if let Ok(text) = clipboard.get_text() {
+                    return ClipboardSnapshot::Text(text);
                 }
-                ClipboardSnapshot::Empty => {}
+
+                if let Ok(image) = clipboard.get_image() {
+                    return ClipboardSnapshot::Image {
+                        width: image.width,
+                        height: image.height,
+                        bytes: image.bytes.into_owned(),
+                    };
+                }
+
+                return ClipboardSnapshot::Empty;
             }
+            Err(err) => {
+                if std::time::Instant::now() >= deadline {
+                    let err = err.to_string();
+                    warn!(
+                        "Clipboard snapshot capture timed out after {} ms: {}",
+                        CLIPBOARD_CAPTURE_TIMEOUT_MS, err
+                    );
+                    return ClipboardSnapshot::Empty;
+                }
+            }
+        }
+
+        thread::sleep(Duration::from_millis(CLIPBOARD_RETRY_INTERVAL_MS));
+    }
+}
+
+fn clipboard_text_matches(expected: &str, current: &str) -> bool {
+    if expected == current {
+        return true;
+    }
+
+    // Windows clipboard conversions can normalize newlines to CRLF.
+    expected.replace("\r\n", "\n") == current.replace("\r\n", "\n")
+}
+
+fn set_clipboard_text_with_retry(text: &str) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + Duration::from_millis(CLIPBOARD_CAPTURE_TIMEOUT_MS);
+    let text = text.to_string();
+
+    loop {
+        let attempt_error = match Clipboard::new() {
+            Ok(mut clipboard) => match clipboard.set_text(text.clone()) {
+                Ok(()) => return Ok(()),
+                Err(err) => err.to_string(),
+            },
+            Err(err) => err.to_string(),
+        };
+
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "Failed to set clipboard text after {} ms: {}",
+                CLIPBOARD_CAPTURE_TIMEOUT_MS, attempt_error
+            ));
+        }
+
+        thread::sleep(Duration::from_millis(CLIPBOARD_RETRY_INTERVAL_MS));
+    }
+}
+
+fn restore_snapshot_with_retry(snapshot: ClipboardSnapshot) -> Result<(), String> {
+    if matches!(snapshot, ClipboardSnapshot::Empty) {
+        return Ok(());
+    }
+
+    let deadline = std::time::Instant::now() + Duration::from_millis(CLIPBOARD_RESTORE_TIMEOUT_MS);
+
+    loop {
+        let attempt_error = match Clipboard::new() {
+            Ok(mut clipboard) => {
+                let write_result = match &snapshot {
+                    ClipboardSnapshot::Text(text) => clipboard.set_text(text.clone()),
+                    ClipboardSnapshot::Image { width, height, bytes } => clipboard.set_image(ImageData {
+                        width: *width,
+                        height: *height,
+                        bytes: std::borrow::Cow::Borrowed(bytes.as_slice()),
+                    }),
+                    ClipboardSnapshot::Empty => return Ok(()),
+                };
+
+                match write_result {
+                    Ok(()) => {
+                        if let ClipboardSnapshot::Text(expected) = &snapshot {
+                            match clipboard.get_text() {
+                                Ok(current) if clipboard_text_matches(expected, &current) => {
+                                    return Ok(());
+                                }
+                                Ok(_) => "Clipboard text verification mismatch".to_string(),
+                                Err(err) => format!("Clipboard text verification failed: {}", err),
+                            }
+                        } else {
+                            return Ok(());
+                        }
+                    }
+                    Err(err) => err.to_string(),
+                }
+            }
+            Err(err) => err.to_string(),
+        };
+
+        if std::time::Instant::now() >= deadline {
+            warn!(
+                "Clipboard restore timed out after {} ms: {}",
+                CLIPBOARD_RESTORE_TIMEOUT_MS, attempt_error
+            );
+            return Err(format!(
+                "Failed to restore clipboard after {} ms: {}",
+                CLIPBOARD_RESTORE_TIMEOUT_MS, attempt_error
+            ));
+        }
+
+        thread::sleep(Duration::from_millis(CLIPBOARD_RETRY_INTERVAL_MS));
+    }
+}
+
+pub(crate) fn paste_text(text: &str) -> Result<(), String> {
+    let snapshot = capture_clipboard_snapshot_with_retry();
+    set_clipboard_text_with_retry(text)?;
+
+    if let Err(paste_error) = send_paste_keystroke() {
+        if let Err(restore_error) = restore_snapshot_with_retry(snapshot) {
+            warn!(
+                "Clipboard restore failed after paste keystroke error: {}",
+                restore_error
+            );
+            return Err(format!(
+                "Failed to send paste keystroke: {}. Clipboard restore also failed: {}",
+                paste_error, restore_error
+            ));
+        }
+
+        return Err(format!("Failed to send paste keystroke: {}", paste_error));
+    }
+
+    let operation_generation = CLIPBOARD_PASTE_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(CLIPBOARD_RESTORE_DELAY_MS));
+
+        // Newer paste operations supersede older restore attempts.
+        if CLIPBOARD_PASTE_GENERATION.load(Ordering::Acquire) != operation_generation {
+            return;
+        }
+
+        if let Err(err) = restore_snapshot_with_retry(snapshot) {
+            warn!("Clipboard restore failed: {}", err);
         }
     });
 
@@ -2202,6 +2799,7 @@ pub fn run() {
             check_ffmpeg,
             get_ffmpeg_version_info,
             start_sidecar,
+            voice_analysis_setup_preflight,
             install_vibevoice_dependencies,
             stop_sidecar,
             sidecar_health,

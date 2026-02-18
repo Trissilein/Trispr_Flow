@@ -2,6 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import type { Settings, TranscriptionAnalysis } from "./types";
 import { settings } from "./state";
 import * as dom from "./dom-refs";
@@ -22,7 +23,10 @@ import { updateChaptersVisibility } from "./chapters";
 
 let lastAnalysisResults: TranscriptionAnalysis | null = null;
 let analysisInProgress = false;
+let analysisRunId = 0;
+let analysisNeedsEngineReset = false;
 const ANALYSIS_ENGINE_DETAIL_DEFAULT = "May take up to 30s on first run";
+const ANALYSIS_SETUP_RECOMMENDED_FREE_GB = 55;
 
 type AnalysisRequest = {
   audioPath: string;
@@ -30,6 +34,45 @@ type AnalysisRequest = {
   language: string;
   parallel: boolean;
 };
+
+type VoiceAnalysisSetupPreflight = {
+  status: string;
+  message?: string;
+  setup_script?: string;
+  run_manual_command?: string;
+  automatic_setup_supported?: boolean;
+  python?: {
+    found?: boolean;
+    supported?: boolean;
+    version?: string | null;
+    path?: string | null;
+  };
+  runtime?: {
+    ready?: boolean;
+    detail?: string | null;
+  };
+  storage?: {
+    cache_dir?: string;
+    free_gb?: number | null;
+    recommended_free_gb?: number;
+    enough_for_prefetch?: boolean | null;
+  };
+};
+
+type VoiceAnalysisSetupProgress = {
+  phase?: string;
+  message?: string;
+  done?: boolean;
+};
+
+function nextAnalysisRunId(): number {
+  analysisRunId += 1;
+  return analysisRunId;
+}
+
+function isCurrentAnalysisRun(runId: number): boolean {
+  return runId === analysisRunId;
+}
 
 function escapeHtml(text: string): string {
   return text
@@ -44,9 +87,118 @@ function nlToBr(text: string): string {
   return escapeHtml(text).replace(/\n/g, "<br>");
 }
 
+function confirmVoiceAnalysisSetupStart(preflight?: VoiceAnalysisSetupPreflight): boolean {
+  const recommendedGb = preflight?.storage?.recommended_free_gb ?? ANALYSIS_SETUP_RECOMMENDED_FREE_GB;
+  const freeGb = preflight?.storage?.free_gb;
+  const enoughForPrefetch = preflight?.storage?.enough_for_prefetch;
+  const messageParts = [
+    "Voice Analysis setup is optional and can take several minutes.",
+    `Download/cache usage can be large (often many GB). Recommended free disk headroom: ${recommendedGb} GB.`,
+  ];
+  if (typeof freeGb === "number") {
+    const storageLine = enoughForPrefetch === false
+      ? `Detected free disk for HF cache: ${freeGb} GB (below recommended headroom for large model cache/prefetch).`
+      : `Detected free disk for HF cache: ${freeGb} GB.`;
+    messageParts.push(storageLine);
+  }
+  messageParts.push("Continue with automatic setup now?");
+  const message = messageParts.join("\n\n");
+  return window.confirm(message);
+}
+
+function isPreflightSetupRequired(status: string): boolean {
+  return status === "setup_required" || status === "runtime_invalid";
+}
+
+function isPreflightBlocking(status: string): boolean {
+  return status === "missing_python"
+    || status === "unsupported_python"
+    || status === "script_missing"
+    || status === "unsupported_platform";
+}
+
+function buildPreflightGuidanceMessage(preflight: VoiceAnalysisSetupPreflight): string {
+  const lines: string[] = [];
+  const status = preflight.status || "unknown";
+  const manual = preflight.run_manual_command || 'powershell -NoProfile -ExecutionPolicy Bypass -File "sidecar/vibevoice-asr/setup-vibevoice.ps1"';
+  const pythonVersion = preflight.python?.version ?? "unknown";
+  const freeGb = preflight.storage?.free_gb;
+  const recommendedGb = preflight.storage?.recommended_free_gb ?? ANALYSIS_SETUP_RECOMMENDED_FREE_GB;
+
+  if (status === "setup_required") {
+    lines.push("Voice Analysis setup is required before the first analysis run.");
+  } else if (status === "runtime_invalid") {
+    lines.push("Voice Analysis runtime exists but is invalid and needs repair.");
+  } else if (status === "missing_python") {
+    lines.push("Python 3.11+ is required but was not found.");
+    lines.push("Install Python from https://www.python.org/downloads/ and retry.");
+  } else if (status === "unsupported_python") {
+    lines.push(`Detected unsupported Python version: ${pythonVersion}.`);
+    lines.push("Use Python 3.11, 3.12, or 3.13.");
+  } else if (status === "script_missing") {
+    lines.push("Voice Analysis setup script is missing.");
+    lines.push("Reinstall Trispr Flow to restore sidecar setup files.");
+  } else if (status === "unsupported_platform") {
+    lines.push("Automatic Voice Analysis setup is currently supported on Windows only.");
+  } else {
+    lines.push(preflight.message || "Voice Analysis preflight found a setup issue.");
+  }
+
+  if (typeof freeGb === "number") {
+    lines.push(`Detected free disk for HF cache: ${freeGb} GB (recommended for prefetch: ${recommendedGb} GB).`);
+  }
+
+  if (preflight.runtime?.detail) {
+    lines.push("");
+    lines.push(`Runtime detail: ${preflight.runtime.detail}`);
+  }
+
+  lines.push("");
+  lines.push("Run manually:");
+  lines.push(manual);
+  return lines.join("\n");
+}
+
+async function runVoiceAnalysisSetupInstall(
+  onProgress?: (progress: VoiceAnalysisSetupProgress) => void,
+): Promise<void> {
+  const unlisten = await listen<VoiceAnalysisSetupProgress>("voice-analysis:setup-progress", (event) => {
+    onProgress?.(event.payload);
+  });
+
+  try {
+    await invoke("install_vibevoice_dependencies", { prefetchModel: false });
+  } finally {
+    unlisten();
+  }
+}
+
 function extractSetupCommand(message: string): string | null {
   const match = message.match(/powershell[^\r\n]*-File\s+"[^"]+"/i);
   return match ? match[0] : null;
+}
+
+function isVoiceAnalysisRuntimeError(message: string): boolean {
+  const msg = message.toLowerCase();
+  const markers = [
+    "sidecar",
+    "pip",
+    "fastapi",
+    "setup-vibevoice",
+    "voice analysis setup",
+    "no module",
+    "unrecognized processing class",
+    "can't instantiate a processor",
+    "failed to load model",
+    "runtime is unavailable or incompatible",
+    "version mismatch",
+    "transformers fallback is disabled",
+    "huggingface_hub version out of supported range",
+    "vibevoice package is not installed",
+    "missing required asr modules",
+    "object of type dtype is not json serializable",
+  ];
+  return markers.some((marker) => msg.includes(marker));
 }
 
 async function runAnalysisRequest(request: AnalysisRequest): Promise<TranscriptionAnalysis> {
@@ -132,6 +284,8 @@ function setAnalysisBusy(isBusy: boolean) {
 }
 
 function closeAnalysisDialog() {
+  // Invalidate pending async UI updates from old analysis attempts.
+  nextAnalysisRunId();
   const dialog = document.getElementById("analysis-dialog");
   if (dialog) dialog.style.display = "none";
 }
@@ -219,6 +373,8 @@ function showAnalysisErrorInDialog(
     const installStatus = document.getElementById("analysis-install-status");
     installBtn?.addEventListener("click", async () => {
       if (!installBtn || installBtn.disabled) return;
+      if (!confirmVoiceAnalysisSetupStart()) return;
+      const runId = nextAnalysisRunId();
       setAnalysisBusy(true);
       installBtn.disabled = true;
       installBtn.textContent = "Installing...";
@@ -229,16 +385,34 @@ function showAnalysisErrorInDialog(
       setAnalysisStage("run", "pending");
 
       try {
-        await invoke("install_vibevoice_dependencies", { prefetchModel: false });
+        await runVoiceAnalysisSetupInstall((progress) => {
+          if (!isCurrentAnalysisRun(runId)) return;
+          if (installStatus && progress.message) {
+            installStatus.textContent = progress.message;
+          }
+        });
+        if (!isCurrentAnalysisRun(runId)) return;
         if (installStatus) {
           installStatus.textContent = "Dependencies installed. Restarting analysis engine...";
         }
 
+        if (analysisNeedsEngineReset) {
+          try {
+            await invoke("stop_sidecar");
+          } catch (stopError) {
+            console.warn("Voice Analysis sidecar reset before retry failed:", stopError);
+          }
+          if (!isCurrentAnalysisRun(runId)) return;
+        }
+
         await invoke("start_sidecar");
+        if (!isCurrentAnalysisRun(runId)) return;
+        analysisNeedsEngineReset = false;
         setAnalysisStage("engine", "done");
         setAnalysisStage("run", "active");
 
         const analysis = await runAnalysisRequest(retryRequest);
+        if (!isCurrentAnalysisRun(runId)) return;
         setAnalysisStage("run", "done");
         showAnalysisResultsInDialog(analysis);
         showToast({
@@ -248,11 +422,15 @@ function showAnalysisErrorInDialog(
           duration: 3500,
         });
       } catch (err) {
+        if (!isCurrentAnalysisRun(runId)) return;
         const installMsg = String(err);
         console.error("Voice Analysis install/retry failed:", err);
+        analysisNeedsEngineReset = true;
         showAnalysisErrorInDialog(installMsg, true, retryRequest);
       } finally {
-        setAnalysisBusy(false);
+        if (isCurrentAnalysisRun(runId)) {
+          setAnalysisBusy(false);
+        }
       }
     });
   }
@@ -542,6 +720,7 @@ export function wireEvents() {
     }
 
     // Step 2: Open dialog and mark in-progress
+    const runId = nextAnalysisRunId();
     setAnalysisBusy(true);
     openAnalysisDialog();
 
@@ -559,27 +738,67 @@ export function wireEvents() {
     };
 
     try {
+      const preflight = await invoke<VoiceAnalysisSetupPreflight>("voice_analysis_setup_preflight");
+      if (!isCurrentAnalysisRun(runId)) return;
+      const preflightStatus = String(preflight?.status || "unknown").toLowerCase();
+      const preflightGuidance = buildPreflightGuidanceMessage(preflight);
+
+      if (isPreflightBlocking(preflightStatus)) {
+        throw new Error(preflightGuidance);
+      }
+
+      if (isPreflightSetupRequired(preflightStatus)) {
+        if (!confirmVoiceAnalysisSetupStart(preflight)) {
+          throw new Error(
+            `Voice Analysis setup is required before analysis.\n\n${preflightGuidance}`,
+          );
+        }
+
+        setAnalysisStage("engine", "active");
+        const engineDetail = document.getElementById("stage-detail-engine");
+        if (engineDetail) {
+          engineDetail.textContent = "Installing Voice Analysis dependencies...";
+        }
+
+        await runVoiceAnalysisSetupInstall((progress) => {
+          if (!isCurrentAnalysisRun(runId)) return;
+          if (engineDetail && progress.message) {
+            engineDetail.textContent = progress.message;
+          }
+        });
+        if (!isCurrentAnalysisRun(runId)) return;
+        analysisNeedsEngineReset = true;
+      }
+
       // Step 3: Start engine
       setAnalysisStage("engine", "active");
+      if (analysisNeedsEngineReset) {
+        try {
+          await invoke("stop_sidecar");
+        } catch (stopError) {
+          console.warn("Voice Analysis sidecar reset before start failed:", stopError);
+        }
+        if (!isCurrentAnalysisRun(runId)) return;
+      }
       await invoke("start_sidecar");
+      if (!isCurrentAnalysisRun(runId)) return;
+      analysisNeedsEngineReset = false;
       setAnalysisStage("engine", "done");
 
       // Step 4: Run analysis
       setAnalysisStage("run", "active");
       const analysis = await runAnalysisRequest(analysisRequest);
+      if (!isCurrentAnalysisRun(runId)) return;
       setAnalysisStage("run", "done");
       showAnalysisResultsInDialog(analysis);
     } catch (error) {
+      if (!isCurrentAnalysisRun(runId)) return;
       console.error("Voice Analysis failed:", error);
       const msg = String(error);
-      const isSidecarError =
-        msg.includes("Sidecar") || msg.includes("sidecar") ||
-        msg.includes("pip") || msg.includes("fastapi") ||
-        msg.includes("setup-vibevoice") || msg.includes("Voice Analysis setup") ||
-        msg.includes("No module") ||
-        msg.includes("Unrecognized processing class") ||
-        msg.includes("Can't instantiate a processor") ||
-        msg.includes("Failed to load model");
+      const isSidecarError = isVoiceAnalysisRuntimeError(msg);
+      if (isSidecarError) {
+        analysisNeedsEngineReset = true;
+      }
 
       // Mark the active stage as error
       ["file", "engine", "run"].forEach((id) => {
@@ -589,7 +808,9 @@ export function wireEvents() {
 
       showAnalysisErrorInDialog(msg, isSidecarError, analysisRequest);
     } finally {
-      setAnalysisBusy(false);
+      if (isCurrentAnalysisRun(runId)) {
+        setAnalysisBusy(false);
+      }
     }
   });
 

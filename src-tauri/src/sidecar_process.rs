@@ -4,11 +4,20 @@
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use crate::sidecar::SidecarClient;
+
+#[cfg(debug_assertions)]
+const TRISPR_DEV_BUILD_VALUE: &str = "1";
+#[cfg(not(debug_assertions))]
+const TRISPR_DEV_BUILD_VALUE: &str = "0";
+
+const HF_UNAUTH_WARNING_SNIPPET: &str = "sending unauthenticated requests to the HF Hub";
+static HF_UNAUTH_WARNING_REPORTED: AtomicBool = AtomicBool::new(false);
 
 /// Log a sidecar stderr line at the appropriate level.
 ///
@@ -16,6 +25,18 @@ use crate::sidecar::SidecarClient;
 /// uvicorn format:           `LEVEL:     message`
 /// Python warnings:          `file.py:42: DeprecationWarning: ...`
 fn log_sidecar_line(line: &str) {
+  if line.contains(HF_UNAUTH_WARNING_SNIPPET) {
+    if !HF_UNAUTH_WARNING_REPORTED.swap(true, Ordering::AcqRel) {
+      info!(
+        "[sidecar] Hugging Face requests are unauthenticated (public model/tokenizer metadata/downloads). \
+Set HF_TOKEN for higher rate limits. Voice audio is processed locally and is not uploaded to Hugging Face."
+      );
+    } else {
+      debug!("[sidecar] {}", line);
+    }
+    return;
+  }
+
   let t = line.trim_start();
   let is_error = t.starts_with("ERROR:") || t.contains(" - ERROR - ") || t.contains(" - CRITICAL - ");
   let is_warn = t.starts_with("WARNING:") || t.contains(" - WARNING - ")
@@ -144,6 +165,7 @@ impl SidecarProcess {
       info!("Starting bundled sidecar: {:?}", bundled_exe);
       let mut cmd = Command::new(&bundled_exe);
       cmd.current_dir(&sidecar_dir)
+        .env("TRISPR_DEV_BUILD", TRISPR_DEV_BUILD_VALUE)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
       #[cfg(target_os = "windows")]
@@ -171,6 +193,7 @@ impl SidecarProcess {
       let mut cmd = Command::new(&python_path);
       cmd.arg(&main_py)
         .current_dir(&sidecar_dir)
+        .env("TRISPR_DEV_BUILD", TRISPR_DEV_BUILD_VALUE)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
       #[cfg(target_os = "windows")]

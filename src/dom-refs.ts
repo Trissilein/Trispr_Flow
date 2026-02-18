@@ -75,6 +75,21 @@ export const postprocCustomVocabEnabled = $("postproc-custom-vocab-enabled") as 
 export const postprocCustomVocabConfig = $("postproc-custom-vocab-config") as HTMLDivElement | null;
 export const postprocVocabRows = $("postproc-vocab-rows") as HTMLDivElement | null;
 export const postprocVocabAdd = $("postproc-vocab-add") as HTMLButtonElement | null;
+export const aiFallbackEnabled = $("ai-fallback-enabled") as HTMLInputElement | null;
+export const aiFallbackSettings = $("ai-fallback-settings") as HTMLDivElement | null;
+export const aiFallbackProvider = $("ai-fallback-provider") as HTMLSelectElement | null;
+export const aiFallbackModel = $("ai-fallback-model") as HTMLSelectElement | null;
+export const aiFallbackApiKeyInput = $("ai-fallback-api-key-input") as HTMLInputElement | null;
+export const aiFallbackSaveKeyBtn = $("ai-fallback-save-key") as HTMLButtonElement | null;
+export const aiFallbackClearKeyBtn = $("ai-fallback-clear-key") as HTMLButtonElement | null;
+export const aiFallbackTestKeyBtn = $("ai-fallback-test-key") as HTMLButtonElement | null;
+export const aiFallbackKeyStatus = $("ai-fallback-key-status") as HTMLSpanElement | null;
+export const aiFallbackTemperature = $("ai-fallback-temperature") as HTMLInputElement | null;
+export const aiFallbackTemperatureValue = $("ai-fallback-temperature-value") as HTMLSpanElement | null;
+export const aiFallbackMaxTokens = $("ai-fallback-max-tokens") as HTMLSelectElement | null;
+export const aiFallbackCustomPromptEnabled = $("ai-fallback-custom-prompt-enabled") as HTMLInputElement | null;
+export const aiFallbackCustomPromptField = $("ai-fallback-custom-prompt-field") as HTMLDivElement | null;
+export const aiFallbackCustomPrompt = $("ai-fallback-custom-prompt") as HTMLTextAreaElement | null;
 
 // Output / transcribe controls
 export const transcribeEnabledToggle = $("transcribe-enabled-toggle") as HTMLInputElement | null;

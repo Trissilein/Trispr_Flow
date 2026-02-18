@@ -963,13 +963,22 @@ pub(crate) fn transcribe_audio(
 ) -> Result<(String, String), String> {
   let wav_bytes = encode_wav_i16(samples, TARGET_SAMPLE_RATE);
 
-  if settings.cloud_fallback {
+  if settings.cloud_fallback && legacy_cloud_transcription_enabled() {
     let text = transcribe_cloud(&wav_bytes)?;
-    return Ok((text, "cloud".to_string()));
+    return Ok((text, "cloud-legacy".to_string()));
   }
 
   let text = transcribe_local(app, settings, &wav_bytes)?;
   Ok((text, "local".to_string()))
+}
+
+fn legacy_cloud_transcription_enabled() -> bool {
+  matches!(
+    std::env::var("TRISPR_ENABLE_LEGACY_CLOUD_TRANSCRIBE")
+      .ok()
+      .map(|v| v.trim().to_lowercase()),
+    Some(v) if v == "1" || v == "true" || v == "yes" || v == "on"
+  )
 }
 
 fn transcribe_local(
@@ -1049,7 +1058,7 @@ struct CloudResponse {
 fn transcribe_cloud(wav_bytes: &[u8]) -> Result<String, String> {
   let endpoint = std::env::var("TRISPR_CLOUD_ENDPOINT").unwrap_or_default();
   if endpoint.trim().is_empty() {
-    return Err("Cloud fallback not configured".to_string());
+    return Err("Legacy cloud transcription fallback is not configured".to_string());
   }
 
   let token = std::env::var("TRISPR_CLOUD_TOKEN").unwrap_or_default();

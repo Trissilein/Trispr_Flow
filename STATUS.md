@@ -5,7 +5,7 @@ Last updated: 2026-02-18
 ## Snapshot
 
 - **Current release**: `v0.6.0` (released 2026-02-16)
-- **Current planning phase**: `v0.7.0` Block F complete; Block A + B complete; Block C in progress
+- **Current planning phase**: `v0.7.0` Block F + G complete; Block A + B + C complete; Block D in progress
 - **Canonical next steps**: see `ROADMAP.md`
 
 ## Working State
@@ -13,6 +13,7 @@ Last updated: 2026-02-18
 - Core capture/transcription pipeline is stable (PTT/VAD + system audio + export).
 - Voice Analysis UI flow exists (file picker, progress dialog, result rendering, error surfacing).
 - Analyse click now runs guided setup preflight (runtime check + storage hint) and can launch setup with live progress updates.
+- AI Fallback foundation (v0.7 Block G) is in place: provider architecture, settings migration (`ai_fallback` + `providers`), key storage flow, and Post-Processing config UI.
 - Sidecar runtime supports two modes:
   - bundled executable (if present)
   - Python fallback (`main.py`) with per-user venv preferred
@@ -23,10 +24,10 @@ Last updated: 2026-02-18
 ## Known Gaps
 
 - Guided first-use setup path is shipped for Windows (`Analyse` preflight + storage hint + setup progress); richer wizard polish can follow later.
-- Model/runtime edge cases still need hardening, but key checks are now in place (runtime dependency/version validation for VibeVoice-ASR, prefetch disk guardrail, and clearer fallback messaging).
+- AI Fallback provider calls are currently scaffolded/passthrough until Block H final provider API integrations are completed.
 - Release-vs-dev source discovery split (D3) is implemented: local `VibeVoice` source auto-discovery defaults ON in dev, OFF in release, with explicit override support.
 - Some legacy docs still contain historical assumptions; `ROADMAP.md` is now the source of truth for priority and sequencing.
-- Policy decisions D1-D4 are locked; Block A/B are complete, C/D remain.
+- Policy decisions D1-D4 are locked; Block A/B/C are complete, D remains.
 
 ## Privacy + Network Notes
 
@@ -36,5 +37,5 @@ Last updated: 2026-02-18
 
 ## Next Focus
 
-1. Block C: Voice Analysis retry/reset and first-use guided setup UX.
-2. Block D: v0.7.0 AI Fallback implementation.
+1. Block H: Provider integrations (OpenAI/Claude/Gemini) + prompt strategy + E2E.
+2. Finalize Block D and release validation.

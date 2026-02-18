@@ -2,6 +2,7 @@
 #![allow(clippy::needless_return)]
 
 mod audio;
+mod ai_fallback;
 mod auto_processing;
 mod constants;
 mod errors;
@@ -37,12 +38,15 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tracing::{error, info, warn};
 
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
+use crate::ai_fallback::keyring as ai_fallback_keyring;
+use crate::ai_fallback::models::RefinementOptions;
+use crate::ai_fallback::provider::{default_models_for_provider, ProviderFactory};
 use crate::models::{
     check_model_available, clear_hidden_external_models, download_model, get_models_dir,
     hide_external_model, list_models, pick_model_dir, quantize_model, remove_model,
 };
 use crate::state::{
-    load_history, load_settings, load_transcribe_history, push_history_entry_inner,
+    load_history, load_settings, load_transcribe_history, normalize_ai_fallback_fields, push_history_entry_inner,
     push_transcribe_entry_inner, save_settings_file, sync_model_dir_env,
 };
 use crate::transcription::{
@@ -320,6 +324,138 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
     state.settings.lock().unwrap().clone()
 }
 
+#[tauri::command]
+fn fetch_available_models(state: State<'_, AppState>, provider: String) -> Result<Vec<String>, String> {
+    let provider_id = provider.trim().to_lowercase();
+    let from_settings = {
+        let settings = state.settings.lock().unwrap();
+        settings
+            .providers
+            .get(&provider_id)
+            .map(|cfg| cfg.available_models.clone())
+            .unwrap_or_default()
+    };
+
+    if !from_settings.is_empty() {
+        return Ok(from_settings);
+    }
+
+    let defaults = default_models_for_provider(&provider_id);
+    if defaults.is_empty() {
+        return Err(format!("Unknown AI provider: {}", provider));
+    }
+    Ok(defaults)
+}
+
+#[tauri::command]
+fn test_provider_connection(provider: String, api_key: String) -> Result<serde_json::Value, String> {
+    let provider_id = provider.trim().to_lowercase();
+    let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
+    provider_client
+        .validate_api_key(api_key.trim())
+        .map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+      "ok": true,
+      "provider": provider_id,
+      "message": "API key format looks valid. Live provider connection checks are activated with provider integrations.",
+    }))
+}
+
+#[tauri::command]
+fn save_provider_api_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: String,
+    api_key: String,
+) -> Result<serde_json::Value, String> {
+    let provider_id = provider.trim().to_lowercase();
+    let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
+    provider_client
+        .validate_api_key(api_key.trim())
+        .map_err(|e| e.to_string())?;
+    ai_fallback_keyring::store_api_key(&app, &provider_id, api_key.trim())?;
+
+    let snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.providers.set_api_key_stored(&provider_id, true)?;
+        normalize_ai_fallback_fields(&mut settings);
+        settings.clone()
+    };
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot.clone());
+
+    Ok(serde_json::json!({
+      "status": "success",
+      "provider": provider_id,
+      "stored": true,
+    }))
+}
+
+#[tauri::command]
+fn clear_provider_api_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: String,
+) -> Result<serde_json::Value, String> {
+    let provider_id = provider.trim().to_lowercase();
+    ai_fallback_keyring::clear_api_key(&app, &provider_id)?;
+
+    let snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.providers.set_api_key_stored(&provider_id, false)?;
+        normalize_ai_fallback_fields(&mut settings);
+        settings.clone()
+    };
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot.clone());
+
+    Ok(serde_json::json!({
+      "status": "success",
+      "provider": provider_id,
+      "stored": false,
+    }))
+}
+
+#[tauri::command]
+fn refine_transcript(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    transcript: String,
+) -> Result<serde_json::Value, String> {
+    let settings_snapshot = state.settings.lock().unwrap().clone();
+    let ai_settings = settings_snapshot.ai_fallback.clone();
+
+    if !ai_settings.enabled {
+        return Err("AI Fallback is disabled.".to_string());
+    }
+
+    let provider_client = ProviderFactory::create(&ai_settings.provider).map_err(|e| e.to_string())?;
+    let api_key = ai_fallback_keyring::read_api_key(&app, &ai_settings.provider)?
+        .ok_or_else(|| format!("No API key stored for provider '{}'.", ai_settings.provider))?;
+
+    provider_client
+        .validate_api_key(&api_key)
+        .map_err(|e| e.to_string())?;
+
+    let options = RefinementOptions {
+        temperature: ai_settings.temperature,
+        max_tokens: ai_settings.max_tokens,
+        language: Some(settings_snapshot.language_mode.clone()),
+        custom_prompt: if ai_settings.custom_prompt_enabled {
+            Some(ai_settings.custom_prompt.clone())
+        } else {
+            None
+        },
+    };
+
+    let result = provider_client
+        .refine_transcript(&transcript, &ai_settings.model, &options, &api_key)
+        .map_err(|e| e.to_string())?;
+
+    serde_json::to_value(&result).map_err(|e| e.to_string())
+}
+
 fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
     let state = app.state::<AppState>();
     let settings = {
@@ -355,7 +491,7 @@ fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> 
 fn save_settings(
     app: AppHandle,
     state: State<'_, AppState>,
-    settings: Settings,
+    mut settings: Settings,
 ) -> Result<(), String> {
     let (prev_mode, prev_device, prev_capture_enabled, prev_transcribe_enabled) = {
         let current = state.settings.lock().unwrap();
@@ -366,6 +502,8 @@ fn save_settings(
             current.transcribe_enabled,
         )
     };
+    normalize_ai_fallback_fields(&mut settings);
+
     {
         let mut current = state.settings.lock().unwrap();
         *current = settings.clone();
@@ -2809,6 +2947,11 @@ pub fn run() {
             get_recordings_directory,
             open_recordings_directory,
             check_vibevoice_updates,
+            fetch_available_models,
+            test_provider_connection,
+            save_provider_api_key,
+            clear_provider_api_key,
+            refine_transcript,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

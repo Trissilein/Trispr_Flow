@@ -1,5 +1,30 @@
 // Type definitions for Trispr Flow application
 
+export type AIFallbackProvider = "claude" | "openai" | "gemini";
+
+export interface AIFallbackSettings {
+  enabled: boolean;
+  provider: AIFallbackProvider;
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  custom_prompt_enabled: boolean;
+  custom_prompt: string;
+  use_default_prompt: boolean;
+}
+
+export interface AIProviderSettings {
+  api_key_stored: boolean;
+  available_models: string[];
+  preferred_model: string;
+}
+
+export interface AIProvidersSettings {
+  claude: AIProviderSettings;
+  openai: AIProviderSettings;
+  gemini: AIProviderSettings;
+}
+
 export interface Settings {
   mode: "ptt" | "vad";
   hotkey_ptt: string;
@@ -8,7 +33,10 @@ export interface Settings {
   language_mode: "auto" | "en" | "de" | "fr" | "es" | "it" | "pt" | "nl" | "pl" | "ru" | "ja" | "ko" | "zh" | "ar" | "tr" | "hi";
   language_pinned: boolean;
   model: string;
+  // Legacy compatibility toggle; mirrors ai_fallback.enabled.
   cloud_fallback: boolean;
+  ai_fallback: AIFallbackSettings;
+  providers: AIProvidersSettings;
   audio_cues: boolean;
   audio_cues_volume: number;
   ptt_use_vad: boolean;

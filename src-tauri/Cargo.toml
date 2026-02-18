@@ -43,6 +43,7 @@ regex = "1"
 which = "6.0"
 hound = "3.5"
 chrono = "0.4"
+keyring = "2.3"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-global-shortcut = "2"

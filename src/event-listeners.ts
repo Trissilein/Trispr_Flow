@@ -3,10 +3,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
-import type { Settings, TranscriptionAnalysis } from "./types";
+import type { AIFallbackProvider, Settings, TranscriptionAnalysis } from "./types";
 import { settings } from "./state";
 import * as dom from "./dom-refs";
-import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, updateTranscribeVadVisibility, updateTranscribeThreshold } from "./settings";
+import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, updateTranscribeVadVisibility, updateTranscribeThreshold, renderAIFallbackSettingsUi } from "./settings";
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
 import { refreshModels, refreshModelsDir } from "./models";
@@ -64,6 +64,75 @@ type VoiceAnalysisSetupProgress = {
   message?: string;
   done?: boolean;
 };
+
+const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini"];
+
+function normalizeAIFallbackProvider(provider?: string): AIFallbackProvider {
+  if (provider && AI_FALLBACK_PROVIDER_IDS.includes(provider as AIFallbackProvider)) {
+    return provider as AIFallbackProvider;
+  }
+  return "claude";
+}
+
+function getAIFallbackProviderSettings(provider: AIFallbackProvider) {
+  if (!settings?.providers) return null;
+  if (provider === "claude") return settings.providers.claude;
+  if (provider === "openai") return settings.providers.openai;
+  if (provider === "gemini") return settings.providers.gemini;
+  return null;
+}
+
+function ensureAIFallbackSettingsDefaults() {
+  if (!settings) return;
+  if (!settings.ai_fallback) {
+    settings.ai_fallback = {
+      enabled: false,
+      provider: "claude",
+      model: "claude-3-5-sonnet-20241022",
+      temperature: 0.3,
+      max_tokens: 4000,
+      custom_prompt_enabled: false,
+      custom_prompt:
+        "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.",
+      use_default_prompt: true,
+    };
+  }
+  if (!settings.providers) {
+    settings.providers = {
+      claude: {
+        api_key_stored: false,
+        available_models: ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
+        preferred_model: "claude-3-5-sonnet-20241022",
+      },
+      openai: {
+        api_key_stored: false,
+        available_models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
+        preferred_model: "gpt-4o-mini",
+      },
+      gemini: {
+        api_key_stored: false,
+        available_models: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
+        preferred_model: "gemini-2.0-flash",
+      },
+    };
+  }
+}
+
+async function refreshAIFallbackModels(provider: AIFallbackProvider) {
+  if (!settings) return;
+  const models = await invoke<string[]>("fetch_available_models", { provider });
+  const providerSettings = getAIFallbackProviderSettings(provider);
+  if (!providerSettings) return;
+  providerSettings.available_models = models;
+  if (!providerSettings.preferred_model || !models.includes(providerSettings.preferred_model)) {
+    providerSettings.preferred_model = models[0] ?? "";
+  }
+  if (settings.ai_fallback.provider === provider) {
+    if (!models.includes(settings.ai_fallback.model)) {
+      settings.ai_fallback.model = providerSettings.preferred_model || models[0] || "";
+    }
+  }
+}
 
 function nextAnalysisRunId(): number {
   analysisRunId += 1;
@@ -566,6 +635,8 @@ export function renderVocabulary() {
 }
 
 export function wireEvents() {
+  ensureAIFallbackSettingsDefaults();
+
   // Main tab switching
   dom.tabBtnTranscription?.addEventListener("click", () => {
     switchMainTab("transcription");
@@ -1044,8 +1115,12 @@ export function wireEvents() {
 
   dom.cloudToggle?.addEventListener("change", async () => {
     if (!settings) return;
-    settings.cloud_fallback = dom.cloudToggle!.checked;
+    ensureAIFallbackSettingsDefaults();
+    settings.ai_fallback.enabled = dom.cloudToggle!.checked;
+    settings.cloud_fallback = settings.ai_fallback.enabled;
+    settings.postproc_llm_enabled = settings.ai_fallback.enabled;
     await persistSettings();
+    renderAIFallbackSettingsUi();
     renderHero();
   });
 
@@ -1171,6 +1246,204 @@ export function wireEvents() {
 
   dom.postprocVocabAdd?.addEventListener("click", () => {
     addVocabRow("", "");
+  });
+
+  // AI fallback event listeners
+  dom.aiFallbackEnabled?.addEventListener("change", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    settings.ai_fallback.enabled = dom.aiFallbackEnabled!.checked;
+    settings.cloud_fallback = settings.ai_fallback.enabled;
+    settings.postproc_llm_enabled = settings.ai_fallback.enabled;
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+    renderHero();
+  });
+
+  dom.aiFallbackProvider?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackProvider) return;
+    ensureAIFallbackSettingsDefaults();
+    const provider = normalizeAIFallbackProvider(dom.aiFallbackProvider.value);
+    settings.ai_fallback.provider = provider;
+    settings.postproc_llm_provider = provider;
+
+    try {
+      await refreshAIFallbackModels(provider);
+    } catch (error) {
+      console.warn(`Failed to refresh models for ${provider}:`, error);
+    }
+
+    const providerSettings = getAIFallbackProviderSettings(provider);
+    if (providerSettings) {
+      if (!providerSettings.preferred_model) {
+        providerSettings.preferred_model = providerSettings.available_models[0] ?? "";
+      }
+      settings.ai_fallback.model = providerSettings.preferred_model;
+      settings.postproc_llm_model = settings.ai_fallback.model;
+    }
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+    renderHero();
+  });
+
+  dom.aiFallbackModel?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackModel) return;
+    ensureAIFallbackSettingsDefaults();
+    const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
+    settings.ai_fallback.model = dom.aiFallbackModel.value;
+    settings.postproc_llm_model = settings.ai_fallback.model;
+    const providerSettings = getAIFallbackProviderSettings(provider);
+    if (providerSettings) {
+      providerSettings.preferred_model = settings.ai_fallback.model;
+    }
+    await persistSettings();
+  });
+
+  dom.aiFallbackSaveKeyBtn?.addEventListener("click", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
+    const apiKey = dom.aiFallbackApiKeyInput?.value?.trim() ?? "";
+    if (!apiKey) {
+      showToast({
+        type: "warning",
+        title: "Missing API key",
+        message: "Paste an API key before saving.",
+        duration: 3000,
+      });
+      return;
+    }
+    try {
+      await invoke("save_provider_api_key", { provider, apiKey });
+      const providerSettings = getAIFallbackProviderSettings(provider);
+      if (providerSettings) {
+        providerSettings.api_key_stored = true;
+      }
+      if (dom.aiFallbackApiKeyInput) {
+        dom.aiFallbackApiKeyInput.value = "";
+      }
+      renderAIFallbackSettingsUi();
+      showToast({
+        type: "success",
+        title: "API key saved",
+        message: `Stored API key for ${provider}.`,
+        duration: 2500,
+      });
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "API key save failed",
+        message: String(error),
+        duration: 5000,
+      });
+    }
+  });
+
+  dom.aiFallbackClearKeyBtn?.addEventListener("click", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
+    try {
+      await invoke("clear_provider_api_key", { provider });
+      const providerSettings = getAIFallbackProviderSettings(provider);
+      if (providerSettings) {
+        providerSettings.api_key_stored = false;
+      }
+      renderAIFallbackSettingsUi();
+      showToast({
+        type: "info",
+        title: "API key removed",
+        message: `Removed API key for ${provider}.`,
+        duration: 2500,
+      });
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "API key remove failed",
+        message: String(error),
+        duration: 5000,
+      });
+    }
+  });
+
+  dom.aiFallbackTestKeyBtn?.addEventListener("click", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
+    const apiKey = dom.aiFallbackApiKeyInput?.value?.trim() ?? "";
+    if (!apiKey) {
+      showToast({
+        type: "warning",
+        title: "Missing API key",
+        message: "Paste an API key in the field to test the connection.",
+        duration: 3000,
+      });
+      return;
+    }
+    try {
+      const result = await invoke<{ message?: string }>("test_provider_connection", { provider, apiKey });
+      await refreshAIFallbackModels(provider);
+      renderAIFallbackSettingsUi();
+      showToast({
+        type: "success",
+        title: "Connection test passed",
+        message: result?.message ?? `Provider ${provider} accepted the key format.`,
+        duration: 3500,
+      });
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Connection test failed",
+        message: String(error),
+        duration: 5000,
+      });
+    }
+  });
+
+  dom.aiFallbackTemperature?.addEventListener("input", () => {
+    if (!settings || !dom.aiFallbackTemperature) return;
+    ensureAIFallbackSettingsDefaults();
+    const value = Math.max(0, Math.min(1, Number(dom.aiFallbackTemperature.value)));
+    settings.ai_fallback.temperature = value;
+    if (dom.aiFallbackTemperatureValue) {
+      dom.aiFallbackTemperatureValue.textContent = value.toFixed(2);
+    }
+    updateRangeAria("ai-fallback-temperature", Math.round(value * 100));
+  });
+
+  dom.aiFallbackTemperature?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  dom.aiFallbackMaxTokens?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackMaxTokens) return;
+    ensureAIFallbackSettingsDefaults();
+    settings.ai_fallback.max_tokens = Math.max(128, Math.min(8192, Number(dom.aiFallbackMaxTokens.value)));
+    await persistSettings();
+  });
+
+  dom.aiFallbackCustomPromptEnabled?.addEventListener("change", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    settings.ai_fallback.custom_prompt_enabled = dom.aiFallbackCustomPromptEnabled!.checked;
+    settings.ai_fallback.use_default_prompt = !settings.ai_fallback.custom_prompt_enabled;
+    if (settings.ai_fallback.custom_prompt_enabled && settings.ai_fallback.custom_prompt.trim().length > 0) {
+      settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt;
+    }
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+  });
+
+  dom.aiFallbackCustomPrompt?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackCustomPrompt) return;
+    ensureAIFallbackSettingsDefaults();
+    settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value.trim();
+    settings.ai_fallback.use_default_prompt = settings.ai_fallback.custom_prompt.length === 0;
+    if (settings.ai_fallback.custom_prompt.length > 0) {
+      settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt;
+    }
+    await persistSettings();
   });
 
   dom.micGain?.addEventListener("input", () => {

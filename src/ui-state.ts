@@ -66,14 +66,16 @@ export function setTranscribeStatus(state: RecordingState) {
 
 export function renderHero() {
   if (!settings) return;
-  const cloudOn = settings.cloud_fallback;
-  if (dom.cloudState) dom.cloudState.textContent = cloudOn ? "Claude On" : "Claude Off";
-  if (dom.cloudCheck) dom.cloudCheck.classList.toggle("is-active", cloudOn);
+  const aiFallbackOn = settings.ai_fallback?.enabled ?? settings.cloud_fallback;
+  const provider = settings.ai_fallback?.provider ?? "claude";
+  const providerLabel = provider === "openai" ? "OpenAI" : provider === "gemini" ? "Gemini" : "Claude";
+  if (dom.cloudState) dom.cloudState.textContent = aiFallbackOn ? `${providerLabel} On` : "AI Off";
+  if (dom.cloudCheck) dom.cloudCheck.classList.toggle("is-active", aiFallbackOn);
   if (dom.dictationBadge) {
-    dom.dictationBadge.textContent = cloudOn
-      ? "AI-enhanced Mode (Online)"
+    dom.dictationBadge.textContent = aiFallbackOn
+      ? "AI fallback enabled"
       : "Private Mode (Offline)";
-    dom.dictationBadge.classList.toggle("badge--online", cloudOn);
+    dom.dictationBadge.classList.toggle("badge--online", aiFallbackOn);
   }
   if (dom.modeState) dom.modeState.textContent = settings.mode === "ptt" ? "PTT" : "Voice Activation";
 

@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-18 (Block B complete: runtime/dependency hardening)
+Last updated: 2026-02-18 (Block C complete; Block D started with Block G foundation)
 
 This file is the canonical source for priorities, dependencies, and "what is next."
 
@@ -9,7 +9,7 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 ## Canonical Current State
 
 - **Released**: `v0.6.0` (2026-02-16) with post-release fixes.
-- **Current phase**: `v0.7.0` planning complete; Block A and Block B complete, Block C in progress.
+- **Current phase**: `v0.7.0` planning complete; Block A/B/C complete, Block D in progress.
 - **Voice Analysis runtime reality**:
   - Rust side supports both `bundled sidecar exe` and `Python main.py` fallback.
   - NSIS CUDA/Vulkan now share one Voice Analysis setup flow (`voice_analysis_shared.nsh`).
@@ -27,8 +27,8 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 | --- | --- | --- | --- | --- |
 | **A** | Installer + setup automation hardening (NSIS page flow, setup script reliability, clear recovery paths) | **High** | - | Complete |
 | **B** | VibeVoice runtime hardening (model loading, dependency pinning, cache/prefetch guardrails, HF warning UX) | **High** | A | Complete |
-| **C** | Voice Analysis UX resilience (retry/reset after failure, actionable dialog states, no stale error replay) | **High** | A, B | In progress |
-| **D** | v0.7.0 AI Fallback implementation (Tasks 31/36/37 then 32/33/34/35/38) | **High** | C | Queued |
+| **C** | Voice Analysis UX resilience (retry/reset after failure, actionable dialog states, no stale error replay) | **High** | A, B | Complete |
+| **D** | v0.7.0 AI Fallback implementation (Tasks 31/36/37 then 32/33/34/35/38) | **High** | C | In progress |
 
 ## Locked Decisions (2026-02-18)
 
@@ -42,8 +42,8 @@ The following decisions are now fixed; implementation is tracked in Blocks A-C:
 ## v0.7.0 Implementation Status
 
 - ✅ **Block F complete**: terminology, UX location, execution sequence, architecture docs.
-- 🔵 **Block G ready**: Task 31 (provider architecture), Task 36 (settings migration), Task 37 (config UI).
-- 🔵 **Block H queued**: Task 32/33/34 providers, Task 35 prompts, Task 38 E2E.
+- ✅ **Block G complete**: Task 31 (provider architecture), Task 36 (settings migration), Task 37 (config UI scaffolding).
+- 🔵 **Block H queued**: Task 32/33/34 provider API integrations, Task 35 prompt strategy polish, Task 38 E2E.
 
 ## Detailed References
 

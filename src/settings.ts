@@ -4,6 +4,7 @@ import { settings } from "./state";
 import * as dom from "./dom-refs";
 import { thresholdToDb, VAD_DB_FLOOR } from "./ui-helpers";
 import { renderVocabulary } from "./event-listeners";
+import type { AIProviderSettings, AIFallbackProvider } from "./types";
 
 export async function persistSettings() {
   if (!settings) return;
@@ -94,6 +95,96 @@ export function updateTranscribeThreshold(threshold: number) {
   }
 }
 
+const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini"];
+
+function normalizeAIFallbackProvider(provider: string | undefined): AIFallbackProvider {
+  if (provider && AI_FALLBACK_PROVIDER_IDS.includes(provider as AIFallbackProvider)) {
+    return provider as AIFallbackProvider;
+  }
+  return "claude";
+}
+
+function getProviderSettings(provider: AIFallbackProvider): AIProviderSettings | null {
+  if (!settings?.providers) return null;
+  if (provider === "claude") return settings.providers.claude;
+  if (provider === "openai") return settings.providers.openai;
+  if (provider === "gemini") return settings.providers.gemini;
+  return null;
+}
+
+function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedModel: string) {
+  if (!dom.aiFallbackModel) return;
+  const providerSettings = getProviderSettings(provider);
+  const fallbackModels = providerSettings?.available_models?.length
+    ? providerSettings.available_models
+    : [];
+
+  dom.aiFallbackModel.innerHTML = "";
+  for (const modelId of fallbackModels) {
+    const option = document.createElement("option");
+    option.value = modelId;
+    option.textContent = modelId;
+    dom.aiFallbackModel.appendChild(option);
+  }
+  if (fallbackModels.length > 0) {
+    dom.aiFallbackModel.value = fallbackModels.includes(selectedModel)
+      ? selectedModel
+      : fallbackModels[0];
+  } else {
+    const option = document.createElement("option");
+    option.value = selectedModel || "";
+    option.textContent = selectedModel || "No models available";
+    dom.aiFallbackModel.appendChild(option);
+    dom.aiFallbackModel.value = option.value;
+  }
+}
+
+export function renderAIFallbackSettingsUi() {
+  if (!settings) return;
+  const ai = settings.ai_fallback;
+  const provider = normalizeAIFallbackProvider(ai?.provider);
+  const providerConfig = getProviderSettings(provider);
+
+  if (dom.aiFallbackEnabled) {
+    dom.aiFallbackEnabled.checked = Boolean(ai?.enabled);
+  }
+  if (dom.aiFallbackSettings) {
+    dom.aiFallbackSettings.style.display = ai?.enabled ? "block" : "none";
+  }
+  if (dom.aiFallbackProvider) {
+    dom.aiFallbackProvider.value = provider;
+  }
+
+  renderAIFallbackModelOptions(provider, ai?.model || "");
+
+  if (dom.aiFallbackKeyStatus) {
+    dom.aiFallbackKeyStatus.textContent = providerConfig?.api_key_stored
+      ? "API key stored in secure system keyring (fallback: local encrypted file)."
+      : "No API key stored for this provider yet.";
+  }
+
+  if (dom.aiFallbackTemperature) {
+    const temp = Math.max(0, Math.min(1, Number(ai?.temperature ?? 0.3)));
+    dom.aiFallbackTemperature.value = temp.toFixed(2);
+  }
+  if (dom.aiFallbackTemperatureValue) {
+    const temp = Math.max(0, Math.min(1, Number(ai?.temperature ?? 0.3)));
+    dom.aiFallbackTemperatureValue.textContent = temp.toFixed(2);
+  }
+  if (dom.aiFallbackMaxTokens) {
+    dom.aiFallbackMaxTokens.value = String(ai?.max_tokens ?? 4000);
+  }
+  if (dom.aiFallbackCustomPromptEnabled) {
+    dom.aiFallbackCustomPromptEnabled.checked = Boolean(ai?.custom_prompt_enabled);
+  }
+  if (dom.aiFallbackCustomPromptField) {
+    dom.aiFallbackCustomPromptField.style.display = ai?.custom_prompt_enabled ? "block" : "none";
+  }
+  if (dom.aiFallbackCustomPrompt) {
+    dom.aiFallbackCustomPrompt.value = ai?.custom_prompt || "";
+  }
+}
+
 export function renderSettings() {
   if (!settings) return;
   if (dom.captureEnabledToggle) dom.captureEnabledToggle.checked = settings.capture_enabled;
@@ -115,7 +206,7 @@ export function renderSettings() {
   if (dom.modelCustomUrlField) {
     dom.modelCustomUrlField.classList.toggle("hidden", settings.model_source !== "custom");
   }
-  if (dom.cloudToggle) dom.cloudToggle.checked = settings.cloud_fallback;
+  if (dom.cloudToggle) dom.cloudToggle.checked = settings.ai_fallback?.enabled ?? settings.cloud_fallback;
   if (dom.audioCuesToggle) dom.audioCuesToggle.checked = settings.audio_cues;
   if (dom.pttUseVadToggle) dom.pttUseVadToggle.checked = settings.ptt_use_vad;
   if (dom.audioCuesVolume) dom.audioCuesVolume.value = Math.round(settings.audio_cues_volume * 100).toString();
@@ -271,6 +362,7 @@ export function renderSettings() {
     dom.postprocCustomVocabConfig.style.display = settings.postproc_custom_vocab_enabled ? "block" : "none";
   }
   renderVocabulary();
+  renderAIFallbackSettingsUi();
 
   // Chapter settings
   if (dom.chaptersEnabled) {

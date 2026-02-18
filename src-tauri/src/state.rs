@@ -1,3 +1,4 @@
+use crate::ai_fallback::models::{AIFallbackSettings, AIProvidersSettings};
 use crate::audio::Recorder;
 use crate::constants::{
   HALLUCINATION_MAX_CHARS,
@@ -27,7 +28,11 @@ pub(crate) struct Settings {
   pub(crate) language_mode: String,
   pub(crate) language_pinned: bool,
   pub(crate) model: String,
+  // Legacy toggle kept for backward compatibility. Mirrors ai_fallback.enabled.
   pub(crate) cloud_fallback: bool,
+  // v0.7.0 AI Fallback settings
+  pub(crate) ai_fallback: AIFallbackSettings,
+  pub(crate) providers: AIProvidersSettings,
   pub(crate) audio_cues: bool,
   pub(crate) audio_cues_volume: f32,
   pub(crate) ptt_use_vad: bool, // Enable VAD threshold check even in PTT mode
@@ -131,6 +136,8 @@ impl Default for Settings {
       language_pinned: false,
       model: "whisper-large-v3".to_string(),
       cloud_fallback: false,
+      ai_fallback: AIFallbackSettings::default(),
+      providers: AIProvidersSettings::default(),
       audio_cues: true,
       audio_cues_volume: 0.3,
       ptt_use_vad: false,
@@ -456,11 +463,49 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
       if !["normal", "minimized", "tray"].contains(&settings.main_window_start_state.as_str()) {
         settings.main_window_start_state = "normal".to_string();
       }
+      // Normalize v0.7 AI fallback settings and legacy compatibility fields.
+      normalize_ai_fallback_fields(&mut settings);
+
       // Transcribe enablement is session-only; always start disabled.
       settings.transcribe_enabled = false;
       settings
     }
     Err(_) => Settings::default(),
+  }
+}
+
+pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
+  // Migrate legacy cloud-fallback toggle to ai_fallback enabled state.
+  if settings.cloud_fallback && !settings.ai_fallback.enabled {
+    settings.ai_fallback.enabled = true;
+  }
+  // Migrate legacy postproc_llm toggle and values if still used.
+  if settings.postproc_llm_enabled && !settings.ai_fallback.enabled {
+    settings.ai_fallback.enabled = true;
+  }
+  if settings.ai_fallback.provider.trim().is_empty() && !settings.postproc_llm_provider.trim().is_empty() {
+    settings.ai_fallback.provider = settings.postproc_llm_provider.clone();
+  }
+  if settings.ai_fallback.model.trim().is_empty() && !settings.postproc_llm_model.trim().is_empty() {
+    settings.ai_fallback.model = settings.postproc_llm_model.clone();
+  }
+  if settings.ai_fallback.custom_prompt.trim().is_empty() && !settings.postproc_llm_prompt.trim().is_empty() {
+    settings.ai_fallback.custom_prompt = settings.postproc_llm_prompt.clone();
+    settings.ai_fallback.custom_prompt_enabled = true;
+    settings.ai_fallback.use_default_prompt = false;
+  }
+
+  settings.ai_fallback.normalize();
+  settings.providers.normalize();
+  settings.providers.sync_from_ai_fallback(&settings.ai_fallback);
+
+  // Keep legacy fields synchronized for compatibility with older code paths.
+  settings.cloud_fallback = settings.ai_fallback.enabled;
+  settings.postproc_llm_enabled = settings.ai_fallback.enabled;
+  settings.postproc_llm_provider = settings.ai_fallback.provider.clone();
+  settings.postproc_llm_model = settings.ai_fallback.model.clone();
+  if settings.ai_fallback.custom_prompt_enabled {
+    settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt.clone();
   }
 }
 

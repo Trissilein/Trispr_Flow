@@ -1,5 +1,8 @@
 # VibeVoice-ASR Research & Integration Plan
 
+> Historical research document (pre-implementation).  
+> For current runtime/API behavior, use `sidecar/vibevoice-asr/README.md` and `docs/ARCHITECTURE.md`.
+
 **Status**: Research Phase (Task C14)
 **Last Updated**: 2026-02-15
 **Model**: Microsoft VibeVoice-ASR 7B

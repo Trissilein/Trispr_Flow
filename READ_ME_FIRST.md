@@ -24,6 +24,7 @@ Rule: write each topic once, in one canonical file.
 | State semantics and UI states | `docs/STATE_MANAGEMENT.md` | State model, loading/error/empty state conventions |
 | Dev setup and test commands | `docs/DEVELOPMENT.md` | Prereqs, local run, smoke/unit test workflow, platform deps |
 | Technical decisions (ADR-lite) | `docs/DECISIONS.md` | Decision, status, rationale, open questions |
+| Documentation contradiction log | `docs/DOC_SYNC_CONFLICTS.md` | Found conflicts, resolutions, and discussion-required items |
 | Release history | `CHANGELOG.md` | User-visible changes per version/release |
 | Contributor process | `CONTRIBUTING.md` | PR process, commit standards, workflow expectations |
 | Licenses and third-party notices | `THIRD_PARTY_NOTICES.md` | License text, attribution, legal notices |

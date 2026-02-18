@@ -1,8 +1,11 @@
 # Task Schedule - Trispr Flow
 
-Last updated: 2026-02-16
+Last updated: 2026-02-18
 
 ## Overview
+
+This file is the detailed execution log and block-level task table.
+For current priorities and dependency ordering, use `ROADMAP.md` as source of truth.
 
 Trispr Flow development uses an optimized **batched task schedule strategy** that reduces model switching overhead from 20+ to just **5 strategic model switches**. This approach groups tasks by AI model (Haiku, Sonnet, Opus) to maximize efficiency and context reuse.
 

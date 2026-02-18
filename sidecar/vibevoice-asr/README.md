@@ -1,87 +1,62 @@
 # VibeVoice-ASR Sidecar
 
-**Purpose**: FastAPI service providing speaker-diarized transcription via VibeVoice-ASR 7B model.
+Last updated: 2026-02-18
+
+FastAPI sidecar used by Trispr Flow for local Voice Analysis (speaker-aware transcription).
 
 ## Architecture
 
-```
-Trispr Flow (Tauri/Rust) ──HTTP──> FastAPI Sidecar ──GPU──> VibeVoice-ASR
-                                    (Python)
+```text
+Trispr Flow (Rust/Tauri) -> HTTP localhost -> FastAPI sidecar -> VibeVoice runtime
 ```
 
-## Directory Structure
-
-```
-sidecar/vibevoice-asr/
-├── main.py              # FastAPI application entry point
-├── config.py            # Configuration (precision mode, model path)
-├── model_loader.py      # Model initialization and VRAM management
-├── inference.py         # Transcription inference logic
-├── requirements.txt     # Python dependencies
-├── Dockerfile           # Container build (optional)
-├── .gitignore           # Git ignore patterns
-└── README.md            # This file
-```
+- Sidecar runs locally on the same machine.
+- Rust sends an `audio_path` to sidecar.
+- Sidecar reads the file from local disk and processes it locally.
 
 ## Requirements
 
-### Hardware
-- **GPU**: 8 GB VRAM minimum (INT8), 16 GB recommended (FP16)
-- **RAM**: 16 GB system RAM minimum
-- **Disk**: 20 GB free space for model files
+- Python 3.11 / 3.12 / 3.13
+- Windows GPU recommended for practical speed
+- Disk headroom for Python deps + HF model caches (can be many GB)
 
-### Software
-- **Python**: 3.10 or 3.11
-- **CUDA**: 12.1 or higher (for GPU acceleration)
-- **FFmpeg**: For audio preprocessing
+## Setup
 
-## Installation
+### Recommended (Windows)
 
-### 1. Install Python Dependencies
-
-```bash
-cd sidecar/vibevoice-asr
-pip install -r requirements.txt
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup-vibevoice.ps1
 ```
 
-### 2. Download Model (First Run)
+Optional model prefetch:
 
-The model will be automatically downloaded on first use via HuggingFace Hub.
-Alternatively, pre-download:
-
-```bash
-python -c "from transformers import AutoModelForSpeechSeq2Seq; AutoModelForSpeechSeq2Seq.from_pretrained('microsoft/vibevoice-asr-7b')"
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup-vibevoice.ps1 -PrefetchModel
 ```
 
-### 3. Start Sidecar
+### Manual
 
 ```bash
-uvicorn main:app --host 127.0.0.1 --port 8765
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-Or use the development server:
-
-```bash
-python main.py
-```
-
-## API Endpoints
+## API
 
 ### `POST /transcribe`
 
-Transcribe audio with speaker diarization.
+Request body is JSON (not multipart upload):
 
-**Request**:
-```http
-POST /transcribe
-Content-Type: multipart/form-data
-
-audio: <OPUS or WAV file binary>
-precision: "fp16" | "int8"  (optional, default: "fp16")
-language: "auto" | "en" | "de" | ... (optional, default: "auto")
+```json
+{
+  "audio_path": "C:/path/to/file.opus",
+  "precision": "fp16",
+  "language": "auto"
+}
 ```
 
-**Response**:
+Response:
+
 ```json
 {
   "status": "success",
@@ -89,144 +64,72 @@ language: "auto" | "en" | "de" | ... (optional, default: "auto")
     {
       "speaker": "Speaker_0",
       "start_time": 0.0,
-      "end_time": 3.5,
-      "text": "Hello, welcome to the meeting."
-    },
-    {
-      "speaker": "Speaker_1",
-      "start_time": 3.8,
-      "end_time": 7.2,
-      "text": "Thanks for having me."
+      "end_time": 1.2,
+      "text": "Hello"
     }
   ],
   "metadata": {
-    "duration": 45.3,
+    "duration": 1.2,
     "language": "en",
-    "processing_time": 2.1,
+    "processing_time": 0.7,
     "model_precision": "fp16",
-    "num_speakers": 2
+    "num_speakers": 1
   }
 }
 ```
 
 ### `GET /health`
 
-Health check endpoint.
-
-**Response**:
-```json
-{
-  "status": "ok",
-  "model_loaded": true,
-  "gpu_available": true,
-  "vram_used_mb": 14234,
-  "vram_total_mb": 16384
-}
-```
+Returns model/gpu availability and VRAM stats.
 
 ### `POST /reload-model`
 
-Reload model with different precision mode.
+Switches precision (`fp16`/`int8`) by reloading model.
 
-**Request**:
-```json
-{
-  "precision": "fp16" | "int8"
-}
+## Hugging Face Behavior
+
+- HF is used for model/tokenizer download/cache access.
+- Warning about missing `HF_TOKEN` only affects rate limits/download speed.
+- User audio is not uploaded to HF by this sidecar.
+
+## Local VibeVoice Runtime Source
+
+`model_loader.py` attempts native VibeVoice imports and auto-discovers local `VibeVoice` source folders.
+
+Planned policy: keep this auto-discovery in dev workflows, but disable it for release builds unless explicitly overridden.
+
+If needed, set explicitly:
+
+```powershell
+$env:VIBEVOICE_SOURCE_DIR = "D:\GIT\VibeVoice"
 ```
 
-**Response**:
-```json
-{
-  "status": "success",
-  "message": "Model reloaded with precision: fp16"
-}
-```
+This resolves errors like:
 
-## Configuration
-
-Environment variables (optional):
-
-- `VIBEVOICE_PRECISION`: Default precision mode (`fp16` or `int8`)
-- `VIBEVOICE_MODEL_PATH`: Custom model cache directory
-- `VIBEVOICE_PORT`: Server port (default: 8765)
-- `VIBEVOICE_HOST`: Server host (default: 127.0.0.1)
-
-## Development
-
-### Running Tests
-
-```bash
-pytest tests/
-```
-
-### Code Formatting
-
-```bash
-black .
-isort .
-```
-
-### Type Checking
-
-```bash
-mypy main.py
-```
+- `Unrecognized processing class in microsoft/VibeVoice-ASR`
 
 ## Troubleshooting
 
-### Out of VRAM
+### `Unrecognized processing class ...`
 
-**Symptom**: `RuntimeError: CUDA out of memory`
+Cause: generic HF auto-processor path is insufficient for this model without native VibeVoice runtime.
 
-**Solutions**:
-1. Switch to INT8 mode (halves VRAM usage)
-2. Close other GPU applications
-3. Use smaller batch sizes (in config.py)
+Fix:
+- ensure local VibeVoice source is available and importable,
+- rerun setup script,
+- restart sidecar/app.
 
-### Model Download Fails
+### HF unauthenticated warning
 
-**Symptom**: `ConnectionError` or `TimeoutError`
+Set token if desired:
 
-**Solutions**:
-1. Check internet connection
-2. Use VPN if HuggingFace is blocked
-3. Manually download model and set `VIBEVOICE_MODEL_PATH`
-
-### Slow Inference
-
-**Symptom**: Transcription takes >10 seconds for 30s audio
-
-**Possible Causes**:
-1. Running on CPU instead of GPU
-2. Other GPU processes consuming resources
-3. Model not fully loaded into VRAM
-
-**Solutions**:
-1. Verify CUDA availability: `python -c "import torch; print(torch.cuda.is_available())"`
-2. Check GPU usage: `nvidia-smi`
-3. Restart sidecar
-
-## Production Deployment
-
-### PyInstaller (Standalone .exe)
-
-```bash
-pyinstaller --onefile --add-data "config.py:." main.py
+```powershell
+$env:HF_TOKEN = "hf_xxx"
 ```
 
-### Docker
+Optional. Not required for local processing.
 
-```bash
-docker build -t vibevoice-asr .
-docker run -p 8765:8765 --gpus all vibevoice-asr
-```
+## Notes
 
-## License
-
-This sidecar code is MIT licensed. VibeVoice-ASR model is also MIT licensed.
-
-## See Also
-
-- [VIBEVOICE_RESEARCH.md](../../docs/VIBEVOICE_RESEARCH.md) - Integration architecture
-- [Trispr Flow Main Repo](../../README.md)
+- `requirements.txt` currently pins `transformers` to `<5.0.0` for compatibility.
+- This README is sidecar-focused; product roadmap lives in `../../ROADMAP.md`.

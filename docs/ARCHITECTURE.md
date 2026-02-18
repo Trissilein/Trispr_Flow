@@ -119,7 +119,7 @@ Trispr Flow (Rust)  ←→  VibeVoice-ASR Sidecar (Python FastAPI)
 5. Sidecar loads audio, runs VibeVoice inference, returns speaker-diarized segments
 6. On app exit, Rust calls `stop_sidecar()` → graceful shutdown
 
-**Packaging**: PyInstaller bundles the sidecar as `vibevoice-asr.exe` for production. `sidecar_process.rs` auto-detects bundled exe vs Python fallback for development.
+**Packaging**: Runtime supports both bundled sidecar exe and Python fallback. Current installers ship Python sidecar files plus setup script; `sidecar_process.rs` auto-detects bundled exe first, then falls back to Python.
 
 **Parallel Mode**: `parallel_transcribe` command runs Whisper (main thread) + VibeVoice (spawned thread) concurrently, returning both results for side-by-side comparison.
 

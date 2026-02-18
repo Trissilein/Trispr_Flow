@@ -1,7 +1,7 @@
 // VibeVoice-ASR Sidecar Integration Layer
 // Handles communication with the Python FastAPI sidecar process:
 // - HTTP client for /transcribe, /health, /reload-model endpoints
-// - Request building (multipart/form-data for audio)
+// - Request building (JSON body with local audio_path)
 // - Response parsing (speaker-diarized segments)
 // - Error handling with retry logic
 // - Timeout management

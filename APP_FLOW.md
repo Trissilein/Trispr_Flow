@@ -1,5 +1,8 @@
 # App Flow — Trispr Flow
 
+> Note: This file contains historical UX flow notes and is being incrementally updated.  
+> For current architecture/state truth, prefer `docs/ARCHITECTURE.md` and `docs/STATE_MANAGEMENT.md`.
+
 > Every screen, route, and user journey in Trispr Flow.
 
 ---

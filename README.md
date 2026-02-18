@@ -16,7 +16,7 @@
 - **Speaker Diarization**: Microsoft VibeVoice-ASR 7B speaker-aware transcription
 - **Quality Controls**: Configurable OPUS bitrate + VibeVoice precision (FP16/INT8)
 - **Parallel Transcription**: Run Whisper + VibeVoice simultaneously (opt-in for 16GB+ VRAM)
-- **PyInstaller Packaging**: Standalone sidecar exe (no Python dependencies for users)
+- **Voice Analysis Bootstrap**: Optional installer/setup flow for VibeVoice dependencies (no Git required)
 - **System Audio Auto-Save**: 60-second flush intervals for OPUS recordings
 - **Professional Icon**: Cyan/Gold Yin-Yang branding
 
@@ -74,6 +74,8 @@ Download the latest installer from [Releases](https://github.com/Trissilein/Tris
 - **Trispr_Flow_0.6.0_CUDA_Edition.exe** — For NVIDIA GPU systems (RTX 4000+ series recommended)
 - **Trispr_Flow_0.6.0_Vulkan_Edition.exe** — For systems without CUDA support
 
+Voice Analysis (VibeVoice) is optional. If enabled, the installer/app guides users through dependency setup via bundled PowerShell script.
+
 ### For Developers
 ```bash
 git clone https://github.com/Trissilein/Trispr_Flow.git
@@ -116,6 +118,7 @@ See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for system requirements and build conf
 - 🔄 [docs/STATE_MANAGEMENT.md](docs/STATE_MANAGEMENT.md) — Internal state flow
 - 📤 [docs/EXPORT_SCHEMA.md](docs/EXPORT_SCHEMA.md) — Export format spec
 - 📋 [docs/TASK_SCHEDULE.md](docs/TASK_SCHEDULE.md) — Implementation blocks and tasks
+- ⚖️ [docs/DOC_SYNC_CONFLICTS.md](docs/DOC_SYNC_CONFLICTS.md) — Contradictions found + discussion points
 - 🔀 [SCOPE.md](SCOPE.md) — How the project evolved vs original plan
 
 ## Testing

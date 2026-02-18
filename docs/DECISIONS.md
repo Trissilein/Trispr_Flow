@@ -1,6 +1,6 @@
 # Decisions
 
-Last updated: 2026-02-16
+Last updated: 2026-02-18
 
 ## Implemented Decisions
 
@@ -118,8 +118,8 @@ Last updated: 2026-02-16
 - Status: `implemented`
 - Decision: Run VibeVoice-ASR as a Python FastAPI sidecar process, communicated via HTTP, rather than embedding Python in Rust.
 - Context: VibeVoice-ASR 7B requires Python + Transformers + PyTorch. Embedding via PyO3 would create complex build dependencies and potential ABI issues. A sidecar process keeps the Rust binary clean and allows independent Python updates.
-- Implementation: `sidecar_process.rs` manages lifecycle (start/stop/health), `sidecar.rs` provides HTTP client. Auto-detects bundled PyInstaller exe vs Python fallback.
-- Why: Clean separation of concerns. Python ecosystem evolves independently. PyInstaller bundles for production. No Rust build complexity from Python bindings.
+- Implementation: `sidecar_process.rs` manages lifecycle (start/stop/health), `sidecar.rs` provides HTTP client. Runtime auto-detects bundled sidecar exe vs Python fallback.
+- Why: Clean separation of concerns. Python ecosystem evolves independently. Supports both distribution modes without Rust build complexity from Python bindings.
 
 ### DEC-021 OPUS as Default Recording Format (v0.6.0)
 
@@ -170,6 +170,34 @@ Last updated: 2026-02-16
 - Decision: Open a dedicated full-screen modal dialog for Voice Analysis instead of injecting results inline into the history list.
 - Context: Previous approach showed results directly in the transcript history, with no feedback during the (potentially 30s) engine startup phase. Users were left with a spinning button and no indication of what was happening.
 - Why: Analysis is a multi-step async operation (file pick → engine start → speaker identification). A dedicated dialog allows showing step-by-step progress (pending / active / done / error per stage), surfacing errors with actionable messages, and presenting results without cluttering the transcript history. Inline toast notifications are insufficient for operations with multiple stages and multi-minute runtimes.
+
+### DEC-028 Voice Analysis distribution strategy (2026-02-18)
+
+- Status: `accepted`
+- Decision: Keep base installer slim and deliver Voice Analysis as optional setup/download path (no mandatory large bundle in base installer).
+- Context: Voice Analysis runtime and model dependencies can be very large; bundling everything directly would significantly inflate installer footprint.
+- Why: Better default download size and faster base install for users who do not need Voice Analysis immediately.
+
+### DEC-029 Voice Analysis prefetch policy (2026-02-18)
+
+- Status: `accepted`
+- Decision: Keep model prefetch `default OFF`; trigger guided setup on first Analyse click with size/storage hint, disk check, and progress feedback.
+- Context: Automatic prefetch can surprise users with very large downloads and disk growth.
+- Why: Balances first-run UX with resource control and transparency.
+
+### DEC-030 Local VibeVoice source discovery policy (2026-02-18)
+
+- Status: `accepted`
+- Decision: Disable local `VibeVoice` source auto-discovery in release builds; allow in dev builds (or explicit override only).
+- Context: Auto-discovery is useful for development but can cause non-deterministic runtime behavior in production.
+- Why: Improves reproducibility and supportability in shipped builds while retaining developer flexibility.
+
+### DEC-031 Voice Analysis installer failure policy (2026-02-18)
+
+- Status: `accepted`
+- Decision: Use soft-fail policy for Voice Analysis setup. App installation must complete; user receives actionable remediation and in-app setup retry path.
+- Context: Voice Analysis is optional; hard-failing full app install because of optional dependency setup blocks core use cases.
+- Why: Maximizes successful installs while still guiding users to feature readiness.
 
 ## Open Decisions
 

@@ -1,74 +1,61 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-17 (audio consolidation Phase 1-2)
+Last updated: 2026-02-18 (docs sync + contradiction cleanup)
 
-This roadmap tracks the current focus: getting core capture + transcription stable and tightening UX before expanding features.
+This file is the canonical source for priorities, dependencies, and "what is next."
+
+---
+
+## Canonical Current State
+
+- **Released**: `v0.6.0` (2026-02-16) with post-release fixes.
+- **Current phase**: `v0.7.0` planning complete (Block F done), implementation pending (Block G/H).
+- **Voice Analysis runtime reality**:
+  - Rust side supports both `bundled sidecar exe` and `Python main.py` fallback.
+  - Current NSIS installers bundle the Python sidecar files + `setup-vibevoice.ps1`.
+  - Optional install-time Voice Analysis setup runs the PowerShell script automatically when opted in.
+  - If setup is missing/failed, app error output includes an actionable setup command.
+- **Hugging Face traffic**:
+  - Used for model/tokenizer download and cache checks.
+  - No user audio is uploaded to Hugging Face by Trispr Flow.
+
+## Next Work (4 Dependency Blocks)
+
+| Block | Focus | Complexity | Depends on | Status |
+| --- | --- | --- | --- | --- |
+| **A** | Installer + setup automation hardening (NSIS page flow, setup script reliability, clear recovery paths) | **High** | - | Ready |
+| **B** | VibeVoice runtime hardening (model loading, dependency pinning, cache/prefetch guardrails, HF warning UX) | **High** | A | In progress |
+| **C** | Voice Analysis UX resilience (retry/reset after failure, actionable dialog states, no stale error replay) | **High** | A, B | Planned |
+| **D** | v0.7.0 AI Fallback implementation (Tasks 31/36/37 then 32/33/34/35/38) | **High** | C | Queued |
+
+## Locked Decisions (2026-02-18)
+
+The following decisions are now fixed; implementation is tracked in Blocks A-C:
+
+1. **D1 Distribution**: Keep base installer slim + optional Voice Analysis pack/setup path.
+2. **D2 Prefetch**: Default OFF; guided first-use setup on Analyse click with size/storage/progress UX.
+3. **D3 Source discovery**: Local `VibeVoice` auto-discovery off in release builds, on in dev (or explicit override).
+4. **D4 Failure policy**: Soft fail for optional Voice Analysis setup; install completes with remediation path.
+
+## v0.7.0 Implementation Status
+
+- ✅ **Block F complete**: terminology, UX location, execution sequence, architecture docs.
+- 🔵 **Block G ready**: Task 31 (provider architecture), Task 36 (settings migration), Task 37 (config UI).
+- 🔵 **Block H queued**: Task 32/33/34 providers, Task 35 prompts, Task 38 E2E.
+
+## Detailed References
+
+- Detailed execution table: `docs/TASK_SCHEDULE.md`
+- Block G implementation handover: `docs/NEXT_BLOCK_G.md`
+- v0.7 architecture: `docs/V0.7.0_ARCHITECTURE.md`
+- Decision log: `docs/DECISIONS.md`
 
 ---
 
-## Current Status
+## Historical Context (Pre-Sync Notes)
 
-### Completed Versions
-
-- **Milestone 0**: ✅ Complete (tech stack locked, whisper.cpp validated)
-- **Milestone 1**: ✅ Complete (PTT capture, transcription, paste)
-- **Milestone 2**: ✅ Complete (Foundation & Critical UX)
-- **Milestone 3**: ✅ Complete (Window persistence, Activity feedback, Model hot swap, Capture enhancements, Post-processing pipeline)
-- **v0.4.0**: ✅ Complete (Post-processing pipeline, custom vocabulary, rule-based enhancements)
-- **v0.4.1**: ✅ Complete (Security hardening, CUDA distribution, Hotkey UX)
-- **v0.5.0 Block A**: ✅ Complete (Export features, schema design, documentation)
-- **v0.5.0 Block B**: ✅ Complete (Tab-Based UI Refactor, Chapter UI, Topic detection, live dump, naming cleanup)
-- **v0.6.0 Block C**: ✅ Complete (VibeVoice research, sidecar structure, OPUS design)
-- **v0.6.0 Block D**: ✅ Complete (Integration layer, model loading, sidecar process management, auto-processing)
-- **v0.6.0 Block E**: ✅ Complete (Speaker UI, Analyse button, quality presets, parallel mode, PyInstaller, E2E tests)
-
-### Latest Release: v0.6.0 (2026-02-16) + Post-Release Fixes
-
-- ✅ VibeVoice-ASR 7B Voice Analysis (identifies who said what) with color-coded speaker segments
-- ✅ **Voice Analysis dialog**: dedicated full-screen modal with progress stages and Copy transcript
-- ✅ Parallel transcription mode (Whisper + VibeVoice simultaneously, opt-in for 16GB+ VRAM)
-- ✅ OPUS audio encoding with configurable bitrate (32/64/96/128 kbps)
-- ✅ Quality presets (VibeVoice precision: FP16/INT8)
-- ✅ Analyse button with file picker — always prompts, never silently reuses last file
-- ✅ PyInstaller packaging (standalone sidecar exe, no Python dependencies for users)
-- ✅ System audio auto-save with 60-second flush intervals
-- ✅ **Audio consolidation (v0.7.0 In Progress)**:
-  - Phase 1: SessionManager for crash-safe chunk aggregation + FFmpeg merge
-  - Phase 2: Settings (session timeout, PTT grouping) + grouping API
-  - Result: 60 files/hour → 1 session.opus + manifest.json (UX-2 partial)
-- ✅ Model monitoring with weekly VibeVoice update checks
-- ✅ 22 E2E tests covering full Voice Analysis workflow
-- ✅ Professional app icon (Cyan/Gold Yin-Yang branding)
-- ✅ No more console windows stealing focus (CREATE_NO_WINDOW on all subprocesses)
-- 📦 Dual installers: CUDA Edition (92MB) + Vulkan Edition (9.4MB)
-
-### Next: v0.7.0 (AI Fallback Overhaul) — Planning Complete ✅
-
-**Block F (Haiku) — COMPLETE**:
-1. ✅ **Task 39**: UX decisions finalized
-   - Terminology: "AI Fallback" (neutral, describes optional refinement)
-   - Location: Post-Processing panel expander
-   - Sequence: Raw → Local Rules → AI Fallback → Final
-2. ✅ **Task 39a**: Architecture documented (V0.7.0_ARCHITECTURE.md — 400+ lines)
-   - Provider trait pattern + factory
-   - Tauri command design
-   - Error handling strategy
-3. ✅ **Task 39b**: Design decisions documented (DEC-023, DEC-024, DEC-025 in DECISIONS.md)
-4. ✅ **Task 39c**: Implementation plan for Blocks G & H
-
-**Block G (Opus) — Ready to Start**:
-1. **Task 31**: Multi-provider architecture (provider trait, factory, models)
-2. **Task 36**: Settings migration (v0.6.0 cloud_fallback → v0.7.0 ai_fallback)
-3. **Task 37**: Configuration UI (API key setup, provider selector, model dropdown)
-
-**Block H (Sonnet) — Queued**:
-1. **Task 32**: OpenAI client (ChatGPT/GPT-4o integration)
-2. **Task 33**: Claude client (Anthropic integration)
-3. **Task 34**: Gemini client (Google integration)
-4. **Task 35**: Custom prompt strategy (user-editable with defaults)
-5. **Task 38**: E2E tests (all providers, error scenarios)
-
----
+The following sections are preserved for implementation history and research context.
+When content conflicts with the sections above, treat the top section (`Canonical Current State`, `Next Work`) as source of truth.
 
 ## Competitor Analysis Integration (Handy.computer)
 
@@ -256,7 +243,7 @@ For detailed task breakdowns, timelines, dependencies, and complexity levels, se
 - **Quality Controls**: OPUS bitrate (32/64/96/128 kbps), VibeVoice precision (FP16/INT8)
 - **Parallel Mode**: Whisper + VibeVoice simultaneous with auto-save (60s flush)
 - **Model Monitoring**: Weekly update checks with toast notifications
-- **PyInstaller Packaging**: Standalone sidecar exe (no Python required)
+- **Sidecar Runtime Packaging**: Supports bundled exe and Python fallback; installer currently ships Python sidecar setup path
 - **E2E Tests**: 22 tests covering full workflow
 
 ### Long-Form Transcription (v0.5.0)

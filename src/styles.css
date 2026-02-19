@@ -3131,6 +3131,62 @@ input[type="range"]:focus-visible {
   margin-left: 23px;
 }
 
+.analysis-job-queue {
+  border-top: 1px solid var(--stroke);
+  margin-top: 10px;
+  padding-top: 12px;
+}
+
+.analysis-job-queue-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.analysis-job-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.analysis-job-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.analysis-job-file {
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.analysis-job-status,
+.analysis-job-duration {
+  color: var(--muted);
+}
+
+.analysis-job-error {
+  grid-column: 1 / -1;
+  color: #f87171;
+  margin-top: 2px;
+}
+
+.analysis-job-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px 2px;
+}
+
 /* Results Area */
 .analysis-results-area {
   border-top: 1px solid var(--stroke);

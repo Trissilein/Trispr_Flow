@@ -4,6 +4,7 @@ version = "0.6.0"
 description = "Offline dictation tool with tray + hotkey control"
 authors = ["trist"]
 edition = "2021"
+default-run = "trispr-flow"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

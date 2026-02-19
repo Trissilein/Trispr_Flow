@@ -187,9 +187,7 @@ export const topicKeywordsReset = $("topic-keywords-reset") as HTMLButtonElement
 // Quality & Encoding controls
 export const opusEnabledToggle = $("opus-enabled-toggle") as HTMLInputElement | null;
 export const opusBitrateSelect = $("opus-bitrate-select") as HTMLSelectElement | null;
-export const vibevoicePrecisionSelect = $("vibevoice-precision-select") as HTMLSelectElement | null;
 export const autoSaveSystemAudioToggle = $("auto-save-system-audio-toggle") as HTMLInputElement | null;
-export const parallelModeToggle = $("parallel-mode-toggle") as HTMLInputElement | null;
 
 // Model manager controls
 export const modelSourceSelect = $("model-source-select") as HTMLSelectElement | null;

@@ -352,43 +352,10 @@ window.addEventListener("DOMContentLoaded", () => {
       initWindowStatePersistence();
       return checkModelOnStartup();
     })
-    .then(() => {
-      // Check for VibeVoice model updates (weekly check)
-      checkVibeVoiceUpdates();
-    })
     .catch((error) => {
       console.error("bootstrap failed", error);
     });
 });
-
-// Check for VibeVoice-ASR model updates
-async function checkVibeVoiceUpdates() {
-  try {
-    // Only check once per week
-    const lastCheck = localStorage.getItem("vibevoice-last-check");
-    const now = Date.now();
-    const week = 7 * 24 * 60 * 60 * 1000;
-
-    if (lastCheck && now - parseInt(lastCheck) < week) {
-      return; // Checked recently
-    }
-
-    const result = await invoke<any>("check_vibevoice_updates");
-
-    if (result.update_available) {
-      showToast({
-        type: "info",
-        title: `VibeVoice-ASR v${result.latest_version} available`,
-        message: result.release_notes || "New version with improvements available",
-        duration: 10000,
-      });
-    }
-
-    localStorage.setItem("vibevoice-last-check", now.toString());
-  } catch (error) {
-    console.error("Failed to check for VibeVoice updates:", error);
-  }
-}
 
 // Cleanup event listeners on window unload to prevent memory leaks
 window.addEventListener("beforeunload", () => {

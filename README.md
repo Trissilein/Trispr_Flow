@@ -16,7 +16,7 @@
 - **Speaker Diarization**: Microsoft VibeVoice-ASR 7B speaker-aware transcription
 - **Quality Controls**: Configurable OPUS bitrate + VibeVoice precision (FP16/INT8)
 - **Parallel Transcription**: Run Whisper + VibeVoice simultaneously (opt-in for 16GB+ VRAM)
-- **Voice Analysis Bootstrap**: Optional installer/setup flow for VibeVoice dependencies (no Git required)
+- **External Analysis Launcher**: Analyse opens a separate Trispr Analysis app (local-only launch path)
 - **System Audio Auto-Save**: 60-second flush intervals for OPUS recordings
 - **Professional Icon**: Cyan/Gold Yin-Yang branding
 
@@ -73,8 +73,10 @@
 Download the latest installer from [Releases](https://github.com/Trissilein/Trispr_Flow/releases):
 - **Trispr_Flow_0.6.0_CUDA_Edition.exe** — For NVIDIA GPU systems (RTX 4000+ series recommended)
 - **Trispr_Flow_0.6.0_Vulkan_Edition.exe** — For systems without CUDA support
+- **Trispr_Flow_0.6.0_CUDA+Analysis_Edition.exe** — CUDA build with optional bundled Analysis Tool chain-install
 
-Voice Analysis (VibeVoice) is optional. If enabled, the installer/app guides users through dependency setup via bundled PowerShell script.
+Voice Analysis is optional and external. Trispr Flow does not auto-download analysis installers at runtime.
+If not installed, Analyse asks for a local `trispr-analysis.exe` or uses dev fallback in debug builds.
 
 ### For Developers
 ```bash
@@ -100,9 +102,9 @@ See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for system requirements and build conf
 3. **View**: Transcripts appear in System Audio tab and merged Conversation view
 
 ### Speaker Diarization (v0.6.0+)
-1. **Enable VibeVoice**: In Model Manager, install VibeVoice-ASR 7B model
-2. **Analyse Button**: Upload audio file for speaker-aware transcription
-3. **Export**: Color-coded speaker segments in TXT/MD/JSON export
+1. **Install Trispr Analysis**: Use the external Analysis app (standalone executable)
+2. **Analyse Button**: Select audio in Trispr Flow and launch the external analyzer
+3. **Process**: Analysis runs in its own window/process, isolated from main transcription runtime
 
 ### Processing Pipeline
 1. **Raw Transcription**: Whisper-generated text

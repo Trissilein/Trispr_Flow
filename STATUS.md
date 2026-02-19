@@ -1,6 +1,6 @@
 # Trispr Flow - Status
 
-Last updated: 2026-02-18
+Last updated: 2026-02-19
 
 ## Snapshot
 
@@ -11,31 +11,31 @@ Last updated: 2026-02-18
 ## Working State
 
 - Core capture/transcription pipeline is stable (PTT/VAD + system audio + export).
-- Voice Analysis UI flow exists (file picker, progress dialog, result rendering, error surfacing).
-- Analyse click now runs guided setup preflight (runtime check + storage hint) and can launch setup with live progress updates.
+- Analyse now launches an external Analysis Tool (no in-app runtime dependency bootstrap).
+- Runtime installer download path has been removed from app launcher flow.
+- Missing Analysis Tool now resolves via local EXE selection (`trispr-analysis.exe`) with path persistence.
+- Dev builds support Python fallback (`analysis-tool/main.py`) when EXE is missing.
+- System-audio session merge path now drops overlap prefixes between transcribe chunks to avoid duplicated audio at boundaries.
 - AI Fallback foundation (v0.7 Block G) is in place: provider architecture, settings migration (`ai_fallback` + `providers`), key storage flow, and Post-Processing config UI.
-- Sidecar runtime supports two modes:
-  - bundled executable (if present)
-  - Python fallback (`main.py`) with per-user venv preferred
-- Installer bundles sidecar Python files plus `setup-vibevoice.ps1` for optional dependency setup.
-- NSIS Voice Analysis setup flow is unified across CUDA/Vulkan and soft-fail by default.
-- In-app Voice Analysis failure dialog exposes `Install Voice Analysis` and retries analysis after successful install.
+- Installer variants now target:
+  - CUDA (base)
+  - Vulkan (base)
+  - CUDA+Analysis (bundled optional chain-install)
 
 ## Known Gaps
 
-- Guided first-use setup path is shipped for Windows (`Analyse` preflight + storage hint + setup progress); richer wizard polish can follow later.
+- `analysis-tool/` still needs full packaging into standalone release artifacts.
+- CUDA+Analysis pipeline depends on local availability of `installers/Trispr-Analysis-Setup.exe`.
 - AI Fallback provider calls are currently scaffolded/passthrough until Block H final provider API integrations are completed.
-- Release-vs-dev source discovery split (D3) is implemented: local `VibeVoice` source auto-discovery defaults ON in dev, OFF in release, with explicit override support.
 - Some legacy docs still contain historical assumptions; `ROADMAP.md` is now the source of truth for priority and sequencing.
-- Policy decisions D1-D4 are locked; Block A/B/C are complete, D remains.
 
 ## Privacy + Network Notes
 
-- Hugging Face is used for model/tokenizer downloads and cache checks.
-- User audio for Voice Analysis is processed locally by the sidecar and is **not uploaded to Hugging Face**.
-- Missing `HF_TOKEN` is now surfaced as a single informational runtime note (rate-limit hint), not a repeated warning.
+- App launcher does not download analysis installers from the network.
+- Analysis processing remains local; no user audio upload is performed by Trispr launcher flow.
 
 ## Next Focus
 
-1. Block H: Provider integrations (OpenAI/Claude/Gemini) + prompt strategy + E2E.
-2. Finalize Block D and release validation.
+1. Validate launcher UX end-to-end (missing EXE, remembered path, dev fallback).
+2. Build and test all three installer variants, including CUDA+Analysis chain-install.
+3. Block H: Provider integrations (OpenAI/Claude/Gemini) + prompt strategy + E2E.

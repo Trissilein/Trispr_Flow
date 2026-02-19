@@ -1,6 +1,6 @@
 # Voice Analysis UX - QA Matrix (Block C)
 
-Last updated: 2026-02-18
+Last updated: 2026-02-19
 
 This matrix validates Block C UX resilience: first-use setup guidance, retry/reset behavior, and stale-run protection.
 
@@ -12,3 +12,6 @@ This matrix validates Block C UX resilience: first-use setup guidance, retry/res
 | QC-4 | Reset after runtime failure | Force sidecar runtime error once | Run analysis twice | Second run does not replay stale previous error; sidecar reset path allows fresh attempt |
 | QC-5 | Burst/cancel safety | Start analysis, then close dialog mid-run, start another | Perform two runs quickly | Old async updates are ignored (run-id gated); only current run updates UI state |
 | QC-6 | Blocking preflight errors | Python missing / unsupported | Click `Analyse` and select file | Clear guided error includes Python remediation and manual setup command; no misleading auto-install loop |
+| QC-7 | External worker queue | `analysis_external_worker_enabled=true` | Start analysis | Job row appears in queue (`queued` → `running` → terminal status) while UI remains responsive |
+| QC-8 | External worker cancel | Same as QC-7 | Close analysis dialog while job is running | Running job transitions to `canceled`; next analysis can start immediately |
+| QC-9 | External worker timeout | Force worker stall beyond timeout | Run analysis | Job transitions to `timeout` with readable error text; app does not hang |

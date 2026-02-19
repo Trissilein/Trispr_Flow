@@ -1,18 +1,20 @@
 # VibeVoice-ASR Sidecar
 
-Last updated: 2026-02-18
+Last updated: 2026-02-19
 
 FastAPI sidecar used by Trispr Flow for local Voice Analysis (speaker-aware transcription).
 
 ## Architecture
 
 ```text
-Trispr Flow (Rust/Tauri) -> HTTP localhost -> FastAPI sidecar -> VibeVoice runtime
+Legacy mode:   Trispr Flow (Rust/Tauri) -> HTTP localhost -> FastAPI sidecar -> VibeVoice runtime
+External mode: Trispr Flow (Rust/Tauri) -> one-shot worker_once.py process -> VibeVoice runtime
 ```
 
 - Sidecar runs locally on the same machine.
 - Rust sends an `audio_path` to sidecar.
 - Sidecar reads the file from local disk and processes it locally.
+- In external-worker mode, Rust sends one JSON payload via stdin to `worker_once.py` and receives one JSON response on stdout.
 
 ## Requirements
 
@@ -86,6 +88,17 @@ Returns model/gpu availability and VRAM stats.
 ### `POST /reload-model`
 
 Switches precision (`fp16`/`int8`) by reloading model.
+
+## External Worker Contract (`worker_once.py`)
+
+- Input: JSON via stdin (`audio_path`, `precision`, `language`, `analysis_backend`)
+- Output: JSON via stdout (same segment/metadata contract as sidecar response)
+- Exit codes:
+  - `0` success
+  - `10` runtime/import missing
+  - `11` model init/load failure
+  - `14` request/input I/O failure
+  - `20` generic worker failure
 
 ## Hugging Face Behavior
 

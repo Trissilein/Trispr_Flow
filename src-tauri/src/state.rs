@@ -1,13 +1,9 @@
 use crate::ai_fallback::models::{AIFallbackSettings, AIProvidersSettings};
 use crate::audio::Recorder;
 use crate::constants::{
-  HALLUCINATION_MAX_CHARS,
-  HALLUCINATION_MAX_DURATION_MS,
-  HALLUCINATION_MAX_WORDS,
-  HALLUCINATION_RMS_THRESHOLD,
-  VAD_SILENCE_MS_DEFAULT,
-  VAD_THRESHOLD_START_DEFAULT,
-  VAD_THRESHOLD_SUSTAIN_DEFAULT,
+    HALLUCINATION_MAX_CHARS, HALLUCINATION_MAX_DURATION_MS, HALLUCINATION_MAX_WORDS,
+    HALLUCINATION_RMS_THRESHOLD, VAD_SILENCE_MS_DEFAULT, VAD_THRESHOLD_START_DEFAULT,
+    VAD_THRESHOLD_SUSTAIN_DEFAULT,
 };
 use crate::paths::{resolve_config_path, resolve_data_path};
 use crate::transcription::TranscribeRecorder;
@@ -21,113 +17,113 @@ use tauri::{AppHandle, Emitter};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
-  pub(crate) mode: String,
-  pub(crate) hotkey_ptt: String,
-  pub(crate) hotkey_toggle: String,
-  pub(crate) input_device: String,
-  pub(crate) language_mode: String,
-  pub(crate) language_pinned: bool,
-  pub(crate) model: String,
-  // Legacy toggle kept for backward compatibility. Mirrors ai_fallback.enabled.
-  pub(crate) cloud_fallback: bool,
-  // v0.7.0 AI Fallback settings
-  pub(crate) ai_fallback: AIFallbackSettings,
-  pub(crate) providers: AIProvidersSettings,
-  pub(crate) audio_cues: bool,
-  pub(crate) audio_cues_volume: f32,
-  pub(crate) ptt_use_vad: bool, // Enable VAD threshold check even in PTT mode
-  pub(crate) vad_threshold: f32, // Legacy: now maps to vad_threshold_start
-  pub(crate) vad_threshold_start: f32,
-  pub(crate) vad_threshold_sustain: f32,
-  pub(crate) vad_silence_ms: u64,
-  pub(crate) transcribe_enabled: bool,
-  pub(crate) transcribe_hotkey: String,
-  pub(crate) hotkey_toggle_activation_words: String,
-  pub(crate) transcribe_output_device: String,
-  pub(crate) transcribe_vad_mode: bool,
-  pub(crate) transcribe_vad_threshold: f32,
-  pub(crate) transcribe_vad_silence_ms: u64,
-  pub(crate) transcribe_batch_interval_ms: u64,
-  pub(crate) transcribe_chunk_overlap_ms: u64,
-  pub(crate) transcribe_input_gain_db: f32,
-  pub(crate) mic_input_gain_db: f32,
-  pub(crate) capture_enabled: bool,
-  pub(crate) model_source: String,
-  pub(crate) model_custom_url: String,
-  pub(crate) model_storage_dir: String,
-  pub(crate) hidden_external_models: HashSet<String>,
-  pub(crate) overlay_color: String,
-  pub(crate) overlay_min_radius: f32,
-  pub(crate) overlay_max_radius: f32,
-  pub(crate) overlay_rise_ms: u64,
-  pub(crate) overlay_fall_ms: u64,
-  pub(crate) overlay_opacity_inactive: f32,
-  pub(crate) overlay_opacity_active: f32,
-  pub(crate) overlay_kitt_color: String,
-  pub(crate) overlay_kitt_rise_ms: u64,
-  pub(crate) overlay_kitt_fall_ms: u64,
-  pub(crate) overlay_kitt_opacity_inactive: f32,
-  pub(crate) overlay_kitt_opacity_active: f32,
-  pub(crate) overlay_pos_x: f64,
-  pub(crate) overlay_pos_y: f64,
-  pub(crate) overlay_kitt_pos_x: f64,
-  pub(crate) overlay_kitt_pos_y: f64,
-  pub(crate) overlay_style: String, // "dot" | "kitt"
-  pub(crate) overlay_kitt_min_width: f32,
-  pub(crate) overlay_kitt_max_width: f32,
-  pub(crate) overlay_kitt_height: f32,
-  pub(crate) hallucination_filter_enabled: bool,
-  pub(crate) hallucination_rms_threshold: f32,
-  pub(crate) hallucination_max_duration_ms: u64,
-  pub(crate) hallucination_max_words: u32,
-  pub(crate) hallucination_max_chars: u32,
-  pub(crate) activation_words_enabled: bool,
-  pub(crate) activation_words: Vec<String>,
-  // Post-processing settings
-  pub(crate) postproc_enabled: bool,
-  pub(crate) postproc_language: String,
-  pub(crate) postproc_punctuation_enabled: bool,
-  pub(crate) postproc_capitalization_enabled: bool,
-  pub(crate) postproc_numbers_enabled: bool,
-  pub(crate) postproc_custom_vocab_enabled: bool,
-  pub(crate) postproc_custom_vocab: HashMap<String, String>,
-  pub(crate) postproc_llm_enabled: bool,
-  pub(crate) postproc_llm_provider: String,
-  pub(crate) postproc_llm_api_key: String,
-  pub(crate) postproc_llm_model: String,
-  pub(crate) postproc_llm_prompt: String,
-  // Chapter settings (v0.5.0)
-  pub(crate) chapters_enabled: bool,
-  pub(crate) chapters_show_in: String, // "conversation" | "all"
-  pub(crate) chapters_method: String, // "silence" | "time" | "hybrid"
-  // Legacy chapter detection settings
-  pub(crate) chapter_silence_enabled: bool,
-  pub(crate) chapter_silence_threshold_ms: u64,
-  // VibeVoice-ASR settings (v0.6.0)
-  pub(crate) vibevoice_precision: String, // "fp16" | "int8"
-  pub(crate) vibevoice_language: String, // "auto" | "en" | "de" | ...
-  pub(crate) vibevoice_auto_start: bool,
-  pub(crate) opus_enabled: bool,
-  pub(crate) opus_bitrate_kbps: u32,
-  pub(crate) parallel_mode: bool, // Run Whisper + VibeVoice simultaneously
-  pub(crate) auto_save_system_audio: bool, // Auto-save system audio as OPUS
-  // Session consolidation settings (v0.7.0)
-  pub(crate) session_idle_timeout_ms: u64, // Auto-finalize session after N ms of silence
-  pub(crate) ptt_session_grouping_enabled: bool, // Group multiple PTT presses into one session
-  pub(crate) ptt_session_group_timeout_s: u64, // PTT presses within this window → same session
-  // Main window state
-  pub(crate) main_window_x: Option<i32>,
-  pub(crate) main_window_y: Option<i32>,
-  pub(crate) main_window_width: Option<u32>,
-  pub(crate) main_window_height: Option<u32>,
-  pub(crate) main_window_monitor: Option<String>,
-  /// Window visibility state at shutdown: "normal", "minimized", or "tray"
-  pub(crate) main_window_start_state: String,
+    pub(crate) mode: String,
+    pub(crate) hotkey_ptt: String,
+    pub(crate) hotkey_toggle: String,
+    pub(crate) input_device: String,
+    pub(crate) language_mode: String,
+    pub(crate) language_pinned: bool,
+    pub(crate) model: String,
+    // Legacy toggle kept for backward compatibility. Mirrors ai_fallback.enabled.
+    pub(crate) cloud_fallback: bool,
+    // v0.7.0 AI Fallback settings
+    pub(crate) ai_fallback: AIFallbackSettings,
+    pub(crate) providers: AIProvidersSettings,
+    pub(crate) audio_cues: bool,
+    pub(crate) audio_cues_volume: f32,
+    pub(crate) ptt_use_vad: bool, // Enable VAD threshold check even in PTT mode
+    pub(crate) vad_threshold: f32, // Legacy: now maps to vad_threshold_start
+    pub(crate) vad_threshold_start: f32,
+    pub(crate) vad_threshold_sustain: f32,
+    pub(crate) vad_silence_ms: u64,
+    pub(crate) transcribe_enabled: bool,
+    pub(crate) transcribe_hotkey: String,
+    pub(crate) hotkey_toggle_activation_words: String,
+    pub(crate) transcribe_output_device: String,
+    pub(crate) transcribe_vad_mode: bool,
+    pub(crate) transcribe_vad_threshold: f32,
+    pub(crate) transcribe_vad_silence_ms: u64,
+    pub(crate) transcribe_batch_interval_ms: u64,
+    pub(crate) transcribe_chunk_overlap_ms: u64,
+    pub(crate) transcribe_input_gain_db: f32,
+    pub(crate) mic_input_gain_db: f32,
+    pub(crate) capture_enabled: bool,
+    pub(crate) model_source: String,
+    pub(crate) model_custom_url: String,
+    pub(crate) model_storage_dir: String,
+    pub(crate) hidden_external_models: HashSet<String>,
+    pub(crate) overlay_color: String,
+    pub(crate) overlay_min_radius: f32,
+    pub(crate) overlay_max_radius: f32,
+    pub(crate) overlay_rise_ms: u64,
+    pub(crate) overlay_fall_ms: u64,
+    pub(crate) overlay_opacity_inactive: f32,
+    pub(crate) overlay_opacity_active: f32,
+    pub(crate) overlay_kitt_color: String,
+    pub(crate) overlay_kitt_rise_ms: u64,
+    pub(crate) overlay_kitt_fall_ms: u64,
+    pub(crate) overlay_kitt_opacity_inactive: f32,
+    pub(crate) overlay_kitt_opacity_active: f32,
+    pub(crate) overlay_pos_x: f64,
+    pub(crate) overlay_pos_y: f64,
+    pub(crate) overlay_kitt_pos_x: f64,
+    pub(crate) overlay_kitt_pos_y: f64,
+    pub(crate) overlay_style: String, // "dot" | "kitt"
+    pub(crate) overlay_kitt_min_width: f32,
+    pub(crate) overlay_kitt_max_width: f32,
+    pub(crate) overlay_kitt_height: f32,
+    pub(crate) hallucination_filter_enabled: bool,
+    pub(crate) hallucination_rms_threshold: f32,
+    pub(crate) hallucination_max_duration_ms: u64,
+    pub(crate) hallucination_max_words: u32,
+    pub(crate) hallucination_max_chars: u32,
+    pub(crate) activation_words_enabled: bool,
+    pub(crate) activation_words: Vec<String>,
+    // Post-processing settings
+    pub(crate) postproc_enabled: bool,
+    pub(crate) postproc_language: String,
+    pub(crate) postproc_punctuation_enabled: bool,
+    pub(crate) postproc_capitalization_enabled: bool,
+    pub(crate) postproc_numbers_enabled: bool,
+    pub(crate) postproc_custom_vocab_enabled: bool,
+    pub(crate) postproc_custom_vocab: HashMap<String, String>,
+    pub(crate) postproc_llm_enabled: bool,
+    pub(crate) postproc_llm_provider: String,
+    pub(crate) postproc_llm_api_key: String,
+    pub(crate) postproc_llm_model: String,
+    pub(crate) postproc_llm_prompt: String,
+    // Chapter settings (v0.5.0)
+    pub(crate) chapters_enabled: bool,
+    pub(crate) chapters_show_in: String, // "conversation" | "all"
+    pub(crate) chapters_method: String,  // "silence" | "time" | "hybrid"
+    // Legacy chapter detection settings
+    pub(crate) chapter_silence_enabled: bool,
+    pub(crate) chapter_silence_threshold_ms: u64,
+    // Analysis launcher settings (external tool)
+    pub(crate) opus_enabled: bool,
+    pub(crate) opus_bitrate_kbps: u32,
+    pub(crate) auto_save_system_audio: bool, // Auto-save system audio as OPUS
+    pub(crate) transcribe_backend: String, // "whisper_cpp" | future backends
+    pub(crate) analysis_tool_path_override: String,
+    pub(crate) analysis_parallel_warning_ack: bool,
+    pub(crate) analysis_auto_launch_on_file_pick: bool,
+    // Session consolidation settings (v0.7.0)
+    pub(crate) session_idle_timeout_ms: u64, // Auto-finalize session after N ms of silence
+    pub(crate) ptt_session_grouping_enabled: bool, // Group multiple PTT presses into one session
+    pub(crate) ptt_session_group_timeout_s: u64, // PTT presses within this window → same session
+    // Main window state
+    pub(crate) main_window_x: Option<i32>,
+    pub(crate) main_window_y: Option<i32>,
+    pub(crate) main_window_width: Option<u32>,
+    pub(crate) main_window_height: Option<u32>,
+    pub(crate) main_window_monitor: Option<String>,
+    /// Window visibility state at shutdown: "normal", "minimized", or "tray"
+    pub(crate) main_window_start_state: String,
 }
 
 impl Default for Settings {
-  fn default() -> Self {
-    Self {
+    fn default() -> Self {
+        Self {
       mode: "ptt".to_string(),
       hotkey_ptt: "CommandOrControl+Shift+Space".to_string(),
       hotkey_toggle: "CommandOrControl+Shift+M".to_string(),
@@ -207,14 +203,13 @@ impl Default for Settings {
       // Legacy chapter settings
       chapter_silence_enabled: false,
       chapter_silence_threshold_ms: 10000, // 10 seconds
-      // VibeVoice-ASR defaults
-      vibevoice_precision: "fp16".to_string(),
-      vibevoice_language: "auto".to_string(),
-      vibevoice_auto_start: false,
       opus_enabled: true,
       opus_bitrate_kbps: 64,
-      parallel_mode: false,
       auto_save_system_audio: false,
+      transcribe_backend: "whisper_cpp".to_string(),
+      analysis_tool_path_override: String::new(),
+      analysis_parallel_warning_ack: false,
+      analysis_auto_launch_on_file_pick: true,
       session_idle_timeout_ms: 60_000,       // 60 seconds
       ptt_session_grouping_enabled: true,
       ptt_session_group_timeout_s: 120,      // 2 minutes
@@ -225,389 +220,419 @@ impl Default for Settings {
       main_window_monitor: None,
       main_window_start_state: "normal".to_string(),
     }
-  }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct HistoryEntry {
-  pub(crate) id: String,
-  pub(crate) text: String,
-  pub(crate) timestamp_ms: u64,
-  pub(crate) source: String,
+    pub(crate) id: String,
+    pub(crate) text: String,
+    pub(crate) timestamp_ms: u64,
+    pub(crate) source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Chapter {
-  pub(crate) id: String,
-  pub(crate) label: String,
-  pub(crate) timestamp_ms: u64,
-  pub(crate) entry_count: u32,
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) timestamp_ms: u64,
+    pub(crate) entry_count: u32,
 }
 
 pub(crate) struct AppState {
-  pub(crate) settings: Mutex<Settings>,
-  pub(crate) history: Mutex<Vec<HistoryEntry>>,
-  pub(crate) history_transcribe: Mutex<Vec<HistoryEntry>>,
-  pub(crate) chapters: Mutex<Vec<Chapter>>,
-  pub(crate) recorder: Mutex<Recorder>,
-  pub(crate) transcribe: Mutex<TranscribeRecorder>,
-  pub(crate) downloads: Mutex<HashSet<String>>,
-  pub(crate) transcribe_active: AtomicBool,
-  /// Last recorded OPUS file path for mic input (for VibeVoice analysis)
-  pub(crate) last_mic_recording_path: Mutex<Option<String>>,
-  /// Last recorded OPUS file path for system audio (for VibeVoice analysis)
-  pub(crate) last_system_recording_path: Mutex<Option<String>>,
+    pub(crate) settings: Mutex<Settings>,
+    pub(crate) history: Mutex<Vec<HistoryEntry>>,
+    pub(crate) history_transcribe: Mutex<Vec<HistoryEntry>>,
+    pub(crate) chapters: Mutex<Vec<Chapter>>,
+    pub(crate) recorder: Mutex<Recorder>,
+    pub(crate) transcribe: Mutex<TranscribeRecorder>,
+    pub(crate) downloads: Mutex<HashSet<String>>,
+    pub(crate) transcribe_active: AtomicBool,
+    /// Last recorded OPUS file path for mic input.
+    pub(crate) last_mic_recording_path: Mutex<Option<String>>,
+    /// Last recorded OPUS file path for system audio.
+    pub(crate) last_system_recording_path: Mutex<Option<String>>,
 }
 
 pub(crate) fn load_settings(app: &AppHandle) -> Settings {
-  let path = resolve_config_path(app, "settings.json");
-  match fs::read_to_string(path) {
-    Ok(raw) => {
-      let mut settings: Settings = serde_json::from_str(&raw).unwrap_or_default();
-      if settings.mode != "ptt" && settings.mode != "vad" {
-        settings.mode = "ptt".to_string();
-      }
-      // Migrate legacy vad_threshold to new dual-threshold system
-      if settings.vad_threshold_start <= 0.0 {
-        settings.vad_threshold_start = if settings.vad_threshold > 0.0 {
-          settings.vad_threshold
-        } else {
-          VAD_THRESHOLD_START_DEFAULT
-        };
-      }
-      if settings.vad_threshold_sustain <= 0.0 {
-        settings.vad_threshold_sustain = VAD_THRESHOLD_SUSTAIN_DEFAULT;
-      }
-      // Clamp thresholds to valid range
-      if !(0.001..=1.0).contains(&settings.vad_threshold_start) {
-        settings.vad_threshold_start = VAD_THRESHOLD_START_DEFAULT;
-      }
-      if !(0.001..=1.0).contains(&settings.vad_threshold_sustain) {
-        settings.vad_threshold_sustain = VAD_THRESHOLD_SUSTAIN_DEFAULT;
-      }
-      // Ensure sustain <= start
-      if settings.vad_threshold_sustain > settings.vad_threshold_start {
-        settings.vad_threshold_sustain = settings.vad_threshold_start;
-      }
-      // Sync legacy field
-      settings.vad_threshold = settings.vad_threshold_start;
-      if settings.vad_silence_ms < 100 {
-        settings.vad_silence_ms = VAD_SILENCE_MS_DEFAULT;
-      }
-      if !(0.0..=1.0).contains(&settings.transcribe_vad_threshold) {
-        settings.transcribe_vad_threshold = 0.04;
-      }
-      if settings.transcribe_batch_interval_ms < 4000 {
-        settings.transcribe_batch_interval_ms = 4000;
-      }
-      if settings.transcribe_batch_interval_ms > 15000 {
-        settings.transcribe_batch_interval_ms = 15000;
-      }
-      if settings.transcribe_chunk_overlap_ms > settings.transcribe_batch_interval_ms {
-        settings.transcribe_chunk_overlap_ms = settings.transcribe_batch_interval_ms / 2;
-      }
-      if settings.transcribe_chunk_overlap_ms > 3000 {
-        settings.transcribe_chunk_overlap_ms = 3000;
-      }
-      if settings.transcribe_vad_silence_ms < 200 {
-        settings.transcribe_vad_silence_ms = 200;
-      }
-      if settings.transcribe_vad_silence_ms > 5000 {
-        settings.transcribe_vad_silence_ms = 5000;
-      }
-      // Validate language_mode
-      let valid_languages = ["auto", "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "ko", "zh", "ar", "tr", "hi"];
-      if !valid_languages.contains(&settings.language_mode.as_str()) {
-        settings.language_mode = "auto".to_string();
-      }
-      if settings.model_source.trim().is_empty() {
-        settings.model_source = "default".to_string();
-      }
-      if settings.model_storage_dir.trim().is_empty() {
-        if let Ok(dir) = std::env::var("TRISPR_WHISPER_MODEL_DIR") {
-          settings.model_storage_dir = dir;
-        } else {
-          settings.model_storage_dir = "".to_string();
-        }
-      }
-      sync_model_dir_env(&settings);
-      settings.transcribe_input_gain_db = settings.transcribe_input_gain_db.clamp(-30.0, 30.0);
-      settings.mic_input_gain_db = settings.mic_input_gain_db.clamp(-30.0, 30.0);
-      #[cfg(target_os = "windows")]
-      if settings.transcribe_output_device != "default"
-        && !settings.transcribe_output_device.starts_with("wasapi:")
-      {
-        settings.transcribe_output_device = "default".to_string();
-      }
-      if settings.overlay_min_radius < 4.0 {
-        settings.overlay_min_radius = 4.0;
-      }
-      if settings.overlay_max_radius < settings.overlay_min_radius {
-        settings.overlay_max_radius = settings.overlay_min_radius + 4.0;
-      }
-      if settings.overlay_max_radius > 64.0 {
-        settings.overlay_max_radius = 64.0;
-      }
-      if settings.overlay_rise_ms < 20 {
-        settings.overlay_rise_ms = 20;
-      }
-      if settings.overlay_fall_ms < 20 {
-        settings.overlay_fall_ms = 20;
-      }
-      if !(0.0..=1.0).contains(&settings.overlay_opacity_inactive) {
-        settings.overlay_opacity_inactive = 0.2;
-      }
-      if !(0.0..=1.0).contains(&settings.overlay_opacity_active) {
-        settings.overlay_opacity_active = 0.8;
-      }
-      if settings.overlay_opacity_inactive < 0.05 {
-        settings.overlay_opacity_inactive = 0.05;
-      }
-      if settings.overlay_opacity_active < 0.05 {
-        settings.overlay_opacity_active = 0.05;
-      }
-      if settings.overlay_opacity_active < settings.overlay_opacity_inactive {
-        settings.overlay_opacity_active = settings.overlay_opacity_inactive;
-      }
-      let defaults = Settings::default();
-      let approx_eq = |a: f32, b: f32| (a - b).abs() < 0.0001;
-      if settings.overlay_kitt_color == defaults.overlay_kitt_color
-        && settings.overlay_color != defaults.overlay_color
-      {
-        settings.overlay_kitt_color = settings.overlay_color.clone();
-      }
-      if settings.overlay_kitt_rise_ms == defaults.overlay_kitt_rise_ms
-        && settings.overlay_rise_ms != defaults.overlay_rise_ms
-      {
-        settings.overlay_kitt_rise_ms = settings.overlay_rise_ms;
-      }
-      if settings.overlay_kitt_fall_ms == defaults.overlay_kitt_fall_ms
-        && settings.overlay_fall_ms != defaults.overlay_fall_ms
-      {
-        settings.overlay_kitt_fall_ms = settings.overlay_fall_ms;
-      }
-      if approx_eq(settings.overlay_kitt_opacity_inactive, defaults.overlay_kitt_opacity_inactive)
-        && !approx_eq(settings.overlay_opacity_inactive, defaults.overlay_opacity_inactive)
-      {
-        settings.overlay_kitt_opacity_inactive = settings.overlay_opacity_inactive;
-      }
-      if approx_eq(settings.overlay_kitt_opacity_active, defaults.overlay_kitt_opacity_active)
-        && !approx_eq(settings.overlay_opacity_active, defaults.overlay_opacity_active)
-      {
-        settings.overlay_kitt_opacity_active = settings.overlay_opacity_active;
-      }
-      if settings.overlay_kitt_pos_x.is_nan() || settings.overlay_kitt_pos_y.is_nan() {
-        settings.overlay_kitt_pos_x = settings.overlay_pos_x;
-        settings.overlay_kitt_pos_y = settings.overlay_pos_y;
-      }
-      if settings.overlay_kitt_pos_x < 0.0 {
-        settings.overlay_kitt_pos_x = 0.0;
-      }
-      if settings.overlay_kitt_pos_y < 0.0 {
-        settings.overlay_kitt_pos_y = 0.0;
-      }
-      if settings.overlay_pos_x < 0.0 {
-        settings.overlay_pos_x = 0.0;
-      }
-      if settings.overlay_pos_y < 0.0 {
-        settings.overlay_pos_y = 0.0;
-      }
-      if (settings.overlay_kitt_pos_x - 12.0).abs() < 0.001
-        && (settings.overlay_kitt_pos_y - 12.0).abs() < 0.001
-        && ((settings.overlay_pos_x - 12.0).abs() > 0.001
-          || (settings.overlay_pos_y - 12.0).abs() > 0.001)
-      {
-        settings.overlay_kitt_pos_x = settings.overlay_pos_x;
-        settings.overlay_kitt_pos_y = settings.overlay_pos_y;
-      }
-      if settings.overlay_kitt_color.trim().is_empty() {
-        settings.overlay_kitt_color = "#ff3d2e".to_string();
-      }
-      if settings.overlay_kitt_min_width < 4.0 {
-        settings.overlay_kitt_min_width = 4.0;
-      }
-      if settings.overlay_kitt_max_width < settings.overlay_kitt_min_width {
-        settings.overlay_kitt_max_width = settings.overlay_kitt_min_width;
-      }
-      if settings.overlay_kitt_max_width > 800.0 {
-        settings.overlay_kitt_max_width = 800.0;
-      }
-      if settings.overlay_kitt_height < 8.0 {
-        settings.overlay_kitt_height = 8.0;
-      }
-      if settings.overlay_kitt_height > 40.0 {
-        settings.overlay_kitt_height = 40.0;
-      }
-      if settings.overlay_kitt_rise_ms < 20 {
-        settings.overlay_kitt_rise_ms = 20;
-      }
-      if settings.overlay_kitt_fall_ms < 20 {
-        settings.overlay_kitt_fall_ms = 20;
-      }
-      if !(0.0..=1.0).contains(&settings.overlay_kitt_opacity_inactive) {
-        settings.overlay_kitt_opacity_inactive = 0.2;
-      }
-      if !(0.0..=1.0).contains(&settings.overlay_kitt_opacity_active) {
-        settings.overlay_kitt_opacity_active = 0.8;
-      }
-      if settings.overlay_kitt_opacity_inactive < 0.05 {
-        settings.overlay_kitt_opacity_inactive = 0.05;
-      }
-      if settings.overlay_kitt_opacity_active < 0.05 {
-        settings.overlay_kitt_opacity_active = 0.05;
-      }
-      if settings.overlay_kitt_opacity_active < settings.overlay_kitt_opacity_inactive {
-        settings.overlay_kitt_opacity_active = settings.overlay_kitt_opacity_inactive;
-      }
-      // Validate main_window_start_state
-      if !["normal", "minimized", "tray"].contains(&settings.main_window_start_state.as_str()) {
-        settings.main_window_start_state = "normal".to_string();
-      }
-      // Normalize v0.7 AI fallback settings and legacy compatibility fields.
-      normalize_ai_fallback_fields(&mut settings);
+    let path = resolve_config_path(app, "settings.json");
+    match fs::read_to_string(path) {
+        Ok(raw) => {
+            let mut settings: Settings = serde_json::from_str(&raw).unwrap_or_default();
+            if settings.mode != "ptt" && settings.mode != "vad" {
+                settings.mode = "ptt".to_string();
+            }
+            // Migrate legacy vad_threshold to new dual-threshold system
+            if settings.vad_threshold_start <= 0.0 {
+                settings.vad_threshold_start = if settings.vad_threshold > 0.0 {
+                    settings.vad_threshold
+                } else {
+                    VAD_THRESHOLD_START_DEFAULT
+                };
+            }
+            if settings.vad_threshold_sustain <= 0.0 {
+                settings.vad_threshold_sustain = VAD_THRESHOLD_SUSTAIN_DEFAULT;
+            }
+            // Clamp thresholds to valid range
+            if !(0.001..=1.0).contains(&settings.vad_threshold_start) {
+                settings.vad_threshold_start = VAD_THRESHOLD_START_DEFAULT;
+            }
+            if !(0.001..=1.0).contains(&settings.vad_threshold_sustain) {
+                settings.vad_threshold_sustain = VAD_THRESHOLD_SUSTAIN_DEFAULT;
+            }
+            // Ensure sustain <= start
+            if settings.vad_threshold_sustain > settings.vad_threshold_start {
+                settings.vad_threshold_sustain = settings.vad_threshold_start;
+            }
+            // Sync legacy field
+            settings.vad_threshold = settings.vad_threshold_start;
+            if settings.vad_silence_ms < 100 {
+                settings.vad_silence_ms = VAD_SILENCE_MS_DEFAULT;
+            }
+            if !(0.0..=1.0).contains(&settings.transcribe_vad_threshold) {
+                settings.transcribe_vad_threshold = 0.04;
+            }
+            if settings.transcribe_batch_interval_ms < 4000 {
+                settings.transcribe_batch_interval_ms = 4000;
+            }
+            if settings.transcribe_batch_interval_ms > 15000 {
+                settings.transcribe_batch_interval_ms = 15000;
+            }
+            if settings.transcribe_chunk_overlap_ms > settings.transcribe_batch_interval_ms {
+                settings.transcribe_chunk_overlap_ms = settings.transcribe_batch_interval_ms / 2;
+            }
+            if settings.transcribe_chunk_overlap_ms > 3000 {
+                settings.transcribe_chunk_overlap_ms = 3000;
+            }
+            if settings.transcribe_vad_silence_ms < 200 {
+                settings.transcribe_vad_silence_ms = 200;
+            }
+            if settings.transcribe_vad_silence_ms > 5000 {
+                settings.transcribe_vad_silence_ms = 5000;
+            }
+            if settings.transcribe_backend.trim().is_empty() {
+                settings.transcribe_backend = "whisper_cpp".to_string();
+            }
+            if settings.transcribe_backend != "whisper_cpp" {
+                settings.transcribe_backend = "whisper_cpp".to_string();
+            }
+            if settings.analysis_tool_path_override.trim().is_empty() {
+                settings.analysis_tool_path_override = String::new();
+            }
+            // Validate language_mode
+            let valid_languages = [
+                "auto", "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "ko", "zh",
+                "ar", "tr", "hi",
+            ];
+            if !valid_languages.contains(&settings.language_mode.as_str()) {
+                settings.language_mode = "auto".to_string();
+            }
+            if settings.model_source.trim().is_empty() {
+                settings.model_source = "default".to_string();
+            }
+            if settings.model_storage_dir.trim().is_empty() {
+                if let Ok(dir) = std::env::var("TRISPR_WHISPER_MODEL_DIR") {
+                    settings.model_storage_dir = dir;
+                } else {
+                    settings.model_storage_dir = "".to_string();
+                }
+            }
+            sync_model_dir_env(&settings);
+            settings.transcribe_input_gain_db =
+                settings.transcribe_input_gain_db.clamp(-30.0, 30.0);
+            settings.mic_input_gain_db = settings.mic_input_gain_db.clamp(-30.0, 30.0);
+            #[cfg(target_os = "windows")]
+            if settings.transcribe_output_device != "default"
+                && !settings.transcribe_output_device.starts_with("wasapi:")
+            {
+                settings.transcribe_output_device = "default".to_string();
+            }
+            if settings.overlay_min_radius < 4.0 {
+                settings.overlay_min_radius = 4.0;
+            }
+            if settings.overlay_max_radius < settings.overlay_min_radius {
+                settings.overlay_max_radius = settings.overlay_min_radius + 4.0;
+            }
+            if settings.overlay_max_radius > 64.0 {
+                settings.overlay_max_radius = 64.0;
+            }
+            if settings.overlay_rise_ms < 20 {
+                settings.overlay_rise_ms = 20;
+            }
+            if settings.overlay_fall_ms < 20 {
+                settings.overlay_fall_ms = 20;
+            }
+            if !(0.0..=1.0).contains(&settings.overlay_opacity_inactive) {
+                settings.overlay_opacity_inactive = 0.2;
+            }
+            if !(0.0..=1.0).contains(&settings.overlay_opacity_active) {
+                settings.overlay_opacity_active = 0.8;
+            }
+            if settings.overlay_opacity_inactive < 0.05 {
+                settings.overlay_opacity_inactive = 0.05;
+            }
+            if settings.overlay_opacity_active < 0.05 {
+                settings.overlay_opacity_active = 0.05;
+            }
+            if settings.overlay_opacity_active < settings.overlay_opacity_inactive {
+                settings.overlay_opacity_active = settings.overlay_opacity_inactive;
+            }
+            let defaults = Settings::default();
+            let approx_eq = |a: f32, b: f32| (a - b).abs() < 0.0001;
+            if settings.overlay_kitt_color == defaults.overlay_kitt_color
+                && settings.overlay_color != defaults.overlay_color
+            {
+                settings.overlay_kitt_color = settings.overlay_color.clone();
+            }
+            if settings.overlay_kitt_rise_ms == defaults.overlay_kitt_rise_ms
+                && settings.overlay_rise_ms != defaults.overlay_rise_ms
+            {
+                settings.overlay_kitt_rise_ms = settings.overlay_rise_ms;
+            }
+            if settings.overlay_kitt_fall_ms == defaults.overlay_kitt_fall_ms
+                && settings.overlay_fall_ms != defaults.overlay_fall_ms
+            {
+                settings.overlay_kitt_fall_ms = settings.overlay_fall_ms;
+            }
+            if approx_eq(
+                settings.overlay_kitt_opacity_inactive,
+                defaults.overlay_kitt_opacity_inactive,
+            ) && !approx_eq(
+                settings.overlay_opacity_inactive,
+                defaults.overlay_opacity_inactive,
+            ) {
+                settings.overlay_kitt_opacity_inactive = settings.overlay_opacity_inactive;
+            }
+            if approx_eq(
+                settings.overlay_kitt_opacity_active,
+                defaults.overlay_kitt_opacity_active,
+            ) && !approx_eq(
+                settings.overlay_opacity_active,
+                defaults.overlay_opacity_active,
+            ) {
+                settings.overlay_kitt_opacity_active = settings.overlay_opacity_active;
+            }
+            if settings.overlay_kitt_pos_x.is_nan() || settings.overlay_kitt_pos_y.is_nan() {
+                settings.overlay_kitt_pos_x = settings.overlay_pos_x;
+                settings.overlay_kitt_pos_y = settings.overlay_pos_y;
+            }
+            if settings.overlay_kitt_pos_x < 0.0 {
+                settings.overlay_kitt_pos_x = 0.0;
+            }
+            if settings.overlay_kitt_pos_y < 0.0 {
+                settings.overlay_kitt_pos_y = 0.0;
+            }
+            if settings.overlay_pos_x < 0.0 {
+                settings.overlay_pos_x = 0.0;
+            }
+            if settings.overlay_pos_y < 0.0 {
+                settings.overlay_pos_y = 0.0;
+            }
+            if (settings.overlay_kitt_pos_x - 12.0).abs() < 0.001
+                && (settings.overlay_kitt_pos_y - 12.0).abs() < 0.001
+                && ((settings.overlay_pos_x - 12.0).abs() > 0.001
+                    || (settings.overlay_pos_y - 12.0).abs() > 0.001)
+            {
+                settings.overlay_kitt_pos_x = settings.overlay_pos_x;
+                settings.overlay_kitt_pos_y = settings.overlay_pos_y;
+            }
+            if settings.overlay_kitt_color.trim().is_empty() {
+                settings.overlay_kitt_color = "#ff3d2e".to_string();
+            }
+            if settings.overlay_kitt_min_width < 4.0 {
+                settings.overlay_kitt_min_width = 4.0;
+            }
+            if settings.overlay_kitt_max_width < settings.overlay_kitt_min_width {
+                settings.overlay_kitt_max_width = settings.overlay_kitt_min_width;
+            }
+            if settings.overlay_kitt_max_width > 800.0 {
+                settings.overlay_kitt_max_width = 800.0;
+            }
+            if settings.overlay_kitt_height < 8.0 {
+                settings.overlay_kitt_height = 8.0;
+            }
+            if settings.overlay_kitt_height > 40.0 {
+                settings.overlay_kitt_height = 40.0;
+            }
+            if settings.overlay_kitt_rise_ms < 20 {
+                settings.overlay_kitt_rise_ms = 20;
+            }
+            if settings.overlay_kitt_fall_ms < 20 {
+                settings.overlay_kitt_fall_ms = 20;
+            }
+            if !(0.0..=1.0).contains(&settings.overlay_kitt_opacity_inactive) {
+                settings.overlay_kitt_opacity_inactive = 0.2;
+            }
+            if !(0.0..=1.0).contains(&settings.overlay_kitt_opacity_active) {
+                settings.overlay_kitt_opacity_active = 0.8;
+            }
+            if settings.overlay_kitt_opacity_inactive < 0.05 {
+                settings.overlay_kitt_opacity_inactive = 0.05;
+            }
+            if settings.overlay_kitt_opacity_active < 0.05 {
+                settings.overlay_kitt_opacity_active = 0.05;
+            }
+            if settings.overlay_kitt_opacity_active < settings.overlay_kitt_opacity_inactive {
+                settings.overlay_kitt_opacity_active = settings.overlay_kitt_opacity_inactive;
+            }
+            // Validate main_window_start_state
+            if !["normal", "minimized", "tray"].contains(&settings.main_window_start_state.as_str())
+            {
+                settings.main_window_start_state = "normal".to_string();
+            }
+            // Normalize v0.7 AI fallback settings and legacy compatibility fields.
+            normalize_ai_fallback_fields(&mut settings);
 
-      // Transcribe enablement is session-only; always start disabled.
-      settings.transcribe_enabled = false;
-      settings
+            // Transcribe enablement is session-only; always start disabled.
+            settings.transcribe_enabled = false;
+            settings
+        }
+        Err(_) => Settings::default(),
     }
-    Err(_) => Settings::default(),
-  }
 }
 
 pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
-  // Migrate legacy cloud-fallback toggle to ai_fallback enabled state.
-  if settings.cloud_fallback && !settings.ai_fallback.enabled {
-    settings.ai_fallback.enabled = true;
-  }
-  // Migrate legacy postproc_llm toggle and values if still used.
-  if settings.postproc_llm_enabled && !settings.ai_fallback.enabled {
-    settings.ai_fallback.enabled = true;
-  }
-  if settings.ai_fallback.provider.trim().is_empty() && !settings.postproc_llm_provider.trim().is_empty() {
-    settings.ai_fallback.provider = settings.postproc_llm_provider.clone();
-  }
-  if settings.ai_fallback.model.trim().is_empty() && !settings.postproc_llm_model.trim().is_empty() {
-    settings.ai_fallback.model = settings.postproc_llm_model.clone();
-  }
-  if settings.ai_fallback.custom_prompt.trim().is_empty() && !settings.postproc_llm_prompt.trim().is_empty() {
-    settings.ai_fallback.custom_prompt = settings.postproc_llm_prompt.clone();
-    settings.ai_fallback.custom_prompt_enabled = true;
-    settings.ai_fallback.use_default_prompt = false;
-  }
+    // Migrate legacy cloud-fallback toggle to ai_fallback enabled state.
+    if settings.cloud_fallback && !settings.ai_fallback.enabled {
+        settings.ai_fallback.enabled = true;
+    }
+    // Migrate legacy postproc_llm toggle and values if still used.
+    if settings.postproc_llm_enabled && !settings.ai_fallback.enabled {
+        settings.ai_fallback.enabled = true;
+    }
+    if settings.ai_fallback.provider.trim().is_empty()
+        && !settings.postproc_llm_provider.trim().is_empty()
+    {
+        settings.ai_fallback.provider = settings.postproc_llm_provider.clone();
+    }
+    if settings.ai_fallback.model.trim().is_empty()
+        && !settings.postproc_llm_model.trim().is_empty()
+    {
+        settings.ai_fallback.model = settings.postproc_llm_model.clone();
+    }
+    if settings.ai_fallback.custom_prompt.trim().is_empty()
+        && !settings.postproc_llm_prompt.trim().is_empty()
+    {
+        settings.ai_fallback.custom_prompt = settings.postproc_llm_prompt.clone();
+        settings.ai_fallback.custom_prompt_enabled = true;
+        settings.ai_fallback.use_default_prompt = false;
+    }
 
-  settings.ai_fallback.normalize();
-  settings.providers.normalize();
-  settings.providers.sync_from_ai_fallback(&settings.ai_fallback);
+    settings.ai_fallback.normalize();
+    settings.providers.normalize();
+    settings
+        .providers
+        .sync_from_ai_fallback(&settings.ai_fallback);
 
-  // Keep legacy fields synchronized for compatibility with older code paths.
-  settings.cloud_fallback = settings.ai_fallback.enabled;
-  settings.postproc_llm_enabled = settings.ai_fallback.enabled;
-  settings.postproc_llm_provider = settings.ai_fallback.provider.clone();
-  settings.postproc_llm_model = settings.ai_fallback.model.clone();
-  if settings.ai_fallback.custom_prompt_enabled {
-    settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt.clone();
-  }
+    // Keep legacy fields synchronized for compatibility with older code paths.
+    settings.cloud_fallback = settings.ai_fallback.enabled;
+    settings.postproc_llm_enabled = settings.ai_fallback.enabled;
+    settings.postproc_llm_provider = settings.ai_fallback.provider.clone();
+    settings.postproc_llm_model = settings.ai_fallback.model.clone();
+    if settings.ai_fallback.custom_prompt_enabled {
+        settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt.clone();
+    }
 }
 
 pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result<(), String> {
-  let path = resolve_config_path(app, "settings.json");
-  let mut persisted = settings.clone();
-  // Do not persist session-only transcribe enablement.
-  persisted.transcribe_enabled = false;
-  let raw = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
-  fs::write(path, raw).map_err(|e| e.to_string())?;
-  Ok(())
+    let path = resolve_config_path(app, "settings.json");
+    let mut persisted = settings.clone();
+    // Do not persist session-only transcribe enablement.
+    persisted.transcribe_enabled = false;
+    let raw = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
+    fs::write(path, raw).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub(crate) fn sync_model_dir_env(settings: &Settings) {
-  let trimmed = settings.model_storage_dir.trim();
-  if trimmed.is_empty() {
-    std::env::remove_var("TRISPR_WHISPER_MODEL_DIR");
-  } else {
-    std::env::set_var("TRISPR_WHISPER_MODEL_DIR", trimmed);
-  }
+    let trimmed = settings.model_storage_dir.trim();
+    if trimmed.is_empty() {
+        std::env::remove_var("TRISPR_WHISPER_MODEL_DIR");
+    } else {
+        std::env::set_var("TRISPR_WHISPER_MODEL_DIR", trimmed);
+    }
 }
 
 pub(crate) fn load_history(app: &AppHandle) -> Vec<HistoryEntry> {
-  let path = resolve_data_path(app, "history.json");
-  match fs::read_to_string(path) {
-    Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-    Err(_) => Vec::new(),
-  }
+    let path = resolve_data_path(app, "history.json");
+    match fs::read_to_string(path) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
 }
 
 pub(crate) fn save_history_file(app: &AppHandle, history: &[HistoryEntry]) -> Result<(), String> {
-  let path = resolve_data_path(app, "history.json");
-  let raw = serde_json::to_string_pretty(history).map_err(|e| e.to_string())?;
-  fs::write(path, raw).map_err(|e| e.to_string())?;
-  Ok(())
+    let path = resolve_data_path(app, "history.json");
+    let raw = serde_json::to_string_pretty(history).map_err(|e| e.to_string())?;
+    fs::write(path, raw).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub(crate) fn load_chapters(app: &AppHandle) -> Vec<Chapter> {
-  let path = resolve_data_path(app, "chapters.json");
-  match fs::read_to_string(path) {
-    Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-    Err(_) => Vec::new(),
-  }
+    let path = resolve_data_path(app, "chapters.json");
+    match fs::read_to_string(path) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
 }
 
 pub(crate) fn save_chapters_file(app: &AppHandle, chapters: &[Chapter]) -> Result<(), String> {
-  let path = resolve_data_path(app, "chapters.json");
-  let raw = serde_json::to_string_pretty(chapters).map_err(|e| e.to_string())?;
-  fs::write(path, raw).map_err(|e| e.to_string())?;
-  Ok(())
+    let path = resolve_data_path(app, "chapters.json");
+    let raw = serde_json::to_string_pretty(chapters).map_err(|e| e.to_string())?;
+    fs::write(path, raw).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub(crate) fn load_transcribe_history(app: &AppHandle) -> Vec<HistoryEntry> {
-  let path = resolve_data_path(app, "history_transcribe.json");
-  match fs::read_to_string(path) {
-    Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-    Err(_) => Vec::new(),
-  }
+    let path = resolve_data_path(app, "history_transcribe.json");
+    match fs::read_to_string(path) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
 }
 
 pub(crate) fn save_transcribe_history_file(
-  app: &AppHandle,
-  history: &[HistoryEntry],
+    app: &AppHandle,
+    history: &[HistoryEntry],
 ) -> Result<(), String> {
-  let path = resolve_data_path(app, "history_transcribe.json");
-  let raw = serde_json::to_string_pretty(history).map_err(|e| e.to_string())?;
-  fs::write(path, raw).map_err(|e| e.to_string())?;
-  Ok(())
+    let path = resolve_data_path(app, "history_transcribe.json");
+    let raw = serde_json::to_string_pretty(history).map_err(|e| e.to_string())?;
+    fs::write(path, raw).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub(crate) fn push_history_entry_inner(
-  app: &AppHandle,
-  history: &Mutex<Vec<HistoryEntry>>,
-  text: String,
-  source: String,
+    app: &AppHandle,
+    history: &Mutex<Vec<HistoryEntry>>,
+    text: String,
+    source: String,
 ) -> Result<Vec<HistoryEntry>, String> {
-  let mut history = history.lock().unwrap();
-  let entry = HistoryEntry {
-    id: format!("h_{}", crate::util::now_ms()),
-    text,
-    timestamp_ms: crate::util::now_ms(),
-    source,
-  };
-  history.insert(0, entry);
-  save_history_file(app, &history)?;
-  Ok(history.clone())
+    let mut history = history.lock().unwrap();
+    let entry = HistoryEntry {
+        id: format!("h_{}", crate::util::now_ms()),
+        text,
+        timestamp_ms: crate::util::now_ms(),
+        source,
+    };
+    history.insert(0, entry);
+    save_history_file(app, &history)?;
+    Ok(history.clone())
 }
 
 pub(crate) fn push_transcribe_entry_inner(
-  app: &AppHandle,
-  history: &Mutex<Vec<HistoryEntry>>,
-  text: String,
+    app: &AppHandle,
+    history: &Mutex<Vec<HistoryEntry>>,
+    text: String,
 ) -> Result<Vec<HistoryEntry>, String> {
-  let mut history = history.lock().unwrap();
-  let entry = HistoryEntry {
-    id: format!("o_{}", crate::util::now_ms()),
-    text,
-    timestamp_ms: crate::util::now_ms(),
-    source: "output".to_string(),
-  };
-  history.insert(0, entry);
-  save_transcribe_history_file(app, &history)?;
-  let _ = app.emit("transcribe:history-updated", history.clone());
-  Ok(history.clone())
+    let mut history = history.lock().unwrap();
+    let entry = HistoryEntry {
+        id: format!("o_{}", crate::util::now_ms()),
+        text,
+        timestamp_ms: crate::util::now_ms(),
+        source: "output".to_string(),
+    };
+    history.insert(0, entry);
+    save_transcribe_history_file(app, &history)?;
+    let _ = app.emit("transcribe:history-updated", history.clone());
+    Ok(history.clone())
 }

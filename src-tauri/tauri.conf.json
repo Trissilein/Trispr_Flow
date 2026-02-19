@@ -50,13 +50,7 @@
       "bin/vulkan/ggml-base.dll": "bin/vulkan/ggml-base.dll",
       "bin/vulkan/ggml-cpu.dll": "bin/vulkan/ggml-cpu.dll",
       "bin/vulkan/ggml-vulkan.dll": "bin/vulkan/ggml-vulkan.dll",
-      "bin/quantize.exe": "bin/quantize.exe",
-      "../sidecar/vibevoice-asr/main.py": "sidecar/vibevoice-asr/main.py",
-      "../sidecar/vibevoice-asr/inference.py": "sidecar/vibevoice-asr/inference.py",
-      "../sidecar/vibevoice-asr/model_loader.py": "sidecar/vibevoice-asr/model_loader.py",
-      "../sidecar/vibevoice-asr/config.py": "sidecar/vibevoice-asr/config.py",
-      "../sidecar/vibevoice-asr/requirements.txt": "sidecar/vibevoice-asr/requirements.txt",
-      "../sidecar/vibevoice-asr/setup-vibevoice.ps1": "sidecar/vibevoice-asr/setup-vibevoice.ps1"
+      "bin/quantize.exe": "bin/quantize.exe"
     },
     "windows": {
       "nsis": {

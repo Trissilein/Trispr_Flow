@@ -2,15 +2,18 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { listen } from "@tauri-apps/api/event";
-import type { AIFallbackProvider, Settings, TranscriptionAnalysis } from "./types";
+import type {
+  AIFallbackProvider,
+  AnalysisToolStatus,
+  Settings,
+} from "./types";
 import { settings } from "./state";
 import * as dom from "./dom-refs";
 import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, updateTranscribeVadVisibility, updateTranscribeThreshold, renderAIFallbackSettingsUi } from "./settings";
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
 import { refreshModels, refreshModelsDir } from "./models";
-import { applyPanelCollapsed, setHistoryTab, buildConversationHistory, buildConversationText, buildExportText, setSearchQuery, renderSpeakerSegments, buildSpeakerExportTxt } from "./history";
+import { applyPanelCollapsed, setHistoryTab, buildConversationHistory, buildConversationText, buildExportText, setSearchQuery } from "./history";
 import { setupHotkeyRecorder } from "./hotkeys";
 import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
@@ -18,52 +21,13 @@ import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
 import { updateChaptersVisibility } from "./chapters";
 
 // =====================================================================
-// Voice Analysis Dialog helpers
+// =====================================================================
+// Voice Analysis launcher helpers
 // =====================================================================
 
-let lastAnalysisResults: TranscriptionAnalysis | null = null;
 let analysisInProgress = false;
-let analysisRunId = 0;
-let analysisNeedsEngineReset = false;
-const ANALYSIS_ENGINE_DETAIL_DEFAULT = "May take up to 30s on first run";
-const ANALYSIS_SETUP_RECOMMENDED_FREE_GB = 55;
-
-type AnalysisRequest = {
-  audioPath: string;
-  precision: "fp16" | "int8";
-  language: string;
-  parallel: boolean;
-};
-
-type VoiceAnalysisSetupPreflight = {
-  status: string;
-  message?: string;
-  setup_script?: string;
-  run_manual_command?: string;
-  automatic_setup_supported?: boolean;
-  python?: {
-    found?: boolean;
-    supported?: boolean;
-    version?: string | null;
-    path?: string | null;
-  };
-  runtime?: {
-    ready?: boolean;
-    detail?: string | null;
-  };
-  storage?: {
-    cache_dir?: string;
-    free_gb?: number | null;
-    recommended_free_gb?: number;
-    enough_for_prefetch?: boolean | null;
-  };
-};
-
-type VoiceAnalysisSetupProgress = {
-  phase?: string;
-  message?: string;
-  done?: boolean;
-};
+const ANALYSIS_GPU_WARNING_MESSAGE =
+  "Voice Analysis runs in a separate app and may heavily load GPU/VRAM. Running Trispr and analysis in parallel can slow down your system.\n\nContinue?";
 
 const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini"];
 
@@ -134,377 +98,158 @@ async function refreshAIFallbackModels(provider: AIFallbackProvider) {
   }
 }
 
-function nextAnalysisRunId(): number {
-  analysisRunId += 1;
-  return analysisRunId;
-}
-
-function isCurrentAnalysisRun(runId: number): boolean {
-  return runId === analysisRunId;
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function nlToBr(text: string): string {
-  return escapeHtml(text).replace(/\n/g, "<br>");
-}
-
-function confirmVoiceAnalysisSetupStart(preflight?: VoiceAnalysisSetupPreflight): boolean {
-  const recommendedGb = preflight?.storage?.recommended_free_gb ?? ANALYSIS_SETUP_RECOMMENDED_FREE_GB;
-  const freeGb = preflight?.storage?.free_gb;
-  const enoughForPrefetch = preflight?.storage?.enough_for_prefetch;
-  const messageParts = [
-    "Voice Analysis setup is optional and can take several minutes.",
-    `Download/cache usage can be large (often many GB). Recommended free disk headroom: ${recommendedGb} GB.`,
-  ];
-  if (typeof freeGb === "number") {
-    const storageLine = enoughForPrefetch === false
-      ? `Detected free disk for HF cache: ${freeGb} GB (below recommended headroom for large model cache/prefetch).`
-      : `Detected free disk for HF cache: ${freeGb} GB.`;
-    messageParts.push(storageLine);
-  }
-  messageParts.push("Continue with automatic setup now?");
-  const message = messageParts.join("\n\n");
-  return window.confirm(message);
-}
-
-function isPreflightSetupRequired(status: string): boolean {
-  return status === "setup_required" || status === "runtime_invalid";
-}
-
-function isPreflightBlocking(status: string): boolean {
-  return status === "missing_python"
-    || status === "unsupported_python"
-    || status === "script_missing"
-    || status === "unsupported_platform";
-}
-
-function buildPreflightGuidanceMessage(preflight: VoiceAnalysisSetupPreflight): string {
-  const lines: string[] = [];
-  const status = preflight.status || "unknown";
-  const manual = preflight.run_manual_command || 'powershell -NoProfile -ExecutionPolicy Bypass -File "sidecar/vibevoice-asr/setup-vibevoice.ps1"';
-  const pythonVersion = preflight.python?.version ?? "unknown";
-  const freeGb = preflight.storage?.free_gb;
-  const recommendedGb = preflight.storage?.recommended_free_gb ?? ANALYSIS_SETUP_RECOMMENDED_FREE_GB;
-
-  if (status === "setup_required") {
-    lines.push("Voice Analysis setup is required before the first analysis run.");
-  } else if (status === "runtime_invalid") {
-    lines.push("Voice Analysis runtime exists but is invalid and needs repair.");
-  } else if (status === "missing_python") {
-    lines.push("Python 3.11+ is required but was not found.");
-    lines.push("Install Python from https://www.python.org/downloads/ and retry.");
-  } else if (status === "unsupported_python") {
-    lines.push(`Detected unsupported Python version: ${pythonVersion}.`);
-    lines.push("Use Python 3.11, 3.12, or 3.13.");
-  } else if (status === "script_missing") {
-    lines.push("Voice Analysis setup script is missing.");
-    lines.push("Reinstall Trispr Flow to restore sidecar setup files.");
-  } else if (status === "unsupported_platform") {
-    lines.push("Automatic Voice Analysis setup is currently supported on Windows only.");
-  } else {
-    lines.push(preflight.message || "Voice Analysis preflight found a setup issue.");
-  }
-
-  if (typeof freeGb === "number") {
-    lines.push(`Detected free disk for HF cache: ${freeGb} GB (recommended for prefetch: ${recommendedGb} GB).`);
-  }
-
-  if (preflight.runtime?.detail) {
-    lines.push("");
-    lines.push(`Runtime detail: ${preflight.runtime.detail}`);
-  }
-
-  lines.push("");
-  lines.push("Run manually:");
-  lines.push(manual);
-  return lines.join("\n");
-}
-
-async function runVoiceAnalysisSetupInstall(
-  onProgress?: (progress: VoiceAnalysisSetupProgress) => void,
-): Promise<void> {
-  const unlisten = await listen<VoiceAnalysisSetupProgress>("voice-analysis:setup-progress", (event) => {
-    onProgress?.(event.payload);
-  });
-
-  try {
-    await invoke("install_vibevoice_dependencies", { prefetchModel: false });
-  } finally {
-    unlisten();
-  }
-}
-
-function extractSetupCommand(message: string): string | null {
-  const match = message.match(/powershell[^\r\n]*-File\s+"[^"]+"/i);
-  return match ? match[0] : null;
-}
-
-function isVoiceAnalysisRuntimeError(message: string): boolean {
-  const msg = message.toLowerCase();
-  const markers = [
-    "sidecar",
-    "pip",
-    "fastapi",
-    "setup-vibevoice",
-    "voice analysis setup",
-    "no module",
-    "unrecognized processing class",
-    "can't instantiate a processor",
-    "failed to load model",
-    "runtime is unavailable or incompatible",
-    "version mismatch",
-    "transformers fallback is disabled",
-    "huggingface_hub version out of supported range",
-    "vibevoice package is not installed",
-    "missing required asr modules",
-    "object of type dtype is not json serializable",
-  ];
-  return markers.some((marker) => msg.includes(marker));
-}
-
-async function runAnalysisRequest(request: AnalysisRequest): Promise<TranscriptionAnalysis> {
-  if (request.parallel) {
-    const result = await invoke<any>("parallel_transcribe", {
-      audioPath: request.audioPath,
-      precision: request.precision,
-      language: request.language,
-    });
-
-    if (!result?.vibevoice || result.vibevoice.error) {
-      throw new Error(String(result?.vibevoice?.error ?? "Parallel analysis returned no VibeVoice results"));
-    }
-
-    return {
-      segments: result.vibevoice.segments.map((seg: any) => ({
-        speaker_id: seg.speaker,
-        start_time: seg.start_time,
-        end_time: seg.end_time,
-        text: seg.text,
-      })),
-      duration_s: result.vibevoice.metadata.duration,
-      total_speakers: result.vibevoice.metadata.num_speakers,
-      processing_time_ms: result.vibevoice.metadata.processing_time * 1000,
-    };
-  }
-
-  const result = await invoke<any>("sidecar_transcribe", {
-    audioPath: request.audioPath,
-    precision: request.precision,
-    language: request.language,
-  });
-
-  return {
-    segments: result.segments.map((seg: any) => ({
-      speaker_id: seg.speaker,
-      start_time: seg.start_time,
-      end_time: seg.end_time,
-      text: seg.text,
-    })),
-    duration_s: result.metadata.duration,
-    total_speakers: result.metadata.num_speakers,
-    processing_time_ms: result.metadata.processing_time * 1000,
-  };
-}
-
-function openAnalysisDialog() {
-  const dialog = document.getElementById("analysis-dialog");
-  if (!dialog) return;
-  dialog.style.display = "flex";
-  // Reset all stages
-  setAnalysisStage("file", "pending");
-  setAnalysisStage("engine", "pending");
-  setAnalysisStage("run", "pending");
-  const fileDetail = document.getElementById("stage-detail-file");
-  if (fileDetail) fileDetail.textContent = "";
-  const engineDetail = document.getElementById("stage-detail-engine");
-  if (engineDetail) engineDetail.textContent = ANALYSIS_ENGINE_DETAIL_DEFAULT;
-  const runDetail = document.getElementById("stage-detail-run");
-  if (runDetail) runDetail.textContent = "";
-  // Hide results and footer
-  const results = document.getElementById("analysis-results-area");
-  const footer = document.getElementById("analysis-dialog-footer");
-  if (results) { results.style.display = "none"; results.innerHTML = ""; }
-  if (footer) footer.style.display = "none";
-  // Show copy button in case it was hidden on previous error
-  const copyBtn = document.getElementById("analysis-copy-btn");
-  if (copyBtn) (copyBtn as HTMLElement).style.display = "";
-  lastAnalysisResults = null;
-}
-
 function setAnalysisBusy(isBusy: boolean) {
   analysisInProgress = isBusy;
   if (dom.analyseButton) {
     dom.analyseButton.disabled = isBusy;
   }
   if (dom.analyseButtonText) {
-    dom.analyseButtonText.textContent = isBusy ? "Analysing..." : "Analyse";
+    dom.analyseButtonText.textContent = isBusy ? "Launching..." : "Analyse";
   }
   if (dom.analyseSpinner) {
     dom.analyseSpinner.style.display = isBusy ? "inline-block" : "none";
   }
 }
 
-function closeAnalysisDialog() {
-  // Invalidate pending async UI updates from old analysis attempts.
-  nextAnalysisRunId();
-  const dialog = document.getElementById("analysis-dialog");
-  if (dialog) dialog.style.display = "none";
+function analysisOverrideParentPath(): string | null {
+  const overridePath = settings?.analysis_tool_path_override?.trim();
+  if (!overridePath) return null;
+  const lastSeparator = Math.max(overridePath.lastIndexOf("\\"), overridePath.lastIndexOf("/"));
+  if (lastSeparator <= 0) return null;
+  return overridePath.slice(0, lastSeparator);
 }
 
-function setAnalysisStage(id: string, state: "pending" | "active" | "done" | "error") {
-  const el = document.getElementById(`analysis-stage-${id}`);
-  if (!el) return;
-  el.className = `analysis-stage ${state}`;
+function analysisExePickerDefaultPath(status: AnalysisToolStatus): string | undefined {
+  const overrideParent = analysisOverrideParentPath();
+  if (overrideParent) {
+    return overrideParent;
+  }
+
+  const preferredDir = (status.candidate_dirs || []).find((candidateDir) => {
+    const normalized = (candidateDir || "").toLowerCase();
+    return normalized.includes("trispr analysis") || normalized.includes("com.trispr.analysis");
+  });
+  if (preferredDir?.trim()) {
+    return preferredDir.trim();
+  }
+
+  for (const candidateDir of status.candidate_dirs || []) {
+    const trimmed = candidateDir?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return undefined;
 }
 
-function showAnalysisResultsInDialog(analysis: TranscriptionAnalysis) {
-  const results = document.getElementById("analysis-results-area");
-  const footer = document.getElementById("analysis-dialog-footer");
-  if (!results || !footer) return;
-
-  const mins = Math.floor(analysis.duration_s / 60);
-  const secs = Math.floor(analysis.duration_s % 60);
-  const segmentsHtml = renderSpeakerSegments(analysis.segments);
-
-  results.innerHTML = `
-    <div class="analysis-results-meta">
-      <span>${mins}m ${secs}s</span>
-      <span>•</span>
-      <span>${analysis.total_speakers} speaker(s)</span>
-      <span>•</span>
-      <span>${analysis.segments.length} segment(s)</span>
-    </div>
-    ${segmentsHtml}
-  `;
-  results.style.display = "block";
-  const copyBtn = document.getElementById("analysis-copy-btn");
-  if (copyBtn) (copyBtn as HTMLElement).style.display = "";
-  footer.style.display = "flex";
-  lastAnalysisResults = analysis;
+function normalizePathForCompare(input: string): string {
+  return input.replace(/\//g, "\\").toLowerCase();
 }
 
-function showAnalysisErrorInDialog(
-  message: string,
-  isSidecarError: boolean,
-  retryRequest?: AnalysisRequest,
-) {
-  const results = document.getElementById("analysis-results-area");
-  const footer = document.getElementById("analysis-dialog-footer");
-  if (!results || !footer) return;
+function isAnalysisExePath(path: string): boolean {
+  const normalized = normalizePathForCompare(path).trim();
+  return normalized.endsWith("\\trispr-analysis.exe") || normalized === "trispr-analysis.exe";
+}
 
-  const setupCommand =
-    extractSetupCommand(message)
-    ?? 'powershell -NoProfile -ExecutionPolicy Bypass -File "sidecar/vibevoice-asr/setup-vibevoice.ps1"';
+async function chooseLocalAnalysisExecutable(status: AnalysisToolStatus): Promise<AnalysisToolStatus | null> {
+  const defaultPath = analysisExePickerDefaultPath(status);
+  const selected = await openDialog({
+    title: "Select trispr-analysis.exe",
+    filters: [{ name: "Executable", extensions: ["exe"] }],
+    multiple: false,
+    directory: false,
+    defaultPath,
+  });
 
-  const bodyText = isSidecarError
-    ? `Voice Analysis engine could not start.<br>`
-      + `Install missing components with this command:<br>`
-      + `<code>${escapeHtml(setupCommand)}</code><br>`
-      + `If Python is missing, install Python 3.11+ from `
-      + `<a href="https://www.python.org/downloads/" target="_blank" rel="noreferrer">python.org</a>, `
-      + `then run the command again.<br><br>`
-      + `${nlToBr(message)}`
-    : nlToBr(message);
-  const installActionHtml = isSidecarError && retryRequest
-    ? `
-      <div class="analysis-error-actions">
-        <button id="analysis-install-btn" class="btn-primary">Install Voice Analysis</button>
-        <p id="analysis-install-status" class="analysis-install-status"></p>
-      </div>
-    `
-    : "";
+  if (!selected || Array.isArray(selected)) {
+    return null;
+  }
 
-  results.innerHTML = `
-    <div class="analysis-error">
-      <p class="analysis-error-title">Analysis failed</p>
-      <p class="analysis-error-msg">${bodyText}</p>
-      ${installActionHtml}
-    </div>
-  `;
-  results.style.display = "block";
+  const selectedPath = selected as string;
+  if (!isAnalysisExePath(selectedPath)) {
+    throw new Error("Please select trispr-analysis.exe.");
+  }
 
-  // Hide copy button — nothing to copy on error
-  const copyBtn = document.getElementById("analysis-copy-btn");
-  if (copyBtn) (copyBtn as HTMLElement).style.display = "none";
+  const previousOverride = settings?.analysis_tool_path_override ?? "";
+  if (settings) {
+    settings.analysis_tool_path_override = selectedPath;
+    await persistSettings();
+  }
 
-  footer.style.display = "flex";
+  const refreshed = await invoke<AnalysisToolStatus>("analysis_tool_status");
+  if (!refreshed.installed || !refreshed.executable_path) {
+    if (settings) {
+      settings.analysis_tool_path_override = previousOverride;
+      await persistSettings();
+    }
+    throw new Error("Selected file is not a valid Trispr Analysis executable.");
+  }
 
-  if (isSidecarError && retryRequest) {
-    const installBtn = document.getElementById("analysis-install-btn") as HTMLButtonElement | null;
-    const installStatus = document.getElementById("analysis-install-status");
-    installBtn?.addEventListener("click", async () => {
-      if (!installBtn || installBtn.disabled) return;
-      if (!confirmVoiceAnalysisSetupStart()) return;
-      const runId = nextAnalysisRunId();
-      setAnalysisBusy(true);
-      installBtn.disabled = true;
-      installBtn.textContent = "Installing...";
-      if (installStatus) {
-        installStatus.textContent = "Installing dependencies. This can take a few minutes.";
-      }
-      setAnalysisStage("engine", "active");
-      setAnalysisStage("run", "pending");
+  if (normalizePathForCompare(refreshed.executable_path) !== normalizePathForCompare(selectedPath)) {
+    if (settings) {
+      settings.analysis_tool_path_override = refreshed.executable_path;
+      await persistSettings();
+    }
+  }
 
-      try {
-        await runVoiceAnalysisSetupInstall((progress) => {
-          if (!isCurrentAnalysisRun(runId)) return;
-          if (installStatus && progress.message) {
-            installStatus.textContent = progress.message;
-          }
-        });
-        if (!isCurrentAnalysisRun(runId)) return;
-        if (installStatus) {
-          installStatus.textContent = "Dependencies installed. Restarting analysis engine...";
-        }
+  if (!isAnalysisExePath(refreshed.executable_path)) {
+    if (settings) {
+      settings.analysis_tool_path_override = previousOverride;
+      await persistSettings();
+    }
+    throw new Error("Selected file is not a valid Trispr Analysis executable.");
+  }
+  return refreshed;
+}
 
-        if (analysisNeedsEngineReset) {
-          try {
-            await invoke("stop_sidecar");
-          } catch (stopError) {
-            console.warn("Voice Analysis sidecar reset before retry failed:", stopError);
-          }
-          if (!isCurrentAnalysisRun(runId)) return;
-        }
+async function ensureAnalysisToolReady(): Promise<AnalysisToolStatus> {
+  const status = await invoke<AnalysisToolStatus>("analysis_tool_status");
+  if (status.installed) {
+    return status;
+  }
 
-        await invoke("start_sidecar");
-        if (!isCurrentAnalysisRun(runId)) return;
-        analysisNeedsEngineReset = false;
-        setAnalysisStage("engine", "done");
-        setAnalysisStage("run", "active");
+  const shouldPickLocalExe = window.confirm(
+    "Trispr Analysis is not installed.\n\nDo you want to pick a local trispr-analysis.exe now?",
+  );
+  if (!shouldPickLocalExe) {
+    throw new Error("Analysis canceled: no Trispr Analysis executable selected.");
+  }
 
-        const analysis = await runAnalysisRequest(retryRequest);
-        if (!isCurrentAnalysisRun(runId)) return;
-        setAnalysisStage("run", "done");
-        showAnalysisResultsInDialog(analysis);
-        showToast({
-          type: "success",
-          title: "Voice Analysis ready",
-          message: "Dependencies installed and analysis retried successfully.",
-          duration: 3500,
-        });
-      } catch (err) {
-        if (!isCurrentAnalysisRun(runId)) return;
-        const installMsg = String(err);
-        console.error("Voice Analysis install/retry failed:", err);
-        analysisNeedsEngineReset = true;
-        showAnalysisErrorInDialog(installMsg, true, retryRequest);
-      } finally {
-        if (isCurrentAnalysisRun(runId)) {
-          setAnalysisBusy(false);
-        }
-      }
-    });
+  const refreshed = await chooseLocalAnalysisExecutable(status);
+  if (!refreshed?.installed) {
+    throw new Error("Analysis canceled: selected executable is invalid or missing.");
+  }
+  return refreshed;
+}
+
+async function confirmAnalysisGpuWarning(): Promise<boolean> {
+  if (settings?.analysis_parallel_warning_ack) {
+    return true;
+  }
+
+  const accepted = window.confirm(ANALYSIS_GPU_WARNING_MESSAGE);
+  if (accepted && settings) {
+    settings.analysis_parallel_warning_ack = true;
+    await persistSettings();
+  }
+
+  return accepted;
+}
+
+async function launchExternalAnalysis(audioPath: string): Promise<void> {
+  await ensureAnalysisToolReady();
+
+  const accepted = await confirmAnalysisGpuWarning();
+  if (!accepted) {
+    throw new Error("Analysis canceled by user.");
+  }
+
+  const launchResult = await invoke<{ status: string }>("analysis_tool_launch", { audioPath });
+  if (launchResult?.status !== "launched") {
+    throw new Error("Failed to launch external analysis tool.");
   }
 }
-
 // Custom vocabulary helper functions
 function addVocabRow(original: string, replacement: string) {
   if (!dom.postprocVocabRows) return;
@@ -765,141 +510,53 @@ export function wireEvents() {
     if (analysisInProgress) {
       showToast({
         type: "info",
-        title: "Analysis already running",
-        message: "Please wait until the current analysis run completes.",
+        title: "Analysis launcher busy",
+        message: "Please wait until the current launch attempt completes.",
         duration: 2500,
       });
       return;
     }
 
-    // Step 1: File picker — before opening dialog so Cancel doesn't flash the UI
-    let audioPath: string | null = null;
+    let audioPath: string;
     try {
       const recordingsDir = await invoke<string>("get_recordings_directory");
       const selected = await openDialog({
-        title: "Select Audio File for Voice Analysis",
+        title: "Select Audio File for External Analysis",
         filters: [{ name: "Audio Files", extensions: ["opus", "wav", "mp3", "m4a"] }],
         multiple: false,
         directory: false,
         defaultPath: recordingsDir,
       });
-      if (!selected) return; // User cancelled
+      if (!selected) {
+        return;
+      }
       audioPath = selected as string;
-    } catch (err) {
-      showToast({ type: "error", title: "File selection failed", message: String(err), duration: 4000 });
+    } catch (error) {
+      showToast({ type: "error", title: "File selection failed", message: String(error), duration: 4000 });
       return;
     }
 
-    // Step 2: Open dialog and mark in-progress
-    const runId = nextAnalysisRunId();
     setAnalysisBusy(true);
-    openAnalysisDialog();
-
-    // Mark file stage done
-    const fileName = (audioPath as string).split(/[/\\]/).pop() ?? audioPath;
-    setAnalysisStage("file", "done");
-    const fileDetail = document.getElementById("stage-detail-file");
-    if (fileDetail) fileDetail.textContent = fileName;
-
-    const analysisRequest: AnalysisRequest = {
-      audioPath: audioPath as string,
-      precision: settings?.vibevoice_precision || "fp16",
-      language: settings?.language_mode || "auto",
-      parallel: settings?.parallel_mode ?? false,
-    };
-
     try {
-      const preflight = await invoke<VoiceAnalysisSetupPreflight>("voice_analysis_setup_preflight");
-      if (!isCurrentAnalysisRun(runId)) return;
-      const preflightStatus = String(preflight?.status || "unknown").toLowerCase();
-      const preflightGuidance = buildPreflightGuidanceMessage(preflight);
-
-      if (isPreflightBlocking(preflightStatus)) {
-        throw new Error(preflightGuidance);
-      }
-
-      if (isPreflightSetupRequired(preflightStatus)) {
-        if (!confirmVoiceAnalysisSetupStart(preflight)) {
-          throw new Error(
-            `Voice Analysis setup is required before analysis.\n\n${preflightGuidance}`,
-          );
-        }
-
-        setAnalysisStage("engine", "active");
-        const engineDetail = document.getElementById("stage-detail-engine");
-        if (engineDetail) {
-          engineDetail.textContent = "Installing Voice Analysis dependencies...";
-        }
-
-        await runVoiceAnalysisSetupInstall((progress) => {
-          if (!isCurrentAnalysisRun(runId)) return;
-          if (engineDetail && progress.message) {
-            engineDetail.textContent = progress.message;
-          }
-        });
-        if (!isCurrentAnalysisRun(runId)) return;
-        analysisNeedsEngineReset = true;
-      }
-
-      // Step 3: Start engine
-      setAnalysisStage("engine", "active");
-      if (analysisNeedsEngineReset) {
-        try {
-          await invoke("stop_sidecar");
-        } catch (stopError) {
-          console.warn("Voice Analysis sidecar reset before start failed:", stopError);
-        }
-        if (!isCurrentAnalysisRun(runId)) return;
-      }
-      await invoke("start_sidecar");
-      if (!isCurrentAnalysisRun(runId)) return;
-      analysisNeedsEngineReset = false;
-      setAnalysisStage("engine", "done");
-
-      // Step 4: Run analysis
-      setAnalysisStage("run", "active");
-      const analysis = await runAnalysisRequest(analysisRequest);
-      if (!isCurrentAnalysisRun(runId)) return;
-      setAnalysisStage("run", "done");
-      showAnalysisResultsInDialog(analysis);
-    } catch (error) {
-      if (!isCurrentAnalysisRun(runId)) return;
-      console.error("Voice Analysis failed:", error);
-      const msg = String(error);
-      const isSidecarError = isVoiceAnalysisRuntimeError(msg);
-      if (isSidecarError) {
-        analysisNeedsEngineReset = true;
-      }
-
-      // Mark the active stage as error
-      ["file", "engine", "run"].forEach((id) => {
-        const el = document.getElementById(`analysis-stage-${id}`);
-        if (el?.classList.contains("active")) setAnalysisStage(id, "error");
+      await launchExternalAnalysis(audioPath);
+      const fileName = audioPath.split(/[/\\]/).pop() ?? audioPath;
+      showToast({
+        type: "success",
+        title: "Analysis launched",
+        message: `Opened external analysis tool for ${fileName}`,
+        duration: 3500,
       });
-
-      showAnalysisErrorInDialog(msg, isSidecarError, analysisRequest);
+    } catch (error) {
+      console.error("External analysis launch failed:", error);
+      showToast({
+        type: "error",
+        title: "Analysis launch failed",
+        message: String(error),
+        duration: 6000,
+      });
     } finally {
-      if (isCurrentAnalysisRun(runId)) {
-        setAnalysisBusy(false);
-      }
+      setAnalysisBusy(false);
     }
-  });
-
-  // Voice Analysis dialog — close buttons
-  document.getElementById("analysis-dialog-close")?.addEventListener("click", closeAnalysisDialog);
-  document.getElementById("analysis-done-btn")?.addEventListener("click", closeAnalysisDialog);
-
-  // Close on backdrop click
-  document.getElementById("analysis-dialog")?.addEventListener("click", (e) => {
-    if (e.target === e.currentTarget) closeAnalysisDialog();
-  });
-
-  // Copy transcript
-  document.getElementById("analysis-copy-btn")?.addEventListener("click", async () => {
-    if (!lastAnalysisResults) return;
-    const text = buildSpeakerExportTxt(lastAnalysisResults);
-    await navigator.clipboard.writeText(text);
-    showToast({ type: "success", title: "Copied", message: "Voice Analysis transcript copied to clipboard", duration: 2500 });
   });
 
   dom.historyExport?.addEventListener("click", async () => {
@@ -1187,21 +844,9 @@ export function wireEvents() {
     await persistSettings();
   });
 
-  dom.vibevoicePrecisionSelect?.addEventListener("change", async () => {
-    if (!settings || !dom.vibevoicePrecisionSelect) return;
-    settings.vibevoice_precision = dom.vibevoicePrecisionSelect.value as "fp16" | "int8";
-    await persistSettings();
-  });
-
   dom.autoSaveSystemAudioToggle?.addEventListener("change", async () => {
     if (!settings) return;
     settings.auto_save_system_audio = dom.autoSaveSystemAudioToggle!.checked;
-    await persistSettings();
-  });
-
-  dom.parallelModeToggle?.addEventListener("change", async () => {
-    if (!settings) return;
-    settings.parallel_mode = dom.parallelModeToggle!.checked;
     await persistSettings();
   });
 

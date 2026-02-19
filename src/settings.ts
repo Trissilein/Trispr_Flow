@@ -326,14 +326,8 @@ export function renderSettings() {
   if (dom.opusBitrateSelect) {
     dom.opusBitrateSelect.value = (settings.opus_bitrate_kbps ?? 64).toString();
   }
-  if (dom.vibevoicePrecisionSelect) {
-    dom.vibevoicePrecisionSelect.value = settings.vibevoice_precision ?? "fp16";
-  }
   if (dom.autoSaveSystemAudioToggle) {
     dom.autoSaveSystemAudioToggle.checked = settings.auto_save_system_audio ?? false;
-  }
-  if (dom.parallelModeToggle) {
-    dom.parallelModeToggle.checked = settings.parallel_mode ?? false;
   }
 
   // Post-processing settings

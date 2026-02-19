@@ -4,7 +4,6 @@
 
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
-!include "${__FILEDIR__}\voice_analysis_shared.nsh"
 
 ; Variables for the install/uninstall page
 Var InstallModeDialog
@@ -31,7 +30,6 @@ Var CaptureModeChoice
 Page custom InstallModePage InstallModePageLeave
 Page custom OverlayStylePage OverlayStylePageLeave
 Page custom CaptureModePage CaptureModePageLeave
-Page custom VibeVoicePage VibeVoicePageLeave
 
 ; =====================================================================
 ; Page 1: Install/Uninstall Mode Selection
@@ -221,9 +219,6 @@ FunctionEnd
 
   ; Create models directory for future use (app will download model on first start)
   CreateDirectory "$APPDATA\com.trispr.flow\models"
-
-  ; Optional Voice Analysis setup (soft-fail)
-  !insertmacro TRISPR_VIBEVOICE_POSTINSTALL
 
   SkipPostInstall:
 !macroend

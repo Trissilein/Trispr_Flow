@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-18 (Block C complete; Block D started with Block G foundation)
+Last updated: 2026-02-19 (Analysis launcher split finalized; 3-installer strategy active)
 
 This file is the canonical source for priorities, dependencies, and "what is next."
 
@@ -9,17 +9,16 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 ## Canonical Current State
 
 - **Released**: `v0.6.0` (2026-02-16) with post-release fixes.
-- **Current phase**: `v0.7.0` planning complete; Block A/B/C complete, Block D in progress.
-- **Voice Analysis runtime reality**:
-  - Rust side supports both `bundled sidecar exe` and `Python main.py` fallback.
-  - NSIS CUDA/Vulkan now share one Voice Analysis setup flow (`voice_analysis_shared.nsh`).
-  - Install-time Voice Analysis setup is optional and soft-fail by policy (D4).
-  - `setup-vibevoice.ps1` now emits deterministic non-zero exit codes per failure phase.
-  - Backend command `install_vibevoice_dependencies` is the stable adapter for UI + retry.
-  - If setup is missing/failed, installer and app show actionable `Run manually` remediation.
-- **Hugging Face traffic**:
-  - Used for model/tokenizer download and cache checks.
-  - No user audio is uploaded to Hugging Face by Trispr Flow.
+- **Current phase**: `v0.7.0` Block D (AI fallback integrations) in progress.
+- **Voice Analysis architecture**:
+  - Trispr Flow no longer auto-downloads analysis installers at runtime.
+  - Analyse action launches an external tool via local executable detection.
+  - When no local EXE is found, users select a local `trispr-analysis.exe`.
+  - Dev builds support Python fallback (`analysis-tool/main.py`) for local testing.
+- **Installer strategy**:
+  - `CUDA` and `Vulkan` stay slim (no analysis payload).
+  - `CUDA+Analysis` adds optional bundled local chain-install (`Trispr-Analysis-Setup.exe`).
+  - No network download in NSIS analysis path.
 
 ## Next Work (4 Dependency Blocks)
 
@@ -30,14 +29,12 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 | **C** | Voice Analysis UX resilience (retry/reset after failure, actionable dialog states, no stale error replay) | **High** | A, B | Complete |
 | **D** | v0.7.0 AI Fallback implementation (Tasks 31/36/37 then 32/33/34/35/38) | **High** | C | In progress |
 
-## Locked Decisions (2026-02-18)
+## Locked Decisions (2026-02-19)
 
-The following decisions are now fixed; implementation is tracked in Blocks A-C:
-
-1. **D1 Distribution**: Keep base installer slim + optional Voice Analysis pack/setup path.
-2. **D2 Prefetch**: Default OFF; guided first-use setup on Analyse click with size/storage/progress UX.
-3. **D3 Source discovery**: Local `VibeVoice` auto-discovery off in release builds, on in dev (or explicit override).
-4. **D4 Failure policy**: Soft fail for optional Voice Analysis setup; install completes with remediation path.
+1. Runtime analysis installer download path is removed.
+2. Analyse flow uses local EXE selection and remembered override path.
+3. A third installer variant is introduced: `CUDA+Analysis`.
+4. `CUDA+Analysis` build has a hard gate on local file `installers/Trispr-Analysis-Setup.exe`.
 
 ## v0.7.0 Implementation Status
 
@@ -45,13 +42,20 @@ The following decisions are now fixed; implementation is tracked in Blocks A-C:
 - ✅ **Block G complete**: Task 31 (provider architecture), Task 36 (settings migration), Task 37 (config UI scaffolding).
 - 🔵 **Block H queued**: Task 32/33/34 provider API integrations, Task 35 prompt strategy polish, Task 38 E2E.
 
+## Analysis Launcher Status
+
+- ✅ Runtime download URL path removed (`download.trispr.dev` no longer used by app launcher).
+- ✅ `analysis_tool_status` now returns local candidate paths/directories for picker UX.
+- ✅ Dev fallback path to Python CLI is available when EXE is absent.
+- ✅ NSIS analysis install path is local-only in the CUDA+Analysis variant.
+
 ## Detailed References
 
 - Detailed execution table: `docs/TASK_SCHEDULE.md`
 - Block G implementation handover: `docs/NEXT_BLOCK_G.md`
 - v0.7 architecture: `docs/V0.7.0_ARCHITECTURE.md`
 - Decision log: `docs/DECISIONS.md`
-- Voice Analysis installer QA matrix: `docs/VOICE_ANALYSIS_SETUP_QA_MATRIX.md`
+- Installer variants and chain-install details: `docs/INSTALLER_VARIANTS.md`
 - Voice Analysis runtime QA matrix: `docs/VOICE_ANALYSIS_RUNTIME_QA_MATRIX.md`
 - Voice Analysis UX QA matrix: `docs/VOICE_ANALYSIS_UX_QA_MATRIX.md`
 

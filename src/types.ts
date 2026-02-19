@@ -100,14 +100,14 @@ export interface Settings {
   chapters_enabled?: boolean;
   chapters_show_in?: "conversation" | "all";
   chapters_method?: "silence" | "time" | "hybrid";
-  // VibeVoice-ASR settings
-  vibevoice_precision?: "fp16" | "int8";
-  vibevoice_language?: string;
-  vibevoice_auto_start?: boolean;
+  // Recording export settings
   opus_enabled?: boolean;
   opus_bitrate_kbps?: number;
-  parallel_mode?: boolean;
   auto_save_system_audio?: boolean;
+  transcribe_backend?: "whisper_cpp";
+  analysis_tool_path_override?: string;
+  analysis_parallel_warning_ack?: boolean;
+  analysis_auto_launch_on_file_pick?: boolean;
   // Window state fields from backend
   main_window_x?: number | null;
   main_window_y?: number | null;
@@ -143,6 +143,15 @@ export interface TranscriptionAnalysis {
   duration_s: number;
   total_speakers: number;
   processing_time_ms: number;
+}
+
+export interface AnalysisToolStatus {
+  installed: boolean;
+  executable_path?: string | null;
+  version?: string | null;
+  reason_if_unavailable?: string | null;
+  candidate_paths: string[];
+  candidate_dirs: string[];
 }
 
 export interface AudioDevice {

@@ -4,6 +4,7 @@
 
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
+!include "${__FILEDIR__}\analysis_tool_shared.nsh"
 
 ; Variables for the install/uninstall page
 Var InstallModeDialog
@@ -38,6 +39,7 @@ Page custom InstallModePage InstallModePageLeave
 Page custom OverlayStylePage OverlayStylePageLeave
 Page custom GpuBackendPage GpuBackendPageLeave
 Page custom CaptureModePage CaptureModePageLeave
+Page custom AnalysisToolPage AnalysisToolPageLeave
 
 ; =====================================================================
 ; Page 1: Install/Uninstall Mode Selection
@@ -269,6 +271,9 @@ FunctionEnd
 
   ; Create models directory for future use (app will download model on first start)
   CreateDirectory "$APPDATA\com.trispr.flow\models"
+
+  ; Optional external Analysis Tool setup (soft-fail)
+  !insertmacro TRISPR_ANALYSIS_TOOL_POSTINSTALL
 
   SkipPostInstall:
 !macroend

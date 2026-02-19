@@ -548,14 +548,6 @@
                   </select>
                   <span class="field-hint">Higher bitrate = better audio quality but larger files</span>
                 </label>
-                <label class="field">
-                  <span class="field-label">VibeVoice precision</span>
-                  <select id="vibevoice-precision-select">
-                    <option value="fp16">FP16 (higher accuracy)</option>
-                    <option value="int8">INT8 (faster, less VRAM)</option>
-                  </select>
-                  <span class="field-hint">INT8 uses ~50% less VRAM with minimal quality loss</span>
-                </label>
                 <div class="field toggle">
                   <label class="toggle-row">
                     <span class="field-label">Auto-save system audio</span>
@@ -563,14 +555,6 @@
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
                   </label>
                   <span class="toggle-hint">Save system audio chunks as OPUS for Voice Analysis</span>
-                </div>
-                <div class="field toggle">
-                  <label class="toggle-row">
-                    <span class="field-label">Parallel mode (Whisper + VibeVoice)</span>
-                    <input id="parallel-mode-toggle" type="checkbox" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-hint">Run both Whisper and VibeVoice simultaneously for comparison</span>
                 </div>
               </div>
             </details>
@@ -1066,45 +1050,5 @@
 
       </div>
     </main>
-
-    <!-- Voice Analysis Dialog -->
-    <div id="analysis-dialog" class="analysis-dialog-overlay" style="display: none;"
-         role="dialog" aria-modal="true" aria-labelledby="analysis-dialog-title">
-      <div class="analysis-dialog-card">
-        <div class="analysis-dialog-header">
-          <div class="analysis-dialog-title-group">
-            <h2 id="analysis-dialog-title" class="analysis-dialog-title-text">Voice Analysis</h2>
-            <p class="analysis-dialog-subtitle">Identifying who said what in your recording</p>
-          </div>
-          <button id="analysis-dialog-close" class="analysis-dialog-close-btn" aria-label="Close dialog">×</button>
-        </div>
-        <div class="analysis-dialog-body">
-          <div id="analysis-stages" class="analysis-stages">
-            <div id="analysis-stage-file" class="analysis-stage pending">
-              <span class="stage-icon"></span>
-              <span class="stage-label">File selected</span>
-              <span class="stage-detail" id="stage-detail-file"></span>
-            </div>
-            <div class="analysis-stage-connector"></div>
-            <div id="analysis-stage-engine" class="analysis-stage pending">
-              <span class="stage-icon"></span>
-              <span class="stage-label">Voice Analysis engine</span>
-              <span class="stage-detail" id="stage-detail-engine">May take up to 30s on first run</span>
-            </div>
-            <div class="analysis-stage-connector"></div>
-            <div id="analysis-stage-run" class="analysis-stage pending">
-              <span class="stage-icon"></span>
-              <span class="stage-label">Identifying speakers</span>
-              <span class="stage-detail" id="stage-detail-run"></span>
-            </div>
-          </div>
-          <div id="analysis-results-area" class="analysis-results-area" style="display: none;"></div>
-        </div>
-        <div id="analysis-dialog-footer" class="analysis-dialog-footer" style="display: none;">
-          <button id="analysis-copy-btn" class="ghost-btn">Copy transcript</button>
-          <button id="analysis-done-btn" class="btn-primary">Done</button>
-        </div>
-      </div>
-    </div>
   </body>
 </html>

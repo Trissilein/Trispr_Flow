@@ -1,5 +1,6 @@
 param(
-  [switch]$PrefetchModel
+  [switch]$PrefetchModel,
+  [switch]$ForceCudaTorch
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,9 +14,14 @@ $EXIT_VENV_PYTHON_MISSING = 21
 $EXIT_PIP_UPGRADE = 30
 $EXIT_PIP_INSTALL = 31
 $EXIT_RUNTIME_VALIDATE = 32
+$EXIT_CUDA_TORCH_INSTALL = 33
+$EXIT_CUDA_TORCH_VALIDATE = 34
 $EXIT_PREFETCH = 40
 $EXIT_UNKNOWN = 99
 $PREFETCH_MIN_FREE_GB = 55
+$CUDA_TORCH_INDEX_URL = "https://download.pytorch.org/whl/cu128"
+$CUDA_TORCH_VERSION = "2.10.0+cu128"
+$CUDA_TORCHAUDIO_VERSION = "2.10.0+cu128"
 
 $script:SetupExitCode = $EXIT_UNKNOWN
 
@@ -83,6 +89,61 @@ function Assert-SupportedPython([string]$version) {
   }
 }
 
+function Test-NvidiaGpuPresent {
+  $nvidiaSmi = Get-Command "nvidia-smi" -ErrorAction SilentlyContinue
+  if (-not $nvidiaSmi) {
+    return $false
+  }
+
+  try {
+    $output = & $nvidiaSmi.Path -L 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $output) {
+      return $false
+    }
+    $text = ($output | Out-String).Trim()
+    return -not [string]::IsNullOrWhiteSpace($text)
+  } catch {
+    return $false
+  }
+}
+
+function Install-CudaTorchRuntime([string]$venvPython) {
+  Write-Step "Installing CUDA PyTorch runtime"
+  Write-Host ("Using PyTorch index: {0}" -f $CUDA_TORCH_INDEX_URL)
+  Write-Host ("Target torch={0}, torchaudio={1}" -f $CUDA_TORCH_VERSION, $CUDA_TORCHAUDIO_VERSION)
+
+  & $venvPython -m pip install --upgrade --index-url $CUDA_TORCH_INDEX_URL "torch==$CUDA_TORCH_VERSION" "torchaudio==$CUDA_TORCHAUDIO_VERSION" | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    Throw-SetupError $EXIT_CUDA_TORCH_INSTALL "Failed to install CUDA-enabled torch runtime"
+  }
+}
+
+function Assert-TorchCudaAvailable([string]$venvPython) {
+  Write-Step "Validating CUDA runtime"
+
+  $probe = & $venvPython -c "import json; import torch; print(json.dumps({'torch': torch.__version__, 'cuda': torch.version.cuda, 'cuda_available': bool(torch.cuda.is_available())}))" 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $probe) {
+    Throw-SetupError $EXIT_CUDA_TORCH_VALIDATE "Failed to validate torch CUDA runtime"
+  }
+
+  $jsonLine = ($probe | Select-Object -Last 1).Trim()
+  if ([string]::IsNullOrWhiteSpace($jsonLine)) {
+    Throw-SetupError $EXIT_CUDA_TORCH_VALIDATE "Torch CUDA runtime validation returned no output"
+  }
+
+  try {
+    $info = $jsonLine | ConvertFrom-Json
+  } catch {
+    Throw-SetupError $EXIT_CUDA_TORCH_VALIDATE ("Failed to parse torch CUDA probe output: {0}" -f $jsonLine)
+  }
+
+  if (-not $info.cuda_available) {
+    Throw-SetupError $EXIT_CUDA_TORCH_VALIDATE ("Torch CUDA runtime is unavailable (torch={0}, cuda={1})" -f $info.torch, $info.cuda)
+  }
+
+  Write-Host ("CUDA runtime OK: torch={0}, cuda={1}" -f $info.torch, $info.cuda)
+}
+
 function Install-Dependencies([string]$pythonExe, [string]$venvDir, [string]$requirementsPath) {
   Write-Step "Creating virtual environment"
   if (-not (Test-Path $venvDir)) {
@@ -107,6 +168,19 @@ function Install-Dependencies([string]$pythonExe, [string]$venvDir, [string]$req
   & $venvPython -m pip install -r $requirementsPath | Out-Host
   if ($LASTEXITCODE -ne 0) {
     Throw-SetupError $EXIT_PIP_INSTALL "Dependency installation failed"
+  }
+
+  $nvidiaDetected = Test-NvidiaGpuPresent
+  if ($nvidiaDetected -or $ForceCudaTorch) {
+    if (-not $nvidiaDetected -and $ForceCudaTorch) {
+      Write-Host "ForceCudaTorch enabled without detected NVIDIA GPU; attempting CUDA runtime install anyway."
+    } elseif ($nvidiaDetected) {
+      Write-Host "Detected NVIDIA GPU. Ensuring CUDA-enabled torch runtime is installed."
+    }
+    Install-CudaTorchRuntime -venvPython $venvPython
+    Assert-TorchCudaAvailable -venvPython $venvPython
+  } else {
+    Write-Host "No NVIDIA GPU detected; keeping default torch runtime."
   }
 
   return [string]$venvPython

@@ -1,9 +1,8 @@
 // Trispr Flow - core app runtime
 #![allow(clippy::needless_return)]
 
-mod audio;
 mod ai_fallback;
-mod auto_processing;
+mod audio;
 mod constants;
 mod errors;
 mod hotkeys;
@@ -13,8 +12,6 @@ mod overlay;
 mod paths;
 mod postprocessing;
 mod session_manager;
-mod sidecar;
-mod sidecar_process;
 mod state;
 mod transcription;
 mod util;
@@ -26,7 +23,7 @@ use overlay::{update_overlay_state, OverlayState};
 use state::{AppState, HistoryEntry, Settings};
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::thread;
@@ -37,24 +34,22 @@ use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tracing::{error, info, warn};
 
-use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
 use crate::ai_fallback::keyring as ai_fallback_keyring;
 use crate::ai_fallback::models::RefinementOptions;
 use crate::ai_fallback::provider::{default_models_for_provider, ProviderFactory};
+use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
 use crate::models::{
     check_model_available, clear_hidden_external_models, download_model, get_models_dir,
     hide_external_model, list_models, pick_model_dir, quantize_model, remove_model,
 };
 use crate::state::{
-    load_history, load_settings, load_transcribe_history, normalize_ai_fallback_fields, push_history_entry_inner,
-    push_transcribe_entry_inner, save_settings_file, sync_model_dir_env,
+    load_history, load_settings, load_transcribe_history, normalize_ai_fallback_fields,
+    push_history_entry_inner, push_transcribe_entry_inner, save_settings_file, sync_model_dir_env,
 };
 use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, start_transcribe_monitor,
-    stop_transcribe_monitor, toggle_transcribe_state, transcribe_audio,
+    stop_transcribe_monitor, toggle_transcribe_state,
 };
-#[cfg(target_os = "windows")]
-use std::io::{BufRead, BufReader};
 
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
@@ -65,8 +60,6 @@ const CLIPBOARD_RETRY_INTERVAL_MS: u64 = 50;
 const CLIPBOARD_CAPTURE_TIMEOUT_MS: u64 = 1_000;
 const CLIPBOARD_RESTORE_DELAY_MS: u64 = 350;
 const CLIPBOARD_RESTORE_TIMEOUT_MS: u64 = 3_000;
-#[cfg(target_os = "windows")]
-const VOICE_ANALYSIS_SETUP_RECOMMENDED_FREE_GB: u64 = 55;
 
 static LAST_TRAY_CLICK_MS: AtomicU64 = AtomicU64::new(0);
 static TRAY_CAPTURE_STATE: AtomicU8 = AtomicU8::new(0);
@@ -325,7 +318,10 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 }
 
 #[tauri::command]
-fn fetch_available_models(state: State<'_, AppState>, provider: String) -> Result<Vec<String>, String> {
+fn fetch_available_models(
+    state: State<'_, AppState>,
+    provider: String,
+) -> Result<Vec<String>, String> {
     let provider_id = provider.trim().to_lowercase();
     let from_settings = {
         let settings = state.settings.lock().unwrap();
@@ -348,7 +344,10 @@ fn fetch_available_models(state: State<'_, AppState>, provider: String) -> Resul
 }
 
 #[tauri::command]
-fn test_provider_connection(provider: String, api_key: String) -> Result<serde_json::Value, String> {
+fn test_provider_connection(
+    provider: String,
+    api_key: String,
+) -> Result<serde_json::Value, String> {
     let provider_id = provider.trim().to_lowercase();
     let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
     provider_client
@@ -430,7 +429,8 @@ fn refine_transcript(
         return Err("AI Fallback is disabled.".to_string());
     }
 
-    let provider_client = ProviderFactory::create(&ai_settings.provider).map_err(|e| e.to_string())?;
+    let provider_client =
+        ProviderFactory::create(&ai_settings.provider).map_err(|e| e.to_string())?;
     let api_key = ai_fallback_keyring::read_api_key(&app, &ai_settings.provider)?
         .ok_or_else(|| format!("No API key stored for provider '{}'.", ai_settings.provider))?;
 
@@ -891,776 +891,303 @@ fn get_ffmpeg_version_info() -> Result<String, String> {
     opus::get_ffmpeg_version()
 }
 
-fn resolve_sidecar_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    #[cfg(debug_assertions)]
-    {
-        let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("sidecar")
-            .join("vibevoice-asr");
-        if dev_path.exists() {
-            return dev_path
-                .canonicalize()
-                .map_err(|e| format!("Failed to resolve dev sidecar path: {}", e));
-        }
-    }
+fn analysis_tool_candidate_paths(app: &AppHandle, override_path: Option<&str>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
 
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
-    Ok(resource_dir.join("sidecar").join("vibevoice-asr"))
-}
-
-#[cfg(target_os = "windows")]
-fn tail_output_lines(raw: &str, max_lines: usize) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    if max_lines == 0 {
-        return String::new();
-    }
-    let lines: Vec<&str> = trimmed.lines().collect();
-    if lines.len() <= max_lines {
-        return trimmed.to_string();
-    }
-    format!("...\n{}", lines[lines.len() - max_lines..].join("\n"))
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Clone, Copy)]
-enum SetupStreamSource {
-    Stdout,
-    Stderr,
-}
-
-#[cfg(target_os = "windows")]
-enum SetupStreamEvent {
-    Line {
-        source: SetupStreamSource,
-        line: String,
-    },
-    End,
-}
-
-#[cfg(target_os = "windows")]
-fn spawn_setup_stream_reader<R: std::io::Read + Send + 'static>(
-    reader: R,
-    source: SetupStreamSource,
-    tx: std::sync::mpsc::Sender<SetupStreamEvent>,
-) {
-    std::thread::spawn(move || {
-        let mut buffered = BufReader::new(reader);
-        let mut line = String::new();
-        loop {
-            line.clear();
-            match buffered.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(_) => {
-                    let normalized = line.trim_end_matches(['\r', '\n']).to_string();
-                    let _ = tx.send(SetupStreamEvent::Line {
-                        source,
-                        line: normalized,
-                    });
-                }
-                Err(err) => {
-                    let _ = tx.send(SetupStreamEvent::Line {
-                        source,
-                        line: format!("stream read error: {}", err),
-                    });
-                    break;
-                }
+    if let Some(path) = override_path {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            let override_candidate = PathBuf::from(trimmed);
+            let valid_override_name = override_candidate
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.eq_ignore_ascii_case("trispr-analysis.exe"))
+                .unwrap_or(false);
+            if valid_override_name {
+                candidates.push(override_candidate);
             }
         }
-        let _ = tx.send(SetupStreamEvent::End);
-    });
-}
-
-#[cfg(target_os = "windows")]
-fn emit_voice_analysis_setup_progress(app: &AppHandle, phase: &str, message: &str, done: bool) {
-    let _ = app.emit(
-        "voice-analysis:setup-progress",
-        serde_json::json!({
-            "phase": phase,
-            "message": message,
-            "done": done,
-        }),
-    );
-}
-
-#[cfg(target_os = "windows")]
-fn map_setup_progress_from_line(line: &str) -> Option<(&'static str, String)> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
     }
 
-    if trimmed.starts_with("== ") && trimmed.ends_with(" ==") {
-        let step = trimmed
-            .trim_start_matches("== ")
-            .trim_end_matches(" ==")
-            .trim()
-            .to_string();
-        let phase = match step.to_lowercase().as_str() {
-            "locating python" => "locating_python",
-            "creating virtual environment" => "creating_venv",
-            "upgrading pip" => "upgrading_pip",
-            "installing vibevoice dependencies" => "installing_dependencies",
-            "validating vibevoice runtime" => "validating_runtime",
-            "prefetching vibevoice model (this can take a while)" => "prefetching_model",
-            "setup complete" => "setup_complete",
-            "setup failed" => "setup_failed",
-            _ => "setup",
-        };
-        return Some((phase, step));
-    }
-
-    if trimmed.starts_with("[E") {
-        return Some(("error", trimmed.to_string()));
-    }
-
-    None
-}
-
-#[cfg(target_os = "windows")]
-fn parse_python_version_tuple(version: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = version
-        .trim()
-        .split('.')
-        .filter_map(|part| part.parse::<u64>().ok());
-    let major = parts.next()?;
-    let minor = parts.next().unwrap_or(0);
-    let patch = parts.next().unwrap_or(0);
-    Some((major, minor, patch))
-}
-
-#[cfg(target_os = "windows")]
-fn is_supported_python_version(version: &str) -> bool {
-    if let Some((major, minor, _)) = parse_python_version_tuple(version) {
-        return major == 3 && minor >= 11;
-    }
-    false
-}
-
-#[cfg(target_os = "windows")]
-fn run_python_probe(command: &str, prefix_args: &[&str]) -> Option<(String, String)> {
-    let mut args: Vec<&str> = prefix_args.to_vec();
-    args.push("-c");
-    args.push("import sys; print(sys.executable); print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')");
-
-    let output = std::process::Command::new(command).args(&args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut lines = stdout.lines().map(str::trim).filter(|line| !line.is_empty());
-    let exe = lines.next()?.to_string();
-    let version = lines.next()?.to_string();
-    if exe.is_empty() || version.is_empty() {
-        return None;
-    }
-    Some((exe, version))
-}
-
-#[cfg(target_os = "windows")]
-fn resolve_python_for_preflight() -> Option<(String, String)> {
-    let candidates: [(&str, &[&str]); 5] = [
-        ("py", &["-3.13"]),
-        ("py", &["-3.12"]),
-        ("py", &["-3.11"]),
-        ("python", &[]),
-        ("python3", &[]),
-    ];
-
-    for (cmd, prefix_args) in candidates {
-        if let Some((exe, version)) = run_python_probe(cmd, prefix_args) {
-            return Some((exe, version));
-        }
-    }
-    None
-}
-
-#[cfg(target_os = "windows")]
-fn resolve_hf_cache_path_for_preflight() -> PathBuf {
-    if let Ok(path) = std::env::var("HUGGINGFACE_HUB_CACHE") {
-        if !path.trim().is_empty() {
-            return PathBuf::from(path);
-        }
-    }
-    if let Ok(hf_home) = std::env::var("HF_HOME") {
-        if !hf_home.trim().is_empty() {
-            return PathBuf::from(hf_home).join("hub");
-        }
-    }
-    if let Ok(xdg_cache_home) = std::env::var("XDG_CACHE_HOME") {
-        if !xdg_cache_home.trim().is_empty() {
-            return PathBuf::from(xdg_cache_home).join("huggingface").join("hub");
-        }
-    }
-    if let Ok(user_profile) = std::env::var("USERPROFILE") {
-        if !user_profile.trim().is_empty() {
-            return PathBuf::from(user_profile)
-                .join(".cache")
-                .join("huggingface")
-                .join("hub");
-        }
-    }
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        if !local_app_data.trim().is_empty() {
-            return PathBuf::from(local_app_data)
-                .join("huggingface")
-                .join("hub");
-        }
-    }
-    PathBuf::from(".")
-}
-
-#[cfg(target_os = "windows")]
-fn free_space_gb_for_path(path: &std::path::Path) -> Result<u64, String> {
-    let escaped = path.to_string_lossy().replace('\'', "''");
-    let script = format!(
-        "$p='{escaped}'; \
-         $full=[System.IO.Path]::GetFullPath($p); \
-         $root=[System.IO.Path]::GetPathRoot($full); \
-         if ([string]::IsNullOrWhiteSpace($root)) {{ throw 'No drive root for path' }}; \
-         $drive=New-Object System.IO.DriveInfo($root); \
-         [math]::Floor($drive.AvailableFreeSpace / 1GB)"
-    );
-    let output = std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &script,
-        ])
-        .output()
-        .map_err(|err| format!("Failed to inspect free disk space: {}", err))?;
-
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if detail.is_empty() {
-            "Disk inspection failed without stderr output".to_string()
-        } else {
-            detail
-        });
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let value = stdout
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .ok_or_else(|| "Disk inspection returned empty output".to_string())?;
-    value
-        .parse::<u64>()
-        .map_err(|err| format!("Failed to parse disk free space '{}': {}", value, err))
-}
-
-#[cfg(target_os = "windows")]
-fn expected_vibevoice_venv_python() -> Option<PathBuf> {
-    let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
-    Some(
-        PathBuf::from(local_app_data)
-            .join("com.trispr.flow")
-            .join("vibevoice-venv")
-            .join("Scripts")
-            .join("python.exe"),
-    )
-}
-
-#[cfg(target_os = "windows")]
-fn check_vibevoice_runtime_ready(venv_python: &std::path::Path) -> Result<(), String> {
-    let output = std::process::Command::new(venv_python)
-        .args([
-            "-c",
-            r#"
-import importlib
-import sys
-required = [
-    "vibevoice.modular.modeling_vibevoice_asr",
-    "vibevoice.processor.vibevoice_asr_processor",
-]
-missing = []
-for module_name in required:
-    try:
-        importlib.import_module(module_name)
-    except Exception as exc:
-        missing.append(f"{module_name}: {exc}")
-if missing:
-    print("\n".join(missing))
-    sys.exit(1)
-print("runtime_ok")
-"#,
-        ])
-        .output()
-        .map_err(|err| format!("Failed to run runtime validation: {}", err))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !stderr.is_empty() {
-        return Err(stderr);
-    }
-    if !stdout.is_empty() {
-        return Err(stdout);
-    }
-    Err("Runtime validation failed without output".to_string())
-}
-
-#[tauri::command]
-fn voice_analysis_setup_preflight(app: AppHandle) -> Result<serde_json::Value, String> {
-    let sidecar_dir = resolve_sidecar_dir(&app)?;
-    let setup_script = sidecar_dir.join("setup-vibevoice.ps1");
-    let setup_cmd = format!(
-        "powershell -NoProfile -ExecutionPolicy Bypass -File \"{}\"",
-        setup_script.display()
-    );
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut status = "ok";
-        let mut message = "Voice Analysis runtime looks ready.".to_string();
-        let mut python_found = false;
-        let mut python_path: Option<String> = None;
-        let mut python_version: Option<String> = None;
-        let mut python_supported = false;
-
-        if !setup_script.exists() {
-            status = "script_missing";
-            message = format!(
-                "Voice Analysis setup script not found: {}. Reinstall Trispr Flow.",
-                setup_script.display()
-            );
-        }
-
-        if status == "ok" {
-            if let Some((exe, version)) = resolve_python_for_preflight() {
-                python_found = true;
-                python_path = Some(exe);
-                python_supported = is_supported_python_version(&version);
-                python_version = Some(version.clone());
-                if !python_supported {
-                    status = "unsupported_python";
-                    message = format!(
-                        "Detected Python {}. Use Python 3.11, 3.12, or 3.13.",
-                        version
-                    );
-                }
-            } else {
-                status = "missing_python";
-                message =
-                    "Python 3.11+ not found. Install Python from https://www.python.org/downloads/"
-                        .to_string();
-            }
-        }
-
-        let cache_dir = resolve_hf_cache_path_for_preflight();
-        let free_space = free_space_gb_for_path(&cache_dir).ok();
-        let enough_for_prefetch = free_space.map(|gb| gb >= VOICE_ANALYSIS_SETUP_RECOMMENDED_FREE_GB);
-
-        let mut runtime_ready = false;
-        let mut runtime_detail: Option<String> = None;
-        let mut venv_python_path: Option<String> = None;
-
-        if status == "ok" {
-            if let Some(venv_python) = expected_vibevoice_venv_python() {
-                venv_python_path = Some(venv_python.to_string_lossy().to_string());
-                if venv_python.exists() {
-                    match check_vibevoice_runtime_ready(&venv_python) {
-                        Ok(()) => {
-                            runtime_ready = true;
-                            runtime_detail = Some("Native runtime modules available.".to_string());
-                        }
-                        Err(detail) => {
-                            status = "runtime_invalid";
-                            message = "Voice Analysis runtime is installed but invalid. Setup repair is required.".to_string();
-                            runtime_detail = Some(detail);
-                        }
-                    }
-                } else {
-                    status = "setup_required";
-                    message = "Voice Analysis dependencies are not installed yet. Run setup first."
-                        .to_string();
-                    runtime_detail = Some(format!(
-                        "Virtual environment Python not found at {}",
-                        venv_python.display()
-                    ));
-                }
-            } else {
-                status = "setup_required";
-                message = "Could not resolve LOCALAPPDATA for expected sidecar environment."
-                    .to_string();
-            }
-        }
-
-        return Ok(serde_json::json!({
-            "status": status,
-            "message": message,
-            "platform": "windows",
-            "automatic_setup_supported": true,
-            "prefetch_default": false,
-            "setup_script": setup_script.to_string_lossy().to_string(),
-            "run_manual_command": setup_cmd,
-            "python": {
-                "found": python_found,
-                "supported": python_supported,
-                "path": python_path,
-                "version": python_version,
-            },
-            "runtime": {
-                "ready": runtime_ready,
-                "venv_python": venv_python_path,
-                "detail": runtime_detail,
-            },
-            "storage": {
-                "cache_dir": cache_dir.to_string_lossy().to_string(),
-                "free_gb": free_space,
-                "recommended_free_gb": VOICE_ANALYSIS_SETUP_RECOMMENDED_FREE_GB,
-                "enough_for_prefetch": enough_for_prefetch,
-            },
-        }));
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(serde_json::json!({
-            "status": "unsupported_platform",
-            "message": "Automatic Voice Analysis setup is currently supported on Windows only.",
-            "platform": std::env::consts::OS,
-            "automatic_setup_supported": false,
-            "prefetch_default": false,
-            "setup_script": setup_script.to_string_lossy().to_string(),
-            "run_manual_command": setup_cmd,
-        }))
-    }
-}
-
-#[tauri::command]
-fn start_sidecar(app: AppHandle) -> Result<(), String> {
-    let sidecar_dir = resolve_sidecar_dir(&app)?;
-    sidecar_process::start_sidecar(None, Some(sidecar_dir))
-}
-
-#[tauri::command]
-fn install_vibevoice_dependencies(
-    app: AppHandle,
-    prefetch_model: Option<bool>,
-) -> Result<serde_json::Value, String> {
-    let sidecar_dir = resolve_sidecar_dir(&app)?;
-    let use_prefetch = prefetch_model.unwrap_or(false);
-    let setup_script = sidecar_dir.join("setup-vibevoice.ps1");
-    let mut setup_cmd =
-        format!("powershell -NoProfile -ExecutionPolicy Bypass -File \"{}\"", setup_script.display());
-    if use_prefetch {
-        setup_cmd.push_str(" -PrefetchModel");
-    }
-
-    if !setup_script.exists() {
-        return Err(format!(
-            "Voice Analysis setup script not found: {}.\nReinstall Trispr Flow to restore sidecar setup files.\nRun manually:\n{}",
-            setup_script.display(),
-            setup_cmd
-        ));
-    }
-
-    let mut cmd_args = vec![
-        "-NoProfile".to_string(),
-        "-ExecutionPolicy".to_string(),
-        "Bypass".to_string(),
-        "-File".to_string(),
-        setup_script.display().to_string(),
-    ];
-    if use_prefetch {
-        cmd_args.push("-PrefetchModel".to_string());
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut cmd = std::process::Command::new("powershell");
-        cmd.args(&cmd_args)
-            .current_dir(&sidecar_dir)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        }
-
-        let mut child = cmd.spawn().map_err(|e| {
-            format!(
-                "Failed to run Voice Analysis setup: {}.\nRun manually:\n{}",
-                e, setup_cmd
-            )
-        })?;
-
-        emit_voice_analysis_setup_progress(&app, "start", "Starting Voice Analysis setup...", false);
-
-        let (tx, rx) = std::sync::mpsc::channel::<SetupStreamEvent>();
-        let mut reader_count = 0usize;
-
-        if let Some(stdout) = child.stdout.take() {
-            reader_count += 1;
-            spawn_setup_stream_reader(stdout, SetupStreamSource::Stdout, tx.clone());
-        }
-        if let Some(stderr) = child.stderr.take() {
-            reader_count += 1;
-            spawn_setup_stream_reader(stderr, SetupStreamSource::Stderr, tx.clone());
-        }
-        drop(tx);
-
-        let mut stdout = String::new();
-        let mut stderr = String::new();
-        let mut ended_readers = 0usize;
-
-        let output_status = child.wait().map_err(|e| {
-            format!(
-                "Voice Analysis setup process failed to complete: {}.\nRun manually:\n{}",
-                e, setup_cmd
-            )
-        })?;
-
-        while ended_readers < reader_count {
-            match rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(SetupStreamEvent::Line { source, line }) => {
-                    match source {
-                        SetupStreamSource::Stdout => {
-                            stdout.push_str(&line);
-                            stdout.push('\n');
-                        }
-                        SetupStreamSource::Stderr => {
-                            stderr.push_str(&line);
-                            stderr.push('\n');
-                        }
-                    }
-                    if let Some((phase, message)) = map_setup_progress_from_line(&line) {
-                        emit_voice_analysis_setup_progress(&app, phase, &message, false);
-                    }
-                }
-                Ok(SetupStreamEvent::End) => {
-                    ended_readers = ended_readers.saturating_add(1);
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-            }
-        }
-
-        let stdout_tail = tail_output_lines(&stdout, 120);
-        let stderr_tail = tail_output_lines(&stderr, 120);
-        if !output_status.success() {
-            let status = output_status
-                .code()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "terminated".to_string());
-            let mut detail = String::new();
-            if !stderr_tail.is_empty() {
-                detail.push_str(&stderr_tail);
-            } else if !stdout_tail.is_empty() {
-                detail.push_str(&stdout_tail);
-            }
-            if detail.is_empty() {
-                detail.push_str("No installer output captured.");
-            }
-            emit_voice_analysis_setup_progress(
-                &app,
-                "error",
-                &format!("Voice Analysis setup failed (exit code {})", status),
-                true,
-            );
-            return Err(format!(
-                "Voice Analysis setup failed (exit code {}).\n{}\n\nRun manually:\n{}",
-                status, detail, setup_cmd
-            ));
-        }
-
-        emit_voice_analysis_setup_progress(
-            &app,
-            "complete",
-            "Voice Analysis setup completed successfully.",
-            true,
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let local = PathBuf::from(local_app_data);
+        candidates.push(
+            local
+                .join("Programs")
+                .join("Trispr Analysis")
+                .join("trispr-analysis.exe"),
         );
+        candidates.push(
+            local
+                .join("com.trispr.analysis")
+                .join("trispr-analysis.exe"),
+        );
+    }
+
+    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+        candidates.push(
+            PathBuf::from(program_files)
+                .join("Trispr Analysis")
+                .join("trispr-analysis.exe"),
+        );
+    }
+
+    if let Some(program_files_x86) = std::env::var_os("ProgramFiles(x86)") {
+        candidates.push(
+            PathBuf::from(program_files_x86)
+                .join("Trispr Analysis")
+                .join("trispr-analysis.exe"),
+        );
+    }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("analysis-tool").join("trispr-analysis.exe"));
+    }
+
+    if let Ok(exe_dir) = std::env::current_exe().and_then(|path| {
+        path.parent()
+            .map(|value| value.to_path_buf())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "exe dir missing"))
+    }) {
+        candidates.push(exe_dir.join("trispr-analysis.exe"));
+    }
+
+    candidates
+}
+
+fn analysis_tool_candidate_dirs(candidate_paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut existing_dirs = Vec::new();
+    let mut non_existing_dirs = Vec::new();
+
+    for path in candidate_paths {
+        if let Some(parent) = path.parent() {
+            let parent_buf = parent.to_path_buf();
+            if existing_dirs.iter().any(|d| d == &parent_buf)
+                || non_existing_dirs.iter().any(|d| d == &parent_buf)
+            {
+                continue;
+            }
+
+            if parent_buf.exists() {
+                existing_dirs.push(parent_buf);
+            } else {
+                non_existing_dirs.push(parent_buf);
+            }
+        }
+    }
+
+    let mut dirs = existing_dirs;
+    dirs.extend(non_existing_dirs);
+
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let fallback = PathBuf::from(local_app_data)
+            .join("Programs")
+            .join("Trispr Analysis");
+        if !dirs.iter().any(|d| d == &fallback) {
+            dirs.push(fallback);
+        }
+    }
+
+    dirs
+}
+
+fn resolve_analysis_tool_executable_from_candidates(candidate_paths: &[PathBuf]) -> Option<PathBuf> {
+    candidate_paths
+        .into_iter()
+        .find(|path| path.exists())
+        .cloned()
+}
+
+fn analysis_tool_dev_main_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("analysis-tool").join("main.py"));
+        candidates.push(cwd.join("..").join("analysis-tool").join("main.py"));
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join("..").join("..").join("..").join("analysis-tool").join("main.py"));
+            candidates.push(exe_dir.join("..").join("..").join("analysis-tool").join("main.py"));
+        }
+    }
+
+    candidates
+}
+
+fn launch_analysis_tool_dev_fallback(audio: &Path) -> Result<(std::process::Child, String), String> {
+    let main_script = analysis_tool_dev_main_candidates()
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| "analysis-tool/main.py not found in known development locations.".to_string())?;
+
+    let mut launch_errors = Vec::new();
+    let mut python_commands: Vec<(String, Vec<String>)> = Vec::new();
+
+    if let Ok(override_python) = std::env::var("TRISPR_ANALYSIS_PYTHON") {
+        let trimmed = override_python.trim();
+        if !trimmed.is_empty() {
+            python_commands.push((trimmed.to_string(), Vec::new()));
+        }
+    }
+
+    python_commands.push(("python".to_string(), Vec::new()));
+    python_commands.push(("py".to_string(), vec!["-3".to_string()]));
+
+    for (command, prefix_args) in python_commands {
+        let mut status_check_args = prefix_args.clone();
+        status_check_args.push(main_script.to_string_lossy().to_string());
+        status_check_args.push("status".to_string());
+        status_check_args.push("--json".to_string());
+
+        match std::process::Command::new(&command)
+            .args(&status_check_args)
+            .output()
+        {
+            Ok(output) => {
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    let detail = if !stderr.is_empty() {
+                        stderr
+                    } else if !stdout.is_empty() {
+                        stdout
+                    } else {
+                        format!("status exited with code {:?}", output.status.code())
+                    };
+                    launch_errors.push(format!("{} status check failed: {}", command, detail));
+                    continue;
+                }
+            }
+            Err(err) => {
+                launch_errors.push(format!("{} status check failed: {}", command, err));
+                continue;
+            }
+        }
+
+        let mut open_args = prefix_args;
+        open_args.push(main_script.to_string_lossy().to_string());
+        open_args.push("open".to_string());
+        open_args.push("--audio".to_string());
+        open_args.push(audio.to_string_lossy().to_string());
+        open_args.push("--source".to_string());
+        open_args.push("trispr-flow".to_string());
+
+        match std::process::Command::new(&command).args(&open_args).spawn() {
+            Ok(child) => {
+                return Ok((child, format!("{} {}", command, main_script.to_string_lossy())));
+            }
+            Err(err) => {
+                launch_errors.push(format!("{}: {}", command, err));
+            }
+        }
+    }
+
+    Err(format!(
+        "Unable to launch Python development fallback. Tried: {}",
+        launch_errors.join(" | ")
+    ))
+}
+
+#[tauri::command]
+fn analysis_tool_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    let candidate_paths =
+        analysis_tool_candidate_paths(&app, Some(&settings.analysis_tool_path_override));
+    let candidate_dirs = analysis_tool_candidate_dirs(&candidate_paths);
+    let path = resolve_analysis_tool_executable_from_candidates(&candidate_paths);
+
+    let candidate_paths_json: Vec<String> = candidate_paths
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+    let candidate_dirs_json: Vec<String> = candidate_dirs
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+
+    match path {
+        Some(executable_path) => Ok(serde_json::json!({
+            "installed": true,
+            "executable_path": executable_path.to_string_lossy().to_string(),
+            "version": serde_json::Value::Null,
+            "reason_if_unavailable": serde_json::Value::Null,
+            "candidate_paths": candidate_paths_json,
+            "candidate_dirs": candidate_dirs_json,
+        })),
+        None => Ok(serde_json::json!({
+            "installed": false,
+            "executable_path": serde_json::Value::Null,
+            "version": serde_json::Value::Null,
+            "reason_if_unavailable": "Trispr Analysis is not installed.",
+            "candidate_paths": candidate_paths_json,
+            "candidate_dirs": candidate_dirs_json,
+        })),
+    }
+}
+
+#[tauri::command]
+fn analysis_tool_launch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    audio_path: String,
+) -> Result<serde_json::Value, String> {
+    if audio_path.trim().is_empty() {
+        return Err("audio_path is required".to_string());
+    }
+
+    let audio = PathBuf::from(&audio_path);
+    if !audio.exists() {
+        return Err(format!("Audio file not found: {}", audio.display()));
+    }
+
+    let settings = state.settings.lock().unwrap().clone();
+    let candidate_paths =
+        analysis_tool_candidate_paths(&app, Some(&settings.analysis_tool_path_override));
+    let executable = resolve_analysis_tool_executable_from_candidates(&candidate_paths);
+
+    if let Some(executable_path) = executable {
+        let child = std::process::Command::new(&executable_path)
+            .arg("open")
+            .arg("--audio")
+            .arg(audio.as_os_str())
+            .arg("--source")
+            .arg("trispr-flow")
+            .spawn()
+            .map_err(|e| format!("Failed to launch analysis tool: {}", e))?;
 
         return Ok(serde_json::json!({
-          "status": "success",
-          "prefetch_model": use_prefetch,
-          "setup_script": setup_script.to_string_lossy().to_string(),
-          "run_manual_command": setup_cmd,
-          "message": "Voice Analysis setup completed successfully.",
-          "stdout": stdout_tail,
-          "stderr": stderr_tail
+            "status": "launched",
+            "executable_path": executable_path.to_string_lossy().to_string(),
+            "pid": child.id(),
+            "launcher": "exe",
         }));
     }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = use_prefetch;
-        let _ = cmd_args;
-        Err("Automatic Voice Analysis setup is currently supported on Windows only.".to_string())
-    }
-}
-
-#[tauri::command]
-fn stop_sidecar() -> Result<(), String> {
-    sidecar_process::stop_sidecar()
-}
-
-#[tauri::command]
-fn sidecar_health() -> Result<serde_json::Value, String> {
-    let client = sidecar_process::get_sidecar_client()?;
-    match client.health_check() {
-        Ok(health) => serde_json::to_value(&health).map_err(|e| e.to_string()),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-#[tauri::command]
-fn sidecar_transcribe(
-    audio_path: String,
-    precision: Option<String>,
-    language: Option<String>,
-) -> Result<serde_json::Value, String> {
-    let client = sidecar_process::get_sidecar_client()?;
-    let path = std::path::Path::new(&audio_path);
-
-    match client.transcribe(path, precision.as_deref(), language.as_deref()) {
-        Ok(result) => serde_json::to_value(&result).map_err(|e| e.to_string()),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-#[tauri::command]
-fn parallel_transcribe(
-    app: AppHandle,
-    audio_path: String,
-    precision: Option<String>,
-    language: Option<String>,
-) -> Result<serde_json::Value, String> {
-    use std::thread;
-
-    let audio_path_clone = audio_path.clone();
-    let precision_clone = precision.clone();
-    let language_clone = language.clone();
-
-    // Run VibeVoice sidecar transcription in a separate thread
-    let sidecar_handle = thread::spawn(move || -> Result<serde_json::Value, String> {
-        let client = sidecar_process::get_sidecar_client()?;
-        let path = std::path::Path::new(&audio_path_clone);
-        match client.transcribe(path, precision_clone.as_deref(), language_clone.as_deref()) {
-            Ok(result) => serde_json::to_value(&result).map_err(|e| e.to_string()),
-            Err(e) => Err(e.to_string()),
-        }
-    });
-
-    // Run Whisper transcription on main thread (reads audio from file)
-    let whisper_result = {
-        let path = std::path::Path::new(&audio_path);
-        let samples = read_audio_file_as_i16(path)?;
-        let state = app.state::<AppState>();
-        let settings = state.settings.lock().unwrap().clone();
-        match transcribe_audio(&app, &settings, &samples) {
-            Ok((text, source)) => {
-                serde_json::json!({ "text": text, "source": source })
+    if cfg!(debug_assertions) {
+        match launch_analysis_tool_dev_fallback(&audio) {
+            Ok((child, launcher_path)) => {
+                return Ok(serde_json::json!({
+                    "status": "launched",
+                    "executable_path": launcher_path,
+                    "pid": child.id(),
+                    "launcher": "python-dev-fallback",
+                }));
             }
-            Err(e) => serde_json::json!({ "error": e }),
+            Err(err) => {
+                return Err(format!(
+                    "Trispr Analysis executable not found and development fallback failed: {}",
+                    err
+                ));
+            }
         }
-    };
-
-    // Wait for sidecar result
-    let sidecar_result = sidecar_handle
-        .join()
-        .map_err(|_| "Sidecar thread panicked".to_string())?;
-
-    Ok(serde_json::json!({
-      "whisper": whisper_result,
-      "vibevoice": sidecar_result.unwrap_or_else(|e| serde_json::json!({ "error": e })),
-    }))
-}
-
-/// Read an audio file (WAV/OPUS) as i16 samples at 16kHz
-fn read_audio_file_as_i16(path: &std::path::Path) -> Result<Vec<i16>, String> {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    let wav_path = match ext.as_str() {
-        "wav" => path.to_path_buf(),
-        "opus" => {
-            // Decode OPUS to temporary WAV using FFmpeg
-            let ffmpeg = crate::opus::find_ffmpeg()
-                .map_err(|e| format!("FFmpeg required for OPUS decoding: {}", e))?;
-
-            let temp_wav = std::env::temp_dir().join(format!(
-                "opus_decode_{}.wav",
-                std::process::id()
-            ));
-
-            std::process::Command::new(&ffmpeg)
-                .args(&[
-                    "-i",
-                    &path.to_string_lossy().to_string(),
-                    "-acodec",
-                    "pcm_s16le",
-                    "-ar",
-                    "16000",
-                    "-f",
-                    "wav",
-                    "-",
-                ])
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
-                .output()
-                .and_then(|out| {
-                    if !out.status.success() {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            "FFmpeg decoding failed",
-                        ));
-                    }
-                    std::fs::write(&temp_wav, out.stdout)?;
-                    Ok(())
-                })
-                .map_err(|e| format!("Failed to decode OPUS with FFmpeg: {}", e))?;
-
-            temp_wav
-        }
-        _ => {
-            return Err(format!(
-                "Unsupported audio format for parallel mode: .{}",
-                ext
-            ))
-        }
-    };
-
-    // Read the WAV file
-    let reader = hound::WavReader::open(&wav_path)
-        .map_err(|e| format!("Failed to open WAV: {}", e))?;
-    let spec = reader.spec();
-    let samples: Vec<i16> = if spec.sample_format == hound::SampleFormat::Float {
-        reader
-            .into_samples::<f32>()
-            .filter_map(|s| s.ok())
-            .map(|s| (s * i16::MAX as f32) as i16)
-            .collect()
-    } else {
-        reader
-            .into_samples::<i16>()
-            .filter_map(|s| s.ok())
-            .collect()
-    };
-
-    // Clean up temporary WAV if we created one
-    if ext == "opus" {
-        let _ = std::fs::remove_file(&wav_path);
     }
 
-    Ok(samples)
+    Err("Trispr Analysis is not installed. Please choose a local trispr-analysis.exe.".to_string())
 }
 
 #[tauri::command]
@@ -1722,113 +1249,6 @@ fn open_recordings_directory(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_semver_like(version: &str) -> Option<(u64, u64, u64)> {
-    let cleaned = version
-        .trim()
-        .trim_start_matches(|c: char| c == 'v' || c == 'V');
-    let numeric_prefix: String = cleaned
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.')
-        .collect();
-
-    if numeric_prefix.is_empty() {
-        return None;
-    }
-
-    let mut parts = numeric_prefix.split('.');
-    let major = parts.next()?.parse::<u64>().ok()?;
-    let minor = parts.next().unwrap_or("0").parse::<u64>().ok()?;
-    let patch = parts.next().unwrap_or("0").parse::<u64>().ok()?;
-    Some((major, minor, patch))
-}
-
-fn is_newer_version(latest: &str, current: &str) -> bool {
-    match (parse_semver_like(latest), parse_semver_like(current)) {
-        (Some(latest_semver), Some(current_semver)) => latest_semver > current_semver,
-        _ => latest.trim() != current.trim(),
-    }
-}
-
-#[tauri::command]
-fn check_vibevoice_updates() -> Result<serde_json::Value, String> {
-    let response = ureq::get("https://api.github.com/repos/microsoft/VibeVoice/releases/latest")
-        .set("User-Agent", "Trispr-Flow/0.6.0")
-        .set("Accept", "application/vnd.github+json")
-        .timeout(Duration::from_secs(10))
-        .call()
-        .map_err(|e| format!("Failed to query VibeVoice releases: {}", e))?;
-
-    let release: serde_json::Value = response
-        .into_json()
-        .map_err(|e| format!("Failed to parse GitHub response: {}", e))?;
-
-    let latest_version = release
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-
-    let current_version =
-        std::env::var("VIBEVOICE_CURRENT_VERSION").unwrap_or_else(|_| "1.0.0".to_string());
-
-    let release_notes_full = release.get("body").and_then(|v| v.as_str()).unwrap_or("");
-    let release_notes = release_notes_full
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or("")
-        .trim()
-        .chars()
-        .take(240)
-        .collect::<String>();
-
-    let download_url = release
-        .get("html_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let update_available = if latest_version.is_empty() {
-        false
-    } else {
-        is_newer_version(&latest_version, &current_version)
-    };
-
-    Ok(serde_json::json!({
-      "update_available": update_available,
-      "current_version": current_version,
-      "latest_version": latest_version,
-      "release_notes": release_notes,
-      "download_url": download_url,
-    }))
-}
-
-/// Sanitize session name for filename
-fn sanitize_session_name(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else if c.is_whitespace() {
-                '-'
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-        .chars()
-        .take(30) // Max 30 chars
-        .collect()
-}
-
-/// Save audio samples as OPUS file for later analysis
-/// This is used to enable VibeVoice-ASR speaker diarization on recorded audio
-///
-/// # Arguments
-/// * `app` - App handle
-/// * `samples` - Audio samples (i16, 16kHz)
-/// * `source` - "mic", "output", or "mixed"
-/// * `session_name` - Optional user-provided session name
 pub(crate) fn save_recording_opus(
     app: &AppHandle,
     samples: &[i16],
@@ -1917,6 +1337,28 @@ pub(crate) fn save_recording_opus(
     let _ = std::fs::remove_file(&wav_path);
 
     Ok(opus_path.to_string_lossy().to_string())
+}
+
+fn sanitize_session_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    let trimmed = sanitized.trim_matches('_').to_string();
+    if trimmed.is_empty() {
+        "session".to_string()
+    } else if trimmed.len() > 40 {
+        trimmed[..40].to_string()
+    } else {
+        trimmed
+    }
 }
 
 fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
@@ -2030,7 +1472,11 @@ fn load_local_env() {
 /// Snapshot of clipboard content before we overwrite it.
 enum ClipboardSnapshot {
     Text(String),
-    Image { width: usize, height: usize, bytes: Vec<u8> },
+    Image {
+        width: usize,
+        height: usize,
+        bytes: Vec<u8>,
+    },
     Empty,
 }
 
@@ -2115,7 +1561,11 @@ fn restore_snapshot_with_retry(snapshot: ClipboardSnapshot) -> Result<(), String
             Ok(mut clipboard) => {
                 let write_result = match &snapshot {
                     ClipboardSnapshot::Text(text) => clipboard.set_text(text.clone()),
-                    ClipboardSnapshot::Image { width, height, bytes } => clipboard.set_image(ImageData {
+                    ClipboardSnapshot::Image {
+                        width,
+                        height,
+                        bytes,
+                    } => clipboard.set_image(ImageData {
                         width: *width,
                         height: *height,
                         bytes: std::borrow::Cow::Borrowed(bytes.as_slice()),
@@ -2936,17 +2386,11 @@ pub fn run() {
             encode_to_opus,
             check_ffmpeg,
             get_ffmpeg_version_info,
-            start_sidecar,
-            voice_analysis_setup_preflight,
-            install_vibevoice_dependencies,
-            stop_sidecar,
-            sidecar_health,
-            sidecar_transcribe,
-            parallel_transcribe,
+            analysis_tool_status,
+            analysis_tool_launch,
             get_last_recording_path,
             get_recordings_directory,
             open_recordings_directory,
-            check_vibevoice_updates,
             fetch_available_models,
             test_provider_connection,
             save_provider_api_key,

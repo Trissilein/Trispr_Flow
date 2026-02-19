@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-02-16
+Last updated: 2026-02-19
 
 ## Frontend architecture
 
@@ -50,7 +50,7 @@ The application uses a **two-tab layout** to separate daily-use views from confi
 | `state.ts` | Centralized mutable state with setters |
 | `types.ts` | TypeScript interfaces (Settings, HistoryEntry, ModelInfo, etc.) |
 | `dom-refs.ts` | ~140 DOM element references via `getElementById` |
-| `event-listeners.ts` | All user interaction handlers (~810 lines) |
+| `event-listeners.ts` | All user interaction handlers (includes Voice Analysis setup/queue orchestration) |
 | `settings.ts` | Settings persistence and UI sync (`renderSettings()`) |
 | `ui-state.ts` | Runtime UI state (capture/transcribe status, hero rendering) |
 | `history.ts` | History rendering, export, chapters, topics, search |
@@ -89,39 +89,45 @@ The application uses a **two-tab layout** to separate daily-use views from confi
 - `opus.rs`: OPUS encoding via FFmpeg subprocess (WAV → OPUS conversion for smaller file sizes).
 - `sidecar.rs`: HTTP client for VibeVoice-ASR sidecar communication (transcription requests, health checks).
 - `sidecar_process.rs`: Sidecar lifecycle management (start/stop Python FastAPI process, health monitoring).
+- `analysis_jobs.rs`: External analysis worker job manager (queued/running/completed/failed/canceled/timeout).
 - `auto_processing.rs`: Post-transcription pipeline (chapter generation, meeting minutes extraction, summary generation).
 
-### Sidecar Architecture (v0.6.0)
+### Voice Analysis Runtime Architecture
 
-**Purpose**: VibeVoice-ASR 7B model requires Python + Transformers ecosystem, runs as separate FastAPI process
+**Purpose**: VibeVoice-ASR 7B model requires Python + Transformers ecosystem and is isolated from the core app runtime.
 
 **Communication Pattern**:
 
 ```text
-Trispr Flow (Rust)  ←→  VibeVoice-ASR Sidecar (Python FastAPI)
-     │                          │
-     ├─ Start/Stop             ├─ Model Loading (FP16/INT8)
-     ├─ Health Check           ├─ Audio Transcription
-     └─ POST /transcribe       └─ Speaker Diarization
+Trispr Flow (Rust)  ←→  Voice Analysis Runtime
+     │
+     ├─ Legacy mode: HTTP sidecar (FastAPI) `/transcribe`
+     └─ External mode: one-shot worker job (CLI process per analysis)
 ```
 
 **Files**:
 
 - Rust side: `sidecar.rs` (HTTP client), `sidecar_process.rs` (lifecycle)
-- Python side: `sidecar/vibevoice-asr/main.py` (FastAPI app), `model_loader.py`, `inference.py`
+- Rust job layer: `analysis_jobs.rs` (job registry + worker launch + cancel/timeout)
+- Python side: `sidecar/vibevoice-asr/main.py` (FastAPI app), `sidecar/vibevoice-asr/worker_once.py` (one-shot worker), `model_loader.py`, `inference.py`
 
 **Lifecycle**:
 
-1. User triggers analysis → Rust calls `start_sidecar()`
-2. `sidecar_process.rs` spawns Python FastAPI via `Command::new(python).arg(main.py)`
-3. Health check loop waits for `/health` to respond (30s timeout)
-4. Rust sends `/transcribe` request with audio file path (JSON body)
-5. Sidecar loads audio, runs VibeVoice inference, returns speaker-diarized segments
-6. On app exit, Rust calls `stop_sidecar()` → graceful shutdown
+Legacy sidecar mode:
+1. User triggers analysis → Rust calls `start_sidecar()`.
+2. `sidecar_process.rs` spawns Python FastAPI via `Command::new(python).arg(main.py)`.
+3. Health check loop waits for `/health` (30s timeout).
+4. Rust sends `/transcribe` request with audio path.
+
+External worker mode (feature-flagged, default OFF):
+1. UI calls `analysis_create_job`.
+2. `analysis_jobs.rs` creates a tracked job and spawns `worker_once.py` as a dedicated process.
+3. UI polls `analysis_get_job`/`analysis_get_jobs` and can cancel via `analysis_cancel_job`.
+4. Worker exits after one transcription; app remains responsive even on runtime failures/timeouts.
 
 **Packaging**: Runtime supports both bundled sidecar exe and Python fallback. Current installers ship Python sidecar files plus setup script; `sidecar_process.rs` auto-detects bundled exe first, then falls back to Python.
 
-**Parallel Mode**: `parallel_transcribe` command runs Whisper (main thread) + VibeVoice (spawned thread) concurrently, returning both results for side-by-side comparison.
+**Parallel Mode**: `parallel_transcribe` command runs Whisper + VibeVoice concurrently for diagnostics. Voice Analysis UI keeps VibeVoice as source of truth.
 
 ## Core data flows
 
@@ -144,7 +150,8 @@ Trispr Flow (Rust)  ←→  VibeVoice-ASR Sidecar (Python FastAPI)
 1. Transcribe hotkey toggles output monitoring for the selected device.
 2. WASAPI loopback stream feeds chunker/VAD.
 3. Chunks are transcribed and appended to output history.
-4. UI receives `transcribe:state`, meter (`transcribe:level`/`transcribe:db`), and history update events.
+4. For persisted session audio (`session.opus`), overlap prefixes are stripped from follow-up chunks to avoid duplicate audio at chunk boundaries.
+5. UI receives `transcribe:state`, meter (`transcribe:level`/`transcribe:db`), and history update events.
 
 ### Export flow
 

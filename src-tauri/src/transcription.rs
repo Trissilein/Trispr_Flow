@@ -1,18 +1,28 @@
+#[cfg(target_os = "windows")]
 use crate::audio::CaptureBuffer;
 #[cfg(target_os = "windows")]
 use crate::constants::TRANSCRIBE_IDLE_METER_MS;
+#[cfg(target_os = "windows")]
+use crate::constants::{MIN_AUDIO_MS, VAD_THRESHOLD_SUSTAIN_DEFAULT};
 use crate::constants::{
-    MIN_AUDIO_MS, TARGET_SAMPLE_RATE, TRANSCRIBE_BACKLOG_EXPAND_DENOMINATOR,
-    TRANSCRIBE_BACKLOG_EXPAND_NUMERATOR, TRANSCRIBE_BACKLOG_MIN_CHUNKS,
-    TRANSCRIBE_BACKLOG_TARGET_MS, TRANSCRIBE_BACKLOG_WARNING_PERCENT,
-    VAD_THRESHOLD_SUSTAIN_DEFAULT,
+    TARGET_SAMPLE_RATE, TRANSCRIBE_BACKLOG_EXPAND_DENOMINATOR, TRANSCRIBE_BACKLOG_EXPAND_NUMERATOR,
+    TRANSCRIBE_BACKLOG_MIN_CHUNKS, TRANSCRIBE_BACKLOG_TARGET_MS,
 };
+#[cfg(any(test, target_os = "windows"))]
+use crate::constants::TRANSCRIBE_BACKLOG_WARNING_PERCENT;
+#[cfg(target_os = "windows")]
+use crate::continuous_dump::{AdaptiveSegmenter, AdaptiveSegmenterConfig, SegmentFlushReason};
 use crate::errors::AppError;
 use crate::models::resolve_model_path;
 use crate::overlay::{update_overlay_state, OverlayState};
-use crate::paths::{resolve_recordings_dir, resolve_whisper_cli_path};
+#[cfg(target_os = "windows")]
+use crate::paths::resolve_recordings_dir;
+use crate::paths::resolve_whisper_cli_path;
+#[cfg(target_os = "windows")]
 use crate::postprocessing::process_transcript;
-use crate::state::{push_transcribe_entry_inner, AppState, Settings};
+#[cfg(target_os = "windows")]
+use crate::state::push_transcribe_entry_inner;
+use crate::state::{AppState, Settings};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs;
@@ -22,9 +32,81 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tracing::{error, info};
+use tracing::error;
+#[cfg(target_os = "windows")]
+use tracing::info;
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Serialize)]
+struct ContinuousDumpEvent {
+    source: &'static str,
+    reason: SegmentFlushReason,
+    duration_ms: u64,
+    rms: f32,
+    text_len: usize,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Serialize)]
+struct ContinuousDumpStats {
+    source: &'static str,
+    queued_chunks: usize,
+    dropped_chunks: u64,
+    percent_used: u8,
+}
+
+#[cfg(target_os = "windows")]
+fn system_segmenter_config(settings: &Settings) -> AdaptiveSegmenterConfig {
+    if !settings.continuous_dump_enabled {
+        let mut legacy = AdaptiveSegmenterConfig::balanced_default();
+        legacy.soft_flush_ms = settings.transcribe_batch_interval_ms;
+        legacy.silence_flush_ms = 5_000;
+        legacy.hard_cut_ms = 120_000;
+        legacy.min_chunk_ms = MIN_AUDIO_MS;
+        legacy.pre_roll_ms = settings.transcribe_chunk_overlap_ms.min(1_500);
+        legacy.post_roll_ms = 0;
+        legacy.idle_keepalive_ms = settings.transcribe_batch_interval_ms.max(10_000);
+        legacy.threshold_start = settings.transcribe_vad_threshold.max(0.001);
+        legacy.threshold_sustain =
+            (legacy.threshold_start * 0.8).clamp(0.001, legacy.threshold_start);
+        legacy.clamp();
+        return legacy;
+    }
+
+    let mut cfg = AdaptiveSegmenterConfig::from_profile(&settings.continuous_dump_profile);
+    cfg.soft_flush_ms = if settings.continuous_system_override_enabled {
+        settings.continuous_system_soft_flush_ms
+    } else {
+        settings.continuous_soft_flush_ms
+    };
+    cfg.silence_flush_ms = if settings.continuous_system_override_enabled {
+        settings.continuous_system_silence_flush_ms
+    } else {
+        settings.continuous_silence_flush_ms
+    };
+    cfg.hard_cut_ms = if settings.continuous_system_override_enabled {
+        settings.continuous_system_hard_cut_ms
+    } else {
+        settings.continuous_hard_cut_ms
+    };
+    cfg.min_chunk_ms = settings.continuous_min_chunk_ms;
+    cfg.pre_roll_ms = settings.continuous_pre_roll_ms;
+    cfg.post_roll_ms = settings.continuous_post_roll_ms;
+    cfg.idle_keepalive_ms = settings.continuous_idle_keepalive_ms;
+
+    let start = if settings.transcribe_vad_mode {
+        settings.transcribe_vad_threshold.max(0.001)
+    } else {
+        VAD_THRESHOLD_SUSTAIN_DEFAULT
+    };
+    cfg.threshold_start = start;
+    cfg.threshold_sustain = (start * 0.8).clamp(0.001, start);
+    cfg.clamp();
+    cfg
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct TranscriptionResult {
@@ -53,6 +135,7 @@ struct AudioQueueState {
     queue: VecDeque<Vec<i16>>,
     max_chunks: usize,
     dropped_chunks: u64,
+    #[cfg(any(test, target_os = "windows"))]
     warned_for_capacity: usize,
 }
 
@@ -70,6 +153,7 @@ impl AudioQueue {
                 queue: VecDeque::new(),
                 max_chunks: max_chunks.max(1),
                 dropped_chunks: 0,
+                #[cfg(any(test, target_os = "windows"))]
                 warned_for_capacity: 0,
             }),
             cond: Condvar::new(),
@@ -78,6 +162,7 @@ impl AudioQueue {
         })
     }
 
+    #[cfg(any(test, target_os = "windows"))]
     fn push(&self, chunk: Vec<i16>) {
         let mut queue = self.inner.lock().unwrap();
         if queue.queue.len() >= queue.max_chunks {
@@ -104,6 +189,7 @@ impl AudioQueue {
         }
     }
 
+    #[cfg(any(test, target_os = "windows"))]
     fn pop(&self) -> Option<Vec<i16>> {
         let mut queue = self.inner.lock().unwrap();
         loop {
@@ -122,6 +208,7 @@ impl AudioQueue {
         self.cond.notify_all();
     }
 
+    #[cfg(any(test, target_os = "windows"))]
     fn status(&self) -> TranscribeBacklogStatus {
         let queue = self.inner.lock().unwrap();
         backlog_status_from_queue(&queue)
@@ -151,6 +238,7 @@ fn backlog_capacity_for_batch_ms(batch_interval_ms: u64) -> usize {
     chunks.max(TRANSCRIBE_BACKLOG_MIN_CHUNKS)
 }
 
+#[cfg(any(test, target_os = "windows"))]
 fn backlog_warning_threshold(capacity: usize) -> usize {
     ((capacity * TRANSCRIBE_BACKLOG_WARNING_PERCENT as usize) + 99) / 100
 }
@@ -180,7 +268,7 @@ fn backlog_status_from_queue(queue: &AudioQueueState) -> TranscribeBacklogStatus
 
 #[cfg(test)]
 mod tests {
-    use super::{backlog_capacity_for_batch_ms, AudioQueue};
+    use super::{backlog_capacity_for_batch_ms, should_drop_transcript, AudioQueue};
 
     #[test]
     fn audio_queue_drops_oldest_when_full() {
@@ -218,6 +306,18 @@ mod tests {
         assert_eq!(backlog_capacity_for_batch_ms(8_000), 75);
         assert_eq!(backlog_capacity_for_batch_ms(4_000), 150);
         assert_eq!(backlog_capacity_for_batch_ms(15_000), 40);
+    }
+
+    #[test]
+    fn short_meaningful_transcript_is_not_dropped() {
+        assert!(!should_drop_transcript("Bitte speichere das", 0.001, 450));
+        assert!(!should_drop_transcript("das passt", 0.002, 300));
+    }
+
+    #[test]
+    fn common_short_hallucination_is_dropped() {
+        assert!(should_drop_transcript("thank you", 0.002, 500));
+        assert!(should_drop_transcript("uh", 0.001, 400));
     }
 }
 
@@ -397,6 +497,7 @@ pub(crate) fn toggle_transcribe_state(app: &AppHandle) {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn rms_f32(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
@@ -430,15 +531,11 @@ fn normalize_transcript(text: &str) -> String {
         .join(" ")
 }
 
-pub(crate) fn should_drop_transcript(text: &str, rms: f32, duration_ms: u64) -> bool {
+pub(crate) fn should_drop_transcript(text: &str, _rms: f32, duration_ms: u64) -> bool {
     let normalized = normalize_transcript(text);
     if normalized.is_empty() {
         return true;
     }
-    let word_count = normalized.split_whitespace().count();
-    let is_short = word_count <= crate::constants::HALLUCINATION_MAX_WORDS
-        || normalized.len() <= crate::constants::HALLUCINATION_MAX_CHARS;
-    let is_low_energy = rms < crate::constants::HALLUCINATION_RMS_THRESHOLD;
     let is_short_audio = duration_ms <= crate::constants::HALLUCINATION_MAX_DURATION_MS;
     let matches_common = HALLUCINATION_PHRASES.iter().any(|p| *p == normalized);
 
@@ -446,7 +543,8 @@ pub(crate) fn should_drop_transcript(text: &str, rms: f32, duration_ms: u64) -> 
         return true;
     }
 
-    is_low_energy && is_short_audio && is_short
+    // Keep genuine short dictations. Only aggressively drop known filler hallucinations.
+    false
 }
 
 pub(crate) fn should_drop_by_activation_words(
@@ -491,6 +589,7 @@ const HALLUCINATION_PHRASES: &[&str] = &[
 /// Flush accumulated system audio as a session chunk via SessionManager.
 /// Replaces the old per-flush file approach: chunks go to a temp session dir
 /// and are merged into a single session.opus when the session ends.
+#[cfg(target_os = "windows")]
 fn flush_system_audio_to_session(buffer: &mut Vec<i16>) {
     if buffer.is_empty() {
         return;
@@ -512,6 +611,7 @@ fn flush_system_audio_to_session(buffer: &mut Vec<i16>) {
     buffer.clear();
 }
 
+#[cfg(any(test, target_os = "windows"))]
 fn append_chunk_for_session_recording(
     save_buffer: &mut Vec<i16>,
     chunk: &[i16],
@@ -550,6 +650,7 @@ mod session_recording_tests {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn transcribe_worker(
     app: AppHandle,
     settings: Settings,
@@ -561,8 +662,7 @@ fn transcribe_worker(
     let auto_save = settings.auto_save_system_audio && settings.opus_enabled;
     let mut save_buffer: Vec<i16> = Vec::new();
     let mut saved_chunk_count: u64 = 0;
-    let overlap_samples =
-        (TARGET_SAMPLE_RATE as u64 * settings.transcribe_chunk_overlap_ms / 1000) as usize;
+    let overlap_samples = 0usize;
     // Flush every 60 seconds of audio (960_000 samples at 16kHz)
     let flush_threshold = TARGET_SAMPLE_RATE as usize * 60;
 
@@ -646,7 +746,7 @@ fn transcribe_worker(
     // Flush remaining buffer and finalize the session on worker exit
     if auto_save {
         flush_system_audio_to_session(&mut save_buffer);
-        match crate::session_manager::finalize() {
+        match crate::session_manager::finalize_for("output") {
             Ok(Some(path)) => {
                 let state = app.state::<AppState>();
                 *state.last_system_recording_path.lock().unwrap() =
@@ -798,10 +898,8 @@ fn run_transcribe_loopback(
 
     audio_client.start_stream().map_err(|e| e.to_string())?;
 
-    let chunk_samples =
-        (TARGET_SAMPLE_RATE as u64 * settings.transcribe_batch_interval_ms / 1000) as usize;
-    let overlap_samples =
-        (TARGET_SAMPLE_RATE as u64 * settings.transcribe_chunk_overlap_ms / 1000) as usize;
+    let mut segmenter = AdaptiveSegmenter::new(system_segmenter_config(&settings));
+    let mut last_backpressure_check = Instant::now();
     let mut gain = (10.0f32).powf(settings.transcribe_input_gain_db / 20.0);
     let mut vad_enabled = settings.transcribe_vad_mode;
     let mut vad_threshold = settings.transcribe_vad_threshold;
@@ -893,6 +991,7 @@ fn run_transcribe_loopback(
                 vad_enabled = current.transcribe_vad_mode;
                 vad_threshold = current.transcribe_vad_threshold;
                 vad_silence_ms = current.transcribe_vad_silence_ms;
+                segmenter.update_config(system_segmenter_config(&current));
                 chapter_silence_enabled = current.chapter_silence_enabled;
                 chapter_silence_threshold_ms = current.chapter_silence_threshold_ms;
                 monitor_threshold = if vad_enabled {
@@ -979,24 +1078,68 @@ fn run_transcribe_loopback(
         }
 
         buffer.push_samples(&mono, sample_rate);
-        while buffer.len() >= chunk_samples {
-            let chunk = buffer.take_chunk(chunk_samples, overlap_samples);
-            if chunk.is_empty() {
-                break;
-            }
-            if vad_enabled {
-                if vad_last_hit_ms.elapsed() <= Duration::from_millis(vad_silence_ms) {
-                    queue.push(chunk);
+        let resampled = buffer.take_all_samples();
+        if !resampled.is_empty() {
+            let segments = segmenter.push_samples(&resampled, smooth_level.max(rms));
+            for mut segment in segments {
+                if segment.samples.is_empty() {
+                    continue;
                 }
-            } else {
-                queue.push(chunk);
+                if vad_enabled
+                    && segment.rms < vad_threshold
+                    && vad_last_hit_ms.elapsed() > Duration::from_millis(vad_silence_ms)
+                {
+                    continue;
+                }
+
+                let reason = segment.reason;
+                let duration_ms = segment.duration_ms;
+                let rms_value = segment.rms;
+                let samples = std::mem::take(&mut segment.samples);
+                queue.push(samples);
+                let _ = app.emit(
+                    "continuous-dump:segment",
+                    ContinuousDumpEvent {
+                        source: "system",
+                        reason,
+                        duration_ms,
+                        rms: rms_value,
+                        text_len: 0,
+                    },
+                );
             }
+        }
+
+        if last_backpressure_check.elapsed() >= Duration::from_millis(1_000) {
+            let status = queue.status();
+            segmenter.set_backpressure_percent(status.percent_used);
+            let _ = app.emit(
+                "continuous-dump:stats",
+                ContinuousDumpStats {
+                    source: "system",
+                    queued_chunks: status.queued_chunks,
+                    dropped_chunks: status.dropped_chunks,
+                    percent_used: status.percent_used,
+                },
+            );
+            last_backpressure_check = Instant::now();
         }
     }
 
-    let leftover = buffer.drain();
+    let leftover = buffer.take_all_samples();
     if !leftover.is_empty() {
-        queue.push(leftover);
+        for mut segment in segmenter.push_samples(&leftover, 0.0) {
+            let samples = std::mem::take(&mut segment.samples);
+            if !samples.is_empty() {
+                queue.push(samples);
+            }
+        }
+    }
+    for mut segment in segmenter.finalize() {
+        let samples = std::mem::take(&mut segment.samples);
+        if !samples.is_empty() {
+            queue.push(samples);
+        }
     }
 
     queue.close();
@@ -1164,9 +1307,4 @@ fn resolve_output_device(device_id: &str) -> Option<wasapi::Device> {
     enumerator
         .get_default_device(&wasapi::Direction::Render)
         .ok()
-}
-
-#[cfg(not(target_os = "windows"))]
-fn resolve_output_device(_device_id: &str) -> Option<cpal::Device> {
-    None
 }

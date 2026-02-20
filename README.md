@@ -17,10 +17,10 @@
 - **Quality Controls**: Configurable OPUS bitrate + VibeVoice precision (FP16/INT8)
 - **Parallel Transcription**: Run Whisper + VibeVoice simultaneously (opt-in for 16GB+ VRAM)
 - **External Analysis Launcher**: Analyse opens a separate Trispr Analysis app (local-only launch path)
-- **System Audio Auto-Save**: 60-second flush intervals for OPUS recordings
+- **Adaptive Continuous Dump**: Silence-aware + interval + hard-cut chunking for system audio and mic Toggle mode
 - **Professional Icon**: Cyan/Gold Yin-Yang branding
 
-**v0.7.0 Planning Complete**: Multi-provider AI Fallback (Claude, OpenAI, Gemini) — Ready for implementation
+**v0.7.0 In Execution**: Foundation complete (Block F + G), provider integrations (Block H) are next.
 
 ## Core Capabilities
 
@@ -28,6 +28,7 @@
 
 - ✅ Microphone capture (PTT + Voice Activation modes)
 - ✅ System audio capture (Windows WASAPI loopback)
+- ✅ Adaptive continuous dump controls (profile + advanced per-source overrides)
 - ✅ GPU-accelerated inference (whisper.cpp) with CPU fallback
 - ✅ Speaker diarization (VibeVoice-ASR 7B with color-coded segments)
 - ✅ Parallel mode (Whisper + VibeVoice simultaneously)
@@ -62,8 +63,8 @@
 | --- | --- | --- | --- |
 | **v0.6.0** | 🟢 LIVE | Complete | VibeVoice-ASR, diarization, OPUS, parallel mode |
 | **v0.7.0** | 📋 Planning | Block F Complete | AI Fallback architecture (Claude/OpenAI/Gemini) |
-| **v0.7.0** | 🔵 Ready | Block G (Opus) | Multi-provider architecture, settings migration, config UI |
-| **v0.7.0** | 🔵 Queued | Block H (Sonnet) | Provider implementations, E2E tests |
+| **v0.7.0** | ✅ Complete | Block G (Opus) | Multi-provider architecture, settings migration, config UI |
+| **v0.7.0** | 🔵 In Progress | Block H (Sonnet) | Provider integrations (OpenAI/Claude/Gemini), prompt polish, E2E |
 
 👉 **[Full Roadmap](ROADMAP.md)** — See milestones, implementation schedule, and competitor analysis
 
@@ -116,6 +117,7 @@ See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for system requirements and build conf
 - 📖 [READ_ME_FIRST.md](READ_ME_FIRST.md) — Start here
 - 🗺️ [ROADMAP.md](ROADMAP.md) — Project status and milestones
 - 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Technical overview
+- 🔊 [docs/CONTINUOUS_DUMP_PLAN.md](docs/CONTINUOUS_DUMP_PLAN.md) — Adaptive continuous dump design + rollout
 - 🛠️ [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — Build setup
 - 🔄 [docs/STATE_MANAGEMENT.md](docs/STATE_MANAGEMENT.md) — Internal state flow
 - 📤 [docs/EXPORT_SCHEMA.md](docs/EXPORT_SCHEMA.md) — Export format spec
@@ -139,5 +141,5 @@ For WSL/Linux development, install dependencies listed in [DEVELOPMENT.md](docs/
 
 - 📝 See [CONTRIBUTING.md](CONTRIBUTING.md) for PR process
 - 🎯 For large features, see [SCOPE.md](SCOPE.md) to understand project direction
-- 🚀 **Next tasks available**: See [NEXT_BLOCK_G.md](docs/NEXT_BLOCK_G.md) for v0.7.0 implementation (Block G — Opus)
+- 🚀 **Next tasks available**: See [ROADMAP.md](ROADMAP.md) for the live Done/Open task ledger (v0.7 Block H)
 - 💬 Discussions welcome in Issues

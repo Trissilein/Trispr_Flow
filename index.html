@@ -96,7 +96,7 @@
       <div class="layout-grid">
         <!-- Transcription Tab -->
         <div id="tab-transcription" class="main-tab-content active" role="tabpanel" aria-labelledby="tab-btn-transcription">
-        <section class="panel output-panel" data-panel="transcription" style="--delay: 0.12s">
+        <section class="panel output-panel" data-panel="transcription" data-default-collapsed="false" style="--delay: 0.12s">
           <div class="panel-header">
             <div class="panel-title">
               <h2>Transcription</h2>
@@ -104,10 +104,10 @@
             </div>
             <div class="panel-actions">
               <button class="panel-collapse-btn"
-                      data-panel-collapse="output"
+                      data-panel-collapse="transcription"
                       title="Collapse"
                       aria-expanded="true"
-                      aria-controls="output-panel-body"
+                      aria-controls="transcription-panel-body"
                       aria-label="Collapse transcription panel">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
@@ -115,7 +115,7 @@
               </button>
             </div>
           </div>
-          <div class="panel-body">
+          <div class="panel-body" id="transcription-panel-body">
             <div class="history-toolbar">
               <div class="history-tabs">
                 <button id="history-tab-mic" class="history-tab active">Input</button>
@@ -173,7 +173,7 @@
 
         <!-- Settings Tab -->
         <div id="tab-settings" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-settings">
-        <section class="panel capture-panel" data-panel="capture" style="--delay: 0.16s">
+        <section class="panel capture-panel" data-panel="capture" data-default-collapsed="true" data-panel-group="input-source" style="--delay: 0.16s">
           <div class="panel-header">
             <div class="panel-title">
               <h2>Capture Input</h2>
@@ -192,7 +192,7 @@
               </button>
             </div>
           </div>
-          <div class="panel-body">
+          <div class="panel-body" id="capture-panel-body">
             <div class="panel-grid">
             <div class="field toggle-with-hint span-2">
               <label class="toggle-row">
@@ -337,57 +337,119 @@
                 </div>
               </label>
             </div>
-            <div class="field toggle span-2">
-              <div class="toggle-row">
-                <span class="field-label">Hallucination Filter</span>
-                <input id="hallucination-filter-toggle" type="checkbox" />
-                <span class="toggle-track">
-                  <span class="toggle-thumb"></span>
-                </span>
+            <details class="expander span-2">
+              <summary>Dumping</summary>
+              <div class="expander-content">
+                <div class="field toggle">
+                  <label class="toggle-row">
+                    <span class="field-label">Auto-save mic continuous audio</span>
+                    <input id="auto-save-mic-audio-toggle" type="checkbox" />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </label>
+                  <span class="toggle-hint">Save mic Toggle/VAD sessions as OPUS for analysis</span>
+                </div>
+                <div class="field toggle span-2">
+                  <label class="toggle-row">
+                    <span class="field-label">Mic continuous override</span>
+                    <input id="continuous-mic-override-toggle" type="checkbox" />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </label>
+                  <span class="toggle-hint">Use source-specific dump timings for mic Toggle/VAD.</span>
+                </div>
+                <label class="field range span-2">
+                  <span class="field-label">Mic soft flush</span>
+                  <div class="range-row">
+                    <input id="continuous-mic-soft-flush" type="range" min="4000" max="30000" step="500"
+                           aria-valuemin="4000"
+                           aria-valuemax="30000"
+                           aria-valuenow="10000"
+                           aria-label="Mic soft flush"
+                           aria-describedby="continuous-mic-soft-flush-value" />
+                    <span id="continuous-mic-soft-flush-value" class="range-value" aria-live="polite">10s</span>
+                  </div>
+                </label>
+                <label class="field range span-2">
+                  <span class="field-label">Mic silence flush</span>
+                  <div class="range-row">
+                    <input id="continuous-mic-silence-flush" type="range" min="300" max="5000" step="100"
+                           aria-valuemin="300"
+                           aria-valuemax="5000"
+                           aria-valuenow="1200"
+                           aria-label="Mic silence flush"
+                           aria-describedby="continuous-mic-silence-flush-value" />
+                    <span id="continuous-mic-silence-flush-value" class="range-value" aria-live="polite">1.2s</span>
+                  </div>
+                </label>
+                <label class="field range span-2">
+                  <span class="field-label">Mic hard cut</span>
+                  <div class="range-row">
+                    <input id="continuous-mic-hard-cut" type="range" min="15000" max="120000" step="1000"
+                           aria-valuemin="15000"
+                           aria-valuemax="120000"
+                           aria-valuenow="45000"
+                           aria-label="Mic hard cut"
+                           aria-describedby="continuous-mic-hard-cut-value" />
+                    <span id="continuous-mic-hard-cut-value" class="range-value" aria-live="polite">45s</span>
+                  </div>
+                </label>
               </div>
-              <span class="toggle-hint">Filter out low-energy noise and common hallucinations</span>
-            </div>
-            <div class="field toggle span-2">
-              <div class="toggle-row">
-                <span class="field-label">Activation Words</span>
-                <input id="activation-words-toggle" type="checkbox" />
-                <span class="toggle-track">
-                  <span class="toggle-thumb"></span>
-                </span>
+            </details>
+            <details class="expander span-2">
+              <summary>Advanced</summary>
+              <div class="expander-content">
+                <div class="field toggle span-2">
+                  <div class="toggle-row">
+                    <span class="field-label">Hallucination filter</span>
+                    <input id="hallucination-filter-toggle" type="checkbox" />
+                    <span class="toggle-track">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                  </div>
+                  <span class="toggle-hint">Filter out low-energy noise and common hallucinations</span>
+                </div>
+                <div class="field toggle span-2">
+                  <div class="toggle-row">
+                    <span class="field-label">Activation words</span>
+                    <input id="activation-words-toggle" type="checkbox" />
+                    <span class="toggle-track">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                  </div>
+                  <span class="toggle-hint">Only process transcripts containing trigger words</span>
+                </div>
+                <div id="activation-words-config" class="field span-2 hidden">
+                  <label class="field-label">Word list (one per line)</label>
+                  <textarea id="activation-words-list" rows="4"
+                    placeholder="computer&#10;hey assistant"
+                    class="activation-words-textarea"></textarea>
+                  <span class="field-hint">Case-insensitive word matching</span>
+                </div>
+                <label class="field toggle span-2">
+                  <span class="field-label">Audio cues</span>
+                  <input id="audio-cues-toggle" type="checkbox" />
+                  <span class="toggle-track">
+                    <span class="toggle-thumb"></span>
+                  </span>
+                </label>
+                <label class="field range span-2">
+                  <span class="field-label">Audio cue volume</span>
+                  <div class="range-row">
+                    <input id="audio-cues-volume" type="range" min="0" max="100" step="1"
+                           aria-valuemin="0"
+                           aria-valuemax="100"
+                           aria-valuenow="30"
+                           aria-label="Audio cue volume"
+                           aria-describedby="audio-cues-volume-value" />
+                    <span id="audio-cues-volume-value" class="range-value" aria-live="polite">30%</span>
+                  </div>
+                </label>
               </div>
-              <span class="toggle-hint">Only process transcripts containing trigger words</span>
-            </div>
-            <div id="activation-words-config" class="field span-2 hidden">
-              <label class="field-label">Word list (one per line)</label>
-              <textarea id="activation-words-list" rows="4"
-                placeholder="computer&#10;hey assistant"
-                class="activation-words-textarea"></textarea>
-              <span class="field-hint">Case-insensitive word matching</span>
-            </div>
-            <label class="field toggle span-2">
-              <span class="field-label">Audio cues</span>
-              <input id="audio-cues-toggle" type="checkbox" />
-              <span class="toggle-track">
-                <span class="toggle-thumb"></span>
-              </span>
-            </label>
-            <label class="field range span-2">
-              <span class="field-label">Audio cue volume</span>
-              <div class="range-row">
-                <input id="audio-cues-volume" type="range" min="0" max="100" step="1"
-                       aria-valuemin="0"
-                       aria-valuemax="100"
-                       aria-valuenow="30"
-                       aria-label="Audio cue volume"
-                       aria-describedby="audio-cues-volume-value" />
-                <span id="audio-cues-volume-value" class="range-value" aria-live="polite">30%</span>
-              </div>
-            </label>
+            </details>
             </div>
           </div>
         </section>
 
-        <section class="panel transcribe-panel" data-panel="system" style="--delay: 0.18s">
+        <section class="panel transcribe-panel" data-panel="system" data-default-collapsed="true" data-panel-group="input-source" style="--delay: 0.18s">
           <div class="panel-header">
             <div class="panel-title">
               <h2>System Audio Capture</h2>
@@ -406,7 +468,7 @@
               </button>
             </div>
           </div>
-          <div class="panel-body">
+          <div class="panel-body" id="system-panel-body">
           <div class="panel-grid">
             <div class="field toggle-with-hint span-2">
               <label class="toggle-row">
@@ -419,15 +481,8 @@
               <span class="toggle-hint">When disabled, system audio monitoring and transcription are inactive</span>
             </div>
             <label class="field">
-                <span class="field-label">System audio device</span>
+              <span class="field-label">Capture device</span>
               <select id="transcribe-device-select"></select>
-            </label>
-            <label class="field toggle">
-              <span class="field-label">Use Voice Activation</span>
-              <input id="transcribe-vad-toggle" type="checkbox" />
-              <span class="toggle-track">
-                <span class="toggle-thumb"></span>
-              </span>
             </label>
             <div class="field hotkey-field span-2">
               <span class="field-label">Transcribe hotkey</span>
@@ -444,6 +499,29 @@
                     role="status"
                     aria-live="polite"></span>
             </div>
+            <label class="field toggle">
+              <span class="field-label">Voice activation mode</span>
+              <input id="transcribe-vad-toggle" type="checkbox" />
+              <span class="toggle-track">
+                <span class="toggle-thumb"></span>
+              </span>
+            </label>
+            <label class="field toggle">
+              <span class="field-label">Intelligent auto-dumping</span>
+              <input id="continuous-dump-enabled-toggle" type="checkbox" />
+              <span class="toggle-track">
+                <span class="toggle-thumb"></span>
+              </span>
+            </label>
+            <label class="field span-2">
+              <span class="field-label">Auto-dump profile</span>
+              <select id="continuous-dump-profile">
+                <option value="balanced">Balanced (recommended)</option>
+                <option value="low_latency">Low latency</option>
+                <option value="high_quality">High quality</option>
+              </select>
+              <span class="field-hint">Hybrid rules: silence + soft interval + hard cut.</span>
+            </label>
             <label class="field range" id="transcribe-vad-threshold-field">
               <span class="field-label">Voice Activation threshold</span>
               <div class="range-row">
@@ -457,7 +535,7 @@
               </div>
             </label>
             <label class="field range" id="transcribe-vad-silence-field">
-              <span class="field-label">Grace silence</span>
+              <span class="field-label">Silence grace</span>
               <div class="range-row">
                 <input id="transcribe-vad-silence" type="range" min="200" max="5000" step="100"
                        aria-valuemin="200"
@@ -502,8 +580,8 @@
               </div>
             </label>
             <label class="field range" id="transcribe-batch-field">
-              <span class="field-label">Chunk interval</span>
-              <span class="field-hint">How often system audio is chunked for transcription.</span>
+              <span class="field-label">Soft flush target</span>
+              <span class="field-hint">Preferred interval for adaptive flush when no clear silence cut appears.</span>
               <div class="range-row">
                 <input id="transcribe-batch-interval" type="range" min="4000" max="15000" step="1000"
                        aria-valuemin="4000"
@@ -515,8 +593,8 @@
               </div>
             </label>
             <label class="field range" id="transcribe-overlap-field">
-              <span class="field-label">Chunk overlap</span>
-              <span class="field-hint">Shared audio between chunks to keep words from splitting.</span>
+              <span class="field-label">Context pre-roll</span>
+              <span class="field-hint">Leading context kept for adaptive segment starts.</span>
               <div class="range-row">
                 <input id="transcribe-chunk-overlap" type="range" min="0" max="3000" step="250"
                        aria-valuemin="0"
@@ -528,7 +606,7 @@
               </div>
             </label>
             <details class="expander span-2">
-              <summary>Quality &amp; Encoding</summary>
+              <summary>Advanced</summary>
               <div class="expander-content">
                 <div class="field toggle">
                   <label class="toggle-row">
@@ -556,13 +634,117 @@
                   </label>
                   <span class="toggle-hint">Save system audio chunks as OPUS for Voice Analysis</span>
                 </div>
+                <label class="field range span-2">
+                  <span class="field-label">Hard cut limit</span>
+                  <div class="range-row">
+                    <input id="continuous-hard-cut" type="range" min="15000" max="120000" step="1000"
+                           aria-valuemin="15000"
+                           aria-valuemax="120000"
+                           aria-valuenow="45000"
+                           aria-label="Continuous hard cut limit"
+                           aria-describedby="continuous-hard-cut-value" />
+                    <span id="continuous-hard-cut-value" class="range-value" aria-live="polite">45s</span>
+                  </div>
+                </label>
+                <label class="field range span-2">
+                  <span class="field-label">Minimum chunk duration</span>
+                  <div class="range-row">
+                    <input id="continuous-min-chunk" type="range" min="250" max="5000" step="50"
+                           aria-valuemin="250"
+                           aria-valuemax="5000"
+                           aria-valuenow="1000"
+                           aria-label="Continuous minimum chunk duration"
+                           aria-describedby="continuous-min-chunk-value" />
+                    <span id="continuous-min-chunk-value" class="range-value" aria-live="polite">1.0s</span>
+                  </div>
+                </label>
+                <label class="field range span-2">
+                  <span class="field-label">Pre-roll context</span>
+                  <div class="range-row">
+                    <input id="continuous-pre-roll" type="range" min="0" max="1500" step="50"
+                           aria-valuemin="0"
+                           aria-valuemax="1500"
+                           aria-valuenow="300"
+                           aria-label="Continuous pre-roll context"
+                           aria-describedby="continuous-pre-roll-value" />
+                    <span id="continuous-pre-roll-value" class="range-value" aria-live="polite">0.30s</span>
+                  </div>
+                </label>
+                <label class="field range span-2">
+                  <span class="field-label">Post-roll context</span>
+                  <div class="range-row">
+                    <input id="continuous-post-roll" type="range" min="0" max="1500" step="50"
+                           aria-valuemin="0"
+                           aria-valuemax="1500"
+                           aria-valuenow="200"
+                           aria-label="Continuous post-roll context"
+                           aria-describedby="continuous-post-roll-value" />
+                    <span id="continuous-post-roll-value" class="range-value" aria-live="polite">0.20s</span>
+                  </div>
+                </label>
+                <label class="field range span-2">
+                  <span class="field-label">Idle keepalive flush</span>
+                  <div class="range-row">
+                    <input id="continuous-keepalive" type="range" min="10000" max="120000" step="5000"
+                           aria-valuemin="10000"
+                           aria-valuemax="120000"
+                           aria-valuenow="60000"
+                           aria-label="Continuous idle keepalive flush"
+                           aria-describedby="continuous-keepalive-value" />
+                    <span id="continuous-keepalive-value" class="range-value" aria-live="polite">60s</span>
+                  </div>
+                </label>
+                <div class="field toggle span-2">
+                  <label class="toggle-row">
+                    <span class="field-label">System Audio override</span>
+                    <input id="continuous-system-override-toggle" type="checkbox" />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </label>
+                  <span class="toggle-hint">Use source-specific dump timings for system audio.</span>
+                </div>
+                <label class="field range span-2">
+                  <span class="field-label">System soft flush</span>
+                  <div class="range-row">
+                    <input id="continuous-system-soft-flush" type="range" min="4000" max="30000" step="500"
+                           aria-valuemin="4000"
+                           aria-valuemax="30000"
+                           aria-valuenow="10000"
+                           aria-label="System soft flush"
+                           aria-describedby="continuous-system-soft-flush-value" />
+                    <span id="continuous-system-soft-flush-value" class="range-value" aria-live="polite">10s</span>
+                  </div>
+                </label>
+                <label class="field range span-2">
+                  <span class="field-label">System silence flush</span>
+                  <div class="range-row">
+                    <input id="continuous-system-silence-flush" type="range" min="300" max="5000" step="100"
+                           aria-valuemin="300"
+                           aria-valuemax="5000"
+                           aria-valuenow="1200"
+                           aria-label="System silence flush"
+                           aria-describedby="continuous-system-silence-flush-value" />
+                    <span id="continuous-system-silence-flush-value" class="range-value" aria-live="polite">1.2s</span>
+                  </div>
+                </label>
+                <label class="field range span-2">
+                  <span class="field-label">System hard cut</span>
+                  <div class="range-row">
+                    <input id="continuous-system-hard-cut" type="range" min="15000" max="120000" step="1000"
+                           aria-valuemin="15000"
+                           aria-valuemax="120000"
+                           aria-valuenow="45000"
+                           aria-label="System hard cut"
+                           aria-describedby="continuous-system-hard-cut-value" />
+                    <span id="continuous-system-hard-cut-value" class="range-value" aria-live="polite">45s</span>
+                  </div>
+                </label>
               </div>
             </details>
           </div>
           </div>
         </section>
 
-        <section class="panel" data-panel="postprocessing" style="--delay: 0.19s">
+        <section class="panel" data-panel="postprocessing" data-default-collapsed="true" style="--delay: 0.19s">
           <div class="panel-header">
             <div class="panel-title">
               <h2>Post-Processing</h2>
@@ -581,7 +763,7 @@
               </button>
             </div>
           </div>
-          <div class="panel-body">
+          <div class="panel-body" id="postprocessing-panel-body">
             <div class="panel-grid">
 
               <!-- Master toggle -->
@@ -753,7 +935,7 @@
           </div>
         </section>
 
-        <section class="panel transcription-panel" data-panel="model" style="--delay: 0.18s">
+        <section class="panel transcription-panel" data-panel="model" data-default-collapsed="true" style="--delay: 0.18s">
           <div class="panel-header">
             <div class="panel-title">
               <h2>Model Manager</h2>
@@ -772,7 +954,7 @@
               </button>
             </div>
           </div>
-          <div class="panel-body">
+          <div class="panel-body" id="model-panel-body">
           <div class="model-manager">
             <div class="panel-grid model-source-grid">
               <label class="field">
@@ -819,7 +1001,7 @@
           </div>
         </section>
 
-        <section class="panel interface-panel" data-panel="interface" style="--delay: 0.22s">
+        <section class="panel interface-panel" data-panel="interface" data-default-collapsed="true" style="--delay: 0.22s">
           <div class="panel-header">
             <div class="panel-title">
               <h2>UX / UI-Adjustments</h2>
@@ -838,7 +1020,7 @@
               </button>
             </div>
           </div>
-          <div class="panel-body">
+          <div class="panel-body" id="interface-panel-body">
           <div class="panel-grid">
             <div class="field hotkey-field span-2">
               <span class="field-label">Toggle activation words</span>

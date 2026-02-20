@@ -1,6 +1,6 @@
 # Task Schedule - Trispr Flow
 
-Last updated: 2026-02-18
+Last updated: 2026-02-19
 
 ## Overview
 
@@ -138,6 +138,22 @@ Instead of context-switching between models for each task, tasks are organized i
 
 ---
 
+## v0.6.1 Stabilization Packet: Adaptive Continuous Dump (Mic + System)
+
+**Timeline**: 2-3 days | **Model Switches**: 1 | **Status**: Complete
+
+| Task | Name | Complexity | Status | Description |
+| --- | --- | --- | --- | --- |
+| CD1 | Adaptive segmenter module | High | DONE | Added `continuous_dump.rs` with hybrid flush logic (silence + soft interval + hard cut), pre-roll, min-chunk merge, backpressure scaling. |
+| CD2 | Settings schema extension + migration | High | DONE | Added continuous dump fields + profile defaults + legacy mapping from transcribe interval/overlap/silence fields. |
+| CD3 | System audio pipeline integration | High | DONE | Replaced static chunk slicing with adaptive segmenter in WASAPI loopback path; added runtime telemetry events. |
+| CD4 | Mic toggle-mode integration | High | DONE | Added continuous toggle processor for mic with adaptive chunking and per-chunk transcription flow. |
+| CD5 | Per-source session finalization | Medium | DONE | Session manager now tracks source-specific active sessions (`mic`, `output`) and finalizes independently. |
+| CD6 | UI controls and wiring | Medium | DONE | Added profile + advanced controls + per-source overrides + mic auto-save toggle in Settings panel. |
+| CD7 | Validation and regression tests | Medium | DONE | `npm run build`, `npm test`, `cargo test` green; adaptive segmenter unit tests added and fixed. |
+
+---
+
 ## v0.7.0 Schedule: AI Fallback Overhaul
 
 **Timeline**: 5 weeks (1 planning + 4 implementation) | **Model Switches**: 2 (Haiku → Opus → Sonnet)
@@ -158,27 +174,27 @@ Instead of context-switching between models for each task, tasks are organized i
 - DECISIONS.md: 3 new decisions (DEC-023, DEC-024, DEC-025)
 - Design decisions documented: terminology, settings layout, execution flow
 
-### Block G: Opus Sprint
+### Block G: Opus Sprint --- COMPLETE
 
-**Duration**: 1.5 weeks | **Model**: Claude Opus
+**Duration**: 1.5 weeks | **Model**: Claude Opus | **Status**: Complete
 
-| Task | Name | Complexity | Dependencies | Description |
-| --- | --- | --- | --- | --- |
-| 31 | Design multi-provider architecture (Claude, OpenAI, Gemini) | High | Task 39 | Plan settings schema, API key storage, provider-specific limits. |
-| 36 | Implement provider data model and settings migration | High | Task 31 | Update settings.json schema. Migration from old `cloud_fallback` to new structure. |
-| 37 | Implement provider config UI (API keys, model selection) | High | Task 31 | Create Settings panel for provider/model/key management. |
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| 31 | Design multi-provider architecture (Claude, OpenAI, Gemini) | High | Task 39 | DONE | Plan settings schema, API key storage, provider-specific limits. |
+| 36 | Implement provider data model and settings migration | High | Task 31 | DONE | Update settings.json schema. Migration from old `cloud_fallback` to new structure. |
+| 37 | Implement provider config UI (API keys, model selection) | High | Task 31 | DONE | Create Settings panel for provider/model/key management. |
 
-### Block H: Sonnet Sprint
+### Block H: Sonnet Sprint --- OPEN
 
-**Duration**: 2 weeks | **Model**: Claude Sonnet
+**Duration**: 2 weeks | **Model**: Claude Sonnet | **Status**: Open / next execution packet
 
-| Task | Name | Complexity | Dependencies | Description |
-| --- | --- | --- | --- | --- |
-| 32 | Implement OpenAI provider integration | High | Task 31 | Add OpenAI API client, model streaming, error handling. |
-| 33 | Implement Anthropic (Claude) provider integration | High | Task 31 | Claude API client, model selection, streaming support. |
-| 34 | Implement Gemini provider integration | High | Task 31 | Gemini API client, model selection, error handling. |
-| 35 | Implement user-editable prompt strategy | Medium | Task 31 | Allow custom post-process prompts per provider. Reset to default. |
-| 38 | End-to-end test: fallback to provider to post-process | High | Tasks 32, 33, 34, 35 | Full workflow test across all providers and models. |
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| 32 | Implement OpenAI provider integration | High | Task 31 | OPEN | Add OpenAI API client, model streaming, error handling. |
+| 33 | Implement Anthropic (Claude) provider integration | High | Task 31 | OPEN | Claude API client, model selection, streaming support. |
+| 34 | Implement Gemini provider integration | High | Task 31 | OPEN | Gemini API client, model selection, error handling. |
+| 35 | Implement user-editable prompt strategy | Medium | Task 31 | OPEN | Allow custom post-process prompts per provider. Reset to default. |
+| 38 | End-to-end test: fallback to provider to post-process | High | Tasks 32, 33, 34, 35 | OPEN | Full workflow test across all providers and models. |
 
 ---
 

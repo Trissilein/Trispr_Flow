@@ -103,6 +103,25 @@ pub(crate) struct Settings {
     pub(crate) opus_enabled: bool,
     pub(crate) opus_bitrate_kbps: u32,
     pub(crate) auto_save_system_audio: bool, // Auto-save system audio as OPUS
+    pub(crate) auto_save_mic_audio: bool,    // Auto-save mic continuous audio as OPUS
+    // Intelligent continuous dump settings
+    pub(crate) continuous_dump_enabled: bool,
+    pub(crate) continuous_dump_profile: String, // "balanced" | "low_latency" | "high_quality"
+    pub(crate) continuous_soft_flush_ms: u64,
+    pub(crate) continuous_silence_flush_ms: u64,
+    pub(crate) continuous_hard_cut_ms: u64,
+    pub(crate) continuous_min_chunk_ms: u64,
+    pub(crate) continuous_pre_roll_ms: u64,
+    pub(crate) continuous_post_roll_ms: u64,
+    pub(crate) continuous_idle_keepalive_ms: u64,
+    pub(crate) continuous_mic_override_enabled: bool,
+    pub(crate) continuous_mic_soft_flush_ms: u64,
+    pub(crate) continuous_mic_silence_flush_ms: u64,
+    pub(crate) continuous_mic_hard_cut_ms: u64,
+    pub(crate) continuous_system_override_enabled: bool,
+    pub(crate) continuous_system_soft_flush_ms: u64,
+    pub(crate) continuous_system_silence_flush_ms: u64,
+    pub(crate) continuous_system_hard_cut_ms: u64,
     pub(crate) transcribe_backend: String, // "whisper_cpp" | future backends
     pub(crate) analysis_tool_path_override: String,
     pub(crate) analysis_parallel_warning_ack: bool,
@@ -206,6 +225,24 @@ impl Default for Settings {
       opus_enabled: true,
       opus_bitrate_kbps: 64,
       auto_save_system_audio: false,
+      auto_save_mic_audio: false,
+      continuous_dump_enabled: true,
+      continuous_dump_profile: "balanced".to_string(),
+      continuous_soft_flush_ms: 10_000,
+      continuous_silence_flush_ms: 1_200,
+      continuous_hard_cut_ms: 45_000,
+      continuous_min_chunk_ms: 1_000,
+      continuous_pre_roll_ms: 300,
+      continuous_post_roll_ms: 200,
+      continuous_idle_keepalive_ms: 60_000,
+      continuous_mic_override_enabled: false,
+      continuous_mic_soft_flush_ms: 10_000,
+      continuous_mic_silence_flush_ms: 1_200,
+      continuous_mic_hard_cut_ms: 45_000,
+      continuous_system_override_enabled: false,
+      continuous_system_soft_flush_ms: 10_000,
+      continuous_system_silence_flush_ms: 1_200,
+      continuous_system_hard_cut_ms: 45_000,
       transcribe_backend: "whisper_cpp".to_string(),
       analysis_tool_path_override: String::new(),
       analysis_parallel_warning_ack: false,
@@ -310,6 +347,7 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if settings.transcribe_vad_silence_ms > 5000 {
                 settings.transcribe_vad_silence_ms = 5000;
             }
+            normalize_continuous_dump_fields(&mut settings);
             if settings.transcribe_backend.trim().is_empty() {
                 settings.transcribe_backend = "whisper_cpp".to_string();
             }
@@ -531,6 +569,88 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
     settings.postproc_llm_model = settings.ai_fallback.model.clone();
     if settings.ai_fallback.custom_prompt_enabled {
         settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt.clone();
+    }
+}
+
+pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
+    let defaults = Settings::default();
+
+    if settings.continuous_dump_profile != "balanced"
+        && settings.continuous_dump_profile != "low_latency"
+        && settings.continuous_dump_profile != "high_quality"
+    {
+        settings.continuous_dump_profile = "balanced".to_string();
+    }
+
+    // Legacy migration from interval/overlap system-audio settings.
+    if settings.continuous_soft_flush_ms == defaults.continuous_soft_flush_ms
+        && settings.transcribe_batch_interval_ms != defaults.transcribe_batch_interval_ms
+    {
+        settings.continuous_soft_flush_ms = settings.transcribe_batch_interval_ms;
+    }
+    if settings.continuous_system_soft_flush_ms == defaults.continuous_system_soft_flush_ms
+        && settings.transcribe_batch_interval_ms != defaults.transcribe_batch_interval_ms
+    {
+        settings.continuous_system_soft_flush_ms = settings.transcribe_batch_interval_ms;
+    }
+    if settings.continuous_silence_flush_ms == defaults.continuous_silence_flush_ms
+        && settings.transcribe_vad_silence_ms != defaults.transcribe_vad_silence_ms
+    {
+        settings.continuous_silence_flush_ms = settings.transcribe_vad_silence_ms;
+    }
+    if settings.continuous_system_silence_flush_ms == defaults.continuous_system_silence_flush_ms
+        && settings.transcribe_vad_silence_ms != defaults.transcribe_vad_silence_ms
+    {
+        settings.continuous_system_silence_flush_ms = settings.transcribe_vad_silence_ms;
+    }
+    if settings.continuous_pre_roll_ms == defaults.continuous_pre_roll_ms
+        && settings.transcribe_chunk_overlap_ms != defaults.transcribe_chunk_overlap_ms
+    {
+        settings.continuous_pre_roll_ms = settings.transcribe_chunk_overlap_ms;
+    }
+
+    settings.continuous_soft_flush_ms = settings.continuous_soft_flush_ms.clamp(4_000, 30_000);
+    settings.continuous_silence_flush_ms = settings.continuous_silence_flush_ms.clamp(300, 5_000);
+    settings.continuous_hard_cut_ms = settings.continuous_hard_cut_ms.clamp(15_000, 120_000);
+    settings.continuous_min_chunk_ms = settings.continuous_min_chunk_ms.clamp(250, 5_000);
+    settings.continuous_pre_roll_ms = settings.continuous_pre_roll_ms.clamp(0, 1_500);
+    settings.continuous_post_roll_ms = settings.continuous_post_roll_ms.clamp(0, 1_500);
+    settings.continuous_idle_keepalive_ms =
+        settings.continuous_idle_keepalive_ms.clamp(10_000, 120_000);
+
+    settings.continuous_mic_soft_flush_ms =
+        settings.continuous_mic_soft_flush_ms.clamp(4_000, 30_000);
+    settings.continuous_mic_silence_flush_ms =
+        settings.continuous_mic_silence_flush_ms.clamp(300, 5_000);
+    settings.continuous_mic_hard_cut_ms =
+        settings.continuous_mic_hard_cut_ms.clamp(15_000, 120_000);
+
+    settings.continuous_system_soft_flush_ms = settings
+        .continuous_system_soft_flush_ms
+        .clamp(4_000, 30_000);
+    settings.continuous_system_silence_flush_ms = settings
+        .continuous_system_silence_flush_ms
+        .clamp(300, 5_000);
+    settings.continuous_system_hard_cut_ms = settings
+        .continuous_system_hard_cut_ms
+        .clamp(15_000, 120_000);
+
+    // Keep legacy controls in sync while old UI / settings still exist.
+    let legacy_soft = if settings.continuous_system_override_enabled {
+        settings.continuous_system_soft_flush_ms
+    } else {
+        settings.continuous_soft_flush_ms
+    };
+    let legacy_silence = if settings.continuous_system_override_enabled {
+        settings.continuous_system_silence_flush_ms
+    } else {
+        settings.continuous_silence_flush_ms
+    };
+    settings.transcribe_batch_interval_ms = legacy_soft.clamp(4_000, 15_000);
+    settings.transcribe_vad_silence_ms = legacy_silence.clamp(200, 5_000);
+    settings.transcribe_chunk_overlap_ms = settings.continuous_pre_roll_ms.min(3_000);
+    if settings.transcribe_chunk_overlap_ms > settings.transcribe_batch_interval_ms {
+        settings.transcribe_chunk_overlap_ms = settings.transcribe_batch_interval_ms / 2;
     }
 }
 

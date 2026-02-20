@@ -2,11 +2,12 @@
 
 > Canonical priority/dependency source: `ROADMAP.md`.  
 > This file is a detailed implementation handover for Block G only.
+> Status note (2026-02-19): Block G is complete. Keep this file as archive/handover context.
 
 **For**: Next developer on v0.7.0 AI Fallback feature
 **Model**: Claude Opus
 **Duration**: 2-3 weeks
-**Status**: Ready to start
+**Status**: Completed (archived handover)
 **Last updated**: 2026-02-16
 
 ---

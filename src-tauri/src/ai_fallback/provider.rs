@@ -3,7 +3,6 @@ use super::models::{RefinementOptions, RefinementResult, TokenUsage};
 
 pub trait AIProvider: Send + Sync {
     fn id(&self) -> &'static str;
-    fn available_models(&self) -> Vec<String>;
     fn validate_api_key(&self, api_key: &str) -> Result<(), AIError>;
     fn estimate_cost_usd(&self, model: &str, input_tokens: usize, output_tokens: usize) -> f64;
     fn refine_transcript(
@@ -108,10 +107,6 @@ impl AIProvider for ClaudeProvider {
         "claude"
     }
 
-    fn available_models(&self) -> Vec<String> {
-        default_models_for_provider("claude")
-    }
-
     fn validate_api_key(&self, api_key: &str) -> Result<(), AIError> {
         validate_key_basic(api_key, self.id())?;
         Ok(())
@@ -139,10 +134,6 @@ impl AIProvider for OpenAIProvider {
         "openai"
     }
 
-    fn available_models(&self) -> Vec<String> {
-        default_models_for_provider("openai")
-    }
-
     fn validate_api_key(&self, api_key: &str) -> Result<(), AIError> {
         validate_key_basic(api_key, self.id())?;
         Ok(())
@@ -167,10 +158,6 @@ impl AIProvider for OpenAIProvider {
 impl AIProvider for GeminiProvider {
     fn id(&self) -> &'static str {
         "gemini"
-    }
-
-    fn available_models(&self) -> Vec<String> {
-        default_models_for_provider("gemini")
     }
 
     fn validate_api_key(&self, api_key: &str) -> Result<(), AIError> {

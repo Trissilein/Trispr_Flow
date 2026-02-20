@@ -173,14 +173,6 @@ impl AIProvidersSettings {
         Ok(())
     }
 
-    pub fn set_models(&mut self, provider: &str, models: Vec<String>) -> Result<(), String> {
-        let provider_config = self
-            .get_mut(provider)
-            .ok_or_else(|| format!("Unknown AI provider: {}", provider))?;
-        provider_config.available_models = models;
-        provider_config.normalize_for_provider(provider);
-        Ok(())
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

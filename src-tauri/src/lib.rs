@@ -4,6 +4,7 @@
 mod ai_fallback;
 mod audio;
 mod constants;
+mod continuous_dump;
 mod errors;
 mod hotkeys;
 mod models;
@@ -44,7 +45,8 @@ use crate::models::{
 };
 use crate::state::{
     load_history, load_settings, load_transcribe_history, normalize_ai_fallback_fields,
-    push_history_entry_inner, push_transcribe_entry_inner, save_settings_file, sync_model_dir_env,
+    normalize_continuous_dump_fields, push_history_entry_inner, push_transcribe_entry_inner,
+    save_settings_file, sync_model_dir_env,
 };
 use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, start_transcribe_monitor,
@@ -503,6 +505,7 @@ fn save_settings(
         )
     };
     normalize_ai_fallback_fields(&mut settings);
+    normalize_continuous_dump_fields(&mut settings);
 
     {
         let mut current = state.settings.lock().unwrap();
@@ -941,7 +944,11 @@ fn analysis_tool_candidate_paths(app: &AppHandle, override_path: Option<&str>) -
     }
 
     if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(resource_dir.join("analysis-tool").join("trispr-analysis.exe"));
+        candidates.push(
+            resource_dir
+                .join("analysis-tool")
+                .join("trispr-analysis.exe"),
+        );
     }
 
     if let Ok(exe_dir) = std::env::current_exe().and_then(|path| {
@@ -991,7 +998,9 @@ fn analysis_tool_candidate_dirs(candidate_paths: &[PathBuf]) -> Vec<PathBuf> {
     dirs
 }
 
-fn resolve_analysis_tool_executable_from_candidates(candidate_paths: &[PathBuf]) -> Option<PathBuf> {
+fn resolve_analysis_tool_executable_from_candidates(
+    candidate_paths: &[PathBuf],
+) -> Option<PathBuf> {
     candidate_paths
         .into_iter()
         .find(|path| path.exists())
@@ -1008,19 +1017,36 @@ fn analysis_tool_dev_main_candidates() -> Vec<PathBuf> {
 
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
-            candidates.push(exe_dir.join("..").join("..").join("..").join("analysis-tool").join("main.py"));
-            candidates.push(exe_dir.join("..").join("..").join("analysis-tool").join("main.py"));
+            candidates.push(
+                exe_dir
+                    .join("..")
+                    .join("..")
+                    .join("..")
+                    .join("analysis-tool")
+                    .join("main.py"),
+            );
+            candidates.push(
+                exe_dir
+                    .join("..")
+                    .join("..")
+                    .join("analysis-tool")
+                    .join("main.py"),
+            );
         }
     }
 
     candidates
 }
 
-fn launch_analysis_tool_dev_fallback(audio: &Path) -> Result<(std::process::Child, String), String> {
+fn launch_analysis_tool_dev_fallback(
+    audio: &Path,
+) -> Result<(std::process::Child, String), String> {
     let main_script = analysis_tool_dev_main_candidates()
         .into_iter()
         .find(|path| path.exists())
-        .ok_or_else(|| "analysis-tool/main.py not found in known development locations.".to_string())?;
+        .ok_or_else(|| {
+            "analysis-tool/main.py not found in known development locations.".to_string()
+        })?;
 
     let mut launch_errors = Vec::new();
     let mut python_commands: Vec<(String, Vec<String>)> = Vec::new();
@@ -1074,9 +1100,15 @@ fn launch_analysis_tool_dev_fallback(audio: &Path) -> Result<(std::process::Chil
         open_args.push("--source".to_string());
         open_args.push("trispr-flow".to_string());
 
-        match std::process::Command::new(&command).args(&open_args).spawn() {
+        match std::process::Command::new(&command)
+            .args(&open_args)
+            .spawn()
+        {
             Ok(child) => {
-                return Ok((child, format!("{} {}", command, main_script.to_string_lossy())));
+                return Ok((
+                    child,
+                    format!("{} {}", command, main_script.to_string_lossy()),
+                ));
             }
             Err(err) => {
                 launch_errors.push(format!("{}: {}", command, err));

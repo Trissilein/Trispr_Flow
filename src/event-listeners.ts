@@ -9,11 +9,12 @@ import type {
 } from "./types";
 import { settings } from "./state";
 import * as dom from "./dom-refs";
-import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, updateTranscribeVadVisibility, updateTranscribeThreshold, renderAIFallbackSettingsUi } from "./settings";
+import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, updateTranscribeVadVisibility, updateTranscribeThreshold, renderAIFallbackSettingsUi, renderTopicKeywords } from "./settings";
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
 import { refreshModels, refreshModelsDir } from "./models";
-import { applyPanelCollapsed, setHistoryTab, buildConversationHistory, buildConversationText, buildExportText, setSearchQuery } from "./history";
+import { setHistoryTab, buildConversationHistory, buildConversationText, buildExportText, setSearchQuery, setTopicKeywords, DEFAULT_TOPICS } from "./history";
+import { isPanelId, togglePanel } from "./panels";
 import { setupHotkeyRecorder } from "./hotkeys";
 import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
@@ -80,6 +81,84 @@ function ensureAIFallbackSettingsDefaults() {
       },
     };
   }
+}
+
+function ensureContinuousDumpDefaults() {
+  if (!settings) return;
+  settings.auto_save_mic_audio ??= false;
+  settings.continuous_dump_enabled ??= true;
+  settings.continuous_dump_profile ??= "balanced";
+  settings.continuous_soft_flush_ms ??= 10000;
+  settings.continuous_silence_flush_ms ??= 1200;
+  settings.continuous_hard_cut_ms ??= 45000;
+  settings.continuous_min_chunk_ms ??= 1000;
+  settings.continuous_pre_roll_ms ??= 300;
+  settings.continuous_post_roll_ms ??= 200;
+  settings.continuous_idle_keepalive_ms ??= 60000;
+  settings.continuous_mic_override_enabled ??= false;
+  settings.continuous_mic_soft_flush_ms ??= settings.continuous_soft_flush_ms;
+  settings.continuous_mic_silence_flush_ms ??= settings.continuous_silence_flush_ms;
+  settings.continuous_mic_hard_cut_ms ??= settings.continuous_hard_cut_ms;
+  settings.continuous_system_override_enabled ??= false;
+  settings.continuous_system_soft_flush_ms ??= settings.continuous_soft_flush_ms;
+  settings.continuous_system_silence_flush_ms ??= settings.continuous_silence_flush_ms;
+  settings.continuous_system_hard_cut_ms ??= settings.continuous_hard_cut_ms;
+}
+
+function applyContinuousProfile(profile: "balanced" | "low_latency" | "high_quality") {
+  if (!settings) return;
+  if (profile === "low_latency") {
+    settings.continuous_soft_flush_ms = 8000;
+    settings.continuous_silence_flush_ms = 900;
+    settings.continuous_hard_cut_ms = 30000;
+    settings.continuous_min_chunk_ms = 800;
+    settings.continuous_pre_roll_ms = 200;
+    settings.continuous_post_roll_ms = 150;
+    settings.continuous_idle_keepalive_ms = 45000;
+  } else if (profile === "high_quality") {
+    settings.continuous_soft_flush_ms = 12000;
+    settings.continuous_silence_flush_ms = 1600;
+    settings.continuous_hard_cut_ms = 60000;
+    settings.continuous_min_chunk_ms = 1500;
+    settings.continuous_pre_roll_ms = 450;
+    settings.continuous_post_roll_ms = 300;
+    settings.continuous_idle_keepalive_ms = 75000;
+  } else {
+    settings.continuous_soft_flush_ms = 10000;
+    settings.continuous_silence_flush_ms = 1200;
+    settings.continuous_hard_cut_ms = 45000;
+    settings.continuous_min_chunk_ms = 1000;
+    settings.continuous_pre_roll_ms = 300;
+    settings.continuous_post_roll_ms = 200;
+    settings.continuous_idle_keepalive_ms = 60000;
+  }
+
+  if (!settings.continuous_system_override_enabled) {
+    settings.continuous_system_soft_flush_ms = settings.continuous_soft_flush_ms;
+    settings.continuous_system_silence_flush_ms = settings.continuous_silence_flush_ms;
+    settings.continuous_system_hard_cut_ms = settings.continuous_hard_cut_ms;
+  }
+  if (!settings.continuous_mic_override_enabled) {
+    settings.continuous_mic_soft_flush_ms = settings.continuous_soft_flush_ms;
+    settings.continuous_mic_silence_flush_ms = settings.continuous_silence_flush_ms;
+    settings.continuous_mic_hard_cut_ms = settings.continuous_hard_cut_ms;
+  }
+  const systemSoftFlush = settings.continuous_system_soft_flush_ms ?? settings.continuous_soft_flush_ms ?? 10000;
+  const systemSilenceFlush =
+    settings.continuous_system_silence_flush_ms ?? settings.continuous_silence_flush_ms ?? 1200;
+  const preRollMs = settings.continuous_pre_roll_ms ?? 300;
+  settings.transcribe_batch_interval_ms = Math.max(
+    4000,
+    Math.min(15000, systemSoftFlush),
+  );
+  settings.transcribe_vad_silence_ms = Math.max(
+    200,
+    Math.min(5000, systemSilenceFlush),
+  );
+  settings.transcribe_chunk_overlap_ms = Math.max(
+    0,
+    Math.min(3000, preRollMs),
+  );
 }
 
 async function refreshAIFallbackModels(provider: AIFallbackProvider) {
@@ -381,6 +460,7 @@ export function renderVocabulary() {
 
 export function wireEvents() {
   ensureAIFallbackSettingsDefaults();
+  ensureContinuousDumpDefaults();
 
   // Main tab switching
   dom.tabBtnTranscription?.addEventListener("click", () => {
@@ -473,25 +553,23 @@ export function wireEvents() {
 
   document.querySelectorAll<HTMLButtonElement>(".panel-collapse-btn").forEach((button) => {
     const panelId = button.dataset.panelCollapse;
-    if (!panelId) return;
-    button.addEventListener("click", () => {
-      const panel = document.querySelector(`[data-panel="${panelId}"]`);
-      const collapsed = panel?.classList.contains("panel-collapsed") ?? false;
-      applyPanelCollapsed(panelId, !collapsed);
+    if (!panelId || !isPanelId(panelId)) return;
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      togglePanel(panelId);
     });
   });
 
   document.querySelectorAll<HTMLElement>(".panel-header").forEach((header) => {
     const panel = header.closest<HTMLElement>(".panel");
     const panelId = panel?.dataset.panel;
-    if (!panelId) return;
+    if (!panelId || !isPanelId(panelId)) return;
     header.addEventListener("click", (event) => {
       const target = event.target as HTMLElement | null;
       if (!target) return;
       if (target.closest(".panel-actions")) return;
       if (target.closest("button, input, select, textarea, a, label")) return;
-      const collapsed = panel?.classList.contains("panel-collapsed") ?? false;
-      applyPanelCollapsed(panelId, !collapsed);
+      togglePanel(panelId);
     });
   });
 
@@ -697,6 +775,10 @@ export function wireEvents() {
     if (!settings || !dom.transcribeVadSilence) return;
     const value = Number(dom.transcribeVadSilence.value);
     settings.transcribe_vad_silence_ms = Math.max(200, Math.min(5000, value));
+    settings.continuous_system_silence_flush_ms = settings.transcribe_vad_silence_ms;
+    if (!settings.continuous_system_override_enabled) {
+      settings.continuous_silence_flush_ms = settings.transcribe_vad_silence_ms;
+    }
     if (dom.transcribeVadSilenceValue) {
       dom.transcribeVadSilenceValue.textContent = `${Math.round(settings.transcribe_vad_silence_ms / 100) / 10}s`;
     }
@@ -712,6 +794,10 @@ export function wireEvents() {
     if (!settings || !dom.transcribeBatchInterval) return;
     const value = Number(dom.transcribeBatchInterval.value);
     settings.transcribe_batch_interval_ms = Math.max(4000, Math.min(15000, value));
+    settings.continuous_system_soft_flush_ms = settings.transcribe_batch_interval_ms;
+    if (!settings.continuous_system_override_enabled) {
+      settings.continuous_soft_flush_ms = settings.transcribe_batch_interval_ms;
+    }
     if (dom.transcribeBatchValue) {
       dom.transcribeBatchValue.textContent = `${Math.round(settings.transcribe_batch_interval_ms / 1000)}s`;
     }
@@ -727,9 +813,11 @@ export function wireEvents() {
     if (!settings || !dom.transcribeChunkOverlap) return;
     const value = Number(dom.transcribeChunkOverlap.value);
     settings.transcribe_chunk_overlap_ms = Math.max(0, Math.min(3000, value));
+    settings.continuous_pre_roll_ms = settings.transcribe_chunk_overlap_ms;
     if (settings.transcribe_chunk_overlap_ms > settings.transcribe_batch_interval_ms) {
       settings.transcribe_chunk_overlap_ms = Math.floor(settings.transcribe_batch_interval_ms / 2);
       dom.transcribeChunkOverlap.value = settings.transcribe_chunk_overlap_ms.toString();
+      settings.continuous_pre_roll_ms = settings.transcribe_chunk_overlap_ms;
     }
     if (dom.transcribeOverlapValue) {
       dom.transcribeOverlapValue.textContent = `${(settings.transcribe_chunk_overlap_ms / 1000).toFixed(1)}s`;
@@ -849,6 +937,160 @@ export function wireEvents() {
     settings.auto_save_system_audio = dom.autoSaveSystemAudioToggle!.checked;
     await persistSettings();
   });
+
+  dom.autoSaveMicAudioToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.auto_save_mic_audio = dom.autoSaveMicAudioToggle!.checked;
+    await persistSettings();
+  });
+
+  dom.continuousDumpEnabledToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.continuous_dump_enabled = dom.continuousDumpEnabledToggle!.checked;
+    await persistSettings();
+  });
+
+  dom.continuousDumpProfile?.addEventListener("change", async () => {
+    if (!settings || !dom.continuousDumpProfile) return;
+    settings.continuous_dump_profile = dom.continuousDumpProfile.value as "balanced" | "low_latency" | "high_quality";
+    applyContinuousProfile(settings.continuous_dump_profile);
+    renderSettings();
+    await persistSettings();
+  });
+
+  dom.continuousHardCut?.addEventListener("input", () => {
+    if (!settings || !dom.continuousHardCut) return;
+    const value = Math.max(15000, Math.min(120000, Number(dom.continuousHardCut.value)));
+    settings.continuous_hard_cut_ms = value;
+    if (!settings.continuous_system_override_enabled) settings.continuous_system_hard_cut_ms = value;
+    if (!settings.continuous_mic_override_enabled) settings.continuous_mic_hard_cut_ms = value;
+    if (dom.continuousHardCutValue) dom.continuousHardCutValue.textContent = `${Math.round(value / 1000)}s`;
+    updateRangeAria("continuous-hard-cut", value);
+  });
+  dom.continuousHardCut?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+
+  dom.continuousMinChunk?.addEventListener("input", () => {
+    if (!settings || !dom.continuousMinChunk) return;
+    const value = Math.max(250, Math.min(5000, Number(dom.continuousMinChunk.value)));
+    settings.continuous_min_chunk_ms = value;
+    if (dom.continuousMinChunkValue) dom.continuousMinChunkValue.textContent = `${(value / 1000).toFixed(1)}s`;
+    updateRangeAria("continuous-min-chunk", value);
+  });
+  dom.continuousMinChunk?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+
+  dom.continuousPreRoll?.addEventListener("input", () => {
+    if (!settings || !dom.continuousPreRoll) return;
+    const value = Math.max(0, Math.min(1500, Number(dom.continuousPreRoll.value)));
+    settings.continuous_pre_roll_ms = value;
+    settings.transcribe_chunk_overlap_ms = Math.max(0, Math.min(3000, value));
+    if (dom.continuousPreRollValue) dom.continuousPreRollValue.textContent = `${(value / 1000).toFixed(2)}s`;
+    if (dom.transcribeChunkOverlap) dom.transcribeChunkOverlap.value = settings.transcribe_chunk_overlap_ms.toString();
+    if (dom.transcribeOverlapValue) dom.transcribeOverlapValue.textContent = `${(settings.transcribe_chunk_overlap_ms / 1000).toFixed(1)}s`;
+    updateRangeAria("continuous-pre-roll", value);
+  });
+  dom.continuousPreRoll?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+
+  dom.continuousPostRoll?.addEventListener("input", () => {
+    if (!settings || !dom.continuousPostRoll) return;
+    const value = Math.max(0, Math.min(1500, Number(dom.continuousPostRoll.value)));
+    settings.continuous_post_roll_ms = value;
+    if (dom.continuousPostRollValue) dom.continuousPostRollValue.textContent = `${(value / 1000).toFixed(2)}s`;
+    updateRangeAria("continuous-post-roll", value);
+  });
+  dom.continuousPostRoll?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+
+  dom.continuousKeepalive?.addEventListener("input", () => {
+    if (!settings || !dom.continuousKeepalive) return;
+    const value = Math.max(10000, Math.min(120000, Number(dom.continuousKeepalive.value)));
+    settings.continuous_idle_keepalive_ms = value;
+    if (dom.continuousKeepaliveValue) dom.continuousKeepaliveValue.textContent = `${Math.round(value / 1000)}s`;
+    updateRangeAria("continuous-keepalive", value);
+  });
+  dom.continuousKeepalive?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+
+  dom.continuousSystemOverrideToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.continuous_system_override_enabled = dom.continuousSystemOverrideToggle!.checked;
+    if (!settings.continuous_system_override_enabled) {
+      settings.continuous_system_soft_flush_ms = settings.continuous_soft_flush_ms!;
+      settings.continuous_system_silence_flush_ms = settings.continuous_silence_flush_ms!;
+      settings.continuous_system_hard_cut_ms = settings.continuous_hard_cut_ms!;
+    }
+    renderSettings();
+    await persistSettings();
+  });
+
+  dom.continuousSystemSoftFlush?.addEventListener("input", () => {
+    if (!settings || !dom.continuousSystemSoftFlush) return;
+    const value = Math.max(4000, Math.min(30000, Number(dom.continuousSystemSoftFlush.value)));
+    settings.continuous_system_soft_flush_ms = value;
+    settings.transcribe_batch_interval_ms = Math.max(4000, Math.min(15000, value));
+    if (dom.continuousSystemSoftFlushValue) dom.continuousSystemSoftFlushValue.textContent = `${Math.round(value / 1000)}s`;
+    if (dom.transcribeBatchInterval) dom.transcribeBatchInterval.value = settings.transcribe_batch_interval_ms.toString();
+    if (dom.transcribeBatchValue) dom.transcribeBatchValue.textContent = `${Math.round(settings.transcribe_batch_interval_ms / 1000)}s`;
+    updateRangeAria("continuous-system-soft-flush", value);
+  });
+  dom.continuousSystemSoftFlush?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+
+  dom.continuousSystemSilenceFlush?.addEventListener("input", () => {
+    if (!settings || !dom.continuousSystemSilenceFlush) return;
+    const value = Math.max(300, Math.min(5000, Number(dom.continuousSystemSilenceFlush.value)));
+    settings.continuous_system_silence_flush_ms = value;
+    settings.transcribe_vad_silence_ms = Math.max(200, Math.min(5000, value));
+    if (dom.continuousSystemSilenceFlushValue) dom.continuousSystemSilenceFlushValue.textContent = `${(value / 1000).toFixed(1)}s`;
+    if (dom.transcribeVadSilence) dom.transcribeVadSilence.value = settings.transcribe_vad_silence_ms.toString();
+    if (dom.transcribeVadSilenceValue) dom.transcribeVadSilenceValue.textContent = `${Math.round(settings.transcribe_vad_silence_ms / 100) / 10}s`;
+    updateRangeAria("continuous-system-silence-flush", value);
+  });
+  dom.continuousSystemSilenceFlush?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+
+  dom.continuousSystemHardCut?.addEventListener("input", () => {
+    if (!settings || !dom.continuousSystemHardCut) return;
+    const value = Math.max(15000, Math.min(120000, Number(dom.continuousSystemHardCut.value)));
+    settings.continuous_system_hard_cut_ms = value;
+    if (dom.continuousSystemHardCutValue) dom.continuousSystemHardCutValue.textContent = `${Math.round(value / 1000)}s`;
+    updateRangeAria("continuous-system-hard-cut", value);
+  });
+  dom.continuousSystemHardCut?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+
+  dom.continuousMicOverrideToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.continuous_mic_override_enabled = dom.continuousMicOverrideToggle!.checked;
+    if (!settings.continuous_mic_override_enabled) {
+      settings.continuous_mic_soft_flush_ms = settings.continuous_soft_flush_ms!;
+      settings.continuous_mic_silence_flush_ms = settings.continuous_silence_flush_ms!;
+      settings.continuous_mic_hard_cut_ms = settings.continuous_hard_cut_ms!;
+    }
+    renderSettings();
+    await persistSettings();
+  });
+
+  dom.continuousMicSoftFlush?.addEventListener("input", () => {
+    if (!settings || !dom.continuousMicSoftFlush) return;
+    const value = Math.max(4000, Math.min(30000, Number(dom.continuousMicSoftFlush.value)));
+    settings.continuous_mic_soft_flush_ms = value;
+    if (dom.continuousMicSoftFlushValue) dom.continuousMicSoftFlushValue.textContent = `${Math.round(value / 1000)}s`;
+    updateRangeAria("continuous-mic-soft-flush", value);
+  });
+  dom.continuousMicSoftFlush?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+
+  dom.continuousMicSilenceFlush?.addEventListener("input", () => {
+    if (!settings || !dom.continuousMicSilenceFlush) return;
+    const value = Math.max(300, Math.min(5000, Number(dom.continuousMicSilenceFlush.value)));
+    settings.continuous_mic_silence_flush_ms = value;
+    if (dom.continuousMicSilenceFlushValue) dom.continuousMicSilenceFlushValue.textContent = `${(value / 1000).toFixed(1)}s`;
+    updateRangeAria("continuous-mic-silence-flush", value);
+  });
+  dom.continuousMicSilenceFlush?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+
+  dom.continuousMicHardCut?.addEventListener("input", () => {
+    if (!settings || !dom.continuousMicHardCut) return;
+    const value = Math.max(15000, Math.min(120000, Number(dom.continuousMicHardCut.value)));
+    settings.continuous_mic_hard_cut_ms = value;
+    if (dom.continuousMicHardCutValue) dom.continuousMicHardCutValue.textContent = `${Math.round(value / 1000)}s`;
+    updateRangeAria("continuous-mic-hard-cut", value);
+  });
+  dom.continuousMicHardCut?.addEventListener("change", async () => { if (settings) await persistSettings(); });
 
   // Post-processing event listeners
   dom.postprocEnabled?.addEventListener("change", async () => {
@@ -1405,8 +1647,6 @@ export function wireEvents() {
 
   // Topic keywords reset
   dom.topicKeywordsReset?.addEventListener("click", async () => {
-    const { setTopicKeywords, DEFAULT_TOPICS } = await import("./history");
-    const { renderTopicKeywords, persistSettings } = await import("./settings");
     setTopicKeywords(DEFAULT_TOPICS);
     await renderTopicKeywords();
     await persistSettings();

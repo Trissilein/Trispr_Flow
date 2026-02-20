@@ -611,6 +611,11 @@ h1 {
   gap: 8px;
 }
 
+.expander-content {
+  display: grid;
+  gap: 8px;
+}
+
 .settings-grid-2col {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2464,177 +2469,20 @@ input[type="range"]:focus-visible {
   }
 }
 
-/* Post-Processing Panel Enhancements */
-/* Master toggle styling */
-[data-panel="postprocessing"] .field.toggle.span-2 {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-[data-panel="postprocessing"] .field.toggle.span-2 .toggle-row {
-  width: 100%;
-  justify-content: space-between;
-  align-items: center;
-}
-
-[data-panel="postprocessing"] .field.toggle.span-2 .field-label {
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--ink);
-}
-
-[data-panel="postprocessing"] .field.toggle.span-2 .toggle-hint {
-  font-size: 11px;
-  margin: 0;
-  padding: 0;
-  opacity: 0.7;
-  line-height: 1.4;
-  color: var(--muted);
-  text-align: left;
-  align-self: flex-start;
-}
-
 #postproc-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  gap: 10px;
   margin-top: 8px;
-  padding-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid var(--stroke);
-  animation: fadeInSettings 0.3s ease backwards;
 }
 
-@keyframes fadeInSettings {
-  from {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Rule toggles group styling */
 #postproc-settings .field.toggle {
-  background: rgba(0, 0, 0, 0.12);
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  transition: all 0.2s ease;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-#postproc-settings .field.toggle:hover {
-  background: rgba(0, 0, 0, 0.18);
-  border-color: var(--stroke-strong);
-  transform: translateX(2px);
-}
-
-#postproc-settings .field.toggle .toggle-row {
-  width: 100%;
-  justify-content: space-between;
-  align-items: center;
-}
-
-#postproc-settings .field.toggle .field-label {
-  flex: 0 0 auto;
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--ink);
-}
-
-#postproc-settings .field.toggle .toggle-hint {
-  font-size: 11px;
-  margin: 0;
   padding: 0;
-  opacity: 0.7;
-  line-height: 1.4;
-  color: var(--muted);
-  order: 3;
-  text-align: left;
-  align-self: flex-start;
 }
 
-/* Language selector enhancement */
-#postproc-settings > label.field {
-  background: rgba(29, 166, 160, 0.05);
-  border: 1px solid rgba(29, 166, 160, 0.15);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-}
-
-#postproc-settings > label.field select {
-  background-color: rgba(30, 35, 42, 0.8);
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-
-/* Custom Vocabulary Expander Enhancement */
 #postproc-settings .expander {
-  background: rgba(29, 166, 160, 0.04);
-  border: 1px solid rgba(29, 166, 160, 0.2);
-  margin-top: 12px;
-  transition: all 0.2s ease;
-}
-
-#postproc-settings .expander:hover {
-  background: rgba(29, 166, 160, 0.06);
-  border-color: rgba(29, 166, 160, 0.3);
-}
-
-#postproc-settings .expander summary {
-  color: var(--accent-2);
-  font-weight: 700;
-  font-size: 0.9rem;
-  letter-spacing: 0.01em;
-}
-
-#postproc-settings .expander[open] {
-  background: rgba(29, 166, 160, 0.06);
-  border-color: rgba(29, 166, 160, 0.3);
-}
-
-#postproc-settings .expander[open] summary {
-  border-bottom-color: rgba(29, 166, 160, 0.25);
-}
-
-/* Custom vocabulary toggle inside expander */
-#postproc-settings .expander .field.toggle {
-  background: transparent;
-  border: none;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-#postproc-settings .expander .field.toggle:hover {
-  background: transparent;
-  transform: none;
-}
-
-#postproc-settings .expander .field.toggle .toggle-row {
-  width: 100%;
-  justify-content: space-between;
-}
-
-#postproc-settings .expander .field.toggle .field-label {
-  font-weight: 600;
-  font-size: 13px;
-}
-
-#postproc-settings .expander .field.toggle .toggle-hint {
-  font-size: 11px;
-  opacity: 0.7;
-  margin: 0;
-  padding: 0;
-  text-align: left;
-  align-self: flex-start;
+  margin-top: 8px;
 }
 
 /* Custom vocabulary table - Refined */

@@ -32,8 +32,6 @@ pub struct OpusEncoderConfig {
 #[derive(Clone)]
 pub enum OpusApplication {
   Voip,
-  Audio,
-  LowDelay,
 }
 
 impl Default for OpusEncoderConfig {
@@ -53,8 +51,6 @@ impl OpusApplication {
   fn as_str(&self) -> &str {
     match self {
       OpusApplication::Voip => "voip",
-      OpusApplication::Audio => "audio",
-      OpusApplication::LowDelay => "lowdelay",
     }
   }
 }

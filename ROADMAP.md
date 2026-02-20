@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-19 (Analysis launcher split finalized; 3-installer strategy active)
+Last updated: 2026-02-19 (Roadmap sync after analysis split + launcher/installer hardening)
 
 This file is the canonical source for priorities, dependencies, and "what is next."
 
@@ -9,7 +9,9 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 ## Canonical Current State
 
 - **Released**: `v0.6.0` (2026-02-16) with post-release fixes.
-- **Current phase**: `v0.7.0` Block D (AI fallback integrations) in progress.
+- **Current phase**: `v0.7.0` implementation execution.
+  - Foundation complete: Block F + Block G
+  - Execution packet open: Block H (Tasks 32/33/34/35/38)
 - **Voice Analysis architecture**:
   - Trispr Flow no longer auto-downloads analysis installers at runtime.
   - Analyse action launches an external tool via local executable detection.
@@ -27,7 +29,7 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 | **A** | Installer + setup automation hardening (NSIS page flow, setup script reliability, clear recovery paths) | **High** | - | Complete |
 | **B** | VibeVoice runtime hardening (model loading, dependency pinning, cache/prefetch guardrails, HF warning UX) | **High** | A | Complete |
 | **C** | Voice Analysis UX resilience (retry/reset after failure, actionable dialog states, no stale error replay) | **High** | A, B | Complete |
-| **D** | v0.7.0 AI Fallback implementation (Tasks 31/36/37 then 32/33/34/35/38) | **High** | C | In progress |
+| **D** | v0.7.0 AI Fallback implementation (Tasks 31/36/37 then 32/33/34/35/38) | **High** | C | In progress (foundation done, integrations open) |
 
 ## Locked Decisions (2026-02-19)
 
@@ -40,7 +42,20 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 
 - ✅ **Block F complete**: terminology, UX location, execution sequence, architecture docs.
 - ✅ **Block G complete**: Task 31 (provider architecture), Task 36 (settings migration), Task 37 (config UI scaffolding).
-- 🔵 **Block H queued**: Task 32/33/34 provider API integrations, Task 35 prompt strategy polish, Task 38 E2E.
+- 🔵 **Block H open**: Task 32/33/34 provider API integrations, Task 35 prompt strategy polish, Task 38 E2E.
+
+### v0.7.0 Task Ledger (Done/Open)
+
+| Task | Title | State |
+| --- | --- | --- |
+| 31 | Multi-provider architecture | ✅ Done |
+| 36 | Settings migration + data model | ✅ Done |
+| 37 | Provider config UI scaffolding | ✅ Done |
+| 32 | OpenAI provider integration | 🔵 Open |
+| 33 | Claude provider integration | 🔵 Open |
+| 34 | Gemini provider integration | 🔵 Open |
+| 35 | Prompt strategy polish | 🔵 Open |
+| 38 | End-to-end tests | 🔵 Open |
 
 ## Analysis Launcher Status
 
@@ -49,10 +64,16 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 - ✅ Dev fallback path to Python CLI is available when EXE is absent.
 - ✅ NSIS analysis install path is local-only in the CUDA+Analysis variant.
 
+## Immediate Next Actions
+
+1. Finish launcher/installer E2E validation for all three variants (including CUDA+Analysis chain-install).
+2. Start Block H Task 32 (OpenAI provider integration) and proceed through Task 33/34/35.
+3. Close Block H with Task 38 cross-provider E2E tests.
+
 ## Detailed References
 
 - Detailed execution table: `docs/TASK_SCHEDULE.md`
-- Block G implementation handover: `docs/NEXT_BLOCK_G.md`
+- Block G implementation handover (archive): `docs/NEXT_BLOCK_G.md`
 - v0.7 architecture: `docs/V0.7.0_ARCHITECTURE.md`
 - Decision log: `docs/DECISIONS.md`
 - Installer variants and chain-install details: `docs/INSTALLER_VARIANTS.md`
@@ -65,6 +86,7 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 
 The following sections are preserved for implementation history and research context.
 When content conflicts with the sections above, treat the top section (`Canonical Current State`, `Next Work`) as source of truth.
+This historical section may reference the earlier in-app sidecar architecture and should be treated as archive.
 
 ## Competitor Analysis Integration (Handy.computer)
 

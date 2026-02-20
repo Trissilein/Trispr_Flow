@@ -32,13 +32,14 @@ import * as dom from "./dom-refs";
 import { renderSettings } from "./settings";
 import { renderDevices, renderOutputDevices } from "./devices";
 import { renderHero, setCaptureStatus, setTranscribeStatus, updateThresholdMarkers } from "./ui-state";
-import { renderHistory, initPanelState, setHistoryTab, initSpeakerLabelEditing } from "./history";
+import { renderHistory, setHistoryTab, initSpeakerLabelEditing } from "./history";
+import { initPanelState, isPanelCollapsed, setPanelCollapsed } from "./panels";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
 import { wireEvents, initMainTab } from "./event-listeners";
 import { dismissToast, showToast, showErrorToast } from "./toast";
 import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
-import { initLiveDump } from "./live-dump";
+import { dumpHistoryToFile, initLiveDump } from "./live-dump";
 import { initChaptersUI, refreshChapters } from "./chapters";
 
 // Track event listeners for cleanup to prevent memory leaks
@@ -169,7 +170,6 @@ async function bootstrap() {
     renderHistory();
     refreshChapters();
     // Live dump to file for crash recovery
-    const { dumpHistoryToFile } = await import("./live-dump");
     dumpHistoryToFile().catch(() => {});
   }));
 
@@ -178,7 +178,6 @@ async function bootstrap() {
     renderHistory();
     refreshChapters();
     // Live dump to file for crash recovery
-    const { dumpHistoryToFile } = await import("./live-dump");
     dumpHistoryToFile().catch(() => {});
   }));
 
@@ -325,9 +324,8 @@ async function checkModelOnStartup() {
         if (modelPanel) {
           // Expand the panel if it's collapsed
           const collapseButton = modelPanel.querySelector('[data-panel-collapse="model"]') as HTMLButtonElement;
-          const panelBody = modelPanel.querySelector('.panel-body') as HTMLElement;
-          if (collapseButton && panelBody && panelBody.style.display === 'none') {
-            collapseButton.click(); // Trigger the collapse/expand toggle
+          if (collapseButton && isPanelCollapsed("model")) {
+            setPanelCollapsed("model", false);
           }
 
           // Scroll to the panel

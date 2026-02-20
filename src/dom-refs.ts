@@ -119,6 +119,32 @@ export const transcribeChunkOverlap = $("transcribe-chunk-overlap") as HTMLInput
 export const transcribeOverlapValue = $("transcribe-overlap-value");
 export const transcribeGain = $("transcribe-gain") as HTMLInputElement | null;
 export const transcribeGainValue = $("transcribe-gain-value");
+export const continuousDumpEnabledToggle = $("continuous-dump-enabled-toggle") as HTMLInputElement | null;
+export const continuousDumpProfile = $("continuous-dump-profile") as HTMLSelectElement | null;
+export const continuousHardCut = $("continuous-hard-cut") as HTMLInputElement | null;
+export const continuousHardCutValue = $("continuous-hard-cut-value");
+export const continuousMinChunk = $("continuous-min-chunk") as HTMLInputElement | null;
+export const continuousMinChunkValue = $("continuous-min-chunk-value");
+export const continuousPreRoll = $("continuous-pre-roll") as HTMLInputElement | null;
+export const continuousPreRollValue = $("continuous-pre-roll-value");
+export const continuousPostRoll = $("continuous-post-roll") as HTMLInputElement | null;
+export const continuousPostRollValue = $("continuous-post-roll-value");
+export const continuousKeepalive = $("continuous-keepalive") as HTMLInputElement | null;
+export const continuousKeepaliveValue = $("continuous-keepalive-value");
+export const continuousSystemOverrideToggle = $("continuous-system-override-toggle") as HTMLInputElement | null;
+export const continuousSystemSoftFlush = $("continuous-system-soft-flush") as HTMLInputElement | null;
+export const continuousSystemSoftFlushValue = $("continuous-system-soft-flush-value");
+export const continuousSystemSilenceFlush = $("continuous-system-silence-flush") as HTMLInputElement | null;
+export const continuousSystemSilenceFlushValue = $("continuous-system-silence-flush-value");
+export const continuousSystemHardCut = $("continuous-system-hard-cut") as HTMLInputElement | null;
+export const continuousSystemHardCutValue = $("continuous-system-hard-cut-value");
+export const continuousMicOverrideToggle = $("continuous-mic-override-toggle") as HTMLInputElement | null;
+export const continuousMicSoftFlush = $("continuous-mic-soft-flush") as HTMLInputElement | null;
+export const continuousMicSoftFlushValue = $("continuous-mic-soft-flush-value");
+export const continuousMicSilenceFlush = $("continuous-mic-silence-flush") as HTMLInputElement | null;
+export const continuousMicSilenceFlushValue = $("continuous-mic-silence-flush-value");
+export const continuousMicHardCut = $("continuous-mic-hard-cut") as HTMLInputElement | null;
+export const continuousMicHardCutValue = $("continuous-mic-hard-cut-value");
 
 // Overlay controls
 export const overlayColor = $("overlay-color") as HTMLInputElement | null;
@@ -188,6 +214,7 @@ export const topicKeywordsReset = $("topic-keywords-reset") as HTMLButtonElement
 export const opusEnabledToggle = $("opus-enabled-toggle") as HTMLInputElement | null;
 export const opusBitrateSelect = $("opus-bitrate-select") as HTMLSelectElement | null;
 export const autoSaveSystemAudioToggle = $("auto-save-system-audio-toggle") as HTMLInputElement | null;
+export const autoSaveMicAudioToggle = $("auto-save-mic-audio-toggle") as HTMLInputElement | null;
 
 // Model manager controls
 export const modelSourceSelect = $("model-source-select") as HTMLSelectElement | null;

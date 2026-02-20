@@ -50,7 +50,7 @@ The application uses a **two-tab layout** to separate daily-use views from confi
 | `state.ts` | Centralized mutable state with setters |
 | `types.ts` | TypeScript interfaces (Settings, HistoryEntry, ModelInfo, etc.) |
 | `dom-refs.ts` | ~140 DOM element references via `getElementById` |
-| `event-listeners.ts` | All user interaction handlers (includes Voice Analysis setup/queue orchestration) |
+| `event-listeners.ts` | All user interaction handlers (includes external Analysis launcher flow) |
 | `settings.ts` | Settings persistence and UI sync (`renderSettings()`) |
 | `ui-state.ts` | Runtime UI state (capture/transcribe status, hero rendering) |
 | `history.ts` | History rendering, export, chapters, topics, search |
@@ -79,6 +79,7 @@ The application uses a **two-tab layout** to separate daily-use views from confi
 
 - `lib.rs`: command registration, app startup, tray/window integration, module wiring.
 - `audio.rs`: microphone capture, VAD runtime, overlay level emission.
+- `continuous_dump.rs`: adaptive segmenter for silence/interval/hard-cut chunking with pre-roll and backpressure handling.
 - `transcription.rs`: system audio transcription pipeline (WASAPI loopback, queue/chunking, post-capture flow).
 - `models.rs`: model index, download, checksum and safety validation, model quantization (q5_0 format).
 - `state.rs`: persisted settings defaults/migrations and shared app state. Includes chapter persistence (`chapters.json`).
@@ -87,47 +88,33 @@ The application uses a **two-tab layout** to separate daily-use views from confi
 - `paths.rs`: app config/data path resolution, quantize.exe resolution.
 - `postprocessing.rs`: rule-based text enhancement (punctuation, capitalization, numbers, custom vocabulary).
 - `opus.rs`: OPUS encoding via FFmpeg subprocess (WAV → OPUS conversion for smaller file sizes).
-- `sidecar.rs`: HTTP client for VibeVoice-ASR sidecar communication (transcription requests, health checks).
-- `sidecar_process.rs`: Sidecar lifecycle management (start/stop Python FastAPI process, health monitoring).
-- `analysis_jobs.rs`: External analysis worker job manager (queued/running/completed/failed/canceled/timeout).
 - `auto_processing.rs`: Post-transcription pipeline (chapter generation, meeting minutes extraction, summary generation).
+- External analysis companion: `analysis-tool/` (separate app + own WebView window, launched by Trispr).
 
 ### Voice Analysis Runtime Architecture
 
-**Purpose**: VibeVoice-ASR 7B model requires Python + Transformers ecosystem and is isolated from the core app runtime.
+**Purpose**: Voice Analysis runs outside the main Trispr process to keep capture/transcription runtime isolated and responsive.
 
 **Communication Pattern**:
 
 ```text
-Trispr Flow (Rust)  ←→  Voice Analysis Runtime
-     │
-     ├─ Legacy mode: HTTP sidecar (FastAPI) `/transcribe`
-     └─ External mode: one-shot worker job (CLI process per analysis)
+Trispr Flow (Rust launcher)  ->  Trispr Analysis app (separate process + separate window)
 ```
 
 **Files**:
 
-- Rust side: `sidecar.rs` (HTTP client), `sidecar_process.rs` (lifecycle)
-- Rust job layer: `analysis_jobs.rs` (job registry + worker launch + cancel/timeout)
-- Python side: `sidecar/vibevoice-asr/main.py` (FastAPI app), `sidecar/vibevoice-asr/worker_once.py` (one-shot worker), `model_loader.py`, `inference.py`
+- Rust launcher side: `src-tauri/src/lib.rs` (`analysis_tool_status`, `analysis_tool_launch`)
+- Frontend launcher flow: `src/event-listeners.ts` (local EXE selection + remembered override + dev fallback path)
+- Analysis app: `analysis-tool/main.py`, `analysis-tool/app/cli.py`, `analysis-tool/app/web_server.py`
+- Analysis runtime worker: `sidecar/vibevoice-asr/worker_once.py`
 
 **Lifecycle**:
 
-Legacy sidecar mode:
-1. User triggers analysis → Rust calls `start_sidecar()`.
-2. `sidecar_process.rs` spawns Python FastAPI via `Command::new(python).arg(main.py)`.
-3. Health check loop waits for `/health` (30s timeout).
-4. Rust sends `/transcribe` request with audio path.
-
-External worker mode (feature-flagged, default OFF):
-1. UI calls `analysis_create_job`.
-2. `analysis_jobs.rs` creates a tracked job and spawns `worker_once.py` as a dedicated process.
-3. UI polls `analysis_get_job`/`analysis_get_jobs` and can cancel via `analysis_cancel_job`.
-4. Worker exits after one transcription; app remains responsive even on runtime failures/timeouts.
-
-**Packaging**: Runtime supports both bundled sidecar exe and Python fallback. Current installers ship Python sidecar files plus setup script; `sidecar_process.rs` auto-detects bundled exe first, then falls back to Python.
-
-**Parallel Mode**: `parallel_transcribe` command runs Whisper + VibeVoice concurrently for diagnostics. Voice Analysis UI keeps VibeVoice as source of truth.
+1. User clicks Analyse in Trispr Flow.
+2. App checks local `trispr-analysis.exe` candidates and remembered override path.
+3. If missing, user picks a local EXE (no runtime network download path in launcher).
+4. In dev builds only, Python fallback can launch `analysis-tool/main.py`.
+5. Analysis runs in its own window/process while Trispr remains responsive.
 
 ## Core data flows
 
@@ -139,6 +126,13 @@ External worker mode (feature-flagged, default OFF):
 4. Whisper backend transcribes.
 5. Result is persisted to mic history and emitted to UI for display/paste.
 
+### Input capture (Toggle continuous mode)
+
+1. Toggle hotkey starts mic stream once and keeps buffering continuously.
+2. Adaptive segmenter emits chunks using hybrid rules (silence flush + soft interval + hard cut).
+3. Each chunk is transcribed immediately and appended to mic history.
+4. Optional mic auto-save persists chunks via source-specific session files and merges to `session.opus` on stop.
+
 ### Input capture (Voice Activation)
 
 1. VAD monitor runs continuously while input capture is enabled.
@@ -148,10 +142,11 @@ External worker mode (feature-flagged, default OFF):
 ### Output capture/transcription (Windows)
 
 1. Transcribe hotkey toggles output monitoring for the selected device.
-2. WASAPI loopback stream feeds chunker/VAD.
-3. Chunks are transcribed and appended to output history.
-4. For persisted session audio (`session.opus`), overlap prefixes are stripped from follow-up chunks to avoid duplicate audio at chunk boundaries.
-5. UI receives `transcribe:state`, meter (`transcribe:level`/`transcribe:db`), and history update events.
+2. WASAPI loopback stream is decoded to mono, resampled to 16kHz, and metered.
+3. Adaptive segmenter emits chunks by silence/soft interval/hard cut (with pre-roll/backpressure scaling).
+4. Chunks are queued and transcribed asynchronously, then appended to output history.
+5. Optional system auto-save flushes source-specific session chunks and merges to one `session.opus` on stop.
+6. UI receives `transcribe:state`, meter (`transcribe:level`/`transcribe:db`), history updates, and continuous dump telemetry.
 
 ### Export flow
 
@@ -180,6 +175,7 @@ External worker mode (feature-flagged, default OFF):
 
 - `capture:state`, `audio:level`, `vad:dynamic-threshold`
 - `transcribe:state`, `transcribe:level`, `transcribe:db`
+- `continuous-dump:segment`, `continuous-dump:stats`
 - `history:updated`, `transcribe:history-updated`
 - `settings-changed`, `audio:cue`, `app:error`
 - `model:download-progress`, `model:download-complete`, `model:download-error`
@@ -187,19 +183,20 @@ External worker mode (feature-flagged, default OFF):
 
 ## Build and Distribution
 
-### Dual Installer System
+### Installer Variants
 
-Two installer variants are built via `build-both-installers.bat`:
+Three installer variants are built via `build-both-installers.bat`:
 
 - **CUDA Edition** (~93 MB): Includes NVIDIA CUDA runtime (cublas64_13.dll, cudart64_13.dll) + Vulkan backend. For NVIDIA GPU users.
 - **Vulkan Edition** (~9 MB): Vulkan backend only. For AMD/Intel GPU users or minimal installs.
+- **CUDA+Analysis Edition**: CUDA build plus optional bundled local chain-install for Trispr Analysis.
 
-Both use NSIS packaging with language selection (English/German).
+All use NSIS packaging with language selection (English/German).
 
 ### Version Management
 
 - Version source of truth: `package.json` version field
-- Tauri configs (`tauri.conf.json`, `tauri.conf.vulkan.json`) mirror the version
+- Tauri configs (`tauri.conf.json`, `tauri.conf.vulkan.json`, `tauri.conf.cuda.analysis.json`) mirror the version
 - App version displayed in UI header via Tauri `getVersion()` API
 
 ## Quality status

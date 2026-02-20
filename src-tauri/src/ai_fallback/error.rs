@@ -5,9 +5,6 @@ pub enum AIError {
     UnknownProvider(String),
     MissingApiKey(String),
     InvalidApiKey(String),
-    NotImplemented(String),
-    Network(String),
-    Config(String),
 }
 
 impl fmt::Display for AIError {
@@ -20,9 +17,6 @@ impl fmt::Display for AIError {
                 write!(f, "No API key configured for provider '{}'", provider)
             }
             AIError::InvalidApiKey(message) => write!(f, "Invalid API key: {}", message),
-            AIError::NotImplemented(message) => write!(f, "Not implemented: {}", message),
-            AIError::Network(message) => write!(f, "Network error: {}", message),
-            AIError::Config(message) => write!(f, "Configuration error: {}", message),
         }
     }
 }

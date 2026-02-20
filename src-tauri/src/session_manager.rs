@@ -19,6 +19,7 @@
 use chrono::Local;
 use hound::{SampleFormat, WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -31,7 +32,7 @@ use tracing::{error, info, warn};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkMeta {
     pub index: usize,
-    pub file: String,    // filename relative to session_dir
+    pub file: String, // filename relative to session_dir
     pub offset_s: u64,
     pub duration_s: u64,
 }
@@ -137,10 +138,18 @@ impl ActiveSession {
             return Err(format!("FFmpeg failed encoding chunk {}", index));
         }
 
-        let meta = ChunkMeta { index, file: format!("{}.opus", chunk_base), offset_s, duration_s };
+        let meta = ChunkMeta {
+            index,
+            file: format!("{}.opus", chunk_base),
+            offset_s,
+            duration_s,
+        };
         self.chunks.push(meta.clone());
         self.write_manifest("recording", None, None);
-        info!("Session chunk {}/{}: {} s at offset {} s", index, self.session_id, duration_s, offset_s);
+        info!(
+            "Session chunk {}/{}: {} s at offset {} s",
+            index, self.session_id, duration_s, offset_s
+        );
         Ok(meta)
     }
 
@@ -149,14 +158,18 @@ impl ActiveSession {
     /// On failure: leaves temp dir intact for crash recovery.
     pub fn finalize(self, recordings_dir: &PathBuf) -> Result<PathBuf, String> {
         if self.chunks.is_empty() {
-            warn!("Session {} has no chunks, discarding temp dir", self.session_id);
+            warn!(
+                "Session {} has no chunks, discarding temp dir",
+                self.session_id
+            );
             let _ = fs::remove_dir_all(&self.session_dir);
             return Err("No chunks to merge".to_string());
         }
 
         // Write concat file list (paths relative to session_dir for FFmpeg -safe 0)
         let concat_path = self.session_dir.join("concat.txt");
-        let list: String = self.chunks
+        let list: String = self
+            .chunks
             .iter()
             .map(|c| format!("file '{}'\n", c.file))
             .collect();
@@ -175,8 +188,8 @@ impl ActiveSession {
             .map_err(|e| format!("Failed to create final session dir: {}", e))?;
         let final_opus = final_dir.join("session.opus");
 
-        let ffmpeg = crate::opus::find_ffmpeg()
-            .map_err(|e| format!("FFmpeg not found for merge: {}", e))?;
+        let ffmpeg =
+            crate::opus::find_ffmpeg().map_err(|e| format!("FFmpeg not found for merge: {}", e))?;
 
         let ended_at = Local::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
@@ -203,7 +216,10 @@ impl ActiveSession {
         if !merge_ok {
             // Leave temp dir intact — user can retry or recover manually
             self.write_manifest("merge_failed", None, Some(&ended_at));
-            return Err(format!("FFmpeg concat failed for session {}", self.session_id));
+            return Err(format!(
+                "FFmpeg concat failed for session {}",
+                self.session_id
+            ));
         }
 
         // Write final manifest to the permanent directory
@@ -226,7 +242,12 @@ impl ActiveSession {
         // Clean up temp dir after successful merge
         let _ = fs::remove_dir_all(&self.session_dir);
 
-        info!("Session {} merged → {:?} ({} s)", self.session_id, final_opus, self.total_duration_s());
+        info!(
+            "Session {} merged → {:?} ({} s)",
+            self.session_id,
+            final_opus,
+            self.total_duration_s()
+        );
         Ok(final_opus)
     }
 }
@@ -236,13 +257,16 @@ impl ActiveSession {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub struct SessionManager {
-    active: Option<ActiveSession>,
+    active: HashMap<String, ActiveSession>,
     recordings_dir: Option<PathBuf>,
 }
 
 impl SessionManager {
     fn new() -> Self {
-        Self { active: None, recordings_dir: None }
+        Self {
+            active: HashMap::new(),
+            recordings_dir: None,
+        }
     }
 
     pub fn set_recordings_dir(&mut self, dir: PathBuf) {
@@ -251,17 +275,18 @@ impl SessionManager {
 
     /// Start a new session for the given audio source.
     /// If a session for the same source is already active, it's a no-op.
-    pub fn start_session(&mut self, source: &str, session_name: Option<&str>) -> Result<(), String> {
-        // Reuse existing session if source matches
-        if let Some(ref active) = self.active {
-            if active.source == source {
-                return Ok(());
-            }
-            // Different source: finalize old session first
-            warn!("Source changed from {} to {}, finalizing old session", active.source, source);
+    pub fn start_session(
+        &mut self,
+        source: &str,
+        session_name: Option<&str>,
+    ) -> Result<(), String> {
+        if self.active.contains_key(source) {
+            return Ok(());
         }
 
-        let recordings_dir = self.recordings_dir.clone()
+        let recordings_dir = self
+            .recordings_dir
+            .clone()
             .ok_or_else(|| "Recordings directory not configured".to_string())?;
         fs::create_dir_all(&recordings_dir)
             .map_err(|e| format!("Cannot create recordings dir: {}", e))?;
@@ -285,49 +310,38 @@ impl SessionManager {
         };
         session.write_manifest("recording", None, None);
         info!("Audio session started: {}", session_id);
-        self.active = Some(session);
+        self.active.insert(source.to_string(), session);
         Ok(())
     }
 
     /// Flush samples as a new chunk (auto-starts session if needed).
     pub fn flush_chunk(&mut self, samples: &[i16], source: &str) -> Result<(), String> {
-        if self.active.is_none() {
+        if !self.active.contains_key(source) {
             self.start_session(source, None)?;
         }
-        if let Some(ref mut session) = self.active {
+        if let Some(session) = self.active.get_mut(source) {
             session.flush_chunk(samples)?;
         }
         Ok(())
     }
 
-    /// Finalize the active session: merge → session.opus, cleanup temp dir.
-    /// Returns the path to the merged file, or None if no session was active.
-    pub fn finalize_session(&mut self) -> Result<Option<PathBuf>, String> {
-        if let Some(session) = self.active.take() {
-            let recordings_dir = self.recordings_dir.clone()
-                .ok_or_else(|| "Recordings directory not configured".to_string())?;
-            match session.finalize(&recordings_dir) {
-                Ok(path) => Ok(Some(path)),
-                Err(e) => Err(e),
-            }
-        } else {
-            Ok(None)
+    /// Finalize one source-specific active session: merge → session.opus, cleanup temp dir.
+    /// Returns the path to the merged file, or None if no session for this source was active.
+    pub fn finalize_session_for(&mut self, source: &str) -> Result<Option<PathBuf>, String> {
+        let Some(session) = self.active.remove(source) else {
+            return Ok(None);
+        };
+
+        let recordings_dir = self
+            .recordings_dir
+            .clone()
+            .ok_or_else(|| "Recordings directory not configured".to_string())?;
+        match session.finalize(&recordings_dir) {
+            Ok(path) => Ok(Some(path)),
+            Err(e) => Err(e),
         }
     }
 
-    pub fn is_active(&self) -> bool {
-        self.active.is_some()
-    }
-
-    /// Check if a session is active for a given source and hasn't expired.
-    /// Used for session grouping (e.g., multiple PTT presses within a time window).
-    pub fn is_active_for(&self, source: &str) -> bool {
-        if let Some(ref session) = self.active {
-            session.source == source
-        } else {
-            false
-        }
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -349,24 +363,18 @@ pub fn init(recordings_dir: PathBuf) {
 
 /// Flush audio samples as a new session chunk.
 pub fn flush_chunk(samples: &[i16], source: &str) -> Result<(), String> {
-    get().lock()
+    get()
+        .lock()
         .map_err(|e| e.to_string())?
         .flush_chunk(samples, source)
 }
 
-/// Finalize the current session and return the merged file path.
-pub fn finalize() -> Result<Option<PathBuf>, String> {
-    get().lock()
+/// Finalize the active session for a specific source and return the merged file path.
+pub fn finalize_for(source: &str) -> Result<Option<PathBuf>, String> {
+    get()
+        .lock()
         .map_err(|e| e.to_string())?
-        .finalize_session()
-}
-
-/// Check if a session is currently active for a given source (e.g., "mic", "output").
-/// Used for session grouping logic (e.g., PTT presses within a time window).
-pub fn is_active_for(source: &str) -> bool {
-    get().lock()
-        .map(|mgr| mgr.is_active_for(source))
-        .unwrap_or(false)
+        .finalize_session_for(source)
 }
 
 /// Scan for incomplete (crash-recovered) sessions in the recordings directory.
@@ -402,16 +410,26 @@ fn write_wav_i16(path: &PathBuf, samples: &[i16]) -> Result<(), String> {
     let mut writer = WavWriter::create(path, spec)
         .map_err(|e| format!("Cannot create chunk WAV {:?}: {}", path, e))?;
     for &s in samples {
-        writer.write_sample(s).map_err(|e| format!("WAV write error: {}", e))?;
+        writer
+            .write_sample(s)
+            .map_err(|e| format!("WAV write error: {}", e))?;
     }
-    writer.finalize().map_err(|e| format!("WAV finalize error: {}", e))?;
+    writer
+        .finalize()
+        .map_err(|e| format!("WAV finalize error: {}", e))?;
     Ok(())
 }
 
 fn sanitize_name(name: &str) -> String {
     let s: String = name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let trimmed = s.trim_matches('_').to_string();
     if trimmed.len() > 40 {

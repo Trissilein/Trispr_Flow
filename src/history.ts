@@ -518,30 +518,6 @@ export function buildTopicBadges(topics: string[]): string {
     .join("");
 }
 
-export function applyPanelCollapsed(panelId: string, collapsed: boolean) {
-  const panel = document.querySelector(`[data-panel="${panelId}"]`) as HTMLElement | null;
-  if (!panel) return;
-  panel.classList.toggle("panel-collapsed", collapsed);
-
-  // Update aria-expanded for accessibility
-  const collapseButton = panel.querySelector<HTMLButtonElement>(".panel-collapse-btn");
-  if (collapseButton) {
-    collapseButton.setAttribute("aria-expanded", String(!collapsed));
-    collapseButton.setAttribute("title", collapsed ? "Expand" : "Collapse");
-    collapseButton.setAttribute("aria-label",
-      collapsed ? `Expand ${panelId} panel` : `Collapse ${panelId} panel`
-    );
-  }
-}
-
-export function initPanelState() {
-  const panelIds = ["transcription", "capture", "system", "interface", "model"];
-  panelIds.forEach((id) => {
-    const collapsed = id !== "transcription";
-    applyPanelCollapsed(id, collapsed);
-  });
-}
-
 let currentSearchQuery = "";
 let selectedTopicFilters: Set<string> = new Set();
 

@@ -79,6 +79,13 @@ npm run tauri dev
 
 See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for system requirements and build configuration.
 
+## Active Branches
+
+- `main`: Trispr Flow mainline (capture/transcription product)
+- `analysis-module-branch`: standalone analysis-module project line
+
+See `docs/BRANCHING.md` for branch responsibilities.
+
 ## Usage
 
 ### Microphone Transcription
@@ -107,6 +114,7 @@ See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for system requirements and build conf
 - 📖 [READ_ME_FIRST.md](READ_ME_FIRST.md) — Start here
 - 🗺️ [ROADMAP.md](ROADMAP.md) — Project status and milestones
 - 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Technical overview
+- 🌿 [docs/BRANCHING.md](docs/BRANCHING.md) — Branch responsibilities and workflow
 - 🔊 [docs/CONTINUOUS_DUMP_PLAN.md](docs/CONTINUOUS_DUMP_PLAN.md) — Adaptive continuous dump design + rollout
 - 🛠️ [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — Build setup
 - 🔄 [docs/STATE_MANAGEMENT.md](docs/STATE_MANAGEMENT.md) — Internal state flow

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trispr Analysis Module Template</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="hero">
+        <p class="eyebrow">Trispr Analysis Module</p>
+        <h1>Speaker-Aware Audio Analysis</h1>
+        <p class="subtitle">Built with VibeVoice. Upload audio, inspect timeline, refine segments, export structured results.</p>
+      </header>
+
+      <section class="card upload">
+        <h2>Upload</h2>
+        <input id="audio-input" type="file" accept=".wav,.mp3,.m4a,.opus" />
+        <button id="start-analysis" type="button">Start Analysis</button>
+        <p id="job-state" class="hint">No job started.</p>
+      </section>
+
+      <section class="grid">
+        <article class="card timeline">
+          <h2>Speaker Timeline</h2>
+          <div id="timeline" class="timeline-track" aria-live="polite"></div>
+        </article>
+
+        <article class="card segments">
+          <h2>Segments</h2>
+          <ul id="segments-list" class="segments-list"></ul>
+        </article>
+      </section>
+
+      <section class="card export">
+        <h2>Export</h2>
+        <div class="row">
+          <button data-format="txt" type="button">TXT</button>
+          <button data-format="md" type="button">Markdown</button>
+          <button data-format="json" type="button">JSON</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

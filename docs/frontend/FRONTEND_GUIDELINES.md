@@ -201,6 +201,13 @@ DOM.vadThreshold.addEventListener('input', () => {
 });
 ```
 
+### Range Slider Tooltip Governance
+
+- Every new `input[type="range"]` must have a tooltip entry in `RANGE_TOOLTIP_DEFINITIONS` (`src/range-tooltips.ts`).
+- Tooltips are runtime-injected using `.tooltip-host`, `.tooltip-trigger`, and `.tooltip-bubble`.
+- Keep tooltip copy short and action-oriented; do not replace existing `field-hint` text.
+- CI checks fail when a range slider exists in `index.html` without a matching tooltip definition.
+
 ---
 
 ## Tauri Integration
@@ -540,4 +547,3 @@ npm run test
 
 **Last updated**: 2026-02-06
 **Version**: 1.0
-

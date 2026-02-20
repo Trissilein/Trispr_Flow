@@ -259,6 +259,22 @@
       // Listen for settings changes (backup path - primary is window.eval from Rust)
       const listen = window.__TAURI__?.event?.listen;
       if (listen) {
+        listen("overlay:state", (event) => {
+          const payload = event?.payload;
+          if (typeof payload === "string") {
+            const state = payload === "toggle-idle" ? "idle" : payload;
+            window.setOverlayState(state);
+          }
+        }).catch(() => {});
+
+        listen("audio:level", (event) => {
+          const payload = event?.payload;
+          const level = typeof payload === "number" ? payload : Number(payload);
+          if (Number.isFinite(level)) {
+            window.setOverlayLevel(level);
+          }
+        }).catch(() => {});
+
         listen("overlay:settings", (event) => {
           const payload = event?.payload;
           if (!payload) return;

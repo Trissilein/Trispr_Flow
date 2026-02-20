@@ -41,6 +41,7 @@ import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
 import { dumpHistoryToFile, initLiveDump } from "./live-dump";
 import { initChaptersUI, refreshChapters } from "./chapters";
+import { initRangeTooltips } from "./range-tooltips";
 
 // Track event listeners for cleanup to prevent memory leaks
 let eventUnlisteners: Array<() => void> = [];
@@ -123,6 +124,7 @@ async function bootstrap() {
   initConversationView();
   initChaptersUI();
   initSpeakerLabelEditing();
+  initRangeTooltips();
 
   // Display app version
   if (dom.appVersion) {

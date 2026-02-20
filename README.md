@@ -20,7 +20,7 @@
 - **Adaptive Continuous Dump**: Silence-aware + interval + hard-cut chunking for system audio and mic Toggle mode
 - **Professional Icon**: Cyan/Gold Yin-Yang branding
 
-**v0.7.0 In Execution**: Foundation complete (Block F + G), provider integrations (Block H) are next.
+**v0.7.x In Execution**: Foundation complete (Block F + G), provider integrations (Block H / v0.7.2) are next.
 
 ## Core Capabilities
 
@@ -37,7 +37,7 @@
 ### Processing & Refinement
 
 - ✅ Local post-processing (punctuation, capitalization, numbers, custom vocabulary)
-- 🔄 Multi-provider AI Fallback (Claude, OpenAI, Gemini) — planned v0.7.0
+- 🔄 Multi-provider AI Fallback (Claude, OpenAI, Gemini) — planned v0.7.2
 - ✅ Custom prompt support (user-editable with defaults)
 
 ### Output & Organization
@@ -55,16 +55,16 @@
 - ✅ Window state persistence (geometry + minimized/tray state)
 - ✅ Model hot-swap (no restart required)
 - ✅ 16 language support with language pinning
-- 🔄 First-run wizard (planned v0.7.0+)
+- 🔄 First-run wizard (planned v0.7.3+)
 
 ## Status & Roadmap
 
 | Version | Phase | Status | Highlights |
 | --- | --- | --- | --- |
 | **v0.6.0** | 🟢 LIVE | Complete | VibeVoice-ASR, diarization, OPUS, parallel mode |
-| **v0.7.0** | 📋 Planning | Block F Complete | AI Fallback architecture (Claude/OpenAI/Gemini) |
-| **v0.7.0** | ✅ Complete | Block G (Opus) | Multi-provider architecture, settings migration, config UI |
-| **v0.7.0** | 🔵 In Progress | Block H (Sonnet) | Provider integrations (OpenAI/Claude/Gemini), prompt polish, E2E |
+| **v0.7.0** | ✅ Complete | Block F | AI Fallback architecture (Claude/OpenAI/Gemini) |
+| **v0.7.1** | ✅ Complete | Block G (Opus) | Multi-provider architecture, settings migration, config UI |
+| **v0.7.2** | 🔵 In Progress | Block H (Sonnet) | Provider integrations (OpenAI/Claude/Gemini), prompt polish, E2E |
 
 👉 **[Full Roadmap](ROADMAP.md)** — See milestones, implementation schedule, and competitor analysis
 
@@ -110,7 +110,7 @@ See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for system requirements and build conf
 ### Processing Pipeline
 1. **Raw Transcription**: Whisper-generated text
 2. **Post-Processing**: Local rules (punctuation, numbers, vocabulary)
-3. **AI Refinement** (optional v0.7.0+): Multi-provider AI enhancement via Claude/OpenAI/Gemini
+3. **AI Refinement** (optional v0.7.2+): Multi-provider AI enhancement via Claude/OpenAI/Gemini
 
 ## Acknowledgements
 
@@ -155,5 +155,5 @@ For WSL/Linux development, install dependencies listed in [DEVELOPMENT.md](docs/
 
 - 📝 See [CONTRIBUTING.md](CONTRIBUTING.md) for PR process
 - 🎯 For feature scope and priority, see [ROADMAP.md](ROADMAP.md) + [docs/DECISIONS.md](docs/DECISIONS.md)
-- 🚀 **Next tasks available**: See [ROADMAP.md](ROADMAP.md) for the live Done/Open task ledger (v0.7 Block H)
+- 🚀 **Next tasks available**: See [ROADMAP.md](ROADMAP.md) for the live Done/Open task ledger (v0.7.2 Block H)
 - 💬 Discussions welcome in Issues

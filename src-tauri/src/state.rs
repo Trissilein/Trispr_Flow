@@ -454,17 +454,35 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
                 settings.overlay_kitt_pos_x = settings.overlay_pos_x;
                 settings.overlay_kitt_pos_y = settings.overlay_pos_y;
             }
+            if settings.overlay_pos_x.is_nan() {
+                settings.overlay_pos_x = defaults.overlay_pos_x;
+            }
+            if settings.overlay_pos_y.is_nan() {
+                settings.overlay_pos_y = defaults.overlay_pos_y;
+            }
             if settings.overlay_kitt_pos_x < 0.0 {
                 settings.overlay_kitt_pos_x = 0.0;
             }
             if settings.overlay_kitt_pos_y < 0.0 {
                 settings.overlay_kitt_pos_y = 0.0;
             }
+            if settings.overlay_kitt_pos_x > 100.0 {
+                settings.overlay_kitt_pos_x = 100.0;
+            }
+            if settings.overlay_kitt_pos_y > 100.0 {
+                settings.overlay_kitt_pos_y = 100.0;
+            }
             if settings.overlay_pos_x < 0.0 {
                 settings.overlay_pos_x = 0.0;
             }
             if settings.overlay_pos_y < 0.0 {
                 settings.overlay_pos_y = 0.0;
+            }
+            if settings.overlay_pos_x > 100.0 {
+                settings.overlay_pos_x = 100.0;
+            }
+            if settings.overlay_pos_y > 100.0 {
+                settings.overlay_pos_y = 100.0;
             }
             if (settings.overlay_kitt_pos_x - 12.0).abs() < 0.001
                 && (settings.overlay_kitt_pos_y - 12.0).abs() < 0.001

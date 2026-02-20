@@ -137,8 +137,25 @@ fn resolve_overlay_position(window: &WebviewWindow, settings: &OverlaySettings, 
         let anchor_y = origin_y + (monitor_height * percent_y / 100.0);
 
         // Position window so its center is at the anchor point
-        let pos_x = anchor_x - width * 0.5;
-        let pos_y = anchor_y - height * 0.5;
+        // and clamp to monitor bounds to avoid "invisible" off-screen overlays.
+        let mut pos_x = anchor_x - width * 0.5;
+        let mut pos_y = anchor_y - height * 0.5;
+
+        let min_x = origin_x;
+        let min_y = origin_y;
+        let max_x = if monitor_width > width {
+            origin_x + monitor_width - width
+        } else {
+            origin_x
+        };
+        let max_y = if monitor_height > height {
+            origin_y + monitor_height - height
+        } else {
+            origin_y
+        };
+
+        pos_x = pos_x.max(min_x).min(max_x);
+        pos_y = pos_y.max(min_y).min(max_y);
         (pos_x, pos_y)
     } else {
         // Fallback if monitor info unavailable (shouldn't happen)

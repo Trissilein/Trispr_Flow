@@ -17,6 +17,7 @@ This module is intentionally decoupled from Trispr Flow mainline. Trispr Flow ke
 - Batch processing queue for multiple files
 
 ## Folder Layout
+- `ANALYSIS_MODULE_SPEC.md`: consolidated implementation spec (single source for behavior/UI/API)
 - `PRODUCT_SCOPE.md`: product boundaries and requirements
 - `ARCHITECTURE.md`: runtime and integration architecture
 - `ROADMAP.md`: incremental delivery plan

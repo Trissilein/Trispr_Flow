@@ -112,6 +112,17 @@ See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for system requirements and build conf
 2. **Post-Processing**: Local rules (punctuation, numbers, vocabulary)
 3. **AI Refinement** (optional v0.7.0+): Multi-provider AI enhancement via Claude/OpenAI/Gemini
 
+## Acknowledgements
+
+Trispr Flow stands on top of several open-source and vendor ecosystems:
+
+- `ggml-org/whisper.cpp` and `ggml` for local ASR runtime tooling
+- `tauri-apps/tauri` for the desktop shell/runtime
+- NVIDIA CUDA runtime components in CUDA installer variants
+- FFmpeg as an optional external runtime dependency for OPUS workflows
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full licensing and attribution details.
+
 ## Documentation
 
 - 📖 [docs/README.md](docs/README.md) — Documentation map + governance

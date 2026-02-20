@@ -1,42 +1,79 @@
 # Third-Party Notices
 
-This document lists third-party software bundled with Trispr Flow and the
-applicable licenses. It is not a full dependency inventory. For a full list of
-runtime dependencies, see `package.json` and `Cargo.lock`.
+Last updated: 2026-02-20
 
-## Bundled Binaries
+This document lists third-party components relevant to Trispr Flow release installers.
+It is not legal advice and not a full transitive dependency SBOM.
+For full dependency inventories, see `package.json` and `src-tauri/Cargo.lock`.
 
-### whisper.cpp / ggml (quantize.exe)
+## Canonical License Sources
 
-Used for local model quantization. License: MIT.
+- whisper.cpp / ggml license: <https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE>
+- Tauri license model (MIT or Apache-2.0): <https://github.com/tauri-apps/tauri>
+- NVIDIA CUDA Toolkit EULA / redistribution terms: <https://docs.nvidia.com/cuda/eula/>
+- FFmpeg licensing overview: <https://ffmpeg.org/legal.html>
 
-```
-MIT License
+## 1) Bundled in Release Installers
 
-Copyright (c) 2023-2024 The ggml authors
+### 1.1 whisper.cpp / ggml runtime binaries
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+- Source project: `ggml-org/whisper.cpp`
+- License: MIT
+- Bundled files (depending on installer variant):
+  - `whisper-cli.exe`
+  - `whisper.dll`
+  - `ggml.dll`
+  - `ggml-base.dll`
+  - `ggml-cpu.dll`
+  - `ggml-cuda.dll`
+  - `ggml-vulkan.dll`
+  - `quantize.exe`
+- Bundled in:
+  - CUDA Edition (`src-tauri/tauri.conf.json`)
+  - Vulkan Edition (`src-tauri/tauri.conf.vulkan.json`)
+  - CUDA+Analysis Edition (`src-tauri/tauri.conf.cuda.analysis.json`)
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+### 1.2 NVIDIA CUDA runtime redistributables (CUDA variants)
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
+- Source vendor: NVIDIA
+- License terms: NVIDIA CUDA Toolkit EULA and redistribution terms
+- Bundled files:
+  - `cublas64_13.dll`
+  - `cudart64_13.dll`
+- Bundled in:
+  - CUDA Edition (`src-tauri/tauri.conf.json`)
+  - CUDA+Analysis Edition (`src-tauri/tauri.conf.cuda.analysis.json`)
 
-## Downloaded Models
+### 1.3 Tauri runtime/framework (application binary dependency)
 
-Trispr Flow can download model files from external sources at runtime. These
-model files are not bundled with the installer. Each model is governed by its
-own license from its source. Consult the model provider for the specific
-license terms before use or redistribution.
+- Source project: `tauri-apps/tauri`
+- License model: MIT or Apache-2.0
+- Applies to all release variants because Trispr Flow is built on Tauri.
+
+### 1.4 Optional bundled Analysis installer payload (CUDA+Analysis)
+
+- Bundled file: `Trispr-Analysis-Setup.exe`
+- Bundled only in: CUDA+Analysis Edition (`src-tauri/tauri.conf.cuda.analysis.json`)
+- Note: This payload belongs to a separate product/distribution path.
+  Its own notices/licenses must be provided by that installer package.
+
+## 2) Optional / Not Bundled by Default
+
+### FFmpeg
+
+- Trispr Flow can use FFmpeg for OPUS conversion if available at runtime.
+- Default release installers in this repository do not bundle FFmpeg by default.
+- If a distribution bundles FFmpeg, that distribution must comply with FFmpeg license terms for the exact build configuration used.
+
+## 3) Downloaded Model Assets (Not Bundled)
+
+- Model files (for example Whisper model binaries downloaded from model hosts) are not bundled with the installer by default.
+- Each downloaded model remains under its own upstream license and terms.
+- Users/distributors are responsible for reviewing and complying with each model's license before redistribution.
+
+## Maintenance Rule
+
+When installer resources change (new DLL/EXE or variant changes), update both:
+
+1. `THIRD_PARTY_NOTICES.md`
+2. `docs/THIRD_PARTY_BUNDLE_MATRIX.md`

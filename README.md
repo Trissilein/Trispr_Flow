@@ -114,22 +114,25 @@ See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for system requirements and build conf
 
 ## Documentation
 
-- 📖 [READ_ME_FIRST.md](READ_ME_FIRST.md) — Start here
+- 📖 [docs/README.md](docs/README.md) — Documentation map + governance
 - 🗺️ [ROADMAP.md](ROADMAP.md) — Project status and milestones
 - 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Technical overview
+- 🧭 [docs/APP_FLOW.md](docs/APP_FLOW.md) — App flow and panel behavior
+- 🎨 [docs/frontend/DESIGN_SYSTEM.md](docs/frontend/DESIGN_SYSTEM.md) — Visual tokens and UI patterns
+- 🧱 [docs/frontend/FRONTEND_GUIDELINES.md](docs/frontend/FRONTEND_GUIDELINES.md) — Frontend engineering conventions
 - 🔊 [docs/CONTINUOUS_DUMP_PLAN.md](docs/CONTINUOUS_DUMP_PLAN.md) — Adaptive continuous dump design + rollout
 - 🛠️ [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — Build setup
 - 🔄 [docs/STATE_MANAGEMENT.md](docs/STATE_MANAGEMENT.md) — Internal state flow
 - 📤 [docs/EXPORT_SCHEMA.md](docs/EXPORT_SCHEMA.md) — Export format spec
 - 📋 [docs/TASK_SCHEDULE.md](docs/TASK_SCHEDULE.md) — Implementation blocks and tasks
-- ⚖️ [docs/DOC_SYNC_CONFLICTS.md](docs/DOC_SYNC_CONFLICTS.md) — Contradictions found + discussion points
-- 🔀 [SCOPE.md](SCOPE.md) — How the project evolved vs original plan
+- 🗃️ [docs/archive/SCOPE.md](docs/archive/SCOPE.md) — Project scope evolution (historical)
 
 ## Testing
 
 ### Run tests
 ```bash
 npm run test          # Unit tests
+npm run test:docs     # Documentation governance checks
 npm run test:smoke    # Smoke test (build + Rust tests)
 ```
 
@@ -140,6 +143,6 @@ For WSL/Linux development, install dependencies listed in [DEVELOPMENT.md](docs/
 👥 **Contributing Guidelines**
 
 - 📝 See [CONTRIBUTING.md](CONTRIBUTING.md) for PR process
-- 🎯 For large features, see [SCOPE.md](SCOPE.md) to understand project direction
+- 🎯 For feature scope and priority, see [ROADMAP.md](ROADMAP.md) + [docs/DECISIONS.md](docs/DECISIONS.md)
 - 🚀 **Next tasks available**: See [ROADMAP.md](ROADMAP.md) for the live Done/Open task ledger (v0.7 Block H)
 - 💬 Discussions welcome in Issues

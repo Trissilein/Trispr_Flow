@@ -1,10 +1,17 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-19 (Roadmap sync after analysis split + launcher/installer hardening)
+Last updated: 2026-02-20 (docs root consolidation + governance sync)
 
 This file is the canonical source for priorities, dependencies, and "what is next."
 
 ---
+
+## Documentation Baseline (2026-02-20)
+
+- Repo-root docs were reduced to a minimal set (`README`, `ROADMAP`, `CHANGELOG`, `CONTRIBUTING`, `CLAUDE`, `THIRD_PARTY_NOTICES`).
+- Legacy root planning/context docs were moved to `docs/archive/`.
+- `STATUS.md` and `SCOPE.md` are now archived files; this roadmap is the canonical planning and status snapshot.
+- Canonical documentation ownership map lives in `docs/README.md`.
 
 ## Canonical Current State
 
@@ -21,6 +28,13 @@ This file is the canonical source for priorities, dependencies, and "what is nex
   - `CUDA` and `Vulkan` stay slim (no analysis payload).
   - `CUDA+Analysis` adds optional bundled local chain-install (`Trispr-Analysis-Setup.exe`).
   - No network download in NSIS analysis path.
+
+## Scope Evolution Summary (from archived `docs/archive/SCOPE.md`)
+
+- Original intent (2025-08): simple Windows dictation app (PTT + Whisper + auto-paste).
+- Actual product (v0.6.0): expanded to meeting transcription workflows (system audio, post-processing, export, diarization, quality controls).
+- Scope growth was driven by real usage (meeting capture, readability needs, storage constraints), not speculative feature creep.
+- Contributor guidance: keep optional features optional and log major tradeoffs in `docs/DECISIONS.md`.
 
 ## Next Work (4 Dependency Blocks)
 

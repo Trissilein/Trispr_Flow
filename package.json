@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
-    "test:smoke": "npm run build && cargo test --manifest-path src-tauri/Cargo.toml"
+    "test:docs": "node scripts/check-doc-governance.mjs",
+    "test:smoke": "npm run build && npm run test:docs && cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

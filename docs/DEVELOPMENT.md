@@ -28,6 +28,11 @@ Notes:
 npm run test
 ```
 
+### Documentation governance
+```bash
+npm run test:docs
+```
+
 ### Smoke test (frontend + Rust)
 ```bash
 npm run test:smoke
@@ -35,7 +40,8 @@ npm run test:smoke
 
 `test:smoke` runs:
 1. `npm run build` (TypeScript + Vite production build)
-2. `cargo test --manifest-path src-tauri/Cargo.toml`
+2. `npm run test:docs` (root markdown governance check)
+3. `cargo test --manifest-path src-tauri/Cargo.toml`
 
 ## Local whisper.cpp (GPU)
 1. Build whisper.cpp with CUDA enabled.
@@ -67,7 +73,7 @@ If CUDA is installed but CMake still cannot find the CUDA toolset, try:
 
 Notes:
 - VS 18/2026 may require CUDA build customizations to be copied into the v180
-  BuildCustomizations folder (see STATUS.md for the workaround used).
+  BuildCustomizations folder.
 
 ## Environment variables
 See `.env.example` for runtime configuration. You can override the default model download base URL with `TRISPR_WHISPER_MODEL_BASE_URL`.

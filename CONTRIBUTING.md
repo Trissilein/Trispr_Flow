@@ -16,7 +16,8 @@ npm run tauri dev
 ## Guidelines
 - Prefer small, isolated changes with a clear purpose.
 - Keep UI changes consistent with the current design system.
-- Update `STATUS.md` and `docs/DECISIONS.md` when behavior changes.
+- Update `ROADMAP.md` and `docs/DECISIONS.md` when behavior changes.
+- Keep documentation ownership aligned with `docs/README.md`.
 - Avoid committing build artifacts (`dist/`, `node_modules/`, `src-tauri/target/`).
 
 ## Testing checklist
@@ -24,6 +25,7 @@ Run before opening a PR:
 
 ```bash
 npm run test
+npm run test:docs
 npm run test:smoke
 ```
 

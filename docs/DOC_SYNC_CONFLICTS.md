@@ -25,7 +25,7 @@ This file tracks contradictions found during doc consolidation.
 ## Canonical Sources After Sync
 
 - Priorities and dependencies: `ROADMAP.md`
-- Operational snapshot: `STATUS.md`
+- Operational snapshot: `ROADMAP.md` (Canonical Current State section)
 - Detailed task table: `docs/TASK_SCHEDULE.md`
 - Sidecar runtime/API: `sidecar/vibevoice-asr/README.md`
 - Installer behavior: `docs/INSTALLER_VARIANTS.md`

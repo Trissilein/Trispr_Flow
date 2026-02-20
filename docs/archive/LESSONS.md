@@ -1,4 +1,7 @@
-# Design Lessons — Trispr Flow
+# Design Lessons — Trispr Flow (Archived)
+
+> Archive note: this file captures historical learnings and is no longer the canonical source.
+> Use `docs/frontend/DESIGN_SYSTEM.md`, `docs/frontend/FRONTEND_GUIDELINES.md`, and `docs/DECISIONS.md` for active guidance.
 
 > Patterns to follow, mistakes to avoid, and corrections from previous sessions.
 
@@ -30,7 +33,7 @@
 - **Why**: Random spacing (11px, 13px, 19px) creates visual noise.
 - **Pattern**: Use 4px base unit. Scale: 4, 6, 8, 10, 12, 14, 16, 20, 24, 32, 48, 64.
 - **Result**: Visual rhythm. Everything feels intentional.
-- **Apply**: Define spacing scale in DESIGN_SYSTEM.md. Reference tokens only.
+- **Apply**: Define spacing scale in `docs/frontend/DESIGN_SYSTEM.md`. Reference tokens only.
 
 **Lesson**: Toggle switches > Checkboxes for boolean settings
 - **Why**: Toggles feel modern. Checkboxes feel like forms.
@@ -212,7 +215,7 @@
 
 ### When Adding New Panels
 1. Add to layout-grid in styles.css
-2. Add to APP_FLOW.md
+2. Add to `docs/APP_FLOW.md`
 3. Add DOM references to dom-refs.ts
 4. Add event listeners to event-listeners.ts
 5. Add panel-collapse button
@@ -224,12 +227,12 @@
 2. Add to AppState in state.ts
 3. Add persistence logic in settings.ts
 4. Add UI in index.html
-5. Add to DESIGN_SYSTEM.md if new tokens needed
+5. Add to `docs/frontend/DESIGN_SYSTEM.md` if new tokens needed
 6. Test edge cases (validation, conflicts, errors)
 
 ### When Adding New Components
-1. Reference DESIGN_SYSTEM.md tokens (no hardcoded values)
-2. Add to component patterns section of DESIGN_SYSTEM.md
+1. Reference `docs/frontend/DESIGN_SYSTEM.md` tokens (no hardcoded values)
+2. Add to component patterns section of `docs/frontend/DESIGN_SYSTEM.md`
 3. Include all 5 states: default, hover, active, focus, disabled
 4. Test keyboard navigation
 5. Test screen reader

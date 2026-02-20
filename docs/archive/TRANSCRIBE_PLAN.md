@@ -1,4 +1,7 @@
-# Transcribe (System-Output) – Implementierungsplan
+# Transcribe (System-Output) – Implementierungsplan (Archived)
+
+> Archive note: this is a historical implementation plan and is no longer a canonical planning source.
+> Use `ROADMAP.md` for current priorities.
 
 ## Ziel
 Ein neues Feature **Transcribe**: Per Toggle-Hotkey werden System-Ausgänge (Output-Audio) aufgezeichnet und transkribiert.

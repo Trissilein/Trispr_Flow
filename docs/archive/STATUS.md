@@ -1,4 +1,7 @@
-# Trispr Flow - Status
+# Trispr Flow - Status (Archived)
+
+> Archive note: this file moved out of repo root during docs housekeeping on 2026-02-20.
+> The canonical operational snapshot now lives in `ROADMAP.md` (`Canonical Current State`).
 
 Last updated: 2026-02-19 (post roadmap-sync)
 

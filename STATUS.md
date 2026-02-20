@@ -1,54 +1,43 @@
 # Trispr Flow - Status
 
-Last updated: 2026-02-19 (post roadmap-sync)
+Last updated: 2026-02-20
 
 ## Snapshot
 
-- **Current release**: `v0.6.0` (released 2026-02-16)
-- **Current planning phase**: `v0.7.0` execution mode (Block F + G complete, Block H open)
-- **Canonical next steps**: see `ROADMAP.md`
+- Current release: `v0.6.0`
+- Current planning phase: `v0.7.0`
+- Canonical next steps: `ROADMAP.md`
 
 ## Working State
 
 - Core capture/transcription pipeline is stable (PTT/VAD + system audio + export).
-- Analyse now launches an external Analysis Tool (no in-app runtime dependency bootstrap).
-- Runtime installer download path has been removed from app launcher flow.
-- Missing Analysis Tool now resolves via local EXE selection (`trispr-analysis.exe`) with path persistence.
-- Dev builds support Python fallback (`analysis-tool/main.py`) when EXE is missing.
-- System-audio session merge path now drops overlap prefixes between transcribe chunks to avoid duplicated audio at boundaries.
-- Adaptive continuous dump is now unified across mic Toggle mode and system loopback (silence-aware flush + soft interval + hard cut).
-- Continuous dump profiles and per-source overrides are available in Settings, with legacy chunk settings mapped for compatibility.
-- Session chunk persistence is now source-specific (`mic` and `output`) to avoid cross-source finalize collisions.
-- AI Fallback foundation (v0.7 Block G) is in place: provider architecture, settings migration (`ai_fallback` + `providers`), key storage flow, and Post-Processing config UI.
-- Installer variants now target:
+- Adaptive continuous dump is unified across mic Toggle mode and system loopback.
+- Continuous dump profiles and per-source overrides are available in Settings.
+- Session chunk persistence is source-specific (`mic` and `output`) to avoid finalize collisions.
+- AI fallback foundation is in place in Post-Processing settings.
+- Installer variants are now:
   - CUDA (base)
   - Vulkan (base)
-  - CUDA+Analysis (bundled optional chain-install)
+
+## Analysis De-Scope
+
+- Analysis launcher flow has been removed from Trispr Flow mainline.
+- The `Analyse` button remains as a placeholder and shows a "coming soon" notice.
+- Analysis runtime/packaging artifacts were removed from mainline.
+- Dedicated analysis work moved to `analysis-module-branch`.
 
 ## Known Gaps
 
-- `analysis-tool/` still needs full packaging into standalone release artifacts.
-- CUDA+Analysis pipeline depends on local availability of `installers/Trispr-Analysis-Setup.exe`.
-- AI Fallback provider calls are scaffolded/passthrough until Block H provider API integrations are completed.
-- Some legacy docs still contain historical assumptions; `ROADMAP.md` is now the source of truth for priority and sequencing.
+- Hands-on desktop/mobile UX QA remains manual and ongoing.
+- Some historical planning docs still reference previous analysis experiments.
 
 ## Privacy + Network Notes
 
-- App launcher does not download analysis installers from the network.
-- Analysis processing remains local; no user audio upload is performed by Trispr launcher flow.
+- Mainline runtime remains local-first for transcription.
+- No analysis installer download path exists in Trispr Flow mainline.
 
 ## Next Focus
 
-1. Validate launcher UX end-to-end (missing EXE, remembered path, dev fallback).
-2. Build and test all three installer variants, including CUDA+Analysis chain-install.
-3. Block H execution:
-   - Task 32 OpenAI integration
-   - Task 33 Claude integration
-   - Task 34 Gemini integration
-   - Task 35 prompt strategy polish
-   - Task 38 E2E.
-
-## v0.7 Task State Snapshot
-
-- ✅ Done: 31, 36, 37
-- 🔵 Open: 32, 33, 34, 35, 38
+1. Continue UX/UI consistency improvements in Settings panels.
+2. Complete provider API integrations for AI fallback.
+3. Execute v0.7 roadmap tasks and stabilize release QA.

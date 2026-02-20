@@ -2,9 +2,9 @@
 setlocal enabledelayedexpansion
 
 REM ========================================
-REM Trispr Flow - Automated Triple Installer Build
+REM Trispr Flow - Automated Dual Installer Build
 REM ========================================
-REM Builds CUDA, Vulkan, and CUDA+Analysis installer variants.
+REM Builds CUDA and Vulkan installer variants.
 
 set "ROOT=%~dp0"
 pushd "%ROOT%" >nul 2>&1
@@ -15,11 +15,11 @@ if not "!ERRORLEVEL!"=="0" (
 
 echo.
 echo ========================================
-echo Trispr Flow - Triple Installer Builder
+echo Trispr Flow - Dual Installer Builder
 echo ========================================
 echo.
 
-echo [1/11] Detecting version...
+echo [1/9] Detecting version...
 for /f "tokens=2 delims=:, " %%a in ('findstr /C:"\"version\"" package.json') do (
     set VERSION_RAW=%%a
 )
@@ -31,16 +31,14 @@ echo Found version: %VERSION%
 echo Build stamp: %BUILDSTAMP%
 echo.
 
-echo [2/11] Verifying config version consistency...
+echo [2/9] Verifying config version consistency...
 call :verify_version "src-tauri\tauri.conf.json"
 if not "!ERRORLEVEL!"=="0" goto :fail
 call :verify_version "src-tauri\tauri.conf.vulkan.json"
 if not "!ERRORLEVEL!"=="0" goto :fail
-call :verify_version "src-tauri\tauri.conf.cuda.analysis.json"
-if not "!ERRORLEVEL!"=="0" goto :fail
 echo.
 
-echo [3/11] Verifying CUDA runtime libraries...
+echo [3/9] Verifying CUDA runtime libraries...
 set DLL_MISSING=0
 if not exist "src-tauri\bin\cuda\cublas64_13.dll" (
     echo   ERROR: cublas64_13.dll not found!
@@ -58,7 +56,7 @@ if "!DLL_MISSING!"=="1" (
 echo   OK: CUDA DLLs found
 echo.
 
-echo [4/11] Preparing output directories...
+echo [4/9] Preparing output directories...
 if not exist "installers" mkdir "installers"
 if exist "src-tauri\target\release\bundle\nsis" (
     rmdir /s /q "src-tauri\target\release\bundle\nsis" 2>nul
@@ -66,48 +64,30 @@ if exist "src-tauri\target\release\bundle\nsis" (
 echo   OK: Output directories ready
 echo.
 
-echo [5/11] Building frontend...
+echo [5/9] Building frontend...
 call npm run build
 if not "!ERRORLEVEL!"=="0" goto :fail
 echo   OK: Frontend build successful
 echo.
 
-echo [6/11] Building CUDA installer...
+echo [6/9] Building CUDA installer...
 call :build_variant "CUDA" "src-tauri/tauri.conf.json" "CUDA"
 if not "!ERRORLEVEL!"=="0" goto :fail
 set "CUDA_TARGET=!LAST_TARGET!"
 echo.
 
-echo [7/11] Building Vulkan installer...
+echo [7/9] Building Vulkan installer...
 call :build_variant "VULKAN" "src-tauri/tauri.conf.vulkan.json" "VULKAN"
 if not "!ERRORLEVEL!"=="0" goto :fail
 set "VULKAN_TARGET=!LAST_TARGET!"
 echo.
 
-echo [8/11] Checking bundled Analysis installer gate...
-set "ANALYSIS_SETUP=installers\Trispr-Analysis-Setup.exe"
-if not exist "%ANALYSIS_SETUP%" (
-    echo ERROR: Missing required file for CUDA+Analysis variant:
-    echo   %ANALYSIS_SETUP%
-    echo Place the Analysis installer there and rerun this script.
-    goto :fail
-)
-echo   OK: Found %ANALYSIS_SETUP%
-echo.
-
-echo [9/11] Building CUDA+Analysis installer...
-call :build_variant "CUDA+Analysis" "src-tauri/tauri.conf.cuda.analysis.json" "CUDA-ANALYSIS"
-if not "!ERRORLEVEL!"=="0" goto :fail
-set "CUDA_ANALYSIS_TARGET=!LAST_TARGET!"
-echo.
-
-echo [10/11] Build summary...
+echo [8/9] Build summary...
 call :print_file_info "CUDA" "!CUDA_TARGET!"
 call :print_file_info "VULKAN" "!VULKAN_TARGET!"
-call :print_file_info "CUDA-ANALYSIS" "!CUDA_ANALYSIS_TARGET!"
 echo.
 
-echo [11/11] Done.
+echo [9/9] Done.
 echo ========================================
 echo Build Complete
 echo ========================================

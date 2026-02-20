@@ -32,7 +32,7 @@ import * as dom from "./dom-refs";
 import { renderSettings } from "./settings";
 import { renderDevices, renderOutputDevices } from "./devices";
 import { renderHero, setCaptureStatus, setTranscribeStatus, updateThresholdMarkers } from "./ui-state";
-import { renderHistory, setHistoryTab, initSpeakerLabelEditing } from "./history";
+import { renderHistory, setHistoryTab } from "./history";
 import { initPanelState, isPanelCollapsed, setPanelCollapsed } from "./panels";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
 import { wireEvents, initMainTab } from "./event-listeners";
@@ -122,7 +122,6 @@ async function bootstrap() {
   initPanelState();
   initConversationView();
   initChaptersUI();
-  initSpeakerLabelEditing();
 
   // Display app version
   if (dom.appVersion) {

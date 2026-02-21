@@ -74,10 +74,8 @@
 Download the latest installer from [Releases](https://github.com/Trissilein/Trispr_Flow/releases):
 - **Trispr_Flow_0.6.0_CUDA_Edition.exe** — For NVIDIA GPU systems (RTX 4000+ series recommended)
 - **Trispr_Flow_0.6.0_Vulkan_Edition.exe** — For systems without CUDA support
-- **Trispr_Flow_0.6.0_CUDA+Analysis_Edition.exe** — CUDA build with optional bundled Analysis Tool chain-install
 
-Voice Analysis is optional and external. Trispr Flow does not auto-download analysis installers at runtime.
-If not installed, Analyse asks for a local `trispr-analysis.exe` or uses dev fallback in debug builds.
+Analysis functionality is being developed as a separate module/project line and is not bundled in Trispr Flow installers.
 
 ### For Developers
 ```bash

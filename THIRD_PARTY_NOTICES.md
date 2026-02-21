@@ -31,7 +31,6 @@ For full dependency inventories, see `package.json` and `src-tauri/Cargo.lock`.
 - Bundled in:
   - CUDA Edition (`src-tauri/tauri.conf.json`)
   - Vulkan Edition (`src-tauri/tauri.conf.vulkan.json`)
-  - CUDA+Analysis Edition (`src-tauri/tauri.conf.cuda.analysis.json`)
 
 ### 1.2 NVIDIA CUDA runtime redistributables (CUDA variants)
 
@@ -42,20 +41,12 @@ For full dependency inventories, see `package.json` and `src-tauri/Cargo.lock`.
   - `cudart64_13.dll`
 - Bundled in:
   - CUDA Edition (`src-tauri/tauri.conf.json`)
-  - CUDA+Analysis Edition (`src-tauri/tauri.conf.cuda.analysis.json`)
 
 ### 1.3 Tauri runtime/framework (application binary dependency)
 
 - Source project: `tauri-apps/tauri`
 - License model: MIT or Apache-2.0
 - Applies to all release variants because Trispr Flow is built on Tauri.
-
-### 1.4 Optional bundled Analysis installer payload (CUDA+Analysis)
-
-- Bundled file: `Trispr-Analysis-Setup.exe`
-- Bundled only in: CUDA+Analysis Edition (`src-tauri/tauri.conf.cuda.analysis.json`)
-- Note: This payload belongs to a separate product/distribution path.
-  Its own notices/licenses must be provided by that installer package.
 
 ## 2) Optional / Not Bundled by Default
 

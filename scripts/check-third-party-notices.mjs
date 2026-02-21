@@ -4,7 +4,6 @@ import path from 'node:path';
 const configFiles = [
   'src-tauri/tauri.conf.json',
   'src-tauri/tauri.conf.vulkan.json',
-  'src-tauri/tauri.conf.cuda.analysis.json',
 ];
 
 function readJson(filePath) {

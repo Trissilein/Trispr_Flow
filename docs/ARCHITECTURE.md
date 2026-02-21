@@ -185,18 +185,17 @@ Trispr Flow (Rust launcher)  ->  Trispr Analysis app (separate process + separat
 
 ### Installer Variants
 
-Three installer variants are built via `build-both-installers.bat`:
+Two installer variants are built via `build-both-installers.bat`:
 
 - **CUDA Edition** (~93 MB): Includes NVIDIA CUDA runtime (cublas64_13.dll, cudart64_13.dll) + Vulkan backend. For NVIDIA GPU users.
 - **Vulkan Edition** (~9 MB): Vulkan backend only. For AMD/Intel GPU users or minimal installs.
-- **CUDA+Analysis Edition**: CUDA build plus optional bundled local chain-install for Trispr Analysis.
 
 All use NSIS packaging with language selection (English/German).
 
 ### Version Management
 
 - Version source of truth: `package.json` version field
-- Tauri configs (`tauri.conf.json`, `tauri.conf.vulkan.json`, `tauri.conf.cuda.analysis.json`) mirror the version
+- Tauri configs (`tauri.conf.json`, `tauri.conf.vulkan.json`) mirror the version
 - App version displayed in UI header via Tauri `getVersion()` API
 
 ## Quality status

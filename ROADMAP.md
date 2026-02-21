@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-20 (docs root consolidation + governance sync)
+Last updated: 2026-02-20 (installer strategy sync: analysis de-scoped from mainline installers)
 
 This file is the canonical source for priorities, dependencies, and "what is next."
 
@@ -25,9 +25,9 @@ This file is the canonical source for priorities, dependencies, and "what is nex
   - When no local EXE is found, users select a local `trispr-analysis.exe`.
   - Dev builds support Python fallback (`analysis-tool/main.py`) for local testing.
 - **Installer strategy**:
-  - `CUDA` and `Vulkan` stay slim (no analysis payload).
-  - `CUDA+Analysis` adds optional bundled local chain-install (`Trispr-Analysis-Setup.exe`).
-  - No network download in NSIS analysis path.
+  - `CUDA` and `Vulkan` are the only supported release installers.
+  - Mainline installers do not bundle analysis payloads.
+  - Analysis is built and distributed as a separate module/project line.
 
 ## Scope Evolution Summary (from archived `docs/archive/SCOPE.md`)
 
@@ -49,8 +49,8 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 
 1. Runtime analysis installer download path is removed.
 2. Analyse flow uses local EXE selection and remembered override path.
-3. A third installer variant is introduced: `CUDA+Analysis`.
-4. `CUDA+Analysis` build has a hard gate on local file `installers/Trispr-Analysis-Setup.exe`.
+3. Mainline release pipeline is limited to two installer variants (`CUDA`, `Vulkan`).
+4. Analysis packaging/install flow is out of scope for Trispr Flow mainline.
 
 ## v0.7.0 Implementation Status
 
@@ -76,11 +76,11 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 - ✅ Runtime download URL path removed (`download.trispr.dev` no longer used by app launcher).
 - ✅ `analysis_tool_status` now returns local candidate paths/directories for picker UX.
 - ✅ Dev fallback path to Python CLI is available when EXE is absent.
-- ✅ NSIS analysis install path is local-only in the CUDA+Analysis variant.
+- ✅ Mainline installers do not include an analysis payload path.
 
 ## Immediate Next Actions
 
-1. Finish launcher/installer E2E validation for all three variants (including CUDA+Analysis chain-install).
+1. Finish launcher/installer E2E validation for the two release variants (CUDA + Vulkan).
 2. Start Block H Task 32 (OpenAI provider integration) and proceed through Task 33/34/35.
 3. Close Block H with Task 38 cross-provider E2E tests.
 
@@ -90,7 +90,7 @@ This file is the canonical source for priorities, dependencies, and "what is nex
 - Block G implementation handover (archive): `docs/NEXT_BLOCK_G.md`
 - v0.7 architecture: `docs/V0.7.0_ARCHITECTURE.md`
 - Decision log: `docs/DECISIONS.md`
-- Installer variants and chain-install details: `docs/INSTALLER_VARIANTS.md`
+- Installer variant details: `docs/INSTALLER_VARIANTS.md`
 - Voice Analysis runtime QA matrix: `docs/VOICE_ANALYSIS_RUNTIME_QA_MATRIX.md`
 - Voice Analysis UX QA matrix: `docs/VOICE_ANALYSIS_UX_QA_MATRIX.md`
 

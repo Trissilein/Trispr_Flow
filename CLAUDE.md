@@ -18,3 +18,8 @@ All files use **LF** line endings (enforced via `.gitattributes`). Never commit 
 - Do not introduce retry loops with cloned state in Rust — they cause stale-data overwrites
 - Tauri event listeners must be tracked and cleaned up (use `unlisten` pattern)
 - Settings are persisted via `invoke("save_settings")` which calls `apply_overlay_settings()` and emits `settings-changed`
+
+## Environment Constraint
+
+- Do not run Git commands from WSL for this project.
+- Use a native Windows shell/session for all Git operations (status/commit/merge/push/branch/delete).

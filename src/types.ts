@@ -123,9 +123,6 @@ export interface Settings {
   continuous_system_silence_flush_ms?: number;
   continuous_system_hard_cut_ms?: number;
   transcribe_backend?: "whisper_cpp";
-  analysis_tool_path_override?: string;
-  analysis_parallel_warning_ack?: boolean;
-  analysis_auto_launch_on_file_pick?: boolean;
   // Window state fields from backend
   main_window_x?: number | null;
   main_window_y?: number | null;
@@ -146,30 +143,6 @@ export interface HistoryEntry {
   text: string;
   timestamp_ms: number;
   source: string;
-}
-
-export interface SpeakerSegment {
-  speaker_id: string;
-  speaker_label?: string; // Custom label (e.g., "John" instead of "Speaker 1")
-  start_time: number;
-  end_time: number;
-  text: string;
-}
-
-export interface TranscriptionAnalysis {
-  segments: SpeakerSegment[];
-  duration_s: number;
-  total_speakers: number;
-  processing_time_ms: number;
-}
-
-export interface AnalysisToolStatus {
-  installed: boolean;
-  executable_path?: string | null;
-  version?: string | null;
-  reason_if_unavailable?: string | null;
-  candidate_paths: string[];
-  candidate_dirs: string[];
 }
 
 export interface AudioDevice {

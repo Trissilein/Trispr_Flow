@@ -1,10 +1,8 @@
 // DOM event listeners setup
 
 import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type {
   AIFallbackProvider,
-  AnalysisToolStatus,
   Settings,
 } from "./types";
 import { settings } from "./state";
@@ -20,15 +18,6 @@ import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
 import { updateChaptersVisibility } from "./chapters";
-
-// =====================================================================
-// =====================================================================
-// Voice Analysis launcher helpers
-// =====================================================================
-
-let analysisInProgress = false;
-const ANALYSIS_GPU_WARNING_MESSAGE =
-  "Voice Analysis runs in a separate app and may heavily load GPU/VRAM. Running Trispr and analysis in parallel can slow down your system.\n\nContinue?";
 
 const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini"];
 
@@ -174,159 +163,6 @@ async function refreshAIFallbackModels(provider: AIFallbackProvider) {
     if (!models.includes(settings.ai_fallback.model)) {
       settings.ai_fallback.model = providerSettings.preferred_model || models[0] || "";
     }
-  }
-}
-
-function setAnalysisBusy(isBusy: boolean) {
-  analysisInProgress = isBusy;
-  if (dom.analyseButton) {
-    dom.analyseButton.disabled = isBusy;
-  }
-  if (dom.analyseButtonText) {
-    dom.analyseButtonText.textContent = isBusy ? "Launching..." : "Analyse";
-  }
-  if (dom.analyseSpinner) {
-    dom.analyseSpinner.style.display = isBusy ? "inline-block" : "none";
-  }
-}
-
-function analysisOverrideParentPath(): string | null {
-  const overridePath = settings?.analysis_tool_path_override?.trim();
-  if (!overridePath) return null;
-  const lastSeparator = Math.max(overridePath.lastIndexOf("\\"), overridePath.lastIndexOf("/"));
-  if (lastSeparator <= 0) return null;
-  return overridePath.slice(0, lastSeparator);
-}
-
-function analysisExePickerDefaultPath(status: AnalysisToolStatus): string | undefined {
-  const overrideParent = analysisOverrideParentPath();
-  if (overrideParent) {
-    return overrideParent;
-  }
-
-  const preferredDir = (status.candidate_dirs || []).find((candidateDir) => {
-    const normalized = (candidateDir || "").toLowerCase();
-    return normalized.includes("trispr analysis") || normalized.includes("com.trispr.analysis");
-  });
-  if (preferredDir?.trim()) {
-    return preferredDir.trim();
-  }
-
-  for (const candidateDir of status.candidate_dirs || []) {
-    const trimmed = candidateDir?.trim();
-    if (trimmed) {
-      return trimmed;
-    }
-  }
-
-  return undefined;
-}
-
-function normalizePathForCompare(input: string): string {
-  return input.replace(/\//g, "\\").toLowerCase();
-}
-
-function isAnalysisExePath(path: string): boolean {
-  const normalized = normalizePathForCompare(path).trim();
-  return normalized.endsWith("\\trispr-analysis.exe") || normalized === "trispr-analysis.exe";
-}
-
-async function chooseLocalAnalysisExecutable(status: AnalysisToolStatus): Promise<AnalysisToolStatus | null> {
-  const defaultPath = analysisExePickerDefaultPath(status);
-  const selected = await openDialog({
-    title: "Select trispr-analysis.exe",
-    filters: [{ name: "Executable", extensions: ["exe"] }],
-    multiple: false,
-    directory: false,
-    defaultPath,
-  });
-
-  if (!selected || Array.isArray(selected)) {
-    return null;
-  }
-
-  const selectedPath = selected as string;
-  if (!isAnalysisExePath(selectedPath)) {
-    throw new Error("Please select trispr-analysis.exe.");
-  }
-
-  const previousOverride = settings?.analysis_tool_path_override ?? "";
-  if (settings) {
-    settings.analysis_tool_path_override = selectedPath;
-    await persistSettings();
-  }
-
-  const refreshed = await invoke<AnalysisToolStatus>("analysis_tool_status");
-  if (!refreshed.installed || !refreshed.executable_path) {
-    if (settings) {
-      settings.analysis_tool_path_override = previousOverride;
-      await persistSettings();
-    }
-    throw new Error("Selected file is not a valid Trispr Analysis executable.");
-  }
-
-  if (normalizePathForCompare(refreshed.executable_path) !== normalizePathForCompare(selectedPath)) {
-    if (settings) {
-      settings.analysis_tool_path_override = refreshed.executable_path;
-      await persistSettings();
-    }
-  }
-
-  if (!isAnalysisExePath(refreshed.executable_path)) {
-    if (settings) {
-      settings.analysis_tool_path_override = previousOverride;
-      await persistSettings();
-    }
-    throw new Error("Selected file is not a valid Trispr Analysis executable.");
-  }
-  return refreshed;
-}
-
-async function ensureAnalysisToolReady(): Promise<AnalysisToolStatus> {
-  const status = await invoke<AnalysisToolStatus>("analysis_tool_status");
-  if (status.installed) {
-    return status;
-  }
-
-  const shouldPickLocalExe = window.confirm(
-    "Trispr Analysis is not installed.\n\nDo you want to pick a local trispr-analysis.exe now?",
-  );
-  if (!shouldPickLocalExe) {
-    throw new Error("Analysis canceled: no Trispr Analysis executable selected.");
-  }
-
-  const refreshed = await chooseLocalAnalysisExecutable(status);
-  if (!refreshed?.installed) {
-    throw new Error("Analysis canceled: selected executable is invalid or missing.");
-  }
-  return refreshed;
-}
-
-async function confirmAnalysisGpuWarning(): Promise<boolean> {
-  if (settings?.analysis_parallel_warning_ack) {
-    return true;
-  }
-
-  const accepted = window.confirm(ANALYSIS_GPU_WARNING_MESSAGE);
-  if (accepted && settings) {
-    settings.analysis_parallel_warning_ack = true;
-    await persistSettings();
-  }
-
-  return accepted;
-}
-
-async function launchExternalAnalysis(audioPath: string): Promise<void> {
-  await ensureAnalysisToolReady();
-
-  const accepted = await confirmAnalysisGpuWarning();
-  if (!accepted) {
-    throw new Error("Analysis canceled by user.");
-  }
-
-  const launchResult = await invoke<{ status: string }>("analysis_tool_launch", { audioPath });
-  if (launchResult?.status !== "launched") {
-    throw new Error("Failed to launch external analysis tool.");
   }
 }
 // Custom vocabulary helper functions
@@ -584,57 +420,13 @@ export function wireEvents() {
     await navigator.clipboard.writeText(transcript);
   });
 
-  dom.analyseButton?.addEventListener("click", async () => {
-    if (analysisInProgress) {
-      showToast({
-        type: "info",
-        title: "Analysis launcher busy",
-        message: "Please wait until the current launch attempt completes.",
-        duration: 2500,
-      });
-      return;
-    }
-
-    let audioPath: string;
-    try {
-      const recordingsDir = await invoke<string>("get_recordings_directory");
-      const selected = await openDialog({
-        title: "Select Audio File for External Analysis",
-        filters: [{ name: "Audio Files", extensions: ["opus", "wav", "mp3", "m4a"] }],
-        multiple: false,
-        directory: false,
-        defaultPath: recordingsDir,
-      });
-      if (!selected) {
-        return;
-      }
-      audioPath = selected as string;
-    } catch (error) {
-      showToast({ type: "error", title: "File selection failed", message: String(error), duration: 4000 });
-      return;
-    }
-
-    setAnalysisBusy(true);
-    try {
-      await launchExternalAnalysis(audioPath);
-      const fileName = audioPath.split(/[/\\]/).pop() ?? audioPath;
-      showToast({
-        type: "success",
-        title: "Analysis launched",
-        message: `Opened external analysis tool for ${fileName}`,
-        duration: 3500,
-      });
-    } catch (error) {
-      console.error("External analysis launch failed:", error);
-      showToast({
-        type: "error",
-        title: "Analysis launch failed",
-        message: String(error),
-        duration: 6000,
-      });
-    } finally {
-      setAnalysisBusy(false);
-    }
+  dom.analyseButton?.addEventListener("click", () => {
+    showToast({
+      type: "info",
+      title: "Analyse module",
+      message: "Analyse module coming soon.",
+      duration: 2800,
+    });
   });
 
   dom.historyExport?.addEventListener("click", async () => {

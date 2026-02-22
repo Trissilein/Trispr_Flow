@@ -123,9 +123,6 @@ pub(crate) struct Settings {
     pub(crate) continuous_system_silence_flush_ms: u64,
     pub(crate) continuous_system_hard_cut_ms: u64,
     pub(crate) transcribe_backend: String, // "whisper_cpp" | future backends
-    pub(crate) analysis_tool_path_override: String,
-    pub(crate) analysis_parallel_warning_ack: bool,
-    pub(crate) analysis_auto_launch_on_file_pick: bool,
     // Session consolidation settings (v0.7.0)
     pub(crate) session_idle_timeout_ms: u64, // Auto-finalize session after N ms of silence
     pub(crate) ptt_session_grouping_enabled: bool, // Group multiple PTT presses into one session
@@ -244,9 +241,6 @@ impl Default for Settings {
       continuous_system_silence_flush_ms: 1_200,
       continuous_system_hard_cut_ms: 45_000,
       transcribe_backend: "whisper_cpp".to_string(),
-      analysis_tool_path_override: String::new(),
-      analysis_parallel_warning_ack: false,
-      analysis_auto_launch_on_file_pick: true,
       session_idle_timeout_ms: 60_000,       // 60 seconds
       ptt_session_grouping_enabled: true,
       ptt_session_group_timeout_s: 120,      // 2 minutes
@@ -353,9 +347,6 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             }
             if settings.transcribe_backend != "whisper_cpp" {
                 settings.transcribe_backend = "whisper_cpp".to_string();
-            }
-            if settings.analysis_tool_path_override.trim().is_empty() {
-                settings.analysis_tool_path_override = String::new();
             }
             // Validate language_mode
             let valid_languages = [

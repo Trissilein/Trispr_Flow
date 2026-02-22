@@ -1,6 +1,6 @@
 // Type definitions for Trispr Flow application
 
-export type AIFallbackProvider = "claude" | "openai" | "gemini";
+export type AIFallbackProvider = "claude" | "openai" | "gemini" | "ollama";
 
 export interface AIFallbackSettings {
   enabled: boolean;
@@ -19,10 +19,17 @@ export interface AIProviderSettings {
   preferred_model: string;
 }
 
+export interface OllamaSettings {
+  endpoint: string;
+  available_models: string[];
+  preferred_model: string;
+}
+
 export interface AIProvidersSettings {
   claude: AIProviderSettings;
   openai: AIProviderSettings;
   gemini: AIProviderSettings;
+  ollama: OllamaSettings;
 }
 
 export interface Settings {

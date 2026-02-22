@@ -10,7 +10,7 @@ const DEFAULT_MAX_TOKENS: u32 = 4000;
 #[serde(default)]
 pub struct AIFallbackSettings {
     pub enabled: bool,
-    pub provider: String, // "claude" | "openai" | "gemini"
+    pub provider: String, // "claude" | "openai" | "gemini" | "ollama"
     pub model: String,
     pub temperature: f32,
     pub max_tokens: u32,
@@ -101,6 +101,40 @@ impl AIProviderSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OllamaSettings {
+    pub endpoint: String,
+    pub available_models: Vec<String>,
+    pub preferred_model: String,
+}
+
+impl Default for OllamaSettings {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:11434".to_string(),
+            available_models: Vec::new(),
+            preferred_model: String::new(),
+        }
+    }
+}
+
+impl OllamaSettings {
+    fn normalize(&mut self) {
+        if self.endpoint.trim().is_empty() {
+            self.endpoint = "http://localhost:11434".to_string();
+        }
+        if self.available_models.is_empty() {
+            self.available_models.push("llama2".to_string());
+        }
+        if self.preferred_model.trim().is_empty()
+            || !self.available_models.iter().any(|m| m == &self.preferred_model)
+        {
+            self.preferred_model = self.available_models[0].clone();
+        }
+    }
+}
+
 impl Default for AIProviderSettings {
     fn default() -> Self {
         Self {
@@ -117,6 +151,7 @@ pub struct AIProvidersSettings {
     pub claude: AIProviderSettings,
     pub openai: AIProviderSettings,
     pub gemini: AIProviderSettings,
+    pub ollama: OllamaSettings,
 }
 
 impl Default for AIProvidersSettings {
@@ -125,6 +160,7 @@ impl Default for AIProvidersSettings {
             claude: AIProviderSettings::with_provider_defaults("claude"),
             openai: AIProviderSettings::with_provider_defaults("openai"),
             gemini: AIProviderSettings::with_provider_defaults("gemini"),
+            ollama: OllamaSettings::default(),
         }
     }
 }
@@ -152,6 +188,7 @@ impl AIProvidersSettings {
         self.claude.normalize_for_provider("claude");
         self.openai.normalize_for_provider("openai");
         self.gemini.normalize_for_provider("gemini");
+        self.ollama.normalize();
     }
 
     pub fn sync_from_ai_fallback(&mut self, fallback: &AIFallbackSettings) {
@@ -204,6 +241,7 @@ pub fn normalize_provider_id(provider: &str) -> &str {
         "claude" => "claude",
         "openai" => "openai",
         "gemini" => "gemini",
+        "ollama" => "ollama",
         _ => DEFAULT_PROVIDER,
     }
 }

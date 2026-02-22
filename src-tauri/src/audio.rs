@@ -477,6 +477,15 @@ fn resolve_input_device(device_id: &str) -> Option<cpal::Device> {
         return host.default_input_device();
     }
 
+    // Extract the device name from a stored "input-{index}-{name}" ID for fallback matching.
+    // The index can change between sessions (e.g. after reboot or USB reconnect),
+    // so we fall back to matching by name alone if the exact ID no longer matches.
+    let stored_name: Option<&str> = device_id
+        .strip_prefix("input-")
+        .and_then(|rest| rest.find('-').map(|pos| &rest[pos + 1..]));
+
+    let mut name_match: Option<cpal::Device> = None;
+
     if let Ok(inputs) = host.input_devices() {
         for (index, device) in inputs.enumerate() {
             let name = device
@@ -484,12 +493,23 @@ fn resolve_input_device(device_id: &str) -> Option<cpal::Device> {
                 .unwrap_or_else(|_| format!("Input {}", index + 1));
             let id = format!("input-{}-{}", index, name);
             if id == device_id {
-                return Some(device);
+                return Some(device); // exact match — index and name both correct
+            }
+            // Keep the first device whose name matches for use as fallback.
+            if name_match.is_none() && stored_name.map(|n| n == name).unwrap_or(false) {
+                name_match = Some(device);
             }
         }
     }
 
-    host.default_input_device()
+    if name_match.is_some() {
+        tracing::warn!(
+            "Input device '{}' not found by exact ID; matched by name instead.",
+            device_id
+        );
+    }
+
+    name_match.or_else(|| host.default_input_device())
 }
 
 fn push_mono_samples(buffer: &Arc<Mutex<CaptureBuffer>>, mono: &[f32], sample_rate: u32) {
@@ -867,7 +887,7 @@ fn process_toggle_segment(
     match result {
         Ok((text, source)) => {
             if !text.trim().is_empty()
-                && !should_drop_transcript(&text, segment_rms, duration_ms)
+                && !should_drop_transcript(&text, segment_rms, duration_ms, false)
                 && !crate::transcription::should_drop_by_activation_words(
                     &text,
                     &runtime_settings.activation_words,
@@ -1411,7 +1431,7 @@ fn process_vad_segment(
         Ok((text, source)) => {
             let settings = state.settings.lock().unwrap().clone();
             if !text.trim().is_empty()
-                && !should_drop_transcript(&text, level, duration_ms)
+                && !should_drop_transcript(&text, level, duration_ms, false)
                 && !crate::transcription::should_drop_by_activation_words(
                     &text,
                     &settings.activation_words,
@@ -1557,7 +1577,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
             Ok((text, source)) => {
                 let settings = state.settings.lock().unwrap().clone();
                 if !text.trim().is_empty()
-                    && !should_drop_transcript(&text, level, duration_ms)
+                    && !should_drop_transcript(&text, level, duration_ms, false)
                     && !crate::transcription::should_drop_by_activation_words(
                         &text,
                         &settings.activation_words,

@@ -310,14 +310,14 @@ mod tests {
 
     #[test]
     fn short_meaningful_transcript_is_not_dropped() {
-        assert!(!should_drop_transcript("Bitte speichere das", 0.001, 450));
-        assert!(!should_drop_transcript("das passt", 0.002, 300));
+        assert!(!should_drop_transcript("Bitte speichere das", 0.001, 450, false));
+        assert!(!should_drop_transcript("das passt", 0.002, 300, false));
     }
 
     #[test]
     fn common_short_hallucination_is_dropped() {
-        assert!(should_drop_transcript("thank you", 0.002, 500));
-        assert!(should_drop_transcript("uh", 0.001, 400));
+        assert!(should_drop_transcript("thank you", 0.002, 500, false));
+        assert!(should_drop_transcript("uh", 0.001, 400, false));
     }
 }
 
@@ -531,19 +531,41 @@ fn normalize_transcript(text: &str) -> String {
         .join(" ")
 }
 
-pub(crate) fn should_drop_transcript(text: &str, _rms: f32, duration_ms: u64) -> bool {
+/// Drop-filter for transcribed text.
+///
+/// * `strict = false` (mic input): drops a known hallucination phrase only when the
+///   captured audio segment is very short (≤ HALLUCINATION_MAX_DURATION_MS).  This
+///   preserves genuine short dictations like "Stop" or "OK Google".
+///
+/// * `strict = true` (system-audio loopback): applies two extra rules because
+///   loopback audio produces far more false-positive fragments than a mic:
+///   1. Known phrases are always dropped, regardless of segment duration.
+///   2. Any utterance that is ≤ 2 words **and** ≤ 15 characters is dropped — these
+///      are almost always background-audio noise ("All right.", "Oh.", "Fine.") that
+///      Whisper transcribes but are not useful content.
+pub(crate) fn should_drop_transcript(text: &str, _rms: f32, duration_ms: u64, strict: bool) -> bool {
     let normalized = normalize_transcript(text);
     if normalized.is_empty() {
         return true;
     }
-    let is_short_audio = duration_ms <= crate::constants::HALLUCINATION_MAX_DURATION_MS;
+
     let matches_common = HALLUCINATION_PHRASES.iter().any(|p| *p == normalized);
 
-    if matches_common && is_short_audio {
-        return true;
+    if strict {
+        if matches_common {
+            return true;
+        }
+        let word_count = normalized.split_whitespace().count();
+        if word_count <= 2 && normalized.len() <= 15 {
+            return true;
+        }
+    } else {
+        let is_short_audio = duration_ms <= crate::constants::HALLUCINATION_MAX_DURATION_MS;
+        if matches_common && is_short_audio {
+            return true;
+        }
     }
 
-    // Keep genuine short dictations. Only aggressively drop known filler hallucinations.
     false
 }
 
@@ -572,18 +594,23 @@ pub(crate) fn should_drop_by_activation_words(
 }
 
 const HALLUCINATION_PHRASES: &[&str] = &[
-    "you",
-    "thank you",
-    "thanks",
-    "okay",
-    "ok",
-    "yeah",
-    "yes",
-    "no",
-    "uh",
-    "um",
-    "hmm",
-    "huh",
+    // Filler sounds / acknowledgements
+    "uh", "um", "hmm", "huh", "ah", "oh", "uh huh",
+    // Single-word reactions
+    "yes", "no", "okay", "ok", "yeah", "right", "sure", "fine",
+    "good", "great", "nice", "wow", "cool", "really", "exactly",
+    "absolutely", "definitely", "correct", "true",
+    "hey", "hi", "hello", "bye", "goodbye", "welcome",
+    "please", "wait", "sorry",
+    // Gratitude / social phrases
+    "you", "thank you", "thanks",
+    // Two-word phrases common in background audio
+    "all right", "alright", "oh no", "oh yeah", "oh well", "oh wow", "oh my",
+    "come on", "go on", "hold on",
+    "i see", "me too", "of course", "no no", "yes yes",
+    "good job", "well done", "no problem", "no worries", "for sure",
+    "see ya", "take care", "good luck", "good night", "good morning",
+    "thats right", "youre right", "youre welcome", "not bad",
 ];
 
 /// Flush accumulated system audio as a session chunk via SessionManager.
@@ -709,7 +736,7 @@ fn transcribe_worker(
         match result {
             Ok((text, _source)) => {
                 if !text.trim().is_empty()
-                    && !should_drop_transcript(&text, level, duration_ms)
+                    && !should_drop_transcript(&text, level, duration_ms, true)
                     && !should_drop_by_activation_words(
                         &text,
                         &settings.activation_words,

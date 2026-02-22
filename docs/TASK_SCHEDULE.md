@@ -154,9 +154,9 @@ Instead of context-switching between models for each task, tasks are organized i
 
 ---
 
-## v0.7.0 Schedule: AI Fallback Overhaul
+## v0.7.x Schedule: AI Fallback Overhaul
 
-**Timeline**: 5 weeks (1 planning + 4 implementation) | **Model Switches**: 2 (Haiku → Opus → Sonnet)
+**Timeline**: Rolling execution in dependency blocks (offline-first before cloud providers)
 
 ### Block F: Haiku Quick ✅ COMPLETE
 
@@ -184,27 +184,37 @@ Instead of context-switching between models for each task, tasks are organized i
 | 36 | Implement provider data model and settings migration | High | Task 31 | DONE | Update settings.json schema. Migration from old `cloud_fallback` to new structure. |
 | 37 | Implement provider config UI (API keys, model selection) | High | Task 31 | DONE | Create Settings panel for provider/model/key management. |
 
-### Block H: Sonnet Sprint --- OPEN
+### Block H: Offline-First Ollama Sprint --- OPEN
 
-**Duration**: 2 weeks | **Model**: Claude Sonnet | **Status**: Open / next execution packet
+**Duration**: 2 weeks | **Status**: Open / next execution packet
 
 | Task | Name | Complexity | Dependencies | Status | Description |
 | --- | --- | --- | --- | --- | --- |
-| 32 | Implement OpenAI provider integration | High | Task 31 | OPEN | Add OpenAI API client, model streaming, error handling. |
-| 33 | Implement Anthropic (Claude) provider integration | High | Task 31 | OPEN | Claude API client, model selection, streaming support. |
-| 34 | Implement Gemini provider integration | High | Task 31 | OPEN | Gemini API client, model selection, error handling. |
-| 35 | Implement user-editable prompt strategy | Medium | Task 31 | OPEN | Allow custom post-process prompts per provider. Reset to default. |
-| 38 | End-to-end test: fallback to provider to post-process | High | Tasks 32, 33, 34, 35 | OPEN | Full workflow test across all providers and models. |
+| 32 | Implement Ollama provider integration (backend) | High | Task 31 | OPEN | Add local Ollama client (`/api/chat`, `/api/tags`) with robust error handling. |
+| 33 | Activate AI refinement pipeline stage (local provider) | High | Task 32 | OPEN | Wire stage 3 to real local refinement with non-blocking fallback on failures. |
+| 34 | Implement Ollama-only provider UX | Medium | Tasks 32, 33 | OPEN | Endpoint input, model refresh/test-connection, remove active API-key flow in MVP path. |
+| 35 | Implement local-model prompt strategy polish | Medium | Task 33 | OPEN | Tune prompts for DE/EN refinement quality on local models (qwen3 track). |
+| 38 | End-to-end test: offline refinement reliability | High | Tasks 32, 33, 34, 35 | OPEN | Validate offline flow, timeout behavior, and no transcript loss under provider failures. |
+
+### Block I: Cloud Provider Rollout --- DEFERRED
+
+**Duration**: 2+ weeks | **Status**: Deferred until Block H stabilization
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| 40 | OpenAI provider integration | High | Task 31, Block H | DEFERRED | Add OpenAI API client after local path is release-stable. |
+| 41 | Anthropic (Claude) provider integration | High | Task 31, Block H | DEFERRED | Claude API client and model mapping after offline release. |
+| 42 | Gemini provider integration | High | Task 31, Block H | DEFERRED | Gemini API client after offline-first milestone. |
 
 ---
 
 ## Key Scheduling Principles
 
-1. **Grouping by Model**: Each block keeps the same AI model active, reducing context switches
-2. **Dependency Sequencing**: Tasks with dependencies are scheduled in blocks that can reference prior blocks
-3. **Complexity Distribution**: High-complexity tasks paired with corresponding model capability (Opus for architecture)
-4. **Team Efficiency**: Haiku blocks allow quick iteration on documentation/testing; Sonnet handles feature work; Opus manages complex decisions
-5. **Risk Mitigation**: End-to-end tests scheduled as final task of each major block to catch integration issues early
+1. **Offline First**: Local refinement path is shipped before online provider integrations.
+2. **Dependency Sequencing**: Tasks with dependencies are scheduled in blocks that can reference prior blocks.
+3. **Complexity Distribution**: Backend provider work lands before UX and E2E stabilization.
+4. **Team Efficiency**: Planning/architecture first, then contained execution packets with low drift.
+5. **Risk Mitigation**: End-to-end tests are scheduled at block end to catch integration failures early.
 
 ---
 

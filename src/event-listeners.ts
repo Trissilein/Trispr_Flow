@@ -5,13 +5,14 @@ import type {
   AIFallbackProvider,
   Settings,
 } from "./types";
-import { settings } from "./state";
+import { settings, currentHistoryTab } from "./state";
 import * as dom from "./dom-refs";
 import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, updateTranscribeVadVisibility, updateTranscribeThreshold, renderAIFallbackSettingsUi, renderTopicKeywords } from "./settings";
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
 import { refreshModels, refreshModelsDir } from "./models";
-import { setHistoryTab, buildConversationHistory, buildConversationText, buildExportText, setSearchQuery, setTopicKeywords, DEFAULT_TOPICS } from "./history";
+import { setHistoryTab, buildConversationHistory, buildConversationText, buildExportText, setSearchQuery, setTopicKeywords, DEFAULT_TOPICS, renderHistory, syncHistoryToolbarState } from "./history";
+import { setHistoryAlias, setHistoryFontSize } from "./history-preferences";
 import { isPanelId, togglePanel } from "./panels";
 import { setupHotkeyRecorder } from "./hotkeys";
 import { updateRangeAria } from "./accessibility";
@@ -19,13 +20,13 @@ import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
 import { updateChaptersVisibility } from "./chapters";
 
-const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini"];
+const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini", "ollama"];
 
 function normalizeAIFallbackProvider(provider?: string): AIFallbackProvider {
   if (provider && AI_FALLBACK_PROVIDER_IDS.includes(provider as AIFallbackProvider)) {
     return provider as AIFallbackProvider;
   }
-  return "claude";
+  return "ollama";
 }
 
 function getAIFallbackProviderSettings(provider: AIFallbackProvider) {
@@ -33,7 +34,15 @@ function getAIFallbackProviderSettings(provider: AIFallbackProvider) {
   if (provider === "claude") return settings.providers.claude;
   if (provider === "openai") return settings.providers.openai;
   if (provider === "gemini") return settings.providers.gemini;
+  // Ollama uses OllamaSettings, handled separately
   return null;
+}
+
+function applyOllamaVisibility(isOllama: boolean) {
+  if (dom.aiFallbackOllamaSection)
+    dom.aiFallbackOllamaSection.style.display = isOllama ? "block" : "none";
+  if (dom.aiFallbackApiKeySection)
+    dom.aiFallbackApiKeySection.style.display = isOllama ? "none" : "block";
 }
 
 function ensureAIFallbackSettingsDefaults() {
@@ -41,13 +50,13 @@ function ensureAIFallbackSettingsDefaults() {
   if (!settings.ai_fallback) {
     settings.ai_fallback = {
       enabled: false,
-      provider: "claude",
-      model: "claude-3-5-sonnet-20241022",
+      provider: "ollama",
+      model: "",
       temperature: 0.3,
       max_tokens: 4000,
       custom_prompt_enabled: false,
       custom_prompt:
-        "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.",
+        "Fix this transcribed text: correct punctuation, capitalization, and obvious errors. Keep the meaning unchanged. Return only the corrected text.",
       use_default_prompt: true,
     };
   }
@@ -68,6 +77,18 @@ function ensureAIFallbackSettingsDefaults() {
         available_models: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
         preferred_model: "gemini-2.0-flash",
       },
+      ollama: {
+        endpoint: "http://localhost:11434",
+        available_models: [],
+        preferred_model: "",
+      },
+    };
+  }
+  if (!settings.providers.ollama) {
+    settings.providers.ollama = {
+      endpoint: "http://localhost:11434",
+      available_models: [],
+      preferred_model: "",
     };
   }
 }
@@ -153,6 +174,19 @@ function applyContinuousProfile(profile: "balanced" | "low_latency" | "high_qual
 async function refreshAIFallbackModels(provider: AIFallbackProvider) {
   if (!settings) return;
   const models = await invoke<string[]>("fetch_available_models", { provider });
+
+  if (provider === "ollama") {
+    ensureAIFallbackSettingsDefaults();
+    settings.providers.ollama.available_models = models;
+    if (!models.includes(settings.providers.ollama.preferred_model)) {
+      settings.providers.ollama.preferred_model = models[0] ?? "";
+    }
+    if (settings.ai_fallback.provider === "ollama" && !models.includes(settings.ai_fallback.model)) {
+      settings.ai_fallback.model = settings.providers.ollama.preferred_model || models[0] || "";
+    }
+    return;
+  }
+
   const providerSettings = getAIFallbackProviderSettings(provider);
   if (!providerSettings) return;
   providerSettings.available_models = models;
@@ -489,13 +523,31 @@ export function wireEvents() {
 
   dom.conversationFontSize?.addEventListener("input", () => {
     if (!dom.conversationFontSize) return;
-    const size = Number(dom.conversationFontSize.value);
-    document.documentElement.style.setProperty("--conversation-font-size", `${size}px`);
+    const size = setHistoryFontSize(currentHistoryTab, Number(dom.conversationFontSize.value));
+    document.documentElement.style.setProperty("--history-active-font-size", `${size}px`);
     if (dom.conversationFontSizeValue) {
       dom.conversationFontSizeValue.textContent = `${size}px`;
     }
     updateRangeAria("conversation-font-size", size);
-    localStorage.setItem("conversationFontSize", size.toString());
+  });
+
+  const commitAlias = (key: "mic" | "system", input: HTMLInputElement | null): void => {
+    if (!input) return;
+    input.value = setHistoryAlias(key, input.value);
+    syncHistoryToolbarState();
+    renderHistory();
+  };
+
+  dom.historyAliasMicInput?.addEventListener("change", () =>
+    commitAlias("mic", dom.historyAliasMicInput));
+  dom.historyAliasMicInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commitAlias("mic", dom.historyAliasMicInput); }
+  });
+
+  dom.historyAliasSystemInput?.addEventListener("change", () =>
+    commitAlias("system", dom.historyAliasSystemInput));
+  dom.historyAliasSystemInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commitAlias("system", dom.historyAliasSystemInput); }
   });
 
   // Hotkey recording functionality
@@ -945,20 +997,30 @@ export function wireEvents() {
     const provider = normalizeAIFallbackProvider(dom.aiFallbackProvider.value);
     settings.ai_fallback.provider = provider;
     settings.postproc_llm_provider = provider;
+    applyOllamaVisibility(provider === "ollama");
 
-    try {
-      await refreshAIFallbackModels(provider);
-    } catch (error) {
-      console.warn(`Failed to refresh models for ${provider}:`, error);
-    }
-
-    const providerSettings = getAIFallbackProviderSettings(provider);
-    if (providerSettings) {
-      if (!providerSettings.preferred_model) {
-        providerSettings.preferred_model = providerSettings.available_models[0] ?? "";
+    if (provider === "ollama") {
+      // For Ollama, use already-cached models (user can click Refresh explicitly)
+      const ollamaModels = settings.providers.ollama.available_models;
+      if (ollamaModels.length > 0) {
+        settings.ai_fallback.model = settings.providers.ollama.preferred_model || ollamaModels[0];
+      } else {
+        settings.ai_fallback.model = "";
       }
-      settings.ai_fallback.model = providerSettings.preferred_model;
-      settings.postproc_llm_model = settings.ai_fallback.model;
+    } else {
+      try {
+        await refreshAIFallbackModels(provider);
+      } catch (error) {
+        console.warn(`Failed to refresh models for ${provider}:`, error);
+      }
+      const providerSettings = getAIFallbackProviderSettings(provider);
+      if (providerSettings) {
+        if (!providerSettings.preferred_model) {
+          providerSettings.preferred_model = providerSettings.available_models[0] ?? "";
+        }
+        settings.ai_fallback.model = providerSettings.preferred_model;
+        settings.postproc_llm_model = settings.ai_fallback.model;
+      }
     }
     await persistSettings();
     renderAIFallbackSettingsUi();
@@ -976,6 +1038,104 @@ export function wireEvents() {
       providerSettings.preferred_model = settings.ai_fallback.model;
     }
     await persistSettings();
+  });
+
+  // Ollama-specific button handlers
+  dom.aiFallbackSaveEndpointBtn?.addEventListener("click", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    const endpoint = dom.aiFallbackOllamaEndpoint?.value?.trim() || "http://localhost:11434";
+    try {
+      await invoke("save_ollama_endpoint", { endpoint });
+      settings.providers.ollama.endpoint = endpoint;
+      await persistSettings();
+      showToast({
+        type: "success",
+        title: "Endpoint saved",
+        message: `Ollama endpoint set to ${endpoint}`,
+        duration: 2500,
+      });
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Save failed",
+        message: String(error),
+        duration: 5000,
+      });
+    }
+  });
+
+  dom.aiFallbackRefreshModelsBtn?.addEventListener("click", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    if (dom.aiFallbackOllamaStatus) {
+      dom.aiFallbackOllamaStatus.textContent = "Refreshing models…";
+    }
+    try {
+      await refreshAIFallbackModels("ollama");
+      await persistSettings();
+      renderAIFallbackSettingsUi();
+      const count = settings.providers.ollama.available_models.length;
+      if (dom.aiFallbackOllamaStatus) {
+        dom.aiFallbackOllamaStatus.textContent = count > 0 ? `${count} model(s) found` : "No models found";
+      }
+      showToast({
+        type: count > 0 ? "success" : "warning",
+        title: count > 0 ? "Models loaded" : "No models found",
+        message: count > 0
+          ? `Found ${count} Ollama model(s).`
+          : "Ollama is running but has no models. Run: ollama pull <model>",
+        duration: 3500,
+      });
+    } catch (error) {
+      if (dom.aiFallbackOllamaStatus) {
+        dom.aiFallbackOllamaStatus.textContent = "Refresh failed";
+      }
+      showToast({
+        type: "error",
+        title: "Refresh failed",
+        message: String(error),
+        duration: 5000,
+      });
+    }
+  });
+
+  dom.aiFallbackTestOllamaBtn?.addEventListener("click", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    if (dom.aiFallbackOllamaStatus) {
+      dom.aiFallbackOllamaStatus.textContent = "Testing connection…";
+    }
+    try {
+      const result = await invoke<{ message?: string }>("test_provider_connection", {
+        provider: "ollama",
+        apiKey: "",
+      });
+      await refreshAIFallbackModels("ollama");
+      await persistSettings();
+      renderAIFallbackSettingsUi();
+      const msg = result?.message ?? "Ollama is reachable.";
+      if (dom.aiFallbackOllamaStatus) {
+        dom.aiFallbackOllamaStatus.textContent = msg;
+      }
+      showToast({
+        type: "success",
+        title: "Ollama connected",
+        message: msg,
+        duration: 3500,
+      });
+    } catch (error) {
+      const msg = String(error);
+      if (dom.aiFallbackOllamaStatus) {
+        dom.aiFallbackOllamaStatus.textContent = "Not reachable";
+      }
+      showToast({
+        type: "error",
+        title: "Ollama not reachable",
+        message: msg,
+        duration: 5000,
+      });
+    }
   });
 
   dom.aiFallbackSaveKeyBtn?.addEventListener("click", async () => {

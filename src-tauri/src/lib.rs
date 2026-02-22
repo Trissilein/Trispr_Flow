@@ -37,7 +37,9 @@ use tracing::{error, info, warn};
 
 use crate::ai_fallback::keyring as ai_fallback_keyring;
 use crate::ai_fallback::models::RefinementOptions;
-use crate::ai_fallback::provider::{default_models_for_provider, ProviderFactory};
+use crate::ai_fallback::provider::{
+    default_models_for_provider, list_ollama_models, ping_ollama, ProviderFactory,
+};
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
 use crate::models::{
     check_model_available, clear_hidden_external_models, download_model, get_models_dir,
@@ -325,6 +327,20 @@ fn fetch_available_models(
     provider: String,
 ) -> Result<Vec<String>, String> {
     let provider_id = provider.trim().to_lowercase();
+
+    // Ollama: always query live /api/tags for up-to-date model list
+    if provider_id == "ollama" {
+        let endpoint = {
+            let settings = state.settings.lock().unwrap();
+            settings.providers.ollama.endpoint.clone()
+        };
+        let models = list_ollama_models(&endpoint);
+        if models.is_empty() {
+            return Err("Ollama is not running or has no models installed.".to_string());
+        }
+        return Ok(models);
+    }
+
     let from_settings = {
         let settings = state.settings.lock().unwrap();
         settings
@@ -347,10 +363,28 @@ fn fetch_available_models(
 
 #[tauri::command]
 fn test_provider_connection(
+    state: State<'_, AppState>,
     provider: String,
     api_key: String,
 ) -> Result<serde_json::Value, String> {
     let provider_id = provider.trim().to_lowercase();
+
+    // Ollama: perform a real HTTP ping instead of API key validation
+    if provider_id == "ollama" {
+        let endpoint = {
+            let settings = state.settings.lock().unwrap();
+            settings.providers.ollama.endpoint.clone()
+        };
+        ping_ollama(&endpoint).map_err(|e| e.to_string())?;
+        let models = list_ollama_models(&endpoint);
+        return Ok(serde_json::json!({
+            "ok": true,
+            "provider": "ollama",
+            "message": format!("Ollama is running. {} model(s) available.", models.len()),
+            "models": models,
+        }));
+    }
+
     let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
     provider_client
         .validate_api_key(api_key.trim())
@@ -419,6 +453,29 @@ fn clear_provider_api_key(
 }
 
 #[tauri::command]
+fn save_ollama_endpoint(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    endpoint: String,
+) -> Result<serde_json::Value, String> {
+    let trimmed = endpoint.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("Endpoint cannot be empty.".to_string());
+    }
+    let snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.providers.ollama.endpoint = trimmed.clone();
+        settings.clone()
+    };
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot.clone());
+    Ok(serde_json::json!({
+        "status": "success",
+        "endpoint": trimmed,
+    }))
+}
+
+#[tauri::command]
 fn refine_transcript(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -431,14 +488,27 @@ fn refine_transcript(
         return Err("AI Fallback is disabled.".to_string());
     }
 
-    let provider_client =
-        ProviderFactory::create(&ai_settings.provider).map_err(|e| e.to_string())?;
-    let api_key = ai_fallback_keyring::read_api_key(&app, &ai_settings.provider)?
-        .ok_or_else(|| format!("No API key stored for provider '{}'.", ai_settings.provider))?;
+    let is_ollama = ai_settings.provider == "ollama";
 
-    provider_client
-        .validate_api_key(&api_key)
-        .map_err(|e| e.to_string())?;
+    let provider_client = if is_ollama {
+        let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
+        ProviderFactory::create_ollama(endpoint)
+    } else {
+        ProviderFactory::create(&ai_settings.provider).map_err(|e| e.to_string())?
+    };
+
+    let api_key = if is_ollama {
+        String::new()
+    } else {
+        ai_fallback_keyring::read_api_key(&app, &ai_settings.provider)?
+            .ok_or_else(|| format!("No API key stored for provider '{}'.", ai_settings.provider))?
+    };
+
+    if !is_ollama {
+        provider_client
+            .validate_api_key(&api_key)
+            .map_err(|e| e.to_string())?;
+    }
 
     let options = RefinementOptions {
         temperature: ai_settings.temperature,
@@ -495,13 +565,14 @@ fn save_settings(
     state: State<'_, AppState>,
     mut settings: Settings,
 ) -> Result<(), String> {
-    let (prev_mode, prev_device, prev_capture_enabled, prev_transcribe_enabled) = {
+    let (prev_mode, prev_device, prev_capture_enabled, prev_transcribe_enabled, prev_transcribe_output_device) = {
         let current = state.settings.lock().unwrap();
         (
             current.mode.clone(),
             current.input_device.clone(),
             current.capture_enabled,
             current.transcribe_enabled,
+            current.transcribe_output_device.clone(),
         )
     };
     normalize_ai_fallback_fields(&mut settings);
@@ -552,12 +623,16 @@ fn save_settings(
     }
 
     let transcribe_enabled_changed = prev_transcribe_enabled != settings.transcribe_enabled;
+    let transcribe_device_changed = prev_transcribe_output_device != settings.transcribe_output_device;
     if transcribe_enabled_changed {
         if !settings.transcribe_enabled {
             stop_transcribe_monitor(&app, &state);
         } else {
             let _ = start_transcribe_monitor(&app, &state, &settings);
         }
+    } else if transcribe_device_changed && settings.transcribe_enabled {
+        stop_transcribe_monitor(&app, &state);
+        let _ = start_transcribe_monitor(&app, &state, &settings);
     }
 
     let overlay_settings = build_overlay_settings(&settings);
@@ -2097,6 +2172,7 @@ pub fn run() {
             test_provider_connection,
             save_provider_api_key,
             clear_provider_api_key,
+            save_ollama_endpoint,
             refine_transcript,
         ])
         .run(tauri::generate_context!())

@@ -5,6 +5,12 @@ import { history, transcribeHistory, currentHistoryTab, setCurrentHistoryTab as 
 import * as dom from "./dom-refs";
 import { formatTime } from "./ui-helpers";
 import { updateChaptersVisibility } from "./chapters";
+import { updateRangeAria } from "./accessibility";
+import {
+  getHistoryAliases,
+  getHistoryFontSize,
+  resolveSourceLabel,
+} from "./history-preferences";
 
 export function buildConversationHistory(): HistoryEntry[] {
   const combined = [...history, ...transcribeHistory];
@@ -14,7 +20,7 @@ export function buildConversationHistory(): HistoryEntry[] {
 export function buildConversationText(entries: HistoryEntry[]) {
   return entries
     .map((entry) => {
-      const speaker = entry.source === "output" ? "System audio" : "Input";
+      const speaker = resolveSourceLabel(entry.source);
       return `[${formatTime(entry.timestamp_ms)}] ${speaker}: ${entry.text}`;
     })
     .join("\n");
@@ -510,9 +516,79 @@ function highlightSearchMatches(text: string): string {
   return text.replace(regex, "<mark>$1</mark>");
 }
 
+function buildConversationMessage(entry: HistoryEntry, role: "mic" | "system"): HTMLElement {
+  const sender = getHistoryAliases()[role];
+
+  const wrapper = document.createElement("article");
+  wrapper.className = `chat-message history-entry chat-message--${role}`;
+  wrapper.dataset.entryId = entry.id;
+
+  const bubble = document.createElement("div");
+  bubble.className = "chat-message-bubble";
+
+  const meta = document.createElement("div");
+  meta.className = "chat-message-meta";
+
+  const senderEl = document.createElement("span");
+  senderEl.className = "chat-message-sender";
+  senderEl.textContent = sender;
+
+  const timeEl = document.createElement("span");
+  timeEl.className = "chat-message-time";
+  timeEl.textContent = formatTime(entry.timestamp_ms);
+
+  meta.append(senderEl, timeEl);
+
+  const text = document.createElement("div");
+  text.className = "chat-message-text";
+  if (currentSearchQuery) {
+    text.innerHTML = highlightSearchMatches(entry.text);
+  } else {
+    text.textContent = entry.text;
+  }
+
+  bubble.append(meta, text);
+  wrapper.appendChild(bubble);
+  return wrapper;
+}
+
+function applyActiveHistoryFontSize(): number {
+  const fontSize = getHistoryFontSize(currentHistoryTab);
+  document.documentElement.style.setProperty("--history-active-font-size", `${fontSize}px`);
+  return fontSize;
+}
+
+export function syncHistoryToolbarState(): void {
+  const isConversation = currentHistoryTab === "conversation";
+
+  if (dom.historyCopyConversation) {
+    dom.historyCopyConversation.style.display = isConversation ? "inline-flex" : "none";
+  }
+  if (dom.historyAliasControls) {
+    dom.historyAliasControls.style.display = isConversation ? "inline-flex" : "none";
+  }
+  if (dom.conversationFontControls) {
+    dom.conversationFontControls.style.display = "inline-flex";
+  }
+
+  const aliases = getHistoryAliases();
+  if (dom.historyAliasMicInput) dom.historyAliasMicInput.value = aliases.mic;
+  if (dom.historyAliasSystemInput) dom.historyAliasSystemInput.value = aliases.system;
+
+  const fontSize = applyActiveHistoryFontSize();
+  if (dom.conversationFontSize) {
+    dom.conversationFontSize.value = String(fontSize);
+  }
+  if (dom.conversationFontSizeValue) {
+    dom.conversationFontSizeValue.textContent = `${fontSize}px`;
+  }
+  updateRangeAria("conversation-font-size", fontSize);
+}
+
 export function renderHistory() {
   if (!dom.historyList) return;
   const historyList = dom.historyList;
+  syncHistoryToolbarState();
   let dataset =
     currentHistoryTab === "mic"
       ? history
@@ -523,15 +599,6 @@ export function renderHistory() {
   // Apply search and topic filters
   dataset = filterEntriesBySearch(dataset);
   dataset = filterEntriesByTopic(dataset);
-
-  if (dom.historyCopyConversation) {
-    dom.historyCopyConversation.style.display =
-      currentHistoryTab === "conversation" ? "inline-flex" : "none";
-  }
-  if (dom.conversationFontControls) {
-    dom.conversationFontControls.style.display =
-      currentHistoryTab === "conversation" ? "inline-flex" : "none";
-  }
 
   if (!dataset.length) {
     const emptyIcon = currentHistoryTab === "mic" ? "🎤" : currentHistoryTab === "system" ? "🔊" : "💬";
@@ -554,10 +621,14 @@ export function renderHistory() {
   historyList.innerHTML = "";
 
   if (currentHistoryTab === "conversation") {
-    const block = document.createElement("div");
-    block.className = "conversation-block";
-    block.textContent = buildConversationText(dataset);
-    historyList.appendChild(block);
+    const systemEntryIds = new Set(transcribeHistory.map((e) => e.id));
+    const feed = document.createElement("div");
+    feed.className = "chat-feed";
+    dataset.forEach((entry) => {
+      const role = systemEntryIds.has(entry.id) ? "system" : "mic";
+      feed.appendChild(buildConversationMessage(entry, role));
+    });
+    historyList.appendChild(feed);
     return;
   }
 

@@ -122,7 +122,31 @@
                 <button id="history-tab-system" class="history-tab">System Audio</button>
                 <button id="history-tab-conversation" class="history-tab">Conv</button>
               </div>
-              <div style="display: flex; gap: 6px; align-items: center;">
+              <div class="history-toolbar-actions">
+                <div id="history-alias-controls" class="history-alias-controls">
+                  <label class="history-alias-field" for="history-alias-mic-input">
+                    <span class="history-alias-label">Input</span>
+                    <input
+                      id="history-alias-mic-input"
+                      class="history-alias-input"
+                      type="text"
+                      maxlength="32"
+                      placeholder="Input"
+                      aria-label="Conversation name for input source"
+                    />
+                  </label>
+                  <label class="history-alias-field" for="history-alias-system-input">
+                    <span class="history-alias-label">System</span>
+                    <input
+                      id="history-alias-system-input"
+                      class="history-alias-input"
+                      type="text"
+                      maxlength="32"
+                      placeholder="System audio"
+                      aria-label="Conversation name for system audio source"
+                    />
+                  </label>
+                </div>
                 <button id="history-copy-conversation" class="ghost-btn">Copy</button>
                 <button id="analyse-button" class="ghost-btn" title="Analyse module coming soon">
                   Analyse
@@ -135,15 +159,15 @@
                   </select>
                   <button id="history-export" class="ghost-btn" title="Export transcript">Export</button>
                 </div>
-                <div id="conversation-font-controls" class="font-controls" title="Adjust conversation font size">
+                <div id="conversation-font-controls" class="font-controls" title="Adjust transcript font size for the active tab">
                   <span class="font-label">Font</span>
                   <input id="conversation-font-size" type="range" min="12" max="24" step="1"
                          aria-valuemin="12"
                          aria-valuemax="24"
-                         aria-valuenow="16"
-                         aria-label="Conversation font size"
+                         aria-valuenow="14"
+                         aria-label="Transcript font size"
                          aria-describedby="conversation-font-size-value" />
-                  <span id="conversation-font-size-value" class="font-value" aria-live="polite">16px</span>
+                  <span id="conversation-font-size-value" class="font-value" aria-live="polite">14px</span>
                 </div>
               </div>
             </div>
@@ -866,6 +890,7 @@
                       <label class="field">
                         <span class="field-label">Provider</span>
                         <select id="ai-fallback-provider">
+                          <option value="ollama">Ollama (Local)</option>
                           <option value="claude">Claude (Anthropic)</option>
                           <option value="openai">OpenAI</option>
                           <option value="gemini">Gemini (Google)</option>
@@ -877,7 +902,20 @@
                         <select id="ai-fallback-model"></select>
                       </label>
 
-                      <div class="field span-2">
+                      <!-- Ollama-specific: endpoint + connection controls (shown only for Ollama) -->
+                      <div id="ai-fallback-ollama-section" class="field span-2" style="display: none;">
+                        <span class="field-label">Ollama endpoint</span>
+                        <div class="hotkey-input-group">
+                          <input id="ai-fallback-ollama-endpoint" type="text" placeholder="http://localhost:11434" />
+                          <button id="ai-fallback-save-endpoint" class="hotkey-record-btn" type="button">Save</button>
+                          <button id="ai-fallback-refresh-models" class="hotkey-record-btn" type="button">Refresh</button>
+                          <button id="ai-fallback-test-ollama" class="hotkey-record-btn" type="button">Test</button>
+                        </div>
+                        <span id="ai-fallback-ollama-status" class="field-hint">Enter your Ollama endpoint and click Refresh to load models.</span>
+                      </div>
+
+                      <!-- Cloud provider: API key controls (shown only for cloud providers) -->
+                      <div id="ai-fallback-api-key-section" class="field span-2">
                         <span class="field-label">API key</span>
                         <div class="hotkey-input-group">
                           <input id="ai-fallback-api-key-input" type="password" placeholder="Paste provider API key" />

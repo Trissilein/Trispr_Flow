@@ -5,7 +5,7 @@ import * as dom from "./dom-refs";
 import { thresholdToDb, VAD_DB_FLOOR } from "./ui-helpers";
 import { renderVocabulary } from "./event-listeners";
 import { getTopicKeywords, setTopicKeywords } from "./history";
-import type { AIProviderSettings, AIFallbackProvider } from "./types";
+import type { AIProviderSettings, AIFallbackProvider, OllamaSettings } from "./types";
 
 function ensureContinuousDumpDefaults() {
   if (!settings) return;
@@ -118,13 +118,13 @@ export function updateTranscribeThreshold(threshold: number) {
   }
 }
 
-const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini"];
+const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini", "ollama"];
 
 function normalizeAIFallbackProvider(provider: string | undefined): AIFallbackProvider {
   if (provider && AI_FALLBACK_PROVIDER_IDS.includes(provider as AIFallbackProvider)) {
     return provider as AIFallbackProvider;
   }
-  return "claude";
+  return "ollama";
 }
 
 function getProviderSettings(provider: AIFallbackProvider): AIProviderSettings | null {
@@ -132,31 +132,42 @@ function getProviderSettings(provider: AIFallbackProvider): AIProviderSettings |
   if (provider === "claude") return settings.providers.claude;
   if (provider === "openai") return settings.providers.openai;
   if (provider === "gemini") return settings.providers.gemini;
+  // Ollama uses OllamaSettings, not AIProviderSettings
   return null;
+}
+
+function getOllamaSettings(): OllamaSettings | null {
+  return settings?.providers?.ollama ?? null;
+}
+
+function applyOllamaProviderVisibility(isOllama: boolean) {
+  if (dom.aiFallbackOllamaSection)
+    dom.aiFallbackOllamaSection.style.display = isOllama ? "block" : "none";
+  if (dom.aiFallbackApiKeySection)
+    dom.aiFallbackApiKeySection.style.display = isOllama ? "none" : "block";
 }
 
 function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedModel: string) {
   if (!dom.aiFallbackModel) return;
-  const providerSettings = getProviderSettings(provider);
-  const fallbackModels = providerSettings?.available_models?.length
-    ? providerSettings.available_models
-    : [];
+
+  const models = provider === "ollama"
+    ? (getOllamaSettings()?.available_models ?? [])
+    : (getProviderSettings(provider)?.available_models ?? []);
 
   dom.aiFallbackModel.innerHTML = "";
-  for (const modelId of fallbackModels) {
+  for (const modelId of models) {
     const option = document.createElement("option");
     option.value = modelId;
     option.textContent = modelId;
     dom.aiFallbackModel.appendChild(option);
   }
-  if (fallbackModels.length > 0) {
-    dom.aiFallbackModel.value = fallbackModels.includes(selectedModel)
-      ? selectedModel
-      : fallbackModels[0];
+  if (models.length > 0) {
+    dom.aiFallbackModel.value = models.includes(selectedModel) ? selectedModel : models[0];
   } else {
+    const placeholder = provider === "ollama" ? "Click Refresh to load models" : "No models available";
     const option = document.createElement("option");
     option.value = selectedModel || "";
-    option.textContent = selectedModel || "No models available";
+    option.textContent = selectedModel || placeholder;
     dom.aiFallbackModel.appendChild(option);
     dom.aiFallbackModel.value = option.value;
   }
@@ -167,6 +178,8 @@ export function renderAIFallbackSettingsUi() {
   const ai = settings.ai_fallback;
   const provider = normalizeAIFallbackProvider(ai?.provider);
   const providerConfig = getProviderSettings(provider);
+  const ollamaConfig = getOllamaSettings();
+  const isOllama = provider === "ollama";
 
   if (dom.aiFallbackEnabled) {
     dom.aiFallbackEnabled.checked = Boolean(ai?.enabled);
@@ -178,8 +191,15 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackProvider.value = provider;
   }
 
+  applyOllamaProviderVisibility(isOllama);
   renderAIFallbackModelOptions(provider, ai?.model || "");
 
+  // Ollama: show endpoint
+  if (dom.aiFallbackOllamaEndpoint && ollamaConfig) {
+    dom.aiFallbackOllamaEndpoint.value = ollamaConfig.endpoint || "http://localhost:11434";
+  }
+
+  // Cloud: show API key status
   if (dom.aiFallbackKeyStatus) {
     dom.aiFallbackKeyStatus.textContent = providerConfig?.api_key_stored
       ? "API key stored in secure system keyring (fallback: local encrypted file)."

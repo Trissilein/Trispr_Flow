@@ -3,11 +3,14 @@
 // This module provides text quality improvements through a multi-stage pipeline:
 // 1. Rule-based enhancements (punctuation, capitalization, number normalization)
 // 2. Custom vocabulary replacements
-// 3. Optional LLM refinement via Claude API
+// 3. Optional LLM refinement via Ollama (local, sync, with fallback to original text)
 
+use crate::ai_fallback::models::RefinementOptions;
+use crate::ai_fallback::provider::ProviderFactory;
 use crate::state::Settings;
 use std::collections::HashMap;
 use tauri::AppHandle;
+use tracing::{info, warn};
 
 /// Main entry point for post-processing transcripts
 ///
@@ -41,11 +44,58 @@ pub(crate) fn process_transcript(
         result = apply_custom_vocabulary(&result, &settings.postproc_custom_vocab);
     }
 
-    // Stage 3: Optional LLM refinement (async, 300-500ms)
-    // TODO: Implement in Phase 5
-    // if settings.postproc_llm_enabled {
-    //     result = refine_with_llm(&result, settings, app)?;
-    // }
+    // Stage 3: Optional AI refinement (sync, 1-30s depending on model and hardware)
+    // Only runs when ai_fallback is enabled and provider is configured.
+    // On any failure: logs a warning and falls back to the stage 1+2 result — no transcript loss.
+    if settings.ai_fallback.enabled && !settings.ai_fallback.provider.is_empty() {
+        let provider_id = settings.ai_fallback.provider.as_str();
+        let is_ollama = provider_id == "ollama";
+
+        let provider = if is_ollama {
+            let endpoint = settings.providers.ollama.endpoint.clone();
+            Ok(ProviderFactory::create_ollama(endpoint))
+        } else {
+            ProviderFactory::create(provider_id).map_err(|e| e.to_string())
+        };
+
+        match provider {
+            Ok(client) => {
+                let options = RefinementOptions {
+                    temperature: settings.ai_fallback.temperature,
+                    max_tokens: settings.ai_fallback.max_tokens,
+                    language: Some(settings.postproc_language.clone()),
+                    custom_prompt: if settings.ai_fallback.custom_prompt_enabled {
+                        Some(settings.ai_fallback.custom_prompt.clone())
+                    } else {
+                        None
+                    },
+                };
+                // Ollama has no API key; cloud providers would need keyring (not supported here yet)
+                let api_key = if is_ollama { "" } else { "" };
+                let model = settings.ai_fallback.model.as_str();
+
+                match client.refine_transcript(&result, model, &options, api_key) {
+                    Ok(refined) => {
+                        info!(
+                            "AI refinement done: provider={} model={} tokens_in={} tokens_out={} ms={}",
+                            refined.provider,
+                            refined.model,
+                            refined.usage.input_tokens,
+                            refined.usage.output_tokens,
+                            refined.execution_time_ms
+                        );
+                        result = refined.text;
+                    }
+                    Err(e) => {
+                        warn!("AI refinement failed (keeping stage 1+2 result): {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("AI provider unavailable (keeping stage 1+2 result): {}", e);
+            }
+        }
+    }
 
     Ok(result)
 }

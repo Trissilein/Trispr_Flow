@@ -122,8 +122,27 @@ set "VARIANT_KEY=%~3"
 set "SOURCE=src-tauri\target\release\bundle\nsis\Trispr Flow_%VERSION%_x64-setup.exe"
 set "TARGET_NAME=TrsprFlw.v%VERSION%.%VARIANT_KEY%-%BUILDSTAMP%.exe"
 
-call npm run tauri build -- --config %CONFIG_PATH%
-if not "!ERRORLEVEL!"=="0" (
+REM Tauri 2 merges --config on top of tauri.conf.json (no full replace).
+REM To get a clean per-variant config, temporarily swap tauri.conf.json.
+set "MAIN_CONF=src-tauri\tauri.conf.json"
+set "MAIN_BAK=src-tauri\tauri.conf.json.bak"
+set "ALT_CONF=%CONFIG_PATH:/=\%"
+set "SWAPPED=0"
+if /I not "%ALT_CONF%"=="%MAIN_CONF%" (
+    copy /y "%MAIN_CONF%" "%MAIN_BAK%" >nul
+    copy /y "%ALT_CONF%" "%MAIN_CONF%" >nul
+    set "SWAPPED=1"
+)
+
+call npm run tauri build
+set "BUILD_RESULT=!ERRORLEVEL!"
+
+if "!SWAPPED!"=="1" (
+    copy /y "%MAIN_BAK%" "%MAIN_CONF%" >nul
+    del "%MAIN_BAK%" >nul
+)
+
+if not "!BUILD_RESULT!"=="0" (
     echo ERROR: Build failed for %VARIANT_LABEL%
     exit /b 1
 )

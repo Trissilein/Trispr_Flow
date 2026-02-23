@@ -44,12 +44,6 @@
       "bin/cuda/ggml-cuda.dll": "bin/cuda/ggml-cuda.dll",
       "bin/cuda/cublas64_13.dll": "bin/cuda/cublas64_13.dll",
       "bin/cuda/cudart64_13.dll": "bin/cuda/cudart64_13.dll",
-      "bin/vulkan/whisper-cli.exe": "bin/vulkan/whisper-cli.exe",
-      "bin/vulkan/whisper.dll": "bin/vulkan/whisper.dll",
-      "bin/vulkan/ggml.dll": "bin/vulkan/ggml.dll",
-      "bin/vulkan/ggml-base.dll": "bin/vulkan/ggml-base.dll",
-      "bin/vulkan/ggml-cpu.dll": "bin/vulkan/ggml-cpu.dll",
-      "bin/vulkan/ggml-vulkan.dll": "bin/vulkan/ggml-vulkan.dll",
       "bin/quantize.exe": "bin/quantize.exe"
     },
     "windows": {

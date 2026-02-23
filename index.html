@@ -118,9 +118,9 @@
           <div class="panel-body" id="transcription-panel-body">
             <div class="history-toolbar">
               <div class="history-tabs">
-                <button id="history-tab-mic" class="history-tab active">Input</button>
-                <button id="history-tab-system" class="history-tab">System Audio</button>
-                <button id="history-tab-conversation" class="history-tab">Conv</button>
+                <button id="history-tab-mic" class="history-tab active" title="Show microphone input transcripts">Input</button>
+                <button id="history-tab-system" class="history-tab" title="Show system audio transcripts">System Audio</button>
+                <button id="history-tab-conversation" class="history-tab" title="Show combined conversation view (mic + system audio)">Conv</button>
               </div>
               <div class="history-toolbar-actions">
                 <div id="history-alias-controls" class="history-alias-controls">
@@ -277,7 +277,7 @@
               <div class="field hotkey-field">
                 <span class="field-label">PTT hotkey (hold)</span>
                 <div class="hotkey-input-group">
-                  <input id="ptt-hotkey" type="text" placeholder="CommandOrControl+Shift+Space" readonly />
+                  <input id="ptt-hotkey" type="text" placeholder="CommandOrControl+Shift+Space" readonly title="Current PTT hotkey — click Record to change" />
                   <button id="ptt-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
@@ -292,7 +292,7 @@
               <div class="field hotkey-field">
                 <span class="field-label">Toggle hotkey (click)</span>
                 <div class="hotkey-input-group">
-                  <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" readonly />
+                  <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" readonly title="Current toggle hotkey — click Record to change" />
                   <button id="toggle-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
@@ -522,7 +522,7 @@
             <div class="field hotkey-field span-2">
               <span class="field-label">Transcribe hotkey</span>
               <div class="hotkey-input-group">
-                <input id="transcribe-hotkey" type="text" placeholder="CommandOrControl+Shift+T" readonly />
+                <input id="transcribe-hotkey" type="text" placeholder="CommandOrControl+Shift+T" readonly title="Current system audio transcription hotkey — click Record to change" />
                 <button id="transcribe-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
@@ -967,7 +967,7 @@
 
                       <label class="field">
                         <span class="field-label">Max tokens</span>
-                        <select id="ai-fallback-max-tokens">
+                        <select id="ai-fallback-max-tokens" title="Maximum number of tokens the AI can output per refinement">
                           <option value="512">512</option>
                           <option value="1024">1024</option>
                           <option value="2048">2048</option>
@@ -1091,7 +1091,7 @@
             <div class="field hotkey-field span-2">
               <span class="field-label">Toggle activation words</span>
               <div class="hotkey-input-group">
-                <input id="toggle-activation-words-hotkey" type="text" readonly />
+                <input id="toggle-activation-words-hotkey" type="text" readonly title="Current hotkey for toggling activation words — click Record to change" />
                 <button id="toggle-activation-words-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
@@ -1116,7 +1116,7 @@
               </label>
               <label class="field">
                 <span class="field-label">Color</span>
-                <input id="overlay-color" type="color" />
+                <input id="overlay-color" type="color" title="Accent color for the recording overlay" />
               </label>
               <!-- Dot mode settings -->
               <div id="overlay-dot-settings" class="settings-grid-2col">

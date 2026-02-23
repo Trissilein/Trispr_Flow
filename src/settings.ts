@@ -530,6 +530,7 @@ export async function renderTopicKeywords(): Promise<void> {
     input.type = "text";
     input.value = words.join(", ");
     input.placeholder = "Separate keywords with commas";
+    input.title = `Comma-separated keywords for the "${topic}" topic`;
     input.addEventListener("change", async () => {
       const updated = { ...keywords };
       updated[topic] = input.value

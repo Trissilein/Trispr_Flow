@@ -879,23 +879,25 @@ fn run_transcribe_loopback(
     if hr.0 < 0 {
         return Err(format!("WASAPI init error: 0x{:X}", hr.0));
     }
-    let mut device = resolve_output_device(&settings.transcribe_output_device)
+    let device = resolve_output_device(&settings.transcribe_output_device)
         .ok_or_else(|| "Output device not found".to_string())?;
+    // Try to open the audio client, with one retry after a short delay.
+    // WASAPI can fail on the first call when the audio subsystem is not yet fully
+    // initialised at app start. Retrying avoids a silent fallback to the wrong device.
     let mut audio_client = match device.get_iaudioclient() {
         Ok(client) => client,
-        Err(err) => {
-            if settings.transcribe_output_device != "default" {
-                if let Some(default_device) = resolve_output_device("default") {
-                    device = default_device;
-                    device
-                        .get_iaudioclient()
-                        .map_err(|e| format!("WASAPI error: {e}"))?
-                } else {
-                    return Err(format!("WASAPI error: {err}"));
-                }
-            } else {
-                return Err(format!("WASAPI error: {err}"));
-            }
+        Err(first_err) => {
+            tracing::warn!(
+                "WASAPI: get_iaudioclient() failed for '{}': {first_err}. Retrying in 400 ms.",
+                settings.transcribe_output_device
+            );
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            device.get_iaudioclient().map_err(|e| {
+                format!(
+                    "WASAPI: could not open audio client for '{}' after retry: {e}",
+                    settings.transcribe_output_device
+                )
+            })?
         }
     };
 
@@ -1329,6 +1331,10 @@ fn resolve_output_device(device_id: &str) -> Option<wasapi::Device> {
         if let Ok(device) = enumerator.get_device(id) {
             return Some(device);
         }
+        tracing::warn!(
+            "resolve_output_device: WASAPI device '{}' not found in enumerator, falling back to system default.",
+            device_id
+        );
     }
 
     enumerator

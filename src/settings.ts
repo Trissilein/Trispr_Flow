@@ -282,7 +282,15 @@ export function renderSettings() {
   if (dom.vadSilenceValue) dom.vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
   if (dom.transcribeHotkey) dom.transcribeHotkey.value = settings.transcribe_hotkey;
   if (dom.toggleActivationWordsHotkey) dom.toggleActivationWordsHotkey.value = settings.hotkey_toggle_activation_words;
-  if (dom.transcribeDeviceSelect) dom.transcribeDeviceSelect.value = settings.transcribe_output_device;
+  if (dom.transcribeDeviceSelect) {
+    dom.transcribeDeviceSelect.value = settings.transcribe_output_device;
+    // If the stored device ID is not present in the current option list, the browser
+    // silently leaves the dropdown on "Default (System)" (value = "default").
+    // Sync the settings object so the next persistSettings() sends the actual value.
+    if (dom.transcribeDeviceSelect.value !== settings.transcribe_output_device) {
+      settings.transcribe_output_device = dom.transcribeDeviceSelect.value;
+    }
+  }
   if (dom.transcribeVadToggle) dom.transcribeVadToggle.checked = settings.transcribe_vad_mode;
   const transcribeThresholdDb = thresholdToDb(settings.transcribe_vad_threshold, VAD_DB_FLOOR);
   if (dom.transcribeVadThreshold) {

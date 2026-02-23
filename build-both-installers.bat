@@ -146,8 +146,8 @@ if not "!ERRORLEVEL!"=="0" (
     exit /b 1
 )
 
-echo   OK: %VARIANT_LABEL% -> installers\!TARGET_NAME!
 set "LAST_TARGET=installers\!TARGET_NAME!"
+echo   OK: %VARIANT_LABEL% -^> !LAST_TARGET!
 exit /b 0
 
 :print_file_info

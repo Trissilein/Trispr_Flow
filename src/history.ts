@@ -692,6 +692,7 @@ export function renderHistory() {
 
     const copyButton = document.createElement("button");
     copyButton.textContent = "Copy";
+    copyButton.title = "Copy transcript text to clipboard";
     copyButton.addEventListener("click", async () => {
       await navigator.clipboard.writeText(entry.text);
     });

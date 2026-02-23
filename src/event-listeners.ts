@@ -211,12 +211,14 @@ function addVocabRow(original: string, replacement: string) {
   originalInput.value = original;
   originalInput.placeholder = "api";
   originalInput.className = "vocab-input";
+  originalInput.title = "Word or phrase to find in transcripts";
 
   const replacementInput = document.createElement("input");
   replacementInput.type = "text";
   replacementInput.value = replacement;
   replacementInput.placeholder = "API";
   replacementInput.className = "vocab-input";
+  replacementInput.title = "Text to substitute for the matched word or phrase";
 
   const removeBtn = document.createElement("button");
   removeBtn.textContent = "×";

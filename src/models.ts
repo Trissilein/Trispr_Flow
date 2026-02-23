@@ -95,6 +95,7 @@ export function renderModels() {
         if (!isActive) {
           const applyBtn = document.createElement("button");
           applyBtn.className = "btn-apply-model";
+          applyBtn.title = "Activate this model for transcription";
           applyBtn.innerHTML = `
             <span class="btn-apply-icon">⚡</span>
             <span class="btn-apply-text">Apply Model</span>
@@ -175,6 +176,7 @@ export function renderModels() {
           const optimizeBtn = document.createElement("button");
           const isOptimizing = optimizingModels.has(model.id);
           optimizeBtn.textContent = isOptimizing ? "Optimizing..." : "Optimize";
+          optimizeBtn.title = "Quantize to q5_0 for faster inference with lower memory usage";
           optimizeBtn.disabled = isOptimizing;
           optimizeBtn.addEventListener("click", async (event) => {
             event.stopPropagation();
@@ -206,6 +208,7 @@ export function renderModels() {
         const removeBtn = document.createElement("button");
         const isExternal = !model.removable;
         removeBtn.textContent = isExternal ? "Remove" : "Delete";
+        removeBtn.title = isExternal ? "Remove external model from list" : "Delete model file from disk";
         removeBtn.addEventListener("click", async (event) => {
           event.stopPropagation();
           try {
@@ -241,6 +244,7 @@ export function renderModels() {
       } else {
         const button = document.createElement("button");
         button.textContent = model.downloading ? "Downloading..." : "Download";
+        button.title = model.downloading ? "Download in progress" : "Download this model to use for transcription";
         button.disabled = model.downloading;
         button.addEventListener("click", async (event) => {
           event.stopPropagation();

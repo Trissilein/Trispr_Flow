@@ -464,13 +464,19 @@ h1 {
 
 .panel-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 10px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--stroke);
   cursor: pointer;
+}
+
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .panel-title {
@@ -926,6 +932,7 @@ button:disabled {
   justify-content: space-between;
   align-items: center;
   gap: 6px;
+  min-height: 32px;
   margin-bottom: 6px;
 }
 
@@ -934,19 +941,23 @@ button:disabled {
   gap: 6px;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .history-alias-controls {
   display: none;
   gap: 6px;
   align-items: center;
+  height: 26px;
 }
 
 .history-alias-field {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  height: 26px;
+  box-sizing: border-box;
   padding: 2px 6px;
   border-radius: 999px;
   border: 1px solid var(--stroke);
@@ -1042,12 +1053,12 @@ button:disabled {
 /* Export controls */
 .export-controls {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   align-items: center;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--stroke);
   border-radius: 6px;
-  padding: 2px;
+  padding: 3px 4px;
 }
 
 .export-format {

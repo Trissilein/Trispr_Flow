@@ -58,7 +58,7 @@
               </svg>
             </span></span>
             <label class="hero-checkbox">
-              <input id="cloud-toggle" type="checkbox" />
+              <input id="cloud-toggle" type="checkbox" title="Enable cloud AI (Replicate) for transcription" />
               <span id="cloud-state">AI Off</span>
             </label>
           </div>
@@ -132,6 +132,7 @@
                       type="text"
                       maxlength="32"
                       placeholder="Input"
+                      title="Display name for your microphone in the Conversation view"
                       aria-label="Conversation name for input source"
                     />
                   </label>
@@ -143,11 +144,12 @@
                       type="text"
                       maxlength="32"
                       placeholder="System audio"
+                      title="Display name for system audio in the Conversation view"
                       aria-label="Conversation name for system audio source"
                     />
                   </label>
                 </div>
-                <button id="history-copy-conversation" class="ghost-btn">Copy</button>
+                <button id="history-copy-conversation" class="ghost-btn" title="Copy the full conversation to clipboard">Copy</button>
                 <button id="analyse-button" class="ghost-btn" title="Analyse module coming soon">
                   Analyse
                 </button>
@@ -162,6 +164,7 @@
                 <div id="conversation-font-controls" class="font-controls" title="Adjust transcript font size for the active tab">
                   <span class="font-label">Font</span>
                   <input id="conversation-font-size" type="range" min="12" max="24" step="1"
+                         title="Font size for transcript text"
                          aria-valuemin="12"
                          aria-valuemax="24"
                          aria-valuenow="14"
@@ -172,7 +175,8 @@
               </div>
             </div>
             <div class="history-search-container">
-              <input id="history-search" type="text" class="history-search-input" placeholder="Search transcripts..." />
+              <input id="history-search" type="text" class="history-search-input" placeholder="Search transcripts..."
+                     title="Filter transcripts by keyword" />
               <button id="history-search-clear" class="history-search-clear" title="Clear search">×</button>
             </div>
             <div id="chapters-container" class="chapters-container" style="display: none;">
@@ -220,7 +224,7 @@
             <div class="field toggle-with-hint span-2">
               <label class="toggle-row">
                 <span class="field-label">Enable input capture</span>
-                <input id="capture-enabled-toggle" type="checkbox" />
+                <input id="capture-enabled-toggle" type="checkbox" title="Enable voice capture and hotkeys" />
                 <span class="toggle-track">
                   <span class="toggle-thumb"></span>
                 </span>
@@ -229,18 +233,18 @@
             </div>
             <label class="field">
               <span class="field-label">Input device</span>
-              <select id="device-select"></select>
+              <select id="device-select" title="Microphone or audio input device to use for recording"></select>
             </label>
             <label class="field">
               <span class="field-label">Capture mode</span>
-              <select id="mode-select">
+              <select id="mode-select" title="Capture mode: Push-to-Talk (hold key) or Voice-Activated">
                 <option value="ptt">Push-to-talk (PTT)</option>
                 <option value="vad">Voice Activation</option>
               </select>
             </label>
             <label class="field">
               <span class="field-label">Language</span>
-              <select id="language-select">
+              <select id="language-select" title="Transcription language (or Auto-detect)">
                 <option value="auto">Auto-detect</option>
                 <option value="en">English</option>
                 <option value="de">Deutsch (German)</option>
@@ -262,7 +266,7 @@
             <label class="field toggle">
               <div class="toggle-row">
                 <span class="field-label">Pin language</span>
-                <input id="language-pinned-toggle" type="checkbox" />
+                <input id="language-pinned-toggle" type="checkbox" title="Lock to selected language instead of auto-detecting" />
                 <span class="toggle-track">
                   <span class="toggle-thumb"></span>
                 </span>
@@ -302,7 +306,7 @@
               </div>
               <label class="field toggle">
                 <span class="field-label">Use Voice Activation in PTT</span>
-                <input id="ptt-use-vad-toggle" type="checkbox" />
+                <input id="ptt-use-vad-toggle" type="checkbox" title="Detect speech automatically while holding the PTT key" />
                 <span class="toggle-hint">Only record when audio exceeds threshold, even while holding PTT key</span>
               </label>
             </div>
@@ -311,6 +315,7 @@
                 <span class="field-label">Voice Activation threshold</span>
                 <div class="range-row">
                   <input id="vad-threshold" type="range" min="-60" max="0" step="1"
+                         title="Minimum volume level to start recording (dB)"
                          aria-valuemin="-60"
                          aria-valuemax="0"
                          aria-valuenow="-34"
@@ -323,6 +328,7 @@
                 <span class="field-label">Silence grace</span>
                 <div class="range-row">
                   <input id="vad-silence" type="range" min="200" max="4000" step="50"
+                         title="How long silence must last before recording stops (ms)"
                          aria-valuemin="200"
                          aria-valuemax="4000"
                          aria-valuenow="700"
@@ -351,6 +357,7 @@
                 <span class="field-label">Mic input gain</span>
                 <div class="range-row">
                   <input id="mic-gain" type="range" min="-30" max="30" step="1"
+                         title="Boost or reduce microphone input level (dB)"
                          aria-valuemin="-30"
                          aria-valuemax="30"
                          aria-valuenow="0"
@@ -366,7 +373,7 @@
                 <div class="field toggle">
                   <label class="toggle-row">
                     <span class="field-label">Auto-save mic continuous audio</span>
-                    <input id="auto-save-mic-audio-toggle" type="checkbox" />
+                    <input id="auto-save-mic-audio-toggle" type="checkbox" title="Save Toggle/VAD mic recordings as OPUS files for later analysis" />
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
                   </label>
                   <span class="toggle-hint">Save mic Toggle/VAD sessions as OPUS.</span>
@@ -374,7 +381,7 @@
                 <div class="field toggle span-2">
                   <label class="toggle-row">
                     <span class="field-label">Mic continuous override</span>
-                    <input id="continuous-mic-override-toggle" type="checkbox" />
+                    <input id="continuous-mic-override-toggle" type="checkbox" title="Use custom timing settings for mic instead of global defaults" />
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
                   </label>
                   <span class="toggle-hint">Use source-specific dump timings for mic Toggle/VAD.</span>
@@ -383,6 +390,7 @@
                   <span class="field-label">Mic soft flush</span>
                   <div class="range-row">
                     <input id="continuous-mic-soft-flush" type="range" min="4000" max="30000" step="500"
+                           title="Flush mic buffer after this much silence (seconds)"
                            aria-valuemin="4000"
                            aria-valuemax="30000"
                            aria-valuenow="10000"
@@ -395,6 +403,7 @@
                   <span class="field-label">Mic silence flush</span>
                   <div class="range-row">
                     <input id="continuous-mic-silence-flush" type="range" min="300" max="5000" step="100"
+                           title="Force a flush after this silence duration (seconds)"
                            aria-valuemin="300"
                            aria-valuemax="5000"
                            aria-valuenow="1200"
@@ -407,6 +416,7 @@
                   <span class="field-label">Mic hard cut</span>
                   <div class="range-row">
                     <input id="continuous-mic-hard-cut" type="range" min="15000" max="120000" step="1000"
+                           title="Maximum mic segment length before a forced split (seconds)"
                            aria-valuemin="15000"
                            aria-valuemax="120000"
                            aria-valuenow="45000"
@@ -423,7 +433,7 @@
                 <div class="field toggle span-2">
                   <div class="toggle-row">
                     <span class="field-label">Hallucination filter</span>
-                    <input id="hallucination-filter-toggle" type="checkbox" />
+                    <input id="hallucination-filter-toggle" type="checkbox" title="Drop low-confidence short transcripts caused by background noise" />
                     <span class="toggle-track">
                       <span class="toggle-thumb"></span>
                     </span>
@@ -433,7 +443,7 @@
                 <div class="field toggle span-2">
                   <div class="toggle-row">
                     <span class="field-label">Activation words</span>
-                    <input id="activation-words-toggle" type="checkbox" />
+                    <input id="activation-words-toggle" type="checkbox" title="Only keep transcripts that contain one of the trigger words" />
                     <span class="toggle-track">
                       <span class="toggle-thumb"></span>
                     </span>
@@ -444,12 +454,13 @@
                   <label class="field-label">Word list (one per line)</label>
                   <textarea id="activation-words-list" rows="4"
                     placeholder="computer&#10;hey assistant"
+                    title="One trigger word or phrase per line — only matching transcripts are kept"
                     class="activation-words-textarea"></textarea>
                   <span class="field-hint">Case-insensitive word matching</span>
                 </div>
                 <label class="field toggle span-2">
                   <span class="field-label">Audio cues</span>
-                  <input id="audio-cues-toggle" type="checkbox" />
+                  <input id="audio-cues-toggle" type="checkbox" title="Play a sound when recording starts or stops" />
                   <span class="toggle-track">
                     <span class="toggle-thumb"></span>
                   </span>
@@ -458,6 +469,7 @@
                   <span class="field-label">Audio cue volume</span>
                   <div class="range-row">
                     <input id="audio-cues-volume" type="range" min="0" max="100" step="1"
+                           title="Volume of start/stop audio cue sounds"
                            aria-valuemin="0"
                            aria-valuemax="100"
                            aria-valuenow="30"
@@ -496,7 +508,7 @@
             <div class="field toggle-with-hint span-2">
               <label class="toggle-row">
                 <span class="field-label">Enable system audio transcription</span>
-                <input id="transcribe-enabled-toggle" type="checkbox" />
+                <input id="transcribe-enabled-toggle" type="checkbox" title="Capture and transcribe system audio (speakers/loopback)" />
                 <span class="toggle-track">
                   <span class="toggle-thumb"></span>
                 </span>
@@ -505,7 +517,7 @@
             </div>
             <label class="field">
               <span class="field-label">Capture device</span>
-              <select id="transcribe-device-select"></select>
+              <select id="transcribe-device-select" title="System audio output device to capture (loopback)"></select>
             </label>
             <div class="field hotkey-field span-2">
               <span class="field-label">Transcribe hotkey</span>
@@ -524,21 +536,21 @@
             </div>
             <label class="field toggle">
               <span class="field-label">Voice activation mode</span>
-              <input id="transcribe-vad-toggle" type="checkbox" />
+              <input id="transcribe-vad-toggle" type="checkbox" title="Only transcribe when speech is detected (voice-activated)" />
               <span class="toggle-track">
                 <span class="toggle-thumb"></span>
               </span>
             </label>
             <label class="field toggle">
               <span class="field-label">Intelligent auto-dumping</span>
-              <input id="continuous-dump-enabled-toggle" type="checkbox" />
+              <input id="continuous-dump-enabled-toggle" type="checkbox" title="Automatically split and flush long system audio recordings" />
               <span class="toggle-track">
                 <span class="toggle-thumb"></span>
               </span>
             </label>
             <label class="field span-2">
               <span class="field-label">Auto-dump profile</span>
-              <select id="continuous-dump-profile">
+              <select id="continuous-dump-profile" title="Pre-set timing profile for continuous audio splitting">
                 <option value="balanced">Balanced (recommended)</option>
                 <option value="low_latency">Low latency</option>
                 <option value="high_quality">High quality</option>
@@ -549,6 +561,7 @@
               <span class="field-label">Voice Activation threshold</span>
               <div class="range-row">
                 <input id="transcribe-vad-threshold" type="range" min="-60" max="0" step="1"
+                       title="Minimum volume to trigger system audio transcription (dB)"
                        aria-valuemin="-60"
                        aria-valuemax="0"
                        aria-valuenow="-28"
@@ -561,6 +574,7 @@
               <span class="field-label">Silence grace</span>
               <div class="range-row">
                 <input id="transcribe-vad-silence" type="range" min="200" max="5000" step="100"
+                       title="Silence duration before system audio recording stops (ms)"
                        aria-valuemin="200"
                        aria-valuemax="5000"
                        aria-valuenow="900"
@@ -594,6 +608,7 @@
               <span class="field-label">Input gain</span>
               <div class="range-row">
                 <input id="transcribe-gain" type="range" min="-30" max="30" step="1"
+                       title="Boost or reduce system audio input level (dB)"
                        aria-valuemin="-30"
                        aria-valuemax="30"
                        aria-valuenow="0"
@@ -607,6 +622,7 @@
               <span class="field-hint">Preferred interval for adaptive flush when no clear silence cut appears.</span>
               <div class="range-row">
                 <input id="transcribe-batch-interval" type="range" min="4000" max="15000" step="1000"
+                       title="Target segment length for system audio (seconds)"
                        aria-valuemin="4000"
                        aria-valuemax="15000"
                        aria-valuenow="8000"
@@ -620,6 +636,7 @@
               <span class="field-hint">Leading context kept for adaptive segment starts.</span>
               <div class="range-row">
                 <input id="transcribe-chunk-overlap" type="range" min="0" max="3000" step="250"
+                       title="Audio pre-roll added before each system audio chunk (seconds)"
                        aria-valuemin="0"
                        aria-valuemax="3000"
                        aria-valuenow="1000"
@@ -634,14 +651,14 @@
                 <div class="field toggle">
                   <label class="toggle-row">
                     <span class="field-label">Save recordings as OPUS</span>
-                    <input id="opus-enabled-toggle" type="checkbox" />
+                    <input id="opus-enabled-toggle" type="checkbox" title="Auto-save system audio recordings longer than 10 s as OPUS" />
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
                   </label>
                   <span class="toggle-hint">Auto-save recordings longer than 10s.</span>
                 </div>
                 <label class="field">
                   <span class="field-label">OPUS bitrate</span>
-                  <select id="opus-bitrate-select">
+                  <select id="opus-bitrate-select" title="Audio quality for saved OPUS recordings">
                     <option value="32">32 kbps (smallest)</option>
                     <option value="64">64 kbps (recommended)</option>
                     <option value="96">96 kbps (high quality)</option>
@@ -652,7 +669,7 @@
                 <div class="field toggle">
                   <label class="toggle-row">
                     <span class="field-label">Auto-save system audio</span>
-                    <input id="auto-save-system-audio-toggle" type="checkbox" />
+                    <input id="auto-save-system-audio-toggle" type="checkbox" title="Save system audio chunks as OPUS files for later analysis" />
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
                   </label>
                   <span class="toggle-hint">Save system audio chunks as OPUS.</span>
@@ -661,6 +678,7 @@
                   <span class="field-label">Hard cut limit</span>
                   <div class="range-row">
                     <input id="continuous-hard-cut" type="range" min="15000" max="120000" step="1000"
+                           title="Maximum system audio segment length (seconds)"
                            aria-valuemin="15000"
                            aria-valuemax="120000"
                            aria-valuenow="45000"
@@ -673,6 +691,7 @@
                   <span class="field-label">Minimum chunk duration</span>
                   <div class="range-row">
                     <input id="continuous-min-chunk" type="range" min="250" max="5000" step="50"
+                           title="Minimum usable chunk duration (seconds)"
                            aria-valuemin="250"
                            aria-valuemax="5000"
                            aria-valuenow="1000"
@@ -685,6 +704,7 @@
                   <span class="field-label">Pre-roll context</span>
                   <div class="range-row">
                     <input id="continuous-pre-roll" type="range" min="0" max="1500" step="50"
+                           title="Audio context added before each segment (seconds)"
                            aria-valuemin="0"
                            aria-valuemax="1500"
                            aria-valuenow="300"
@@ -697,6 +717,7 @@
                   <span class="field-label">Post-roll context</span>
                   <div class="range-row">
                     <input id="continuous-post-roll" type="range" min="0" max="1500" step="50"
+                           title="Audio context added after each segment (seconds)"
                            aria-valuemin="0"
                            aria-valuemax="1500"
                            aria-valuenow="200"
@@ -709,6 +730,7 @@
                   <span class="field-label">Idle keepalive flush</span>
                   <div class="range-row">
                     <input id="continuous-keepalive" type="range" min="10000" max="120000" step="5000"
+                           title="Force a flush after this idle period (seconds)"
                            aria-valuemin="10000"
                            aria-valuemax="120000"
                            aria-valuenow="60000"
@@ -720,7 +742,7 @@
                 <div class="field toggle span-2">
                   <label class="toggle-row">
                     <span class="field-label">System Audio override</span>
-                    <input id="continuous-system-override-toggle" type="checkbox" />
+                    <input id="continuous-system-override-toggle" type="checkbox" title="Use custom timing settings for system audio instead of global defaults" />
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
                   </label>
                   <span class="toggle-hint">Use source-specific dump timings for system audio.</span>
@@ -729,6 +751,7 @@
                   <span class="field-label">System soft flush</span>
                   <div class="range-row">
                     <input id="continuous-system-soft-flush" type="range" min="4000" max="30000" step="500"
+                           title="Flush system audio buffer after this silence (seconds)"
                            aria-valuemin="4000"
                            aria-valuemax="30000"
                            aria-valuenow="10000"
@@ -741,6 +764,7 @@
                   <span class="field-label">System silence flush</span>
                   <div class="range-row">
                     <input id="continuous-system-silence-flush" type="range" min="300" max="5000" step="100"
+                           title="Force a system audio flush after this silence (seconds)"
                            aria-valuemin="300"
                            aria-valuemax="5000"
                            aria-valuenow="1200"
@@ -753,6 +777,7 @@
                   <span class="field-label">System hard cut</span>
                   <div class="range-row">
                     <input id="continuous-system-hard-cut" type="range" min="15000" max="120000" step="1000"
+                           title="Maximum system audio segment before forced split (seconds)"
                            aria-valuemin="15000"
                            aria-valuemax="120000"
                            aria-valuenow="45000"
@@ -793,7 +818,7 @@
               <div class="field toggle span-2">
                 <label class="toggle-row">
                   <span class="field-label">Enable post-processing</span>
-                  <input id="postproc-enabled" type="checkbox" />
+                  <input id="postproc-enabled" type="checkbox" title="Run post-processing rules on every transcript" />
                   <span class="toggle-track"><span class="toggle-thumb"></span></span>
                 </label>
                 <span class="toggle-hint">Apply intelligent text enhancements to transcriptions</span>
@@ -804,7 +829,7 @@
                 <!-- Language -->
                 <label class="field">
                   <span class="field-label">Processing language</span>
-                  <select id="postproc-language">
+                  <select id="postproc-language" title="Language used for post-processing rules">
                     <option value="en">English</option>
                     <option value="de">Deutsch (German)</option>
                     <option value="multi">Multilingual (EN/DE)</option>
@@ -816,7 +841,7 @@
                 <div class="field toggle">
                   <label class="toggle-row">
                     <span class="field-label">Punctuation</span>
-                    <input id="postproc-punctuation" type="checkbox" />
+                    <input id="postproc-punctuation" type="checkbox" title="Automatically add punctuation (periods, commas, question marks)" />
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
                   </label>
                   <span class="toggle-hint">Add periods, commas, question marks</span>
@@ -825,7 +850,7 @@
                 <div class="field toggle">
                   <label class="toggle-row">
                     <span class="field-label">Capitalization</span>
-                    <input id="postproc-capitalization" type="checkbox" />
+                    <input id="postproc-capitalization" type="checkbox" title="Capitalize the first letter of sentences and proper nouns" />
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
                   </label>
                   <span class="toggle-hint">Capitalize sentences and proper words</span>
@@ -834,7 +859,7 @@
                 <div class="field toggle">
                   <label class="toggle-row">
                     <span class="field-label">Number normalization</span>
-                    <input id="postproc-numbers" type="checkbox" />
+                    <input id="postproc-numbers" type="checkbox" title="Convert written-out numbers to digits (e.g. &quot;three&quot; → &quot;3&quot;)" />
                     <span class="toggle-track"><span class="toggle-thumb"></span></span>
                   </label>
                   <span class="toggle-hint">Convert number words to digits (e.g., "three" → "3")</span>
@@ -847,7 +872,7 @@
                     <div class="field toggle">
                       <label class="toggle-row">
                         <span class="field-label">Enable custom vocabulary</span>
-                        <input id="postproc-custom-vocab-enabled" type="checkbox" />
+                        <input id="postproc-custom-vocab-enabled" type="checkbox" title="Apply custom find-and-replace rules to every transcript" />
                         <span class="toggle-track"><span class="toggle-thumb"></span></span>
                       </label>
                       <span class="toggle-hint">Replace specific words or phrases</span>
@@ -867,7 +892,7 @@
                           <!-- Dynamically populated -->
                         </div>
                       </div>
-                      <button id="postproc-vocab-add" class="btn-secondary" style="margin-top: 10px; font-size: 13px; font-weight: 600;">
+                      <button id="postproc-vocab-add" class="btn-secondary" title="Add a new find-and-replace entry" style="margin-top: 10px; font-size: 13px; font-weight: 600;">
                         <span style="font-size: 16px; margin-right: 4px; line-height: 1;">+</span> Add Entry
                       </button>
                     </div>
@@ -880,7 +905,7 @@
                     <div class="field toggle">
                       <label class="toggle-row">
                         <span class="field-label">Enable AI fallback</span>
-                        <input id="ai-fallback-enabled" type="checkbox" />
+                        <input id="ai-fallback-enabled" type="checkbox" title="Send transcripts to an AI provider for refinement and correction" />
                         <span class="toggle-track"><span class="toggle-thumb"></span></span>
                       </label>
                       <span class="toggle-hint">Apply provider-based refinement after local post-processing rules</span>
@@ -889,7 +914,7 @@
                     <div id="ai-fallback-settings" class="panel-grid" style="display: none;">
                       <label class="field">
                         <span class="field-label">Provider</span>
-                        <select id="ai-fallback-provider">
+                        <select id="ai-fallback-provider" title="AI service to use for transcript refinement">
                           <option value="ollama">Ollama (Local)</option>
                           <option value="claude">Claude (Anthropic)</option>
                           <option value="openai">OpenAI</option>
@@ -899,17 +924,17 @@
 
                       <label class="field">
                         <span class="field-label">Model</span>
-                        <select id="ai-fallback-model"></select>
+                        <select id="ai-fallback-model" title="Model to use for refinement (loaded from selected provider)"></select>
                       </label>
 
                       <!-- Ollama-specific: endpoint + connection controls (shown only for Ollama) -->
                       <div id="ai-fallback-ollama-section" class="field span-2" style="display: none;">
                         <span class="field-label">Ollama endpoint</span>
                         <div class="hotkey-input-group">
-                          <input id="ai-fallback-ollama-endpoint" type="text" placeholder="http://localhost:11434" />
-                          <button id="ai-fallback-save-endpoint" class="hotkey-record-btn" type="button">Save</button>
-                          <button id="ai-fallback-refresh-models" class="hotkey-record-btn" type="button">Refresh</button>
-                          <button id="ai-fallback-test-ollama" class="hotkey-record-btn" type="button">Test</button>
+                          <input id="ai-fallback-ollama-endpoint" type="text" placeholder="http://localhost:11434" title="Ollama server URL (default: http://localhost:11434)" />
+                          <button id="ai-fallback-save-endpoint" class="hotkey-record-btn" type="button" title="Save the Ollama endpoint URL">Save</button>
+                          <button id="ai-fallback-refresh-models" class="hotkey-record-btn" type="button" title="Fetch the list of available models from Ollama">Refresh</button>
+                          <button id="ai-fallback-test-ollama" class="hotkey-record-btn" type="button" title="Check if Ollama is reachable at the configured endpoint">Test</button>
                         </div>
                         <span id="ai-fallback-ollama-status" class="field-hint">Enter your Ollama endpoint and click Refresh to load models.</span>
                       </div>
@@ -918,10 +943,10 @@
                       <div id="ai-fallback-api-key-section" class="field span-2">
                         <span class="field-label">API key</span>
                         <div class="hotkey-input-group">
-                          <input id="ai-fallback-api-key-input" type="password" placeholder="Paste provider API key" />
-                          <button id="ai-fallback-save-key" class="hotkey-record-btn" type="button">Save</button>
-                          <button id="ai-fallback-clear-key" class="hotkey-record-btn" type="button">Clear</button>
-                          <button id="ai-fallback-test-key" class="hotkey-record-btn" type="button">Test</button>
+                          <input id="ai-fallback-api-key-input" type="password" placeholder="Paste provider API key" title="API key for the selected cloud provider" />
+                          <button id="ai-fallback-save-key" class="hotkey-record-btn" type="button" title="Save the API key for the selected provider">Save</button>
+                          <button id="ai-fallback-clear-key" class="hotkey-record-btn" type="button" title="Delete the stored API key">Clear</button>
+                          <button id="ai-fallback-test-key" class="hotkey-record-btn" type="button" title="Test whether the saved API key is valid">Test</button>
                         </div>
                         <span id="ai-fallback-key-status" class="field-hint">No API key stored.</span>
                       </div>
@@ -930,6 +955,7 @@
                         <span class="field-label">Temperature</span>
                         <div class="range-row">
                           <input id="ai-fallback-temperature" type="range" min="0" max="1" step="0.05"
+                                 title="AI creativity level — lower = more literal, higher = more creative"
                                  aria-valuemin="0"
                                  aria-valuemax="1"
                                  aria-valuenow="0.3"
@@ -953,7 +979,7 @@
                       <div class="field toggle span-2">
                         <label class="toggle-row">
                           <span class="field-label">Use custom prompt</span>
-                          <input id="ai-fallback-custom-prompt-enabled" type="checkbox" />
+                          <input id="ai-fallback-custom-prompt-enabled" type="checkbox" title="Replace the built-in refinement prompt with a custom one" />
                           <span class="toggle-track"><span class="toggle-thumb"></span></span>
                         </label>
                         <span class="toggle-hint">Override default refinement prompt for this profile</span>
@@ -961,7 +987,8 @@
 
                       <div id="ai-fallback-custom-prompt-field" class="field span-2" style="display: none;">
                         <span class="field-label">Custom prompt</span>
-                        <textarea id="ai-fallback-custom-prompt" rows="4" placeholder="Refine this transcript ..."></textarea>
+                        <textarea id="ai-fallback-custom-prompt" rows="4" placeholder="Refine this transcript ..."
+                                  title="Custom prompt sent to the AI before each transcript"></textarea>
                       </div>
                     </div>
                   </div>
@@ -996,7 +1023,7 @@
             <div class="panel-grid model-source-grid">
               <label class="field">
                 <span class="field-label">Source</span>
-                <select id="model-source-select">
+                <select id="model-source-select" title="Where to load the Whisper model from">
                   <option value="default">Default (whisper.cpp)</option>
                   <option value="custom">Custom URL</option>
                 </select>
@@ -1008,8 +1035,9 @@
                     id="model-custom-url"
                     type="text"
                     placeholder="https://example.com/models.json or model.bin"
+                    title="URL to a Whisper model file or JSON model index"
                   />
-                  <button id="model-refresh" class="hotkey-record-btn">Refresh</button>
+                  <button id="model-refresh" class="hotkey-record-btn" title="Scan for downloaded models">Refresh</button>
                 </div>
                 <span class="field-hint">Supports JSON index or direct model file URL.</span>
               </label>
@@ -1022,9 +1050,10 @@
                     id="model-storage-path"
                     type="text"
                     placeholder="Default (App data/models)"
+                    title="Folder where downloaded models are stored"
                   />
-                  <button id="model-storage-browse" class="hotkey-record-btn">Browse</button>
-                  <button id="model-storage-reset" class="hotkey-record-btn">Reset</button>
+                  <button id="model-storage-browse" class="hotkey-record-btn" title="Choose a folder for storing models">Browse</button>
+                  <button id="model-storage-reset" class="hotkey-record-btn" title="Reset model storage path to default">Reset</button>
                 </div>
                 <span class="field-hint">Choose where downloaded models are stored.</span>
               </label>
@@ -1080,7 +1109,7 @@
             <div class="expander-body">
               <label class="field">
                 <span class="field-label">Style</span>
-                <select id="overlay-style">
+                <select id="overlay-style" title="Visual style for the recording overlay">
                   <option value="dot">HAL 9000 by Space:2001®</option>
                   <option value="kitt">KITT by Dox®</option>
                 </select>
@@ -1095,6 +1124,7 @@
                 <span class="field-label">Min radius (px)</span>
                 <div class="range-row">
                   <input id="overlay-min-radius" type="range" min="4" max="32" step="1"
+                         title="Smallest dot size on the recording overlay"
                          aria-valuemin="4"
                          aria-valuemax="32"
                          aria-valuenow="8"
@@ -1107,6 +1137,7 @@
                 <span class="field-label">Max radius (px)</span>
                 <div class="range-row">
                   <input id="overlay-max-radius" type="range" min="8" max="64" step="1"
+                         title="Largest dot size on the recording overlay"
                          aria-valuemin="8"
                          aria-valuemax="64"
                          aria-valuenow="24"
@@ -1122,6 +1153,7 @@
                 <span class="field-label">Min width (px)</span>
                 <div class="range-row">
                   <input id="overlay-kitt-min-width" type="range" min="4" max="40" step="1"
+                         title="Minimum bar width for the KITT overlay style"
                          aria-valuemin="4"
                          aria-valuemax="40"
                          aria-valuenow="20"
@@ -1134,6 +1166,7 @@
                 <span class="field-label">Max width (px)</span>
                 <div class="range-row">
                   <input id="overlay-kitt-max-width" type="range" min="50" max="800" step="10"
+                         title="Maximum bar width for the KITT overlay style"
                          aria-valuemin="50"
                          aria-valuemax="800"
                          aria-valuenow="200"
@@ -1146,6 +1179,7 @@
                 <span class="field-label">Height (px)</span>
                 <div class="range-row">
                   <input id="overlay-kitt-height" type="range" min="8" max="40" step="1"
+                         title="Bar height for the KITT overlay style"
                          aria-valuemin="8"
                          aria-valuemax="40"
                          aria-valuenow="20"
@@ -1161,6 +1195,7 @@
                 <span class="field-label">Rise smoothing (ms)</span>
                 <div class="range-row">
                   <input id="overlay-rise" type="range" min="20" max="600" step="10"
+                         title="How fast the overlay reacts to rising audio (ms)"
                          aria-valuemin="20"
                          aria-valuemax="600"
                          aria-valuenow="80"
@@ -1173,6 +1208,7 @@
                 <span class="field-label">Fall smoothing (ms)</span>
                 <div class="range-row">
                   <input id="overlay-fall" type="range" min="20" max="800" step="10"
+                         title="How fast the overlay fades after audio drops (ms)"
                          aria-valuemin="20"
                          aria-valuemax="800"
                          aria-valuenow="160"
@@ -1185,6 +1221,7 @@
                 <span class="field-label">Inactive opacity</span>
                 <div class="range-row">
                   <input id="overlay-opacity-inactive" type="range" min="5" max="100" step="1"
+                         title="Overlay opacity when not recording"
                          aria-valuemin="5"
                          aria-valuemax="100"
                          aria-valuenow="20"
@@ -1197,6 +1234,7 @@
                 <span class="field-label">Active opacity</span>
                 <div class="range-row">
                   <input id="overlay-opacity-active" type="range" min="5" max="100" step="1"
+                         title="Overlay opacity while recording"
                          aria-valuemin="5"
                          aria-valuemax="100"
                          aria-valuenow="80"
@@ -1209,14 +1247,16 @@
               <div class="panel-grid">
                 <label class="field">
                   <span class="field-label">Position X (%)</span>
-                  <input id="overlay-pos-x" type="number" min="0" max="100" step="1" />
+                  <input id="overlay-pos-x" type="number" min="0" max="100" step="1"
+                         title="Horizontal overlay position (0 = left, 100 = right)" />
                 </label>
                 <label class="field">
                   <span class="field-label">Position Y (%)</span>
-                  <input id="overlay-pos-y" type="number" min="0" max="100" step="1" />
+                  <input id="overlay-pos-y" type="number" min="0" max="100" step="1"
+                         title="Vertical overlay position (0 = top, 100 = bottom)" />
                 </label>
               </div>
-              <button id="apply-overlay-btn" class="button primary" style="margin-top: 12px; width: 100%;">Apply Overlay Settings</button>
+              <button id="apply-overlay-btn" class="button primary" title="Apply overlay position and style settings" style="margin-top: 12px; width: 100%;">Apply Overlay Settings</button>
             </div>
           </details>
           <details class="expander">
@@ -1225,7 +1265,7 @@
               <div class="field toggle">
                 <label class="toggle-row">
                   <span class="field-label">Enable chapters</span>
-                  <input id="chapters-enabled" type="checkbox" />
+                  <input id="chapters-enabled" type="checkbox" title="Automatically add chapter markers to long transcripts" />
                   <span class="toggle-track"><span class="toggle-thumb"></span></span>
                 </label>
                 <span class="toggle-hint">Show chapter markers in long transcripts</span>
@@ -1233,7 +1273,7 @@
               <div id="chapters-settings" style="display: none;">
                 <label class="field">
                   <span class="field-label">Show chapters in</span>
-                  <select id="chapters-show-in">
+                  <select id="chapters-show-in" title="Panel where chapter markers are displayed">
                     <option value="conversation">Conversation tab only</option>
                     <option value="all">All tabs</option>
                   </select>
@@ -1241,7 +1281,7 @@
                 </label>
                 <label class="field">
                   <span class="field-label">Chapter generation method</span>
-                  <select id="chapters-method">
+                  <select id="chapters-method" title="Algorithm used to detect chapter boundaries">
                     <option value="silence">Silence-based</option>
                     <option value="time">Time-based (5min)</option>
                     <option value="hybrid">Hybrid (recommended)</option>
@@ -1255,7 +1295,7 @@
             <summary>Topic Keywords</summary>
             <div class="expander-body">
               <div id="topic-keywords-list"></div>
-              <button id="topic-keywords-reset" class="btn-secondary" style="width: 100%; margin-top: 8px;">
+              <button id="topic-keywords-reset" class="btn-secondary" title="Reset topic keywords to built-in defaults" style="width: 100%; margin-top: 8px;">
                 Reset to Defaults
               </button>
               <span class="field-hint" style="display: block; margin-top: 8px;">

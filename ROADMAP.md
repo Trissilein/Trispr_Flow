@@ -27,6 +27,7 @@ This file is the canonical source for priorities and execution order.
 | F | Reliability hardening and release QA | High | D, E | Planned |
 | G | Cloud provider rollout (OpenAI/Claude/Gemini) | High | D, F | Deferred to v0.7.3 |
 | J | Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary) | Medium | D | Planned |
+| K | Expert Mode UX Overhaul (standard/expert toggle, hide technical settings) | Medium | E | Planned |
 
 ## v0.7 Task Ledger
 
@@ -59,7 +60,8 @@ This file is the canonical source for priorities and execution order.
 1. Block E: UX/UI consistency and settings IA cleanup.
 2. Block F: Reliability hardening and release QA.
 3. Block J: Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary).
-4. Block G (v0.7.3): Cloud provider rollout (OpenAI/Claude/Gemini).
+4. Block K (after Block E): Expert Mode UX Overhaul.
+5. Block G (v0.7.3): Cloud provider rollout (OpenAI/Claude/Gemini).
 
 ## References
 

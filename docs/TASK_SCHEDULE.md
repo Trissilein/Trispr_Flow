@@ -170,6 +170,7 @@ Instead of context-switching between models for each task, tasks are organized i
 | 39c | V0.7.0 Planning document | DONE | ✅ V0.7.0_PLAN.md with full architecture overview |
 
 **Deliverables**:
+
 - V0.7.0_PLAN.md: 280 lines, full planning doc with provider architecture, settings schema, UI mockups
 - DECISIONS.md: 3 new decisions (DEC-023, DEC-024, DEC-025)
 - Design decisions documented: terminology, settings layout, execution flow
@@ -258,6 +259,25 @@ When AI refinement consistently replaces the same word or phrase across multiple
 | 44a | Persistence and threshold logic | Medium | Task 44 | PLANNED | Persist `learned_vocabulary` map to settings JSON. Auto-promote substitution → vocabulary rule after N occurrences (default 3). |
 | 44b | Learned vocabulary settings UI | Medium | Task 44a | PLANNED | Settings sub-panel: toggle auto-learn, list of learned rules with accept/reject, session toast notification. |
 | 44c | Adaptive vocabulary regression tests | Medium | Tasks 44, 44a | PLANNED | Unit tests: diff extraction correctness, threshold promotion, persistence round-trip, rule deduplication. |
+
+### Block K: Expert Mode UX Overhaul --- PLANNED
+
+**Duration**: 2-3 weeks | **Model**: Claude Sonnet | **Depends on**: Block E | **Status**: Planned
+
+A persistent toggle separates the app into two modes:
+
+- **Standard mode** (default): Only essential settings visible — device, language, hotkeys, enable/disable toggles, AI Refinement tab (full).
+- **Expert mode**: Reveals all timing/threshold/buffer controls (VAD thresholds, grace periods, chunk sizes, continuous dump parameters, overlay customization, chapters method, temperature/tokens/custom prompt in AI Refinement).
+
+Implementation uses `data-expert-only` attributes on DOM elements — CSS hides them in standard mode, shows them in expert mode. No settings schema change needed; purely a display filter.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| K1 | Expert-mode toggle (header/settings, localStorage persistence) | Low | Block E | PLANNED | Small toggle button; persists via localStorage `trispr-expert-mode`. |
+| K2 | Audit & classify all settings (agent-assisted) | Medium | Block E | PLANNED | Agent reviews every settings field; outputs two lists: standard vs expert. Decision document added to DECISIONS.md. |
+| K3 | Apply `data-expert-only` attributes + CSS hide/show | Medium | K1, K2 | PLANNED | Add attribute to expert-only elements; CSS rule `.expert-mode [data-expert-only]` toggles visibility. |
+| K4 | Settings re-ordering within panels (expert items sink to bottom) | Medium | K3 | PLANNED | Visual grouping: essential controls at top, expert controls below a subtle divider. |
+| K5 | Regression tests (mode toggle shows correct subsets) | Low | K3, K4 | PLANNED | Unit tests verify standard mode hides expert elements; expert mode shows all. |
 
 ---
 

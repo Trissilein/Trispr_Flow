@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-24
+Last updated: 2026-02-24 (Block J added)
 
 This file is the canonical source for priorities and execution order.
 
@@ -26,6 +26,7 @@ This file is the canonical source for priorities and execution order.
 | E | UX/UI consistency and settings IA cleanup | Medium | D | Planned |
 | F | Reliability hardening and release QA | High | D, E | Planned |
 | G | Cloud provider rollout (OpenAI/Claude/Gemini) | High | D, F | Deferred to v0.7.3 |
+| J | Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary) | Medium | D | Planned |
 
 ## v0.7 Task Ledger
 
@@ -39,6 +40,12 @@ This file is the canonical source for priorities and execution order.
 | 34 | Ollama-only UI (endpoint, model refresh, connection test) | Done |
 | 35 | Prompt strategy polish for local models (DE/EN) | Done |
 | 38 | Offline E2E + fail-safe regression tests | Done |
+| 43 | GPU VRAM detection (Tauri backend) | Planned |
+| 43a | VRAM requirement display in AI Fallback UI | Planned |
+| 44 | Word-diff extraction from refinement events | Planned |
+| 44a | Persistence and threshold logic for learned vocabulary | Planned |
+| 44b | Learned vocabulary settings UI | Planned |
+| 44c | Adaptive vocabulary regression tests | Planned |
 
 ## AI Direction (Decision Snapshot)
 
@@ -51,7 +58,8 @@ This file is the canonical source for priorities and execution order.
 
 1. Block E: UX/UI consistency and settings IA cleanup.
 2. Block F: Reliability hardening and release QA.
-3. Block G (v0.7.3): Cloud provider rollout (OpenAI/Claude/Gemini).
+3. Block J: Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary).
+4. Block G (v0.7.3): Cloud provider rollout (OpenAI/Claude/Gemini).
 
 ## References
 

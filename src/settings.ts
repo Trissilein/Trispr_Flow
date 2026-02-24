@@ -489,7 +489,6 @@ export function renderSettings() {
     dom.postprocCustomVocabConfig.style.display = settings.postproc_custom_vocab_enabled ? "block" : "none";
   }
   renderVocabulary();
-  renderAIFallbackSettingsUi();
 
   // Chapter settings
   if (dom.chaptersEnabled) {
@@ -505,6 +504,17 @@ export function renderSettings() {
     dom.chaptersMethod.value = settings.chapters_method ?? "hybrid";
   }
 
+  renderAIRefinementTab();
+}
+
+/**
+ * Render the AI Refinement tab content.
+ * Covers provider/model setup (AI Fallback) and topic keyword editor.
+ * Called from renderSettings() and can be called independently after
+ * provider-specific changes.
+ */
+export function renderAIRefinementTab(): void {
+  renderAIFallbackSettingsUi();
   renderTopicKeywords();
 }
 

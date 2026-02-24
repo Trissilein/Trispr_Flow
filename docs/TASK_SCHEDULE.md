@@ -206,6 +206,59 @@ Instead of context-switching between models for each task, tasks are organized i
 | 41 | Anthropic (Claude) provider integration | High | Task 31, Block H | DEFERRED | Claude API client and model mapping after offline release. |
 | 42 | Gemini provider integration | High | Task 31, Block H | DEFERRED | Gemini API client after offline-first milestone. |
 
+### Block J: Adaptive AI Refinement Intelligence --- PLANNED
+
+**Duration**: 2-3 weeks | **Model**: Claude Sonnet | **Status**: Planned (after Block E)
+
+Two features that make the AI refinement pipeline more transparent and self-improving over time.
+
+#### J1 — Hardware Requirements Indicator
+
+When a user enables AI Fallback or selects a model, the UI should display VRAM requirements for the chosen model and warn if the GPU is likely insufficient.
+
+**User-facing behaviour:**
+
+- AI Fallback settings show estimated VRAM per model next to the model name (e.g., `qwen3:8b · ~5.9 GB VRAM`)
+- If detected VRAM < model requirement → amber warning banner: *"This model may run on CPU (~1–5 tok/s, 30–120 s per chunk). Consider `qwen3:8b` for faster processing."*
+- If no GPU detected → red warning: *"No GPU detected. AI refinement will use CPU and may be slow."*
+
+**Implementation notes:**
+
+- Tauri command `get_gpu_info` → Rust: try `nvml-wrapper` (NVIDIA), fall back to `wgpu` adapter query, fall back to `{ vram_mb: null }`.
+- Model VRAM table embedded in frontend (static lookup by quantization tier from `list_ollama_models_with_size` output).
+- Warning renders below the model selector in the AI Fallback settings panel.
+- No Ollama API call required — size info already available from Block H's `fetch_ollama_models_with_size`.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| 43 | GPU VRAM detection (Tauri backend) | Medium | Block H | PLANNED | Rust command `get_gpu_info` returning `{vram_mb: Option<u64>, gpu_name: Option<String>}` via nvml-wrapper → wgpu fallback. |
+| 43a | VRAM requirement display in AI Fallback UI | Low | Task 43 | PLANNED | Model selector shows size badge; warning banner renders when VRAM < model threshold. |
+
+#### J2 — Adaptive Vocabulary (Self-Learning from AI Refinement)
+
+When AI refinement consistently replaces the same word or phrase across multiple transcripts, the system should automatically propose (or auto-add) that substitution as a vocabulary rule — so Whisper learns the user's domain vocabulary over time.
+
+**User-facing behaviour:**
+
+- After a correction fires ≥ 3 times (configurable), the system auto-adds it to the custom vocabulary as a substitution rule: `original_word → corrected_word`.
+- Optional: surface a *"Learned X new vocabulary rules this session"* toast after a session ends.
+- Settings panel: toggle `Auto-learn vocabulary from AI refinement` (default: enabled). Sub-section shows learned rules with ability to accept/reject individually.
+
+**Implementation notes:**
+
+- Frontend (TypeScript): listen to `transcription:refined` events → compute word-level diff between `original` and `refined` (`diffWords` or a simple tokenised comparison).
+- Maintain a `Map<string, Map<string, number>>` (`original → refined → count`) in session memory and persisted as `learned_vocabulary` in settings JSON.
+- Threshold reached → call `update_settings` to append the rule to the existing vocabulary list.
+- Learned rules are indistinguishable at runtime from manually entered ones — same pipeline, same Rust processing.
+- Vocabulary rules are applied at Stage 1 (local rule processing), before AI fallback. The self-learning loop therefore improves the base transcript so the AI has less to fix over time.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| 44 | Word-diff extraction from refinement events | Medium | Block H | PLANNED | TypeScript: compare `original` vs `refined` payload from `transcription:refined`; extract word-level substitutions; accumulate in session map. |
+| 44a | Persistence and threshold logic | Medium | Task 44 | PLANNED | Persist `learned_vocabulary` map to settings JSON. Auto-promote substitution → vocabulary rule after N occurrences (default 3). |
+| 44b | Learned vocabulary settings UI | Medium | Task 44a | PLANNED | Settings sub-panel: toggle auto-learn, list of learned rules with accept/reject, session toast notification. |
+| 44c | Adaptive vocabulary regression tests | Medium | Tasks 44, 44a | PLANNED | Unit tests: diff extraction correctness, threshold promotion, persistence round-trip, rule deduplication. |
+
 ---
 
 ## Key Scheduling Principles

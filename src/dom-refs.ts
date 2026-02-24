@@ -9,8 +9,10 @@ const $ = <T extends HTMLElement>(id: string) => {
 // Main tabs
 export const tabBtnTranscription = $("tab-btn-transcription") as HTMLButtonElement | null;
 export const tabBtnSettings = $("tab-btn-settings") as HTMLButtonElement | null;
+export const tabBtnAiRefinement = $("tab-btn-ai-refinement") as HTMLButtonElement | null;
 export const tabTranscription = $("tab-transcription") as HTMLDivElement | null;
 export const tabSettings = $("tab-settings") as HTMLDivElement | null;
+export const tabAiRefinement = $("tab-ai-refinement") as HTMLDivElement | null;
 
 // Status and hero elements
 export const statusLabel = $("status-label");

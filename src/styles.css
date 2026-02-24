@@ -2802,3 +2802,67 @@ input[type="range"]:focus-visible {
 #postproc-vocab-add:active {
   transform: translateY(-1px) scale(0.98);
 }
+
+/* ============================================================
+   AI REFINEMENT TAB
+   All classes prefixed ai-refine-* to avoid collision with
+   Block E mainline changes.
+   ============================================================ */
+
+.ai-refine-panel {
+  border: none;
+  background: transparent;
+}
+
+.ai-refine-section {
+  padding: 20px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ai-refine-section:last-child {
+  border-bottom: none;
+}
+
+.ai-refine-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin: 0 0 16px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ai-refine-section--coming-soon {
+  opacity: 0.5;
+}
+
+.badge-coming-soon {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(29, 166, 160, 0.15);
+  color: var(--accent-1, #4be0d4);
+  border: 1px solid rgba(29, 166, 160, 0.3);
+}
+
+/* Inline link-button used in Post-Processing hint */
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent-1, #4be0d4);
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link-btn:hover {
+  color: #fff;
+}

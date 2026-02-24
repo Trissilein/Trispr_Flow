@@ -257,17 +257,20 @@ function addVocabRow(original: string, replacement: string) {
 }
 
 // Main tab switching
-type MainTab = "transcription" | "settings";
+type MainTab = "transcription" | "settings" | "ai-refinement";
 
 function switchMainTab(tab: MainTab) {
-  // Update button states
   const isTranscription = tab === "transcription";
+  const isSettings = tab === "settings";
+  const isAiRefinement = tab === "ai-refinement";
 
   dom.tabBtnTranscription?.classList.toggle("active", isTranscription);
-  dom.tabBtnSettings?.classList.toggle("active", !isTranscription);
+  dom.tabBtnSettings?.classList.toggle("active", isSettings);
+  dom.tabBtnAiRefinement?.classList.toggle("active", isAiRefinement);
 
   dom.tabBtnTranscription?.setAttribute("aria-selected", isTranscription.toString());
-  dom.tabBtnSettings?.setAttribute("aria-selected", (!isTranscription).toString());
+  dom.tabBtnSettings?.setAttribute("aria-selected", isSettings.toString());
+  dom.tabBtnAiRefinement?.setAttribute("aria-selected", isAiRefinement.toString());
 
   // Update tab content visibility — clear any inline display styles first
   if (dom.tabTranscription) {
@@ -276,7 +279,11 @@ function switchMainTab(tab: MainTab) {
   }
   if (dom.tabSettings) {
     dom.tabSettings.style.removeProperty("display");
-    dom.tabSettings.classList.toggle("active", !isTranscription);
+    dom.tabSettings.classList.toggle("active", isSettings);
+  }
+  if (dom.tabAiRefinement) {
+    dom.tabAiRefinement.style.removeProperty("display");
+    dom.tabAiRefinement.classList.toggle("active", isAiRefinement);
   }
 
   // Persist to localStorage
@@ -291,7 +298,7 @@ function switchMainTab(tab: MainTab) {
 export function initMainTab() {
   try {
     const savedTab = localStorage.getItem("trispr-active-tab") as MainTab | null;
-    if (savedTab === "settings" || savedTab === "transcription") {
+    if (savedTab === "settings" || savedTab === "transcription" || savedTab === "ai-refinement") {
       switchMainTab(savedTab);
     } else {
       // Default to transcription tab
@@ -341,6 +348,15 @@ export function wireEvents() {
 
   dom.tabBtnSettings?.addEventListener("click", () => {
     switchMainTab("settings");
+  });
+
+  dom.tabBtnAiRefinement?.addEventListener("click", () => {
+    switchMainTab("ai-refinement");
+  });
+
+  // "AI Refinement →" link in Post-Processing hint
+  document.getElementById("go-to-ai-refinement")?.addEventListener("click", () => {
+    switchMainTab("ai-refinement");
   });
 
   dom.captureEnabledToggle?.addEventListener("change", async () => {

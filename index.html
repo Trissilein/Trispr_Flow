@@ -91,6 +91,9 @@
         <button id="tab-btn-settings" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-settings">
           Settings
         </button>
+        <button id="tab-btn-ai-refinement" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-ai-refinement">
+          AI Refinement
+        </button>
       </div>
 
       <div class="layout-grid">
@@ -899,100 +902,11 @@
                   </div>
                 </details>
 
-                <details class="expander span-2">
-                  <summary>AI Fallback (Cloud Refinement)</summary>
-                  <div class="expander-content">
-                    <div class="field toggle">
-                      <label class="toggle-row">
-                        <span class="field-label">Enable AI fallback</span>
-                        <input id="ai-fallback-enabled" type="checkbox" title="Send transcripts to an AI provider for refinement and correction" />
-                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                      </label>
-                      <span class="toggle-hint">Apply provider-based refinement after local post-processing rules</span>
-                    </div>
-
-                    <div id="ai-fallback-settings" class="panel-grid" style="display: none;">
-                      <label class="field">
-                        <span class="field-label">Provider</span>
-                        <select id="ai-fallback-provider" title="AI service to use for transcript refinement">
-                          <option value="ollama">Ollama (Local)</option>
-                          <option value="claude">Claude (Anthropic)</option>
-                          <option value="openai">OpenAI</option>
-                          <option value="gemini">Gemini (Google)</option>
-                        </select>
-                      </label>
-
-                      <label class="field">
-                        <span class="field-label">Model</span>
-                        <select id="ai-fallback-model" title="Model to use for refinement (loaded from selected provider)"></select>
-                      </label>
-
-                      <!-- Ollama-specific: endpoint + connection controls (shown only for Ollama) -->
-                      <div id="ai-fallback-ollama-section" class="field span-2" style="display: none;">
-                        <span class="field-label">Ollama endpoint</span>
-                        <div class="hotkey-input-group">
-                          <input id="ai-fallback-ollama-endpoint" type="text" placeholder="http://localhost:11434" title="Ollama server URL (default: http://localhost:11434)" />
-                          <button id="ai-fallback-save-endpoint" class="hotkey-record-btn" type="button" title="Save the Ollama endpoint URL">Save</button>
-                          <button id="ai-fallback-refresh-models" class="hotkey-record-btn" type="button" title="Fetch the list of available models from Ollama">Refresh</button>
-                          <button id="ai-fallback-test-ollama" class="hotkey-record-btn" type="button" title="Check if Ollama is reachable at the configured endpoint">Test</button>
-                        </div>
-                        <span id="ai-fallback-ollama-status" class="field-hint">Enter your Ollama endpoint and click Refresh to load models.</span>
-                      </div>
-
-                      <!-- Cloud provider: API key controls (shown only for cloud providers) -->
-                      <div id="ai-fallback-api-key-section" class="field span-2">
-                        <span class="field-label">API key</span>
-                        <div class="hotkey-input-group">
-                          <input id="ai-fallback-api-key-input" type="password" placeholder="Paste provider API key" title="API key for the selected cloud provider" />
-                          <button id="ai-fallback-save-key" class="hotkey-record-btn" type="button" title="Save the API key for the selected provider">Save</button>
-                          <button id="ai-fallback-clear-key" class="hotkey-record-btn" type="button" title="Delete the stored API key">Clear</button>
-                          <button id="ai-fallback-test-key" class="hotkey-record-btn" type="button" title="Test whether the saved API key is valid">Test</button>
-                        </div>
-                        <span id="ai-fallback-key-status" class="field-hint">No API key stored.</span>
-                      </div>
-
-                      <label class="field range">
-                        <span class="field-label">Temperature</span>
-                        <div class="range-row">
-                          <input id="ai-fallback-temperature" type="range" min="0" max="1" step="0.05"
-                                 title="AI creativity level — lower = more literal, higher = more creative"
-                                 aria-valuemin="0"
-                                 aria-valuemax="1"
-                                 aria-valuenow="0.3"
-                                 aria-label="AI fallback temperature"
-                                 aria-describedby="ai-fallback-temperature-value" />
-                          <span id="ai-fallback-temperature-value" class="range-value" aria-live="polite">0.30</span>
-                        </div>
-                      </label>
-
-                      <label class="field">
-                        <span class="field-label">Max tokens</span>
-                        <select id="ai-fallback-max-tokens" title="Maximum number of tokens the AI can output per refinement">
-                          <option value="512">512</option>
-                          <option value="1024">1024</option>
-                          <option value="2048">2048</option>
-                          <option value="4000">4000</option>
-                          <option value="8192">8192</option>
-                        </select>
-                      </label>
-
-                      <div class="field toggle span-2">
-                        <label class="toggle-row">
-                          <span class="field-label">Use custom prompt</span>
-                          <input id="ai-fallback-custom-prompt-enabled" type="checkbox" title="Replace the built-in refinement prompt with a custom one" />
-                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                        </label>
-                        <span class="toggle-hint">Override default refinement prompt for this profile</span>
-                      </div>
-
-                      <div id="ai-fallback-custom-prompt-field" class="field span-2" style="display: none;">
-                        <span class="field-label">Custom prompt</span>
-                        <textarea id="ai-fallback-custom-prompt" rows="4" placeholder="Refine this transcript ..."
-                                  title="Custom prompt sent to the AI before each transcript"></textarea>
-                      </div>
-                    </div>
-                  </div>
-                </details>
+                <div class="field span-2">
+                  <span class="field-hint">AI-powered refinement is configured in the
+                    <button type="button" class="link-btn" id="go-to-ai-refinement">AI Refinement tab →</button>
+                  </span>
+                </div>
 
               </div>
             </div>
@@ -1002,7 +916,7 @@
         <section class="panel transcription-panel" data-panel="model" data-default-collapsed="true" style="--delay: 0.18s">
           <div class="panel-header">
             <div class="panel-title">
-              <h2>Model Manager</h2>
+              <h2>Whisper Model Manager</h2>
               <p>Download and manage local whisper.cpp models.</p>
             </div>
             <div class="panel-actions">
@@ -1291,20 +1205,137 @@
               </div>
             </div>
           </details>
-          <details class="expander">
-            <summary>Topic Keywords</summary>
-            <div class="expander-body">
-              <div id="topic-keywords-list"></div>
-              <button id="topic-keywords-reset" class="btn-secondary" title="Reset topic keywords to built-in defaults" style="width: 100%; margin-top: 8px;">
-                Reset to Defaults
-              </button>
-              <span class="field-hint" style="display: block; margin-top: 8px;">
-                Customize keywords for automatic topic detection. Topics are shown as badges on conversation entries.
-              </span>
-            </div>
-          </details>
           </div>
         </section>
+        </div>
+
+        <!-- AI Refinement Tab -->
+        <div id="tab-ai-refinement" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-ai-refinement">
+          <section class="panel ai-refine-panel" data-panel="ai-refinement" style="--delay: 0.12s">
+            <div class="panel-header">
+              <div class="panel-title">
+                <h2>AI Refinement</h2>
+                <p>AI-powered transcript improvement, topic detection, and adaptive vocabulary</p>
+              </div>
+            </div>
+            <div class="panel-body" id="ai-refinement-panel-body">
+
+              <!-- Provider & Model Setup -->
+              <div class="ai-refine-section">
+                <h3 class="ai-refine-section-title">Provider &amp; Model</h3>
+                <div class="panel-grid">
+                  <div class="field toggle span-2">
+                    <label class="toggle-row">
+                      <span class="field-label">Enable AI refinement</span>
+                      <input id="ai-fallback-enabled" type="checkbox" title="Send transcripts to an AI provider for refinement and correction" />
+                      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                    </label>
+                    <span class="toggle-hint">Apply provider-based refinement after local post-processing rules</span>
+                  </div>
+
+                  <div id="ai-fallback-settings" class="panel-grid span-2" style="display: none;">
+                    <label class="field">
+                      <span class="field-label">Provider</span>
+                      <select id="ai-fallback-provider" title="AI service to use for transcript refinement">
+                        <option value="ollama">Ollama (Local)</option>
+                        <option value="claude">Claude (Anthropic)</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="gemini">Gemini (Google)</option>
+                      </select>
+                    </label>
+
+                    <label class="field">
+                      <span class="field-label">Model</span>
+                      <select id="ai-fallback-model" title="Model to use for refinement (loaded from selected provider)"></select>
+                    </label>
+
+                    <!-- Ollama-specific: endpoint + connection controls -->
+                    <div id="ai-fallback-ollama-section" class="field span-2" style="display: none;">
+                      <span class="field-label">Ollama endpoint</span>
+                      <div class="hotkey-input-group">
+                        <input id="ai-fallback-ollama-endpoint" type="text" placeholder="http://localhost:11434" title="Ollama server URL (default: http://localhost:11434)" />
+                        <button id="ai-fallback-save-endpoint" class="hotkey-record-btn" type="button" title="Save the Ollama endpoint URL">Save</button>
+                        <button id="ai-fallback-refresh-models" class="hotkey-record-btn" type="button" title="Fetch the list of available models from Ollama">Refresh</button>
+                        <button id="ai-fallback-test-ollama" class="hotkey-record-btn" type="button" title="Check if Ollama is reachable at the configured endpoint">Test</button>
+                      </div>
+                      <span id="ai-fallback-ollama-status" class="field-hint">Enter your Ollama endpoint and click Refresh to load models.</span>
+                    </div>
+
+                    <!-- Cloud provider: API key controls -->
+                    <div id="ai-fallback-api-key-section" class="field span-2">
+                      <span class="field-label">API key</span>
+                      <div class="hotkey-input-group">
+                        <input id="ai-fallback-api-key-input" type="password" placeholder="Paste provider API key" title="API key for the selected cloud provider" />
+                        <button id="ai-fallback-save-key" class="hotkey-record-btn" type="button" title="Save the API key for the selected provider">Save</button>
+                        <button id="ai-fallback-clear-key" class="hotkey-record-btn" type="button" title="Delete the stored API key">Clear</button>
+                        <button id="ai-fallback-test-key" class="hotkey-record-btn" type="button" title="Test whether the saved API key is valid">Test</button>
+                      </div>
+                      <span id="ai-fallback-key-status" class="field-hint">No API key stored.</span>
+                    </div>
+
+                    <label class="field range">
+                      <span class="field-label">Temperature</span>
+                      <div class="range-row">
+                        <input id="ai-fallback-temperature" type="range" min="0" max="1" step="0.05"
+                               title="AI creativity level — lower = more literal, higher = more creative"
+                               aria-valuemin="0"
+                               aria-valuemax="1"
+                               aria-valuenow="0.3"
+                               aria-label="AI fallback temperature"
+                               aria-describedby="ai-fallback-temperature-value" />
+                        <span id="ai-fallback-temperature-value" class="range-value" aria-live="polite">0.30</span>
+                      </div>
+                    </label>
+
+                    <label class="field">
+                      <span class="field-label">Max tokens</span>
+                      <select id="ai-fallback-max-tokens" title="Maximum number of tokens the AI can output per refinement">
+                        <option value="512">512</option>
+                        <option value="1024">1024</option>
+                        <option value="2048">2048</option>
+                        <option value="4000">4000</option>
+                        <option value="8192">8192</option>
+                      </select>
+                    </label>
+
+                    <div class="field toggle span-2">
+                      <label class="toggle-row">
+                        <span class="field-label">Use custom prompt</span>
+                        <input id="ai-fallback-custom-prompt-enabled" type="checkbox" title="Replace the built-in refinement prompt with a custom one" />
+                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                      </label>
+                      <span class="toggle-hint">Override default refinement prompt for this profile</span>
+                    </div>
+
+                    <div id="ai-fallback-custom-prompt-field" class="field span-2" style="display: none;">
+                      <span class="field-label">Custom prompt</span>
+                      <textarea id="ai-fallback-custom-prompt" rows="4" placeholder="Refine this transcript ..."
+                                title="Custom prompt sent to the AI before each transcript"></textarea>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Topic Detection -->
+              <div class="ai-refine-section">
+                <h3 class="ai-refine-section-title">Topic Detection</h3>
+                <div id="topic-keywords-list"></div>
+                <button id="topic-keywords-reset" class="btn-secondary" title="Reset topic keywords to built-in defaults" style="width: 100%; margin-top: 8px;">
+                  Reset to Defaults
+                </button>
+                <span class="field-hint" style="display: block; margin-top: 8px;">
+                  Customize keywords for automatic topic detection. Topics are shown as badges on conversation entries.
+                </span>
+              </div>
+
+              <!-- Adaptive Vocabulary (Block J placeholder) -->
+              <div class="ai-refine-section ai-refine-section--coming-soon">
+                <h3 class="ai-refine-section-title">Adaptive Vocabulary <span class="badge-coming-soon">Coming in Block J</span></h3>
+                <p class="field-hint">When AI refinement consistently improves the same words (e.g. "Trispa" → "Trispr"), they will be automatically added to your vocabulary. Learned rules will appear here.</p>
+              </div>
+
+            </div>
+          </section>
         </div>
 
       </div>

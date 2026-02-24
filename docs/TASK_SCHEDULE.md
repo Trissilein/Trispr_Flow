@@ -184,17 +184,17 @@ Instead of context-switching between models for each task, tasks are organized i
 | 36 | Implement provider data model and settings migration | High | Task 31 | DONE | Update settings.json schema. Migration from old `cloud_fallback` to new structure. |
 | 37 | Implement provider config UI (API keys, model selection) | High | Task 31 | DONE | Create Settings panel for provider/model/key management. |
 
-### Block H: Offline-First Ollama Sprint --- OPEN
+### Block H: Offline-First Ollama Sprint --- COMPLETE ✅
 
-**Duration**: 2 weeks | **Status**: Open / next execution packet
+**Duration**: 2 weeks | **Model**: Claude Sonnet | **Status**: All 5 tasks complete
 
 | Task | Name | Complexity | Dependencies | Status | Description |
 | --- | --- | --- | --- | --- | --- |
-| 32 | Implement Ollama provider integration (backend) | High | Task 31 | OPEN | Add local Ollama client (`/api/chat`, `/api/tags`) with robust error handling. |
-| 33 | Activate AI refinement pipeline stage (local provider) | High | Task 32 | OPEN | Wire stage 3 to real local refinement with non-blocking fallback on failures. |
-| 34 | Implement Ollama-only provider UX | Medium | Tasks 32, 33 | OPEN | Endpoint input, model refresh/test-connection, remove active API-key flow in MVP path. |
-| 35 | Implement local-model prompt strategy polish | Medium | Task 33 | OPEN | Tune prompts for DE/EN refinement quality on local models (qwen3 track). |
-| 38 | End-to-end test: offline refinement reliability | High | Tasks 32, 33, 34, 35 | OPEN | Validate offline flow, timeout behavior, and no transcript loss under provider failures. |
+| 32 | Implement Ollama provider integration (backend) | High | Task 31 | DONE | `OllamaProvider` hardened: `keep_alive: "-1"`, 60s read timeout, 5s connect timeout, `list_ollama_models_with_size` + `fetch_ollama_models_with_size` Tauri command. |
+| 33 | Activate AI refinement pipeline stage (local provider) | High | Task 32 | DONE | `maybe_spawn_ai_refinement` helper in audio.rs; wired at all 3 transcription:result emit sites; emits `transcription:refined` / `transcription:refinement-failed`; frontend listeners in main.ts. |
+| 34 | Implement Ollama-only provider UX | Medium | Tasks 32, 33 | DONE | UI already complete from Block G: endpoint input, Refresh/Test/Save buttons, ollama-specific section, API-key section hidden for Ollama. |
+| 35 | Implement local-model prompt strategy polish | Medium | Task 33 | DONE | EN/DE prompts updated: no-translate guard, output-only instruction, proper-noun preservation, German register (Du/Sie) preservation. |
+| 38 | End-to-end test: offline refinement reliability | High | Tasks 32, 33, 34, 35 | DONE | 24 TypeScript tests (block-h-ollama.test.ts: H-S1–H-S5); 8 new Rust unit tests for prompt guards, connection refused → OllamaNotRunning, size-list consistency. |
 
 ### Block I: Cloud Provider Rollout --- DEFERRED
 

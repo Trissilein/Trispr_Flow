@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-22
+Last updated: 2026-02-24
 
 This file is the canonical source for priorities and execution order.
 
@@ -8,8 +8,8 @@ This file is the canonical source for priorities and execution order.
 
 - Released: `v0.6.0`
 - Current phase: `v0.7.0` execution
-- Foundation complete: Blocks F + G
-- Active execution block: Offline-first AI fallback (Ollama)
+- Foundation complete: Blocks F + G + H
+- Active execution block: UX/UI consistency (Block E)
 
 ## Analysis De-Scope Decision
 
@@ -22,7 +22,7 @@ This file is the canonical source for priorities and execution order.
 
 | Block | Focus | Complexity | Depends on | Status |
 | --- | --- | --- | --- | --- |
-| D | v0.7.2 Offline-first AI fallback (Ollama provider + pipeline + UX) | High | F, G | In progress |
+| D | v0.7.2 Offline-first AI fallback (Ollama provider + pipeline + UX) | High | F, G | Complete ✅ |
 | E | UX/UI consistency and settings IA cleanup | Medium | D | Planned |
 | F | Reliability hardening and release QA | High | D, E | Planned |
 | G | Cloud provider rollout (OpenAI/Claude/Gemini) | High | D, F | Deferred to v0.7.3 |
@@ -34,11 +34,11 @@ This file is the canonical source for priorities and execution order.
 | 31 | Multi-provider architecture | Done |
 | 36 | Settings migration + data model | Done |
 | 37 | Provider config UI scaffolding | Done |
-| 32 | Ollama provider integration (backend) | Open |
-| 33 | Activate AI refinement pipeline stage for local provider | Open |
-| 34 | Ollama-only UI (endpoint, model refresh, connection test) | Open |
-| 35 | Prompt strategy polish for local models (DE/EN) | Open |
-| 38 | Offline E2E + fail-safe regression tests | Open |
+| 32 | Ollama provider integration (backend) | Done |
+| 33 | Activate AI refinement pipeline stage for local provider | Done |
+| 34 | Ollama-only UI (endpoint, model refresh, connection test) | Done |
+| 35 | Prompt strategy polish for local models (DE/EN) | Done |
+| 38 | Offline E2E + fail-safe regression tests | Done |
 
 ## AI Direction (Decision Snapshot)
 
@@ -49,11 +49,9 @@ This file is the canonical source for priorities and execution order.
 
 ## Immediate Next Actions
 
-1. Implement Task 32 (Ollama backend provider and model discovery).
-2. Implement Task 33 (real pipeline activation with safe fallback behavior).
-3. Implement Task 34 (Ollama-only settings UX and connection flow).
-4. Complete Task 35 and Task 38 for local-model quality and reliability.
-5. Continue UX consistency passes for Capture/System settings panels.
+1. Block E: UX/UI consistency and settings IA cleanup.
+2. Block F: Reliability hardening and release QA.
+3. Block G (v0.7.3): Cloud provider rollout (OpenAI/Claude/Gemini).
 
 ## References
 

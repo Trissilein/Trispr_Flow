@@ -1,3 +1,5 @@
+use crate::ai_fallback::models::RefinementOptions;
+use crate::ai_fallback::provider::ProviderFactory;
 use crate::constants::{
     TARGET_SAMPLE_RATE, VAD_MIN_CONSECUTIVE_CHUNKS, VAD_MIN_VOICE_MS,
 };
@@ -844,6 +846,79 @@ pub(crate) fn start_recording_with_settings(
     Ok(())
 }
 
+/// Spawn a background thread to refine `text` via Ollama AI Fallback.
+/// The raw transcript is emitted immediately before this is called — this
+/// function never blocks the transcription pipeline. On success it emits
+/// `"transcription:refined"`; on failure it emits `"transcription:refinement-failed"`
+/// and logs the error. The original transcript is always preserved.
+fn maybe_spawn_ai_refinement(
+    app_handle: AppHandle,
+    text: String,
+    source: String,
+    settings: &Settings,
+) {
+    if !settings.ai_fallback.enabled {
+        return;
+    }
+    // Only Ollama is active in v0.7.x (cloud providers deferred to v0.7.3)
+    if settings.ai_fallback.provider != "ollama" {
+        return;
+    }
+
+    let endpoint = settings.providers.ollama.endpoint.clone();
+    // Use ai_fallback.model; fall back to preferred_model if blank
+    let model = {
+        let m = settings.ai_fallback.model.trim().to_string();
+        if m.is_empty() {
+            settings.providers.ollama.preferred_model.clone()
+        } else {
+            m
+        }
+    };
+    if model.is_empty() {
+        return; // No model configured — skip silently
+    }
+
+    let options = RefinementOptions {
+        temperature: settings.ai_fallback.temperature,
+        max_tokens: settings.ai_fallback.max_tokens,
+        language: Some(settings.language_mode.clone()),
+        custom_prompt: if settings.ai_fallback.custom_prompt_enabled {
+            Some(settings.ai_fallback.custom_prompt.clone())
+        } else {
+            None
+        },
+    };
+
+    thread::spawn(move || {
+        let provider = ProviderFactory::create_ollama(endpoint);
+        match provider.refine_transcript(&text, &model, &options, "") {
+            Ok(result) => {
+                let _ = app_handle.emit(
+                    "transcription:refined",
+                    serde_json::json!({
+                        "original": text,
+                        "refined": result.text,
+                        "source": source,
+                        "model": result.model,
+                        "execution_time_ms": result.execution_time_ms,
+                    }),
+                );
+            }
+            Err(e) => {
+                error!("AI refinement failed ({}): {}", model, e);
+                let _ = app_handle.emit(
+                    "transcription:refinement-failed",
+                    serde_json::json!({
+                        "source": source,
+                        "error": e.to_string(),
+                    }),
+                );
+            }
+        }
+    });
+}
+
 fn flush_mic_audio_to_session(buffer: &mut Vec<i16>) {
     if buffer.is_empty() {
         return;
@@ -922,6 +997,12 @@ fn process_toggle_segment(
                         text: processed_text.clone(),
                         source: source.clone(),
                     },
+                );
+                maybe_spawn_ai_refinement(
+                    app_handle.clone(),
+                    processed_text.clone(),
+                    source.clone(),
+                    runtime_settings,
                 );
 
                 let _ = app_handle.emit(
@@ -1466,6 +1547,12 @@ fn process_vad_segment(
                         source: source.clone(),
                     },
                 );
+                maybe_spawn_ai_refinement(
+                    app_handle.clone(),
+                    processed_text.clone(),
+                    source.clone(),
+                    &settings,
+                );
                 if let Err(err) = crate::paste_text(&processed_text) {
                     let _ = app_handle.emit("transcription:error", err);
                 }
@@ -1611,6 +1698,12 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
                             text: processed_text.clone(),
                             source: source.clone(),
                         },
+                    );
+                    maybe_spawn_ai_refinement(
+                        app_handle.clone(),
+                        processed_text.clone(),
+                        source.clone(),
+                        &settings,
                     );
                     if let Err(err) = crate::paste_text(&processed_text) {
                         let _ = app_handle.emit("transcription:error", err);

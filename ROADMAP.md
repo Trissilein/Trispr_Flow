@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-22
+Last updated: 2026-02-24 (Block K added)
 
 This file is the canonical source for priorities and execution order.
 
@@ -26,6 +26,7 @@ This file is the canonical source for priorities and execution order.
 | E | UX/UI consistency and settings IA cleanup | Medium | D | Planned |
 | F | Reliability hardening and release QA | High | D, E | Planned |
 | G | Cloud provider rollout (OpenAI/Claude/Gemini) | High | D, F | Deferred to v0.7.3 |
+| K | Expert Mode UX Overhaul (standard/expert toggle, hide technical settings) | Medium | E | Planned |
 
 ## v0.7 Task Ledger
 
@@ -54,6 +55,7 @@ This file is the canonical source for priorities and execution order.
 3. Implement Task 34 (Ollama-only settings UX and connection flow).
 4. Complete Task 35 and Task 38 for local-model quality and reliability.
 5. Continue UX consistency passes for Capture/System settings panels.
+6. Block K (after Block E): Expert Mode UX Overhaul.
 
 ## References
 

@@ -184,17 +184,6 @@ async function bootstrap() {
     if (dom.statusMessage) dom.statusMessage.textContent = "";
   }));
 
-  // AI Fallback: refined transcript available — log silently (original already shown).
-  eventUnlisteners.push(await listen<{ original: string; refined: string; source: string; model: string; execution_time_ms: number }>("transcription:refined", (event) => {
-    const { refined, model, execution_time_ms } = event.payload;
-    console.debug(`[AI] Refinement done (${model}, ${execution_time_ms}ms):`, refined);
-  }));
-
-  // AI Fallback: refinement failed — log, no disruption to user workflow.
-  eventUnlisteners.push(await listen<{ source: string; error: string }>("transcription:refinement-failed", (event) => {
-    console.warn(`[AI] Refinement failed (${event.payload.source}):`, event.payload.error);
-  }));
-
   eventUnlisteners.push(await listen<DownloadProgress>("model:download-progress", (event) => {
     modelProgress.set(event.payload.id, event.payload);
     const updatedModels = models.map((model) =>

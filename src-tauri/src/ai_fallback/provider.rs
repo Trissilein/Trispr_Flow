@@ -2,11 +2,10 @@ use super::error::AIError;
 use super::models::{RefinementOptions, RefinementResult, TokenUsage};
 use std::time::{Duration, Instant};
 
-// Prompt templates optimized for local models (Ollama: qwen3, mistral-small).
-// Guidelines: no translation, no explanations, preserve register and proper nouns.
-pub const OLLAMA_PROMPT_EN: &str = "You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors in the text below. Rules: do NOT translate; do NOT add explanations or commentary; preserve all proper nouns and technical terms exactly; preserve the original register (formal/informal). Output ONLY the corrected text with no preamble.";
+// Prompt templates optimized for local models (Ollama: qwen, mistral)
+pub const OLLAMA_PROMPT_EN: &str = "Fix this transcribed text: correct punctuation, capitalization, and obvious errors. Keep the meaning unchanged. Return only the corrected text.";
 
-pub const OLLAMA_PROMPT_DE: &str = "Du bist ein Transkript-Editor. Korrigiere Zeichensetzung, Groß-/Kleinschreibung und offensichtliche Sprache-zu-Text-Fehler im Text unten. Regeln: NICHT übersetzen; KEINE Erklärungen oder Kommentare hinzufügen; alle Eigennamen und Fachbegriffe exakt beibehalten; Anredeform (Du/Sie) aus dem Original beibehalten. Gib NUR den korrigierten Text aus, ohne Einleitung.";
+pub const OLLAMA_PROMPT_DE: &str = "Korrigiere diesen transkribierten Text: verbessere Zeichensetzung, Großschreibung und offensichtliche Fehler. Behalte die Bedeutung bei. Gib nur den korrigierten Text zurück.";
 
 pub trait AIProvider: Send + Sync {
     fn id(&self) -> &'static str;
@@ -42,15 +41,6 @@ impl ProviderFactory {
 /// Fetch model list from a running Ollama instance via GET /api/tags.
 /// Returns an empty Vec on any error (Ollama not running, network issue, etc.).
 pub fn list_ollama_models(endpoint: &str) -> Vec<String> {
-    list_ollama_models_with_size(endpoint)
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect()
-}
-
-/// Fetch model list with size information from a running Ollama instance.
-/// Each entry is (model_name, size_bytes). Returns empty Vec on any error.
-pub fn list_ollama_models_with_size(endpoint: &str) -> Vec<(String, u64)> {
     let url = format!("{}/api/tags", endpoint.trim_end_matches('/'));
     let agent = ureq::builder()
         .timeout_connect(Duration::from_secs(2))
@@ -68,11 +58,7 @@ pub fn list_ollama_models_with_size(endpoint: &str) -> Vec<(String, u64)> {
         .as_array()
         .map(|arr| {
             arr.iter()
-                .filter_map(|m| {
-                    let name = m["name"].as_str()?.to_string();
-                    let size = m["size"].as_u64().unwrap_or(0);
-                    Some((name, size))
-                })
+                .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
                 .collect()
         })
         .unwrap_or_default()
@@ -314,19 +300,15 @@ impl AIProvider for OllamaProvider {
                 {"role": "user", "content": text}
             ],
             "stream": false,
-            "keep_alive": "-1",
             "options": {
                 "temperature": options.temperature,
-                "num_predict": options.max_tokens,
-                "num_ctx": 4096
+                "num_predict": options.max_tokens
             }
         });
 
-        // 60 s read timeout: cold model load can take 20-40 s on first inference.
-        // 5 s connect timeout: if Ollama is running, it should accept immediately.
         let agent = ureq::builder()
-            .timeout_connect(Duration::from_secs(5))
-            .timeout_read(Duration::from_secs(60))
+            .timeout_connect(Duration::from_secs(3))
+            .timeout_read(Duration::from_secs(30))
             .build();
 
         let resp = agent
@@ -477,76 +459,5 @@ mod tests {
     #[test]
     fn token_estimate_is_at_least_one_for_empty_text() {
         assert!(rough_token_estimate("") >= 1);
-    }
-
-    // --- Task 32: list_ollama_models_with_size returns empty on bad endpoint ---
-    #[test]
-    fn list_ollama_models_with_size_returns_empty_on_bad_endpoint() {
-        let models = list_ollama_models_with_size("http://127.0.0.1:19999");
-        assert!(models.is_empty(), "expected empty list for unreachable endpoint");
-    }
-
-    // --- Task 32: list_ollama_models delegates to list_ollama_models_with_size ---
-    #[test]
-    fn list_ollama_models_consistent_with_with_size() {
-        let names = list_ollama_models("http://127.0.0.1:19999");
-        let with_size = list_ollama_models_with_size("http://127.0.0.1:19999");
-        assert_eq!(names.len(), with_size.len());
-    }
-
-    // --- Task 32: OllamaProvider refine_transcript maps connection refused to OllamaNotRunning ---
-    #[test]
-    fn ollama_provider_connection_refused_returns_not_running() {
-        let provider = OllamaProvider::with_endpoint("http://127.0.0.1:19999".to_string());
-        let options = RefinementOptions {
-            temperature: 0.3,
-            max_tokens: 512,
-            language: Some("en".to_string()),
-            custom_prompt: None,
-        };
-        let result = provider.refine_transcript("hello world", "qwen3:14b", &options, "");
-        assert!(
-            matches!(result, Err(AIError::OllamaNotRunning)),
-            "connection refused should map to OllamaNotRunning, got: {:?}",
-            result
-        );
-    }
-
-    // --- Task 35: English prompt contains key guard instructions ---
-    #[test]
-    fn prompt_en_contains_no_translate_guard() {
-        assert!(OLLAMA_PROMPT_EN.contains("do NOT translate"),
-            "EN prompt must explicitly forbid translation");
-    }
-
-    #[test]
-    fn prompt_en_contains_output_only_instruction() {
-        assert!(OLLAMA_PROMPT_EN.contains("ONLY"),
-            "EN prompt must tell the model to output only the corrected text");
-    }
-
-    #[test]
-    fn prompt_en_mentions_proper_nouns() {
-        assert!(OLLAMA_PROMPT_EN.contains("proper nouns"),
-            "EN prompt must mention preserving proper nouns");
-    }
-
-    // --- Task 35: German prompt contains key guard instructions ---
-    #[test]
-    fn prompt_de_contains_no_translate_guard() {
-        assert!(OLLAMA_PROMPT_DE.contains("NICHT übersetzen"),
-            "DE prompt must explicitly forbid translation");
-    }
-
-    #[test]
-    fn prompt_de_contains_output_only_instruction() {
-        assert!(OLLAMA_PROMPT_DE.contains("NUR"),
-            "DE prompt must tell the model to output only the corrected text");
-    }
-
-    #[test]
-    fn prompt_de_contains_register_preservation() {
-        assert!(OLLAMA_PROMPT_DE.contains("Anredeform"),
-            "DE prompt must mention preserving formal/informal register (Du/Sie)");
     }
 }

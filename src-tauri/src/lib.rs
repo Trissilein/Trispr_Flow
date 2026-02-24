@@ -38,7 +38,8 @@ use tracing::{error, info, warn};
 use crate::ai_fallback::keyring as ai_fallback_keyring;
 use crate::ai_fallback::models::RefinementOptions;
 use crate::ai_fallback::provider::{
-    default_models_for_provider, list_ollama_models, ping_ollama, ProviderFactory,
+    default_models_for_provider, list_ollama_models, list_ollama_models_with_size, ping_ollama,
+    ProviderFactory,
 };
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
 use crate::models::{
@@ -359,6 +360,26 @@ fn fetch_available_models(
         return Err(format!("Unknown AI provider: {}", provider));
     }
     Ok(defaults)
+}
+
+#[tauri::command]
+fn fetch_ollama_models_with_size(
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let endpoint = {
+        let settings = state.settings.lock().unwrap();
+        settings.providers.ollama.endpoint.clone()
+    };
+    let models = list_ollama_models_with_size(&endpoint);
+    if models.is_empty() {
+        return Err("Ollama is not running or has no models installed.".to_string());
+    }
+    Ok(models
+        .into_iter()
+        .map(|(name, size_bytes)| {
+            serde_json::json!({ "name": name, "size_bytes": size_bytes })
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -2169,6 +2190,7 @@ pub fn run() {
             get_recordings_directory,
             open_recordings_directory,
             fetch_available_models,
+            fetch_ollama_models_with_size,
             test_provider_connection,
             save_provider_api_key,
             clear_provider_api_key,

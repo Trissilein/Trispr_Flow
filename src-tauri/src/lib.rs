@@ -8,6 +8,7 @@ mod continuous_dump;
 mod errors;
 mod hotkeys;
 mod models;
+mod ollama_runtime;
 mod opus;
 mod overlay;
 mod paths;
@@ -38,13 +39,17 @@ use tracing::{error, info, warn};
 use crate::ai_fallback::keyring as ai_fallback_keyring;
 use crate::ai_fallback::models::RefinementOptions;
 use crate::ai_fallback::provider::{
-    default_models_for_provider, list_ollama_models, list_ollama_models_with_size, ping_ollama,
-    ProviderFactory,
+    default_models_for_provider, is_local_ollama_endpoint, list_ollama_models,
+    list_ollama_models_with_size, ping_ollama, resolve_effective_local_model, ProviderFactory,
 };
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
 use crate::models::{
     check_model_available, clear_hidden_external_models, download_model, get_models_dir,
     hide_external_model, list_models, pick_model_dir, quantize_model, remove_model,
+};
+use crate::ollama_runtime::{
+    detect_ollama_runtime, download_ollama_runtime, import_ollama_model_from_file,
+    install_ollama_runtime, set_strict_local_mode, start_ollama_runtime, verify_ollama_runtime,
 };
 use crate::state::{
     load_history, load_settings, load_transcribe_history, normalize_ai_fallback_fields,
@@ -331,13 +336,23 @@ fn fetch_available_models(
 
     // Ollama: always query live /api/tags for up-to-date model list
     if provider_id == "ollama" {
-        let endpoint = {
+        let (endpoint, strict_local_mode) = {
             let settings = state.settings.lock().unwrap();
-            settings.providers.ollama.endpoint.clone()
+            (
+                settings.providers.ollama.endpoint.clone(),
+                settings.ai_fallback.strict_local_mode,
+            )
         };
+        if strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
+            return Err(
+                "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
+                    .to_string(),
+            );
+        }
         let models = list_ollama_models(&endpoint);
         if models.is_empty() {
-            return Err("Ollama is not running or has no models installed.".to_string());
+            // Distinguish "Ollama not reachable" from "reachable but no models installed".
+            ping_ollama(&endpoint).map_err(|e| e.to_string())?;
         }
         return Ok(models);
     }
@@ -366,19 +381,27 @@ fn fetch_available_models(
 fn fetch_ollama_models_with_size(
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let endpoint = {
+    let (endpoint, strict_local_mode) = {
         let settings = state.settings.lock().unwrap();
-        settings.providers.ollama.endpoint.clone()
+        (
+            settings.providers.ollama.endpoint.clone(),
+            settings.ai_fallback.strict_local_mode,
+        )
     };
+    if strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
+        return Err(
+            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
+                .to_string(),
+        );
+    }
     let models = list_ollama_models_with_size(&endpoint);
     if models.is_empty() {
-        return Err("Ollama is not running or has no models installed.".to_string());
+        // Distinguish "Ollama not reachable" from "reachable but no models installed".
+        ping_ollama(&endpoint).map_err(|e| e.to_string())?;
     }
     Ok(models
         .into_iter()
-        .map(|(name, size_bytes)| {
-            serde_json::json!({ "name": name, "size_bytes": size_bytes })
-        })
+        .map(|(name, size_bytes)| serde_json::json!({ "name": name, "size_bytes": size_bytes }))
         .collect())
 }
 
@@ -392,10 +415,19 @@ fn test_provider_connection(
 
     // Ollama: perform a real HTTP ping instead of API key validation
     if provider_id == "ollama" {
-        let endpoint = {
+        let (endpoint, strict_local_mode) = {
             let settings = state.settings.lock().unwrap();
-            settings.providers.ollama.endpoint.clone()
+            (
+                settings.providers.ollama.endpoint.clone(),
+                settings.ai_fallback.strict_local_mode,
+            )
         };
+        if strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
+            return Err(
+                "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
+                    .to_string(),
+            );
+        }
         ping_ollama(&endpoint).map_err(|e| e.to_string())?;
         let models = list_ollama_models(&endpoint);
         return Ok(serde_json::json!({
@@ -445,6 +477,7 @@ fn save_provider_api_key(
       "status": "success",
       "provider": provider_id,
       "stored": true,
+      "auth_status": "locked",
     }))
 }
 
@@ -470,6 +503,95 @@ fn clear_provider_api_key(
       "status": "success",
       "provider": provider_id,
       "stored": false,
+      "auth_status": "locked",
+    }))
+}
+
+#[tauri::command]
+fn verify_provider_auth(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: String,
+    method: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let provider_id = provider.trim().to_lowercase();
+    let method_id = method
+        .as_deref()
+        .unwrap_or("api_key")
+        .trim()
+        .to_lowercase();
+
+    if provider_id == "ollama" {
+        return Err("Ollama does not require cloud credential verification.".to_string());
+    }
+    if !matches!(provider_id.as_str(), "claude" | "openai" | "gemini") {
+        return Err(format!("Unknown AI provider: {}", provider));
+    }
+    if method_id != "api_key" && method_id != "oauth" {
+        return Err(format!(
+            "Unsupported auth verification method '{}'.",
+            method_id
+        ));
+    }
+
+    if method_id == "oauth" {
+        let snapshot = {
+            let mut settings = state.settings.lock().unwrap();
+            settings.providers.lock_auth(&provider_id)?;
+            normalize_ai_fallback_fields(&mut settings);
+            settings.clone()
+        };
+        save_settings_file(&app, &snapshot)?;
+        let _ = app.emit("settings-changed", snapshot.clone());
+        return Err("OAuth verification is not supported yet. Use API key verification.".to_string());
+    }
+
+    let stored_key = ai_fallback_keyring::read_api_key(&app, &provider_id)?;
+    let Some(api_key) = stored_key else {
+        let snapshot = {
+            let mut settings = state.settings.lock().unwrap();
+            settings.providers.lock_auth(&provider_id)?;
+            normalize_ai_fallback_fields(&mut settings);
+            settings.clone()
+        };
+        save_settings_file(&app, &snapshot)?;
+        let _ = app.emit("settings-changed", snapshot.clone());
+        return Err(format!("No stored API key found for provider '{}'.", provider_id));
+    };
+
+    let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
+    if let Err(error) = provider_client.validate_api_key(api_key.trim()) {
+        let snapshot = {
+            let mut settings = state.settings.lock().unwrap();
+            settings.providers.lock_auth(&provider_id)?;
+            normalize_ai_fallback_fields(&mut settings);
+            settings.clone()
+        };
+        save_settings_file(&app, &snapshot)?;
+        let _ = app.emit("settings-changed", snapshot.clone());
+        return Err(error.to_string());
+    }
+
+    let verified_at = chrono::Utc::now().to_rfc3339();
+    let snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.providers.set_auth_verified(
+            &provider_id,
+            "verified_api_key",
+            Some(verified_at.clone()),
+        )?;
+        normalize_ai_fallback_fields(&mut settings);
+        settings.clone()
+    };
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot.clone());
+
+    Ok(serde_json::json!({
+      "ok": true,
+      "provider": provider_id,
+      "method": "verified_api_key",
+      "verified_at": verified_at,
+      "message": "Provider credentials verified successfully.",
     }))
 }
 
@@ -482,6 +604,15 @@ fn save_ollama_endpoint(
     let trimmed = endpoint.trim().to_string();
     if trimmed.is_empty() {
         return Err("Endpoint cannot be empty.".to_string());
+    }
+    {
+        let settings = state.settings.lock().unwrap();
+        if settings.ai_fallback.strict_local_mode && !is_local_ollama_endpoint(&trimmed) {
+            return Err(
+                "Strict local mode is enabled. Only localhost/127.0.0.1:11434 is allowed."
+                    .to_string(),
+            );
+        }
     }
     let snapshot = {
         let mut settings = state.settings.lock().unwrap();
@@ -513,6 +644,12 @@ fn refine_transcript(
 
     let provider_client = if is_ollama {
         let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
+        if ai_settings.strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
+            return Err(
+                "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
+                    .to_string(),
+            );
+        }
         ProviderFactory::create_ollama(endpoint)
     } else {
         ProviderFactory::create(&ai_settings.provider).map_err(|e| e.to_string())?
@@ -531,6 +668,47 @@ fn refine_transcript(
             .map_err(|e| e.to_string())?;
     }
 
+    let mut model = ai_settings.model.trim().to_string();
+    if is_ollama {
+        let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
+        let preferred = settings_snapshot.providers.ollama.preferred_model.clone();
+        let resolved =
+            resolve_effective_local_model(&model, &preferred, &endpoint).map_err(|e| e.to_string())?;
+        model = resolved.model;
+
+        if resolved.repaired
+            || settings_snapshot.ai_fallback.model.trim() != model
+            || settings_snapshot.providers.ollama.preferred_model.trim() != model
+            || settings_snapshot.postproc_llm_model.trim() != model
+        {
+            let snapshot = {
+                let mut settings = state.settings.lock().unwrap();
+                settings.ai_fallback.model = model.clone();
+                settings.providers.ollama.preferred_model = model.clone();
+                settings.postproc_llm_model = model.clone();
+                normalize_ai_fallback_fields(&mut settings);
+                settings.clone()
+            };
+            save_settings_file(&app, &snapshot)?;
+            let _ = app.emit("settings-changed", snapshot.clone());
+        }
+    } else if model.is_empty() {
+        model = match ai_settings.provider.as_str() {
+            "claude" => settings_snapshot.providers.claude.preferred_model.trim().to_string(),
+            "openai" => settings_snapshot.providers.openai.preferred_model.trim().to_string(),
+            "gemini" => settings_snapshot.providers.gemini.preferred_model.trim().to_string(),
+            _ => String::new(),
+        };
+    }
+    if model.is_empty() {
+        return Err(if is_ollama {
+            "No local Ollama model configured. Download a model and set it active first."
+                .to_string()
+        } else {
+            "No cloud model configured for the selected provider.".to_string()
+        });
+    }
+
     let options = RefinementOptions {
         temperature: ai_settings.temperature,
         max_tokens: ai_settings.max_tokens,
@@ -543,7 +721,7 @@ fn refine_transcript(
     };
 
     let result = provider_client
-        .refine_transcript(&transcript, &ai_settings.model, &options, &api_key)
+        .refine_transcript(&transcript, &model, &options, &api_key)
         .map_err(|e| e.to_string())?;
 
     serde_json::to_value(&result).map_err(|e| e.to_string())
@@ -581,12 +759,176 @@ fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> 
 }
 
 #[tauri::command]
+fn pull_ollama_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    model: String,
+) -> Result<(), String> {
+    use crate::ai_fallback::provider::{pull_ollama_model_inner, validate_ollama_model_name};
+
+    validate_ollama_model_name(&model)?;
+
+    // Prevent duplicate pulls for the same model
+    {
+        let mut pulls = state.ollama_pulls.lock().unwrap();
+        if pulls.contains(&model) {
+            return Err(format!("Pull already in progress for '{}'", model));
+        }
+        pulls.insert(model.clone());
+    }
+
+    let (endpoint, strict_local_mode) = {
+        let settings = state.settings.lock().unwrap();
+        (
+            settings.providers.ollama.endpoint.clone(),
+            settings.ai_fallback.strict_local_mode,
+        )
+    };
+    if strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
+        let mut pulls = state.ollama_pulls.lock().unwrap();
+        pulls.remove(&model);
+        return Err(
+            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
+                .to_string(),
+        );
+    }
+
+    let app_handle = app.clone();
+    let model_clone = model.clone();
+    std::thread::spawn(move || {
+        pull_ollama_model_inner(app_handle.clone(), model_clone.clone(), endpoint);
+        // Clean up: remove from active pulls
+        let state = app_handle.state::<AppState>();
+        let mut pulls = state.ollama_pulls.lock().unwrap();
+        pulls.remove(&model_clone);
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_ollama_model(state: State<'_, AppState>, model: String) -> Result<(), String> {
+    use crate::ai_fallback::provider::{ollama_endpoint_candidates, validate_ollama_model_name};
+
+    validate_ollama_model_name(&model)?;
+
+    let (endpoint, strict_local_mode) = {
+        let settings = state.settings.lock().unwrap();
+        (
+            settings.providers.ollama.endpoint.clone(),
+            settings.ai_fallback.strict_local_mode,
+        )
+    };
+    if strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
+        return Err(
+            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
+                .to_string(),
+        );
+    }
+
+    let body = serde_json::json!({ "model": model });
+
+    let agent = ureq::builder()
+        .timeout_connect(std::time::Duration::from_secs(5))
+        .timeout_read(std::time::Duration::from_secs(30))
+        .build();
+
+    let mut last_transport_error: Option<String> = None;
+    for candidate in ollama_endpoint_candidates(&endpoint) {
+        let url = format!("{}/api/delete", candidate);
+        let request = agent
+            .request("DELETE", &url)
+            .set("Content-Type", "application/json");
+
+        match request.send_json(body.clone()) {
+            Ok(_) => return Ok(()),
+            Err(ureq::Error::Status(404, _)) => {
+                return Err(format!("Model '{}' not found in Ollama", model));
+            }
+            Err(ureq::Error::Transport(t)) => {
+                last_transport_error = Some(t.to_string());
+                continue;
+            }
+            Err(e) => return Err(format!("Failed to delete model: {}", e)),
+        }
+    }
+
+    Err(format!(
+        "Failed to delete model: {}",
+        last_transport_error.unwrap_or_else(|| "unable to reach Ollama endpoint".to_string())
+    ))
+}
+
+#[tauri::command]
+fn get_ollama_model_info(
+    state: State<'_, AppState>,
+    model: String,
+) -> Result<serde_json::Value, String> {
+    use crate::ai_fallback::provider::{ollama_endpoint_candidates, validate_ollama_model_name};
+
+    validate_ollama_model_name(&model)?;
+
+    let (endpoint, strict_local_mode) = {
+        let settings = state.settings.lock().unwrap();
+        (
+            settings.providers.ollama.endpoint.clone(),
+            settings.ai_fallback.strict_local_mode,
+        )
+    };
+    if strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
+        return Err(
+            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
+                .to_string(),
+        );
+    }
+
+    let body = serde_json::json!({ "model": model });
+
+    let agent = ureq::builder()
+        .timeout_connect(std::time::Duration::from_secs(5))
+        .timeout_read(std::time::Duration::from_secs(10))
+        .build();
+
+    let mut last_transport_error: Option<String> = None;
+    for candidate in ollama_endpoint_candidates(&endpoint) {
+        let url = format!("{}/api/show", candidate);
+        let response = match agent
+            .post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(body.clone())
+        {
+            Ok(r) => r,
+            Err(ureq::Error::Transport(t)) => {
+                last_transport_error = Some(t.to_string());
+                continue;
+            }
+            Err(e) => return Err(format!("Failed to get model info: {}", e)),
+        };
+
+        return response
+            .into_json::<serde_json::Value>()
+            .map_err(|e| format!("Failed to parse response: {}", e));
+    }
+
+    Err(format!(
+        "Failed to get model info: {}",
+        last_transport_error.unwrap_or_else(|| "unable to reach Ollama endpoint".to_string())
+    ))
+}
+
+#[tauri::command]
 fn save_settings(
     app: AppHandle,
     state: State<'_, AppState>,
     mut settings: Settings,
 ) -> Result<(), String> {
-    let (prev_mode, prev_device, prev_capture_enabled, prev_transcribe_enabled, prev_transcribe_output_device) = {
+    let (
+        prev_mode,
+        prev_device,
+        prev_capture_enabled,
+        prev_transcribe_enabled,
+        prev_transcribe_output_device,
+    ) = {
         let current = state.settings.lock().unwrap();
         (
             current.mode.clone(),
@@ -644,7 +986,8 @@ fn save_settings(
     }
 
     let transcribe_enabled_changed = prev_transcribe_enabled != settings.transcribe_enabled;
-    let transcribe_device_changed = prev_transcribe_output_device != settings.transcribe_output_device;
+    let transcribe_device_changed =
+        prev_transcribe_output_device != settings.transcribe_output_device;
     if transcribe_enabled_changed {
         if !settings.transcribe_enabled {
             stop_transcribe_monitor(&app, &state);
@@ -1839,6 +2182,7 @@ pub fn run() {
                 recorder: Mutex::new(crate::audio::Recorder::new()),
                 transcribe: Mutex::new(crate::transcription::TranscribeRecorder::new()),
                 downloads: Mutex::new(HashSet::new()),
+                ollama_pulls: Mutex::new(HashSet::new()),
                 transcribe_active: AtomicBool::new(false),
                 last_mic_recording_path: Mutex::new(None),
                 last_system_recording_path: Mutex::new(None),
@@ -2194,8 +2538,19 @@ pub fn run() {
             test_provider_connection,
             save_provider_api_key,
             clear_provider_api_key,
+            verify_provider_auth,
             save_ollama_endpoint,
+            detect_ollama_runtime,
+            download_ollama_runtime,
+            install_ollama_runtime,
+            start_ollama_runtime,
+            verify_ollama_runtime,
+            import_ollama_model_from_file,
+            set_strict_local_mode,
             refine_transcript,
+            pull_ollama_model,
+            delete_ollama_model,
+            get_ollama_model_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

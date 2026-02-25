@@ -1,4 +1,5 @@
 use crate::ai_fallback::models::{AIFallbackSettings, AIProvidersSettings};
+use crate::ai_fallback::provider::is_local_ollama_endpoint;
 use crate::audio::Recorder;
 use crate::constants::{
     HALLUCINATION_MAX_CHARS, HALLUCINATION_MAX_DURATION_MS, HALLUCINATION_MAX_WORDS,
@@ -16,6 +17,24 @@ use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub(crate) struct SetupSettings {
+    pub(crate) local_ai_wizard_completed: bool,
+    pub(crate) local_ai_wizard_pending: bool,
+    pub(crate) ollama_remote_expert_opt_in: bool,
+}
+
+impl Default for SetupSettings {
+    fn default() -> Self {
+        Self {
+            local_ai_wizard_completed: false,
+            local_ai_wizard_pending: true,
+            ollama_remote_expert_opt_in: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub(crate) struct Settings {
     pub(crate) mode: String,
     pub(crate) hotkey_ptt: String,
@@ -29,6 +48,8 @@ pub(crate) struct Settings {
     // v0.7.0 AI Fallback settings
     pub(crate) ai_fallback: AIFallbackSettings,
     pub(crate) providers: AIProvidersSettings,
+    // First-run setup flags
+    pub(crate) setup: SetupSettings,
     pub(crate) audio_cues: bool,
     pub(crate) audio_cues_volume: f32,
     pub(crate) ptt_use_vad: bool, // Enable VAD threshold check even in PTT mode
@@ -150,6 +171,7 @@ impl Default for Settings {
       cloud_fallback: false,
       ai_fallback: AIFallbackSettings::default(),
       providers: AIProvidersSettings::default(),
+      setup: SetupSettings::default(),
       audio_cues: true,
       audio_cues_volume: 0.3,
       ptt_use_vad: false,
@@ -208,9 +230,9 @@ impl Default for Settings {
       postproc_custom_vocab_enabled: false,
       postproc_custom_vocab: HashMap::new(),
       postproc_llm_enabled: false,
-      postproc_llm_provider: "claude".to_string(),
+      postproc_llm_provider: "ollama".to_string(),
       postproc_llm_api_key: String::new(),
-      postproc_llm_model: "claude-3-5-sonnet-20241022".to_string(),
+      postproc_llm_model: String::new(),
       postproc_llm_prompt: "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
       // Chapter settings (v0.5.0) - disabled by default per DEC-018
       chapters_enabled: false,
@@ -278,6 +300,7 @@ pub(crate) struct AppState {
     pub(crate) recorder: Mutex<Recorder>,
     pub(crate) transcribe: Mutex<TranscribeRecorder>,
     pub(crate) downloads: Mutex<HashSet<String>>,
+    pub(crate) ollama_pulls: Mutex<HashSet<String>>,
     pub(crate) transcribe_active: AtomicBool,
     /// Last recorded OPUS file path for mic input.
     pub(crate) last_mic_recording_path: Mutex<Option<String>>,
@@ -511,6 +534,9 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             }
             // Normalize v0.7 AI fallback settings and legacy compatibility fields.
             normalize_ai_fallback_fields(&mut settings);
+            if settings.setup.local_ai_wizard_completed {
+                settings.setup.local_ai_wizard_pending = false;
+            }
 
             // Transcribe enablement is session-only; always start disabled.
             settings.transcribe_enabled = false;
@@ -521,6 +547,22 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
 }
 
 pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
+    fn normalize_cloud_provider(provider: &str) -> Option<String> {
+        match provider.trim().to_lowercase().as_str() {
+            "claude" => Some("claude".to_string()),
+            "openai" => Some("openai".to_string()),
+            "gemini" => Some("gemini".to_string()),
+            _ => None,
+        }
+    }
+
+    fn is_verified_auth_status(status: &str) -> bool {
+        matches!(
+            status.trim(),
+            "verified_api_key" | "verified_oauth"
+        )
+    }
+
     // Migrate legacy cloud-fallback toggle to ai_fallback enabled state.
     if settings.cloud_fallback && !settings.ai_fallback.enabled {
         settings.ai_fallback.enabled = true;
@@ -547,8 +589,73 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
         settings.ai_fallback.use_default_prompt = false;
     }
 
+    // Preserve legacy cloud provider selection as optional fallback candidate.
+    if settings.ai_fallback.fallback_provider.is_none()
+        && settings.ai_fallback.provider != "ollama"
+    {
+        settings.ai_fallback.fallback_provider =
+            normalize_cloud_provider(&settings.ai_fallback.provider);
+    }
+
     settings.ai_fallback.normalize();
     settings.providers.normalize();
+
+    // Migration rule: cloud providers remain locked until explicit verify succeeds.
+    for provider in ["claude", "openai", "gemini"] {
+        if let Some(config) = settings.providers.get_mut(provider) {
+            if !is_verified_auth_status(&config.auth_status) {
+                config.auth_status = "locked".to_string();
+                config.auth_verified_at = None;
+            }
+            if !config.api_key_stored && config.auth_status != "verified_oauth" {
+                config.auth_status = "locked".to_string();
+                config.auth_verified_at = None;
+            }
+        }
+    }
+
+    settings.ai_fallback.execution_mode = if settings.ai_fallback.execution_mode == "online_fallback"
+    {
+        "online_fallback".to_string()
+    } else {
+        "local_primary".to_string()
+    };
+
+    settings.ai_fallback.fallback_provider = settings
+        .ai_fallback
+        .fallback_provider
+        .as_ref()
+        .and_then(|provider| normalize_cloud_provider(provider));
+
+    if settings.ai_fallback.execution_mode == "online_fallback" {
+        let verified = settings
+            .ai_fallback
+            .fallback_provider
+            .as_ref()
+            .map(|provider| settings.providers.is_verified(provider))
+            .unwrap_or(false);
+
+        if verified {
+            if let Some(provider) = settings.ai_fallback.fallback_provider.clone() {
+                settings.ai_fallback.provider = provider;
+            } else {
+                settings.ai_fallback.execution_mode = "local_primary".to_string();
+                settings.ai_fallback.provider = "ollama".to_string();
+            }
+        } else {
+            settings.ai_fallback.execution_mode = "local_primary".to_string();
+            settings.ai_fallback.provider = "ollama".to_string();
+        }
+    } else {
+        settings.ai_fallback.provider = "ollama".to_string();
+    }
+
+    if settings.ai_fallback.provider == "ollama"
+        && settings.ai_fallback.strict_local_mode
+        && !is_local_ollama_endpoint(&settings.providers.ollama.endpoint)
+    {
+        settings.providers.ollama.endpoint = "http://localhost:11434".to_string();
+    }
     settings
         .providers
         .sync_from_ai_fallback(&settings.ai_fallback);
@@ -560,6 +667,9 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
     settings.postproc_llm_model = settings.ai_fallback.model.clone();
     if settings.ai_fallback.custom_prompt_enabled {
         settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt.clone();
+    }
+    if settings.setup.local_ai_wizard_completed {
+        settings.setup.local_ai_wizard_pending = false;
     }
 }
 

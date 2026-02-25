@@ -3,6 +3,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AIFallbackProvider,
+  CloudAIFallbackProvider,
+  AIExecutionMode,
+  AIProviderAuthStatus,
   Settings,
 } from "./types";
 import { settings, currentHistoryTab } from "./state";
@@ -19,14 +22,144 @@ import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
 import { updateChaptersVisibility } from "./chapters";
+import {
+  detectOllamaRuntime,
+  ensureLocalRuntimeReady,
+  importOllamaModelFromLocalFile,
+  refreshOllamaInstalledModels,
+  refreshOllamaRuntimeAndModels,
+  refreshOllamaRuntimeState,
+  renderOllamaModelManager,
+  startOllamaRuntime,
+  useSystemOllamaRuntime,
+  verifyOllamaRuntime,
+} from "./ollama-models";
 
 const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini", "ollama"];
+const CLOUD_PROVIDER_IDS: CloudAIFallbackProvider[] = ["claude", "openai", "gemini"];
+const CLOUD_PROVIDER_LABELS: Record<CloudAIFallbackProvider, string> = {
+  claude: "Claude (Anthropic)",
+  openai: "OpenAI",
+  gemini: "Gemini (Google)",
+};
+let authModalProvider: CloudAIFallbackProvider | null = null;
+
+function isCloudProvider(provider?: string | null): provider is CloudAIFallbackProvider {
+  if (!provider) return false;
+  return CLOUD_PROVIDER_IDS.includes(provider as CloudAIFallbackProvider);
+}
+
+function normalizeCloudProvider(provider?: string | null): CloudAIFallbackProvider | null {
+  if (!provider) return null;
+  const normalized = provider.trim().toLowerCase();
+  return isCloudProvider(normalized) ? (normalized as CloudAIFallbackProvider) : null;
+}
+
+function normalizeExecutionMode(mode?: string | null): AIExecutionMode {
+  return mode === "online_fallback" ? "online_fallback" : "local_primary";
+}
+
+function normalizeAuthMethodPreference(method?: string | null): "api_key" | "oauth" {
+  return method === "oauth" ? "oauth" : "api_key";
+}
+
+function isVerifiedAuthStatus(status?: string | null): boolean {
+  return status === "verified_api_key" || status === "verified_oauth";
+}
+
+function getCredentialTargetProvider(): CloudAIFallbackProvider | null {
+  if (authModalProvider) {
+    return authModalProvider;
+  }
+  if (dom.aiFallbackCredentialProvider) {
+    return normalizeCloudProvider(dom.aiFallbackCredentialProvider.value);
+  }
+  return normalizeCloudProvider(settings?.ai_fallback?.fallback_provider ?? null);
+}
+
+function getFallbackProvider(): CloudAIFallbackProvider | null {
+  return normalizeCloudProvider(settings?.ai_fallback?.fallback_provider ?? null);
+}
+
+function isProviderVerified(provider: CloudAIFallbackProvider | null): boolean {
+  if (!provider || !settings) return false;
+  const providerSettings = getAIFallbackProviderSettings(provider);
+  if (!providerSettings) return false;
+  return isVerifiedAuthStatus(providerSettings.auth_status);
+}
+
+function applyExecutionModeInSettings(mode: AIExecutionMode): void {
+  if (!settings) return;
+  settings.ai_fallback.execution_mode = mode;
+  const fallbackProvider = getFallbackProvider();
+  if (mode === "online_fallback" && fallbackProvider && isProviderVerified(fallbackProvider)) {
+    settings.ai_fallback.provider = fallbackProvider;
+    settings.postproc_llm_provider = fallbackProvider;
+  } else {
+    settings.ai_fallback.execution_mode = "local_primary";
+    settings.ai_fallback.provider = "ollama";
+    settings.postproc_llm_provider = "ollama";
+  }
+}
+
+function ensureOnlineModeConstraints(notify: boolean): boolean {
+  if (!settings) return false;
+  const fallbackProvider = getFallbackProvider();
+  if (
+    settings.ai_fallback.execution_mode === "online_fallback" &&
+    (!fallbackProvider || !isProviderVerified(fallbackProvider))
+  ) {
+    applyExecutionModeInSettings("local_primary");
+    if (notify) {
+      showToast({
+        type: "warning",
+        title: "Fallback switched to local",
+        message: "Fallback provider is locked/unverified. Switched back to local Ollama.",
+        duration: 3800,
+      });
+    }
+    return true;
+  }
+  return false;
+}
+
+function syncCloudModelForProvider(provider: CloudAIFallbackProvider): void {
+  if (!settings) return;
+  const providerSettings = getAIFallbackProviderSettings(provider);
+  if (!providerSettings) return;
+  if (!providerSettings.preferred_model) {
+    providerSettings.preferred_model = providerSettings.available_models[0] ?? "";
+  }
+  settings.ai_fallback.model = providerSettings.preferred_model || providerSettings.available_models[0] || "";
+  settings.postproc_llm_model = settings.ai_fallback.model;
+}
+
+async function activateOnlineFallback(provider: CloudAIFallbackProvider): Promise<void> {
+  if (!settings) return;
+  settings.ai_fallback.fallback_provider = provider;
+  settings.ai_fallback.execution_mode = "online_fallback";
+  settings.ai_fallback.provider = provider;
+  settings.postproc_llm_provider = provider;
+  try {
+    await refreshAIFallbackModels(provider);
+  } catch (error) {
+    console.warn(`Failed to refresh models for ${provider}:`, error);
+  }
+  syncCloudModelForProvider(provider);
+}
 
 function normalizeAIFallbackProvider(provider?: string): AIFallbackProvider {
   if (provider && AI_FALLBACK_PROVIDER_IDS.includes(provider as AIFallbackProvider)) {
     return provider as AIFallbackProvider;
   }
   return "ollama";
+}
+
+function isLaneControlTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(
+    target.closest("button,select,input,textarea,summary,details,label,a")
+  );
 }
 
 function getAIFallbackProviderSettings(provider: AIFallbackProvider) {
@@ -38,19 +171,15 @@ function getAIFallbackProviderSettings(provider: AIFallbackProvider) {
   return null;
 }
 
-function applyOllamaVisibility(isOllama: boolean) {
-  if (dom.aiFallbackOllamaSection)
-    dom.aiFallbackOllamaSection.style.display = isOllama ? "block" : "none";
-  if (dom.aiFallbackApiKeySection)
-    dom.aiFallbackApiKeySection.style.display = isOllama ? "none" : "block";
-}
-
 function ensureAIFallbackSettingsDefaults() {
   if (!settings) return;
   if (!settings.ai_fallback) {
     settings.ai_fallback = {
       enabled: false,
       provider: "ollama",
+      fallback_provider: null,
+      execution_mode: "local_primary",
+      strict_local_mode: true,
       model: "",
       temperature: 0.3,
       max_tokens: 4000,
@@ -64,16 +193,25 @@ function ensureAIFallbackSettingsDefaults() {
     settings.providers = {
       claude: {
         api_key_stored: false,
+        auth_method_preference: "api_key",
+        auth_status: "locked",
+        auth_verified_at: null,
         available_models: ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
         preferred_model: "claude-3-5-sonnet-20241022",
       },
       openai: {
         api_key_stored: false,
+        auth_method_preference: "api_key",
+        auth_status: "locked",
+        auth_verified_at: null,
         available_models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
         preferred_model: "gpt-4o-mini",
       },
       gemini: {
         api_key_stored: false,
+        auth_method_preference: "api_key",
+        auth_status: "locked",
+        auth_verified_at: null,
         available_models: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
         preferred_model: "gemini-2.0-flash",
       },
@@ -81,6 +219,10 @@ function ensureAIFallbackSettingsDefaults() {
         endpoint: "http://localhost:11434",
         available_models: [],
         preferred_model: "",
+        runtime_source: "manual",
+        runtime_path: "",
+        runtime_version: "",
+        last_health_check: null,
       },
     };
   }
@@ -89,8 +231,56 @@ function ensureAIFallbackSettingsDefaults() {
       endpoint: "http://localhost:11434",
       available_models: [],
       preferred_model: "",
+      runtime_source: "manual",
+      runtime_path: "",
+      runtime_version: "",
+      last_health_check: null,
     };
   }
+  settings.ai_fallback.strict_local_mode ??= true;
+  settings.ai_fallback.fallback_provider = normalizeCloudProvider(
+    settings.ai_fallback.fallback_provider ?? null
+  );
+  settings.ai_fallback.execution_mode = normalizeExecutionMode(settings.ai_fallback.execution_mode);
+  if (!settings.ai_fallback.fallback_provider && settings.ai_fallback.provider !== "ollama") {
+    settings.ai_fallback.fallback_provider = normalizeCloudProvider(settings.ai_fallback.provider);
+  }
+  if (settings.ai_fallback.execution_mode === "online_fallback") {
+    const fallbackProvider = settings.ai_fallback.fallback_provider;
+    if (fallbackProvider && isProviderVerified(fallbackProvider)) {
+      settings.ai_fallback.provider = fallbackProvider;
+    } else {
+      settings.ai_fallback.execution_mode = "local_primary";
+      settings.ai_fallback.provider = "ollama";
+    }
+  } else {
+    settings.ai_fallback.provider = "ollama";
+  }
+  settings.providers.ollama.runtime_source ??= "manual";
+  settings.providers.ollama.runtime_path ??= "";
+  settings.providers.ollama.runtime_version ??= "";
+  settings.providers.ollama.last_health_check ??= null;
+  CLOUD_PROVIDER_IDS.forEach((provider) => {
+    const providerSettings = getAIFallbackProviderSettings(provider);
+    if (!providerSettings) return;
+    providerSettings.auth_method_preference = normalizeAuthMethodPreference(
+      providerSettings.auth_method_preference
+    );
+    providerSettings.auth_status = isVerifiedAuthStatus(providerSettings.auth_status)
+      ? (providerSettings.auth_status as AIProviderAuthStatus)
+      : "locked";
+    providerSettings.auth_verified_at ??= null;
+    if (!providerSettings.api_key_stored && providerSettings.auth_status !== "verified_oauth") {
+      providerSettings.auth_status = "locked";
+      providerSettings.auth_verified_at = null;
+    }
+  });
+  settings.setup ??= {
+    local_ai_wizard_completed: false,
+    local_ai_wizard_pending: true,
+    ollama_remote_expert_opt_in: false,
+  };
+  settings.setup.ollama_remote_expert_opt_in ??= false;
 }
 
 function ensureContinuousDumpDefaults() {
@@ -193,12 +383,220 @@ async function refreshAIFallbackModels(provider: AIFallbackProvider) {
   if (!providerSettings.preferred_model || !models.includes(providerSettings.preferred_model)) {
     providerSettings.preferred_model = models[0] ?? "";
   }
-  if (settings.ai_fallback.provider === provider) {
+  const mode = normalizeExecutionMode(settings.ai_fallback.execution_mode);
+  const fallbackProvider = getFallbackProvider();
+  if (
+    settings.ai_fallback.provider === provider ||
+    (mode === "online_fallback" && fallbackProvider === provider)
+  ) {
     if (!models.includes(settings.ai_fallback.model)) {
       settings.ai_fallback.model = providerSettings.preferred_model || models[0] || "";
     }
   }
 }
+
+function setAuthModalOpen(open: boolean): void {
+  if (!dom.aiAuthModal) return;
+  dom.aiAuthModal.hidden = !open;
+  dom.aiAuthModal.classList.toggle("is-open", open);
+}
+
+function refreshAuthModalContent(): void {
+  const provider = authModalProvider;
+  if (!provider) return;
+  const providerSettings = getAIFallbackProviderSettings(provider);
+  if (!providerSettings) return;
+
+  const providerLabel = CLOUD_PROVIDER_LABELS[provider];
+  if (dom.aiAuthProviderName) {
+    dom.aiAuthProviderName.textContent = `${providerLabel} credentials`;
+  }
+  if (dom.aiAuthMethod) {
+    dom.aiAuthMethod.value = normalizeAuthMethodPreference(providerSettings.auth_method_preference);
+  }
+  if (dom.aiAuthVerifyKey) {
+    dom.aiAuthVerifyKey.disabled =
+      normalizeAuthMethodPreference(providerSettings.auth_method_preference) === "oauth";
+  }
+  if (dom.aiAuthStatus) {
+    if (normalizeAuthMethodPreference(providerSettings.auth_method_preference) === "oauth") {
+      dom.aiAuthStatus.textContent =
+        `OAuth for ${providerLabel} is coming soon. Use API key verification for now.`;
+    } else {
+      dom.aiAuthStatus.textContent = providerSettings.api_key_stored
+        ? `${providerLabel} key stored. Verify to unlock online usage.`
+        : `No API key stored for ${providerLabel} yet.`;
+    }
+  }
+}
+
+function openAuthModal(provider: CloudAIFallbackProvider): void {
+  authModalProvider = provider;
+  if (dom.aiAuthApiKeyInput) {
+    dom.aiAuthApiKeyInput.value = "";
+  }
+  refreshAuthModalContent();
+  setAuthModalOpen(true);
+}
+
+function closeAuthModal(): void {
+  setAuthModalOpen(false);
+  authModalProvider = null;
+  if (dom.aiAuthApiKeyInput) {
+    dom.aiAuthApiKeyInput.value = "";
+  }
+}
+
+async function applyFallbackProviderSelection(
+  selected: CloudAIFallbackProvider | null
+): Promise<void> {
+  if (!settings) return;
+  ensureAIFallbackSettingsDefaults();
+
+  if (!selected) {
+    settings.ai_fallback.fallback_provider = null;
+    if (settings.ai_fallback.execution_mode === "online_fallback") {
+      applyExecutionModeInSettings("local_primary");
+      await persistSettings();
+      showToast({
+        type: "warning",
+        title: "Fallback switched to local",
+        message: "No verified fallback provider selected. Switched back to local Ollama.",
+        duration: 3600,
+      });
+    } else {
+      await persistSettings();
+    }
+    renderAIFallbackSettingsUi();
+    renderHero();
+    return;
+  }
+
+  settings.ai_fallback.fallback_provider = selected;
+  if (settings.ai_fallback.execution_mode === "online_fallback") {
+    if (!isProviderVerified(selected)) {
+      applyExecutionModeInSettings("local_primary");
+      await persistSettings();
+      showToast({
+        type: "warning",
+        title: "Fallback provider locked",
+        message: "Selected provider is not verified. Switched to local Ollama.",
+        duration: 3600,
+      });
+    } else {
+      await activateOnlineFallback(selected);
+      await persistSettings();
+    }
+  } else {
+    await persistSettings();
+  }
+
+  renderAIFallbackSettingsUi();
+  renderHero();
+}
+
+async function saveProviderApiKey(provider: CloudAIFallbackProvider, apiKey: string): Promise<void> {
+  if (!settings) return;
+  await invoke("save_provider_api_key", { provider, apiKey });
+  const providerSettings = getAIFallbackProviderSettings(provider);
+  if (providerSettings) {
+    providerSettings.api_key_stored = true;
+    providerSettings.auth_status = "locked";
+    providerSettings.auth_verified_at = null;
+  }
+  ensureOnlineModeConstraints(true);
+  await persistSettings();
+  renderAIFallbackSettingsUi();
+  refreshAuthModalContent();
+}
+
+async function clearProviderApiKey(provider: CloudAIFallbackProvider): Promise<void> {
+  if (!settings) return;
+  await invoke("clear_provider_api_key", { provider });
+  const providerSettings = getAIFallbackProviderSettings(provider);
+  if (providerSettings) {
+    providerSettings.api_key_stored = false;
+    providerSettings.auth_status = "locked";
+    providerSettings.auth_verified_at = null;
+  }
+  const forcedLocal = ensureOnlineModeConstraints(true);
+  if (forcedLocal) {
+    await persistSettings();
+  } else {
+    await persistSettings();
+  }
+  renderAIFallbackSettingsUi();
+  refreshAuthModalContent();
+}
+
+async function verifyProviderCredentials(provider: CloudAIFallbackProvider): Promise<void> {
+  if (!settings) return;
+  const providerSettings = getAIFallbackProviderSettings(provider);
+  const authMethod = normalizeAuthMethodPreference(providerSettings?.auth_method_preference);
+  if (authMethod === "oauth") {
+    showToast({
+      type: "info",
+      title: "OAuth coming soon",
+      message: "OAuth verification is not available yet. Use API key verification for now.",
+      duration: 4200,
+    });
+    return;
+  }
+  if (!providerSettings?.api_key_stored) {
+    showToast({
+      type: "warning",
+      title: "Missing API key",
+      message: "Save an API key first, then click Verify.",
+      duration: 3000,
+    });
+    return;
+  }
+
+  try {
+    const result = await invoke<{ message?: string; method?: string; verified_at?: string }>(
+      "verify_provider_auth",
+      { provider, method: authMethod }
+    );
+    if (providerSettings) {
+      providerSettings.auth_status =
+        (result?.method as "verified_api_key" | "verified_oauth") || "verified_api_key";
+      providerSettings.auth_verified_at = result?.verified_at ?? new Date().toISOString();
+    }
+    if (!settings.ai_fallback.fallback_provider) {
+      settings.ai_fallback.fallback_provider = provider;
+    }
+    await refreshAIFallbackModels(provider);
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+    refreshAuthModalContent();
+    showToast({
+      type: "success",
+      title: "Provider verified",
+      message: result?.message ?? `${provider} is unlocked for online fallback.`,
+      duration: 3500,
+    });
+  } catch (error) {
+    if (providerSettings) {
+      providerSettings.auth_status = "locked";
+      providerSettings.auth_verified_at = null;
+    }
+    const forcedLocal = ensureOnlineModeConstraints(true);
+    if (forcedLocal) {
+      await persistSettings();
+    } else {
+      await persistSettings();
+    }
+    renderAIFallbackSettingsUi();
+    refreshAuthModalContent();
+    showToast({
+      type: "error",
+      title: "Verification failed",
+      message: String(error),
+      duration: 5000,
+    });
+  }
+}
+
 // Custom vocabulary helper functions
 function addVocabRow(original: string, replacement: string) {
   if (!dom.postprocVocabRows) return;
@@ -292,6 +690,19 @@ function switchMainTab(tab: MainTab) {
   } catch (error) {
     console.error("Failed to persist active tab", error);
   }
+
+  if (isAiRefinement) {
+    void (async () => {
+      try {
+        await refreshOllamaInstalledModels();
+        await refreshOllamaRuntimeState();
+        renderAIFallbackSettingsUi();
+        renderOllamaModelManager();
+      } catch (error) {
+        console.warn("Failed to refresh Ollama runtime on tab switch:", error);
+      }
+    })();
+  }
 }
 
 // Initialize tab state from localStorage
@@ -358,6 +769,7 @@ export function wireEvents() {
   document.getElementById("go-to-ai-refinement")?.addEventListener("click", () => {
     switchMainTab("ai-refinement");
   });
+
 
   dom.captureEnabledToggle?.addEventListener("change", async () => {
     if (!settings) return;
@@ -720,16 +1132,7 @@ export function wireEvents() {
     await persistSettings();
   });
 
-  dom.cloudToggle?.addEventListener("change", async () => {
-    if (!settings) return;
-    ensureAIFallbackSettingsDefaults();
-    settings.ai_fallback.enabled = dom.cloudToggle!.checked;
-    settings.cloud_fallback = settings.ai_fallback.enabled;
-    settings.postproc_llm_enabled = settings.ai_fallback.enabled;
-    await persistSettings();
-    renderAIFallbackSettingsUi();
-    renderHero();
-  });
+
 
   dom.audioCuesToggle?.addEventListener("change", async () => {
     if (!settings) return;
@@ -1009,46 +1412,131 @@ export function wireEvents() {
     renderHero();
   });
 
-  dom.aiFallbackProvider?.addEventListener("change", async () => {
-    if (!settings || !dom.aiFallbackProvider) return;
-    ensureAIFallbackSettingsDefaults();
-    const provider = normalizeAIFallbackProvider(dom.aiFallbackProvider.value);
-    settings.ai_fallback.provider = provider;
-    settings.postproc_llm_provider = provider;
-    applyOllamaVisibility(provider === "ollama");
-
-    if (provider === "ollama") {
-      // For Ollama, use already-cached models (user can click Refresh explicitly)
-      const ollamaModels = settings.providers.ollama.available_models;
-      if (ollamaModels.length > 0) {
-        settings.ai_fallback.model = settings.providers.ollama.preferred_model || ollamaModels[0];
-      } else {
-        settings.ai_fallback.model = "";
-      }
-    } else {
-      try {
-        await refreshAIFallbackModels(provider);
-      } catch (error) {
-        console.warn(`Failed to refresh models for ${provider}:`, error);
-      }
-      const providerSettings = getAIFallbackProviderSettings(provider);
-      if (providerSettings) {
-        if (!providerSettings.preferred_model) {
-          providerSettings.preferred_model = providerSettings.available_models[0] ?? "";
-        }
-        settings.ai_fallback.model = providerSettings.preferred_model;
-        settings.postproc_llm_model = settings.ai_fallback.model;
-      }
+  dom.aiFallbackCloudProviderList?.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement | null;
+    const actionBtn = target?.closest<HTMLButtonElement>("[data-ai-provider-action]");
+    if (!actionBtn) return;
+    const provider = normalizeCloudProvider(actionBtn.dataset.provider ?? null);
+    if (!provider) return;
+    const action = actionBtn.dataset.aiProviderAction;
+    if (action === "select-fallback") {
+      void applyFallbackProviderSelection(provider);
+      return;
     }
+    if (action === "authenticate") {
+      openAuthModal(provider);
+    }
+  });
+
+  dom.aiAuthModalClose?.addEventListener("click", () => {
+    closeAuthModal();
+  });
+  dom.aiAuthModalBackdrop?.addEventListener("click", () => {
+    closeAuthModal();
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && dom.aiAuthModal && !dom.aiAuthModal.hidden) {
+      closeAuthModal();
+    }
+  });
+  dom.aiAuthMethod?.addEventListener("change", async () => {
+    if (!settings || !dom.aiAuthMethod || !authModalProvider) return;
+    ensureAIFallbackSettingsDefaults();
+    const providerSettings = getAIFallbackProviderSettings(authModalProvider);
+    if (!providerSettings) return;
+    providerSettings.auth_method_preference = normalizeAuthMethodPreference(
+      dom.aiAuthMethod.value
+    );
     await persistSettings();
     renderAIFallbackSettingsUi();
+    refreshAuthModalContent();
+    if (providerSettings.auth_method_preference === "oauth") {
+      showToast({
+        type: "info",
+        title: "OAuth coming soon",
+        message: "OAuth verification is not available yet. Use API key for now.",
+        duration: 3600,
+      });
+    }
+  });
+
+  const activateLocalLane = async (notify = false) => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    const switched =
+      settings.ai_fallback.execution_mode !== "local_primary" ||
+      settings.ai_fallback.provider !== "ollama";
+    applyExecutionModeInSettings("local_primary");
+    await refreshOllamaInstalledModels();
+    await refreshOllamaRuntimeState();
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+    renderOllamaModelManager();
     renderHero();
+    if (notify && switched) {
+      showToast({
+        type: "success",
+        title: "Local runtime active",
+        message: "Using local Ollama as primary runtime.",
+        duration: 2600,
+      });
+    }
+  };
+
+  const activateOnlineLane = async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    const fallbackProvider = getFallbackProvider();
+    if (!fallbackProvider || !isProviderVerified(fallbackProvider)) {
+      applyExecutionModeInSettings("local_primary");
+      renderAIFallbackSettingsUi();
+      renderOllamaModelManager();
+      showToast({
+        type: "warning",
+        title: "Fallback provider locked",
+        message: "Verify a cloud provider before enabling online fallback.",
+        duration: 3600,
+      });
+      return;
+    }
+    await activateOnlineFallback(fallbackProvider);
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+    renderOllamaModelManager();
+    renderHero();
+  };
+
+  dom.aiFallbackLocalLane?.addEventListener("click", (event) => {
+    if (isLaneControlTarget(event.target)) return;
+    void activateLocalLane(false);
+  });
+  dom.aiFallbackLocalLane?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (isLaneControlTarget(event.target)) return;
+    event.preventDefault();
+    void activateLocalLane(false);
+  });
+
+  dom.aiFallbackOnlineLane?.addEventListener("click", (event) => {
+    if (isLaneControlTarget(event.target)) return;
+    void activateOnlineLane();
+  });
+  dom.aiFallbackOnlineLane?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (isLaneControlTarget(event.target)) return;
+    event.preventDefault();
+    void activateOnlineLane();
   });
 
   dom.aiFallbackModel?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackModel) return;
     ensureAIFallbackSettingsDefaults();
+    const mode = normalizeExecutionMode(settings.ai_fallback.execution_mode);
     const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
+    if (provider === "ollama" || mode !== "online_fallback") {
+      // Ollama model selection is handled only in the Local AI Runtime manager.
+      return;
+    }
     settings.ai_fallback.model = dom.aiFallbackModel.value;
     settings.postproc_llm_model = settings.ai_fallback.model;
     const providerSettings = getAIFallbackProviderSettings(provider);
@@ -1058,109 +1546,92 @@ export function wireEvents() {
     await persistSettings();
   });
 
-  // Ollama-specific button handlers
-  dom.aiFallbackSaveEndpointBtn?.addEventListener("click", async () => {
+  // Local runtime action handlers in Local Primary card
+  dom.aiFallbackLocalPrimaryAction?.addEventListener("click", async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
-    const endpoint = dom.aiFallbackOllamaEndpoint?.value?.trim() || "http://localhost:11434";
-    try {
-      await invoke("save_ollama_endpoint", { endpoint });
-      settings.providers.ollama.endpoint = endpoint;
-      await persistSettings();
-      showToast({
-        type: "success",
-        title: "Endpoint saved",
-        message: `Ollama endpoint set to ${endpoint}`,
-        duration: 2500,
-      });
-    } catch (error) {
-      showToast({
-        type: "error",
-        title: "Save failed",
-        message: String(error),
-        duration: 5000,
-      });
-    }
-  });
-
-  dom.aiFallbackRefreshModelsBtn?.addEventListener("click", async () => {
-    if (!settings) return;
-    ensureAIFallbackSettingsDefaults();
-    if (dom.aiFallbackOllamaStatus) {
-      dom.aiFallbackOllamaStatus.textContent = "Refreshing models…";
-    }
-    try {
-      await refreshAIFallbackModels("ollama");
-      await persistSettings();
+    applyExecutionModeInSettings("local_primary");
+    await persistSettings();
+    const action = dom.aiFallbackLocalPrimaryAction?.dataset.runtimeAction ?? "install";
+    if (action === "ready") {
       renderAIFallbackSettingsUi();
-      const count = settings.providers.ollama.available_models.length;
-      if (dom.aiFallbackOllamaStatus) {
-        dom.aiFallbackOllamaStatus.textContent = count > 0 ? `${count} model(s) found` : "No models found";
-      }
-      showToast({
-        type: count > 0 ? "success" : "warning",
-        title: count > 0 ? "Models loaded" : "No models found",
-        message: count > 0
-          ? `Found ${count} Ollama model(s).`
-          : "Ollama is running but has no models. Run: ollama pull <model>",
-        duration: 3500,
-      });
-    } catch (error) {
-      if (dom.aiFallbackOllamaStatus) {
-        dom.aiFallbackOllamaStatus.textContent = "Refresh failed";
-      }
-      showToast({
-        type: "error",
-        title: "Refresh failed",
-        message: String(error),
-        duration: 5000,
-      });
+      return;
     }
-  });
-
-  dom.aiFallbackTestOllamaBtn?.addEventListener("click", async () => {
-    if (!settings) return;
-    ensureAIFallbackSettingsDefaults();
-    if (dom.aiFallbackOllamaStatus) {
-      dom.aiFallbackOllamaStatus.textContent = "Testing connection…";
-    }
-    try {
-      const result = await invoke<{ message?: string }>("test_provider_connection", {
-        provider: "ollama",
-        apiKey: "",
-      });
-      await refreshAIFallbackModels("ollama");
-      await persistSettings();
+    if (action === "start") {
+      const startPromise = startOllamaRuntime();
       renderAIFallbackSettingsUi();
-      const msg = result?.message ?? "Ollama is reachable.";
-      if (dom.aiFallbackOllamaStatus) {
-        dom.aiFallbackOllamaStatus.textContent = msg;
-      }
-      showToast({
-        type: "success",
-        title: "Ollama connected",
-        message: msg,
-        duration: 3500,
-      });
-    } catch (error) {
-      const msg = String(error);
-      if (dom.aiFallbackOllamaStatus) {
-        dom.aiFallbackOllamaStatus.textContent = "Not reachable";
-      }
-      showToast({
-        type: "error",
-        title: "Ollama not reachable",
-        message: msg,
-        duration: 5000,
-      });
+      await startPromise;
+    } else {
+      const ensurePromise = ensureLocalRuntimeReady();
+      renderAIFallbackSettingsUi();
+      await ensurePromise;
     }
+    renderAIFallbackSettingsUi();
+    renderOllamaModelManager();
+    renderHero();
   });
 
-  dom.aiFallbackSaveKeyBtn?.addEventListener("click", async () => {
+  dom.aiFallbackLocalImportAction?.addEventListener("click", async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
-    const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
-    const apiKey = dom.aiFallbackApiKeyInput?.value?.trim() ?? "";
+    applyExecutionModeInSettings("local_primary");
+    await persistSettings();
+    const importPromise = importOllamaModelFromLocalFile();
+    renderAIFallbackSettingsUi();
+    await importPromise;
+    renderAIFallbackSettingsUi();
+    renderOllamaModelManager();
+    renderHero();
+  });
+
+  dom.aiFallbackLocalDetectAction?.addEventListener("click", async () => {
+    const detectPromise = detectOllamaRuntime();
+    renderAIFallbackSettingsUi();
+    await detectPromise;
+    renderAIFallbackSettingsUi();
+  });
+
+  dom.aiFallbackLocalUseSystemAction?.addEventListener("click", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    applyExecutionModeInSettings("local_primary");
+    await persistSettings();
+    const systemPromise = useSystemOllamaRuntime();
+    renderAIFallbackSettingsUi();
+    await systemPromise;
+    renderAIFallbackSettingsUi();
+    renderOllamaModelManager();
+    renderHero();
+  });
+
+  dom.aiFallbackLocalVerifyAction?.addEventListener("click", async () => {
+    const verifyPromise = verifyOllamaRuntime();
+    renderAIFallbackSettingsUi();
+    await verifyPromise;
+    renderAIFallbackSettingsUi();
+  });
+
+  dom.aiFallbackLocalRefreshAction?.addEventListener("click", async () => {
+    const refreshPromise = refreshOllamaRuntimeAndModels();
+    renderAIFallbackSettingsUi();
+    await refreshPromise;
+    renderAIFallbackSettingsUi();
+  });
+
+  const handleSaveCredentialsClick = async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    const provider = getCredentialTargetProvider();
+    if (!provider) {
+      showToast({
+        type: "warning",
+        title: "Select provider",
+        message: "Choose a cloud provider before saving credentials.",
+        duration: 3000,
+      });
+      return;
+    }
+    const apiKey = (dom.aiAuthApiKeyInput?.value ?? dom.aiFallbackApiKeyInput?.value ?? "").trim();
     if (!apiKey) {
       showToast({
         type: "warning",
@@ -1171,15 +1642,9 @@ export function wireEvents() {
       return;
     }
     try {
-      await invoke("save_provider_api_key", { provider, apiKey });
-      const providerSettings = getAIFallbackProviderSettings(provider);
-      if (providerSettings) {
-        providerSettings.api_key_stored = true;
-      }
-      if (dom.aiFallbackApiKeyInput) {
-        dom.aiFallbackApiKeyInput.value = "";
-      }
-      renderAIFallbackSettingsUi();
+      await saveProviderApiKey(provider, apiKey);
+      if (dom.aiAuthApiKeyInput) dom.aiAuthApiKeyInput.value = "";
+      if (dom.aiFallbackApiKeyInput) dom.aiFallbackApiKeyInput.value = "";
       showToast({
         type: "success",
         title: "API key saved",
@@ -1194,19 +1659,23 @@ export function wireEvents() {
         duration: 5000,
       });
     }
-  });
+  };
 
-  dom.aiFallbackClearKeyBtn?.addEventListener("click", async () => {
+  const handleClearCredentialsClick = async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
-    const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
+    const provider = getCredentialTargetProvider();
+    if (!provider) {
+      showToast({
+        type: "warning",
+        title: "Select provider",
+        message: "Choose a cloud provider before clearing credentials.",
+        duration: 3000,
+      });
+      return;
+    }
     try {
-      await invoke("clear_provider_api_key", { provider });
-      const providerSettings = getAIFallbackProviderSettings(provider);
-      if (providerSettings) {
-        providerSettings.api_key_stored = false;
-      }
-      renderAIFallbackSettingsUi();
+      await clearProviderApiKey(provider);
       showToast({
         type: "info",
         title: "API key removed",
@@ -1221,40 +1690,41 @@ export function wireEvents() {
         duration: 5000,
       });
     }
-  });
+  };
 
-  dom.aiFallbackTestKeyBtn?.addEventListener("click", async () => {
+  const handleVerifyCredentialsClick = async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
-    const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
-    const apiKey = dom.aiFallbackApiKeyInput?.value?.trim() ?? "";
-    if (!apiKey) {
+    const provider = getCredentialTargetProvider();
+    if (!provider) {
       showToast({
         type: "warning",
-        title: "Missing API key",
-        message: "Paste an API key in the field to test the connection.",
+        title: "Select provider",
+        message: "Choose a cloud provider before verification.",
         duration: 3000,
       });
       return;
     }
-    try {
-      const result = await invoke<{ message?: string }>("test_provider_connection", { provider, apiKey });
-      await refreshAIFallbackModels(provider);
-      renderAIFallbackSettingsUi();
-      showToast({
-        type: "success",
-        title: "Connection test passed",
-        message: result?.message ?? `Provider ${provider} accepted the key format.`,
-        duration: 3500,
-      });
-    } catch (error) {
-      showToast({
-        type: "error",
-        title: "Connection test failed",
-        message: String(error),
-        duration: 5000,
-      });
-    }
+    await verifyProviderCredentials(provider);
+  };
+
+  dom.aiFallbackSaveKeyBtn?.addEventListener("click", () => {
+    void handleSaveCredentialsClick();
+  });
+  dom.aiFallbackClearKeyBtn?.addEventListener("click", () => {
+    void handleClearCredentialsClick();
+  });
+  dom.aiFallbackTestKeyBtn?.addEventListener("click", () => {
+    void handleVerifyCredentialsClick();
+  });
+  dom.aiAuthSaveKey?.addEventListener("click", () => {
+    void handleSaveCredentialsClick();
+  });
+  dom.aiAuthClearKey?.addEventListener("click", () => {
+    void handleClearCredentialsClick();
+  });
+  dom.aiAuthVerifyKey?.addEventListener("click", () => {
+    void handleVerifyCredentialsClick();
   });
 
   dom.aiFallbackTemperature?.addEventListener("input", () => {

@@ -714,4 +714,3 @@ export function setHistoryTab(tab: HistoryTab) {
   renderHistory();
   updateChaptersVisibility();
 }
-

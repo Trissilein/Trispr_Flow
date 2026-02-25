@@ -1,10 +1,17 @@
 // Type definitions for Trispr Flow application
 
 export type AIFallbackProvider = "claude" | "openai" | "gemini" | "ollama";
+export type CloudAIFallbackProvider = Exclude<AIFallbackProvider, "ollama">;
+export type AIExecutionMode = "local_primary" | "online_fallback";
+export type AIProviderAuthStatus = "locked" | "verified_api_key" | "verified_oauth";
+export type AIProviderAuthMethodPreference = "api_key" | "oauth";
 
 export interface AIFallbackSettings {
   enabled: boolean;
   provider: AIFallbackProvider;
+  fallback_provider: CloudAIFallbackProvider | null;
+  execution_mode: AIExecutionMode;
+  strict_local_mode: boolean;
   model: string;
   temperature: number;
   max_tokens: number;
@@ -15,6 +22,9 @@ export interface AIFallbackSettings {
 
 export interface AIProviderSettings {
   api_key_stored: boolean;
+  auth_method_preference: AIProviderAuthMethodPreference;
+  auth_status: AIProviderAuthStatus;
+  auth_verified_at: string | null;
   available_models: string[];
   preferred_model: string;
 }
@@ -23,6 +33,10 @@ export interface OllamaSettings {
   endpoint: string;
   available_models: string[];
   preferred_model: string;
+  runtime_source: "system" | "per_user_zip" | "manual";
+  runtime_path: string;
+  runtime_version: string;
+  last_health_check: string | null;
 }
 
 export interface AIProvidersSettings {
@@ -30,6 +44,12 @@ export interface AIProvidersSettings {
   openai: AIProviderSettings;
   gemini: AIProviderSettings;
   ollama: OllamaSettings;
+}
+
+export interface SetupSettings {
+  local_ai_wizard_completed: boolean;
+  local_ai_wizard_pending: boolean;
+  ollama_remote_expert_opt_in: boolean;
 }
 
 export interface Settings {
@@ -44,6 +64,7 @@ export interface Settings {
   cloud_fallback: boolean;
   ai_fallback: AIFallbackSettings;
   providers: AIProvidersSettings;
+  setup: SetupSettings;
   audio_cues: boolean;
   audio_cues_volume: number;
   ptt_use_vad: boolean;
@@ -227,3 +248,80 @@ export interface TranscribeBacklogStatus {
 
 export type RecordingState = "disabled" | "idle" | "recording" | "transcribing";
 export type HistoryTab = "mic" | "system" | "conversation";
+
+// Ollama model pull events
+export interface OllamaPullProgress {
+  model: string;
+  status: string;
+  digest?: string;
+  total?: number;
+  completed?: number;
+}
+
+export interface OllamaPullComplete {
+  model: string;
+}
+
+export interface OllamaPullError {
+  model: string;
+  error: string;
+}
+
+export interface OllamaRuntimeDetectResult {
+  found: boolean;
+  source: "system" | "per_user_zip" | "manual";
+  path: string;
+  version: string;
+}
+
+export interface OllamaRuntimeDownloadResult {
+  archive_path: string;
+  sha256_ok: boolean;
+  version: string;
+}
+
+export interface OllamaRuntimeInstallResult {
+  runtime_path: string;
+  version: string;
+}
+
+export interface OllamaRuntimeStartResult {
+  pid: number | null;
+  endpoint: string;
+  source: "system" | "per_user_zip" | "manual";
+  already_running: boolean;
+}
+
+export interface OllamaRuntimeVerifyResult {
+  ok: boolean;
+  endpoint: string;
+  models_count: number;
+}
+
+export interface OllamaImportResult {
+  model_name: string;
+}
+
+export interface OllamaRuntimeInstallProgress {
+  stage: string;
+  message: string;
+  downloaded?: number;
+  total?: number;
+  version?: string;
+}
+
+export interface OllamaRuntimeInstallComplete {
+  version: string;
+  runtime_path: string;
+}
+
+export interface OllamaRuntimeInstallError {
+  stage: string;
+  error: string;
+}
+
+export interface OllamaRuntimeHealth {
+  ok: boolean;
+  endpoint: string;
+  models_count: number;
+}

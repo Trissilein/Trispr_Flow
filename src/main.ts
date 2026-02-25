@@ -14,7 +14,14 @@ import type {
   DownloadComplete,
   DownloadError,
   ErrorEvent,
-  TranscribeBacklogStatus
+  TranscribeBacklogStatus,
+  OllamaPullProgress,
+  OllamaPullComplete,
+  OllamaPullError,
+  OllamaRuntimeInstallProgress,
+  OllamaRuntimeInstallComplete,
+  OllamaRuntimeInstallError,
+  OllamaRuntimeHealth,
 } from "./types";
 import {
   settings,
@@ -26,21 +33,34 @@ import {
   models,
   setModels,
   setDynamicSustainThreshold,
-  modelProgress
+  modelProgress,
+  ollamaPullProgress,
 } from "./state";
 import * as dom from "./dom-refs";
-import { renderSettings } from "./settings";
+import { renderAIFallbackSettingsUi, renderSettings } from "./settings";
 import { renderDevices, renderOutputDevices } from "./devices";
 import { renderHero, setCaptureStatus, setTranscribeStatus, updateThresholdMarkers } from "./ui-state";
 import { renderHistory, setHistoryTab } from "./history";
 import { initPanelState, isPanelCollapsed, setPanelCollapsed } from "./panels";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
 import { wireEvents, initMainTab } from "./event-listeners";
+import { initUnifiedTooltips } from "./custom-tooltips";
 import { dismissToast, showToast, showErrorToast } from "./toast";
 import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
 import { dumpHistoryToFile, initLiveDump } from "./live-dump";
 import { initChaptersUI, refreshChapters } from "./chapters";
+import {
+  clearActiveOllamaPull,
+  renderOllamaModelManager,
+  refreshOllamaInstalledModels,
+  refreshOllamaRuntimeState,
+  setOllamaRuntimeHealth,
+  setOllamaRuntimeInstallComplete,
+  setOllamaRuntimeInstallError,
+  setOllamaRuntimeInstallProgress,
+} from "./ollama-models";
+import { OLLAMA_SETTINGS_CHANGED_POLICY } from "./ollama-refresh-policy";
 
 // Track event listeners for cleanup to prevent memory leaks
 let eventUnlisteners: Array<() => void> = [];
@@ -90,6 +110,7 @@ async function bootstrap() {
   // Clean up old listeners if re-bootstrapping to prevent memory leaks
   cleanupEventListeners();
 
+  // Phase 1: Load data from backend — any failure here is fatal
   const fetchedSettings = await invoke<Settings>("get_settings");
   setSettings(fetchedSettings);
 
@@ -108,20 +129,34 @@ async function bootstrap() {
   const fetchedModels = await invoke<ModelInfo[]>("list_models");
   setModels(fetchedModels);
 
-  renderDevices();
-  renderOutputDevices();
-  renderSettings();
-  renderHero();
-  setCaptureStatus("idle");
-  setTranscribeStatus("idle");
-  renderHistory();
-  renderModels();
-  await refreshModelsDir();
+  // Phase 2: Wire event handlers FIRST so UI is always interactive
   wireEvents();
   initMainTab();
   initPanelState();
   initConversationView();
   initChaptersUI();
+  initUnifiedTooltips();
+
+  // Phase 3: Render UI — failures here should not block interaction
+  try {
+    renderDevices();
+    renderOutputDevices();
+    renderSettings();
+    renderHero();
+    setCaptureStatus("idle");
+    setTranscribeStatus("idle");
+    renderHistory();
+    renderModels();
+    await refreshModelsDir();
+    // Initialize Ollama model manager if provider is Ollama
+    if (settings?.ai_fallback?.provider === "ollama") {
+      await refreshOllamaInstalledModels();
+      await refreshOllamaRuntimeState();
+    }
+    renderOllamaModelManager();
+  } catch (renderError) {
+    console.error("Non-fatal render error during bootstrap:", renderError);
+  }
 
   // Display app version
   if (dom.appVersion) {
@@ -139,6 +174,17 @@ async function bootstrap() {
     renderHero();
     renderModels();
     refreshModelsDir();
+    if (settings?.ai_fallback?.provider === "ollama") {
+      if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshInstalledModels) {
+        void refreshOllamaInstalledModels();
+      }
+      if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshRuntimeState) {
+        void refreshOllamaRuntimeState();
+      }
+    }
+    if (OLLAMA_SETTINGS_CHANGED_POLICY.renderManager) {
+      renderOllamaModelManager();
+    }
   }));
 
   eventUnlisteners.push(await listen<string>("capture:state", (event) => {
@@ -213,6 +259,66 @@ async function bootstrap() {
     console.error("model download error", event.payload.error);
     modelProgress.delete(event.payload.id);
     await refreshModels();
+  }));
+
+  // Ollama pull progress events
+  eventUnlisteners.push(await listen<OllamaPullProgress>("ollama:pull-progress", (event) => {
+    ollamaPullProgress.set(event.payload.model, event.payload);
+    renderOllamaModelManager();
+    renderAIFallbackSettingsUi();
+  }));
+
+  eventUnlisteners.push(await listen<OllamaPullComplete>("ollama:pull-complete", async (event) => {
+    clearActiveOllamaPull(event.payload.model);
+    ollamaPullProgress.delete(event.payload.model);
+    showToast({
+      type: "success",
+      title: "Model Downloaded",
+      message: `${event.payload.model} is ready to use.`,
+    });
+    await refreshOllamaInstalledModels();
+    await refreshOllamaRuntimeState();
+    renderOllamaModelManager();
+    renderAIFallbackSettingsUi();
+  }));
+
+  eventUnlisteners.push(await listen<OllamaPullError>("ollama:pull-error", (event) => {
+    clearActiveOllamaPull(event.payload.model);
+    ollamaPullProgress.delete(event.payload.model);
+    showToast({
+      type: "error",
+      title: "Download Failed",
+      message: `${event.payload.model}: ${event.payload.error}`,
+    });
+    renderOllamaModelManager();
+    renderAIFallbackSettingsUi();
+  }));
+
+  eventUnlisteners.push(
+    await listen<OllamaRuntimeInstallProgress>("ollama:runtime-install-progress", (event) => {
+      setOllamaRuntimeInstallProgress(event.payload);
+      renderAIFallbackSettingsUi();
+    })
+  );
+
+  eventUnlisteners.push(
+    await listen<OllamaRuntimeInstallComplete>("ollama:runtime-install-complete", async (event) => {
+      setOllamaRuntimeInstallComplete(event.payload);
+      await refreshOllamaRuntimeState();
+      renderAIFallbackSettingsUi();
+    })
+  );
+
+  eventUnlisteners.push(
+    await listen<OllamaRuntimeInstallError>("ollama:runtime-install-error", (event) => {
+      setOllamaRuntimeInstallError(event.payload);
+      renderAIFallbackSettingsUi();
+    })
+  );
+
+  eventUnlisteners.push(await listen<OllamaRuntimeHealth>("ollama:runtime-health", (event) => {
+    setOllamaRuntimeHealth(event.payload);
+    renderAIFallbackSettingsUi();
   }));
 
   eventUnlisteners.push(await listen<string>("transcription:error", (event) => {

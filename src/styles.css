@@ -385,6 +385,15 @@ h1 {
   display: grid;
 }
 
+/* AI Refinement Tab */
+#tab-ai-refinement {
+  display: none;
+}
+
+#tab-ai-refinement.active {
+  display: block;
+}
+
 /* Panel grid-area assignments */
 .output-panel {
   grid-area: transcription;
@@ -2835,6 +2844,189 @@ input[type="range"]:focus-visible {
   gap: 10px;
 }
 
+.ai-refine-topic-expander {
+  margin-top: 0;
+}
+
+.ai-refine-master-toggle {
+  padding: 16px 0 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 4px;
+}
+
+.ai-refine-expander {
+  margin-top: 0;
+}
+
+.ai-refine-expander summary .ai-refine-section-title,
+.ai-refine-topic-expander summary .ai-refine-section-title {
+  margin: 0;
+}
+
+#ai-fallback-settings.is-disabled {
+  opacity: 0.88;
+}
+
+.ai-provider-lanes {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ai-provider-lane {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  background: rgba(34, 40, 49, 0.52);
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.ai-provider-lane:focus-visible {
+  outline: none;
+  border-color: rgba(111, 247, 235, 0.5);
+  box-shadow: 0 0 0 2px rgba(91, 238, 224, 0.2);
+}
+
+.ai-provider-lane.is-active {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+}
+
+.ai-provider-lane--local.is-active {
+  border-color: rgba(76, 224, 212, 0.62);
+}
+
+.ai-provider-lane--online.is-active {
+  border-color: rgba(245, 179, 66, 0.62);
+}
+
+.ai-provider-lane--local {
+  border-color: rgba(76, 224, 212, 0.35);
+  background: linear-gradient(135deg, rgba(24, 53, 58, 0.45), rgba(22, 32, 42, 0.5));
+}
+
+.ai-provider-lane--online {
+  border-color: rgba(245, 179, 66, 0.35);
+  background: linear-gradient(135deg, rgba(74, 53, 26, 0.38), rgba(33, 30, 25, 0.48));
+}
+
+.ai-provider-lane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-provider-lane-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.badge.badge--online.is-locked {
+  opacity: 0.75;
+  background: rgba(156, 163, 175, 0.22);
+  border-color: rgba(156, 163, 175, 0.38);
+  color: #d1d5db;
+}
+
+.badge.badge--online.is-verified {
+  background: rgba(245, 179, 66, 0.2);
+  border-color: rgba(245, 179, 66, 0.45);
+  color: #f5c463;
+}
+
+.badge.badge--online.is-active {
+  background: rgba(245, 179, 66, 0.28);
+  border-color: rgba(245, 179, 66, 0.65);
+  color: #ffce72;
+}
+
+.ai-provider-lane-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-provider-lane-actions .hotkey-record-btn {
+  min-width: 0;
+  flex: 1;
+}
+
+.cloud-provider-list {
+  display: grid;
+  gap: 8px;
+}
+
+.cloud-provider-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cloud-provider-row.is-selected {
+  border-color: rgba(245, 179, 66, 0.45);
+  background: rgba(245, 179, 66, 0.08);
+}
+
+.cloud-provider-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.cloud-provider-meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.cloud-provider-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cloud-provider-actions .hotkey-record-btn {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.ai-provider-advanced {
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  padding-top: 8px;
+}
+
+.ai-provider-advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.ai-provider-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ai-provider-advanced-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ai-provider-advanced-actions .hotkey-record-btn {
+  min-width: 0;
+  flex: 1;
+}
+
 .ai-refine-section--coming-soon {
   opacity: 0.5;
 }
@@ -2865,4 +3057,351 @@ input[type="range"]:focus-visible {
 
 .link-btn:hover {
   color: #fff;
+}
+
+/* Unified app tooltips */
+.has-help-tooltip {
+  cursor: help;
+}
+
+.ai-refine-section-title.has-help-tooltip,
+.ollama-card-title.has-help-tooltip,
+.ollama-runtime-heading.has-help-tooltip {
+  text-decoration: underline dotted rgba(76, 224, 212, 0.45);
+  text-underline-offset: 3px;
+}
+
+.app-tooltip {
+  position: absolute;
+  width: clamp(220px, 36vw, 340px);
+  border-radius: 10px;
+  border: 1px solid rgba(76, 224, 212, 0.34);
+  background: linear-gradient(180deg, rgba(22, 28, 38, 0.96), rgba(14, 20, 28, 0.96));
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.42);
+  color: var(--ink);
+  padding: 10px 11px;
+  z-index: 2500;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+}
+
+.app-tooltip.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.app-tooltip-title {
+  display: block;
+  font-size: 0.76rem;
+  margin-bottom: 5px;
+  color: #b8fff9;
+  font-weight: 700;
+}
+
+.app-tooltip-body {
+  display: block;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: var(--ink-soft);
+}
+
+.app-tooltip-consequence {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: #ffd59f;
+}
+
+/* Ollama Model Manager Cards */
+.ollama-card {
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(35, 41, 50, 0.62), rgba(28, 34, 44, 0.58));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.ollama-card--large {
+  padding: 14px;
+}
+
+.ollama-card--compact {
+  padding: 12px;
+}
+
+.ollama-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.ollama-card-meta-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.ollama-card-meta-label {
+  font-size: 0.74rem;
+  color: var(--muted, #9ca3af);
+}
+
+.ollama-card-meta-value {
+  font-size: 0.76rem;
+  color: var(--ink-soft, #d1d5db);
+  word-break: break-word;
+}
+
+.ollama-service-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.ollama-tool-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ollama-models-section {
+  padding-top: 0;
+}
+
+.ollama-model-list {
+  margin-top: 8px;
+}
+
+.ollama-model-item .model-status {
+  display: inline-flex;
+}
+
+.ollama-model-progress {
+  margin-top: 4px;
+}
+
+.ollama-progress-bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.ollama-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-2, #1da6a0), var(--accent-3, #f5b342));
+  transition: width 0.25s ease;
+}
+
+.ollama-progress-text {
+  font-size: 0.75rem;
+  color: var(--muted, #9ca3af);
+  display: block;
+  text-align: center;
+}
+
+.ollama-model-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ollama-model-actions .btn-sm {
+  min-width: 0;
+  flex: 1;
+}
+
+.ollama-cancel-note {
+  font-size: 0.75rem;
+  color: var(--muted, #9ca3af);
+  font-style: italic;
+}
+
+.ollama-runtime-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ollama-runtime-heading {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ollama-runtime-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.ollama-runtime-badge.is-ready {
+  background: rgba(76, 224, 212, 0.14);
+  border-color: rgba(76, 224, 212, 0.4);
+  color: #4be0d4;
+}
+
+.ollama-runtime-badge.is-busy {
+  background: rgba(245, 179, 66, 0.15);
+  border-color: rgba(245, 179, 66, 0.42);
+  color: #f5b342;
+}
+
+.ollama-runtime-badge.is-warning {
+  background: rgba(255, 184, 77, 0.12);
+  border-color: rgba(255, 184, 77, 0.34);
+  color: #ffb84d;
+}
+
+.ollama-runtime-badge.is-pending {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--ink-soft);
+}
+
+.ollama-runtime-busy {
+  margin: 10px 0 0 0;
+  font-size: 12px;
+  color: #f5b342;
+}
+
+.ollama-runtime-progress {
+  margin-top: 10px;
+}
+
+.ollama-runtime-meta {
+  margin-top: 10px;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted, #9ca3af);
+}
+
+.ollama-runtime-error {
+  color: #ff8f8f;
+}
+
+.ollama-runtime-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ollama-runtime-actions .hotkey-record-btn {
+  min-width: 190px;
+}
+
+.ollama-tool-actions .hotkey-record-btn {
+  width: 100%;
+}
+
+.hotkey-record-btn.is-recommended {
+  border-color: rgba(76, 224, 212, 0.5);
+  color: #4be0d4;
+}
+
+.auth-modal[hidden] {
+  display: none !important;
+}
+
+.auth-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  display: grid;
+  place-items: center;
+}
+
+.auth-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.auth-modal-card {
+  position: relative;
+  width: min(560px, 92vw);
+  border-radius: 12px;
+  border: 1px solid rgba(76, 224, 212, 0.3);
+  background: linear-gradient(180deg, rgba(20, 27, 36, 0.96), rgba(14, 19, 26, 0.96));
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.auth-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.auth-modal-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.auth-modal-actions .hotkey-record-btn {
+  min-width: 0;
+  flex: 1;
+}
+
+@media (max-width: 820px) {
+  .ai-provider-lanes {
+    grid-template-columns: 1fr;
+  }
+
+  .ollama-service-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ollama-tool-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .ollama-runtime-actions .hotkey-record-btn {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .cloud-provider-row {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-provider-actions .hotkey-record-btn {
+    width: 100%;
+  }
+
+  .auth-modal-actions .hotkey-record-btn {
+    width: 100%;
+  }
+
+  .ollama-model-actions .btn-sm {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .app-tooltip {
+    width: min(84vw, 340px);
+  }
 }

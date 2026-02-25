@@ -7,6 +7,7 @@ import type {
   DownloadProgress,
   RecordingState,
   HistoryTab,
+  OllamaPullProgress,
 } from "./types";
 
 export let settings: Settings | null = null;
@@ -16,6 +17,7 @@ export let devices: AudioDevice[] = [];
 export let outputDevices: AudioDevice[] = [];
 export let models: ModelInfo[] = [];
 export const modelProgress = new Map<string, DownloadProgress>();
+export const ollamaPullProgress = new Map<string, OllamaPullProgress>();
 export let currentCaptureStatus: RecordingState = "idle";
 export let currentTranscribeStatus: RecordingState = "idle";
 export let currentHistoryTab: HistoryTab = "mic";

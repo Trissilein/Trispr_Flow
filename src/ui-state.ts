@@ -67,15 +67,42 @@ export function setTranscribeStatus(state: RecordingState) {
 export function renderHero() {
   if (!settings) return;
   const aiFallbackOn = settings.ai_fallback?.enabled ?? settings.cloud_fallback;
-  const provider = settings.ai_fallback?.provider ?? "claude";
-  const providerLabel = provider === "openai" ? "OpenAI" : provider === "gemini" ? "Gemini" : "Claude";
-  if (dom.cloudState) dom.cloudState.textContent = aiFallbackOn ? `${providerLabel} On` : "AI Off";
+  const provider = settings.ai_fallback?.provider ?? "ollama";
+  const executionMode = settings.ai_fallback?.execution_mode ?? "local_primary";
+  const isOnlineRefinement = aiFallbackOn && executionMode === "online_fallback" && provider !== "ollama";
+  const providerLabel =
+    provider === "openai"
+      ? "OpenAI"
+      : provider === "gemini"
+        ? "Gemini"
+        : provider === "ollama"
+          ? "Ollama"
+          : "Claude";
+
+  const configuredModel = settings.ai_fallback?.model?.trim() || "";
+  const providerModel =
+    provider === "claude"
+      ? settings.providers?.claude?.preferred_model?.trim() || ""
+      : provider === "openai"
+        ? settings.providers?.openai?.preferred_model?.trim() || ""
+        : provider === "gemini"
+          ? settings.providers?.gemini?.preferred_model?.trim() || ""
+          : settings.providers?.ollama?.preferred_model?.trim() || "";
+  const effectiveRefinementModel = configuredModel || providerModel || "No model selected";
+
+  if (dom.cloudState) dom.cloudState.textContent = aiFallbackOn ? "Yes" : "No";
+  if (dom.cloudDetail) {
+    dom.cloudDetail.textContent = aiFallbackOn
+      ? `${isOnlineRefinement ? "Online" : "Offline"} • ${effectiveRefinementModel} • ${providerLabel}`
+      : "Offline • AI refinement disabled";
+  }
   if (dom.cloudCheck) dom.cloudCheck.classList.toggle("is-active", aiFallbackOn);
+  if (dom.aiModelState) dom.aiModelState.textContent = aiFallbackOn ? effectiveRefinementModel : "—";
   if (dom.dictationBadge) {
-    dom.dictationBadge.textContent = aiFallbackOn
-      ? "AI fallback enabled"
+    dom.dictationBadge.textContent = isOnlineRefinement
+      ? "AI Refinement (Online)"
       : "Private Mode (Offline)";
-    dom.dictationBadge.classList.toggle("badge--online", aiFallbackOn);
+    dom.dictationBadge.classList.toggle("badge--online", isOnlineRefinement);
   }
   if (dom.modeState) dom.modeState.textContent = settings.mode === "ptt" ? "PTT" : "Voice Activation";
 

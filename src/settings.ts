@@ -5,7 +5,15 @@ import * as dom from "./dom-refs";
 import { thresholdToDb, VAD_DB_FLOOR } from "./ui-helpers";
 import { renderVocabulary } from "./event-listeners";
 import { getTopicKeywords, setTopicKeywords } from "./history";
-import type { AIProviderSettings, AIFallbackProvider, OllamaSettings } from "./types";
+import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
+import { getOllamaRuntimeCardState } from "./ollama-models";
+import type {
+  AIProviderSettings,
+  AIFallbackProvider,
+  CloudAIFallbackProvider,
+  AIExecutionMode,
+  AIProviderAuthMethodPreference,
+} from "./types";
 
 function ensureContinuousDumpDefaults() {
   if (!settings) return;
@@ -118,13 +126,43 @@ export function updateTranscribeThreshold(threshold: number) {
   }
 }
 
-const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini", "ollama"];
+const CLOUD_PROVIDER_IDS: CloudAIFallbackProvider[] = ["claude", "openai", "gemini"];
+const CLOUD_PROVIDER_LABELS: Record<CloudAIFallbackProvider, string> = {
+  claude: "Claude (Anthropic)",
+  openai: "OpenAI",
+  gemini: "Gemini (Google)",
+};
 
-function normalizeAIFallbackProvider(provider: string | undefined): AIFallbackProvider {
-  if (provider && AI_FALLBACK_PROVIDER_IDS.includes(provider as AIFallbackProvider)) {
-    return provider as AIFallbackProvider;
-  }
-  return "ollama";
+function normalizeCloudProvider(provider?: string | null): CloudAIFallbackProvider | null {
+  if (!provider) return null;
+  const normalized = provider.trim().toLowerCase();
+  return CLOUD_PROVIDER_IDS.includes(normalized as CloudAIFallbackProvider)
+    ? (normalized as CloudAIFallbackProvider)
+    : null;
+}
+
+function normalizeExecutionMode(mode?: string | null): AIExecutionMode {
+  return mode === "online_fallback" ? "online_fallback" : "local_primary";
+}
+
+function normalizeAuthMethodPreference(
+  method?: string | null
+): AIProviderAuthMethodPreference {
+  return method === "oauth" ? "oauth" : "api_key";
+}
+
+function isVerifiedAuthStatus(status?: string | null): boolean {
+  return status === "verified_api_key" || status === "verified_oauth";
+}
+
+function authStatusLabel(status?: string | null): string {
+  if (status === "verified_api_key") return "Verified";
+  if (status === "verified_oauth") return "Verified (OAuth)";
+  return "Locked";
+}
+
+function authMethodLabel(method?: AIProviderAuthMethodPreference | null): string {
+  return method === "oauth" ? "OAuth (coming soon)" : "API key";
 }
 
 function getProviderSettings(provider: AIFallbackProvider): AIProviderSettings | null {
@@ -136,23 +174,158 @@ function getProviderSettings(provider: AIFallbackProvider): AIProviderSettings |
   return null;
 }
 
-function getOllamaSettings(): OllamaSettings | null {
-  return settings?.providers?.ollama ?? null;
+function ensureSetupDefaults() {
+  if (!settings) return;
+  settings.setup ??= {
+    local_ai_wizard_completed: false,
+    local_ai_wizard_pending: true,
+    ollama_remote_expert_opt_in: false,
+  };
+  settings.setup.ollama_remote_expert_opt_in ??= false;
 }
 
-function applyOllamaProviderVisibility(isOllama: boolean) {
-  if (dom.aiFallbackOllamaSection)
-    dom.aiFallbackOllamaSection.style.display = isOllama ? "block" : "none";
+const AI_REFINEMENT_EXPANDER_STATE_KEY = "ai_refinement_expanders_v1";
+const AI_REFINEMENT_EXPANDER_DEFAULTS: Record<string, boolean> = {
+  "ai-refinement-runtime-expander": true,
+  "ai-refinement-models-expander": true,
+  "ai-refinement-topic-expander": true,
+};
+
+function readAIRefinementExpanderState(): Record<string, boolean> {
+  if (typeof window === "undefined") {
+    return { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+  }
+  try {
+    const raw = window.localStorage.getItem(AI_REFINEMENT_EXPANDER_STATE_KEY);
+    if (!raw) return { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const merged = { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+    Object.keys(merged).forEach((key) => {
+      if (typeof parsed?.[key] === "boolean") {
+        merged[key] = parsed[key] as boolean;
+      }
+    });
+    return merged;
+  } catch {
+    return { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+  }
+}
+
+function writeAIRefinementExpanderState(next: Record<string, boolean>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(AI_REFINEMENT_EXPANDER_STATE_KEY, JSON.stringify(next));
+  } catch {
+    // no-op
+  }
+}
+
+function syncAIRefinementExpanders(): void {
+  if (typeof document === "undefined") return;
+  const state = readAIRefinementExpanderState();
+  Object.keys(AI_REFINEMENT_EXPANDER_DEFAULTS).forEach((id) => {
+    const expander = document.getElementById(id) as HTMLDetailsElement | null;
+    if (!expander) return;
+    expander.open = state[id] ?? AI_REFINEMENT_EXPANDER_DEFAULTS[id];
+    if (expander.dataset.expanderBound === "true") return;
+    expander.addEventListener("toggle", () => {
+      const current = readAIRefinementExpanderState();
+      current[id] = expander.open;
+      writeAIRefinementExpanderState(current);
+    });
+    expander.dataset.expanderBound = "true";
+  });
+}
+
+function applyProviderLaneVisibility(isOnlineMode: boolean) {
   if (dom.aiFallbackApiKeySection)
-    dom.aiFallbackApiKeySection.style.display = isOllama ? "none" : "block";
+    dom.aiFallbackApiKeySection.style.display = "none";
+  if (dom.aiFallbackModelField)
+    dom.aiFallbackModelField.style.display = isOnlineMode ? "block" : "none";
+  if (dom.aiFallbackOllamaManagedNote)
+    dom.aiFallbackOllamaManagedNote.style.display = isOnlineMode ? "none" : "block";
+  if (dom.aiFallbackProviderLanes) {
+    dom.aiFallbackProviderLanes.style.display = "grid";
+  }
+}
+
+function renderCloudProviderList(fallbackProvider: CloudAIFallbackProvider | null, isOnlineMode: boolean) {
+  if (!dom.aiFallbackCloudProviderList) return;
+
+  dom.aiFallbackCloudProviderList.innerHTML = "";
+
+  CLOUD_PROVIDER_IDS.forEach((providerId) => {
+    const providerConfig = getProviderSettings(providerId);
+    const verified = isVerifiedAuthStatus(providerConfig?.auth_status);
+    const selectedFallback = fallbackProvider === providerId;
+    const row = document.createElement("div");
+    row.className = `cloud-provider-row${selectedFallback ? " is-selected" : ""}`;
+
+    const left = document.createElement("div");
+    left.className = "cloud-provider-main";
+
+    const label = document.createElement("div");
+    label.className = "cloud-provider-title";
+    label.textContent = CLOUD_PROVIDER_LABELS[providerId];
+    left.appendChild(label);
+
+    const meta = document.createElement("div");
+    meta.className = "cloud-provider-meta";
+    const authStatus = authStatusLabel(providerConfig?.auth_status);
+    const method = authMethodLabel(providerConfig?.auth_method_preference);
+    meta.textContent = `${authStatus} • ${method}`;
+    left.appendChild(meta);
+
+    const actions = document.createElement("div");
+    actions.className = "cloud-provider-actions";
+
+    const selectBtn = document.createElement("button");
+    selectBtn.className = "hotkey-record-btn";
+    selectBtn.type = "button";
+    selectBtn.dataset.aiProviderAction = "select-fallback";
+    selectBtn.dataset.provider = providerId;
+    if (selectedFallback && isOnlineMode) {
+      selectBtn.textContent = "Active fallback";
+      selectBtn.disabled = true;
+    } else if (selectedFallback) {
+      selectBtn.textContent = "Selected fallback";
+      selectBtn.disabled = !verified;
+    } else {
+      selectBtn.textContent = "Use as fallback";
+      selectBtn.disabled = !verified;
+    }
+    actions.appendChild(selectBtn);
+
+    const authBtn = document.createElement("button");
+    authBtn.className = "hotkey-record-btn";
+    authBtn.type = "button";
+    authBtn.dataset.aiProviderAction = "authenticate";
+    authBtn.dataset.provider = providerId;
+    authBtn.textContent = "Authenticate";
+    actions.appendChild(authBtn);
+
+    row.appendChild(left);
+    row.appendChild(actions);
+    dom.aiFallbackCloudProviderList?.appendChild(row);
+  });
 }
 
 function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedModel: string) {
   if (!dom.aiFallbackModel) return;
 
-  const models = provider === "ollama"
-    ? (getOllamaSettings()?.available_models ?? [])
-    : (getProviderSettings(provider)?.available_models ?? []);
+  if (provider === "ollama") {
+    dom.aiFallbackModel.disabled = true;
+    dom.aiFallbackModel.innerHTML = "";
+    const option = document.createElement("option");
+    option.value = selectedModel || "";
+    option.textContent = selectedModel || "Managed in Local AI Runtime section";
+    dom.aiFallbackModel.appendChild(option);
+    dom.aiFallbackModel.value = option.value;
+    return;
+  }
+
+  dom.aiFallbackModel.disabled = false;
+  const models = getProviderSettings(provider)?.available_models ?? [];
 
   dom.aiFallbackModel.innerHTML = "";
   for (const modelId of models) {
@@ -164,7 +337,7 @@ function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedMode
   if (models.length > 0) {
     dom.aiFallbackModel.value = models.includes(selectedModel) ? selectedModel : models[0];
   } else {
-    const placeholder = provider === "ollama" ? "Click Refresh to load models" : "No models available";
+    const placeholder = "No models available";
     const option = document.createElement("option");
     option.value = selectedModel || "";
     option.textContent = selectedModel || placeholder;
@@ -175,36 +348,119 @@ function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedMode
 
 export function renderAIFallbackSettingsUi() {
   if (!settings) return;
+  ensureSetupDefaults();
+  CLOUD_PROVIDER_IDS.forEach((providerId) => {
+    const providerSettings = getProviderSettings(providerId);
+    if (!providerSettings) return;
+    providerSettings.auth_method_preference = normalizeAuthMethodPreference(
+      providerSettings.auth_method_preference
+    );
+  });
   const ai = settings.ai_fallback;
-  const provider = normalizeAIFallbackProvider(ai?.provider);
-  const providerConfig = getProviderSettings(provider);
-  const ollamaConfig = getOllamaSettings();
-  const isOllama = provider === "ollama";
+  ai.fallback_provider = normalizeCloudProvider(ai?.fallback_provider ?? null);
+  ai.execution_mode = normalizeExecutionMode(ai?.execution_mode);
+  if (!ai.fallback_provider && ai.provider !== "ollama") {
+    ai.fallback_provider = normalizeCloudProvider(ai.provider);
+  }
+
+  const fallbackProvider = normalizeCloudProvider(ai?.fallback_provider ?? null);
+  const fallbackConfig = fallbackProvider ? getProviderSettings(fallbackProvider) : null;
+  const fallbackVerified = Boolean(
+    fallbackProvider && fallbackConfig && isVerifiedAuthStatus(fallbackConfig.auth_status)
+  );
+  const executionMode: AIExecutionMode =
+    ai.execution_mode === "online_fallback" && fallbackVerified ? "online_fallback" : "local_primary";
+  const provider: AIFallbackProvider =
+    executionMode === "online_fallback" && fallbackProvider ? fallbackProvider : "ollama";
+  ai.execution_mode = executionMode;
+  ai.provider = provider;
+
+  const isOnlineMode = executionMode === "online_fallback";
+
+  if (isOnlineMode && provider !== "ollama") {
+    const onlineProviderSettings = getProviderSettings(provider);
+    const available = onlineProviderSettings?.available_models ?? [];
+    if (available.length > 0 && !available.includes(ai.model)) {
+      const nextModel =
+        onlineProviderSettings?.preferred_model && available.includes(onlineProviderSettings.preferred_model)
+          ? onlineProviderSettings.preferred_model
+          : available[0];
+      ai.model = nextModel;
+      settings.postproc_llm_model = nextModel;
+      if (onlineProviderSettings) {
+        onlineProviderSettings.preferred_model = nextModel;
+      }
+    }
+  }
+
+  const runtimeCardState = getOllamaRuntimeCardState();
 
   if (dom.aiFallbackEnabled) {
     dom.aiFallbackEnabled.checked = Boolean(ai?.enabled);
   }
   if (dom.aiFallbackSettings) {
-    dom.aiFallbackSettings.style.display = ai?.enabled ? "block" : "none";
+    dom.aiFallbackSettings.style.display = "block";
+    dom.aiFallbackSettings.classList.toggle("is-disabled", !ai?.enabled);
   }
-  if (dom.aiFallbackProvider) {
-    dom.aiFallbackProvider.value = provider;
+  renderCloudProviderList(fallbackProvider, isOnlineMode);
+
+  if (dom.aiFallbackFallbackStatus) {
+    dom.aiFallbackFallbackStatus.textContent = fallbackProvider
+      ? `${CLOUD_PROVIDER_LABELS[fallbackProvider]}: ${authStatusLabel(fallbackConfig?.auth_status)}`
+      : "No verified online fallback selected.";
   }
 
-  applyOllamaProviderVisibility(isOllama);
+  if (dom.aiFallbackLocalLane) {
+    dom.aiFallbackLocalLane.classList.toggle("is-active", !isOnlineMode);
+    dom.aiFallbackLocalLane.setAttribute("aria-pressed", (!isOnlineMode).toString());
+  }
+  if (dom.aiFallbackOnlineLane) {
+    dom.aiFallbackOnlineLane.classList.toggle("is-active", isOnlineMode);
+    dom.aiFallbackOnlineLane.setAttribute("aria-pressed", isOnlineMode.toString());
+  }
+
+  if (dom.aiFallbackOnlineStatusBadge) {
+    dom.aiFallbackOnlineStatusBadge.textContent = fallbackVerified
+      ? (isOnlineMode ? "Online • Active" : "Online • Verified")
+      : "Online • Locked";
+    dom.aiFallbackOnlineStatusBadge.classList.toggle("is-locked", !fallbackVerified);
+    dom.aiFallbackOnlineStatusBadge.classList.toggle("is-verified", fallbackVerified);
+    dom.aiFallbackOnlineStatusBadge.classList.toggle("is-active", isOnlineMode && fallbackVerified);
+  }
+  if (dom.aiFallbackLocalPrimaryStatus) {
+    const healthText = runtimeCardState.healthy
+      ? "running"
+      : runtimeCardState.detected
+        ? "detected, not running"
+        : "not detected";
+    dom.aiFallbackLocalPrimaryStatus.textContent = `Runtime ${healthText} • Source: ${runtimeCardState.source} • Version: ${runtimeCardState.version}`;
+  }
+  if (dom.aiFallbackLocalRuntimeNote) {
+    dom.aiFallbackLocalRuntimeNote.textContent = runtimeCardState.detail;
+  }
+  if (dom.aiFallbackLocalPrimaryAction) {
+    dom.aiFallbackLocalPrimaryAction.textContent = runtimeCardState.primaryLabel;
+    dom.aiFallbackLocalPrimaryAction.disabled = runtimeCardState.primaryDisabled;
+    dom.aiFallbackLocalPrimaryAction.dataset.runtimeAction = runtimeCardState.primaryAction;
+  }
+  if (dom.aiFallbackLocalImportAction) {
+    dom.aiFallbackLocalImportAction.disabled = runtimeCardState.busy;
+  }
+  if (dom.aiFallbackLocalDetectAction) {
+    dom.aiFallbackLocalDetectAction.disabled = runtimeCardState.busy;
+  }
+  if (dom.aiFallbackLocalUseSystemAction) {
+    dom.aiFallbackLocalUseSystemAction.disabled = runtimeCardState.busy;
+  }
+  if (dom.aiFallbackLocalVerifyAction) {
+    dom.aiFallbackLocalVerifyAction.disabled = runtimeCardState.busy || !runtimeCardState.detected;
+  }
+  if (dom.aiFallbackLocalRefreshAction) {
+    dom.aiFallbackLocalRefreshAction.disabled = runtimeCardState.busy;
+  }
+
+  applyProviderLaneVisibility(isOnlineMode);
   renderAIFallbackModelOptions(provider, ai?.model || "");
-
-  // Ollama: show endpoint
-  if (dom.aiFallbackOllamaEndpoint && ollamaConfig) {
-    dom.aiFallbackOllamaEndpoint.value = ollamaConfig.endpoint || "http://localhost:11434";
-  }
-
-  // Cloud: show API key status
-  if (dom.aiFallbackKeyStatus) {
-    dom.aiFallbackKeyStatus.textContent = providerConfig?.api_key_stored
-      ? "API key stored in secure system keyring (fallback: local encrypted file)."
-      : "No API key stored for this provider yet.";
-  }
 
   if (dom.aiFallbackTemperature) {
     const temp = Math.max(0, Math.min(1, Number(ai?.temperature ?? 0.3)));
@@ -231,6 +487,7 @@ export function renderAIFallbackSettingsUi() {
 export function renderSettings() {
   if (!settings) return;
   ensureContinuousDumpDefaults();
+  ensureSetupDefaults();
   if (dom.captureEnabledToggle) dom.captureEnabledToggle.checked = settings.capture_enabled;
   if (dom.transcribeEnabledToggle) dom.transcribeEnabledToggle.checked = settings.transcribe_enabled;
   if (dom.modeSelect) dom.modeSelect.value = settings.mode;
@@ -250,7 +507,6 @@ export function renderSettings() {
   if (dom.modelCustomUrlField) {
     dom.modelCustomUrlField.classList.toggle("hidden", settings.model_source !== "custom");
   }
-  if (dom.cloudToggle) dom.cloudToggle.checked = settings.ai_fallback?.enabled ?? settings.cloud_fallback;
   if (dom.audioCuesToggle) dom.audioCuesToggle.checked = settings.audio_cues;
   if (dom.pttUseVadToggle) dom.pttUseVadToggle.checked = settings.ptt_use_vad;
   if (dom.audioCuesVolume) dom.audioCuesVolume.value = Math.round(settings.audio_cues_volume * 100).toString();
@@ -514,8 +770,10 @@ export function renderSettings() {
  * provider-specific changes.
  */
 export function renderAIRefinementTab(): void {
+  syncAIRefinementExpanders();
   renderAIFallbackSettingsUi();
   renderTopicKeywords();
+  renderAIRefinementStaticHelp();
 }
 
 /**

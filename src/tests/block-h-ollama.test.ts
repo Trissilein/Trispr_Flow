@@ -11,6 +11,8 @@
 
 import { describe, it, expect } from "vitest";
 import type { AIFallbackSettings, AIProvidersSettings, OllamaSettings } from "../types";
+import { isExactModelTagMatch, normalizeModelTag } from "../ollama-tag-utils";
+import { OLLAMA_SETTINGS_CHANGED_POLICY } from "../ollama-refresh-policy";
 
 // ---------------------------------------------------------------------------
 // H-S1: Settings shape and defaults
@@ -21,6 +23,10 @@ describe("Block H S1 — Ollama settings defaults", () => {
       endpoint: "http://localhost:11434",
       available_models: [],
       preferred_model: "",
+      runtime_source: "manual",
+      runtime_path: "",
+      runtime_version: "",
+      last_health_check: null,
     };
     expect(ollama.endpoint).toBe("http://localhost:11434");
     expect(ollama.available_models).toHaveLength(0);
@@ -31,6 +37,9 @@ describe("Block H S1 — Ollama settings defaults", () => {
     const fallback: AIFallbackSettings = {
       enabled: false,
       provider: "ollama",
+      fallback_provider: null,
+      execution_mode: "local_primary",
+      strict_local_mode: true,
       model: "",
       temperature: 0.3,
       max_tokens: 4000,
@@ -46,10 +55,39 @@ describe("Block H S1 — Ollama settings defaults", () => {
 
   it("includes ollama field inside AIProvidersSettings", () => {
     const providers: AIProvidersSettings = {
-      claude: { api_key_stored: false, available_models: [], preferred_model: "" },
-      openai: { api_key_stored: false, available_models: [], preferred_model: "" },
-      gemini: { api_key_stored: false, available_models: [], preferred_model: "" },
-      ollama: { endpoint: "http://localhost:11434", available_models: [], preferred_model: "" },
+      claude: {
+        api_key_stored: false,
+        auth_method_preference: "api_key",
+        auth_status: "locked",
+        auth_verified_at: null,
+        available_models: [],
+        preferred_model: ""
+      },
+      openai: {
+        api_key_stored: false,
+        auth_method_preference: "api_key",
+        auth_status: "locked",
+        auth_verified_at: null,
+        available_models: [],
+        preferred_model: ""
+      },
+      gemini: {
+        api_key_stored: false,
+        auth_method_preference: "api_key",
+        auth_status: "locked",
+        auth_verified_at: null,
+        available_models: [],
+        preferred_model: ""
+      },
+      ollama: {
+        endpoint: "http://localhost:11434",
+        available_models: [],
+        preferred_model: "",
+        runtime_source: "manual",
+        runtime_path: "",
+        runtime_version: "",
+        last_health_check: null,
+      },
     };
     expect(providers.ollama).toBeDefined();
     expect(providers.ollama.endpoint).toBe("http://localhost:11434");
@@ -67,6 +105,10 @@ describe("Block H S2 — Offline model refresh", () => {
       endpoint: "http://localhost:11434",
       available_models: [],
       preferred_model: "",
+      runtime_source: "manual",
+      runtime_path: "",
+      runtime_version: "",
+      last_health_check: null,
     };
     const models: string[] = []; // returned when Ollama is unreachable
 
@@ -84,10 +126,17 @@ describe("Block H S2 — Offline model refresh", () => {
       endpoint: "http://localhost:11434",
       available_models: [],
       preferred_model: "",
+      runtime_source: "manual",
+      runtime_path: "",
+      runtime_version: "",
+      last_health_check: null,
     };
     const fallback: AIFallbackSettings = {
       enabled: true,
       provider: "ollama",
+      fallback_provider: null,
+      execution_mode: "local_primary",
+      strict_local_mode: true,
       model: "",
       temperature: 0.3,
       max_tokens: 4000,
@@ -114,6 +163,10 @@ describe("Block H S2 — Offline model refresh", () => {
       endpoint: "http://localhost:11434",
       available_models: ["llama3.2:3b", "mistral:7b"],
       preferred_model: "mistral:7b",
+      runtime_source: "manual",
+      runtime_path: "",
+      runtime_version: "",
+      last_health_check: null,
     };
 
     const models = ["llama3.2:3b", "mistral:7b", "qwen2.5:7b"];
@@ -130,6 +183,10 @@ describe("Block H S2 — Offline model refresh", () => {
       endpoint: "http://localhost:11434",
       available_models: ["old-model:7b"],
       preferred_model: "old-model:7b",
+      runtime_source: "manual",
+      runtime_path: "",
+      runtime_version: "",
+      last_health_check: null,
     };
 
     const models = ["llama3.2:3b", "mistral:7b"];
@@ -301,5 +358,27 @@ describe("Block H S5 — Connection error handling", () => {
 
   it("returns error toast when Ollama is unreachable", () => {
     expect(toastType(null)).toBe("error");
+  });
+});
+
+describe("Block H S6 — Exact Ollama model tag matching", () => {
+  it("normalizes model tags for stable exact comparisons", () => {
+    expect(normalizeModelTag(" QWEN3:8B ")).toBe("qwen3:8b");
+    expect(normalizeModelTag("mistral-small3.1:24b")).toBe("mistral-small3.1:24b");
+  });
+
+  it("matches only exact tags and avoids family/prefix collisions", () => {
+    expect(isExactModelTagMatch("qwen3:8b", "qwen3:8b")).toBe(true);
+    expect(isExactModelTagMatch("qwen3:8b", "QWEN3:8B")).toBe(true);
+    expect(isExactModelTagMatch("qwen3:8b", "qwen3:14b")).toBe(false);
+    expect(isExactModelTagMatch("qwen3:8b", "qwen3")).toBe(false);
+  });
+});
+
+describe("Block H S7 — No settings-changed recursion into Ollama refresh", () => {
+  it("uses render-only policy on settings-changed by default", () => {
+    expect(OLLAMA_SETTINGS_CHANGED_POLICY.refreshInstalledModels).toBe(false);
+    expect(OLLAMA_SETTINGS_CHANGED_POLICY.refreshRuntimeState).toBe(false);
+    expect(OLLAMA_SETTINGS_CHANGED_POLICY.renderManager).toBe(true);
   });
 });

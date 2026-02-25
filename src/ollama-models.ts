@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { settings, ollamaPullProgress } from "./state";
 import { showToast } from "./toast";
+import { isExactModelTagMatch, normalizeModelTag } from "./ollama-tag-utils";
+import { applyHelpTooltip } from "./ai-refinement-help";
 import type {
   OllamaImportResult,
   OllamaPullProgress as OllamaPullProgressType,
@@ -17,7 +19,6 @@ import type {
 } from "./types";
 
 const DEFAULT_LOCAL_ENDPOINT = "http://localhost:11434";
-const DEFAULT_SETUP_MODEL = "qwen3:8b";
 const DEFAULT_RUNTIME_VERSION = "0.17.0";
 
 type WizardStage =
@@ -26,8 +27,11 @@ type WizardStage =
   | "install_runtime"
   | "start_runtime"
   | "verify_runtime"
+  | "failed"
   | "select_model_source"
   | "ready";
+
+type CardStatus = "available" | "downloaded" | "active";
 
 export const OLLAMA_RECOMMENDED_MODELS = [
   {
@@ -63,22 +67,74 @@ let runtimeInstallError: OllamaRuntimeInstallError | null = null;
 let runtimeHealth: OllamaRuntimeHealth | null = null;
 let runtimeBusyAction: string | null = null;
 
+let renderFrame: number | null = null;
+
+const RUNTIME_ACTION_LABELS: Record<string, string> = {
+  detect: "Detecting runtime...",
+  install: "Installing local runtime...",
+  "ensure-runtime": "Preparing local runtime...",
+  "use-system": "Switching to system runtime...",
+  start: "Starting runtime...",
+  verify: "Verifying runtime...",
+  import: "Importing model...",
+  refresh: "Refreshing runtime and models...",
+};
+
+type OllamaRuntimePrimaryAction = "install" | "start" | "ready";
+
+export type OllamaRuntimeCardState = {
+  detected: boolean;
+  healthy: boolean;
+  source: string;
+  version: string;
+  endpoint: string;
+  busy: boolean;
+  busyAction: string | null;
+  stage: WizardStage;
+  primaryAction: OllamaRuntimePrimaryAction;
+  primaryLabel: string;
+  primaryDisabled: boolean;
+  detail: string;
+};
+
 function isOllamaProvider(): boolean {
   return settings?.ai_fallback?.provider === "ollama";
-}
-
-function strictLocalModeEnabled(): boolean {
-  return Boolean(settings?.ai_fallback?.strict_local_mode ?? true);
 }
 
 function runtimeIsHealthy(): boolean {
   return Boolean(runtimeVerify?.ok || runtimeHealth?.ok);
 }
 
+function scheduleRender(): void {
+  if (renderFrame !== null) return;
+
+  if (typeof window === "undefined") {
+    renderOllamaModelManagerNow();
+    return;
+  }
+
+  if (typeof window.requestAnimationFrame === "function") {
+    renderFrame = window.requestAnimationFrame(() => {
+      renderFrame = null;
+      renderOllamaModelManagerNow();
+    });
+    return;
+  }
+
+  renderFrame = window.setTimeout(() => {
+    renderFrame = null;
+    renderOllamaModelManagerNow();
+  }, 16) as unknown as number;
+}
+
 function computeWizardStage(): WizardStage {
   const progressStage = runtimeInstallProgress?.stage;
   if (progressStage === "download_runtime") return "download_runtime";
   if (progressStage === "install_runtime") return "install_runtime";
+  if (progressStage === "start_runtime") return "start_runtime";
+  if (progressStage === "verify_runtime") return "verify_runtime";
+
+  if (runtimeInstallError) return "failed";
 
   if (!runtimeDetect?.found) return "not_detected";
   if (!runtimeIsHealthy()) return "start_runtime";
@@ -86,19 +142,9 @@ function computeWizardStage(): WizardStage {
   return "ready";
 }
 
-function stageTitle(stage: WizardStage): string {
-  if (stage === "not_detected") return "Runtime not detected";
-  if (stage === "download_runtime") return "Downloading runtime";
-  if (stage === "install_runtime") return "Installing runtime";
-  if (stage === "start_runtime") return "Start local runtime";
-  if (stage === "verify_runtime") return "Verifying runtime";
-  if (stage === "select_model_source") return "Runtime ready, no model installed";
-  return "Ready";
-}
-
 function stageHint(stage: WizardStage): string {
   if (stage === "not_detected") {
-    return "Install local Ollama runtime, use existing system Ollama, or import manually.";
+    return "Install local Ollama runtime or use an existing local runtime.";
   }
   if (stage === "download_runtime" || stage === "install_runtime") {
     return "Preparing local runtime. This can take a few minutes on first run.";
@@ -109,30 +155,99 @@ function stageHint(stage: WizardStage): string {
   if (stage === "verify_runtime") {
     return "Checking runtime health and model availability.";
   }
+  if (stage === "failed") {
+    return runtimeInstallError?.error || "Runtime setup failed. Retry or open advanced tools.";
+  }
   if (stage === "select_model_source") {
-    return "Install a model with one click or import from local files for offline setup.";
+    return "Install a model from the cards below or import from local files.";
   }
   return "Local AI refinement is configured and ready.";
 }
 
-function stageClass(stage: WizardStage): string {
-  if (stage === "ready") return "is-ready";
-  if (stage === "download_runtime" || stage === "install_runtime") return "is-busy";
-  if (stage === "select_model_source") return "is-warning";
-  return "is-pending";
+function runtimeActionLabel(action: string | null): string {
+  if (!action) return "";
+  return RUNTIME_ACTION_LABELS[action] || `Running ${action}...`;
+}
+
+function resolvePrimaryAction(): {
+  action: OllamaRuntimePrimaryAction;
+  label: string;
+  disabled: boolean;
+} {
+  if (runtimeBusyAction) {
+    return {
+      action: runtimeDetect?.found ? "start" : "install",
+      label: runtimeActionLabel(runtimeBusyAction),
+      disabled: true,
+    };
+  }
+  if (runtimeIsHealthy()) {
+    return {
+      action: "ready",
+      label: "Runtime ready",
+      disabled: true,
+    };
+  }
+  if (runtimeDetect?.found) {
+    return {
+      action: "start",
+      label: "Start local runtime",
+      disabled: false,
+    };
+  }
+  return {
+    action: "install",
+    label: "Install local runtime",
+    disabled: false,
+  };
+}
+
+export function getOllamaRuntimeCardState(): OllamaRuntimeCardState {
+  const source = runtimeDetect?.source || settings?.providers?.ollama?.runtime_source || "manual";
+  const version = runtimeDetect?.version || settings?.providers?.ollama?.runtime_version || "unknown";
+  const endpoint = settings?.providers?.ollama?.endpoint || DEFAULT_LOCAL_ENDPOINT;
+  const stage = computeWizardStage();
+  const primary = resolvePrimaryAction();
+  const detail = runtimeInstallProgress?.message
+    || (runtimeBusyAction ? runtimeActionLabel(runtimeBusyAction) : stageHint(stage));
+
+  return {
+    detected: Boolean(runtimeDetect?.found),
+    healthy: runtimeIsHealthy(),
+    source,
+    version: version || "unknown",
+    endpoint,
+    busy: Boolean(runtimeBusyAction),
+    busyAction: runtimeBusyAction,
+    stage,
+    primaryAction: primary.action,
+    primaryLabel: primary.label,
+    primaryDisabled: primary.disabled,
+    detail,
+  };
 }
 
 function isModelInstalled(name: string): boolean {
-  return installedOllamaModels.some(
-    (m) => m.name === name || m.name.startsWith(`${name.split(":")[0]}:`)
-  );
+  const target = normalizeModelTag(name);
+  if (!target) return false;
+  return installedOllamaModels.some((m) => isExactModelTagMatch(m.name, target));
+}
+
+function isModelActive(name: string): boolean {
+  return isExactModelTagMatch(name, settings?.ai_fallback?.model);
 }
 
 function getInstalledSize(name: string): number {
-  const found = installedOllamaModels.find(
-    (m) => m.name === name || m.name.startsWith(`${name.split(":")[0]}:`)
-  );
+  const target = normalizeModelTag(name);
+  const found = installedOllamaModels.find((m) => isExactModelTagMatch(m.name, target));
   return found ? found.size_bytes : 0;
+}
+
+function resolveCardStatus(modelName: string): CardStatus {
+  if (!isModelInstalled(modelName)) {
+    return "available";
+  }
+  return isModelActive(modelName) ? "active" : "downloaded";
 }
 
 async function persistCurrentSettings(): Promise<void> {
@@ -164,98 +279,6 @@ async function maybePersistWizardState(): Promise<void> {
   await persistCurrentSettings();
 }
 
-function renderRuntimeProgress(section: HTMLElement): void {
-  if (!runtimeInstallProgress) return;
-
-  const row = document.createElement("div");
-  row.className = "ollama-runtime-progress";
-
-  const hasTotals =
-    typeof runtimeInstallProgress.downloaded === "number" &&
-    typeof runtimeInstallProgress.total === "number" &&
-    runtimeInstallProgress.total > 0;
-
-  const percent = hasTotals
-    ? Math.max(
-        0,
-        Math.min(
-          100,
-          Math.round(
-            ((runtimeInstallProgress.downloaded as number) /
-              (runtimeInstallProgress.total as number)) *
-              100
-          )
-        )
-      )
-    : null;
-
-  if (percent !== null) {
-    const bar = document.createElement("div");
-    bar.className = "ollama-progress-bar";
-    const fill = document.createElement("div");
-    fill.className = "ollama-progress-fill";
-    fill.style.width = `${percent}%`;
-    bar.appendChild(fill);
-    row.appendChild(bar);
-  }
-
-  const text = document.createElement("span");
-  text.className = "ollama-progress-text";
-  text.textContent = runtimeInstallProgress.message;
-  row.appendChild(text);
-
-  section.appendChild(row);
-}
-
-function renderRuntimeMeta(section: HTMLElement): void {
-  const meta = document.createElement("div");
-  meta.className = "ollama-runtime-meta";
-
-  const endpoint = settings?.providers?.ollama?.endpoint || DEFAULT_LOCAL_ENDPOINT;
-  const strictLocal = strictLocalModeEnabled() ? "on" : "off";
-  const source = runtimeDetect?.source || settings?.providers?.ollama?.runtime_source || "manual";
-  const version = runtimeDetect?.version || settings?.providers?.ollama?.runtime_version || "unknown";
-
-  const endpointRow = document.createElement("span");
-  endpointRow.textContent = `Endpoint: ${endpoint}`;
-  meta.appendChild(endpointRow);
-
-  const strictRow = document.createElement("span");
-  strictRow.textContent = `Strict local: ${strictLocal}`;
-  meta.appendChild(strictRow);
-
-  const sourceRow = document.createElement("span");
-  sourceRow.textContent = `Runtime source: ${source}`;
-  meta.appendChild(sourceRow);
-
-  const versionRow = document.createElement("span");
-  versionRow.textContent = `Runtime version: ${version}`;
-  meta.appendChild(versionRow);
-
-  if (runtimeInstallError) {
-    const errorRow = document.createElement("span");
-    errorRow.className = "ollama-runtime-error";
-    errorRow.textContent = `Last error: ${runtimeInstallError.error}`;
-    meta.appendChild(errorRow);
-  }
-
-  section.appendChild(meta);
-}
-
-function runtimeButton(label: string, onClick: () => Promise<void> | void, options?: {
-  recommended?: boolean;
-  disabled?: boolean;
-}): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.className = options?.recommended ? "hotkey-record-btn is-recommended" : "hotkey-record-btn";
-  button.textContent = label;
-  button.disabled = Boolean(options?.disabled);
-  button.addEventListener("click", () => {
-    void onClick();
-  });
-  return button;
-}
-
 async function runRuntimeAction(action: string, task: () => Promise<void>): Promise<void> {
   if (runtimeBusyAction) return;
   runtimeBusyAction = action;
@@ -266,6 +289,10 @@ async function runRuntimeAction(action: string, task: () => Promise<void>): Prom
     await task();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    runtimeInstallError = {
+      stage: action,
+      error: message,
+    };
     showToast({
       type: "error",
       title: "Runtime action failed",
@@ -293,33 +320,73 @@ async function handleDetectRuntime(): Promise<void> {
   });
 }
 
-async function handleInstallLocalRuntime(): Promise<void> {
-  await runRuntimeAction("install", async () => {
+export async function ensureLocalRuntimeReady(): Promise<void> {
+  if (runtimeBusyAction) return;
+
+  runtimeBusyAction = "ensure-runtime";
+  runtimeInstallError = null;
+  renderOllamaModelManager();
+
+  let installedThisRun = false;
+  let flowStage: "detect" | "download_runtime" | "install_runtime" | "start_runtime" | "verify_runtime" = "detect";
+
+  try {
     runtimeInstallProgress = {
-      stage: "download_runtime",
-      message: "Downloading runtime archive...",
+      stage: "verify_runtime",
+      message: "Checking for local runtime...",
     };
     renderOllamaModelManager();
 
-    const download = await invoke<OllamaRuntimeDownloadResult>("download_ollama_runtime", {
-      version: DEFAULT_RUNTIME_VERSION,
-    });
-    if (!download.sha256_ok) {
-      throw new Error("Runtime checksum verification failed.");
+    runtimeDetect = await invoke<OllamaRuntimeDetectResult>("detect_ollama_runtime");
+    if (!runtimeDetect.found) {
+      flowStage = "download_runtime";
+      runtimeInstallProgress = {
+        stage: "download_runtime",
+        message: "Downloading runtime archive...",
+      };
+      renderOllamaModelManager();
+
+      const download = await invoke<OllamaRuntimeDownloadResult>("download_ollama_runtime", {
+        version: DEFAULT_RUNTIME_VERSION,
+      });
+      if (!download.sha256_ok) {
+        throw new Error("Runtime checksum verification failed.");
+      }
+
+      flowStage = "install_runtime";
+      runtimeInstallProgress = {
+        stage: "install_runtime",
+        message: "Installing runtime files...",
+        version: download.version,
+      };
+      renderOllamaModelManager();
+
+      await invoke<OllamaRuntimeInstallResult>("install_ollama_runtime", {
+        archivePath: download.archive_path,
+      });
+      installedThisRun = true;
+
+      // Refresh detection immediately so UI reflects "installed" even if start fails.
+      runtimeDetect = await invoke<OllamaRuntimeDetectResult>("detect_ollama_runtime");
+      if (!runtimeDetect.found) {
+        throw new Error("Runtime installation completed, but no executable was detected.");
+      }
     }
 
+    flowStage = "start_runtime";
     runtimeInstallProgress = {
-      stage: "install_runtime",
-      message: "Installing runtime files...",
-      version: download.version,
+      stage: "start_runtime",
+      message: "Starting local runtime...",
     };
     renderOllamaModelManager();
-
-    await invoke<OllamaRuntimeInstallResult>("install_ollama_runtime", {
-      archivePath: download.archive_path,
-    });
-
     await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
+
+    flowStage = "verify_runtime";
+    runtimeInstallProgress = {
+      stage: "verify_runtime",
+      message: "Verifying local runtime...",
+    };
+    renderOllamaModelManager();
     runtimeVerify = await invoke<OllamaRuntimeVerifyResult>("verify_ollama_runtime");
 
     await refreshOllamaInstalledModels();
@@ -328,11 +395,39 @@ async function handleInstallLocalRuntime(): Promise<void> {
 
     showToast({
       type: "success",
-      title: "Local runtime installed",
-      message: "Ollama runtime is installed and running locally.",
+      title: installedThisRun ? "Local runtime installed" : "Local runtime ready",
+      message: installedThisRun
+        ? "Install and startup completed. Local Ollama is ready."
+        : "Local Ollama runtime is running and verified.",
       duration: 4000,
     });
-  });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    runtimeInstallError = {
+      stage: flowStage,
+      error: message,
+    };
+
+    if (installedThisRun && (flowStage === "start_runtime" || flowStage === "verify_runtime")) {
+      showToast({
+        type: "warning",
+        title: "Install completed, start failed",
+        message: `${message} Try "Start local runtime" again.`,
+        duration: 7000,
+      });
+    } else {
+      showToast({
+        type: "error",
+        title: "Runtime setup failed",
+        message,
+        duration: 7000,
+      });
+    }
+  } finally {
+    runtimeBusyAction = null;
+    runtimeInstallProgress = null;
+    renderOllamaModelManager();
+  }
 }
 
 async function handleUseSystemRuntime(): Promise<void> {
@@ -365,6 +460,10 @@ async function handleUseSystemRuntime(): Promise<void> {
   });
 }
 
+export async function useSystemOllamaRuntime(): Promise<void> {
+  await handleUseSystemRuntime();
+}
+
 async function handleStartRuntime(): Promise<void> {
   await runRuntimeAction("start", async () => {
     const result = await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
@@ -387,6 +486,10 @@ async function handleStartRuntime(): Promise<void> {
   });
 }
 
+export async function startOllamaRuntime(): Promise<void> {
+  await handleStartRuntime();
+}
+
 async function handleVerifyRuntime(): Promise<void> {
   await runRuntimeAction("verify", async () => {
     runtimeVerify = await invoke<OllamaRuntimeVerifyResult>("verify_ollama_runtime");
@@ -403,14 +506,16 @@ async function handleVerifyRuntime(): Promise<void> {
   });
 }
 
+export async function verifyOllamaRuntime(): Promise<void> {
+  await handleVerifyRuntime();
+}
+
 async function handleImportModelFromFile(): Promise<void> {
   await runRuntimeAction("import", async () => {
     const selected = await open({
       directory: false,
       multiple: false,
-      filters: [
-        { name: "Model files", extensions: ["gguf", "modelfile", "txt"] },
-      ],
+      filters: [{ name: "Model files", extensions: ["gguf", "modelfile", "txt"] }],
     });
 
     if (!selected || Array.isArray(selected)) {
@@ -439,112 +544,89 @@ async function handleImportModelFromFile(): Promise<void> {
   });
 }
 
-async function handlePullDefaultModel(): Promise<void> {
-  await handleOllamaPull(DEFAULT_SETUP_MODEL);
+export async function importOllamaModelFromLocalFile(): Promise<void> {
+  await handleImportModelFromFile();
 }
 
-function renderRuntimeWizard(container: HTMLElement): void {
+async function handleSetActiveModel(modelName: string): Promise<void> {
+  if (!settings) return;
+  const normalized = normalizeModelTag(modelName);
+  settings.ai_fallback.model = normalized;
+  settings.postproc_llm_model = normalized;
+  settings.providers.ollama.preferred_model = normalized;
+  await persistCurrentSettings();
+  showToast({
+    type: "success",
+    title: "Model selected",
+    message: `${modelName} is now active for AI refinement.`,
+    duration: 3000,
+  });
+  renderOllamaModelManager();
+}
+
+async function handleRefreshRuntimeAndModels(): Promise<void> {
+  await runRuntimeAction("refresh", async () => {
+    await refreshOllamaInstalledModels();
+    await refreshOllamaRuntimeState();
+  });
+}
+
+export async function refreshOllamaRuntimeAndModels(): Promise<void> {
+  await handleRefreshRuntimeAndModels();
+}
+
+export async function detectOllamaRuntime(): Promise<void> {
+  await handleDetectRuntime();
+}
+
+function renderModelsSection(container: HTMLElement): void {
   const section = document.createElement("div");
-  section.className = "ai-refine-section";
-
-  const titleRow = document.createElement("div");
-  titleRow.className = "ollama-runtime-title-row";
-
-  const title = document.createElement("h3");
-  title.className = "ai-refine-section-title";
-  title.textContent = "Local AI Runtime";
-  titleRow.appendChild(title);
-
-  const stage = computeWizardStage();
-  const badge = document.createElement("span");
-  badge.className = `ollama-runtime-badge ${stageClass(stage)}`;
-  badge.textContent = stageTitle(stage);
-  titleRow.appendChild(badge);
-
-  section.appendChild(titleRow);
+  section.className = "ollama-models-section";
 
   const hint = document.createElement("p");
   hint.className = "field-hint";
-  hint.textContent = stageHint(stage);
+  hint.textContent = "Download, activate, or remove local models for offline refinement.";
   section.appendChild(hint);
 
-  if (runtimeBusyAction) {
-    const busy = document.createElement("p");
-    busy.className = "ollama-runtime-busy";
-    busy.textContent = `Action in progress: ${runtimeBusyAction}`;
-    section.appendChild(busy);
-  }
-
-  renderRuntimeProgress(section);
-  renderRuntimeMeta(section);
-
-  const actions = document.createElement("div");
-  actions.className = "ollama-runtime-actions";
-  const busy = Boolean(runtimeBusyAction);
-
-  actions.appendChild(
-    runtimeButton("Install local Ollama runtime (recommended)", handleInstallLocalRuntime, {
-      recommended: true,
-      disabled: busy,
-    })
-  );
-  actions.appendChild(
-    runtimeButton("Use existing system Ollama", handleUseSystemRuntime, {
-      disabled: busy,
-    })
-  );
-  actions.appendChild(runtimeButton("Detect runtime", handleDetectRuntime, { disabled: busy }));
-  actions.appendChild(runtimeButton("Start runtime", handleStartRuntime, { disabled: busy }));
-  actions.appendChild(runtimeButton("Verify runtime", handleVerifyRuntime, { disabled: busy }));
-  actions.appendChild(
-    runtimeButton("Import model from file", handleImportModelFromFile, { disabled: busy })
-  );
-
-  if (!isModelInstalled(DEFAULT_SETUP_MODEL)) {
-    actions.appendChild(
-      runtimeButton(`Pull ${DEFAULT_SETUP_MODEL}`, handlePullDefaultModel, { disabled: busy })
-    );
-  }
-
-  section.appendChild(actions);
-  container.appendChild(section);
-}
-
-function renderRecommendedModels(container: HTMLElement): void {
-  const header = document.createElement("div");
-  header.className = "ai-refine-section";
-  header.innerHTML = `
-    <h3 class="ai-refine-section-title">Recommended Models</h3>
-    <p class="field-hint">These models are optimized for transcript refinement.</p>
-  `;
-  container.appendChild(header);
+  const list = document.createElement("div");
+  list.className = "model-list ollama-model-list";
 
   OLLAMA_RECOMMENDED_MODELS.forEach((spec) => {
     const installed = isModelInstalled(spec.name);
+    const active = isModelActive(spec.name);
     const isPulling = ollamaPullProgress.has(spec.name) || activeOllamaPulls.has(spec.name);
     const progress = ollamaPullProgress.get(spec.name);
 
-    const card = document.createElement("div");
-    card.className = `ollama-model-card${installed ? " is-installed" : ""}`;
+    const status = resolveCardStatus(spec.name);
+    const statusText = isPulling
+      ? "Downloading"
+      : status === "active"
+        ? "Active"
+        : status === "downloaded"
+          ? "Installed"
+          : "Available";
+
+    const card = document.createElement("article");
+    card.className = `model-item ollama-model-item${
+      status === "active" ? " selected" : ""
+    }${status === "available" ? " model-item--available" : ""}${isPulling ? " is-loading" : ""}`;
 
     const sizeDisplay = installed
       ? formatBytesGb(getInstalledSize(spec.name))
       : `~${spec.size_gb.toFixed(1)} GB`;
 
     card.innerHTML = `
-      <div class="ollama-model-header">
-        <div class="ollama-model-name">${spec.label}</div>
-        <div class="ollama-model-size">${sizeDisplay}</div>
+      <div class="model-header">
+        <div class="model-name">${spec.label}</div>
+        <div class="model-size">${sizeDisplay}</div>
       </div>
-      <div class="ollama-model-profile">${spec.profile}</div>
-      <div class="ollama-model-desc">${spec.description}</div>
-      <div class="ollama-model-status ${installed ? "installed" : "available"}">
-        ${installed ? "Installed" : isPulling ? "Downloading..." : "Not installed"}
-      </div>
+      <div class="model-meta">${spec.profile}</div>
+      <div class="model-desc">${spec.description}</div>
+      <div class="model-status ${isPulling ? "downloaded" : status}">${statusText}</div>
       ${
         isPulling && progress
           ? `
-        <div class="ollama-model-progress">
+        <div class="model-progress ollama-model-progress">
           <div class="ollama-progress-bar">
             <div class="ollama-progress-fill" style="width: ${computeOllamaPercent(progress)}%"></div>
           </div>
@@ -553,61 +635,59 @@ function renderRecommendedModels(container: HTMLElement): void {
       `
           : ""
       }
-      <div class="ollama-model-actions"></div>
+      <div class="model-actions ollama-model-actions"></div>
     `;
 
-    container.appendChild(card);
+    const actionsEl = card.querySelector(".ollama-model-actions") as HTMLDivElement | null;
+    if (actionsEl) {
+      if (isPulling) {
+        const note = document.createElement("span");
+        note.className = "ollama-cancel-note";
+        note.textContent = "Pull in progress...";
+        actionsEl.appendChild(note);
+      } else if (status === "available") {
+        const pullBtn = document.createElement("button");
+        pullBtn.className = "btn-sm btn-primary";
+        pullBtn.textContent = "Download";
+        pullBtn.title = `Pull ${spec.name} via Ollama`;
+        applyHelpTooltip(pullBtn, "ollama_action_download");
+        pullBtn.addEventListener("click", () => {
+          void handleOllamaPull(spec.name);
+        });
+        actionsEl.appendChild(pullBtn);
+      } else {
+        if (!active) {
+          const activateBtn = document.createElement("button");
+          activateBtn.className = "btn-sm btn-primary";
+          activateBtn.textContent = "Set active";
+          activateBtn.title = `Use ${spec.name} for AI refinement`;
+          applyHelpTooltip(activateBtn, "ollama_action_set_active");
+          activateBtn.addEventListener("click", () => {
+            void handleSetActiveModel(spec.name);
+          });
+          actionsEl.appendChild(activateBtn);
+        }
 
-    const actionsEl = card.querySelector(".ollama-model-actions");
-    if (!actionsEl) return;
-
-    if (installed) {
-      const deleteBtn = document.createElement("button");
-      deleteBtn.className = "btn-sm btn-danger";
-      deleteBtn.textContent = "Delete";
-      deleteBtn.title = `Remove ${spec.name} from Ollama`;
-      deleteBtn.addEventListener("click", () => {
-        void handleOllamaDelete(spec.name);
-      });
-      actionsEl.appendChild(deleteBtn);
-    } else if (isPulling) {
-      const note = document.createElement("span");
-      note.className = "ollama-cancel-note";
-      note.textContent = "Pull in progress...";
-      actionsEl.appendChild(note);
-    } else {
-      const pullBtn = document.createElement("button");
-      pullBtn.className = "btn-sm btn-primary";
-      pullBtn.textContent = "Download";
-      pullBtn.title = `Pull ${spec.name} via Ollama`;
-      pullBtn.addEventListener("click", () => {
-        void handleOllamaPull(spec.name);
-      });
-      actionsEl.appendChild(pullBtn);
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "btn-sm btn-danger";
+        deleteBtn.textContent = "Delete";
+        deleteBtn.title = `Remove ${spec.name} from Ollama`;
+        applyHelpTooltip(deleteBtn, "ollama_action_delete");
+        deleteBtn.addEventListener("click", () => {
+          void handleOllamaDelete(spec.name);
+        });
+        actionsEl.appendChild(deleteBtn);
+      }
     }
-  });
-}
 
-function renderRefreshRow(container: HTMLElement): void {
-  const refreshRow = document.createElement("div");
-  refreshRow.className = "ollama-refresh-row";
-
-  const refreshBtn = document.createElement("button");
-  refreshBtn.className = "ghost-btn";
-  refreshBtn.textContent = "Refresh Runtime + Models";
-  refreshBtn.addEventListener("click", () => {
-    void (async () => {
-      await refreshOllamaInstalledModels();
-      await refreshOllamaRuntimeState();
-      renderOllamaModelManager();
-    })();
+    list.appendChild(card);
   });
 
-  refreshRow.appendChild(refreshBtn);
-  container.appendChild(refreshRow);
+  section.appendChild(list);
+  container.appendChild(section);
 }
 
-export function renderOllamaModelManager(): void {
+function renderOllamaModelManagerNow(): void {
   const container = document.getElementById("ollama-model-manager");
   if (!container) return;
 
@@ -616,9 +696,11 @@ export function renderOllamaModelManager(): void {
   if (!isOllama) return;
 
   container.innerHTML = "";
-  renderRuntimeWizard(container);
-  renderRecommendedModels(container);
-  renderRefreshRow(container);
+  renderModelsSection(container);
+}
+
+export function renderOllamaModelManager(): void {
+  scheduleRender();
 }
 
 export async function refreshOllamaInstalledModels(): Promise<void> {
@@ -634,8 +716,6 @@ export async function refreshOllamaInstalledModels(): Promise<void> {
 }
 
 export async function refreshOllamaRuntimeState(): Promise<void> {
-  if (!isOllamaProvider()) return;
-
   try {
     runtimeDetect = await invoke<OllamaRuntimeDetectResult>("detect_ollama_runtime");
   } catch {
@@ -651,6 +731,11 @@ export async function refreshOllamaRuntimeState(): Promise<void> {
     };
   } catch {
     runtimeVerify = null;
+    runtimeHealth = {
+      ok: false,
+      endpoint: settings?.providers?.ollama?.endpoint || DEFAULT_LOCAL_ENDPOINT,
+      models_count: 0,
+    };
   }
 
   try {
@@ -683,6 +768,15 @@ async function handleOllamaDelete(modelName: string): Promise<void> {
   try {
     await invoke("delete_ollama_model", { model: modelName });
     await refreshOllamaInstalledModels();
+
+    if (settings && normalizeModelTag(settings.ai_fallback.model) === normalizeModelTag(modelName)) {
+      const fallbackModel = installedOllamaModels[0]?.name ?? "";
+      settings.ai_fallback.model = normalizeModelTag(fallbackModel);
+      settings.providers.ollama.preferred_model = normalizeModelTag(fallbackModel);
+      settings.postproc_llm_model = normalizeModelTag(fallbackModel);
+      await persistCurrentSettings();
+    }
+
     await maybePersistWizardState();
     showToast({
       type: "success",
@@ -728,9 +822,6 @@ export function clearActiveOllamaPull(modelName: string): void {
 
 export function setOllamaRuntimeInstallProgress(progress: OllamaRuntimeInstallProgress): void {
   runtimeInstallProgress = progress;
-  if (progress.stage === "verify_runtime") {
-    runtimeVerify = { ok: true, endpoint: DEFAULT_LOCAL_ENDPOINT, models_count: installedOllamaModels.length };
-  }
   renderOllamaModelManager();
 }
 

@@ -2,15 +2,24 @@ use serde::{Deserialize, Serialize};
 
 use super::provider::default_models_for_provider;
 
-const DEFAULT_PROVIDER: &str = "claude";
+const DEFAULT_PROVIDER: &str = "ollama";
 const DEFAULT_TEMPERATURE: f32 = 0.3;
 const DEFAULT_MAX_TOKENS: u32 = 4000;
+const DEFAULT_EXECUTION_MODE: &str = "local_primary";
+const AUTH_STATUS_LOCKED: &str = "locked";
+const AUTH_STATUS_VERIFIED_API_KEY: &str = "verified_api_key";
+const AUTH_STATUS_VERIFIED_OAUTH: &str = "verified_oauth";
+const AUTH_METHOD_API_KEY: &str = "api_key";
+const AUTH_METHOD_OAUTH: &str = "oauth";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AIFallbackSettings {
     pub enabled: bool,
     pub provider: String, // "claude" | "openai" | "gemini" | "ollama"
+    pub fallback_provider: Option<String>, // "claude" | "openai" | "gemini"
+    pub execution_mode: String, // "local_primary" | "online_fallback"
+    pub strict_local_mode: bool,
     pub model: String,
     pub temperature: f32,
     pub max_tokens: u32,
@@ -25,10 +34,13 @@ impl Default for AIFallbackSettings {
         let model = default_models_for_provider(&provider)
             .into_iter()
             .next()
-            .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string());
+            .unwrap_or_default();
         Self {
             enabled: false,
             provider,
+            fallback_provider: None,
+            execution_mode: DEFAULT_EXECUTION_MODE.to_string(),
+            strict_local_mode: true,
             model,
             temperature: DEFAULT_TEMPERATURE,
             max_tokens: DEFAULT_MAX_TOKENS,
@@ -42,8 +54,27 @@ impl Default for AIFallbackSettings {
 
 impl AIFallbackSettings {
     pub fn normalize(&mut self) {
-        let provider = normalize_provider_id(&self.provider);
-        self.provider = provider.to_string();
+        self.fallback_provider = self
+            .fallback_provider
+            .as_ref()
+            .and_then(|provider| normalize_cloud_provider_id(provider).map(str::to_string));
+
+        if self.execution_mode != "local_primary" && self.execution_mode != "online_fallback" {
+            self.execution_mode = DEFAULT_EXECUTION_MODE.to_string();
+        }
+
+        let normalized_provider = normalize_provider_id(&self.provider).to_string();
+        self.provider = if self.execution_mode == "online_fallback" {
+            self.fallback_provider
+                .clone()
+                .unwrap_or_else(|| DEFAULT_PROVIDER.to_string())
+        } else {
+            DEFAULT_PROVIDER.to_string()
+        };
+        if self.provider != "ollama" && self.fallback_provider.is_none() {
+            self.fallback_provider =
+                normalize_cloud_provider_id(&normalized_provider).map(str::to_string);
+        }
 
         self.temperature = self.temperature.clamp(0.0, 1.0);
         if self.max_tokens < 128 {
@@ -56,10 +87,11 @@ impl AIFallbackSettings {
             self.custom_prompt = AIFallbackSettings::default().custom_prompt;
         }
         if self.model.trim().is_empty() {
-            self.model = default_models_for_provider(&self.provider)
-                .into_iter()
-                .next()
-                .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string());
+            // For Ollama: models are discovered at runtime, don't default to a cloud model.
+            let defaults = default_models_for_provider(&self.provider);
+            if let Some(first) = defaults.into_iter().next() {
+                self.model = first;
+            }
         }
     }
 }
@@ -68,6 +100,9 @@ impl AIFallbackSettings {
 #[serde(default)]
 pub struct AIProviderSettings {
     pub api_key_stored: bool,
+    pub auth_method_preference: String, // "api_key" | "oauth"
+    pub auth_status: String, // "locked" | "verified_api_key" | "verified_oauth"
+    pub auth_verified_at: Option<String>,
     pub available_models: Vec<String>,
     pub preferred_model: String,
 }
@@ -81,12 +116,26 @@ impl AIProviderSettings {
         let preferred_model = models[0].clone();
         Self {
             api_key_stored: false,
+            auth_method_preference: AUTH_METHOD_API_KEY.to_string(),
+            auth_status: AUTH_STATUS_LOCKED.to_string(),
+            auth_verified_at: None,
             available_models: models,
             preferred_model,
         }
     }
 
     fn normalize_for_provider(&mut self, provider: &str) {
+        if !is_valid_auth_method_preference(&self.auth_method_preference) {
+            self.auth_method_preference = AUTH_METHOD_API_KEY.to_string();
+        }
+        if !is_valid_auth_status(&self.auth_status) {
+            self.auth_status = AUTH_STATUS_LOCKED.to_string();
+            self.auth_verified_at = None;
+        }
+        if !self.api_key_stored && self.auth_status != AUTH_STATUS_VERIFIED_OAUTH {
+            self.auth_status = AUTH_STATUS_LOCKED.to_string();
+            self.auth_verified_at = None;
+        }
         if self.available_models.is_empty() {
             self.available_models = default_models_for_provider(provider);
         }
@@ -94,41 +143,10 @@ impl AIProviderSettings {
             self.available_models.push("unknown".to_string());
         }
         if self.preferred_model.trim().is_empty()
-            || !self.available_models.iter().any(|m| m == &self.preferred_model)
-        {
-            self.preferred_model = self.available_models[0].clone();
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct OllamaSettings {
-    pub endpoint: String,
-    pub available_models: Vec<String>,
-    pub preferred_model: String,
-}
-
-impl Default for OllamaSettings {
-    fn default() -> Self {
-        Self {
-            endpoint: "http://localhost:11434".to_string(),
-            available_models: Vec::new(),
-            preferred_model: String::new(),
-        }
-    }
-}
-
-impl OllamaSettings {
-    fn normalize(&mut self) {
-        if self.endpoint.trim().is_empty() {
-            self.endpoint = "http://localhost:11434".to_string();
-        }
-        if self.available_models.is_empty() {
-            self.available_models.push("llama2".to_string());
-        }
-        if self.preferred_model.trim().is_empty()
-            || !self.available_models.iter().any(|m| m == &self.preferred_model)
+            || !self
+                .available_models
+                .iter()
+                .any(|m| m == &self.preferred_model)
         {
             self.preferred_model = self.available_models[0].clone();
         }
@@ -139,8 +157,61 @@ impl Default for AIProviderSettings {
     fn default() -> Self {
         Self {
             api_key_stored: false,
+            auth_method_preference: AUTH_METHOD_API_KEY.to_string(),
+            auth_status: AUTH_STATUS_LOCKED.to_string(),
+            auth_verified_at: None,
             available_models: Vec::new(),
             preferred_model: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OllamaSettings {
+    pub endpoint: String,
+    pub available_models: Vec<String>,
+    pub preferred_model: String,
+    pub runtime_source: String, // "system" | "per_user_zip" | "manual"
+    pub runtime_path: String,
+    pub runtime_version: String,
+    pub last_health_check: Option<String>,
+}
+
+impl Default for OllamaSettings {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:11434".to_string(),
+            available_models: Vec::new(),
+            preferred_model: String::new(),
+            runtime_source: "manual".to_string(),
+            runtime_path: String::new(),
+            runtime_version: String::new(),
+            last_health_check: None,
+        }
+    }
+}
+
+impl OllamaSettings {
+    fn normalize(&mut self) {
+        if self.endpoint.trim().is_empty() {
+            self.endpoint = "http://localhost:11434".to_string();
+        }
+        if self.available_models.is_empty() {
+            self.preferred_model = String::new();
+        } else if self.preferred_model.trim().is_empty()
+            || !self
+                .available_models
+                .iter()
+                .any(|m| m == &self.preferred_model)
+        {
+            self.preferred_model = self.available_models[0].clone();
+        }
+        if self.runtime_source != "system"
+            && self.runtime_source != "per_user_zip"
+            && self.runtime_source != "manual"
+        {
+            self.runtime_source = "manual".to_string();
         }
     }
 }
@@ -207,9 +278,62 @@ impl AIProvidersSettings {
             .get_mut(provider)
             .ok_or_else(|| format!("Unknown AI provider: {}", provider))?;
         provider_config.api_key_stored = stored;
+        provider_config.auth_status = AUTH_STATUS_LOCKED.to_string();
+        provider_config.auth_verified_at = None;
         Ok(())
     }
 
+    pub fn set_auth_verified(
+        &mut self,
+        provider: &str,
+        method: &str,
+        verified_at: Option<String>,
+    ) -> Result<(), String> {
+        let provider_config = self
+            .get_mut(provider)
+            .ok_or_else(|| format!("Unknown AI provider: {}", provider))?;
+        if method != AUTH_STATUS_VERIFIED_API_KEY && method != AUTH_STATUS_VERIFIED_OAUTH {
+            return Err(format!("Unsupported auth verification method: {}", method));
+        }
+        provider_config.auth_status = method.to_string();
+        provider_config.auth_verified_at = verified_at;
+        Ok(())
+    }
+
+    pub fn lock_auth(&mut self, provider: &str) -> Result<(), String> {
+        let provider_config = self
+            .get_mut(provider)
+            .ok_or_else(|| format!("Unknown AI provider: {}", provider))?;
+        provider_config.auth_status = AUTH_STATUS_LOCKED.to_string();
+        provider_config.auth_verified_at = None;
+        Ok(())
+    }
+
+    pub fn is_verified(&self, provider: &str) -> bool {
+        self.get(provider)
+            .map(|config| config.auth_status != AUTH_STATUS_LOCKED)
+            .unwrap_or(false)
+    }
+}
+
+fn is_valid_auth_status(status: &str) -> bool {
+    matches!(
+        status.trim(),
+        AUTH_STATUS_LOCKED | AUTH_STATUS_VERIFIED_API_KEY | AUTH_STATUS_VERIFIED_OAUTH
+    )
+}
+
+fn is_valid_auth_method_preference(method: &str) -> bool {
+    matches!(method.trim(), AUTH_METHOD_API_KEY | AUTH_METHOD_OAUTH)
+}
+
+fn normalize_cloud_provider_id(provider: &str) -> Option<&'static str> {
+    match provider.trim().to_lowercase().as_str() {
+        "claude" => Some("claude"),
+        "openai" => Some("openai"),
+        "gemini" => Some("gemini"),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,7 +360,7 @@ pub struct RefinementResult {
     pub execution_time_ms: u64,
 }
 
-pub fn normalize_provider_id(provider: &str) -> &str {
+pub fn normalize_provider_id(provider: &str) -> &'static str {
     match provider.trim().to_lowercase().as_str() {
         "claude" => "claude",
         "openai" => "openai",

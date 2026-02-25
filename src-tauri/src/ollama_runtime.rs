@@ -719,7 +719,7 @@ pub fn start_ollama_runtime(
         .map_err(|e| format!("Failed to start Ollama runtime: {}", e))?;
     let pid = child.id();
 
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         if ping_ollama(&endpoint).is_ok() {
             let ts = now_iso();
@@ -743,7 +743,10 @@ pub fn start_ollama_runtime(
         }
         if Instant::now() >= deadline {
             emit_runtime_health(&app, endpoint.clone(), 0, false);
-            return Err("Timed out while waiting for Ollama runtime to start.".to_string());
+            return Err(format!(
+                "Timed out while waiting for Ollama runtime to start at {}. Check whether port 11434 is blocked by another process or firewall, then retry.",
+                endpoint
+            ));
         }
         std::thread::sleep(Duration::from_millis(500));
     }
@@ -773,15 +776,6 @@ pub fn verify_ollama_runtime(
     ping_ollama(&endpoint).map_err(|e| e.to_string())?;
     let models = list_ollama_models(&endpoint);
 
-    let _ = update_runtime_in_settings(
-        &app,
-        &state,
-        settings_snapshot.providers.ollama.runtime_source.clone(),
-        settings_snapshot.providers.ollama.runtime_path.clone(),
-        settings_snapshot.providers.ollama.runtime_version.clone(),
-        Some(now_iso()),
-        !models.is_empty(),
-    );
     emit_runtime_health(&app, endpoint.clone(), models.len(), true);
 
     Ok(OllamaRuntimeVerifyResult {

@@ -1,12 +1,14 @@
 use crate::ai_fallback::models::RefinementOptions;
-use crate::ai_fallback::provider::ProviderFactory;
+use crate::ai_fallback::provider::{resolve_effective_local_model, ProviderFactory};
 use crate::constants::{
     TARGET_SAMPLE_RATE, VAD_MIN_CONSECUTIVE_CHUNKS, VAD_MIN_VOICE_MS,
 };
 use crate::continuous_dump::{AdaptiveSegmenter, AdaptiveSegmenterConfig, SegmentFlushReason};
 use crate::overlay::{update_overlay_state, OverlayState};
 use crate::postprocessing::process_transcript;
-use crate::state::{push_history_entry_inner, AppState, Settings};
+use crate::state::{
+    normalize_ai_fallback_fields, push_history_entry_inner, save_settings_file, AppState, Settings,
+};
 use crate::transcription::{
     rms_i16, should_drop_transcript, transcribe_audio, TranscriptionResult,
 };
@@ -866,17 +868,45 @@ fn maybe_spawn_ai_refinement(
     }
 
     let endpoint = settings.providers.ollama.endpoint.clone();
-    // Use ai_fallback.model; fall back to preferred_model if blank
-    let model = {
-        let m = settings.ai_fallback.model.trim().to_string();
-        if m.is_empty() {
-            settings.providers.ollama.preferred_model.clone()
-        } else {
-            m
+    let model_resolution = match resolve_effective_local_model(
+        &settings.ai_fallback.model,
+        &settings.providers.ollama.preferred_model,
+        &endpoint,
+    ) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            error!("AI refinement skipped: {}", error);
+            let _ = app_handle.emit(
+                "transcription:refinement-failed",
+                serde_json::json!({
+                    "source": source.clone(),
+                    "error": error.to_string(),
+                }),
+            );
+            return;
         }
     };
-    if model.is_empty() {
-        return; // No model configured — skip silently
+
+    let model = model_resolution.model.clone();
+    if model_resolution.repaired
+        || settings.ai_fallback.model.trim() != model
+        || settings.providers.ollama.preferred_model.trim() != model
+        || settings.postproc_llm_model.trim() != model
+    {
+        let snapshot = {
+            let state = app_handle.state::<AppState>();
+            let mut live = state.settings.lock().unwrap();
+            live.ai_fallback.model = model.clone();
+            live.providers.ollama.preferred_model = model.clone();
+            live.postproc_llm_model = model.clone();
+            normalize_ai_fallback_fields(&mut live);
+            live.clone()
+        };
+        if let Err(err) = save_settings_file(&app_handle, &snapshot) {
+            error!("Failed to persist repaired local model selection: {}", err);
+        } else {
+            let _ = app_handle.emit("settings-changed", snapshot.clone());
+        }
     }
 
     let options = RefinementOptions {

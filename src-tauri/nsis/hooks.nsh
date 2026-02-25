@@ -208,6 +208,8 @@ FunctionEnd
   FileWrite $0 '"language_mode":"auto",'
   FileWrite $0 '"model":"whisper-large-v3-turbo",'
   FileWrite $0 '"cloud_fallback":false,'
+  FileWrite $0 '"ai_fallback":{"enabled":false,"provider":"ollama","fallback_provider":null,"execution_mode":"local_primary","strict_local_mode":true,"model":"","temperature":0.3,"max_tokens":4000,"custom_prompt_enabled":false,"custom_prompt":"Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.","use_default_prompt":true},'
+  FileWrite $0 '"setup":{"local_ai_wizard_completed":false,"local_ai_wizard_pending":true,"ollama_remote_expert_opt_in":false},'
   FileWrite $0 '"audio_cues":true,'
   FileWrite $0 '"audio_cues_volume":0.3,'
   FileWrite $0 '"ptt_use_vad":false,'

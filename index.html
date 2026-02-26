@@ -25,6 +25,10 @@
          role="status"
          aria-live="polite"
          aria-atomic="true"></div>
+    <div id="refining-announcement" class="sr-only"
+         role="status"
+         aria-live="polite"
+         aria-atomic="true"></div>
     <main class="app">
       <header class="hero" style="--delay: 0.05s">
         <div>
@@ -46,6 +50,18 @@
               <span class="status-dot" id="transcribe-dot" data-state="idle"
                     aria-label="Transcribing status: idle"></span>
               <span id="transcribe-label" class="status-label">Transcribing: Idle</span>
+            </div>
+            <div class="status-item">
+              <span id="refining-pill" class="status-pill status-pill--disabled">Refining</span>
+              <span class="status-dot" id="refining-dot" data-state="idle"
+                    aria-label="Refining status: idle"></span>
+              <span id="refining-label" class="status-label">Refining: Idle</span>
+            </div>
+            <div class="status-item">
+              <span id="gpu-pill" class="status-pill status-pill--disabled">GPU</span>
+              <span class="status-dot" id="gpu-dot" data-state="idle"
+                    aria-label="GPU status: idle"></span>
+              <span id="gpu-label" class="status-label">GPU: Idle</span>
             </div>
             <span id="status-message" class="status-message" role="alert"></span>
           </div>
@@ -198,6 +214,35 @@
               <div id="chapters-list" class="chapters-list"></div>
             </div>
             <div id="history-list" class="history-list"></div>
+            <details id="refinement-inspector" class="expander refinement-inspector" open>
+              <summary>Refinement Inspector (Latest)</summary>
+              <div class="expander-body">
+                <div id="refinement-inspector-empty" class="field-hint">
+                  No refinement data yet. Start speaking to compare raw vs refined text.
+                </div>
+                <div id="refinement-inspector-content" class="refinement-inspector-content" style="display: none;">
+                  <div class="refinement-inspector-header">
+                    <span id="refinement-inspector-status" class="model-status model-status--available">Idle</span>
+                    <span id="refinement-inspector-meta" class="field-hint">—</span>
+                  </div>
+                  <div class="refinement-inspector-grid">
+                    <div class="refinement-inspector-card">
+                      <h4>Raw Transcript</h4>
+                      <div id="refinement-inspector-raw" class="refinement-inspector-text"></div>
+                    </div>
+                    <div class="refinement-inspector-card">
+                      <h4>Refined Transcript</h4>
+                      <div id="refinement-inspector-refined" class="refinement-inspector-text"></div>
+                    </div>
+                  </div>
+                  <div class="refinement-inspector-card">
+                    <h4>Word Diff</h4>
+                    <div id="refinement-inspector-diff" class="refinement-inspector-diff"></div>
+                  </div>
+                  <div id="refinement-inspector-error" class="refinement-inspector-error" style="display: none;"></div>
+                </div>
+              </div>
+            </details>
           </div>
         </section>
         </div>
@@ -1170,6 +1215,59 @@
                          title="Vertical overlay position (0 = top, 100 = bottom)" />
                 </label>
               </div>
+              <div id="overlay-refinement-settings-section" class="overlay-refinement-settings">
+                <div class="overlay-refinement-settings-header">
+                  <span class="field-label">AI Refinement Overlay</span>
+                  <span class="field-hint">Separate settings for refinement animation only</span>
+                </div>
+                <div class="settings-grid-2col">
+                  <label class="field toggle span-2">
+                    <span class="field-label">Show refining indicator</span>
+                    <input id="overlay-refining-indicator-enabled" type="checkbox" title="Show an extra overlay effect while AI refinement is running" />
+                    <span class="toggle-track">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Refining effect intensity</span>
+                    <select id="overlay-refining-indicator-preset" title="Visual intensity of the overlay effect during AI refinement">
+                      <option value="subtle">Subtle</option>
+                      <option value="standard">Standard</option>
+                      <option value="intense">Intense</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Refining effect color</span>
+                    <input id="overlay-refining-indicator-color" type="color" title="Accent color for the AI refinement overlay animation" />
+                  </label>
+                  <label class="field range">
+                    <span class="field-label">Refining speed (ms)</span>
+                    <div class="range-row">
+                      <input id="overlay-refining-indicator-speed" type="range" min="450" max="3000" step="50"
+                             title="Animation speed for the AI refinement indicator"
+                             aria-valuemin="450"
+                             aria-valuemax="3000"
+                             aria-valuenow="1150"
+                             aria-label="Refining animation speed"
+                             aria-describedby="overlay-refining-indicator-speed-value" />
+                      <span id="overlay-refining-indicator-speed-value" class="range-value" aria-live="polite">1150 ms</span>
+                    </div>
+                  </label>
+                  <label class="field range">
+                    <span class="field-label">Refining range (%)</span>
+                    <div class="range-row">
+                      <input id="overlay-refining-indicator-range" type="range" min="60" max="180" step="5"
+                             title="How far the refinement pulse expands"
+                             aria-valuemin="60"
+                             aria-valuemax="180"
+                             aria-valuenow="100"
+                             aria-label="Refining pulse range"
+                             aria-describedby="overlay-refining-indicator-range-value" />
+                      <span id="overlay-refining-indicator-range-value" class="range-value" aria-live="polite">100%</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
               <button id="apply-overlay-btn" class="button primary" title="Apply overlay position and style settings" style="margin-top: 12px; width: 100%;">Apply Overlay Settings</button>
             </div>
           </details>
@@ -1331,30 +1429,48 @@
                         </div>
                       </label>
 
+                      <div class="field toggle span-2">
+                        <label class="toggle-row">
+                          <span class="field-label">Speed Mode (Low Latency)</span>
+                          <input id="ai-fallback-low-latency-mode" type="checkbox" title="Prefer faster refinement with reduced output budget" />
+                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span id="ai-fallback-low-latency-note" class="toggle-hint">
+                          Targets faster turnaround by reducing output/context budget for short dictation.
+                        </span>
+                      </div>
+
                       <label class="field">
                         <span class="field-label">Max tokens</span>
                         <select id="ai-fallback-max-tokens" title="Maximum number of tokens the AI can output per refinement">
+                          <option value="256">256</option>
                           <option value="512">512</option>
                           <option value="1024">1024</option>
+                          <option value="1536">1536</option>
                           <option value="2048">2048</option>
                           <option value="4000">4000</option>
                           <option value="8192">8192</option>
                         </select>
                       </label>
 
-                      <div class="field toggle span-2">
-                        <label class="toggle-row">
-                          <span class="field-label">Use custom prompt</span>
-                          <input id="ai-fallback-custom-prompt-enabled" type="checkbox" title="Replace the built-in refinement prompt with a custom one" />
-                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                        </label>
-                        <span class="toggle-hint">Override default refinement prompt for this profile</span>
-                      </div>
+                      <label class="field">
+                        <span class="field-label">Prompt preset</span>
+                        <select id="ai-fallback-prompt-preset" title="Select the active refinement prompt profile">
+                          <option value="wording">Wording (Recommended)</option>
+                          <option value="summary">Summary</option>
+                          <option value="technical_specs">Technical Specs</option>
+                          <option value="action_items">Action Items</option>
+                          <option value="custom">Custom Prompt</option>
+                        </select>
+                      </label>
 
-                      <div id="ai-fallback-custom-prompt-field" class="field span-2" style="display: none;">
-                        <span class="field-label">Custom prompt</span>
-                        <textarea id="ai-fallback-custom-prompt" rows="4" placeholder="Refine this transcript ..."
-                                  title="Custom prompt sent to the AI before each transcript"></textarea>
+                      <div id="ai-fallback-prompt-preview-field" class="field span-2">
+                        <span id="ai-fallback-prompt-preview-label" class="field-label">Prompt preview</span>
+                        <textarea id="ai-fallback-custom-prompt" rows="6" placeholder="Define your custom refinement prompt..."
+                                  title="Prompt sent to the AI before each refinement"></textarea>
+                        <span id="ai-fallback-prompt-preview-hint" class="field-hint">
+                          Presets are shown read-only so users can learn prompt structure. Select "Custom Prompt" to edit.
+                        </span>
                       </div>
 
                     </div>

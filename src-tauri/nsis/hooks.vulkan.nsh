@@ -206,6 +206,8 @@ FunctionEnd
   FileWrite $0 '"overlay_kitt_pos_x":50.0,'
   FileWrite $0 '"overlay_kitt_pos_y":90.0,'
   FileWrite $0 '"overlay_style":"$OverlayStyleChoice",'
+  FileWrite $0 '"overlay_refining_indicator_enabled":true,'
+  FileWrite $0 '"overlay_refining_indicator_preset":"standard",'
   FileWrite $0 '"overlay_kitt_min_width":20.0,'
   FileWrite $0 '"overlay_kitt_max_width":700.0,'
   FileWrite $0 '"overlay_kitt_height":13.0,'

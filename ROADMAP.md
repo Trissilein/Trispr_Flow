@@ -1,13 +1,13 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-24 (Block J added)
+Last updated: 2026-02-26 (v0.7.0 release sync)
 
 This file is the canonical source for priorities and execution order.
 
 ## Canonical Current State
 
-- Released: `v0.6.0`
-- Current phase: `v0.7.0` execution
+- Released: `v0.7.0`
+- Current phase: `v0.7.0` stabilization execution
 - Foundation complete: Blocks F + G + H
 - Active execution block: UX/UI consistency (Block E)
 
@@ -57,15 +57,16 @@ This file is the canonical source for priorities and execution order.
 
 ## Immediate Next Actions
 
-1. Block E: UX/UI consistency and settings IA cleanup.
+1. Architecture review kickoff and risk register for v0.7.0 baseline.
 2. Block F: Reliability hardening and release QA.
-3. Block J: Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary).
-4. Block K (after Block E): Expert Mode UX Overhaul.
+3. Block E: UX/UI consistency and settings IA cleanup.
+4. Block J: Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary).
 5. Block G (v0.7.3): Cloud provider rollout (OpenAI/Claude/Gemini).
 
 ## References
 
 - `docs/TASK_SCHEDULE.md`
 - `docs/DECISIONS.md`
+- `docs/ARCHITECTURE_REVIEW_0.7.md`
 - `docs/V0.7.0_ARCHITECTURE.md`
 - `docs/INSTALLER_VARIANTS.md`

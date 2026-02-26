@@ -24,6 +24,11 @@ pub struct OverlaySettings {
     pub pos_x: f64,
     pub pos_y: f64,
     pub style: String,
+    pub refining_indicator_enabled: bool,
+    pub refining_indicator_preset: String,
+    pub refining_indicator_color: String,
+    pub refining_indicator_speed_ms: u64,
+    pub refining_indicator_range: f64,
     pub kitt_min_width: f64,
     pub kitt_max_width: f64,
     pub kitt_height: f64,
@@ -114,6 +119,24 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
     Ok(())
 }
 
+pub fn update_overlay_refining_indicator(app: &AppHandle, active: bool) -> Result<(), String> {
+    let window = match app.get_webview_window("overlay") {
+        Some(w) => w,
+        None => create_overlay_window(app)?,
+    };
+
+    let _ = window.emit("overlay:refining", active);
+    let _ = app.emit("overlay:refining", active);
+
+    let active_str = if active { "true" } else { "false" };
+    let js = format!(
+        "if(window.setOverlayRefining){{window.setOverlayRefining({});}}",
+        active_str
+    );
+    let _ = window.eval(&js);
+    Ok(())
+}
+
 fn resolve_overlay_position(window: &WebviewWindow, settings: &OverlaySettings, width: f64, height: f64) -> (f64, f64) {
     // pos_x and pos_y are stored as percentages (0-100)
     // Convert to absolute monitor coordinates, then to window position
@@ -178,11 +201,16 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
 
     // Update overlay via JS functions
     let js = format!(
-        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}if(window.setKittDimensions){{window.setKittDimensions({},{},{});}}if(window.setDotDimensions){{window.setDotDimensions({},{});}}",
+        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}if(window.setOverlayRefiningEnabled){{window.setOverlayRefiningEnabled({});}}if(window.setOverlayRefiningPreset){{window.setOverlayRefiningPreset('{}');}}if(window.setOverlayRefiningAppearance){{window.setOverlayRefiningAppearance('{}',{},{});}}if(window.setKittDimensions){{window.setKittDimensions({},{},{});}}if(window.setDotDimensions){{window.setDotDimensions({},{});}}",
         settings.color,
         settings.opacity_active,
         settings.opacity_inactive,
         settings.style,
+        if settings.refining_indicator_enabled { "true" } else { "false" },
+        settings.refining_indicator_preset,
+        settings.refining_indicator_color,
+        settings.refining_indicator_speed_ms,
+        settings.refining_indicator_range,
         settings.kitt_min_width,
         settings.kitt_max_width,
         settings.kitt_height,

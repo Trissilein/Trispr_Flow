@@ -19,7 +19,7 @@ echo Trispr Flow - Dual Installer Builder
 echo ========================================
 echo.
 
-echo [1/9] Detecting version...
+echo [1/10] Detecting version...
 for /f "tokens=2 delims=:, " %%a in ('findstr /C:"\"version\"" package.json') do (
     set VERSION_RAW=%%a
 )
@@ -31,14 +31,25 @@ echo Found version: %VERSION%
 echo Build stamp: %BUILDSTAMP%
 echo.
 
-echo [2/9] Verifying config version consistency...
+echo [2/10] Verifying config version consistency...
 call :verify_version "src-tauri\tauri.conf.json"
 if not "!ERRORLEVEL!"=="0" goto :fail
 call :verify_version "src-tauri\tauri.conf.vulkan.json"
 if not "!ERRORLEVEL!"=="0" goto :fail
 echo.
 
-echo [3/9] Verifying CUDA runtime libraries...
+echo [3/10] Verifying installer consistency hints...
+call :verify_hook_consistency "src-tauri\nsis\hooks.nsh"
+if not "!ERRORLEVEL!"=="0" goto :fail
+call :verify_hook_consistency "src-tauri\nsis\hooks.vulkan.nsh"
+if not "!ERRORLEVEL!"=="0" goto :fail
+call :verify_variant_resource_scope "src-tauri\tauri.conf.json" "bin/cuda/" "bin/vulkan/" "CUDA"
+if not "!ERRORLEVEL!"=="0" goto :fail
+call :verify_variant_resource_scope "src-tauri\tauri.conf.vulkan.json" "bin/vulkan/" "bin/cuda/" "VULKAN"
+if not "!ERRORLEVEL!"=="0" goto :fail
+echo.
+
+echo [4/10] Verifying CUDA runtime libraries...
 set DLL_MISSING=0
 if not exist "src-tauri\bin\cuda\cublas64_13.dll" (
     echo   ERROR: cublas64_13.dll not found!
@@ -56,7 +67,7 @@ if "!DLL_MISSING!"=="1" (
 echo   OK: CUDA DLLs found
 echo.
 
-echo [4/9] Preparing output directories...
+echo [5/10] Preparing output directories...
 if not exist "installers" mkdir "installers"
 if exist "src-tauri\target\release\bundle\nsis" (
     rmdir /s /q "src-tauri\target\release\bundle\nsis" 2>nul
@@ -64,30 +75,30 @@ if exist "src-tauri\target\release\bundle\nsis" (
 echo   OK: Output directories ready
 echo.
 
-echo [5/9] Building frontend...
+echo [6/10] Building frontend...
 call npm run build
 if not "!ERRORLEVEL!"=="0" goto :fail
 echo   OK: Frontend build successful
 echo.
 
-echo [6/9] Building CUDA installer...
+echo [7/10] Building CUDA installer...
 call :build_variant "CUDA" "src-tauri/tauri.conf.json" "CUDA"
 if not "!ERRORLEVEL!"=="0" goto :fail
 set "CUDA_TARGET=!LAST_TARGET!"
 echo.
 
-echo [7/9] Building Vulkan installer...
+echo [8/10] Building Vulkan installer...
 call :build_variant "VULKAN" "src-tauri/tauri.conf.vulkan.json" "VULKAN"
 if not "!ERRORLEVEL!"=="0" goto :fail
 set "VULKAN_TARGET=!LAST_TARGET!"
 echo.
 
-echo [8/9] Build summary...
+echo [9/10] Build summary...
 call :print_file_info "CUDA" "!CUDA_TARGET!"
 call :print_file_info "VULKAN" "!VULKAN_TARGET!"
 echo.
 
-echo [9/9] Done.
+echo [10/10] Done.
 echo ========================================
 echo Build Complete
 echo ========================================
@@ -113,6 +124,44 @@ if /I not "%CFG_VERSION%"=="%VERSION%" (
     exit /b 1
 )
 echo   OK: %CFG% = %CFG_VERSION%
+exit /b 0
+
+:verify_hook_consistency
+set "HOOK=%~1"
+findstr /C:"GpuBackendPage" "%HOOK%" >nul
+if not errorlevel 1 (
+    echo ERROR: %HOOK% still contains GPU backend selector logic ^(GpuBackendPage^).
+    exit /b 1
+)
+findstr /C:"RMDir /r \"$INSTDIR\bin\cuda\"" "%HOOK%" >nul
+if not errorlevel 1 (
+    echo ERROR: %HOOK% still contains runtime cleanup for cuda.
+    exit /b 1
+)
+findstr /C:"RMDir /r \"$INSTDIR\bin\vulkan\"" "%HOOK%" >nul
+if not errorlevel 1 (
+    echo ERROR: %HOOK% still contains runtime cleanup for vulkan.
+    exit /b 1
+)
+echo   OK: %HOOK% has no GPU selector or backend cleanup.
+exit /b 0
+
+:verify_variant_resource_scope
+set "CFG=%~1"
+set "REQUIRED=%~2"
+set "FORBIDDEN=%~3"
+set "LABEL=%~4"
+findstr /C:"%REQUIRED%" "%CFG%" >nul
+if errorlevel 1 (
+    echo ERROR: %LABEL% config is missing expected resource path '%REQUIRED%' in %CFG%.
+    exit /b 1
+)
+findstr /C:"%FORBIDDEN%" "%CFG%" >nul
+if not errorlevel 1 (
+    echo ERROR: %LABEL% config contains forbidden resource path '%FORBIDDEN%' in %CFG%.
+    exit /b 1
+)
+echo   OK: %LABEL% config resource scope verified.
 exit /b 0
 
 :build_variant

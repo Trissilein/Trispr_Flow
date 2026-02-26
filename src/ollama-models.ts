@@ -20,6 +20,8 @@ import type {
 
 const DEFAULT_LOCAL_ENDPOINT = "http://localhost:11434";
 const DEFAULT_RUNTIME_VERSION = "0.17.0";
+const AUTOSTART_WARNING_COOLDOWN_MS = 60_000;
+const LOCAL_OLLAMA_HOSTS = new Set(["localhost", "127.0.0.1"]);
 
 type WizardStage =
   | "not_detected"
@@ -66,8 +68,12 @@ let runtimeInstallProgress: OllamaRuntimeInstallProgress | null = null;
 let runtimeInstallError: OllamaRuntimeInstallError | null = null;
 let runtimeHealth: OllamaRuntimeHealth | null = null;
 let runtimeBusyAction: string | null = null;
+let runtimeStateRefreshInFlight: Promise<void> | null = null;
+let runtimeStateLastRefreshMs = 0;
+let lastAutostartWarningMs = 0;
 
 let renderFrame: number | null = null;
+const PASSIVE_RUNTIME_REFRESH_TTL_MS = 1500;
 
 const RUNTIME_ACTION_LABELS: Record<string, string> = {
   detect: "Detecting runtime...",
@@ -81,6 +87,11 @@ const RUNTIME_ACTION_LABELS: Record<string, string> = {
 };
 
 type OllamaRuntimePrimaryAction = "install" | "start" | "ready";
+type RuntimeStateRefreshOptions = {
+  verify?: boolean;
+  skipDetect?: boolean;
+  force?: boolean;
+};
 
 export type OllamaRuntimeCardState = {
   detected: boolean;
@@ -101,8 +112,111 @@ function isOllamaProvider(): boolean {
   return settings?.ai_fallback?.provider === "ollama";
 }
 
+function isStrictLocalEndpoint(endpoint: string): boolean {
+  try {
+    const parsed = new URL(endpoint);
+    if (parsed.protocol !== "http:") return false;
+    if (!LOCAL_OLLAMA_HOSTS.has(parsed.hostname.toLowerCase())) return false;
+    if (parsed.port && parsed.port !== "11434") return false;
+    if (parsed.pathname && parsed.pathname !== "/") return false;
+    if (parsed.search || parsed.hash) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isLocalEndpoint(endpoint: string): boolean {
+  try {
+    const parsed = new URL(endpoint);
+    if (parsed.protocol !== "http:") return false;
+    if (!LOCAL_OLLAMA_HOSTS.has(parsed.hostname.toLowerCase())) return false;
+    if (parsed.pathname && parsed.pathname !== "/") return false;
+    if (parsed.search || parsed.hash) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function shouldAutoStartLocalRuntime(): boolean {
+  if (!settings?.ai_fallback || !settings.providers?.ollama) return false;
+
+  const aiFallback = settings.ai_fallback;
+  if (!aiFallback.enabled) return false;
+  if (aiFallback.execution_mode !== "local_primary") return false;
+  if (aiFallback.provider !== "ollama") return false;
+
+  const endpoint = settings.providers.ollama.endpoint || DEFAULT_LOCAL_ENDPOINT;
+  if (aiFallback.strict_local_mode) {
+    return isStrictLocalEndpoint(endpoint);
+  }
+  return isLocalEndpoint(endpoint);
+}
+
+function showAutostartWarning(trigger: "bootstrap" | "enable_toggle", message: string): void {
+  const now = Date.now();
+  if (now - lastAutostartWarningMs < AUTOSTART_WARNING_COOLDOWN_MS) {
+    return;
+  }
+  lastAutostartWarningMs = now;
+  showToast({
+    type: "warning",
+    title: "Local runtime not started",
+    message:
+      trigger === "enable_toggle"
+        ? `Could not auto-start local Ollama: ${message}`
+        : `Local Ollama auto-start skipped: ${message}`,
+    duration: 5200,
+  });
+}
+
 function runtimeIsHealthy(): boolean {
   return Boolean(runtimeVerify?.ok || runtimeHealth?.ok);
+}
+
+function effectiveRuntimeBusyAction(): string | null {
+  if (!runtimeBusyAction) return null;
+  if ((runtimeBusyAction === "start" || runtimeBusyAction === "ensure-runtime") && runtimeIsHealthy()) {
+    return null;
+  }
+  return runtimeBusyAction;
+}
+
+export async function autoStartLocalRuntimeIfNeeded(
+  trigger: "bootstrap" | "enable_toggle"
+): Promise<void> {
+  if (!shouldAutoStartLocalRuntime()) {
+    return;
+  }
+
+  await refreshOllamaRuntimeState({ force: true });
+  const card = getOllamaRuntimeCardState();
+  if (card.busy || card.healthy || !card.detected) {
+    return;
+  }
+
+  if (runtimeBusyAction) {
+    return;
+  }
+
+  runtimeBusyAction = "start";
+  runtimeInstallError = null;
+  renderOllamaModelManager();
+  try {
+    await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
+    await refreshOllamaRuntimeState({ force: true, verify: true });
+    if (getOllamaRuntimeCardState().healthy) {
+      await refreshOllamaInstalledModels();
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`Ollama autostart failed (${trigger}):`, message);
+    showAutostartWarning(trigger, message);
+  } finally {
+    runtimeBusyAction = null;
+    renderOllamaModelManager();
+  }
 }
 
 function scheduleRender(): void {
@@ -174,10 +288,11 @@ function resolvePrimaryAction(): {
   label: string;
   disabled: boolean;
 } {
-  if (runtimeBusyAction) {
+  const busyAction = effectiveRuntimeBusyAction();
+  if (busyAction) {
     return {
       action: runtimeDetect?.found ? "start" : "install",
-      label: runtimeActionLabel(runtimeBusyAction),
+      label: runtimeActionLabel(busyAction),
       disabled: true,
     };
   }
@@ -206,10 +321,11 @@ export function getOllamaRuntimeCardState(): OllamaRuntimeCardState {
   const source = runtimeDetect?.source || settings?.providers?.ollama?.runtime_source || "manual";
   const version = runtimeDetect?.version || settings?.providers?.ollama?.runtime_version || "unknown";
   const endpoint = settings?.providers?.ollama?.endpoint || DEFAULT_LOCAL_ENDPOINT;
+  const busyAction = effectiveRuntimeBusyAction();
   const stage = computeWizardStage();
   const primary = resolvePrimaryAction();
   const detail = runtimeInstallProgress?.message
-    || (runtimeBusyAction ? runtimeActionLabel(runtimeBusyAction) : stageHint(stage));
+    || (busyAction ? runtimeActionLabel(busyAction) : stageHint(stage));
 
   return {
     detected: Boolean(runtimeDetect?.found),
@@ -217,8 +333,8 @@ export function getOllamaRuntimeCardState(): OllamaRuntimeCardState {
     source,
     version: version || "unknown",
     endpoint,
-    busy: Boolean(runtimeBusyAction),
-    busyAction: runtimeBusyAction,
+    busy: Boolean(busyAction),
+    busyAction,
     stage,
     primaryAction: primary.action,
     primaryLabel: primary.label,
@@ -307,8 +423,10 @@ async function runRuntimeAction(action: string, task: () => Promise<void>): Prom
 
 async function handleDetectRuntime(): Promise<void> {
   await runRuntimeAction("detect", async () => {
-    runtimeDetect = await invoke<OllamaRuntimeDetectResult>("detect_ollama_runtime");
-    await refreshOllamaRuntimeState();
+    await refreshOllamaRuntimeState({ force: true });
+    if (runtimeDetect?.is_serving) {
+      await refreshOllamaInstalledModels();
+    }
     showToast({
       type: runtimeDetect?.found ? "success" : "warning",
       title: runtimeDetect?.found ? "Runtime detected" : "No runtime detected",
@@ -713,38 +831,96 @@ export async function refreshOllamaInstalledModels(): Promise<void> {
     console.error("Failed to refresh Ollama models:", error);
     installedOllamaModels = [];
   }
+
+  if (runtimeHealth) {
+    runtimeHealth = {
+      ...runtimeHealth,
+      models_count: installedOllamaModels.length,
+    };
+  }
+  if (runtimeVerify) {
+    runtimeVerify = {
+      ...runtimeVerify,
+      models_count: installedOllamaModels.length,
+    };
+  }
 }
 
-export async function refreshOllamaRuntimeState(): Promise<void> {
-  try {
-    runtimeDetect = await invoke<OllamaRuntimeDetectResult>("detect_ollama_runtime");
-  } catch {
-    runtimeDetect = null;
+export async function refreshOllamaRuntimeState(
+  options: RuntimeStateRefreshOptions = {}
+): Promise<void> {
+  const verify = options.verify ?? false;
+  const skipDetect = options.skipDetect ?? false;
+  const force = options.force ?? false;
+  const now = Date.now();
+
+  if (!verify && !force && now - runtimeStateLastRefreshMs < PASSIVE_RUNTIME_REFRESH_TTL_MS) {
+    renderOllamaModelManager();
+    return;
   }
 
-  try {
-    runtimeVerify = await invoke<OllamaRuntimeVerifyResult>("verify_ollama_runtime");
-    runtimeHealth = {
-      ok: runtimeVerify.ok,
-      endpoint: runtimeVerify.endpoint,
-      models_count: runtimeVerify.models_count,
-    };
-  } catch {
-    runtimeVerify = null;
-    runtimeHealth = {
-      ok: false,
-      endpoint: settings?.providers?.ollama?.endpoint || DEFAULT_LOCAL_ENDPOINT,
-      models_count: 0,
-    };
+  if (runtimeStateRefreshInFlight) {
+    await runtimeStateRefreshInFlight;
+    if (!verify) return;
   }
 
-  try {
-    await maybePersistWizardState();
-  } catch (error) {
-    console.warn("Failed to persist local AI wizard state:", error);
-  }
+  const refreshTask = (async () => {
+    if (!skipDetect) {
+      try {
+        runtimeDetect = await invoke<OllamaRuntimeDetectResult>("detect_ollama_runtime");
+      } catch {
+        runtimeDetect = null;
+      }
+    }
 
-  renderOllamaModelManager();
+    const endpoint = settings?.providers?.ollama?.endpoint || DEFAULT_LOCAL_ENDPOINT;
+
+    if (verify) {
+      try {
+        runtimeVerify = await invoke<OllamaRuntimeVerifyResult>("verify_ollama_runtime");
+        runtimeHealth = {
+          ok: runtimeVerify.ok,
+          endpoint: runtimeVerify.endpoint,
+          models_count: runtimeVerify.models_count,
+        };
+      } catch {
+        runtimeVerify = null;
+        runtimeHealth = {
+          ok: false,
+          endpoint,
+          models_count: 0,
+        };
+      }
+    } else {
+      const serving = Boolean(runtimeDetect?.is_serving);
+      if (!serving) {
+        runtimeVerify = null;
+      }
+      runtimeHealth = {
+        ok: serving,
+        endpoint,
+        models_count: installedOllamaModels.length,
+      };
+    }
+
+    try {
+      await maybePersistWizardState();
+    } catch (error) {
+      console.warn("Failed to persist local AI wizard state:", error);
+    }
+
+    runtimeStateLastRefreshMs = Date.now();
+    renderOllamaModelManager();
+  })();
+
+  runtimeStateRefreshInFlight = refreshTask;
+  try {
+    await refreshTask;
+  } finally {
+    if (runtimeStateRefreshInFlight === refreshTask) {
+      runtimeStateRefreshInFlight = null;
+    }
+  }
 }
 
 async function handleOllamaPull(modelName: string): Promise<void> {

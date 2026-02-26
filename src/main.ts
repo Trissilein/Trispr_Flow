@@ -22,6 +22,12 @@ import type {
   OllamaRuntimeInstallComplete,
   OllamaRuntimeInstallError,
   OllamaRuntimeHealth,
+  TranscriptionRefinedEvent,
+  TranscriptionRefinementFailedEvent,
+  TranscriptionRefinementStartedEvent,
+  TranscriptionRefinementActivityEvent,
+  TranscriptionGpuActivityEvent,
+  TranscriptionResultEvent,
 } from "./types";
 import {
   settings,
@@ -39,7 +45,14 @@ import {
 import * as dom from "./dom-refs";
 import { renderAIFallbackSettingsUi, renderSettings } from "./settings";
 import { renderDevices, renderOutputDevices } from "./devices";
-import { renderHero, setCaptureStatus, setTranscribeStatus, updateThresholdMarkers } from "./ui-state";
+import {
+  renderHero,
+  setCaptureStatus,
+  setGpuActivity,
+  setRefiningActive,
+  setTranscribeStatus,
+  updateThresholdMarkers,
+} from "./ui-state";
 import { renderHistory, setHistoryTab } from "./history";
 import { initPanelState, isPanelCollapsed, setPanelCollapsed } from "./panels";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
@@ -51,7 +64,18 @@ import { levelToDb, thresholdToPercent } from "./ui-helpers";
 import { dumpHistoryToFile, initLiveDump } from "./live-dump";
 import { initChaptersUI, refreshChapters } from "./chapters";
 import {
+  handleRefinementFailureForInspector,
+  handleRefinementStartedForInspector,
+  handleRefinementSuccessForInspector,
+  handleTranscriptionResultForInspector,
+  markAllPendingAsFailed,
+  restoreRefinementInspector,
+  renderRefinementInspector,
+} from "./refinement-inspector";
+import {
+  autoStartLocalRuntimeIfNeeded,
   clearActiveOllamaPull,
+  getOllamaRuntimeCardState,
   renderOllamaModelManager,
   refreshOllamaInstalledModels,
   refreshOllamaRuntimeState,
@@ -65,8 +89,95 @@ import { OLLAMA_SETTINGS_CHANGED_POLICY } from "./ollama-refresh-policy";
 // Track event listeners for cleanup to prevent memory leaks
 let eventUnlisteners: Array<() => void> = [];
 let backlogWarningToastId: string | null = null;
+let pasteQueue: Promise<void> = Promise.resolve();
+
+type PendingDeferredPasteJob = {
+  rawText: string;
+  timeoutHandle: number;
+};
+
+type DeferredPasteOutcome = "refined" | "failed" | "timed_out";
+
+const pendingDeferredPasteJobs = new Map<string, PendingDeferredPasteJob>();
+const deferredPasteOutcomes = new Map<string, DeferredPasteOutcome>();
+const deferredRefinedTextByJobId = new Map<string, string>();
+const MAX_DEFERRED_PASTE_OUTCOMES = 500;
+
+function clearPendingDeferredPasteJobs() {
+  for (const pending of pendingDeferredPasteJobs.values()) {
+    window.clearTimeout(pending.timeoutHandle);
+  }
+  pendingDeferredPasteJobs.clear();
+}
+
+function rememberDeferredPasteOutcome(
+  jobId: string,
+  outcome: DeferredPasteOutcome,
+  refinedText?: string
+): void {
+  deferredPasteOutcomes.set(jobId, outcome);
+  if (outcome === "refined" && typeof refinedText === "string") {
+    deferredRefinedTextByJobId.set(jobId, refinedText);
+  } else {
+    deferredRefinedTextByJobId.delete(jobId);
+  }
+  if (deferredPasteOutcomes.size <= MAX_DEFERRED_PASTE_OUTCOMES) {
+    return;
+  }
+  const first = deferredPasteOutcomes.keys().next();
+  if (!first.done) {
+    deferredRefinedTextByJobId.delete(first.value);
+    deferredPasteOutcomes.delete(first.value);
+  }
+}
+
+function queueTranscriptPaste(text: string, context: string): void {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+
+  pasteQueue = pasteQueue
+    .catch(() => {})
+    .then(async () => {
+      await invoke("paste_transcript_text", { text });
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`paste_transcript_text failed (${context})`, message);
+      if (dom.statusMessage) {
+        dom.statusMessage.textContent = message;
+      }
+      showToast({
+        type: "error",
+        title: "Paste Failed",
+        message,
+        duration: 7000,
+      });
+    });
+}
+
+function settleDeferredPasteJob(jobId: string): PendingDeferredPasteJob | null {
+  const pending = pendingDeferredPasteJobs.get(jobId);
+  if (!pending) {
+    return null;
+  }
+  window.clearTimeout(pending.timeoutHandle);
+  pendingDeferredPasteJobs.delete(jobId);
+  return pending;
+}
+
+function handleDeferredPasteTimeout(jobId: string): void {
+  const pending = pendingDeferredPasteJobs.get(jobId);
+  if (!pending) {
+    return;
+  }
+
+  pendingDeferredPasteJobs.delete(jobId);
+  rememberDeferredPasteOutcome(jobId, "timed_out");
+  queueTranscriptPaste(pending.rawText, `timeout:${jobId}`);
+}
 
 function cleanupEventListeners() {
+  clearPendingDeferredPasteJobs();
   eventUnlisteners.forEach((unlisten) => unlisten());
   eventUnlisteners = [];
   dismissToast(backlogWarningToastId);
@@ -125,6 +236,7 @@ async function bootstrap() {
 
   const fetchedTranscribeHistory = await invoke<HistoryEntry[]>("get_transcribe_history");
   setTranscribeHistory(fetchedTranscribeHistory);
+  restoreRefinementInspector([...fetchedHistory, ...fetchedTranscribeHistory]);
 
   const fetchedModels = await invoke<ModelInfo[]>("list_models");
   setModels(fetchedModels);
@@ -145,14 +257,22 @@ async function bootstrap() {
     renderHero();
     setCaptureStatus("idle");
     setTranscribeStatus("idle");
+    setRefiningActive(false);
     renderHistory();
+    renderRefinementInspector();
     renderModels();
     await refreshModelsDir();
     // Initialize Ollama model manager if provider is Ollama
     if (settings?.ai_fallback?.provider === "ollama") {
-      await refreshOllamaInstalledModels();
-      await refreshOllamaRuntimeState();
+      await refreshOllamaRuntimeState({ force: true });
+      if (getOllamaRuntimeCardState().healthy) {
+        await refreshOllamaInstalledModels();
+      }
     }
+    void autoStartLocalRuntimeIfNeeded("bootstrap").finally(() => {
+      renderAIFallbackSettingsUi();
+      renderOllamaModelManager();
+    });
     renderOllamaModelManager();
   } catch (renderError) {
     console.error("Non-fatal render error during bootstrap:", renderError);
@@ -170,6 +290,7 @@ async function bootstrap() {
 
   eventUnlisteners.push(await listen<Settings>("settings-changed", (event) => {
     setSettings(event.payload ?? null);
+    if (!settings?.ai_fallback?.enabled) setRefiningActive(false);
     renderSettings();
     renderHero();
     renderModels();
@@ -196,6 +317,12 @@ async function bootstrap() {
     const state = event.payload as "idle" | "recording" | "transcribing";
     setTranscribeStatus(state ?? "idle");
   }));
+
+  eventUnlisteners.push(
+    await listen<TranscriptionGpuActivityEvent>("transcription:gpu-activity", (event) => {
+      setGpuActivity(event.payload);
+    })
+  );
 
   eventUnlisteners.push(await listen<number>("transcribe:level", (event) => {
     if (!dom.transcribeMeterFill) return;
@@ -226,20 +353,101 @@ async function bootstrap() {
     dumpHistoryToFile().catch(() => {});
   }));
 
-  eventUnlisteners.push(await listen<{ text: string; source: string }>("transcription:result", () => {
+  eventUnlisteners.push(await listen<TranscriptionResultEvent>("transcription:result", (event) => {
+    const payload = event.payload;
+    handleTranscriptionResultForInspector(payload);
+    renderHistory();
     if (dom.statusMessage) dom.statusMessage.textContent = "";
+
+    const jobId = typeof payload?.job_id === "string" ? payload.job_id.trim() : "";
+    const pasteDeferred = Boolean(payload?.paste_deferred && jobId);
+    if (!pasteDeferred) {
+      queueTranscriptPaste(payload.text, `raw:${jobId || "unknown"}`);
+      return;
+    }
+
+    const completedOutcome = deferredPasteOutcomes.get(jobId);
+    if (completedOutcome === "refined") {
+      const refinedText = deferredRefinedTextByJobId.get(jobId);
+      queueTranscriptPaste(refinedText && refinedText.trim() ? refinedText : payload.text, `late_result_refined:${jobId}`);
+      return;
+    }
+    if (completedOutcome === "failed" || completedOutcome === "timed_out") {
+      queueTranscriptPaste(payload.text, `late_result_fallback:${jobId}`);
+      return;
+    }
+
+    const timeoutMs = Math.max(1, Number(payload.paste_timeout_ms ?? 10_000));
+    const existing = pendingDeferredPasteJobs.get(jobId);
+    if (existing) {
+      window.clearTimeout(existing.timeoutHandle);
+    }
+    const timeoutHandle = window.setTimeout(() => {
+      handleDeferredPasteTimeout(jobId);
+    }, timeoutMs);
+    pendingDeferredPasteJobs.set(jobId, {
+      rawText: payload.text,
+      timeoutHandle,
+    });
   }));
 
+  eventUnlisteners.push(
+    await listen<TranscriptionRefinementStartedEvent>("transcription:refinement-started", (event) => {
+      handleRefinementStartedForInspector(event.payload);
+      renderHistory();
+    })
+  );
+
   // AI Fallback: refined transcript available — log silently (original already shown).
-  eventUnlisteners.push(await listen<{ original: string; refined: string; source: string; model: string; execution_time_ms: number }>("transcription:refined", (event) => {
-    const { refined, model, execution_time_ms } = event.payload;
+  eventUnlisteners.push(await listen<TranscriptionRefinedEvent>("transcription:refined", (event) => {
+    handleRefinementSuccessForInspector(event.payload);
+    renderHistory();
+    const { refined, model, execution_time_ms, job_id: jobId } = event.payload;
+    const pending = settleDeferredPasteJob(jobId);
+    if (pending) {
+      rememberDeferredPasteOutcome(jobId, "refined", refined);
+      queueTranscriptPaste(refined, `refined:${jobId}`);
+    } else if (deferredPasteOutcomes.get(jobId) === "timed_out") {
+      rememberDeferredPasteOutcome(jobId, "refined", refined);
+      console.debug(`[AI] Late refinement received after timeout (${jobId}); history updated only.`);
+    } else {
+      rememberDeferredPasteOutcome(jobId, "refined", refined);
+    }
     console.debug(`[AI] Refinement done (${model}, ${execution_time_ms}ms):`, refined);
   }));
 
   // AI Fallback: refinement failed — log, no disruption to user workflow.
-  eventUnlisteners.push(await listen<{ source: string; error: string }>("transcription:refinement-failed", (event) => {
-    console.warn(`[AI] Refinement failed (${event.payload.source}):`, event.payload.error);
+  eventUnlisteners.push(await listen<TranscriptionRefinementFailedEvent>("transcription:refinement-failed", (event) => {
+    const payload = event.payload;
+    handleRefinementFailureForInspector(payload);
+    renderHistory();
+    const pending = settleDeferredPasteJob(payload.job_id);
+    if (pending) {
+      rememberDeferredPasteOutcome(payload.job_id, "failed");
+      queueTranscriptPaste(pending.rawText, `fallback_failed:${payload.job_id}`);
+    } else {
+      rememberDeferredPasteOutcome(payload.job_id, "failed");
+    }
+    console.warn(`[AI] Refinement failed (${payload.source}):`, payload.error);
   }));
+
+  eventUnlisteners.push(
+    await listen<TranscriptionRefinementActivityEvent>("transcription:refinement-activity", (event) => {
+      const payload = event.payload;
+      const activeCount = Number(payload?.active_count ?? 0);
+      setRefiningActive(activeCount > 0);
+      if (payload?.reason === "watchdog_reset" || payload?.reason === "forced_reset") {
+        markAllPendingAsFailed(payload.reason);
+        renderHistory();
+        showToast({
+          type: "warning",
+          title: "Refinement reset",
+          message: "A stuck refinement job was reset automatically.",
+          duration: 4200,
+        });
+      }
+    })
+  );
 
   eventUnlisteners.push(await listen<DownloadProgress>("model:download-progress", (event) => {
     modelProgress.set(event.payload.id, event.payload);
@@ -276,8 +484,10 @@ async function bootstrap() {
       title: "Model Downloaded",
       message: `${event.payload.model} is ready to use.`,
     });
-    await refreshOllamaInstalledModels();
-    await refreshOllamaRuntimeState();
+    await refreshOllamaRuntimeState({ force: true });
+    if (getOllamaRuntimeCardState().healthy) {
+      await refreshOllamaInstalledModels();
+    }
     renderOllamaModelManager();
     renderAIFallbackSettingsUi();
   }));
@@ -304,7 +514,7 @@ async function bootstrap() {
   eventUnlisteners.push(
     await listen<OllamaRuntimeInstallComplete>("ollama:runtime-install-complete", async (event) => {
       setOllamaRuntimeInstallComplete(event.payload);
-      await refreshOllamaRuntimeState();
+      await refreshOllamaRuntimeState({ force: true });
       renderAIFallbackSettingsUi();
     })
   );
@@ -324,7 +534,7 @@ async function bootstrap() {
   eventUnlisteners.push(await listen<string>("transcription:error", (event) => {
     console.error("transcription error", event.payload);
     setCaptureStatus("idle");
-    if (dom.statusMessage) dom.statusMessage.textContent = `Error: ${event.payload}`;
+    if (dom.statusMessage) dom.statusMessage.textContent = event.payload;
 
     // Show toast for transcription errors
     showToast({

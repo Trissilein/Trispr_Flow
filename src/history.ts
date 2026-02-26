@@ -11,6 +11,12 @@ import {
   getHistoryFontSize,
   resolveSourceLabel,
 } from "./history-preferences";
+import {
+  buildRefinementWordDiff,
+  getRefinementSnapshot,
+  type RefinementDiffToken,
+  setInspectorFocus,
+} from "./refinement-inspector";
 
 export function buildConversationHistory(): HistoryEntry[] {
   const combined = [...history, ...transcribeHistory];
@@ -21,7 +27,7 @@ export function buildConversationText(entries: HistoryEntry[]) {
   return entries
     .map((entry) => {
       const speaker = resolveSourceLabel(entry.source);
-      return `[${formatTime(entry.timestamp_ms)}] ${speaker}: ${entry.text}`;
+      return `[${formatTime(entry.timestamp_ms)}] ${speaker}: ${getPreferredEntryText(entry)}`;
     })
     .join("\n");
 }
@@ -424,7 +430,7 @@ export function detectTopicsForHistory(): Record<string, string[]> {
   const entries = buildConversationHistory();
 
   entries.forEach((entry) => {
-    result[entry.id] = detectTopics(entry.text);
+    result[entry.id] = detectTopics(getPreferredEntryText(entry));
   });
 
   return result;
@@ -492,7 +498,14 @@ export function clearTopicFilters(): void {
  */
 function filterEntriesBySearch(entries: HistoryEntry[]): HistoryEntry[] {
   if (!currentSearchQuery) return entries;
-  return entries.filter((entry) => entry.text.toLowerCase().includes(currentSearchQuery));
+  return entries.filter((entry) => {
+    if (entry.text.toLowerCase().includes(currentSearchQuery)) return true;
+    const refinementState = getRefinementViewState(entry);
+    if (!refinementState) return false;
+    if ((refinementState.raw ?? "").toLowerCase().includes(currentSearchQuery)) return true;
+    if ((refinementState.refined ?? "").toLowerCase().includes(currentSearchQuery)) return true;
+    return false;
+  });
 }
 
 /**
@@ -501,7 +514,7 @@ function filterEntriesBySearch(entries: HistoryEntry[]): HistoryEntry[] {
 function filterEntriesByTopic(entries: HistoryEntry[]): HistoryEntry[] {
   if (selectedTopicFilters.size === 0) return entries;
   return entries.filter((entry) => {
-    const entryTopics = detectTopics(entry.text);
+    const entryTopics = detectTopics(getPreferredEntryText(entry));
     return entryTopics.some((topic) => selectedTopicFilters.has(topic));
   });
 }
@@ -514,6 +527,201 @@ function highlightSearchMatches(text: string): string {
 
   const regex = new RegExp(`(${currentSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
   return text.replace(regex, "<mark>$1</mark>");
+}
+
+function setEntryTextContent(node: HTMLElement, text: string): void {
+  if (currentSearchQuery) {
+    node.innerHTML = highlightSearchMatches(text);
+  } else {
+    node.textContent = text;
+  }
+}
+
+function normalizeForComparison(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+type RefinementViewState = {
+  status: "idle" | "refining" | "refined" | "error";
+  raw: string;
+  refined?: string;
+};
+
+function getRefinementViewState(entry: HistoryEntry): RefinementViewState | null {
+  const snapshot = getRefinementSnapshot(entry.id);
+  if (snapshot) {
+    return {
+      status: snapshot.status,
+      raw: snapshot.raw?.trim() ? snapshot.raw : entry.text,
+      refined: snapshot.refined?.trim() ? snapshot.refined : undefined,
+    };
+  }
+
+  const refinement = entry.refinement;
+  if (!refinement) return null;
+  const status =
+    refinement.status === "refining"
+    || refinement.status === "refined"
+    || refinement.status === "error"
+      ? refinement.status
+      : "idle";
+  return {
+    status,
+    raw: (refinement.raw ?? "").trim() ? refinement.raw : entry.text,
+    refined: (refinement.refined ?? "").trim() ? refinement.refined : undefined,
+  };
+}
+
+function getRefinementTextPair(entry: HistoryEntry): { raw: string; refined: string } | null {
+  const state = getRefinementViewState(entry);
+  if (!state || state.status !== "refined") return null;
+  const refined = state.refined?.trim();
+  if (!refined) return null;
+  return { raw: state.raw, refined };
+}
+
+function getPreferredEntryText(entry: HistoryEntry): string {
+  const pair = getRefinementTextPair(entry);
+  if (!pair) return entry.text;
+  return pair.refined;
+}
+
+function buildRefinementDiffSummary(raw: string, refined: string): HTMLElement | null {
+  const diff = buildRefinementWordDiff(raw, refined).filter((token) => token.kind !== "same");
+  if (diff.length === 0) return null;
+
+  const MAX_DIFF_TOKENS = 40;
+  const summary = document.createElement("div");
+  summary.className = "history-refinement-diff";
+
+  diff.slice(0, MAX_DIFF_TOKENS).forEach((token: RefinementDiffToken) => {
+    const el = document.createElement("span");
+    el.className = `history-refinement-diff-token ${token.kind === "added" ? "is-added" : "is-removed"}`;
+    el.textContent = `${token.kind === "added" ? "+" : "-"}${token.token}`;
+    summary.appendChild(el);
+  });
+
+  if (diff.length > MAX_DIFF_TOKENS) {
+    const more = document.createElement("span");
+    more.className = "history-refinement-diff-token is-more";
+    more.textContent = `+${diff.length - MAX_DIFF_TOKENS} more changes`;
+    summary.appendChild(more);
+  }
+
+  return summary;
+}
+
+type EntryTextPresentation = {
+  element: HTMLElement;
+  displayText: string;
+};
+
+function buildEntryTextPresentation(entry: HistoryEntry, baseClassName: string): EntryTextPresentation {
+  const pair = getRefinementTextPair(entry);
+  if (!pair) {
+    const fallback = document.createElement("div");
+    fallback.className = baseClassName;
+    setEntryTextContent(fallback, entry.text);
+    return {
+      element: fallback,
+      displayText: entry.text,
+    };
+  }
+
+  const root = document.createElement("div");
+  root.className = `${baseClassName} history-refinement-view`;
+
+  const rawBlock = document.createElement("div");
+  rawBlock.className = "history-refinement-original";
+  const rawLabel = document.createElement("div");
+  rawLabel.className = "history-refinement-label";
+  rawLabel.textContent = "Original";
+  const rawText = document.createElement("div");
+  rawText.className = "history-refinement-original-text";
+  setEntryTextContent(rawText, pair.raw);
+  rawBlock.append(rawLabel, rawText);
+
+  const refinedBlock = document.createElement("div");
+  refinedBlock.className = "history-refinement-final";
+  const refinedLabel = document.createElement("div");
+  refinedLabel.className = "history-refinement-label";
+  refinedLabel.textContent = "Refined";
+  const refinedText = document.createElement("div");
+  refinedText.className = "history-refinement-final-text";
+  setEntryTextContent(refinedText, pair.refined);
+  refinedBlock.append(refinedLabel, refinedText);
+
+  root.append(refinedBlock, rawBlock);
+
+  if (normalizeForComparison(pair.raw) !== normalizeForComparison(pair.refined)) {
+    const diffSummary = buildRefinementDiffSummary(pair.raw, pair.refined);
+    if (diffSummary) {
+      root.appendChild(diffSummary);
+    }
+  }
+
+  return {
+    element: root,
+    displayText: pair.refined,
+  };
+}
+
+type RefinementChipState =
+  | "raw_only"
+  | "refining"
+  | "refined"
+  | "refined_no_change"
+  | "failed";
+
+function getRefinementChipState(entry: HistoryEntry): RefinementChipState {
+  const state = getRefinementViewState(entry);
+  if (!state) return "raw_only";
+  if (state.status === "refining") return "refining";
+  if (state.status === "error") return "failed";
+  if (state.status === "refined") {
+    const raw = state.raw.trim();
+    const refined = (state.refined ?? "").trim();
+    if (raw.length > 0 && raw === refined) return "refined_no_change";
+    return "refined";
+  }
+  return "raw_only";
+}
+
+function getRefinementChipLabel(state: RefinementChipState): string {
+  if (state === "refining") return "Refining";
+  if (state === "refined") return "Refined";
+  if (state === "refined_no_change") return "Refined (no change)";
+  if (state === "failed") return "Refine failed";
+  return "Raw only";
+}
+
+function getRefinementChipClass(state: RefinementChipState): string {
+  if (state === "refining") return "is-refining";
+  if (state === "refined") return "is-refined";
+  if (state === "refined_no_change") return "is-no-change";
+  if (state === "failed") return "is-failed";
+  return "is-raw";
+}
+
+function buildRefinementChip(entry: HistoryEntry): HTMLElement {
+  const state = getRefinementChipState(entry);
+  const hasSnapshot = Boolean(getRefinementSnapshot(entry.id) || entry.refinement);
+  const chipTag = hasSnapshot ? "button" : "span";
+  const chip = document.createElement(chipTag);
+  chip.className = `refinement-chip ${getRefinementChipClass(state)}`;
+  chip.textContent = getRefinementChipLabel(state);
+  chip.setAttribute("aria-label", `Refinement status: ${chip.textContent}`);
+
+  if (hasSnapshot && chip instanceof HTMLButtonElement) {
+    chip.type = "button";
+    chip.title = "Open refinement inspector for this entry";
+    chip.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setInspectorFocus(entry.id);
+    });
+  }
+
+  return chip;
 }
 
 function buildConversationMessage(entry: HistoryEntry, role: "mic" | "system"): HTMLElement {
@@ -537,17 +745,14 @@ function buildConversationMessage(entry: HistoryEntry, role: "mic" | "system"): 
   timeEl.className = "chat-message-time";
   timeEl.textContent = formatTime(entry.timestamp_ms);
 
-  meta.append(senderEl, timeEl);
+  const metaRight = document.createElement("span");
+  metaRight.className = "chat-message-meta-right";
+  metaRight.append(timeEl, buildRefinementChip(entry));
 
-  const text = document.createElement("div");
-  text.className = "chat-message-text";
-  if (currentSearchQuery) {
-    text.innerHTML = highlightSearchMatches(entry.text);
-  } else {
-    text.textContent = entry.text;
-  }
+  meta.append(senderEl, metaRight);
 
-  bubble.append(meta, text);
+  const textPresentation = buildEntryTextPresentation(entry, "chat-message-text");
+  bubble.append(meta, textPresentation.element);
   wrapper.appendChild(bubble);
   return wrapper;
 }
@@ -640,17 +845,12 @@ export function renderHistory() {
 
     const textWrap = document.createElement("div");
     textWrap.className = "history-content";
-    const text = document.createElement("div");
-    text.className = "history-text";
-    // Use innerHTML for search highlighting
-    if (currentSearchQuery) {
-      text.innerHTML = highlightSearchMatches(entry.text);
-    } else {
-      text.textContent = entry.text;
-    }
+    const textPresentation = buildEntryTextPresentation(entry, "history-text");
+    const text = textPresentation.element;
+    textWrap.appendChild(text);
 
     // Add topic badges
-    const topics = detectTopics(entry.text);
+    const topics = detectTopics(textPresentation.displayText);
     if (topics.length > 0) {
       const topicContainer = document.createElement("div");
       topicContainer.className = "history-topics";
@@ -667,11 +867,12 @@ export function renderHistory() {
         });
       });
 
-      text.appendChild(topicContainer);
+      textWrap.appendChild(topicContainer);
     }
 
     const meta = document.createElement("div");
     meta.className = "history-meta";
+    const metaText = document.createElement("span");
     if (currentHistoryTab === "conversation") {
       const speaker =
         entry.source === "output"
@@ -679,12 +880,12 @@ export function renderHistory() {
           : entry.source && entry.source !== "local"
             ? `Input (${entry.source})`
             : "Input";
-      meta.textContent = `${formatTime(entry.timestamp_ms)} · ${speaker}`;
+      metaText.textContent = `${formatTime(entry.timestamp_ms)} · ${speaker}`;
     } else {
-      meta.textContent = `${formatTime(entry.timestamp_ms)} · ${entry.source}`;
+      metaText.textContent = `${formatTime(entry.timestamp_ms)} · ${entry.source}`;
     }
+    meta.append(metaText, buildRefinementChip(entry));
 
-    textWrap.appendChild(text);
     textWrap.appendChild(meta);
 
     const actions = document.createElement("div");
@@ -694,7 +895,7 @@ export function renderHistory() {
     copyButton.textContent = "Copy";
     copyButton.title = "Copy transcript text to clipboard";
     copyButton.addEventListener("click", async () => {
-      await navigator.clipboard.writeText(entry.text);
+      await navigator.clipboard.writeText(textPresentation.displayText);
     });
 
     actions.appendChild(copyButton);

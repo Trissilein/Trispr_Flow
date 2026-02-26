@@ -26,16 +26,19 @@ use crate::state::{AppState, Settings};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs;
+use std::io::ErrorKind;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 #[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tracing::error;
+use tracing::{error, warn};
 #[cfg(target_os = "windows")]
 use tracing::info;
 
@@ -112,6 +115,22 @@ fn system_segmenter_config(settings: &Settings) -> AdaptiveSegmenterConfig {
 pub(crate) struct TranscriptionResult {
     pub(crate) text: String,
     pub(crate) source: String,
+    pub(crate) job_id: String,
+    pub(crate) paste_deferred: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) paste_timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) entry_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TranscriptionGpuActivityEvent {
+    state: &'static str,
+    accelerator: &'static str,
+    backend: String,
+    source: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
 }
 
 #[derive(Default)]
@@ -1210,8 +1229,16 @@ pub(crate) fn transcribe_audio(
     let wav_bytes = encode_wav_i16(samples, TARGET_SAMPLE_RATE);
 
     if settings.cloud_fallback && legacy_cloud_transcription_enabled() {
-        let text = transcribe_cloud(&wav_bytes)?;
-        return Ok((text, "cloud-legacy".to_string()));
+        match transcribe_cloud(&wav_bytes) {
+            Ok(text) => return Ok((text, "cloud-legacy".to_string())),
+            Err(err) => {
+                warn!(
+                    "Legacy cloud transcription failed, falling back to local whisper: {}",
+                    err
+                );
+                let _ = app.emit("transcription:legacy-cloud-failed", err.clone());
+            }
+        }
     }
 
     let text = transcribe_local(app, settings, &wav_bytes)?;
@@ -1227,38 +1254,259 @@ fn legacy_cloud_transcription_enabled() -> bool {
     )
 }
 
+fn parse_env_usize(name: &str) -> Option<usize> {
+    std::env::var(name).ok().and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        trimmed.parse::<usize>().ok()
+    })
+}
+
+fn whisper_cli_looks_gpu_capable(cli_path: Option<&Path>) -> bool {
+    cli_path
+        .map(|path| path.to_string_lossy().to_lowercase())
+        .map(|path| {
+            path.contains("/cuda/")
+                || path.contains("\\cuda\\")
+                || path.contains("build-cuda")
+                || path.contains("/vulkan/")
+                || path.contains("\\vulkan\\")
+                || path.contains("build-vulkan")
+        })
+        .unwrap_or(false)
+}
+
+fn resolve_whisper_gpu_layers() -> Option<usize> {
+    parse_env_usize("TRISPR_WHISPER_GPU_LAYERS")
+}
+
+fn resolve_whisper_threads(gpu_hint: bool) -> usize {
+    if let Some(explicit) = parse_env_usize("TRISPR_WHISPER_THREADS") {
+        return explicit.max(1);
+    }
+
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+
+    if gpu_hint {
+        // GPU mode: keep CPU reserve to avoid UI stalls on Windows.
+        let suggested = (cores / 2).max(2);
+        return suggested.clamp(2, 8);
+    }
+
+    // CPU mode: avoid saturating all cores.
+    cores.saturating_sub(1).clamp(2, 12)
+}
+
+fn whisper_cli_supports_gpu_layers(cli_path: &Path) -> bool {
+    let mut probe = Command::new(cli_path);
+    #[cfg(target_os = "windows")]
+    probe.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+    let output = match probe.arg("--help").stdout(Stdio::piped()).stderr(Stdio::piped()).output() {
+        Ok(output) => output,
+        Err(err) => {
+            warn!(
+                "Failed to probe whisper-cli args for '{}': {}",
+                cli_path.display(),
+                err
+            );
+            return false;
+        }
+    };
+
+    let help_text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+    .to_lowercase();
+    help_text.contains("-ngl") || help_text.contains("--gpu-layers")
+}
+
+fn whisper_runtime_missing_message(detail: &str) -> String {
+    format!(
+        "Whisper runtime is missing or incomplete ({}). Reinstall Trispr Flow and ensure whisper-cli exists in the installed runtime (bin\\\\cuda or bin\\\\vulkan).",
+        detail
+    )
+}
+
+fn whisper_runtime_dependency_message(cli_path: &Path, err: &std::io::Error) -> String {
+    format!(
+        "Whisper runtime executable was found at '{}', but Windows could not load required runtime files (possible DLL dependency issue: {}). Reinstall Trispr Flow.",
+        cli_path.display(),
+        err
+    )
+}
+
+fn map_whisper_spawn_error(cli_path: &Path, err: std::io::Error) -> String {
+    if !cli_path.exists() {
+        return whisper_runtime_missing_message(&format!(
+            "whisper-cli not found at '{}'",
+            cli_path.display()
+        ));
+    }
+
+    let code = err.raw_os_error();
+    if matches!(err.kind(), ErrorKind::NotFound)
+        || code == Some(2)
+        || code == Some(126)
+        || code == Some(193)
+    {
+        return whisper_runtime_dependency_message(cli_path, &err);
+    }
+
+    format!(
+        "Failed to start Whisper runtime '{}': {}",
+        cli_path.display(),
+        err
+    )
+}
+
+fn whisper_backend_from_cli_path(cli_path: &Path) -> &'static str {
+    let lowered = cli_path.to_string_lossy().to_ascii_lowercase();
+    if lowered.contains("/cuda/")
+        || lowered.contains("\\cuda\\")
+        || lowered.contains("build-cuda")
+    {
+        return "cuda";
+    }
+    if lowered.contains("/vulkan/")
+        || lowered.contains("\\vulkan\\")
+        || lowered.contains("build-vulkan")
+    {
+        return "vulkan";
+    }
+    "cpu"
+}
+
+fn whisper_stderr_indicates_gpu(stderr: &str) -> bool {
+    let lowered = stderr.to_ascii_lowercase();
+    lowered.contains("ggml_cuda_init")
+        || lowered.contains("cuda devices")
+        || lowered.contains("ggml_vulkan")
+}
+
+fn emit_transcription_gpu_activity(
+    app: &AppHandle,
+    state: &'static str,
+    accelerator: &'static str,
+    backend: &str,
+    message: Option<String>,
+) {
+    let _ = app.emit(
+        "transcription:gpu-activity",
+        TranscriptionGpuActivityEvent {
+            state,
+            accelerator,
+            backend: backend.to_string(),
+            source: "whisper",
+            message,
+        },
+    );
+}
+
+struct WhisperGpuActivityGuard {
+    app: AppHandle,
+    backend: String,
+    accelerator: &'static str,
+}
+
+impl WhisperGpuActivityGuard {
+    fn new(app: &AppHandle, accelerator: &'static str, backend: &str) -> Self {
+        emit_transcription_gpu_activity(
+            app,
+            if accelerator == "gpu" { "active" } else { "cpu" },
+            accelerator,
+            backend,
+            None,
+        );
+        Self {
+            app: app.clone(),
+            backend: backend.to_string(),
+            accelerator,
+        }
+    }
+
+    fn set_accelerator(&mut self, accelerator: &'static str) {
+        if self.accelerator == accelerator {
+            return;
+        }
+        self.accelerator = accelerator;
+        emit_transcription_gpu_activity(
+            &self.app,
+            if accelerator == "gpu" { "active" } else { "cpu" },
+            accelerator,
+            &self.backend,
+            None,
+        );
+    }
+}
+
+impl Drop for WhisperGpuActivityGuard {
+    fn drop(&mut self) {
+        emit_transcription_gpu_activity(
+            &self.app,
+            "idle",
+            self.accelerator,
+            &self.backend,
+            None,
+        );
+    }
+}
+
 fn transcribe_local(
     app: &AppHandle,
     settings: &Settings,
     wav_bytes: &[u8],
 ) -> Result<String, String> {
     let temp_dir = std::env::temp_dir();
-    let stamp = crate::util::now_ms();
-    let base = temp_dir.join(format!("trispr_{}", stamp));
+    let _ = fs::create_dir_all(&temp_dir);
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = temp_dir.join(format!("trispr_{}_{}", std::process::id(), stamp));
     let wav_path = base.with_extension("wav");
     let output_base = base.clone();
 
-    fs::write(&wav_path, wav_bytes).map_err(|e| e.to_string())?;
+    fs::write(&wav_path, wav_bytes).map_err(|e| {
+        format!(
+            "Failed to write temporary audio file '{}': {}",
+            wav_path.display(),
+            e
+        )
+    })?;
 
     let model_path = resolve_model_path(app, &settings.model).ok_or_else(|| {
         "Model file not found. Set TRISPR_WHISPER_MODEL_DIR or TRISPR_WHISPER_MODEL.".to_string()
     })?;
 
-    let cli_path = resolve_whisper_cli_path();
+    let cli_path = resolve_whisper_cli_path().ok_or_else(|| {
+        whisper_runtime_missing_message("whisper-cli executable could not be located")
+    })?;
+    if !cli_path.exists() {
+        return Err(whisper_runtime_missing_message(&format!(
+            "whisper-cli not found at '{}'",
+            cli_path.display()
+        )));
+    }
 
-    let mut command = if let Some(path) = cli_path {
-        Command::new(path)
-    } else {
-        Command::new("whisper-cli")
-    };
+    let mut command = Command::new(&cli_path);
 
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get().to_string())
-        .unwrap_or_else(|_| "4".to_string());
+    let gpu_layers = resolve_whisper_gpu_layers();
+    let backend_gpu_capable = whisper_cli_looks_gpu_capable(Some(cli_path.as_path()));
+    let gpu_hint = gpu_layers
+        .map(|layers| layers > 0)
+        .unwrap_or(backend_gpu_capable);
+    let threads = resolve_whisper_threads(gpu_hint).to_string();
 
     // Hide console window on Windows
     #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    command.creation_flags(0x08000000 | 0x00004000); // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
 
     command
         .arg("-m")
@@ -1278,22 +1526,148 @@ fn transcribe_local(
         .arg("-of")
         .arg(&output_base)
         .arg("-np")
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let output = command.output().map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("whisper-cli failed: {stderr}"));
+    let requested_gpu_layers = gpu_layers.filter(|layers| *layers > 0);
+    let mut applied_gpu_layers: Option<usize> = None;
+    if let Some(layers) = requested_gpu_layers {
+        if whisper_cli_supports_gpu_layers(cli_path.as_path()) {
+            command.arg("-ngl").arg(layers.to_string());
+            applied_gpu_layers = Some(layers);
+        } else {
+            warn!(
+                "Ignoring TRISPR_WHISPER_GPU_LAYERS={} because whisper-cli '{}' does not support -ngl/--gpu-layers.",
+                layers,
+                cli_path.display()
+            );
+        }
     }
 
+    let expected_gpu = if requested_gpu_layers.is_some() {
+        applied_gpu_layers.is_some() || backend_gpu_capable
+    } else {
+        backend_gpu_capable
+    };
+    let backend = whisper_backend_from_cli_path(cli_path.as_path());
+    let mut gpu_activity_guard =
+        WhisperGpuActivityGuard::new(app, if expected_gpu { "gpu" } else { "cpu" }, backend);
+
+    let output = command
+        .output()
+        .map_err(|e| map_whisper_spawn_error(cli_path.as_path(), e))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if whisper_stderr_indicates_gpu(&stderr) {
+        gpu_activity_guard.set_accelerator("gpu");
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stderr.to_lowercase().contains("unknown argument:") {
+        return Err(format!(
+            "whisper-cli argument mismatch ('{}'): {}",
+            cli_path.display(),
+            stderr.trim()
+        ));
+    }
+    if !output.status.success() {
+        let details = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(format!(
+            "whisper-cli failed ('{}'): {}",
+            cli_path.display(),
+            details
+        ));
+    }
+
+    let mut transcript_candidates: Vec<PathBuf> = Vec::new();
     let txt_path = output_base.with_extension("txt");
-    let text = fs::read_to_string(&txt_path).map_err(|e| e.to_string())?;
+    push_unique_path(&mut transcript_candidates, txt_path.clone());
+    push_unique_path(
+        &mut transcript_candidates,
+        Path::new(&format!("{}.txt", wav_path.display())).to_path_buf(),
+    );
+    push_unique_path(&mut transcript_candidates, wav_path.with_extension("txt"));
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(name) = output_base.file_name().and_then(|name| name.to_str()) {
+            push_unique_path(&mut transcript_candidates, cwd.join(format!("{name}.txt")));
+        }
+        if let Some(name) = wav_path.file_name().and_then(|name| name.to_str()) {
+            push_unique_path(&mut transcript_candidates, cwd.join(format!("{name}.txt")));
+        }
+    }
+
+    let mut transcript_path: Option<PathBuf> = None;
+    let mut text: Option<String> = None;
+    for _ in 0..20 {
+        if let Some((path, value)) = read_first_existing_text_file(&transcript_candidates) {
+            transcript_path = Some(path);
+            text = Some(value);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+
+    let stdout_text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let text = if let Some(text) = text {
+        text
+    } else if !stdout_text.is_empty() {
+        stdout_text
+    } else {
+        let stderr_text = String::from_utf8_lossy(&output.stderr);
+        let expected = transcript_candidates
+            .iter()
+            .map(|path| format!("'{}'", path.display()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "Whisper finished without producing transcript output. Checked: {}. whisper-cli: '{}'. stderr: {}",
+            expected,
+            cli_path.display(),
+            stderr_text.trim()
+        ));
+    };
 
     let _ = fs::remove_file(&wav_path);
-    let _ = fs::remove_file(&txt_path);
+    for path in &transcript_candidates {
+        let _ = fs::remove_file(path);
+    }
+    if let Some(path) = transcript_path {
+        let _ = fs::remove_file(path);
+    }
 
     Ok(text.trim().to_string())
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if !paths.iter().any(|existing| existing == &candidate) {
+        paths.push(candidate);
+    }
+}
+
+fn read_first_existing_text_file(paths: &[PathBuf]) -> Option<(PathBuf, String)> {
+    let mut first_non_not_found: Option<(PathBuf, std::io::Error)> = None;
+    for path in paths {
+        match fs::read_to_string(path) {
+            Ok(content) => return Some((path.clone(), content)),
+            Err(err) if err.kind() == ErrorKind::NotFound => continue,
+            Err(err) => {
+                if first_non_not_found.is_none() {
+                    first_non_not_found = Some((path.clone(), err));
+                }
+            }
+        }
+    }
+
+    if let Some((path, err)) = first_non_not_found {
+        warn!(
+            "Failed reading whisper transcript candidate '{}': {}",
+            path.display(),
+            err
+        );
+    }
+    None
 }
 
 #[derive(Deserialize)]

@@ -1,6 +1,6 @@
 // UI state management for status and hero sections
 
-import type { RecordingState } from "./types";
+import type { RecordingState, TranscriptionGpuActivityEvent } from "./types";
 import {
   settings,
   devices,
@@ -9,7 +9,7 @@ import {
   dynamicSustainThreshold
 } from "./state";
 import * as dom from "./dom-refs";
-import { updateRecordingStatus, updateTranscribeStatus } from "./accessibility";
+import { updateRecordingStatus, updateRefiningStatus, updateTranscribeStatus } from "./accessibility";
 import { thresholdToPercent } from "./ui-helpers";
 import {
   applyFeedbackSettings,
@@ -17,6 +17,62 @@ import {
   transitionCaptureRuntime,
   transitionTranscribeRuntime,
 } from "./feedback-state";
+
+let refiningRuntimeActive = false;
+let gpuRuntimeState: "idle" | "active" | "cpu" | "error" = "idle";
+let gpuAccelerator: "gpu" | "cpu" = "cpu";
+let gpuBackend = "unknown";
+let gpuKnown = false;
+const GPU_STATUS_STORAGE_KEY = "trispr_gpu_status_snapshot_v1";
+
+type GpuStatusSnapshot = {
+  accelerator: "gpu" | "cpu";
+  backend: string;
+};
+
+function loadGpuStatusSnapshot(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(GPU_STATUS_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Partial<GpuStatusSnapshot>;
+    if (
+      (parsed?.accelerator === "gpu" || parsed?.accelerator === "cpu")
+      && typeof parsed.backend === "string"
+      && parsed.backend.trim().length > 0
+    ) {
+      gpuAccelerator = parsed.accelerator;
+      gpuBackend = parsed.backend;
+      gpuKnown = true;
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function persistGpuStatusSnapshot(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const snapshot: GpuStatusSnapshot = {
+      accelerator: gpuAccelerator,
+      backend: gpuBackend,
+    };
+    window.localStorage.setItem(GPU_STATUS_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // ignore
+  }
+}
+
+loadGpuStatusSnapshot();
+
+function prettifyGpuBackend(backend: string): string {
+  const normalized = backend.trim().toLowerCase();
+  if (!normalized) return "Unknown";
+  if (normalized === "cuda") return "CUDA";
+  if (normalized === "vulkan") return "Vulkan";
+  if (normalized === "cpu") return "CPU";
+  return normalized.toUpperCase();
+}
 
 function renderFeedbackIndicators() {
   const { capture, transcribe } = getFeedbackView();
@@ -52,6 +108,63 @@ function renderFeedbackIndicators() {
     dom.transcribeStatusPill.classList.toggle("status-pill--disabled", !transcribe.enabled);
   }
   updateTranscribeStatus(transcribe.labelState);
+
+  const refiningEnabled = Boolean(settings?.ai_fallback?.enabled);
+  const refiningState: "disabled" | "idle" | "refining" = !refiningEnabled
+    ? "disabled"
+    : refiningRuntimeActive
+      ? "refining"
+      : "idle";
+  if (dom.refiningStatusDot) {
+    dom.refiningStatusDot.dataset.state = refiningState;
+  }
+  if (dom.refiningStatusLabel) {
+    const label =
+      refiningState === "refining"
+        ? "Active"
+        : refiningState === "disabled"
+          ? "Deactivated"
+          : "Idle";
+    dom.refiningStatusLabel.textContent = `Refining: ${label}`;
+  }
+  if (dom.refiningPill) {
+    dom.refiningPill.classList.toggle("status-pill--enabled", refiningEnabled);
+    dom.refiningPill.classList.toggle("status-pill--disabled", !refiningEnabled);
+  }
+  updateRefiningStatus(refiningState);
+
+  const gpuDotState =
+    gpuRuntimeState === "active"
+      ? "gpu-active"
+      : gpuRuntimeState === "cpu"
+        ? "cpu"
+        : gpuRuntimeState === "error"
+          ? "error"
+          : "idle";
+  if (dom.gpuStatusDot) {
+    dom.gpuStatusDot.dataset.state = gpuDotState;
+  }
+  if (dom.gpuStatusLabel) {
+    if (!gpuKnown && gpuRuntimeState === "idle") {
+      dom.gpuStatusLabel.textContent = "GPU: Waiting for first run";
+    } else if (gpuRuntimeState === "active") {
+      dom.gpuStatusLabel.textContent = `GPU: Active (${prettifyGpuBackend(gpuBackend)})`;
+    } else if (gpuRuntimeState === "cpu") {
+      dom.gpuStatusLabel.textContent = "GPU: CPU mode";
+    } else if (gpuRuntimeState === "error") {
+      dom.gpuStatusLabel.textContent = "GPU: Runtime error";
+    } else {
+      dom.gpuStatusLabel.textContent =
+        gpuAccelerator === "gpu"
+          ? `GPU: Idle (${prettifyGpuBackend(gpuBackend)})`
+          : "GPU: Idle (CPU mode)";
+    }
+  }
+  if (dom.gpuPill) {
+    const gpuEnabled = gpuKnown && (gpuAccelerator === "gpu" || gpuRuntimeState === "active");
+    dom.gpuPill.classList.toggle("status-pill--enabled", gpuEnabled);
+    dom.gpuPill.classList.toggle("status-pill--disabled", !gpuEnabled);
+  }
 }
 
 export function setCaptureStatus(state: RecordingState) {
@@ -64,9 +177,23 @@ export function setTranscribeStatus(state: RecordingState) {
   renderFeedbackIndicators();
 }
 
+export function setRefiningActive(active: boolean) {
+  refiningRuntimeActive = active;
+  renderFeedbackIndicators();
+}
+
+export function setGpuActivity(event: TranscriptionGpuActivityEvent) {
+  gpuRuntimeState = event.state;
+  gpuAccelerator = event.accelerator;
+  gpuBackend = event.backend || "unknown";
+  gpuKnown = true;
+  persistGpuStatusSnapshot();
+  renderFeedbackIndicators();
+}
+
 export function renderHero() {
   if (!settings) return;
-  const aiFallbackOn = settings.ai_fallback?.enabled ?? settings.cloud_fallback;
+  const aiFallbackOn = Boolean(settings.ai_fallback?.enabled);
   const provider = settings.ai_fallback?.provider ?? "ollama";
   const executionMode = settings.ai_fallback?.execution_mode ?? "local_primary";
   const isOnlineRefinement = aiFallbackOn && executionMode === "online_fallback" && provider !== "ollama";

@@ -1,12 +1,15 @@
 use crate::ai_fallback::models::RefinementOptions;
-use crate::ai_fallback::provider::{resolve_effective_local_model, ProviderFactory};
+use crate::ai_fallback::provider::{
+    prompt_for_profile, resolve_effective_local_model, ProviderFactory,
+};
 use crate::constants::{
     TARGET_SAMPLE_RATE, VAD_MIN_CONSECUTIVE_CHUNKS, VAD_MIN_VOICE_MS,
 };
 use crate::continuous_dump::{AdaptiveSegmenter, AdaptiveSegmenterConfig, SegmentFlushReason};
-use crate::overlay::{update_overlay_state, OverlayState};
+use crate::overlay::{update_overlay_refining_indicator, update_overlay_state, OverlayState};
 use crate::postprocessing::process_transcript;
 use crate::state::{
+    mark_entry_refinement_failed, mark_entry_refinement_started, mark_entry_refinement_success,
     normalize_ai_fallback_fields, push_history_entry_inner, save_settings_file, AppState, Settings,
 };
 use crate::transcription::{
@@ -19,9 +22,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 const MIC_MIN_AUDIO_MS: u64 = 120;
+const REFINEMENT_WATCHDOG_TIMEOUT_MS: u64 = 90_000;
+const REFINEMENT_WATCHDOG_POLL_MS: u64 = 1_000;
+const REFINEMENT_PASTE_TIMEOUT_MS: u64 = 10_000;
+static TRANSCRIPTION_JOB_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct AudioDevice {
@@ -848,15 +855,27 @@ pub(crate) fn start_recording_with_settings(
     Ok(())
 }
 
-/// Spawn a background thread to refine `text` via Ollama AI Fallback.
-/// The raw transcript is emitted immediately before this is called — this
-/// function never blocks the transcription pipeline. On success it emits
-/// `"transcription:refined"`; on failure it emits `"transcription:refinement-failed"`
-/// and logs the error. The original transcript is always preserved.
+fn should_defer_paste_for_refinement(settings: &Settings) -> bool {
+    settings.ai_fallback.enabled
+        && settings.ai_fallback.provider == "ollama"
+        && settings.ai_fallback.execution_mode == "local_primary"
+}
+
+fn next_transcription_job_id(source: &str) -> String {
+    let seq = TRANSCRIPTION_JOB_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let timestamp = crate::util::now_ms();
+    format!("{source}-{timestamp}-{seq}")
+}
+
+/// Spawn a background thread to refine `text` via Ollama AI fallback.
+/// On success emits `"transcription:refined"`; on failure emits
+/// `"transcription:refinement-failed"` and logs the error.
 fn maybe_spawn_ai_refinement(
     app_handle: AppHandle,
     text: String,
     source: String,
+    job_id: String,
+    entry_id: Option<String>,
     settings: &Settings,
 ) {
     if !settings.ai_fallback.enabled {
@@ -868,65 +887,114 @@ fn maybe_spawn_ai_refinement(
     }
 
     let endpoint = settings.providers.ollama.endpoint.clone();
-    let model_resolution = match resolve_effective_local_model(
-        &settings.ai_fallback.model,
-        &settings.providers.ollama.preferred_model,
-        &endpoint,
-    ) {
-        Ok(resolved) => resolved,
-        Err(error) => {
-            error!("AI refinement skipped: {}", error);
-            let _ = app_handle.emit(
-                "transcription:refinement-failed",
-                serde_json::json!({
-                    "source": source.clone(),
-                    "error": error.to_string(),
-                }),
-            );
-            return;
-        }
-    };
-
-    let model = model_resolution.model.clone();
-    if model_resolution.repaired
-        || settings.ai_fallback.model.trim() != model
-        || settings.providers.ollama.preferred_model.trim() != model
-        || settings.postproc_llm_model.trim() != model
-    {
-        let snapshot = {
-            let state = app_handle.state::<AppState>();
-            let mut live = state.settings.lock().unwrap();
-            live.ai_fallback.model = model.clone();
-            live.providers.ollama.preferred_model = model.clone();
-            live.postproc_llm_model = model.clone();
-            normalize_ai_fallback_fields(&mut live);
-            live.clone()
-        };
-        if let Err(err) = save_settings_file(&app_handle, &snapshot) {
-            error!("Failed to persist repaired local model selection: {}", err);
-        } else {
-            let _ = app_handle.emit("settings-changed", snapshot.clone());
-        }
-    }
-
+    let configured_model = settings.ai_fallback.model.clone();
+    let preferred_model = settings.providers.ollama.preferred_model.clone();
+    let postproc_model = settings.postproc_llm_model.clone();
     let options = RefinementOptions {
         temperature: settings.ai_fallback.temperature,
         max_tokens: settings.ai_fallback.max_tokens,
+        low_latency_mode: settings.ai_fallback.low_latency_mode,
         language: Some(settings.language_mode.clone()),
-        custom_prompt: if settings.ai_fallback.custom_prompt_enabled {
-            Some(settings.ai_fallback.custom_prompt.clone())
-        } else {
-            None
-        },
+        custom_prompt: prompt_for_profile(
+            &settings.ai_fallback.prompt_profile,
+            &settings.language_mode,
+            Some(settings.ai_fallback.custom_prompt.as_str()),
+        ),
     };
 
     thread::spawn(move || {
+        // Resolve model BEFORE signalling "started" — if Ollama is down or no
+        // model is available the frontend never sees a spinner for a doomed job.
+        let model_resolution = match resolve_effective_local_model(
+            &configured_model,
+            &preferred_model,
+            &endpoint,
+        ) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                error!("AI refinement skipped: {}", error);
+                if let Some(entry_id_value) = entry_id.as_deref() {
+                    let _ = mark_entry_refinement_failed(
+                        &app_handle,
+                        entry_id_value,
+                        &job_id,
+                        &text,
+                        &error.to_string(),
+                    );
+                }
+                let _ = app_handle.emit(
+                    "transcription:refinement-failed",
+                    serde_json::json!({
+                        "job_id": job_id.clone(),
+                        "entry_id": entry_id.clone(),
+                        "source": source.clone(),
+                        "original": text.clone(),
+                        "error": error.to_string(),
+                    }),
+                );
+                return;
+            }
+        };
+
+        // Model resolved successfully — now signal that refinement is active.
+        begin_refinement_activity(&app_handle);
+        let _activity_guard = RefinementActivityGuard {
+            app_handle: app_handle.clone(),
+        };
+        if let Some(entry_id_value) = entry_id.as_deref() {
+            let _ = mark_entry_refinement_started(&app_handle, entry_id_value, &job_id, &text);
+        }
+        let _ = app_handle.emit(
+            "transcription:refinement-started",
+            serde_json::json!({
+                "job_id": job_id.clone(),
+                "entry_id": entry_id.clone(),
+                "source": source.clone(),
+                "original": text.clone(),
+            }),
+        );
+
+        let model = model_resolution.model.clone();
+        if model_resolution.repaired
+            || configured_model.trim() != model
+            || preferred_model.trim() != model
+            || postproc_model.trim() != model
+        {
+            let snapshot = {
+                let state = app_handle.state::<AppState>();
+                let mut live = state.settings.lock().unwrap();
+                live.ai_fallback.model = model.clone();
+                live.providers.ollama.preferred_model = model.clone();
+                live.postproc_llm_model = model.clone();
+                normalize_ai_fallback_fields(&mut live);
+                live.clone()
+            };
+            if let Err(err) = save_settings_file(&app_handle, &snapshot) {
+                error!("Failed to persist repaired local model selection: {}", err);
+            } else {
+                let _ = app_handle.emit("settings-changed", snapshot.clone());
+            }
+        }
+
         let provider = ProviderFactory::create_ollama(endpoint);
         match provider.refine_transcript(&text, &model, &options, "") {
             Ok(result) => {
+                if let Some(entry_id_value) = entry_id.as_deref() {
+                    let _ = mark_entry_refinement_success(
+                        &app_handle,
+                        entry_id_value,
+                        &job_id,
+                        &text,
+                        &result.text,
+                        &result.model,
+                        result.execution_time_ms,
+                    );
+                }
                 let _ = app_handle.emit(
                     "transcription:refined",
                     serde_json::json!({
+                        "job_id": job_id,
+                        "entry_id": entry_id,
                         "original": text,
                         "refined": result.text,
                         "source": source,
@@ -937,16 +1005,155 @@ fn maybe_spawn_ai_refinement(
             }
             Err(e) => {
                 error!("AI refinement failed ({}): {}", model, e);
+                if let Some(entry_id_value) = entry_id.as_deref() {
+                    let _ = mark_entry_refinement_failed(
+                        &app_handle,
+                        entry_id_value,
+                        &job_id,
+                        &text,
+                        &e.to_string(),
+                    );
+                }
                 let _ = app_handle.emit(
                     "transcription:refinement-failed",
                     serde_json::json!({
+                        "job_id": job_id,
+                        "entry_id": entry_id,
                         "source": source,
+                        "original": text,
                         "error": e.to_string(),
                     }),
                 );
             }
         }
     });
+}
+
+struct RefinementActivityGuard {
+    app_handle: AppHandle,
+}
+
+impl Drop for RefinementActivityGuard {
+    fn drop(&mut self) {
+        end_refinement_activity(&self.app_handle);
+    }
+}
+
+fn emit_refinement_activity(app_handle: &AppHandle, active_count: usize, reason: &str) {
+    let state = if active_count > 0 { "active" } else { "idle" };
+    let _ = app_handle.emit(
+        "transcription:refinement-activity",
+        serde_json::json!({
+            "active_count": active_count,
+            "state": state,
+            "reason": reason,
+        }),
+    );
+}
+
+fn schedule_refinement_watchdog(app_handle: AppHandle, generation: u64) {
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_millis(REFINEMENT_WATCHDOG_POLL_MS));
+
+            let state = app_handle.state::<AppState>();
+            if state.refinement_watchdog_generation.load(Ordering::SeqCst) != generation {
+                return;
+            }
+
+            let active_count = state.refinement_active_count.load(Ordering::SeqCst);
+            if active_count == 0 {
+                return;
+            }
+
+            let last_change_ms = state.refinement_last_change_ms.load(Ordering::SeqCst);
+            let now_ms = crate::util::now_ms();
+            if now_ms.saturating_sub(last_change_ms) <= REFINEMENT_WATCHDOG_TIMEOUT_MS {
+                continue;
+            }
+
+            state.refinement_active_count.store(0, Ordering::SeqCst);
+            state.refinement_watchdog_generation.fetch_add(1, Ordering::SeqCst);
+            state.refinement_last_change_ms.store(now_ms, Ordering::SeqCst);
+            let _ = update_overlay_refining_indicator(&app_handle, false);
+            emit_refinement_activity(&app_handle, 0, "watchdog_reset");
+            warn!(
+                "Refinement watchdog reset triggered after {}ms without lifecycle completion",
+                REFINEMENT_WATCHDOG_TIMEOUT_MS
+            );
+            return;
+        }
+    });
+}
+
+pub(crate) fn force_reset_refinement_activity(app_handle: &AppHandle, reason: &str) {
+    let state = app_handle.state::<AppState>();
+    state.refinement_active_count.store(0, Ordering::SeqCst);
+    state.refinement_watchdog_generation.fetch_add(1, Ordering::SeqCst);
+    state
+        .refinement_last_change_ms
+        .store(crate::util::now_ms(), Ordering::SeqCst);
+    let _ = update_overlay_refining_indicator(app_handle, false);
+    emit_refinement_activity(app_handle, 0, reason);
+}
+
+fn begin_refinement_activity(app_handle: &AppHandle) {
+    let state = app_handle.state::<AppState>();
+    let previous = state.refinement_active_count.fetch_add(1, Ordering::SeqCst);
+    let next = previous + 1;
+    state
+        .refinement_last_change_ms
+        .store(crate::util::now_ms(), Ordering::SeqCst);
+    emit_refinement_activity(app_handle, next, "started");
+
+    if previous == 0 {
+        let generation = state
+            .refinement_watchdog_generation
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
+        let enabled = state
+            .settings
+            .lock()
+            .map(|settings| settings.overlay_refining_indicator_enabled)
+            .unwrap_or(true);
+        if enabled {
+            let _ = update_overlay_refining_indicator(app_handle, true);
+        } else {
+            let _ = update_overlay_refining_indicator(app_handle, false);
+        }
+        schedule_refinement_watchdog(app_handle.clone(), generation);
+    }
+}
+
+fn end_refinement_activity(app_handle: &AppHandle) {
+    let state = app_handle.state::<AppState>();
+    loop {
+        let current = state.refinement_active_count.load(Ordering::SeqCst);
+        if current == 0 {
+            state
+                .refinement_last_change_ms
+                .store(crate::util::now_ms(), Ordering::SeqCst);
+            emit_refinement_activity(app_handle, 0, "finished");
+            let _ = update_overlay_refining_indicator(app_handle, false);
+            return;
+        }
+        if state
+            .refinement_active_count
+            .compare_exchange(current, current - 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            let next = current - 1;
+            state
+                .refinement_last_change_ms
+                .store(crate::util::now_ms(), Ordering::SeqCst);
+            emit_refinement_activity(app_handle, next, "finished");
+            if next == 0 {
+                state.refinement_watchdog_generation.fetch_add(1, Ordering::SeqCst);
+                let _ = update_overlay_refining_indicator(app_handle, false);
+            }
+            return;
+        }
+    }
 }
 
 fn flush_mic_audio_to_session(buffer: &mut Vec<i16>) {
@@ -1011,27 +1218,40 @@ fn process_toggle_segment(
                     text.clone()
                 };
 
+                let job_id = next_transcription_job_id(&source);
                 let state = app_handle.state::<AppState>();
+                let mut entry_id: Option<String> = None;
                 if let Ok(updated) = push_history_entry_inner(
                     app_handle,
                     &state.history,
                     processed_text.clone(),
                     source.clone(),
                 ) {
+                    entry_id = updated.first().map(|entry| entry.id.clone());
                     let _ = app_handle.emit("history:updated", updated);
                 }
-
+                let paste_deferred = should_defer_paste_for_refinement(runtime_settings);
                 let _ = app_handle.emit(
                     "transcription:result",
                     TranscriptionResult {
                         text: processed_text.clone(),
                         source: source.clone(),
+                        job_id: job_id.clone(),
+                        paste_deferred,
+                        paste_timeout_ms: if paste_deferred {
+                            Some(REFINEMENT_PASTE_TIMEOUT_MS)
+                        } else {
+                            None
+                        },
+                        entry_id: entry_id.clone(),
                     },
                 );
                 maybe_spawn_ai_refinement(
                     app_handle.clone(),
                     processed_text.clone(),
                     source.clone(),
+                    job_id,
+                    entry_id,
                     runtime_settings,
                 );
 
@@ -1045,10 +1265,6 @@ fn process_toggle_segment(
                         text_len: processed_text.len(),
                     },
                 );
-
-                if let Err(err) = crate::paste_text(&processed_text) {
-                    let _ = app_handle.emit("transcription:error", err);
-                }
             }
         }
         Err(err) => {
@@ -1562,30 +1778,41 @@ fn process_vad_segment(
                     text.clone()
                 };
 
+                let job_id = next_transcription_job_id(&source);
+                let mut entry_id: Option<String> = None;
                 if let Ok(updated) = push_history_entry_inner(
                     &app_handle,
                     &state.history,
                     processed_text.clone(),
                     source.clone(),
                 ) {
+                    entry_id = updated.first().map(|entry| entry.id.clone());
                     let _ = app_handle.emit("history:updated", updated);
                 }
+                let paste_deferred = should_defer_paste_for_refinement(&settings);
                 let _ = app_handle.emit(
                     "transcription:result",
                     TranscriptionResult {
                         text: processed_text.clone(),
                         source: source.clone(),
+                        job_id: job_id.clone(),
+                        paste_deferred,
+                        paste_timeout_ms: if paste_deferred {
+                            Some(REFINEMENT_PASTE_TIMEOUT_MS)
+                        } else {
+                            None
+                        },
+                        entry_id: entry_id.clone(),
                     },
                 );
                 maybe_spawn_ai_refinement(
                     app_handle.clone(),
                     processed_text.clone(),
                     source.clone(),
+                    job_id,
+                    entry_id,
                     &settings,
                 );
-                if let Err(err) = crate::paste_text(&processed_text) {
-                    let _ = app_handle.emit("transcription:error", err);
-                }
             }
         }
         Err(err) => {
@@ -1714,30 +1941,41 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
                         text.clone()
                     };
 
+                    let job_id = next_transcription_job_id(&source);
+                    let mut entry_id: Option<String> = None;
                     if let Ok(updated) = push_history_entry_inner(
                         &app_handle,
                         &state.history,
                         processed_text.clone(),
                         source.clone(),
                     ) {
+                        entry_id = updated.first().map(|entry| entry.id.clone());
                         let _ = app_handle.emit("history:updated", updated);
                     }
+                    let paste_deferred = should_defer_paste_for_refinement(&settings);
                     let _ = app_handle.emit(
                         "transcription:result",
                         TranscriptionResult {
                             text: processed_text.clone(),
                             source: source.clone(),
+                            job_id: job_id.clone(),
+                            paste_deferred,
+                            paste_timeout_ms: if paste_deferred {
+                                Some(REFINEMENT_PASTE_TIMEOUT_MS)
+                            } else {
+                                None
+                            },
+                            entry_id: entry_id.clone(),
                         },
                     );
                     maybe_spawn_ai_refinement(
                         app_handle.clone(),
                         processed_text.clone(),
                         source.clone(),
+                        job_id,
+                        entry_id,
                         &settings,
                     );
-                    if let Err(err) = crate::paste_text(&processed_text) {
-                        let _ = app_handle.emit("transcription:error", err);
-                    }
                 }
             }
             Err(err) => {

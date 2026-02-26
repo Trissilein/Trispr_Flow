@@ -6,6 +6,7 @@ const DEFAULT_PROVIDER: &str = "ollama";
 const DEFAULT_TEMPERATURE: f32 = 0.3;
 const DEFAULT_MAX_TOKENS: u32 = 4000;
 const DEFAULT_EXECUTION_MODE: &str = "local_primary";
+const DEFAULT_PROMPT_PROFILE: &str = "wording";
 const AUTH_STATUS_LOCKED: &str = "locked";
 const AUTH_STATUS_VERIFIED_API_KEY: &str = "verified_api_key";
 const AUTH_STATUS_VERIFIED_OAUTH: &str = "verified_oauth";
@@ -23,6 +24,8 @@ pub struct AIFallbackSettings {
     pub model: String,
     pub temperature: f32,
     pub max_tokens: u32,
+    pub low_latency_mode: bool,
+    pub prompt_profile: String, // "wording" | "summary" | "technical_specs" | "action_items" | "custom"
     pub custom_prompt_enabled: bool,
     pub custom_prompt: String,
     pub use_default_prompt: bool,
@@ -44,6 +47,8 @@ impl Default for AIFallbackSettings {
             model,
             temperature: DEFAULT_TEMPERATURE,
             max_tokens: DEFAULT_MAX_TOKENS,
+            low_latency_mode: false,
+            prompt_profile: DEFAULT_PROMPT_PROFILE.to_string(),
             custom_prompt_enabled: false,
             custom_prompt:
                 "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
@@ -82,6 +87,16 @@ impl AIFallbackSettings {
         }
         if self.max_tokens > 8192 {
             self.max_tokens = 8192;
+        }
+        let normalized_profile = normalize_prompt_profile_id(&self.prompt_profile);
+        if normalized_profile.is_empty() {
+            if self.custom_prompt_enabled && !self.use_default_prompt {
+                self.prompt_profile = "custom".to_string();
+            } else {
+                self.prompt_profile = DEFAULT_PROMPT_PROFILE.to_string();
+            }
+        } else {
+            self.prompt_profile = normalized_profile.to_string();
         }
         if self.custom_prompt.trim().is_empty() {
             self.custom_prompt = AIFallbackSettings::default().custom_prompt;
@@ -340,6 +355,7 @@ fn normalize_cloud_provider_id(provider: &str) -> Option<&'static str> {
 pub struct RefinementOptions {
     pub temperature: f32,
     pub max_tokens: u32,
+    pub low_latency_mode: bool,
     pub language: Option<String>,
     pub custom_prompt: Option<String>,
 }
@@ -367,5 +383,16 @@ pub fn normalize_provider_id(provider: &str) -> &'static str {
         "gemini" => "gemini",
         "ollama" => "ollama",
         _ => DEFAULT_PROVIDER,
+    }
+}
+
+pub fn normalize_prompt_profile_id(profile: &str) -> &'static str {
+    match profile.trim().to_lowercase().as_str() {
+        "wording" => "wording",
+        "summary" => "summary",
+        "technical_specs" => "technical_specs",
+        "action_items" => "action_items",
+        "custom" => "custom",
+        _ => "",
     }
 }

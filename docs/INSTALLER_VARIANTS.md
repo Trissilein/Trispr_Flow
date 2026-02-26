@@ -1,6 +1,6 @@
 # Trispr Flow - Installer Variants
 
-Last updated: 2026-02-20
+Last updated: 2026-02-26
 
 This document describes the current Windows installer variants for Trispr Flow mainline.
 
@@ -10,13 +10,15 @@ This document describes the current Windows installer variants for Trispr Flow m
 
 - Config: `src-tauri/tauri.conf.json`
 - NSIS hooks: `src-tauri/nsis/hooks.nsh`
-- Includes: CUDA + Vulkan whisper runtimes
+- Includes: CUDA whisper runtime only
+- Installer flow: no GPU backend selector page
 
 ### 2. Vulkan Edition
 
 - Config: `src-tauri/tauri.conf.vulkan.json`
 - NSIS hooks: `src-tauri/nsis/hooks.vulkan.nsh`
 - Includes: Vulkan whisper runtime only
+- Installer flow: no GPU backend selector page
 
 ## Build Command
 

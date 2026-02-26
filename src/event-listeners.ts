@@ -23,8 +23,15 @@ import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
 import { updateChaptersVisibility } from "./chapters";
 import {
+  DEFAULT_REFINEMENT_PROMPT_PRESET,
+  normalizeRefinementPromptPreset,
+  resolveEffectiveRefinementPrompt,
+} from "./refinement-prompts";
+import {
+  autoStartLocalRuntimeIfNeeded,
   detectOllamaRuntime,
   ensureLocalRuntimeReady,
+  getOllamaRuntimeCardState,
   importOllamaModelFromLocalFile,
   refreshOllamaInstalledModels,
   refreshOllamaRuntimeAndModels,
@@ -70,9 +77,6 @@ function isVerifiedAuthStatus(status?: string | null): boolean {
 function getCredentialTargetProvider(): CloudAIFallbackProvider | null {
   if (authModalProvider) {
     return authModalProvider;
-  }
-  if (dom.aiFallbackCredentialProvider) {
-    return normalizeCloudProvider(dom.aiFallbackCredentialProvider.value);
   }
   return normalizeCloudProvider(settings?.ai_fallback?.fallback_provider ?? null);
 }
@@ -183,6 +187,8 @@ function ensureAIFallbackSettingsDefaults() {
       model: "",
       temperature: 0.3,
       max_tokens: 4000,
+      low_latency_mode: false,
+      prompt_profile: DEFAULT_REFINEMENT_PROMPT_PRESET,
       custom_prompt_enabled: false,
       custom_prompt:
         "Fix this transcribed text: correct punctuation, capitalization, and obvious errors. Keep the meaning unchanged. Return only the corrected text.",
@@ -238,6 +244,12 @@ function ensureAIFallbackSettingsDefaults() {
     };
   }
   settings.ai_fallback.strict_local_mode ??= true;
+  settings.ai_fallback.prompt_profile = normalizeRefinementPromptPreset(
+    settings.ai_fallback.prompt_profile
+  );
+  settings.ai_fallback.low_latency_mode ??= false;
+  settings.ai_fallback.custom_prompt_enabled = settings.ai_fallback.prompt_profile === "custom";
+  settings.ai_fallback.use_default_prompt = false;
   settings.ai_fallback.fallback_provider = normalizeCloudProvider(
     settings.ai_fallback.fallback_provider ?? null
   );
@@ -656,6 +668,32 @@ function addVocabRow(original: string, replacement: string) {
 
 // Main tab switching
 type MainTab = "transcription" | "settings" | "ai-refinement";
+let aiRefinementTabRefreshInFlight: Promise<void> | null = null;
+
+async function refreshAiRefinementTabState(): Promise<void> {
+  if (aiRefinementTabRefreshInFlight) {
+    await aiRefinementTabRefreshInFlight;
+    return;
+  }
+
+  const refreshTask = (async () => {
+    await refreshOllamaRuntimeState({ force: true });
+    if (getOllamaRuntimeCardState().healthy) {
+      await refreshOllamaInstalledModels();
+    }
+    renderAIFallbackSettingsUi();
+    renderOllamaModelManager();
+  })();
+
+  aiRefinementTabRefreshInFlight = refreshTask;
+  try {
+    await refreshTask;
+  } finally {
+    if (aiRefinementTabRefreshInFlight === refreshTask) {
+      aiRefinementTabRefreshInFlight = null;
+    }
+  }
+}
 
 function switchMainTab(tab: MainTab) {
   const isTranscription = tab === "transcription";
@@ -694,10 +732,7 @@ function switchMainTab(tab: MainTab) {
   if (isAiRefinement) {
     void (async () => {
       try {
-        await refreshOllamaInstalledModels();
-        await refreshOllamaRuntimeState();
-        renderAIFallbackSettingsUi();
-        renderOllamaModelManager();
+        await refreshAiRefinementTabState();
       } catch (error) {
         console.warn("Failed to refresh Ollama runtime on tab switch:", error);
       }
@@ -959,6 +994,7 @@ export function wireEvents() {
       dom.conversationFontSizeValue.textContent = `${size}px`;
     }
     updateRangeAria("conversation-font-size", size);
+    renderHistory();
   });
 
   const commitAlias = (key: "mic" | "system", input: HTMLInputElement | null): void => {
@@ -1405,11 +1441,16 @@ export function wireEvents() {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
     settings.ai_fallback.enabled = dom.aiFallbackEnabled!.checked;
-    settings.cloud_fallback = settings.ai_fallback.enabled;
     settings.postproc_llm_enabled = settings.ai_fallback.enabled;
     await persistSettings();
     renderAIFallbackSettingsUi();
     renderHero();
+    if (settings.ai_fallback.enabled) {
+      void autoStartLocalRuntimeIfNeeded("enable_toggle").finally(() => {
+        renderAIFallbackSettingsUi();
+        renderOllamaModelManager();
+      });
+    }
   });
 
   dom.aiFallbackCloudProviderList?.addEventListener("click", (event) => {
@@ -1467,8 +1508,10 @@ export function wireEvents() {
       settings.ai_fallback.execution_mode !== "local_primary" ||
       settings.ai_fallback.provider !== "ollama";
     applyExecutionModeInSettings("local_primary");
-    await refreshOllamaInstalledModels();
-    await refreshOllamaRuntimeState();
+    await refreshOllamaRuntimeState({ force: true });
+    if (getOllamaRuntimeCardState().healthy) {
+      await refreshOllamaInstalledModels();
+    }
     await persistSettings();
     renderAIFallbackSettingsUi();
     renderOllamaModelManager();
@@ -1631,7 +1674,7 @@ export function wireEvents() {
       });
       return;
     }
-    const apiKey = (dom.aiAuthApiKeyInput?.value ?? dom.aiFallbackApiKeyInput?.value ?? "").trim();
+    const apiKey = (dom.aiAuthApiKeyInput?.value ?? "").trim();
     if (!apiKey) {
       showToast({
         type: "warning",
@@ -1644,7 +1687,6 @@ export function wireEvents() {
     try {
       await saveProviderApiKey(provider, apiKey);
       if (dom.aiAuthApiKeyInput) dom.aiAuthApiKeyInput.value = "";
-      if (dom.aiFallbackApiKeyInput) dom.aiFallbackApiKeyInput.value = "";
       showToast({
         type: "success",
         title: "API key saved",
@@ -1708,15 +1750,6 @@ export function wireEvents() {
     await verifyProviderCredentials(provider);
   };
 
-  dom.aiFallbackSaveKeyBtn?.addEventListener("click", () => {
-    void handleSaveCredentialsClick();
-  });
-  dom.aiFallbackClearKeyBtn?.addEventListener("click", () => {
-    void handleClearCredentialsClick();
-  });
-  dom.aiFallbackTestKeyBtn?.addEventListener("click", () => {
-    void handleVerifyCredentialsClick();
-  });
   dom.aiAuthSaveKey?.addEventListener("click", () => {
     void handleSaveCredentialsClick();
   });
@@ -1743,6 +1776,25 @@ export function wireEvents() {
     await persistSettings();
   });
 
+  dom.aiFallbackLowLatencyMode?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackLowLatencyMode) return;
+    ensureAIFallbackSettingsDefaults();
+    const enabled = dom.aiFallbackLowLatencyMode.checked;
+    settings.ai_fallback.low_latency_mode = enabled;
+
+    if (enabled) {
+      if (settings.ai_fallback.max_tokens > 512) {
+        settings.ai_fallback.max_tokens = 512;
+      }
+      if (settings.ai_fallback.temperature > 0.2) {
+        settings.ai_fallback.temperature = 0.15;
+      }
+    }
+
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+  });
+
   dom.aiFallbackMaxTokens?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackMaxTokens) return;
     ensureAIFallbackSettingsDefaults();
@@ -1750,26 +1802,43 @@ export function wireEvents() {
     await persistSettings();
   });
 
-  dom.aiFallbackCustomPromptEnabled?.addEventListener("change", async () => {
-    if (!settings) return;
+  dom.aiFallbackPromptPreset?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackPromptPreset) return;
     ensureAIFallbackSettingsDefaults();
-    settings.ai_fallback.custom_prompt_enabled = dom.aiFallbackCustomPromptEnabled!.checked;
-    settings.ai_fallback.use_default_prompt = !settings.ai_fallback.custom_prompt_enabled;
-    if (settings.ai_fallback.custom_prompt_enabled && settings.ai_fallback.custom_prompt.trim().length > 0) {
-      settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt;
-    }
+    const profile = normalizeRefinementPromptPreset(dom.aiFallbackPromptPreset.value);
+    settings.ai_fallback.prompt_profile = profile;
+    settings.ai_fallback.custom_prompt_enabled = profile === "custom";
+    settings.ai_fallback.use_default_prompt = false;
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      profile,
+      settings.language_mode,
+      settings.ai_fallback.custom_prompt
+    );
     await persistSettings();
     renderAIFallbackSettingsUi();
+  });
+
+  dom.aiFallbackCustomPrompt?.addEventListener("input", () => {
+    if (!settings || !dom.aiFallbackCustomPrompt) return;
+    ensureAIFallbackSettingsDefaults();
+    if (settings.ai_fallback.prompt_profile !== "custom") return;
+    settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value;
+    settings.ai_fallback.custom_prompt_enabled = true;
+    settings.ai_fallback.use_default_prompt = false;
+    settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt.trim();
   });
 
   dom.aiFallbackCustomPrompt?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackCustomPrompt) return;
     ensureAIFallbackSettingsDefaults();
-    settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value.trim();
-    settings.ai_fallback.use_default_prompt = settings.ai_fallback.custom_prompt.length === 0;
-    if (settings.ai_fallback.custom_prompt.length > 0) {
-      settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt;
+    if (settings.ai_fallback.prompt_profile !== "custom") {
+      renderAIFallbackSettingsUi();
+      return;
     }
+    settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value.trim();
+    settings.ai_fallback.custom_prompt_enabled = true;
+    settings.ai_fallback.use_default_prompt = false;
+    settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt;
     await persistSettings();
   });
 
@@ -2009,6 +2078,60 @@ export function wireEvents() {
     settings.overlay_style = dom.overlayStyle.value;
     updateOverlayStyleVisibility(dom.overlayStyle.value);
     applyOverlaySharedUi(dom.overlayStyle.value);
+    await persistSettings();
+  });
+
+  dom.overlayRefiningIndicatorEnabled?.addEventListener("change", async () => {
+    if (!settings || !dom.overlayRefiningIndicatorEnabled) return;
+    settings.overlay_refining_indicator_enabled = dom.overlayRefiningIndicatorEnabled.checked;
+    await persistSettings();
+  });
+
+  dom.overlayRefiningIndicatorPreset?.addEventListener("change", async () => {
+    if (!settings || !dom.overlayRefiningIndicatorPreset) return;
+    const value = dom.overlayRefiningIndicatorPreset.value;
+    settings.overlay_refining_indicator_preset =
+      value === "subtle" || value === "intense" ? value : "standard";
+    await persistSettings();
+  });
+
+  dom.overlayRefiningIndicatorColor?.addEventListener("input", () => {
+    if (!settings || !dom.overlayRefiningIndicatorColor) return;
+    settings.overlay_refining_indicator_color = dom.overlayRefiningIndicatorColor.value;
+  });
+
+  dom.overlayRefiningIndicatorColor?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  dom.overlayRefiningIndicatorSpeed?.addEventListener("input", () => {
+    if (!settings || !dom.overlayRefiningIndicatorSpeed) return;
+    const value = Math.max(450, Math.min(3000, Number(dom.overlayRefiningIndicatorSpeed.value)));
+    settings.overlay_refining_indicator_speed_ms = value;
+    if (dom.overlayRefiningIndicatorSpeedValue) {
+      dom.overlayRefiningIndicatorSpeedValue.textContent = `${value} ms`;
+    }
+    updateRangeAria("overlay-refining-indicator-speed", value);
+  });
+
+  dom.overlayRefiningIndicatorSpeed?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  dom.overlayRefiningIndicatorRange?.addEventListener("input", () => {
+    if (!settings || !dom.overlayRefiningIndicatorRange) return;
+    const value = Math.max(60, Math.min(180, Number(dom.overlayRefiningIndicatorRange.value)));
+    settings.overlay_refining_indicator_range = value;
+    if (dom.overlayRefiningIndicatorRangeValue) {
+      dom.overlayRefiningIndicatorRangeValue.textContent = `${value}%`;
+    }
+    updateRangeAria("overlay-refining-indicator-range", value);
+  });
+
+  dom.overlayRefiningIndicatorRange?.addEventListener("change", async () => {
+    if (!settings) return;
     await persistSettings();
   });
 

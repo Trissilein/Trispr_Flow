@@ -26,7 +26,7 @@ use state::{AppState, HistoryEntry, Settings};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
@@ -40,7 +40,8 @@ use crate::ai_fallback::keyring as ai_fallback_keyring;
 use crate::ai_fallback::models::RefinementOptions;
 use crate::ai_fallback::provider::{
     default_models_for_provider, is_local_ollama_endpoint, list_ollama_models,
-    list_ollama_models_with_size, ping_ollama, resolve_effective_local_model, ProviderFactory,
+    list_ollama_models_with_size, ping_ollama, ping_ollama_quick, prompt_for_profile,
+    resolve_effective_local_model, ProviderFactory,
 };
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
 use crate::models::{
@@ -352,7 +353,7 @@ fn fetch_available_models(
         let models = list_ollama_models(&endpoint);
         if models.is_empty() {
             // Distinguish "Ollama not reachable" from "reachable but no models installed".
-            ping_ollama(&endpoint).map_err(|e| e.to_string())?;
+            ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
         }
         return Ok(models);
     }
@@ -397,7 +398,8 @@ fn fetch_ollama_models_with_size(
     let models = list_ollama_models_with_size(&endpoint);
     if models.is_empty() {
         // Distinguish "Ollama not reachable" from "reachable but no models installed".
-        ping_ollama(&endpoint).map_err(|e| e.to_string())?;
+        // Use quick ping (300ms) to avoid blocking the command thread for seconds.
+        ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
     }
     Ok(models
         .into_iter()
@@ -712,12 +714,13 @@ fn refine_transcript(
     let options = RefinementOptions {
         temperature: ai_settings.temperature,
         max_tokens: ai_settings.max_tokens,
+        low_latency_mode: ai_settings.low_latency_mode,
         language: Some(settings_snapshot.language_mode.clone()),
-        custom_prompt: if ai_settings.custom_prompt_enabled {
-            Some(ai_settings.custom_prompt.clone())
-        } else {
-            None
-        },
+        custom_prompt: prompt_for_profile(
+            &ai_settings.prompt_profile,
+            &settings_snapshot.language_mode,
+            Some(ai_settings.custom_prompt.as_str()),
+        ),
     };
 
     let result = provider_client
@@ -928,6 +931,7 @@ fn save_settings(
         prev_capture_enabled,
         prev_transcribe_enabled,
         prev_transcribe_output_device,
+        prev_ai_refinement_enabled,
     ) = {
         let current = state.settings.lock().unwrap();
         (
@@ -936,6 +940,7 @@ fn save_settings(
             current.capture_enabled,
             current.transcribe_enabled,
             current.transcribe_output_device.clone(),
+            current.ai_fallback.enabled,
         )
     };
     normalize_ai_fallback_fields(&mut settings);
@@ -1001,6 +1006,10 @@ fn save_settings(
 
     let overlay_settings = build_overlay_settings(&settings);
     let _ = overlay::apply_overlay_settings(&app, &overlay_settings);
+
+    if prev_ai_refinement_enabled && !settings.ai_fallback.enabled {
+        crate::audio::force_reset_refinement_activity(&app, "forced_reset");
+    }
 
     let recorder = state.recorder.lock().unwrap();
     if !recorder.active {
@@ -1183,6 +1192,11 @@ fn expand_transcribe_backlog(
 ) -> Result<transcription::TranscribeBacklogStatus, String> {
     cancel_backlog_auto_expand(&app);
     expand_transcribe_backlog_inner(&app)
+}
+
+#[tauri::command]
+fn paste_transcript_text(text: String) -> Result<(), String> {
+    paste_text(&text)
 }
 
 #[tauri::command]
@@ -1538,6 +1552,11 @@ fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
         pos_x,
         pos_y,
         style: settings.overlay_style.clone(),
+        refining_indicator_enabled: settings.overlay_refining_indicator_enabled,
+        refining_indicator_preset: settings.overlay_refining_indicator_preset.clone(),
+        refining_indicator_color: settings.overlay_refining_indicator_color.clone(),
+        refining_indicator_speed_ms: settings.overlay_refining_indicator_speed_ms,
+        refining_indicator_range: settings.overlay_refining_indicator_range as f64,
         kitt_min_width: settings.overlay_kitt_min_width as f64,
         kitt_max_width: settings.overlay_kitt_max_width as f64,
         kitt_height: settings.overlay_kitt_height as f64,
@@ -2184,6 +2203,9 @@ pub fn run() {
                 downloads: Mutex::new(HashSet::new()),
                 ollama_pulls: Mutex::new(HashSet::new()),
                 transcribe_active: AtomicBool::new(false),
+                refinement_active_count: AtomicUsize::new(0),
+                refinement_watchdog_generation: AtomicU64::new(0),
+                refinement_last_change_ms: AtomicU64::new(0),
                 last_mic_recording_path: Mutex::new(None),
                 last_system_recording_path: Mutex::new(None),
             });
@@ -2521,6 +2543,7 @@ pub fn run() {
             stop_recording,
             toggle_transcribe,
             expand_transcribe_backlog,
+            paste_transcript_text,
             apply_model,
             validate_hotkey,
             test_hotkey,

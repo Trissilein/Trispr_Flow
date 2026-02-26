@@ -79,19 +79,12 @@ pub(crate) fn resolve_whisper_cli_path() -> Option<PathBuf> {
 
   // 3. Relative to CWD (dev mode)
   if let Ok(cwd) = std::env::current_dir() {
-    candidates.push(cwd.join("whisper-cli.exe"));
-    candidates.push(cwd.join("whisper-cli"));
-    for build_dir in &[
-      "../whisper.cpp/build/bin",
-      "../whisper.cpp/build/bin/Release",
-      "../whisper.cpp/build-cpu/bin",
-      "../whisper.cpp/build-cpu/bin/Release",
-      "../whisper.cpp/build-cuda/bin",
-      "../whisper.cpp/build-cuda/bin/Release",
-      "../whisper.cpp/build-vulkan/bin",
-      "../whisper.cpp/build-vulkan/bin/Release",
-    ] {
-      candidates.push(cwd.join(format!("{}/whisper-cli.exe", build_dir)));
+    // Preferred dev locations in this repository.
+    for backend in &["cuda", "vulkan"] {
+      candidates.push(cwd.join(format!("src-tauri/bin/{}/whisper-cli.exe", backend)));
+      candidates.push(cwd.join(format!("src-tauri/bin/{}/whisper-cli", backend)));
+      candidates.push(cwd.join(format!("bin/{}/whisper-cli.exe", backend)));
+      candidates.push(cwd.join(format!("bin/{}/whisper-cli", backend)));
     }
   }
 
@@ -130,19 +123,8 @@ pub(crate) fn resolve_quantize_path(app: &AppHandle) -> Option<PathBuf> {
 
   // 3. Relative to CWD (dev mode)
   if let Ok(cwd) = std::env::current_dir() {
-    candidates.push(cwd.join("quantize.exe"));
-    for build_dir in &[
-      "../whisper.cpp/build/bin",
-      "../whisper.cpp/build/bin/Release",
-      "../whisper.cpp/build-cpu/bin",
-      "../whisper.cpp/build-cpu/bin/Release",
-      "../whisper.cpp/build-cuda/bin",
-      "../whisper.cpp/build-cuda/bin/Release",
-      "../whisper.cpp/build-vulkan/bin",
-      "../whisper.cpp/build-vulkan/bin/Release",
-    ] {
-      candidates.push(cwd.join(format!("{}/quantize.exe", build_dir)));
-    }
+    candidates.push(cwd.join("src-tauri/bin/quantize.exe"));
+    candidates.push(cwd.join("bin/quantize.exe"));
   }
 
   for path in candidates {

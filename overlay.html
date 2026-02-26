@@ -71,6 +71,149 @@
         transform: scale(1);
       }
 
+      #refine-indicator {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.2s ease-out;
+        --refine-inner-size: 38px;
+        --refine-outer-size: 56px;
+        --refine-inner-border: 2px;
+        --refine-outer-border: 2px;
+        --refine-pulse-duration: 1150ms;
+        --refine-duration-factor: 1;
+        --refine-range-scale: 1;
+        --refine-rgb: 110, 200, 255;
+        --refine-ring-opacity-a: 0.8;
+        --refine-ring-opacity-b: 0.55;
+        --refine-shadow-a: 14px;
+        --refine-shadow-b: 20px;
+      }
+
+      #refine-indicator::before,
+      #refine-indicator::after {
+        content: "";
+        position: absolute;
+        border-radius: 999px;
+        border-style: solid;
+      }
+
+      #refine-indicator::before {
+        width: calc(var(--refine-inner-size) * var(--refine-range-scale));
+        height: calc(var(--refine-inner-size) * var(--refine-range-scale));
+        border-width: var(--refine-inner-border);
+        border-color: rgba(var(--refine-rgb), var(--refine-ring-opacity-a));
+        box-shadow: 0 0 var(--refine-shadow-a) rgba(var(--refine-rgb), 0.5);
+        animation: refinePulseA calc(var(--refine-pulse-duration) * var(--refine-duration-factor)) ease-out infinite;
+      }
+
+      #refine-indicator::after {
+        width: calc(var(--refine-outer-size) * var(--refine-range-scale));
+        height: calc(var(--refine-outer-size) * var(--refine-range-scale));
+        border-width: var(--refine-outer-border);
+        border-color: rgba(var(--refine-rgb), var(--refine-ring-opacity-b));
+        box-shadow: 0 0 var(--refine-shadow-b) rgba(var(--refine-rgb), 0.35);
+        animation: refinePulseB calc(var(--refine-pulse-duration) * var(--refine-duration-factor)) ease-out infinite;
+      }
+
+      #container[data-refining-preset="subtle"] #refine-indicator {
+        --refine-inner-size: 30px;
+        --refine-outer-size: 44px;
+        --refine-inner-border: 1.5px;
+        --refine-outer-border: 1.5px;
+        --refine-duration-factor: 1.15;
+        --refine-ring-opacity-a: 0.56;
+        --refine-ring-opacity-b: 0.4;
+        --refine-shadow-a: 10px;
+        --refine-shadow-b: 14px;
+      }
+
+      #container[data-refining-preset="standard"] #refine-indicator {
+        --refine-inner-size: 38px;
+        --refine-outer-size: 56px;
+        --refine-inner-border: 2px;
+        --refine-outer-border: 2px;
+        --refine-duration-factor: 1;
+        --refine-ring-opacity-a: 0.8;
+        --refine-ring-opacity-b: 0.55;
+        --refine-shadow-a: 14px;
+        --refine-shadow-b: 20px;
+      }
+
+      #container[data-refining-preset="intense"] #refine-indicator {
+        --refine-inner-size: 48px;
+        --refine-outer-size: 72px;
+        --refine-inner-border: 2.5px;
+        --refine-outer-border: 2.5px;
+        --refine-duration-factor: 0.82;
+        --refine-ring-opacity-a: 1;
+        --refine-ring-opacity-b: 0.82;
+        --refine-shadow-a: 20px;
+        --refine-shadow-b: 28px;
+      }
+
+      #container[data-style="kitt"] #refine-indicator {
+        --refine-inner-size: 96px;
+        --refine-outer-size: 132px;
+      }
+
+      #container[data-style="kitt"] #refine-indicator::before {
+        height: 22px;
+        border-radius: 12px;
+      }
+
+      #container[data-style="kitt"] #refine-indicator::after {
+        height: 30px;
+        border-radius: 16px;
+      }
+
+      #container[data-style="kitt"][data-refining-preset="subtle"] #refine-indicator {
+        --refine-inner-size: 82px;
+        --refine-outer-size: 114px;
+      }
+
+      #container[data-style="kitt"][data-refining-preset="intense"] #refine-indicator {
+        --refine-inner-size: 112px;
+        --refine-outer-size: 148px;
+      }
+
+      #container[data-refining="on"][data-refining-enabled="true"] #refine-indicator {
+        opacity: 1;
+      }
+
+      @keyframes refinePulseA {
+        0% {
+          transform: scale(0.78);
+          opacity: 0.9;
+        }
+        70% {
+          transform: scale(1.12);
+          opacity: 0.12;
+        }
+        100% {
+          transform: scale(1.2);
+          opacity: 0;
+        }
+      }
+
+      @keyframes refinePulseB {
+        0% {
+          transform: scale(0.62);
+          opacity: 0.7;
+        }
+        60% {
+          transform: scale(1.02);
+          opacity: 0.15;
+        }
+        100% {
+          transform: scale(1.14);
+          opacity: 0;
+        }
+      }
+
       /* Dot mode (default): show dot, hide kitt */
       #container[data-style="dot"] #dot { display: block; }
       #container[data-style="dot"] #kitt { display: none; }
@@ -85,6 +228,7 @@
       <div id="dot"></div>
       <div id="kitt"></div>
       <div id="transcribe-indicator"></div>
+      <div id="refine-indicator"></div>
     </div>
 
     <script>
@@ -97,6 +241,7 @@
       const container = document.getElementById("container");
       const dot = document.getElementById("dot");
       const kitt = document.getElementById("kitt");
+      const refineIndicator = document.getElementById("refine-indicator");
 
       // State
       let isActive = false;
@@ -104,6 +249,12 @@
       let opacityInactive = 0.25;
       let baseColor = "#ff3d2e";
       let currentStyle = "dot";
+      let refiningActive = false;
+      let refiningEnabled = true;
+      let refiningPreset = "standard";
+      let refiningColor = "#6ec8ff";
+      let refiningSpeedMs = 1150;
+      let refiningRangePercent = 100;
 
       // KITT settings
       let kittMinWidth = 20;
@@ -118,6 +269,36 @@
         const opacity = isActive ? opacityActive : opacityInactive;
         dot.style.opacity = opacity;
         kitt.style.opacity = opacity;
+      }
+
+      function updateRefiningIndicator() {
+        if (!container || !refineIndicator) return;
+        container.dataset.refining = refiningActive ? "on" : "off";
+        container.dataset.refiningEnabled = refiningEnabled ? "true" : "false";
+        container.dataset.refiningPreset = refiningPreset;
+      }
+
+      function normalizeRefiningPreset(value) {
+        if (value === "subtle" || value === "intense") return value;
+        return "standard";
+      }
+
+      function normalizeRefiningColor(value) {
+        if (typeof value !== "string") return "#6ec8ff";
+        const trimmed = value.trim();
+        return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed : "#6ec8ff";
+      }
+
+      function normalizeRefiningSpeedMs(value) {
+        const numberValue = Number(value);
+        if (!Number.isFinite(numberValue)) return 1150;
+        return Math.max(450, Math.min(3000, Math.round(numberValue)));
+      }
+
+      function normalizeRefiningRange(value) {
+        const numberValue = Number(value);
+        if (!Number.isFinite(numberValue)) return 100;
+        return Math.max(60, Math.min(180, Math.round(numberValue)));
       }
 
       function hexToRgb(hex) {
@@ -149,12 +330,23 @@
         kitt.style.background = `linear-gradient(90deg, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${inactive}) 0%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${active}) 50%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${inactive}) 100%)`;
       }
 
+      function updateRefiningAppearance() {
+        if (!refineIndicator) return;
+        const rgb = hexToRgb(refiningColor);
+        if (rgb) {
+          refineIndicator.style.setProperty("--refine-rgb", `${rgb.r}, ${rgb.g}, ${rgb.b}`);
+        }
+        refineIndicator.style.setProperty("--refine-pulse-duration", `${refiningSpeedMs}ms`);
+        refineIndicator.style.setProperty("--refine-range-scale", `${(refiningRangePercent / 100).toFixed(2)}`);
+      }
+
       // --- Public API called from Rust via window.eval() ---
 
       window.setOverlayState = function(state) {
         isActive = (state === "recording" || state === "transcribing");
         container.dataset.state = state;
         updateOpacity();
+        updateRefiningIndicator();
       };
 
       window.setOverlayColor = function(color) {
@@ -174,6 +366,28 @@
       window.setOverlayStyle = function(style) {
         currentStyle = style;
         container.dataset.style = style;
+      };
+
+      window.setOverlayRefining = function(active) {
+        refiningActive = Boolean(active);
+        updateRefiningIndicator();
+      };
+
+      window.setOverlayRefiningEnabled = function(enabled) {
+        refiningEnabled = Boolean(enabled);
+        updateRefiningIndicator();
+      };
+
+      window.setOverlayRefiningPreset = function(preset) {
+        refiningPreset = normalizeRefiningPreset(preset);
+        updateRefiningIndicator();
+      };
+
+      window.setOverlayRefiningAppearance = function(color, speedMs, rangePercent) {
+        refiningColor = normalizeRefiningColor(color);
+        refiningSpeedMs = normalizeRefiningSpeedMs(speedMs);
+        refiningRangePercent = normalizeRefiningRange(rangePercent);
+        updateRefiningAppearance();
       };
 
       window.setKittDimensions = function(minWidth, maxWidth, height) {
@@ -213,6 +427,8 @@
       updateOpacity();
       updateDotGradient();
       updateKittGradient();
+      updateRefiningIndicator();
+      updateRefiningAppearance();
 
       // Signal readiness to Rust backend
       if (window.__TAURI__?.event?.emit) {
@@ -236,6 +452,11 @@
         const height = payload.overlay_kitt_height ?? kittHeight;
         const minRadius = payload.overlay_min_radius ?? dotMinRadius;
         const maxRadius = payload.overlay_max_radius ?? dotMaxRadius;
+        const refiningIndicatorEnabled = payload.overlay_refining_indicator_enabled;
+        const refiningIndicatorPreset = normalizeRefiningPreset(payload.overlay_refining_indicator_preset);
+        const refiningIndicatorColor = normalizeRefiningColor(payload.overlay_refining_indicator_color);
+        const refiningIndicatorSpeedMs = normalizeRefiningSpeedMs(payload.overlay_refining_indicator_speed_ms);
+        const refiningIndicatorRange = normalizeRefiningRange(payload.overlay_refining_indicator_range);
         if (color) {
           window.setOverlayColor(color);
         }
@@ -245,6 +466,15 @@
         window.setOverlayStyle(style);
         window.setKittDimensions(minWidth, maxWidth, height);
         window.setDotDimensions(minRadius, maxRadius);
+        if (typeof refiningIndicatorEnabled === "boolean") {
+          window.setOverlayRefiningEnabled(refiningIndicatorEnabled);
+        }
+        window.setOverlayRefiningPreset(refiningIndicatorPreset);
+        window.setOverlayRefiningAppearance(
+          refiningIndicatorColor,
+          refiningIndicatorSpeedMs,
+          refiningIndicatorRange
+        );
         // Position is handled by Rust via window.set_position() - no JS positioning needed
       }
 
@@ -259,6 +489,20 @@
       // Listen for settings changes (backup path - primary is window.eval from Rust)
       const listen = window.__TAURI__?.event?.listen;
       if (listen) {
+        listen("overlay:state", (event) => {
+          const payload = event?.payload;
+          if (!payload) return;
+          if (typeof payload === "string") {
+            window.setOverlayState(payload);
+          } else if (typeof payload.state === "string") {
+            window.setOverlayState(payload.state);
+          }
+        }).catch(() => {});
+
+        listen("overlay:refining", (event) => {
+          window.setOverlayRefining(Boolean(event?.payload));
+        }).catch(() => {});
+
         listen("overlay:settings", (event) => {
           const payload = event?.payload;
           if (!payload) return;
@@ -273,6 +517,11 @@
               overlay_kitt_min_width: payload.kitt_min_width,
               overlay_kitt_max_width: payload.kitt_max_width,
               overlay_kitt_height: payload.kitt_height,
+              overlay_refining_indicator_enabled: payload.refining_indicator_enabled,
+              overlay_refining_indicator_preset: payload.refining_indicator_preset,
+              overlay_refining_indicator_color: payload.refining_indicator_color,
+              overlay_refining_indicator_speed_ms: payload.refining_indicator_speed_ms,
+              overlay_refining_indicator_range: payload.refining_indicator_range,
             });
           }
         }).catch(() => {});

@@ -5,6 +5,13 @@ export type CloudAIFallbackProvider = Exclude<AIFallbackProvider, "ollama">;
 export type AIExecutionMode = "local_primary" | "online_fallback";
 export type AIProviderAuthStatus = "locked" | "verified_api_key" | "verified_oauth";
 export type AIProviderAuthMethodPreference = "api_key" | "oauth";
+export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
+export type RefinementPromptPreset =
+  | "wording"
+  | "summary"
+  | "technical_specs"
+  | "action_items"
+  | "custom";
 
 export interface AIFallbackSettings {
   enabled: boolean;
@@ -15,6 +22,8 @@ export interface AIFallbackSettings {
   model: string;
   temperature: number;
   max_tokens: number;
+  low_latency_mode: boolean;
+  prompt_profile: RefinementPromptPreset;
   custom_prompt_enabled: boolean;
   custom_prompt: string;
   use_default_prompt: boolean;
@@ -60,7 +69,7 @@ export interface Settings {
   language_mode: "auto" | "en" | "de" | "fr" | "es" | "it" | "pt" | "nl" | "pl" | "ru" | "ja" | "ko" | "zh" | "ar" | "tr" | "hi";
   language_pinned: boolean;
   model: string;
-  // Legacy compatibility toggle; mirrors ai_fallback.enabled.
+  // Legacy compatibility toggle for optional old cloud transcription path.
   cloud_fallback: boolean;
   ai_fallback: AIFallbackSettings;
   providers: AIProvidersSettings;
@@ -105,6 +114,11 @@ export interface Settings {
   overlay_kitt_pos_x: number;
   overlay_kitt_pos_y: number;
   overlay_style: string;
+  overlay_refining_indicator_enabled: boolean;
+  overlay_refining_indicator_preset: OverlayRefiningIndicatorPreset;
+  overlay_refining_indicator_color: string;
+  overlay_refining_indicator_speed_ms: number;
+  overlay_refining_indicator_range: number;
   overlay_kitt_min_width: number;
   overlay_kitt_max_width: number;
   overlay_kitt_height: number;
@@ -171,6 +185,17 @@ export interface HistoryEntry {
   text: string;
   timestamp_ms: number;
   source: string;
+  refinement?: HistoryRefinement | null;
+}
+
+export interface HistoryRefinement {
+  job_id: string;
+  raw: string;
+  refined: string;
+  status: "idle" | "refining" | "refined" | "error";
+  model: string;
+  execution_time_ms?: number | null;
+  error: string;
 }
 
 export interface AudioDevice {
@@ -246,6 +271,54 @@ export interface TranscribeBacklogStatus {
   suggested_capacity_chunks: number;
 }
 
+export interface TranscriptionResultEvent {
+  text: string;
+  source: string;
+  job_id: string;
+  paste_deferred?: boolean;
+  paste_timeout_ms?: number;
+  entry_id?: string;
+}
+
+export interface TranscriptionRefinementStartedEvent {
+  job_id: string;
+  entry_id?: string;
+  source: string;
+  original: string;
+}
+
+export interface TranscriptionRefinedEvent {
+  job_id: string;
+  entry_id?: string;
+  original: string;
+  refined: string;
+  source: string;
+  model: string;
+  execution_time_ms: number;
+}
+
+export interface TranscriptionRefinementFailedEvent {
+  job_id: string;
+  entry_id?: string;
+  source: string;
+  original?: string;
+  error: string;
+}
+
+export interface TranscriptionRefinementActivityEvent {
+  active_count: number;
+  state: "idle" | "active";
+  reason: "started" | "finished" | "watchdog_reset" | "forced_reset";
+}
+
+export interface TranscriptionGpuActivityEvent {
+  state: "idle" | "active" | "cpu" | "error";
+  accelerator: "gpu" | "cpu";
+  backend: string;
+  source: "whisper";
+  message?: string;
+}
+
 export type RecordingState = "disabled" | "idle" | "recording" | "transcribing";
 export type HistoryTab = "mic" | "system" | "conversation";
 
@@ -269,6 +342,7 @@ export interface OllamaPullError {
 
 export interface OllamaRuntimeDetectResult {
   found: boolean;
+  is_serving: boolean;
   source: "system" | "per_user_zip" | "manual";
   path: string;
   version: string;

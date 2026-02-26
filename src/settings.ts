@@ -7,12 +7,17 @@ import { renderVocabulary } from "./event-listeners";
 import { getTopicKeywords, setTopicKeywords } from "./history";
 import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
 import { getOllamaRuntimeCardState } from "./ollama-models";
+import {
+  normalizeRefinementPromptPreset,
+  resolveEffectiveRefinementPrompt,
+} from "./refinement-prompts";
 import type {
   AIProviderSettings,
   AIFallbackProvider,
   CloudAIFallbackProvider,
   AIExecutionMode,
   AIProviderAuthMethodPreference,
+  OverlayRefiningIndicatorPreset,
 } from "./types";
 
 function ensureContinuousDumpDefaults() {
@@ -127,6 +132,23 @@ export function updateTranscribeThreshold(threshold: number) {
 }
 
 const CLOUD_PROVIDER_IDS: CloudAIFallbackProvider[] = ["claude", "openai", "gemini"];
+
+function normalizeRefiningIndicatorColor(value: string | undefined): string {
+  const trimmed = (value || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed : "#6ec8ff";
+}
+
+function normalizeRefiningIndicatorSpeedMs(value: number | undefined): number {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return 1150;
+  return Math.max(450, Math.min(3000, Math.round(numberValue)));
+}
+
+function normalizeRefiningIndicatorRange(value: number | undefined): number {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return 100;
+  return Math.max(60, Math.min(180, Math.round(numberValue)));
+}
 const CLOUD_PROVIDER_LABELS: Record<CloudAIFallbackProvider, string> = {
   claude: "Claude (Anthropic)",
   openai: "OpenAI",
@@ -163,6 +185,13 @@ function authStatusLabel(status?: string | null): string {
 
 function authMethodLabel(method?: AIProviderAuthMethodPreference | null): string {
   return method === "oauth" ? "OAuth (coming soon)" : "API key";
+}
+
+function normalizeOverlayRefiningPreset(
+  preset?: string | null
+): OverlayRefiningIndicatorPreset {
+  if (preset === "subtle" || preset === "intense") return preset;
+  return "standard";
 }
 
 function getProviderSettings(provider: AIFallbackProvider): AIProviderSettings | null {
@@ -238,8 +267,6 @@ function syncAIRefinementExpanders(): void {
 }
 
 function applyProviderLaneVisibility(isOnlineMode: boolean) {
-  if (dom.aiFallbackApiKeySection)
-    dom.aiFallbackApiKeySection.style.display = "none";
   if (dom.aiFallbackModelField)
     dom.aiFallbackModelField.style.display = isOnlineMode ? "block" : "none";
   if (dom.aiFallbackOllamaManagedNote)
@@ -357,6 +384,9 @@ export function renderAIFallbackSettingsUi() {
     );
   });
   const ai = settings.ai_fallback;
+  ai.prompt_profile = normalizeRefinementPromptPreset(ai.prompt_profile);
+  ai.custom_prompt_enabled = ai.prompt_profile === "custom";
+  ai.use_default_prompt = false;
   ai.fallback_provider = normalizeCloudProvider(ai?.fallback_provider ?? null);
   ai.execution_mode = normalizeExecutionMode(ai?.execution_mode);
   if (!ai.fallback_provider && ai.provider !== "ollama") {
@@ -412,6 +442,7 @@ export function renderAIFallbackSettingsUi() {
 
   if (dom.aiFallbackLocalLane) {
     dom.aiFallbackLocalLane.classList.toggle("is-active", !isOnlineMode);
+    dom.aiFallbackLocalLane.classList.toggle("is-runtime-busy", runtimeCardState.busy);
     dom.aiFallbackLocalLane.setAttribute("aria-pressed", (!isOnlineMode).toString());
   }
   if (dom.aiFallbackOnlineLane) {
@@ -436,12 +467,21 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackLocalPrimaryStatus.textContent = `Runtime ${healthText} • Source: ${runtimeCardState.source} • Version: ${runtimeCardState.version}`;
   }
   if (dom.aiFallbackLocalRuntimeNote) {
-    dom.aiFallbackLocalRuntimeNote.textContent = runtimeCardState.detail;
+    dom.aiFallbackLocalRuntimeNote.textContent = runtimeCardState.busy
+      ? `${runtimeCardState.detail} Running in background.`
+      : runtimeCardState.detail;
+    dom.aiFallbackLocalRuntimeNote.classList.toggle("ai-runtime-busy-note", runtimeCardState.busy);
+    dom.aiFallbackLocalRuntimeNote.setAttribute("aria-live", "polite");
   }
   if (dom.aiFallbackLocalPrimaryAction) {
     dom.aiFallbackLocalPrimaryAction.textContent = runtimeCardState.primaryLabel;
     dom.aiFallbackLocalPrimaryAction.disabled = runtimeCardState.primaryDisabled;
     dom.aiFallbackLocalPrimaryAction.dataset.runtimeAction = runtimeCardState.primaryAction;
+    dom.aiFallbackLocalPrimaryAction.classList.toggle("is-busy", runtimeCardState.busy);
+    dom.aiFallbackLocalPrimaryAction.setAttribute(
+      "aria-busy",
+      runtimeCardState.busy ? "true" : "false"
+    );
   }
   if (dom.aiFallbackLocalImportAction) {
     dom.aiFallbackLocalImportAction.disabled = runtimeCardState.busy;
@@ -470,17 +510,39 @@ export function renderAIFallbackSettingsUi() {
     const temp = Math.max(0, Math.min(1, Number(ai?.temperature ?? 0.3)));
     dom.aiFallbackTemperatureValue.textContent = temp.toFixed(2);
   }
+  if (dom.aiFallbackLowLatencyMode) {
+    dom.aiFallbackLowLatencyMode.checked = Boolean(ai?.low_latency_mode);
+  }
+  if (dom.aiFallbackLowLatencyNote) {
+    dom.aiFallbackLowLatencyNote.textContent = ai?.low_latency_mode
+      ? "Low latency active: max_tokens and context are reduced for faster turnaround."
+      : "Standard latency: higher response budgets, potentially slower refinement.";
+  }
   if (dom.aiFallbackMaxTokens) {
     dom.aiFallbackMaxTokens.value = String(ai?.max_tokens ?? 4000);
   }
-  if (dom.aiFallbackCustomPromptEnabled) {
-    dom.aiFallbackCustomPromptEnabled.checked = Boolean(ai?.custom_prompt_enabled);
+  const promptProfile = normalizeRefinementPromptPreset(ai?.prompt_profile);
+  const promptPreview = resolveEffectiveRefinementPrompt(
+    promptProfile,
+    settings.language_mode,
+    ai?.custom_prompt
+  );
+  if (dom.aiFallbackPromptPreset) {
+    dom.aiFallbackPromptPreset.value = promptProfile;
   }
-  if (dom.aiFallbackCustomPromptField) {
-    dom.aiFallbackCustomPromptField.style.display = ai?.custom_prompt_enabled ? "block" : "none";
+  const isCustomPrompt = promptProfile === "custom";
+  if (dom.aiFallbackPromptPreviewLabel) {
+    dom.aiFallbackPromptPreviewLabel.textContent = isCustomPrompt ? "Custom prompt" : "Prompt preview";
+  }
+  if (dom.aiFallbackPromptPreviewHint) {
+    dom.aiFallbackPromptPreviewHint.textContent = isCustomPrompt
+      ? "This prompt is editable and will be used directly for refinement."
+      : "Preset prompt is shown read-only so users can understand prompt structure.";
   }
   if (dom.aiFallbackCustomPrompt) {
-    dom.aiFallbackCustomPrompt.value = ai?.custom_prompt || "";
+    dom.aiFallbackCustomPrompt.value = isCustomPrompt ? ai?.custom_prompt || "" : promptPreview;
+    dom.aiFallbackCustomPrompt.readOnly = !isCustomPrompt;
+    dom.aiFallbackCustomPrompt.classList.toggle("is-readonly", !isCustomPrompt);
   }
 }
 
@@ -608,6 +670,39 @@ export function renderSettings() {
   if (dom.overlayMaxRadiusValue) dom.overlayMaxRadiusValue.textContent = `${Math.round(settings.overlay_max_radius)}`;
   const overlayStyleValue = settings.overlay_style || "dot";
   if (dom.overlayStyle) dom.overlayStyle.value = overlayStyleValue;
+  if (dom.overlayRefiningIndicatorEnabled) {
+    dom.overlayRefiningIndicatorEnabled.checked = settings.overlay_refining_indicator_enabled ?? true;
+  }
+  settings.overlay_refining_indicator_preset = normalizeOverlayRefiningPreset(
+    settings.overlay_refining_indicator_preset
+  );
+  if (dom.overlayRefiningIndicatorPreset) {
+    dom.overlayRefiningIndicatorPreset.value = settings.overlay_refining_indicator_preset;
+  }
+  settings.overlay_refining_indicator_color = normalizeRefiningIndicatorColor(
+    settings.overlay_refining_indicator_color
+  );
+  settings.overlay_refining_indicator_speed_ms = normalizeRefiningIndicatorSpeedMs(
+    settings.overlay_refining_indicator_speed_ms
+  );
+  settings.overlay_refining_indicator_range = normalizeRefiningIndicatorRange(
+    settings.overlay_refining_indicator_range
+  );
+  if (dom.overlayRefiningIndicatorColor) {
+    dom.overlayRefiningIndicatorColor.value = settings.overlay_refining_indicator_color;
+  }
+  if (dom.overlayRefiningIndicatorSpeed) {
+    dom.overlayRefiningIndicatorSpeed.value = String(settings.overlay_refining_indicator_speed_ms);
+  }
+  if (dom.overlayRefiningIndicatorSpeedValue) {
+    dom.overlayRefiningIndicatorSpeedValue.textContent = `${settings.overlay_refining_indicator_speed_ms} ms`;
+  }
+  if (dom.overlayRefiningIndicatorRange) {
+    dom.overlayRefiningIndicatorRange.value = String(settings.overlay_refining_indicator_range);
+  }
+  if (dom.overlayRefiningIndicatorRangeValue) {
+    dom.overlayRefiningIndicatorRangeValue.textContent = `${settings.overlay_refining_indicator_range}%`;
+  }
   updateOverlayStyleVisibility(overlayStyleValue);
   applyOverlaySharedUi(overlayStyleValue);
   if (dom.overlayPosX) {

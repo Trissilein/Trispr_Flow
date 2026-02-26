@@ -2,7 +2,7 @@
 
 > GPU-first offline dictation + system audio transcription with optional AI refinement, privacy-first by default
 
-[![Version](https://img.shields.io/badge/version-0.6.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.0-blue.svg)](CHANGELOG.md)
 [![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
 [![macOS](https://img.shields.io/badge/macOS-000000?style=flat&logo=apple&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -11,12 +11,16 @@
 
 **Perfect for**: Meeting transcription, research notes, technical documentation, dictation workflows.
 
-## What's New in v0.6.0 ✨
+## What's New in v0.7.0 ✨
 
-- **Adaptive Continuous Dump**: Silence-aware + interval + hard-cut chunking for system audio and mic Toggle mode
-- **Professional Icon**: Cyan/Gold Yin-Yang branding
+- **Refined-Only Insert Flow**: Deferred paste with timeout fallback to raw text
+- **AI Refinement UX Upgrade**: Prompt presets + custom prompt preview + dedicated refinement inspector
+- **Local Ollama Runtime Reliability**: Background autostart + improved runtime state handling
+- **GPU Activity Visibility**: CPU/GPU activity indicator with persisted status snapshot
+- **Overlay Controls Split**: Separate refinement animation controls under overlay settings
+- **Installer Hardening**: Clear CUDA/Vulkan variant strategy and safer runtime path handling
 
-**v0.7.0 In Execution**: Foundation complete (Block F + G), provider integrations (Block H) are next.
+**v0.7.0 Baseline Locked**: Stabilization + architecture review before next feature wave.
 
 ## Core Capabilities
 
@@ -31,7 +35,8 @@
 ### Processing & Refinement
 
 - ✅ Local post-processing (punctuation, capitalization, numbers, custom vocabulary)
-- 🔄 Multi-provider AI Fallback (Claude, OpenAI, Gemini) — planned v0.7.0
+- ✅ Local AI refinement (Ollama runtime management, presets, low-latency mode)
+- 🔄 Cloud provider rollout (Claude, OpenAI, Gemini) — planned v0.7.3
 - ✅ Custom prompt support (user-editable with defaults)
 
 ### Output & Organization
@@ -55,10 +60,9 @@
 
 | Version | Phase | Status | Highlights |
 | --- | --- | --- | --- |
-| **v0.6.0** | 🟢 LIVE | Complete | Core capture/transcription, OPUS, chapters, topics |
-| **v0.7.0** | 📋 Planning | Block F Complete | AI Fallback architecture (Claude/OpenAI/Gemini) |
-| **v0.7.0** | ✅ Complete | Block G (Opus) | Multi-provider architecture, settings migration, config UI |
-| **v0.7.0** | 🔵 In Progress | Block H (Sonnet) | Provider integrations (OpenAI/Claude/Gemini), prompt polish, E2E |
+| **v0.7.0** | 🟢 LIVE | Complete | Local AI refinement flow, runtime manager, overlay split, GPU indicator |
+| **v0.7.1** | 🔵 In Progress | Hardening | Reliability + performance + QA |
+| **v0.7.3** | 📋 Planned | Cloud rollout | Claude/OpenAI/Gemini provider activation |
 
 👉 **[Full Roadmap](ROADMAP.md)** — See milestones, implementation schedule, and competitor analysis
 
@@ -66,8 +70,8 @@
 
 ### For Users
 Download the latest installer from [Releases](https://github.com/Trissilein/Trispr_Flow/releases):
-- **Trispr_Flow_0.6.0_CUDA_Edition.exe** — For NVIDIA GPU systems (RTX 4000+ series recommended)
-- **Trispr_Flow_0.6.0_Vulkan_Edition.exe** — For systems without CUDA support
+- **Trispr_Flow_0.7.0_CUDA_Edition.exe** — For NVIDIA GPU systems (RTX 4000+ series recommended)
+- **Trispr_Flow_0.7.0_Vulkan_Edition.exe** — For systems without CUDA support
 
 ### For Developers
 ```bash
@@ -107,12 +111,13 @@ See `docs/BRANCHING.md` for branch responsibilities.
 ### Processing Pipeline
 1. **Raw Transcription**: Whisper-generated text
 2. **Post-Processing**: Local rules (punctuation, numbers, vocabulary)
-3. **AI Refinement** (optional v0.7.0+): Multi-provider AI enhancement via Claude/OpenAI/Gemini
+3. **AI Refinement** (optional): Local-first refinement via Ollama with deferred paste + fallback
 
 ## Documentation
 
 - 📖 [READ_ME_FIRST.md](READ_ME_FIRST.md) — Start here
 - 🗺️ [ROADMAP.md](ROADMAP.md) — Project status and milestones
+- 🧱 [docs/ARCHITECTURE_REVIEW_0.7.md](docs/ARCHITECTURE_REVIEW_0.7.md) — v0.7.0 architecture review checklist + findings
 - 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Technical overview
 - 🌿 [docs/BRANCHING.md](docs/BRANCHING.md) — Branch responsibilities and workflow
 - 🔊 [docs/CONTINUOUS_DUMP_PLAN.md](docs/CONTINUOUS_DUMP_PLAN.md) — Adaptive continuous dump design + rollout

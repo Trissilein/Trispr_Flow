@@ -1,5 +1,5 @@
 use crate::ai_fallback::models::{AIFallbackSettings, AIProvidersSettings};
-use crate::ai_fallback::provider::is_local_ollama_endpoint;
+use crate::ai_fallback::provider::{is_local_ollama_endpoint, prompt_for_profile};
 use crate::audio::Recorder;
 use crate::constants::{
     HALLUCINATION_MAX_CHARS, HALLUCINATION_MAX_DURATION_MS, HALLUCINATION_MAX_WORDS,
@@ -11,9 +11,9 @@ use crate::transcription::TranscribeRecorder;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -33,6 +33,26 @@ impl Default for SetupSettings {
     }
 }
 
+fn default_overlay_refining_indicator_enabled() -> bool {
+    true
+}
+
+fn default_overlay_refining_indicator_preset() -> String {
+    "standard".to_string()
+}
+
+fn default_overlay_refining_indicator_color() -> String {
+    "#6ec8ff".to_string()
+}
+
+fn default_overlay_refining_indicator_speed_ms() -> u64 {
+    1_150
+}
+
+fn default_overlay_refining_indicator_range() -> f32 {
+    100.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
@@ -43,7 +63,7 @@ pub(crate) struct Settings {
     pub(crate) language_mode: String,
     pub(crate) language_pinned: bool,
     pub(crate) model: String,
-    // Legacy toggle kept for backward compatibility. Mirrors ai_fallback.enabled.
+    // Legacy toggle kept for backward compatibility with old cloud transcription paths.
     pub(crate) cloud_fallback: bool,
     // v0.7.0 AI Fallback settings
     pub(crate) ai_fallback: AIFallbackSettings,
@@ -90,6 +110,16 @@ pub(crate) struct Settings {
     pub(crate) overlay_kitt_pos_x: f64,
     pub(crate) overlay_kitt_pos_y: f64,
     pub(crate) overlay_style: String, // "dot" | "kitt"
+    #[serde(default = "default_overlay_refining_indicator_enabled")]
+    pub(crate) overlay_refining_indicator_enabled: bool,
+    #[serde(default = "default_overlay_refining_indicator_preset")]
+    pub(crate) overlay_refining_indicator_preset: String, // "subtle" | "standard" | "intense"
+    #[serde(default = "default_overlay_refining_indicator_color")]
+    pub(crate) overlay_refining_indicator_color: String,
+    #[serde(default = "default_overlay_refining_indicator_speed_ms")]
+    pub(crate) overlay_refining_indicator_speed_ms: u64,
+    #[serde(default = "default_overlay_refining_indicator_range")]
+    pub(crate) overlay_refining_indicator_range: f32,
     pub(crate) overlay_kitt_min_width: f32,
     pub(crate) overlay_kitt_max_width: f32,
     pub(crate) overlay_kitt_height: f32,
@@ -212,6 +242,11 @@ impl Default for Settings {
       overlay_kitt_pos_x: 50.0,     // 50% = horizontal center
       overlay_kitt_pos_y: 90.0,     // 90% = bottom area
       overlay_style: "dot".to_string(),
+      overlay_refining_indicator_enabled: true,
+      overlay_refining_indicator_preset: "standard".to_string(),
+      overlay_refining_indicator_color: "#6ec8ff".to_string(),
+      overlay_refining_indicator_speed_ms: 1_150,
+      overlay_refining_indicator_range: 100.0,
       overlay_kitt_min_width: 20.0,
       overlay_kitt_max_width: 700.0,
       overlay_kitt_height: 13.0,
@@ -277,11 +312,39 @@ impl Default for Settings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct HistoryRefinement {
+    pub(crate) job_id: String,
+    pub(crate) raw: String,
+    pub(crate) refined: String,
+    pub(crate) status: String, // "idle" | "refining" | "refined" | "error"
+    pub(crate) model: String,
+    pub(crate) execution_time_ms: Option<u64>,
+    pub(crate) error: String,
+}
+
+impl Default for HistoryRefinement {
+    fn default() -> Self {
+        Self {
+            job_id: String::new(),
+            raw: String::new(),
+            refined: String::new(),
+            status: "idle".to_string(),
+            model: String::new(),
+            execution_time_ms: None,
+            error: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct HistoryEntry {
     pub(crate) id: String,
     pub(crate) text: String,
     pub(crate) timestamp_ms: u64,
     pub(crate) source: String,
+    #[serde(default)]
+    pub(crate) refinement: Option<HistoryRefinement>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,6 +365,9 @@ pub(crate) struct AppState {
     pub(crate) downloads: Mutex<HashSet<String>>,
     pub(crate) ollama_pulls: Mutex<HashSet<String>>,
     pub(crate) transcribe_active: AtomicBool,
+    pub(crate) refinement_active_count: AtomicUsize,
+    pub(crate) refinement_watchdog_generation: AtomicU64,
+    pub(crate) refinement_last_change_ms: AtomicU64,
     /// Last recorded OPUS file path for mic input.
     pub(crate) last_mic_recording_path: Mutex<Option<String>>,
     /// Last recorded OPUS file path for system audio.
@@ -512,6 +578,28 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if settings.overlay_kitt_fall_ms < 20 {
                 settings.overlay_kitt_fall_ms = 20;
             }
+            if !["subtle", "standard", "intense"]
+                .contains(&settings.overlay_refining_indicator_preset.as_str())
+            {
+                settings.overlay_refining_indicator_preset = "standard".to_string();
+            }
+            if !settings.overlay_refining_indicator_color.starts_with('#')
+                || settings.overlay_refining_indicator_color.len() != 7
+            {
+                settings.overlay_refining_indicator_color = "#6ec8ff".to_string();
+            }
+            if settings.overlay_refining_indicator_speed_ms < 450 {
+                settings.overlay_refining_indicator_speed_ms = 450;
+            }
+            if settings.overlay_refining_indicator_speed_ms > 3_000 {
+                settings.overlay_refining_indicator_speed_ms = 3_000;
+            }
+            if settings.overlay_refining_indicator_range < 60.0 {
+                settings.overlay_refining_indicator_range = 60.0;
+            }
+            if settings.overlay_refining_indicator_range > 180.0 {
+                settings.overlay_refining_indicator_range = 180.0;
+            }
             if !(0.0..=1.0).contains(&settings.overlay_kitt_opacity_inactive) {
                 settings.overlay_kitt_opacity_inactive = 0.2;
             }
@@ -563,10 +651,6 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
         )
     }
 
-    // Migrate legacy cloud-fallback toggle to ai_fallback enabled state.
-    if settings.cloud_fallback && !settings.ai_fallback.enabled {
-        settings.ai_fallback.enabled = true;
-    }
     // Migrate legacy postproc_llm toggle and values if still used.
     if settings.postproc_llm_enabled && !settings.ai_fallback.enabled {
         settings.ai_fallback.enabled = true;
@@ -588,6 +672,15 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
         settings.ai_fallback.custom_prompt_enabled = true;
         settings.ai_fallback.use_default_prompt = false;
     }
+    if settings.ai_fallback.prompt_profile.trim().is_empty() {
+        settings.ai_fallback.prompt_profile = if settings.ai_fallback.custom_prompt_enabled
+            && !settings.ai_fallback.use_default_prompt
+        {
+            "custom".to_string()
+        } else {
+            "wording".to_string()
+        };
+    }
 
     // Preserve legacy cloud provider selection as optional fallback candidate.
     if settings.ai_fallback.fallback_provider.is_none()
@@ -598,6 +691,8 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
     }
 
     settings.ai_fallback.normalize();
+    settings.ai_fallback.custom_prompt_enabled = settings.ai_fallback.prompt_profile == "custom";
+    settings.ai_fallback.use_default_prompt = false;
     settings.providers.normalize();
 
     // Migration rule: cloud providers remain locked until explicit verify succeeds.
@@ -660,13 +755,16 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
         .providers
         .sync_from_ai_fallback(&settings.ai_fallback);
 
-    // Keep legacy fields synchronized for compatibility with older code paths.
-    settings.cloud_fallback = settings.ai_fallback.enabled;
+    // Keep legacy post-processing fields synchronized for compatibility with older code paths.
     settings.postproc_llm_enabled = settings.ai_fallback.enabled;
     settings.postproc_llm_provider = settings.ai_fallback.provider.clone();
     settings.postproc_llm_model = settings.ai_fallback.model.clone();
-    if settings.ai_fallback.custom_prompt_enabled {
-        settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt.clone();
+    if let Some(prompt) = prompt_for_profile(
+        &settings.ai_fallback.prompt_profile,
+        &settings.language_mode,
+        Some(settings.ai_fallback.custom_prompt.as_str()),
+    ) {
+        settings.postproc_llm_prompt = prompt;
     }
     if settings.setup.local_ai_wizard_completed {
         settings.setup.local_ai_wizard_pending = false;
@@ -834,6 +932,7 @@ pub(crate) fn push_history_entry_inner(
         text,
         timestamp_ms: crate::util::now_ms(),
         source,
+        refinement: None,
     };
     history.insert(0, entry);
     save_history_file(app, &history)?;
@@ -851,9 +950,150 @@ pub(crate) fn push_transcribe_entry_inner(
         text,
         timestamp_ms: crate::util::now_ms(),
         source: "output".to_string(),
+        refinement: None,
     };
     history.insert(0, entry);
     save_transcribe_history_file(app, &history)?;
     let _ = app.emit("transcribe:history-updated", history.clone());
     Ok(history.clone())
+}
+
+fn emit_updated_history(app: &AppHandle, event_name: &str, updated: Vec<HistoryEntry>) {
+    let _ = app.emit(event_name, updated);
+}
+
+fn update_history_entry_in_store<F>(
+    app: &AppHandle,
+    store: &Mutex<Vec<HistoryEntry>>,
+    save_fn: fn(&AppHandle, &[HistoryEntry]) -> Result<(), String>,
+    event_name: &str,
+    entry_id: &str,
+    apply: &mut F,
+) -> Result<bool, String>
+where
+    F: FnMut(&mut HistoryEntry),
+{
+    let mut history = store.lock().unwrap();
+    let Some(entry) = history.iter_mut().find(|entry| entry.id == entry_id) else {
+        return Ok(false);
+    };
+    apply(entry);
+    save_fn(app, &history)?;
+    let updated = history.clone();
+    drop(history);
+    emit_updated_history(app, event_name, updated);
+    Ok(true)
+}
+
+fn update_history_entry_refinement<F>(
+    app: &AppHandle,
+    entry_id: &str,
+    mut apply: F,
+) -> Result<(), String>
+where
+    F: FnMut(&mut HistoryEntry),
+{
+    if entry_id.trim().is_empty() {
+        return Ok(());
+    }
+    let state = app.state::<AppState>();
+    if update_history_entry_in_store(
+        app,
+        &state.history,
+        save_history_file,
+        "history:updated",
+        entry_id,
+        &mut apply,
+    )? {
+        return Ok(());
+    }
+    let _ = update_history_entry_in_store(
+        app,
+        &state.history_transcribe,
+        save_transcribe_history_file,
+        "transcribe:history-updated",
+        entry_id,
+        &mut apply,
+    )?;
+    Ok(())
+}
+
+fn ensure_history_refinement(entry: &mut HistoryEntry) -> &mut HistoryRefinement {
+    if entry.refinement.is_none() {
+        entry.refinement = Some(HistoryRefinement::default());
+    }
+    entry.refinement.as_mut().expect("refinement just initialized")
+}
+
+pub(crate) fn mark_entry_refinement_started(
+    app: &AppHandle,
+    entry_id: &str,
+    job_id: &str,
+    raw_text: &str,
+) -> Result<(), String> {
+    update_history_entry_refinement(app, entry_id, |entry| {
+        let fallback_raw = entry.text.clone();
+        let refinement = ensure_history_refinement(entry);
+        if !job_id.trim().is_empty() {
+            refinement.job_id = job_id.to_string();
+        }
+        if !raw_text.trim().is_empty() {
+            refinement.raw = raw_text.to_string();
+        } else if refinement.raw.trim().is_empty() {
+            refinement.raw = fallback_raw;
+        }
+        refinement.status = "refining".to_string();
+        refinement.error.clear();
+    })
+}
+
+pub(crate) fn mark_entry_refinement_success(
+    app: &AppHandle,
+    entry_id: &str,
+    job_id: &str,
+    raw_text: &str,
+    refined_text: &str,
+    model: &str,
+    execution_time_ms: u64,
+) -> Result<(), String> {
+    update_history_entry_refinement(app, entry_id, |entry| {
+        let fallback_raw = entry.text.clone();
+        let refinement = ensure_history_refinement(entry);
+        if !job_id.trim().is_empty() {
+            refinement.job_id = job_id.to_string();
+        }
+        if !raw_text.trim().is_empty() {
+            refinement.raw = raw_text.to_string();
+        } else if refinement.raw.trim().is_empty() {
+            refinement.raw = fallback_raw;
+        }
+        refinement.refined = refined_text.to_string();
+        refinement.status = "refined".to_string();
+        refinement.model = model.to_string();
+        refinement.execution_time_ms = Some(execution_time_ms);
+        refinement.error.clear();
+    })
+}
+
+pub(crate) fn mark_entry_refinement_failed(
+    app: &AppHandle,
+    entry_id: &str,
+    job_id: &str,
+    raw_text: &str,
+    error_text: &str,
+) -> Result<(), String> {
+    update_history_entry_refinement(app, entry_id, |entry| {
+        let fallback_raw = entry.text.clone();
+        let refinement = ensure_history_refinement(entry);
+        if !job_id.trim().is_empty() {
+            refinement.job_id = job_id.to_string();
+        }
+        if !raw_text.trim().is_empty() {
+            refinement.raw = raw_text.to_string();
+        } else if refinement.raw.trim().is_empty() {
+            refinement.raw = fallback_raw;
+        }
+        refinement.status = "error".to_string();
+        refinement.error = error_text.to_string();
+    })
 }

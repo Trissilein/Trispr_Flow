@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-02-26
+
+### Added
+
+- **Refinement Insert Flow**: Deferred paste with `Refined-Only` strategy and automatic raw fallback after timeout.
+- **Refinement Inspector + History View**:
+  - Original + refined text are shown together.
+  - Final refined text is displayed first, original text below.
+  - Word-level diff summary for quick change review.
+  - Refinement metadata is persisted in backend history entries (survives app restart).
+- **Local Ollama Runtime Autostart**:
+  - Autostart on app bootstrap when local refinement is enabled.
+  - Autostart on enabling AI refinement (no auto-install).
+- **Refinement Prompt Presets**:
+  - Presets: `wording`, `summary`, `technical_specs`, `action_items`, plus `custom`.
+  - Effective prompt preview is always visible.
+- **Low Latency Refinement Mode**:
+  - Faster local refinement profile via reduced token/context budgets.
+- **GPU Activity Indicator**:
+  - Runtime CPU/GPU activity indicator in UI.
+  - Last known accelerator/backend snapshot persisted in local storage.
+- **Dedicated Refinement Overlay Controls**:
+  - Refinement animation settings separated from base overlay settings.
+  - Color, speed, range and preset controls for refinement animation.
+
+### Changed
+
+- **Windows Installer Strategy**:
+  - Two explicit installers (`CUDA` and `Vulkan`) as primary distribution model.
+  - Removed in-installer GPU backend selector flow.
+- **Whisper Runtime Resolution**:
+  - No silent `Command::new("whisper-cli")` fallback.
+  - Clear runtime-missing and dependency-error messaging for `NotFound`/DLL cases.
+- **Runtime UI Behavior**:
+  - Reduced stale "Starting runtime..." states when runtime is already reachable.
+
+### Fixed
+
+- Fixed `os error 2` transcription failures caused by missing/incomplete runtime binary paths.
+- Fixed `-ngl` argument incompatibility for whisper-cli variants that do not support GPU layer flags.
+- Fixed history text-size regression:
+  - Slider affects refined/final transcript body text.
+  - Original text stays intentionally compact/italic.
+
 ## [0.6.0] - 2026-02-16
 
 ### Added

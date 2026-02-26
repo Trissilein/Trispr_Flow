@@ -1,12 +1,16 @@
-use crate::ai_fallback::provider::{is_local_ollama_endpoint, list_ollama_models, ping_ollama};
+use crate::ai_fallback::provider::{
+    is_local_ollama_endpoint, list_ollama_models, ping_ollama, ping_ollama_quick,
+};
 use crate::paths::resolve_data_path;
 use crate::state::{save_settings_file, AppState};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use url::Url;
@@ -20,6 +24,8 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const DEFAULT_RUNTIME_VERSION: &str = "0.17.0";
+const BACKGROUND_IO_THROTTLE_BYTES: u64 = 16 * 1024 * 1024;
+const BACKGROUND_IO_THROTTLE_SLEEP_MS: u64 = 2;
 
 struct RuntimeManifest {
     version: &'static str,
@@ -64,6 +70,7 @@ pub struct OllamaRuntimeHealth {
 #[derive(Debug, Clone, Serialize)]
 pub struct OllamaRuntimeDetectResult {
     pub found: bool,
+    pub is_serving: bool,
     pub source: String,
     pub path: String,
     pub version: String,
@@ -196,11 +203,42 @@ fn emit_runtime_health(app: &AppHandle, endpoint: String, models_count: usize, o
     );
 }
 
+fn maybe_throttle_background_io(processed_since_pause: &mut u64) {
+    if *processed_since_pause < BACKGROUND_IO_THROTTLE_BYTES {
+        return;
+    }
+    *processed_since_pause = 0;
+    std::thread::sleep(Duration::from_millis(BACKGROUND_IO_THROTTLE_SLEEP_MS));
+}
+
+fn copy_with_background_throttle<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+) -> Result<u64, std::io::Error> {
+    let mut buf = [0u8; 1024 * 256];
+    let mut total_written = 0u64;
+    let mut processed_since_pause = 0u64;
+
+    loop {
+        let read = reader.read(&mut buf)?;
+        if read == 0 {
+            break;
+        }
+        writer.write_all(&buf[..read])?;
+        total_written += read as u64;
+        processed_since_pause += read as u64;
+        maybe_throttle_background_io(&mut processed_since_pause);
+    }
+
+    Ok(total_written)
+}
+
 fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file =
         File::open(path).map_err(|e| format!("Failed to open file for hashing: {}", e))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 1024 * 64];
+    let mut processed_since_pause = 0u64;
     loop {
         let read = file
             .read(&mut buffer)
@@ -209,6 +247,8 @@ fn sha256_file(path: &Path) -> Result<String, String> {
             break;
         }
         hasher.update(&buffer[..read]);
+        processed_since_pause += read as u64;
+        maybe_throttle_background_io(&mut processed_since_pause);
     }
     Ok(format!("{:x}", hasher.finalize()))
 }
@@ -237,6 +277,16 @@ fn find_file_recursive(root: &Path, target_name: &str) -> Option<PathBuf> {
 }
 
 fn parse_ollama_version(binary_path: &Path) -> String {
+    static VERSION_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    let cache = VERSION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache_key = binary_path.to_string_lossy().to_string();
+
+    if let Ok(guard) = cache.lock() {
+        if let Some(version) = guard.get(&cache_key) {
+            return version.clone();
+        }
+    }
+
     let output = Command::new(binary_path).arg("--version").output();
     let text = match output {
         Ok(out) => {
@@ -252,10 +302,18 @@ fn parse_ollama_version(binary_path: &Path) -> String {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == 'v')
         {
-            return token.trim().trim_start_matches('v').to_string();
+            let parsed = token.trim().trim_start_matches('v').to_string();
+            if let Ok(mut guard) = cache.lock() {
+                guard.insert(cache_key, parsed.clone());
+            }
+            return parsed;
         }
     }
-    String::new()
+    let empty = String::new();
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(cache_key, empty.clone());
+    }
+    empty
 }
 
 fn sanitize_model_name(name: &str) -> String {
@@ -321,7 +379,7 @@ fn select_runtime_binary(settings: &crate::state::Settings) -> Result<(PathBuf, 
 
 fn update_runtime_in_settings(
     app: &AppHandle,
-    state: &State<'_, AppState>,
+    state: &AppState,
     source: String,
     runtime_path: String,
     runtime_version: String,
@@ -353,59 +411,97 @@ fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
+fn runtime_endpoint_reachable(endpoint: &str) -> bool {
+    if ping_ollama_quick(endpoint).is_ok() {
+        return true;
+    }
+
+    // Fallback to a slower probe. Quick ping can miss a busy but already
+    // serving runtime, which would otherwise leave the UI in "starting".
+    ping_ollama(endpoint).is_ok()
+}
+
 #[tauri::command]
 pub fn detect_ollama_runtime(
     state: State<'_, AppState>,
 ) -> Result<OllamaRuntimeDetectResult, String> {
     let settings = state.settings.lock().unwrap().clone();
+    let endpoint = settings.providers.ollama.endpoint.clone();
     let source_hint = settings
         .providers
         .ollama
         .runtime_source
         .trim()
         .to_lowercase();
-    let configured = settings.providers.ollama.runtime_path.trim();
-    if !configured.is_empty() {
-        let path = PathBuf::from(configured);
-        if path.exists() {
-            let source = if source_hint == "system" {
-                "system".to_string()
-            } else if source_hint == "per_user_zip" {
-                "per_user_zip".to_string()
+
+    // Phase 1: filesystem-only binary search (no network).
+    let binary_info: Option<(String, PathBuf)> = {
+        let configured = settings.providers.ollama.runtime_path.trim();
+        if !configured.is_empty() {
+            let path = PathBuf::from(configured);
+            if path.exists() {
+                let source = if source_hint == "system" {
+                    "system".to_string()
+                } else if source_hint == "per_user_zip" {
+                    "per_user_zip".to_string()
+                } else {
+                    "manual".to_string()
+                };
+                Some((source, path))
             } else {
-                "manual".to_string()
-            };
-            return Ok(OllamaRuntimeDetectResult {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    let binary_info = binary_info.or_else(|| {
+        which("ollama")
+            .ok()
+            .map(|p| ("system".to_string(), p))
+    });
+
+    match binary_info {
+        None => Ok(OllamaRuntimeDetectResult {
+            found: false,
+            is_serving: false,
+            source: "manual".to_string(),
+            path: String::new(),
+            version: String::new(),
+        }),
+        Some((source, path)) => {
+            // Phase 2: single quick ping (≤ 300 ms) — never blocks the UI thread noticeably.
+            let is_serving = ping_ollama_quick(&endpoint).is_ok();
+            Ok(OllamaRuntimeDetectResult {
                 found: true,
+                is_serving,
                 source,
-                path: path.to_string_lossy().to_string(),
                 version: parse_ollama_version(&path),
-            });
+                path: path.to_string_lossy().to_string(),
+            })
         }
     }
-    if let Ok(system) = which("ollama") {
-        return Ok(OllamaRuntimeDetectResult {
-            found: true,
-            source: "system".to_string(),
-            path: system.to_string_lossy().to_string(),
-            version: parse_ollama_version(&system),
-        });
-    }
-    Ok(OllamaRuntimeDetectResult {
-        found: false,
-        source: "manual".to_string(),
-        path: String::new(),
-        version: String::new(),
-    })
 }
 
 #[tauri::command]
-pub fn download_ollama_runtime(
+pub async fn download_ollama_runtime(
     app: AppHandle,
     version: Option<String>,
 ) -> Result<OllamaRuntimeDownloadResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        download_ollama_runtime_impl(&app_handle, version)
+    })
+    .await
+    .map_err(|e| format!("Runtime download task failed: {}", e))?
+}
+
+fn download_ollama_runtime_impl(
+    app: &AppHandle,
+    version: Option<String>,
+) -> Result<OllamaRuntimeDownloadResult, String> {
     let manifest = resolve_manifest(version.as_deref())?;
-    let cache_dir = resolve_runtime_cache_dir(&app);
+    let cache_dir = resolve_runtime_cache_dir(app);
     let archive_path = cache_dir.join(format!("ollama-windows-amd64-v{}.zip", manifest.version));
     let temp_path = archive_path.with_extension("zip.part");
 
@@ -413,7 +509,7 @@ pub fn download_ollama_runtime(
         let current_hash = sha256_file(&archive_path)?;
         if current_hash.eq_ignore_ascii_case(manifest.sha256) {
             emit_install_progress(
-                &app,
+                app,
                 "download_runtime",
                 format!("Runtime archive already cached ({})", manifest.version),
                 None,
@@ -430,7 +526,7 @@ pub fn download_ollama_runtime(
     }
 
     emit_install_progress(
-        &app,
+        app,
         "download_runtime",
         format!("Downloading Ollama runtime {}", manifest.version),
         Some(0),
@@ -448,7 +544,7 @@ pub fn download_ollama_runtime(
         .call()
         .map_err(|e| {
             let msg = format!("Failed to download runtime archive: {}", e);
-            emit_install_error(&app, "download_runtime", msg.clone());
+            emit_install_error(app, "download_runtime", msg.clone());
             msg
         })?;
 
@@ -459,16 +555,17 @@ pub fn download_ollama_runtime(
     let mut reader = response.into_reader();
     let mut out = File::create(&temp_path).map_err(|e| {
         let msg = format!("Failed to create temp archive file: {}", e);
-        emit_install_error(&app, "download_runtime", msg.clone());
+        emit_install_error(app, "download_runtime", msg.clone());
         msg
     })?;
     let mut buf = vec![0u8; 1024 * 256];
     let mut downloaded = 0u64;
     let mut last_emit = Instant::now();
+    let mut processed_since_pause = 0u64;
     loop {
         let read = reader.read(&mut buf).map_err(|e| {
             let msg = format!("Failed while downloading runtime archive: {}", e);
-            emit_install_error(&app, "download_runtime", msg.clone());
+            emit_install_error(app, "download_runtime", msg.clone());
             msg
         })?;
         if read == 0 {
@@ -476,13 +573,15 @@ pub fn download_ollama_runtime(
         }
         out.write_all(&buf[..read]).map_err(|e| {
             let msg = format!("Failed to write runtime archive to disk: {}", e);
-            emit_install_error(&app, "download_runtime", msg.clone());
+            emit_install_error(app, "download_runtime", msg.clone());
             msg
         })?;
         downloaded += read as u64;
+        processed_since_pause += read as u64;
+        maybe_throttle_background_io(&mut processed_since_pause);
         if last_emit.elapsed() >= Duration::from_millis(250) {
             emit_install_progress(
-                &app,
+                app,
                 "download_runtime",
                 "Downloading runtime archive...".to_string(),
                 Some(downloaded),
@@ -495,7 +594,7 @@ pub fn download_ollama_runtime(
 
     fs::rename(&temp_path, &archive_path).map_err(|e| {
         let msg = format!("Failed to finalize downloaded archive: {}", e);
-        emit_install_error(&app, "download_runtime", msg.clone());
+        emit_install_error(app, "download_runtime", msg.clone());
         msg
     })?;
 
@@ -506,12 +605,12 @@ pub fn download_ollama_runtime(
             "Runtime archive checksum mismatch. Expected {}, got {}",
             manifest.sha256, digest
         );
-        emit_install_error(&app, "download_runtime", msg.clone());
+        emit_install_error(app, "download_runtime", msg.clone());
         return Err(msg);
     }
 
     emit_install_progress(
-        &app,
+        app,
         "download_runtime",
         "Download complete and checksum verified.".to_string(),
         Some(downloaded),
@@ -527,11 +626,23 @@ pub fn download_ollama_runtime(
 }
 
 #[tauri::command]
-pub fn install_ollama_runtime(
+pub async fn install_ollama_runtime(
     app: AppHandle,
-    state: State<'_, AppState>,
     archive_path: String,
 ) -> Result<OllamaRuntimeInstallResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        install_ollama_runtime_impl(&app_handle, archive_path)
+    })
+    .await
+    .map_err(|e| format!("Runtime install task failed: {}", e))?
+}
+
+fn install_ollama_runtime_impl(
+    app: &AppHandle,
+    archive_path: String,
+) -> Result<OllamaRuntimeInstallResult, String> {
+    let state = app.state::<AppState>();
     let archive = PathBuf::from(archive_path.trim());
     if !archive.exists() {
         return Err("Archive file does not exist.".to_string());
@@ -547,7 +658,7 @@ pub fn install_ollama_runtime(
         })?;
 
     emit_install_progress(
-        &app,
+        app,
         "install_runtime",
         format!("Installing Ollama runtime {}", manifest.version),
         None,
@@ -555,7 +666,7 @@ pub fn install_ollama_runtime(
         Some(manifest.version.to_string()),
     );
 
-    let runtime_root = resolve_runtime_root(&app);
+    let runtime_root = resolve_runtime_root(app);
     let target_dir = runtime_root.join(manifest.version);
     let staging_dir = runtime_root.join(format!(
         ".staging-{}-{}",
@@ -599,13 +710,13 @@ pub fn install_ollama_runtime(
             }
             let mut out = File::create(&out_path)
                 .map_err(|e| format!("Failed to create file '{}': {}", out_path.display(), e))?;
-            std::io::copy(&mut entry, &mut out)
+            copy_with_background_throttle(&mut entry, &mut out)
                 .map_err(|e| format!("Failed to extract '{}': {}", out_path.display(), e))?;
         }
 
-        if idx == 0 || idx + 1 == total_entries || (idx + 1) % 25 == 0 {
+        if idx == 0 || idx + 1 == total_entries || (idx + 1) % 10 == 0 {
             emit_install_progress(
-                &app,
+                app,
                 "install_runtime",
                 format!("Extracting runtime files ({}/{})", idx + 1, total_entries),
                 Some((idx + 1) as u64),
@@ -618,7 +729,11 @@ pub fn install_ollama_runtime(
     let staged_binary = find_file_recursive(&staging_dir, "ollama.exe")
         .ok_or_else(|| "Installed runtime does not contain ollama.exe".to_string())?;
 
-    let _ = fs::remove_dir_all(&target_dir);
+    // Remove existing target first; Windows rename fails if target dir exists.
+    if target_dir.exists() {
+        fs::remove_dir_all(&target_dir)
+            .map_err(|e| format!("Failed to remove previous runtime at '{}': {}", target_dir.display(), e))?;
+    }
     fs::rename(&staging_dir, &target_dir)
         .map_err(|e| format!("Failed to move runtime into final location: {}", e))?;
 
@@ -628,8 +743,8 @@ pub fn install_ollama_runtime(
     let _ = staged_binary; // Explicitly keep extraction validation before rename.
 
     update_runtime_in_settings(
-        &app,
-        &state,
+        app,
+        state.inner(),
         "per_user_zip".to_string(),
         runtime_binary.to_string_lossy().to_string(),
         manifest.version.to_string(),
@@ -652,10 +767,19 @@ pub fn install_ollama_runtime(
 }
 
 #[tauri::command]
-pub fn start_ollama_runtime(
+pub async fn start_ollama_runtime(
     app: AppHandle,
-    state: State<'_, AppState>,
 ) -> Result<OllamaRuntimeStartResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || start_ollama_runtime_impl(&app_handle))
+        .await
+        .map_err(|e| format!("Runtime start task failed: {}", e))?
+}
+
+fn start_ollama_runtime_impl(
+    app: &AppHandle,
+) -> Result<OllamaRuntimeStartResult, String> {
+    let state = app.state::<AppState>();
     let settings_snapshot = state.settings.lock().unwrap().clone();
     let endpoint = settings_snapshot
         .providers
@@ -681,11 +805,11 @@ pub fn start_ollama_runtime(
 
     let (binary_path, source) = select_runtime_binary(&settings_snapshot)?;
     let version = parse_ollama_version(&binary_path);
-    if ping_ollama(&endpoint).is_ok() {
+    if runtime_endpoint_reachable(&endpoint) {
         let ts = now_iso();
         let _ = update_runtime_in_settings(
-            &app,
-            &state,
+            app,
+            state.inner(),
             source.clone(),
             binary_path.to_string_lossy().to_string(),
             version.clone(),
@@ -693,7 +817,7 @@ pub fn start_ollama_runtime(
             false,
         );
         let models = list_ollama_models(&endpoint);
-        emit_runtime_health(&app, endpoint.clone(), models.len(), true);
+        emit_runtime_health(app, endpoint.clone(), models.len(), true);
         return Ok(OllamaRuntimeStartResult {
             pid: None,
             endpoint,
@@ -720,12 +844,16 @@ pub fn start_ollama_runtime(
     let pid = child.id();
 
     let deadline = Instant::now() + Duration::from_secs(60);
+    let mut probe_attempt: u32 = 0;
     loop {
-        if ping_ollama(&endpoint).is_ok() {
+        let reachable = ping_ollama_quick(&endpoint).is_ok()
+            || (probe_attempt % 4 == 3 && ping_ollama(&endpoint).is_ok());
+
+        if reachable {
             let ts = now_iso();
             update_runtime_in_settings(
-                &app,
-                &state,
+                app,
+                state.inner(),
                 source.clone(),
                 binary_path.to_string_lossy().to_string(),
                 version.clone(),
@@ -733,7 +861,7 @@ pub fn start_ollama_runtime(
                 false,
             )?;
             let models = list_ollama_models(&endpoint);
-            emit_runtime_health(&app, endpoint.clone(), models.len(), true);
+            emit_runtime_health(app, endpoint.clone(), models.len(), true);
             return Ok(OllamaRuntimeStartResult {
                 pid: Some(pid),
                 endpoint,
@@ -742,21 +870,31 @@ pub fn start_ollama_runtime(
             });
         }
         if Instant::now() >= deadline {
-            emit_runtime_health(&app, endpoint.clone(), 0, false);
+            emit_runtime_health(app, endpoint.clone(), 0, false);
             return Err(format!(
                 "Timed out while waiting for Ollama runtime to start at {}. Check whether port 11434 is blocked by another process or firewall, then retry.",
                 endpoint
             ));
         }
+        probe_attempt = probe_attempt.saturating_add(1);
         std::thread::sleep(Duration::from_millis(500));
     }
 }
 
 #[tauri::command]
-pub fn verify_ollama_runtime(
+pub async fn verify_ollama_runtime(
     app: AppHandle,
-    state: State<'_, AppState>,
 ) -> Result<OllamaRuntimeVerifyResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || verify_ollama_runtime_impl(&app_handle))
+        .await
+        .map_err(|e| format!("Runtime verify task failed: {}", e))?
+}
+
+fn verify_ollama_runtime_impl(
+    app: &AppHandle,
+) -> Result<OllamaRuntimeVerifyResult, String> {
+    let state = app.state::<AppState>();
     let settings_snapshot = state.settings.lock().unwrap().clone();
     let endpoint = settings_snapshot
         .providers
@@ -773,10 +911,12 @@ pub fn verify_ollama_runtime(
                 .to_string(),
         );
     }
-    ping_ollama(&endpoint).map_err(|e| e.to_string())?;
     let models = list_ollama_models(&endpoint);
+    if models.is_empty() {
+        ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
+    }
 
-    emit_runtime_health(&app, endpoint.clone(), models.len(), true);
+    emit_runtime_health(app, endpoint.clone(), models.len(), true);
 
     Ok(OllamaRuntimeVerifyResult {
         ok: true,

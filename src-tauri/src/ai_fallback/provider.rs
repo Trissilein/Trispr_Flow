@@ -1,7 +1,9 @@
 use super::error::AIError;
 use super::models::{RefinementOptions, RefinementResult, TokenUsage};
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tauri::Emitter;
+use tracing::warn;
 use url::Url;
 
 // Prompt templates optimized for local models (Ollama: qwen3, mistral-small).
@@ -9,6 +11,18 @@ use url::Url;
 pub const OLLAMA_PROMPT_EN: &str = "You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors in the text below. Rules: do NOT translate; do NOT add explanations or commentary; preserve all proper nouns and technical terms exactly; preserve the original register (formal/informal). Output ONLY the corrected text with no preamble.";
 
 pub const OLLAMA_PROMPT_DE: &str = "Du bist ein Transkript-Editor. Korrigiere Zeichensetzung, Groß-/Kleinschreibung und offensichtliche Sprache-zu-Text-Fehler im Text unten. Regeln: NICHT übersetzen; KEINE Erklärungen oder Kommentare hinzufügen; alle Eigennamen und Fachbegriffe exakt beibehalten; Anredeform (Du/Sie) aus dem Original beibehalten. Gib NUR den korrigierten Text aus, ohne Einleitung.";
+
+const OLLAMA_PROMPT_SUMMARY_EN: &str = "Summarize this transcript into 3 to 6 concise bullet points. Preserve key facts, numbers, names, and decisions. Do not invent information. If something is uncertain, state it cautiously. Return only the bullet list.";
+
+const OLLAMA_PROMPT_SUMMARY_DE: &str = "Fasse dieses Transkript in 3 bis 6 praegnanten Stichpunkten zusammen. Behalte wichtige Fakten, Zahlen, Namen und Entscheidungen bei. Keine Informationen erfinden. Unsichere Inhalte vorsichtig formulieren. Gib nur die Stichpunktliste zurueck.";
+
+const OLLAMA_PROMPT_TECHNICAL_EN: &str = "Rewrite this transcript in technical specification style. Keep exact numbers, units, versions, APIs, constraints, and file paths. Structure output with short sections: Goal, Inputs, Outputs, Constraints, Open Questions. Do not invent missing values. Return only the structured result.";
+
+const OLLAMA_PROMPT_TECHNICAL_DE: &str = "Formuliere dieses Transkript als technische Spezifikation um. Behalte exakte Zahlen, Einheiten, Versionen, APIs, Rahmenbedingungen und Dateipfade. Strukturiere die Ausgabe mit kurzen Abschnitten: Ziel, Eingaben, Ausgaben, Constraints, Offene Fragen. Keine fehlenden Werte erfinden. Gib nur das strukturierte Ergebnis zurueck.";
+
+const OLLAMA_PROMPT_ACTION_ITEMS_EN: &str = "Convert this transcript into actionable tasks. Use bullets with format: [Action] [Owner?] [Due?] [Notes]. Preserve technical wording and constraints. If owner or due date is missing, mark it as unknown. Return only the action list.";
+
+const OLLAMA_PROMPT_ACTION_ITEMS_DE: &str = "Wandle dieses Transkript in konkrete Aufgaben um. Nutze Stichpunkte im Format: [Aktion] [Owner?] [Faellig?] [Hinweise]. Behalte technische Begriffe und Rahmenbedingungen bei. Wenn Owner oder Datum fehlen, mit unknown markieren. Gib nur die Aufgabenliste zurueck.";
 
 pub trait AIProvider: Send + Sync {
     fn id(&self) -> &'static str;
@@ -225,6 +239,24 @@ pub fn ping_ollama(endpoint: &str) -> Result<(), AIError> {
     Err(AIError::OllamaNotRunning)
 }
 
+/// Quick reachability check for use in UI detection paths (e.g. detect_ollama_runtime).
+/// Uses a 300 ms timeout — enough for localhost, never blocks the UI thread noticeably.
+pub fn ping_ollama_quick(endpoint: &str) -> Result<(), AIError> {
+    let agent = ureq::builder()
+        .timeout_connect(Duration::from_millis(300))
+        .timeout_read(Duration::from_millis(300))
+        .build();
+
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/tags", candidate);
+        if agent.get(&url).call().is_ok() {
+            return Ok(());
+        }
+    }
+
+    Err(AIError::OllamaNotRunning)
+}
+
 pub fn default_models_for_provider(provider: &str) -> Vec<String> {
     match normalize_provider(provider) {
         "claude" => vec![
@@ -251,6 +283,56 @@ pub fn default_prompt_for_language(language: &str) -> &'static str {
     match language.trim().to_lowercase().as_str() {
         "de" | "german" => OLLAMA_PROMPT_DE,
         _ => OLLAMA_PROMPT_EN,
+    }
+}
+
+pub fn normalize_prompt_profile(profile: &str) -> &'static str {
+    match profile.trim().to_lowercase().as_str() {
+        "wording" => "wording",
+        "summary" => "summary",
+        "technical_specs" => "technical_specs",
+        "action_items" => "action_items",
+        "custom" => "custom",
+        _ => "wording",
+    }
+}
+
+pub fn prompt_for_profile(
+    profile: &str,
+    language: &str,
+    custom_prompt: Option<&str>,
+) -> Option<String> {
+    match normalize_prompt_profile(profile) {
+        "custom" => {
+            let normalized = custom_prompt.unwrap_or("").trim();
+            if normalized.is_empty() {
+                None
+            } else {
+                Some(normalized.to_string())
+            }
+        }
+        "summary" => Some(
+            match language.trim().to_lowercase().as_str() {
+                "de" | "german" => OLLAMA_PROMPT_SUMMARY_DE,
+                _ => OLLAMA_PROMPT_SUMMARY_EN,
+            }
+            .to_string(),
+        ),
+        "technical_specs" => Some(
+            match language.trim().to_lowercase().as_str() {
+                "de" | "german" => OLLAMA_PROMPT_TECHNICAL_DE,
+                _ => OLLAMA_PROMPT_TECHNICAL_EN,
+            }
+            .to_string(),
+        ),
+        "action_items" => Some(
+            match language.trim().to_lowercase().as_str() {
+                "de" | "german" => OLLAMA_PROMPT_ACTION_ITEMS_DE,
+                _ => OLLAMA_PROMPT_ACTION_ITEMS_EN,
+            }
+            .to_string(),
+        ),
+        _ => Some(default_prompt_for_language(language).to_string()),
     }
 }
 
@@ -351,6 +433,171 @@ fn parse_ollama_usage(json: &serde_json::Value) -> (usize, usize) {
         json["prompt_eval_count"].as_u64().unwrap_or(0) as usize,
         json["eval_count"].as_u64().unwrap_or(0) as usize,
     )
+}
+
+fn parse_env_usize(name: &str) -> Option<usize> {
+    std::env::var(name).ok().and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        trimmed.parse::<usize>().ok()
+    })
+}
+
+fn default_ollama_num_thread() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    // Keep headroom for UI/audio threads.
+    (cores / 2).max(2).clamp(2, 8)
+}
+
+fn adaptive_num_predict(input_text: &str, configured_max: u32, low_latency_mode: bool) -> u32 {
+    let configured = configured_max.clamp(128, 8192);
+    let input_tokens = rough_token_estimate(input_text);
+    let heuristic = if low_latency_mode {
+        ((input_tokens * 2) + 24).clamp(64, 384) as u32
+    } else {
+        ((input_tokens * 3) + 48).clamp(96, 1024) as u32
+    };
+    configured.min(heuristic.max(64))
+}
+
+fn adaptive_num_ctx(input_text: &str, system_prompt: &str, low_latency_mode: bool) -> usize {
+    let tokens = rough_token_estimate(input_text) + rough_token_estimate(system_prompt);
+    let max_ctx = if low_latency_mode { 2048 } else { 4096 };
+    let target = (tokens * 2).clamp(1024, max_ctx);
+    if target <= 1024 {
+        1024
+    } else if target <= 2048 {
+        2048
+    } else if !low_latency_mode && target <= 3072 {
+        3072
+    } else {
+        max_ctx
+    }
+}
+
+fn build_ollama_options_payload(
+    options: &RefinementOptions,
+    input_text: &str,
+    system_prompt: &str,
+) -> serde_json::Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert("temperature".to_string(), serde_json::json!(options.temperature));
+    let num_predict = adaptive_num_predict(input_text, options.max_tokens, options.low_latency_mode);
+    payload.insert("num_predict".to_string(), serde_json::json!(num_predict));
+    let num_ctx = parse_env_usize("TRISPR_OLLAMA_NUM_CTX")
+        .map(|n| n.clamp(1024, 8192))
+        .unwrap_or_else(|| adaptive_num_ctx(input_text, system_prompt, options.low_latency_mode));
+    payload.insert("num_ctx".to_string(), serde_json::json!(num_ctx));
+
+    let num_thread = parse_env_usize("TRISPR_OLLAMA_NUM_THREAD").unwrap_or_else(default_ollama_num_thread);
+    payload.insert("num_thread".to_string(), serde_json::json!(num_thread));
+
+    // Optional advanced override. Example: TRISPR_OLLAMA_NUM_GPU=999
+    // to request aggressive GPU offload if supported by local runtime.
+    if let Some(num_gpu) = parse_env_usize("TRISPR_OLLAMA_NUM_GPU") {
+        payload.insert("num_gpu".to_string(), serde_json::json!(num_gpu));
+    }
+
+    serde_json::Value::Object(payload)
+}
+
+fn collapse_excessive_blank_lines(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut newline_streak = 0usize;
+
+    for ch in text.chars() {
+        if ch == '\n' {
+            newline_streak += 1;
+            if newline_streak <= 2 {
+                out.push(ch);
+            }
+        } else {
+            newline_streak = 0;
+            out.push(ch);
+        }
+    }
+
+    out
+}
+
+fn extract_word_set(text: &str) -> HashSet<String> {
+    text.split_whitespace()
+        .filter_map(|raw| {
+            let normalized = raw
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_ascii_lowercase();
+            if normalized.len() < 2 {
+                None
+            } else {
+                Some(normalized)
+            }
+        })
+        .collect()
+}
+
+fn shared_word_ratio(original: &str, refined: &str) -> f64 {
+    let original_words = extract_word_set(original);
+    if original_words.is_empty() {
+        return 1.0;
+    }
+    let refined_words = extract_word_set(refined);
+    let shared = original_words
+        .iter()
+        .filter(|word| refined_words.contains(*word))
+        .count();
+    shared as f64 / original_words.len() as f64
+}
+
+fn suspicious_refinement_shape(original: &str, refined: &str) -> bool {
+    let original_trimmed = original.trim();
+    let refined_trimmed = refined.trim();
+    if refined_trimmed.is_empty() {
+        return true;
+    }
+    if original_trimmed.is_empty() {
+        return false;
+    }
+
+    let original_chars = original_trimmed.chars().filter(|c| !c.is_whitespace()).count();
+    let refined_chars = refined_trimmed.chars().filter(|c| !c.is_whitespace()).count();
+
+    let original_blank_lines = original_trimmed
+        .lines()
+        .filter(|line| line.trim().is_empty())
+        .count();
+    let refined_blank_lines = refined_trimmed
+        .lines()
+        .filter(|line| line.trim().is_empty())
+        .count();
+
+    let severe_shrink = original_chars >= 80 && refined_chars * 100 < original_chars * 45;
+    let blank_line_spike =
+        refined_blank_lines >= original_blank_lines + 4 && refined_blank_lines >= 6;
+    let overlap_ratio = shared_word_ratio(original_trimmed, refined_trimmed);
+    let low_overlap = original_trimmed.split_whitespace().count() >= 20 && overlap_ratio < 0.40;
+
+    (severe_shrink && low_overlap) || (blank_line_spike && severe_shrink)
+}
+
+fn sanitize_ollama_refinement_output(original: &str, refined: &str) -> String {
+    let normalized = refined.replace("\r\n", "\n").replace('\r', "\n");
+    let collapsed = collapse_excessive_blank_lines(normalized.trim());
+    if suspicious_refinement_shape(original, &collapsed) {
+        warn!(
+            "Ignoring suspicious Ollama refinement output and keeping original transcript (orig_len={}, refined_len={})",
+            original.len(),
+            collapsed.len()
+        );
+        return original.to_string();
+    }
+    if collapsed.is_empty() {
+        return original.to_string();
+    }
+    collapsed
 }
 
 fn map_ollama_http_error(code: u16, detail: &str) -> AIError {
@@ -500,36 +747,43 @@ impl AIProvider for OllamaProvider {
                 default_prompt_for_language(lang)
             });
 
+        // "think": false disables extended chain-of-thought mode on reasoning models
+        // (e.g. qwen3, deepseek-r1). Without this, thinking models generate internal
+        // reasoning tokens indefinitely before producing any output, causing apparent hangs.
+        let ollama_options = build_ollama_options_payload(options, text, system_prompt);
+        let keep_alive = std::env::var("TRISPR_OLLAMA_KEEP_ALIVE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "20m".to_string());
+
         let chat_body = serde_json::json!({
             "model": model,
             "stream": false,
+            "think": false,
             "messages": [
                 { "role": "system", "content": system_prompt },
                 { "role": "user", "content": text }
             ],
-            "options": {
-                "temperature": options.temperature,
-                "num_predict": options.max_tokens,
-                "num_ctx": 4096
-            }
+            "options": ollama_options.clone(),
+            "keep_alive": keep_alive.clone()
         });
 
         let generate_body = serde_json::json!({
             "model": model,
             "prompt": format!("{}\n\n{}", system_prompt, text),
             "stream": false,
-            "options": {
-                "temperature": options.temperature,
-                "num_predict": options.max_tokens,
-                "num_ctx": 4096
-            }
+            "think": false,
+            "options": ollama_options,
+            "keep_alive": keep_alive
         });
 
-        // 60 s read timeout: cold model load can take 20-40 s on first inference.
+        // 45 s read timeout: with think:false, inference on 8B models takes 2-15 s.
+        // Two candidates × 50 s total budget stays comfortably under the 90 s watchdog.
         // 5 s connect timeout: if Ollama is running, it should accept immediately.
+        let read_timeout_secs = if options.low_latency_mode { 20 } else { 45 };
         let agent = ureq::builder()
             .timeout_connect(Duration::from_secs(5))
-            .timeout_read(Duration::from_secs(60))
+            .timeout_read(Duration::from_secs(read_timeout_secs))
             .build();
 
         let mut last_transport_error: Option<AIError> = None;
@@ -577,6 +831,7 @@ impl AIProvider for OllamaProvider {
                             .to_string(),
                     )
                 })?;
+                let refined_text = sanitize_ollama_refinement_output(text, &refined_text);
                 let (input_tokens, output_tokens) = parse_ollama_usage(&json);
                 let elapsed_ms = start.elapsed().as_millis() as u64;
                 return Ok(RefinementResult {
@@ -636,6 +891,7 @@ impl AIProvider for OllamaProvider {
                         .to_string(),
                 )
             })?;
+            let refined_text = sanitize_ollama_refinement_output(text, &refined_text);
             let (input_tokens, output_tokens) = parse_ollama_usage(&json);
             let elapsed_ms = start.elapsed().as_millis() as u64;
 
@@ -981,6 +1237,7 @@ mod tests {
         let options = RefinementOptions {
             temperature: 0.3,
             max_tokens: 512,
+            low_latency_mode: false,
             language: Some("en".to_string()),
             custom_prompt: None,
         };
@@ -1074,5 +1331,21 @@ mod tests {
             "unknown route /api/chat on this server"
         ));
         assert!(!is_missing_chat_route(500, "internal server error"));
+    }
+
+    #[test]
+    fn suspicious_refinement_falls_back_to_original_text() {
+        let original = "This is a fairly long transcript sentence with multiple technical terms and enough context to detect aggressive truncation in refinement output.";
+        let refined = "summary only";
+        let sanitized = sanitize_ollama_refinement_output(original, refined);
+        assert_eq!(sanitized, original);
+    }
+
+    #[test]
+    fn refinement_output_collapses_excessive_blank_lines() {
+        let original = "First line\nSecond line\nThird line";
+        let refined = "First line\n\n\n\nSecond line\n\n\nThird line";
+        let sanitized = sanitize_ollama_refinement_output(original, refined);
+        assert_eq!(sanitized, "First line\n\nSecond line\n\nThird line");
     }
 }

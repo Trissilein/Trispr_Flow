@@ -456,8 +456,6 @@ pub(crate) fn resolve_model_path(app: &AppHandle, model_id: &str) -> Option<Path
       let exe_search_dirs = [
         exe_dir.join("models"),                   // models/ next to .exe
         exe_dir.join("../models"),                // models/ one level up
-        exe_dir.join("../whisper.cpp/models"),     // whisper.cpp/models one level up
-        exe_dir.join("../../whisper.cpp/models"),  // whisper.cpp/models two levels up
       ];
       for dir in &exe_search_dirs {
         info!("Checking: {}", dir.display());
@@ -474,8 +472,6 @@ pub(crate) fn resolve_model_path(app: &AppHandle, model_id: &str) -> Option<Path
     info!("Current working directory: {}", cwd.display());
     let search_dirs = [
       cwd.join("models"),
-      cwd.join("../whisper.cpp/models"),
-      cwd.join("../../whisper.cpp/models"),
     ];
     for dir in &search_dirs {
       info!("Checking: {}", dir.display());
@@ -526,8 +522,6 @@ fn resolve_model_path_by_file(app: &AppHandle, file_name: &str) -> Option<PathBu
       let exe_search_dirs = [
         exe_dir.join("models"),
         exe_dir.join("../models"),
-        exe_dir.join("../whisper.cpp/models"),
-        exe_dir.join("../../whisper.cpp/models"),
       ];
       for dir in &exe_search_dirs {
         let candidate = dir.join(file_name);
@@ -541,8 +535,6 @@ fn resolve_model_path_by_file(app: &AppHandle, file_name: &str) -> Option<PathBu
   if let Ok(cwd) = std::env::current_dir() {
     let search_dirs = [
       cwd.join("models"),
-      cwd.join("../whisper.cpp/models"),
-      cwd.join("../../whisper.cpp/models"),
     ];
     for dir in &search_dirs {
       let candidate = dir.join(file_name);

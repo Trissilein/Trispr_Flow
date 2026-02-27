@@ -1,123 +1,31 @@
 /* ═══════════════════════════════════════════════════════════════
-   TRISPR FLOW - MODERN UI OPTIMIZATION
-   Glasmorphismus • Dynamische Animationen • Verbesserte Tiefeneffekte
+   TRISPR FLOW — MODERN UI LAYER
+   Lädt nach styles.css und überschreibt gezielt einzelne Komponenten.
+   Kein Layout-Eingriff — nur visuelle Verfeinerung.
    ═══════════════════════════════════════════════════════════════ */
 
 /* ─────────────────────────────────────────────────────────────
-   ERWEITERTE CSS CUSTOM PROPERTIES
+   KEYFRAME ANIMATIONEN
    ───────────────────────────────────────────────────────────── */
 
-:root {
-  /* Bestehende Palette */
-  --ink: #e8e8ea;
-  --ink-soft: #d1d5db;
-  --muted: #9ca3af;
-  --accent: #ff6b3d;
-  --accent-2: #1da6a0;
-  --accent-3: #f5b342;
-
-  /* Neue Farben */
-  --success: #22c55e;
-  --info: #6ec8ff;
-  --warning: #f59e0b;
-  --error: #ef4444;
-
-  /* Hintergründe */
-  --bg-base: #1a1f24;
-  --bg-elevated: #2a2f38;
-  --bg-float: rgba(42, 47, 56, 0.8);
-
-  /* Glaseffekte */
-  --glass-light: rgba(255, 255, 255, 0.03);
-  --glass-medium: rgba(255, 255, 255, 0.06);
-  --glass-strong: rgba(255, 255, 255, 0.10);
-
-  /* Schatten */
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
-  --shadow-glow: 0 0 20px rgba(255, 107, 61, 0.1);
-
-  /* Radii */
-  --radius: 10px;
-  --radius-sm: 6px;
-  --radius-lg: 16px;
-
-  /* Übergänge */
-  --transition-fast: 150ms ease;
-  --transition-normal: 300ms ease;
-  --transition-slow: 500ms ease;
+@keyframes tf-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(var(--dot-color-rgb), 0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(var(--dot-color-rgb), 0); }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   ANIMATIONEN
-   ───────────────────────────────────────────────────────────── */
-
-@keyframes pulse-glow {
-  0%, 100% {
-    box-shadow: 0 0 0 0 currentColor;
-    opacity: 1;
-  }
-  50% {
-    box-shadow: 0 0 0 8px rgba(255, 107, 61, 0);
-    opacity: 0.8;
-  }
+@keyframes tf-shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
 }
 
-@keyframes glow-rotate {
-  0% {
-    box-shadow: 0 0 20px rgba(255, 107, 61, 0.2), 0 0 40px rgba(255, 107, 61, 0.1);
-  }
-  50% {
-    box-shadow: 0 0 30px rgba(255, 107, 61, 0.4), 0 0 60px rgba(255, 107, 61, 0.2);
-  }
-  100% {
-    box-shadow: 0 0 20px rgba(255, 107, 61, 0.2), 0 0 40px rgba(255, 107, 61, 0.1);
-  }
+@keyframes tf-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes float-up {
-  0% { transform: translateY(0); }
-  50% { transform: translateY(-2px); }
-  100% { transform: translateY(0); }
-}
-
-@keyframes shimmer {
-  0% {
-    background-position: -200% center;
-  }
-  100% {
-    background-position: 200% center;
-  }
-}
-
-@keyframes slide-in-down {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes scale-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* Benutzer-Präferenz: Bewegung reduzieren */
+/* Keine Animationen wenn der Nutzer das bevorzugt */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
@@ -125,525 +33,231 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
-   OPTIMIERTE BASISELEMENTE
+   ERWEITERTE CSS-VARIABLEN
    ───────────────────────────────────────────────────────────── */
 
-body {
-  background: linear-gradient(135deg, #1a1f24 0%, #1f252e 100%);
-  color: var(--ink);
+:root {
+  --transition-fast:   150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Für den generischen Glow (wird per inline-style gesetzt) */
+  --dot-color-rgb: 29, 166, 160;
 }
 
 /* ─────────────────────────────────────────────────────────────
-   GLASMORPHISMUS-PANELS
-   ───────────────────────────────────────────────────────────── */
-
-.panel {
-  background: var(--bg-float);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--glass-strong);
-  border-radius: var(--radius);
-  box-shadow:
-    0 0 1px rgba(255, 255, 255, 0.1) inset,
-    var(--shadow-md);
-  transition: all var(--transition-normal);
-  position: relative;
-  overflow: hidden;
-}
-
-.panel::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.04) 0%,
-    rgba(255, 255, 255, 0.02) 100%
-  );
-  pointer-events: none;
-}
-
-.panel:hover {
-  background: rgba(42, 47, 56, 0.95);
-  border-color: rgba(255, 255, 255, 0.15);
-  box-shadow:
-    0 0 1px rgba(255, 255, 255, 0.15) inset,
-    var(--shadow-lg);
-  transform: translateY(-2px);
-}
-
-/* ─────────────────────────────────────────────────────────────
-   STATUS-INDIKATOREN MIT GLOW
+   STATUS-DOTS — pulsierender Glow je nach State
    ───────────────────────────────────────────────────────────── */
 
 .status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--muted);
-  transition: all var(--transition-fast);
-  position: relative;
+  transition: background var(--transition-fast),
+              box-shadow var(--transition-fast);
 }
 
-/* Recording - Orange Glow */
 .status-dot[data-state="recording"] {
+  --dot-color-rgb: 255, 107, 61;
   background: var(--accent);
-  animation: pulse-glow 2s ease-in-out infinite;
-  box-shadow: 0 0 0 4px rgba(255, 107, 61, 0.25);
+  box-shadow: 0 0 0 3px rgba(255, 107, 61, 0.35);
+  animation: tf-pulse 1.8s ease-in-out infinite;
 }
 
-/* Transcribing - Teal Glow */
 .status-dot[data-state="transcribing"] {
-  background: var(--accent-2);
-  animation: glow-rotate 2s ease-in-out infinite;
-  box-shadow: 0 0 0 4px rgba(29, 166, 160, 0.3);
+  --dot-color-rgb: 245, 179, 66;
+  background: var(--accent-3);
+  box-shadow: 0 0 0 3px rgba(245, 179, 66, 0.35);
+  animation: tf-pulse 1.4s ease-in-out infinite;
 }
 
-/* Refining - Blue Glow */
 .status-dot[data-state="refining"] {
-  background: var(--info);
-  animation: glow-rotate 1.5s ease-in-out infinite;
-  box-shadow: 0 0 0 4px rgba(110, 200, 255, 0.3);
+  --dot-color-rgb: 110, 200, 255;
+  background: #6ec8ff;
+  box-shadow: 0 0 0 3px rgba(110, 200, 255, 0.35);
+  animation: tf-pulse 1.2s ease-in-out infinite;
 }
 
-/* GPU Active - Green Glow */
 .status-dot[data-state="gpu-active"] {
-  background: var(--success);
-  animation: pulse-glow 1.5s ease-in-out infinite;
-  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.3);
+  --dot-color-rgb: 34, 197, 94;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.35);
+  animation: tf-pulse 2s ease-in-out infinite;
 }
 
-/* Error - Red */
+.status-dot[data-state="cpu"] {
+  --dot-color-rgb: 245, 158, 11;
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.3);
+}
+
 .status-dot[data-state="error"] {
-  background: var(--error);
-  animation: pulse-glow 1.5s ease-in-out infinite;
-  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.3);
+  --dot-color-rgb: 239, 68, 68;
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.35);
+  animation: tf-pulse 1s ease-in-out infinite;
 }
 
 /* ─────────────────────────────────────────────────────────────
-   OPTIMIERTE BUTTONS
+   PANELS — Glasmorphismus & subtile Hover-Tiefe
    ───────────────────────────────────────────────────────────── */
 
-button {
-  transition: all var(--transition-fast);
-  border: none;
-  cursor: pointer;
-  position: relative;
-  overflow: hidden;
-}
-
-/* Primary Action Buttons */
-button:not(.ghost-btn):not(.main-tab-btn):not(.history-tab) {
-  background: linear-gradient(135deg, var(--accent) 0%, #e55a2b 100%);
-  color: white;
-  padding: 8px 16px;
-  border-radius: var(--radius-sm);
-  font-weight: 600;
+.panel {
+  background: rgba(36, 42, 51, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow:
-    0 0 0 0 rgba(255, 107, 61, 0.3),
-    var(--shadow-sm);
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 4px 20px rgba(0, 0, 0, 0.35);
+  transition: border-color var(--transition-normal),
+              box-shadow var(--transition-normal);
 }
 
-button:not(.ghost-btn):not(.main-tab-btn):not(.history-tab):hover {
-  transform: translateY(-2px);
+.panel:hover {
+  border-color: rgba(255, 255, 255, 0.13);
   box-shadow:
-    0 0 0 4px rgba(255, 107, 61, 0.2),
-    var(--shadow-md);
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 6px 28px rgba(0, 0, 0, 0.45);
 }
 
-button:not(.ghost-btn):not(.main-tab-btn):not(.history-tab):active {
-  transform: translateY(0);
+/* Hero-Card: kein transform (würde Tooltips verschieben) */
+.hero-card {
+  background: rgba(36, 42, 51, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 
-/* Ghost Buttons */
+/* ─────────────────────────────────────────────────────────────
+   GHOST BUTTONS — deutlicheres Hover-Feedback
+   ───────────────────────────────────────────────────────────── */
+
 .ghost-btn {
-  background: transparent;
-  color: var(--ink);
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  font-size: 0.875rem;
-  transition: all var(--transition-fast);
-  border: 1px solid transparent;
+  transition: color var(--transition-fast),
+              background var(--transition-fast),
+              border-color var(--transition-fast);
 }
 
 .ghost-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
-  color: var(--accent);
-}
-
-/* ─────────────────────────────────────────────────────────────
-   VERBESSERTE HERO-SEKTION
-   ───────────────────────────────────────────────────────────── */
-
-.hero {
-  animation: slide-in-down 0.6s ease both;
-}
-
-.badge {
-  animation: scale-in 0.4s ease 0.1s both;
-  background: rgba(29, 166, 160, 0.15);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(29, 166, 160, 0.4);
-  transition: all var(--transition-normal);
-}
-
-.badge:hover {
-  background: rgba(29, 166, 160, 0.25);
-  border-color: rgba(29, 166, 160, 0.6);
-  transform: translateY(-2px);
-}
-
-h1 {
-  background: linear-gradient(135deg, var(--ink) 0%, var(--ink-soft) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  letter-spacing: -0.02em;
-}
-
-.subtitle {
-  color: var(--muted);
-  line-height: 1.6;
-}
-
-/* ─────────────────────────────────────────────────────────────
-   OPTIMIERTE STATUS-PILLS
-   ───────────────────────────────────────────────────────────── */
-
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 8px;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  backdrop-filter: blur(10px);
-  transition: all var(--transition-fast);
-}
-
-.status-pill--enabled {
-  background: rgba(29, 166, 160, 0.2);
-  color: #4be0d4;
-  border: 1px solid rgba(29, 166, 160, 0.5);
-  box-shadow: inset 0 0 0 1px rgba(29, 166, 160, 0.3);
-}
-
-.status-pill--enabled:hover {
-  background: rgba(29, 166, 160, 0.3);
-  border-color: rgba(29, 166, 160, 0.7);
-  transform: scale(1.05);
-}
-
-.status-pill--disabled {
-  background: rgba(239, 68, 68, 0.15);
-  color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.4);
-  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.2);
-}
-
-/* ─────────────────────────────────────────────────────────────
-   OPTIMIERTE INPUT-FELDER
-   ───────────────────────────────────────────────────────────── */
-
-input[type="text"],
-input[type="number"],
-input[type="range"],
-select,
-textarea {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: var(--radius-sm);
   color: var(--ink);
-  padding: 8px 12px;
-  transition: all var(--transition-normal);
-  font-family: inherit;
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
-input[type="text"]:focus,
-input[type="number"]:focus,
-select:focus,
-textarea:focus {
-  outline: none;
-  background: rgba(255, 255, 255, 0.08);
-  border-color: var(--accent);
-  box-shadow:
-    0 0 0 2px rgba(255, 107, 61, 0.1),
-    inset 0 0 0 1px var(--accent);
-}
-
-input[type="range"] {
-  accent-color: var(--accent);
+.ghost-btn:active {
+  background: rgba(255, 255, 255, 0.04);
+  transform: scale(0.97);
 }
 
 /* ─────────────────────────────────────────────────────────────
-   TAB-NAVIGATION MIT UNDERLINE-EFFEKT
+   MAIN TABS — Underline statt Solid-Hintergrund
    ───────────────────────────────────────────────────────────── */
 
 .main-tab-btn {
   position: relative;
   background: transparent;
   color: var(--muted);
-  padding: 10px 16px;
   border-radius: 0;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 0.75rem;
-  transition: color var(--transition-normal);
-}
-
-.main-tab-btn::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--accent);
-  transform: scaleX(0);
-  transition: transform var(--transition-normal);
-  transform-origin: center;
+  border-bottom: 2px solid transparent;
+  transition: color var(--transition-fast),
+              border-color var(--transition-fast);
 }
 
 .main-tab-btn:hover {
-  color: var(--ink);
+  background: transparent;
+  color: var(--ink-soft);
 }
 
 .main-tab-btn.active {
+  background: transparent;
   color: var(--accent);
-}
-
-.main-tab-btn.active::after {
-  transform: scaleX(1);
+  border-bottom-color: var(--accent);
+  box-shadow: none;
 }
 
 /* ─────────────────────────────────────────────────────────────
-   HERO-CARD MIT TIEFENEFFEKT
+   INPUTS — fokussierter Focus-Ring mit Accent-Glow
    ───────────────────────────────────────────────────────────── */
 
-.hero-card {
-  perspective: 1000px;
+.history-search-input {
+  transition: border-color var(--transition-fast),
+              box-shadow var(--transition-fast),
+              background var(--transition-fast);
 }
 
-.hero-card:hover {
-  transform: rotateX(2deg) rotateY(-2deg) translateY(-4px);
-  box-shadow:
-    0 0 1px rgba(255, 255, 255, 0.15) inset,
-    0 12px 40px rgba(0, 0, 0, 0.5);
-}
-
-.hero-label {
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 700;
-  color: var(--muted);
-  transition: color var(--transition-fast);
-}
-
-.hero-item:hover .hero-label {
-  color: var(--accent);
-}
-
-.hero-value {
-  font-family: "Space Grotesk", sans-serif;
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--ink-soft);
-  transition: color var(--transition-fast);
-}
-
-.hero-item:hover .hero-value {
-  color: var(--ink);
+.history-search-input:focus {
+  outline: none;
+  border-color: var(--accent-2);
+  background: rgba(29, 166, 160, 0.06);
+  box-shadow: 0 0 0 3px rgba(29, 166, 160, 0.15);
 }
 
 /* ─────────────────────────────────────────────────────────────
-   HISTORY-LISTE MIT HOVER-EFFEKTEN
+   HISTORY ITEMS — Left-Border-Indicator beim Hover
    ───────────────────────────────────────────────────────────── */
 
 .history-item {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: var(--radius-sm);
-  padding: 12px 16px;
-  margin-bottom: 8px;
-  transition: all var(--transition-normal);
-  cursor: pointer;
   position: relative;
-  overflow: hidden;
-}
-
-.history-item::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 100%;
-  width: 3px;
-  background: linear-gradient(180deg, var(--accent) 0%, transparent 100%);
-  opacity: 0;
-  transition: opacity var(--transition-normal);
+  border-left: 2px solid transparent;
+  transition: background var(--transition-fast),
+              border-color var(--transition-fast),
+              transform var(--transition-fast);
 }
 
 .history-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.15);
-  transform: translateX(4px);
-}
-
-.history-item:hover::before {
-  opacity: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+  border-left-color: var(--accent);
+  transform: translateX(2px);
 }
 
 /* ─────────────────────────────────────────────────────────────
-   REFINEMENT INSPECTOR MIT CARDS
+   PROGRESS BARS — Shimmer-Animation für Downloads
    ───────────────────────────────────────────────────────────── */
 
-.refinement-inspector-card {
-  background: linear-gradient(135deg,
-    rgba(255, 107, 61, 0.05) 0%,
-    rgba(29, 166, 160, 0.05) 100%);
-  border: 1px solid rgba(255, 107, 61, 0.1);
-  border-radius: var(--radius);
-  padding: 16px;
-  margin-bottom: 12px;
-  transition: all var(--transition-normal);
-  backdrop-filter: blur(10px);
-}
-
-.refinement-inspector-card:hover {
-  border-color: rgba(255, 107, 61, 0.3);
-  box-shadow:
-    0 0 20px rgba(255, 107, 61, 0.1),
-    inset 0 0 0 1px rgba(255, 107, 61, 0.1);
-}
-
-.refinement-inspector-card h4 {
-  margin: 0 0 10px;
-  font-size: 0.85rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--accent);
-}
-
-/* ─────────────────────────────────────────────────────────────
-   LOADING & PROGRESS-INDIKATOREN
-   ───────────────────────────────────────────────────────────── */
-
-.spinner {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.progress-bar {
-  height: 4px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 999px;
-  overflow: hidden;
-  margin: 8px 0;
-}
-
-.progress-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
-  border-radius: 999px;
-  animation: shimmer 2s infinite;
+.model-progress-fill,
+.download-progress-fill {
+  background: linear-gradient(
+    90deg,
+    var(--accent-2) 0%,
+    #4be0d4       40%,
+    var(--accent-2) 60%,
+    var(--accent-2) 100%
+  );
   background-size: 200% 100%;
+  animation: tf-shimmer 2s linear infinite;
 }
 
 /* ─────────────────────────────────────────────────────────────
-   TOAST-BENACHRICHTIGUNGEN
-   ───────────────────────────────────────────────────────────── */
-
-.toast {
-  background: var(--bg-float);
-  border: 1px solid var(--glass-strong);
-  border-radius: var(--radius);
-  padding: 12px 16px;
-  margin-bottom: 8px;
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  animation: slide-in-down 0.3s ease;
-  box-shadow: var(--shadow-md);
-  backdrop-filter: blur(20px);
-}
-
-.toast-success {
-  border-color: rgba(34, 197, 94, 0.3);
-}
-
-.toast-error {
-  border-color: rgba(239, 68, 68, 0.3);
-}
-
-.toast-info {
-  border-color: rgba(110, 200, 255, 0.3);
-}
-
-/* ─────────────────────────────────────────────────────────────
-   RESPONSIVE VERBESSERUNGEN
-   ───────────────────────────────────────────────────────────── */
-
-@media (max-width: 1024px) {
-  .panel {
-    padding: 12px;
-  }
-
-  .hero-card {
-    grid-template-columns: 1fr;
-  }
-
-  button {
-    font-size: 0.875rem;
-    padding: 8px 12px;
-  }
-}
-
-@media (max-width: 768px) {
-  .hero {
-    grid-template-columns: 1fr;
-  }
-
-  .main-tab-btn {
-    font-size: 0.7rem;
-    padding: 8px 12px;
-  }
-
-  .history-item {
-    padding: 10px 12px;
-  }
-}
-
-/* ─────────────────────────────────────────────────────────────
-   ACCESSIBILITY - FOKUS-INDIKATOREN
+   FOCUS RINGS — WCAG-konform für alle interaktiven Elemente
    ───────────────────────────────────────────────────────────── */
 
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
-a:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 2px;
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+/* Panel-Collapse-Button hat eigene focus-sichtbarkeit */
+.panel-collapse-btn:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 3px;
 }
 
 /* ─────────────────────────────────────────────────────────────
-   DARK MODE READY (Optional Future Enhancement)
+   BADGE — Eingangsanimation
    ───────────────────────────────────────────────────────────── */
 
-@media (prefers-color-scheme: dark) {
-  /* Bereits dark - kein Änderung nötig */
+.badge {
+  animation: tf-fade-in 0.4s ease both;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   TOAST — Glasmorphismus für Benachrichtigungen
+   Kein animation-Override: styles.css hat bereits slide-in
+   ───────────────────────────────────────────────────────────── */
+
+.toast {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }

@@ -188,27 +188,26 @@ export function renderRefinementPipelineGraph(): void {
   setNodeState("pipeline-node-output-refined", refinedOutputState);
   setNodeState("pipeline-node-output-raw", rawOutputState);
 
-  setEdgeState("pipeline-edge-transcribe-rules", hasJob ? "active" : "idle");
+  const useRulesBypassToAi = hasJob && localAiPath && !rulesEnabled;
+  const useDirectRawBypass = hasJob && !localAiPath && !rulesEnabled;
+  const useRulesOnlyRawPath =
+    hasJob && !localAiPath && rulesEnabled && pipelineJobState.phase !== "refined";
+  const useGateRawFallback =
+    hasJob
+    && gateEnabled
+    && (pipelineJobState.phase === "failed" || pipelineJobState.phase === "timed_out");
+
+  setEdgeState("pipeline-edge-transcribe-rules", hasJob && rulesEnabled ? "active" : "muted");
+  setEdgeState("pipeline-edge-transcribe-ai", useRulesBypassToAi ? "active" : "muted");
+  setEdgeState("pipeline-edge-transcribe-raw", useDirectRawBypass ? "active" : "muted");
   setEdgeState(
     "pipeline-edge-rules-ai",
-    localAiPath && hasJob ? "active" : "muted",
+    hasJob && localAiPath && rulesEnabled ? "active" : "muted",
   );
-  setEdgeState(
-    "pipeline-edge-ai-gate",
-    gateEnabled && hasJob ? "active" : "muted",
-  );
-  setEdgeState(
-    "pipeline-edge-gate-refined",
-    pipelineJobState.phase === "refined" ? "active" : "muted",
-  );
-  setEdgeState(
-    "pipeline-edge-rules-raw",
-    pipelineJobState.phase === "failed"
-      || pipelineJobState.phase === "timed_out"
-      || (!gateEnabled && hasJob && pipelineJobState.phase !== "refined")
-      ? "active"
-      : "muted",
-  );
+  setEdgeState("pipeline-edge-ai-gate", hasJob && gateEnabled ? "active" : "muted");
+  setEdgeState("pipeline-edge-gate-refined", pipelineJobState.phase === "refined" ? "active" : "muted");
+  setEdgeState("pipeline-edge-gate-raw", useGateRawFallback ? "active" : "muted");
+  setEdgeState("pipeline-edge-rules-raw", useRulesOnlyRawPath ? "active" : "muted");
 
   updateLiveSummary(hasJob, aiEnabled, rulesEnabled, localAiPath);
 }

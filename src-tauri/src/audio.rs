@@ -1190,6 +1190,15 @@ fn process_toggle_segment(
         return;
     }
 
+    // Read the latest persisted settings per segment so model/AI option changes
+    // apply immediately to the next transcription/refinement job.
+    let effective_settings = app_handle
+        .state::<AppState>()
+        .settings
+        .lock()
+        .map(|settings| settings.clone())
+        .unwrap_or_else(|_| runtime_settings.clone());
+
     let _ = app_handle.emit("capture:state", "transcribing");
     let _ = update_overlay_state(app_handle, OverlayState::Transcribing);
 
@@ -1197,7 +1206,7 @@ fn process_toggle_segment(
         recorder.transcribing = true;
     }
 
-    let result = transcribe_audio(app_handle, runtime_settings, &chunk);
+    let result = transcribe_audio(app_handle, &effective_settings, &chunk);
 
     if let Ok(mut recorder) = app_handle.state::<AppState>().recorder.lock() {
         recorder.transcribing = false;
@@ -1209,12 +1218,12 @@ fn process_toggle_segment(
                 && !should_drop_transcript(&text, segment_rms, duration_ms, false)
                 && !crate::transcription::should_drop_by_activation_words(
                     &text,
-                    &runtime_settings.activation_words,
-                    runtime_settings.activation_words_enabled,
+                    &effective_settings.activation_words,
+                    effective_settings.activation_words_enabled,
                 )
             {
-                let processed_text = if runtime_settings.postproc_enabled {
-                    match process_transcript(&text, runtime_settings, app_handle) {
+                let processed_text = if effective_settings.postproc_enabled {
+                    match process_transcript(&text, &effective_settings, app_handle) {
                         Ok(processed) => processed,
                         Err(err) => {
                             error!("Post-processing failed: {}", err);
@@ -1237,7 +1246,7 @@ fn process_toggle_segment(
                     entry_id = updated.first().map(|entry| entry.id.clone());
                     let _ = app_handle.emit("history:updated", updated);
                 }
-                let paste_deferred = should_defer_paste_for_refinement(runtime_settings);
+                let paste_deferred = should_defer_paste_for_refinement(&effective_settings);
                 let _ = app_handle.emit(
                     "transcription:result",
                     TranscriptionResult {
@@ -1259,7 +1268,7 @@ fn process_toggle_segment(
                     source.clone(),
                     job_id,
                     entry_id,
-                    runtime_settings,
+                    &effective_settings,
                 );
 
                 let _ = app_handle.emit(

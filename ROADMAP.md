@@ -1,13 +1,13 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-26 (v0.7.0 release sync)
+Last updated: 2026-02-26 (v0.7.1 stabilization pass)
 
 This file is the canonical source for priorities and execution order.
 
 ## Canonical Current State
 
 - Released: `v0.7.0`
-- Current phase: `v0.7.0` stabilization execution
+- Current phase: `v0.7.1` stabilization execution
 - Foundation complete: Blocks F + G + H
 - Active execution block: UX/UI consistency (Block E)
 
@@ -57,11 +57,11 @@ This file is the canonical source for priorities and execution order.
 
 ## Immediate Next Actions
 
-1. Architecture review kickoff and risk register for v0.7.0 baseline.
-2. Block F: Reliability hardening and release QA.
-3. Block E: UX/UI consistency and settings IA cleanup.
-4. Block J: Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary).
-5. Block G (v0.7.3): Cloud provider rollout (OpenAI/Claude/Gemini).
+1. Finalize latency benchmark baseline (`benchmark:latency`) and record p50/p95 trend.
+2. Validate runtime-start background behavior on Windows (no permanent "Starting runtime..." state).
+3. Complete reliability hardening and release QA for v0.7.1.
+4. Continue Block E: UX/UI consistency and settings IA cleanup.
+5. Keep Block J and Block G (v0.7.3) out of stabilization scope.
 
 ## References
 

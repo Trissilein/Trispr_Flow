@@ -134,6 +134,8 @@ See `docs/BRANCHING.md` for branch responsibilities.
 ```bash
 npm run test          # Unit tests
 npm run test:smoke    # Smoke test (build + Rust tests)
+npm run benchmark:latency       # Fixture benchmark (p50/p95, warn-gate)
+npm run benchmark:latency:live  # Optional live profile (manual)
 ```
 
 For WSL/Linux development, install dependencies listed in [DEVELOPMENT.md](docs/DEVELOPMENT.md).

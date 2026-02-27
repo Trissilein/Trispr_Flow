@@ -1,7 +1,7 @@
 # Architecture Review - v0.7.0 Baseline
 
 Last updated: 2026-02-26  
-Status: Kickoff (active)
+Status: Execution (active)
 
 ## Goal
 
@@ -49,13 +49,13 @@ Validate the `v0.7.0` architecture for:
 
 ## Open Questions
 
-1. What is the accepted p50/p95 latency target for short utterances (ms)?
-2. Should refined text replace `HistoryEntry.text`, or remain in dedicated refinement fields only?
-3. Do we require structured telemetry counters for runtime start/refinement timeout/fallback events?
+1. ✅ Accepted target for short utterances: p50 <= 2500ms, p95 <= 4000ms.
+2. ✅ Refined text remains in dedicated refinement fields (no overwrite of `HistoryEntry.text`).
+3. ✅ Minimal structured telemetry counters are required for runtime start/refinement timeout/fallback events.
 
 ## Action Items
 
-1. Add latency benchmark script for mic short-utterance path (p50/p95).
-2. Add integration test for restart persistence of raw+refined+error states.
-3. Audit lock-hold durations in history update paths under burst load.
-4. Define release SLO gate for `v0.7.0` sign-off.
+1. ✅ Add latency benchmark runner and local warn-gate report (`bench/results/latest.json`).
+2. ✅ Add persistence roundtrip test for raw+refined+error history states.
+3. ✅ Add lock-hold instrumentation for history update paths (warn threshold 20ms).
+4. ✅ Define release SLO gate defaults (warn-first mode): p50 <= 2500ms, p95 <= 4000ms.

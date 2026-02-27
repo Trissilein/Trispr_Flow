@@ -166,8 +166,8 @@
 
 .main-tab-btn.active {
   background: transparent;
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  color: var(--accent-2);
+  border-bottom-color: var(--accent-2);
   box-shadow: none;
 }
 
@@ -203,7 +203,7 @@
 .history-item:hover {
   background: rgba(255, 255, 255, 0.04);
   border-color: rgba(255, 255, 255, 0.1);
-  border-left-color: var(--accent);
+  border-left-color: var(--accent-2);
   transform: translateX(2px);
 }
 
@@ -233,15 +233,9 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-  border-radius: var(--radius-sm);
-}
-
-/* Panel-Collapse-Button hat eigene focus-sichtbarkeit */
-.panel-collapse-btn:focus-visible {
   outline: 2px solid var(--accent-2);
   outline-offset: 3px;
+  border-radius: var(--radius-sm);
 }
 
 /* ─────────────────────────────────────────────────────────────

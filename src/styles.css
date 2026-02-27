@@ -161,8 +161,8 @@ h1 {
 
 
 .status-dot[data-state="recording"] {
-  background: var(--accent-2);
-  box-shadow: 0 0 0 4px rgba(29, 166, 160, 0.25);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(255, 107, 61, 0.25);
 }
 
 .status-dot[data-state="transcribing"] {

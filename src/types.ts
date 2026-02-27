@@ -364,6 +364,8 @@ export interface OllamaRuntimeStartResult {
   endpoint: string;
   source: "system" | "per_user_zip" | "manual";
   already_running: boolean;
+  pending_start: boolean;
+  startup_wait_ms: number;
 }
 
 export interface OllamaRuntimeVerifyResult {

@@ -10,7 +10,8 @@ use crate::overlay::{update_overlay_refining_indicator, update_overlay_state, Ov
 use crate::postprocessing::process_transcript;
 use crate::state::{
     mark_entry_refinement_failed, mark_entry_refinement_started, mark_entry_refinement_success,
-    normalize_ai_fallback_fields, push_history_entry_inner, save_settings_file, AppState, Settings,
+    normalize_ai_fallback_fields, push_history_entry_inner, record_refinement_fallback_failed,
+    save_settings_file, AppState, Settings,
 };
 use crate::transcription::{
     rms_i16, should_drop_transcript, transcribe_audio, TranscriptionResult,
@@ -28,6 +29,7 @@ const MIC_MIN_AUDIO_MS: u64 = 120;
 const REFINEMENT_WATCHDOG_TIMEOUT_MS: u64 = 90_000;
 const REFINEMENT_WATCHDOG_POLL_MS: u64 = 1_000;
 const REFINEMENT_PASTE_TIMEOUT_MS: u64 = 10_000;
+const OVERLAY_EMIT_INTERVAL_MS: u64 = 33; // ~30 FPS for smoother overlay motion
 static TRANSCRIPTION_JOB_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -274,12 +276,17 @@ impl OverlayLevelEmitter {
     fn emit_level(&self, level: f32) {
         let now_ms = self.start.elapsed().as_millis() as u64;
         let last = self.last_emit_ms.load(Ordering::Relaxed);
-        if now_ms.saturating_sub(last) < 50 {
+        if now_ms.saturating_sub(last) < OVERLAY_EMIT_INTERVAL_MS {
             return;
         }
         self.last_emit_ms.store(now_ms, Ordering::Relaxed);
 
         let level_clamped = level.clamp(0.0, 1.0);
+        // Perceptual remap for overlay rendering:
+        // speech RMS often sits in lower ranges, which made configured max pixel
+        // widths/radii feel unreachable. Keep raw level for meters/events and only
+        // boost visual rendering.
+        let visual_target = level_clamped.powf(0.62);
 
         let dynamic_thresh = self.dynamic_threshold.update(level_clamped, now_ms);
 
@@ -298,26 +305,24 @@ impl OverlayLevelEmitter {
                 } else {
                     (state.overlay_rise_ms, state.overlay_fall_ms)
                 };
+                // Fine-tuned coefficients:
+                // Keep slider impact noticeable but avoid "too laggy at low values".
+                let effective_rise_ms = (rise_ms as f32 * 1.15).max(20.0);
+                let effective_fall_ms = (fall_ms as f32 * 1.05).max(20.0);
 
                 let last_smooth = self.last_smooth_ms.load(Ordering::Relaxed);
                 let mut current = self.smooth_level.load(Ordering::Relaxed) as f32 / 1_000_000.0;
                 if last_smooth == 0 {
-                    current = level_clamped;
+                    current = visual_target;
                 } else {
                     let dt = now_ms.saturating_sub(last_smooth).max(1) as f32;
-                    let tau: u64 = if level_clamped > current {
-                        rise_ms
+                    let tau = if visual_target > current {
+                        effective_rise_ms
                     } else {
-                        fall_ms
+                        effective_fall_ms
                     };
-                    let denom = tau.max(1) as f32;
-                    let max_step = (dt / denom).min(1.0);
-                    let delta = level_clamped - current;
-                    if delta.abs() <= max_step {
-                        current = level_clamped;
-                    } else {
-                        current += max_step * delta.signum();
-                    }
+                    let alpha = 1.0 - (-dt / tau.max(1.0)).exp();
+                    current += (visual_target - current) * alpha;
                 }
                 self.last_smooth_ms.store(now_ms, Ordering::Relaxed);
                 let clamped = current.clamp(0.0, 1.0);
@@ -913,6 +918,7 @@ fn maybe_spawn_ai_refinement(
             Ok(resolved) => resolved,
             Err(error) => {
                 error!("AI refinement skipped: {}", error);
+                record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
                 if let Some(entry_id_value) = entry_id.as_deref() {
                     let _ = mark_entry_refinement_failed(
                         &app_handle,
@@ -1005,6 +1011,7 @@ fn maybe_spawn_ai_refinement(
             }
             Err(e) => {
                 error!("AI refinement failed ({}): {}", model, e);
+                record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
                 if let Some(entry_id_value) = entry_id.as_deref() {
                     let _ = mark_entry_refinement_failed(
                         &app_handle,

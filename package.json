@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
-    "test:smoke": "npm run build && cargo test --manifest-path src-tauri/Cargo.toml"
+    "test:smoke": "npm run build && cargo test --manifest-path src-tauri/Cargo.toml",
+    "benchmark:latency": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1",
+    "benchmark:latency:live": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1 -Live"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

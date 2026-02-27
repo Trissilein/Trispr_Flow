@@ -13,7 +13,11 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::Mutex;
+use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
+use tracing::warn;
+
+const HISTORY_LOCK_WARN_MS: u128 = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -228,13 +232,13 @@ impl Default for Settings {
       overlay_color: "#ff3d2e".to_string(),
       overlay_min_radius: 16.0,
       overlay_max_radius: 64.0,
-      overlay_rise_ms: 20,
-      overlay_fall_ms: 400,
+      overlay_rise_ms: 60,
+      overlay_fall_ms: 140,
       overlay_opacity_inactive: 0.1,
       overlay_opacity_active: 0.97,
       overlay_kitt_color: "#ff3d2e".to_string(),
-      overlay_kitt_rise_ms: 20,
-      overlay_kitt_fall_ms: 800,
+      overlay_kitt_rise_ms: 60,
+      overlay_kitt_fall_ms: 140,
       overlay_kitt_opacity_inactive: 0.1,
       overlay_kitt_opacity_active: 1.0,
       overlay_pos_x: 50.0,          // 50% = horizontal center
@@ -368,10 +372,68 @@ pub(crate) struct AppState {
     pub(crate) refinement_active_count: AtomicUsize,
     pub(crate) refinement_watchdog_generation: AtomicU64,
     pub(crate) refinement_last_change_ms: AtomicU64,
+    pub(crate) runtime_start_attempts: AtomicU64,
+    pub(crate) runtime_start_failures: AtomicU64,
+    pub(crate) refinement_timeouts: AtomicU64,
+    pub(crate) refinement_fallback_failed: AtomicU64,
+    pub(crate) refinement_fallback_timed_out: AtomicU64,
     /// Last recorded OPUS file path for mic input.
     pub(crate) last_mic_recording_path: Mutex<Option<String>>,
     /// Last recorded OPUS file path for system audio.
     pub(crate) last_system_recording_path: Mutex<Option<String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RuntimeMetricsSnapshot {
+    pub(crate) runtime_start_attempts: u64,
+    pub(crate) runtime_start_failures: u64,
+    pub(crate) refinement_timeouts: u64,
+    pub(crate) refinement_fallback_failed: u64,
+    pub(crate) refinement_fallback_timed_out: u64,
+}
+
+pub(crate) fn record_runtime_start_attempt(state: &AppState) {
+    state.runtime_start_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn record_runtime_start_failure(state: &AppState) {
+    state.runtime_start_failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn record_refinement_timeout(state: &AppState) {
+    state.refinement_timeouts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn record_refinement_fallback_failed(state: &AppState) {
+    state
+        .refinement_fallback_failed
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn record_refinement_fallback_timed_out(state: &AppState) {
+    state
+        .refinement_fallback_timed_out
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn get_runtime_metrics_snapshot(state: &AppState) -> RuntimeMetricsSnapshot {
+    RuntimeMetricsSnapshot {
+        runtime_start_attempts: state
+            .runtime_start_attempts
+            .load(std::sync::atomic::Ordering::Relaxed),
+        runtime_start_failures: state
+            .runtime_start_failures
+            .load(std::sync::atomic::Ordering::Relaxed),
+        refinement_timeouts: state
+            .refinement_timeouts
+            .load(std::sync::atomic::Ordering::Relaxed),
+        refinement_fallback_failed: state
+            .refinement_fallback_failed
+            .load(std::sync::atomic::Ordering::Relaxed),
+        refinement_fallback_timed_out: state
+            .refinement_fallback_timed_out
+            .load(std::sync::atomic::Ordering::Relaxed),
+    }
 }
 
 pub(crate) fn load_settings(app: &AppHandle) -> Settings {
@@ -465,20 +527,30 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             {
                 settings.transcribe_output_device = "default".to_string();
             }
-            if settings.overlay_min_radius < 4.0 {
-                settings.overlay_min_radius = 4.0;
+            if !settings.overlay_min_radius.is_finite() {
+                settings.overlay_min_radius = 16.0;
             }
-            if settings.overlay_max_radius < settings.overlay_min_radius {
-                settings.overlay_max_radius = settings.overlay_min_radius + 4.0;
-            }
-            if settings.overlay_max_radius > 64.0 {
+            if !settings.overlay_max_radius.is_finite() {
                 settings.overlay_max_radius = 64.0;
+            }
+            // Keep dot dimensions in sane bounds; monitor-relative 50% cap is
+            // applied at runtime in overlay.rs.
+            settings.overlay_min_radius = settings.overlay_min_radius.clamp(4.0, 5_000.0);
+            settings.overlay_max_radius = settings.overlay_max_radius.clamp(8.0, 10_000.0);
+            if settings.overlay_max_radius < settings.overlay_min_radius {
+                settings.overlay_max_radius = settings.overlay_min_radius;
             }
             if settings.overlay_rise_ms < 20 {
                 settings.overlay_rise_ms = 20;
             }
+            if settings.overlay_rise_ms > 200 {
+                settings.overlay_rise_ms = 200;
+            }
             if settings.overlay_fall_ms < 20 {
                 settings.overlay_fall_ms = 20;
+            }
+            if settings.overlay_fall_ms > 200 {
+                settings.overlay_fall_ms = 200;
             }
             if !(0.0..=1.0).contains(&settings.overlay_opacity_inactive) {
                 settings.overlay_opacity_inactive = 0.2;
@@ -557,26 +629,35 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if settings.overlay_kitt_color.trim().is_empty() {
                 settings.overlay_kitt_color = "#ff3d2e".to_string();
             }
-            if settings.overlay_kitt_min_width < 4.0 {
-                settings.overlay_kitt_min_width = 4.0;
+            if !settings.overlay_kitt_min_width.is_finite() {
+                settings.overlay_kitt_min_width = 20.0;
             }
+            if !settings.overlay_kitt_max_width.is_finite() {
+                settings.overlay_kitt_max_width = 700.0;
+            }
+            if !settings.overlay_kitt_height.is_finite() {
+                settings.overlay_kitt_height = 13.0;
+            }
+
+            // Keep KITT dimensions in sane bounds; monitor-relative 50% cap is
+            // applied at runtime in overlay.rs.
+            settings.overlay_kitt_min_width = settings.overlay_kitt_min_width.clamp(4.0, 10_000.0);
+            settings.overlay_kitt_max_width = settings.overlay_kitt_max_width.clamp(50.0, 20_000.0);
             if settings.overlay_kitt_max_width < settings.overlay_kitt_min_width {
-                settings.overlay_kitt_max_width = settings.overlay_kitt_min_width;
+                settings.overlay_kitt_max_width = settings.overlay_kitt_min_width.max(50.0);
             }
-            if settings.overlay_kitt_max_width > 800.0 {
-                settings.overlay_kitt_max_width = 800.0;
-            }
-            if settings.overlay_kitt_height < 8.0 {
-                settings.overlay_kitt_height = 8.0;
-            }
-            if settings.overlay_kitt_height > 40.0 {
-                settings.overlay_kitt_height = 40.0;
-            }
+            settings.overlay_kitt_height = settings.overlay_kitt_height.clamp(8.0, 400.0);
             if settings.overlay_kitt_rise_ms < 20 {
                 settings.overlay_kitt_rise_ms = 20;
             }
+            if settings.overlay_kitt_rise_ms > 200 {
+                settings.overlay_kitt_rise_ms = 200;
+            }
             if settings.overlay_kitt_fall_ms < 20 {
                 settings.overlay_kitt_fall_ms = 20;
+            }
+            if settings.overlay_kitt_fall_ms > 200 {
+                settings.overlay_kitt_fall_ms = 200;
             }
             if !["subtle", "standard", "intense"]
                 .contains(&settings.overlay_refining_indicator_preset.as_str())
@@ -874,17 +955,12 @@ pub(crate) fn sync_model_dir_env(settings: &Settings) {
 
 pub(crate) fn load_history(app: &AppHandle) -> Vec<HistoryEntry> {
     let path = resolve_data_path(app, "history.json");
-    match fs::read_to_string(path) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    }
+    load_history_from_path(&path)
 }
 
 pub(crate) fn save_history_file(app: &AppHandle, history: &[HistoryEntry]) -> Result<(), String> {
     let path = resolve_data_path(app, "history.json");
-    let raw = serde_json::to_string_pretty(history).map_err(|e| e.to_string())?;
-    fs::write(path, raw).map_err(|e| e.to_string())?;
-    Ok(())
+    save_history_to_path(&path, history)
 }
 
 pub(crate) fn load_chapters(app: &AppHandle) -> Vec<Chapter> {
@@ -904,10 +980,7 @@ pub(crate) fn save_chapters_file(app: &AppHandle, chapters: &[Chapter]) -> Resul
 
 pub(crate) fn load_transcribe_history(app: &AppHandle) -> Vec<HistoryEntry> {
     let path = resolve_data_path(app, "history_transcribe.json");
-    match fs::read_to_string(path) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    }
+    load_history_from_path(&path)
 }
 
 pub(crate) fn save_transcribe_history_file(
@@ -915,6 +988,20 @@ pub(crate) fn save_transcribe_history_file(
     history: &[HistoryEntry],
 ) -> Result<(), String> {
     let path = resolve_data_path(app, "history_transcribe.json");
+    save_history_to_path(&path, history)
+}
+
+pub(crate) fn load_history_from_path(path: &std::path::Path) -> Vec<HistoryEntry> {
+    match fs::read_to_string(path) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+pub(crate) fn save_history_to_path(
+    path: &std::path::Path,
+    history: &[HistoryEntry],
+) -> Result<(), String> {
     let raw = serde_json::to_string_pretty(history).map_err(|e| e.to_string())?;
     fs::write(path, raw).map_err(|e| e.to_string())?;
     Ok(())
@@ -926,6 +1013,7 @@ pub(crate) fn push_history_entry_inner(
     text: String,
     source: String,
 ) -> Result<Vec<HistoryEntry>, String> {
+    let lock_started = Instant::now();
     let mut history = history.lock().unwrap();
     let entry = HistoryEntry {
         id: format!("h_{}", crate::util::now_ms()),
@@ -935,8 +1023,17 @@ pub(crate) fn push_history_entry_inner(
         refinement: None,
     };
     history.insert(0, entry);
-    save_history_file(app, &history)?;
-    Ok(history.clone())
+    let updated = history.clone();
+    let lock_elapsed_ms = lock_started.elapsed().as_millis();
+    drop(history);
+    if lock_elapsed_ms > HISTORY_LOCK_WARN_MS {
+        warn!(
+            "History lock hold exceeded threshold in push_history_entry_inner: {}ms",
+            lock_elapsed_ms
+        );
+    }
+    save_history_file(app, &updated)?;
+    Ok(updated)
 }
 
 pub(crate) fn push_transcribe_entry_inner(
@@ -944,6 +1041,7 @@ pub(crate) fn push_transcribe_entry_inner(
     history: &Mutex<Vec<HistoryEntry>>,
     text: String,
 ) -> Result<Vec<HistoryEntry>, String> {
+    let lock_started = Instant::now();
     let mut history = history.lock().unwrap();
     let entry = HistoryEntry {
         id: format!("o_{}", crate::util::now_ms()),
@@ -953,9 +1051,18 @@ pub(crate) fn push_transcribe_entry_inner(
         refinement: None,
     };
     history.insert(0, entry);
-    save_transcribe_history_file(app, &history)?;
-    let _ = app.emit("transcribe:history-updated", history.clone());
-    Ok(history.clone())
+    let updated = history.clone();
+    let lock_elapsed_ms = lock_started.elapsed().as_millis();
+    drop(history);
+    if lock_elapsed_ms > HISTORY_LOCK_WARN_MS {
+        warn!(
+            "History lock hold exceeded threshold in push_transcribe_entry_inner: {}ms",
+            lock_elapsed_ms
+        );
+    }
+    save_transcribe_history_file(app, &updated)?;
+    let _ = app.emit("transcribe:history-updated", updated.clone());
+    Ok(updated)
 }
 
 fn emit_updated_history(app: &AppHandle, event_name: &str, updated: Vec<HistoryEntry>) {
@@ -973,14 +1080,22 @@ fn update_history_entry_in_store<F>(
 where
     F: FnMut(&mut HistoryEntry),
 {
+    let lock_started = Instant::now();
     let mut history = store.lock().unwrap();
     let Some(entry) = history.iter_mut().find(|entry| entry.id == entry_id) else {
         return Ok(false);
     };
     apply(entry);
-    save_fn(app, &history)?;
     let updated = history.clone();
+    let lock_elapsed_ms = lock_started.elapsed().as_millis();
     drop(history);
+    if lock_elapsed_ms > HISTORY_LOCK_WARN_MS {
+        warn!(
+            "History lock hold exceeded threshold in update_history_entry_in_store ({}): {}ms",
+            event_name, lock_elapsed_ms
+        );
+    }
+    save_fn(app, &updated)?;
     emit_updated_history(app, event_name, updated);
     Ok(true)
 }
@@ -1096,4 +1211,68 @@ pub(crate) fn mark_entry_refinement_failed(
         refinement.status = "error".to_string();
         refinement.error = error_text.to_string();
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_history_entry(id: &str, status: &str, refined: &str, error: &str) -> HistoryEntry {
+        HistoryEntry {
+            id: id.to_string(),
+            text: "raw transcript".to_string(),
+            timestamp_ms: 1_772_101_100_000,
+            source: "local".to_string(),
+            refinement: Some(HistoryRefinement {
+                job_id: format!("job-{id}"),
+                raw: "raw transcript".to_string(),
+                refined: refined.to_string(),
+                status: status.to_string(),
+                model: "qwen3:14b".to_string(),
+                execution_time_ms: Some(1234),
+                error: error.to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn history_roundtrip_persists_refinement_states() {
+        let temp_path = std::env::temp_dir().join(format!(
+            "trispr_history_roundtrip_{}_{}.json",
+            std::process::id(),
+            crate::util::now_ms()
+        ));
+
+        let original = vec![
+            sample_history_entry("a", "refined", "refined transcript", ""),
+            sample_history_entry("b", "error", "", "network timeout"),
+            sample_history_entry("c", "refining", "", ""),
+        ];
+
+        save_history_to_path(&temp_path, &original).expect("save history");
+        let restored = load_history_from_path(&temp_path);
+        let _ = fs::remove_file(&temp_path);
+
+        assert_eq!(restored.len(), original.len());
+        assert_eq!(
+            restored[0].refinement.as_ref().map(|r| r.status.as_str()),
+            Some("refined")
+        );
+        assert_eq!(
+            restored[0].refinement.as_ref().map(|r| r.refined.as_str()),
+            Some("refined transcript")
+        );
+        assert_eq!(
+            restored[1].refinement.as_ref().map(|r| r.status.as_str()),
+            Some("error")
+        );
+        assert_eq!(
+            restored[1].refinement.as_ref().map(|r| r.error.as_str()),
+            Some("network timeout")
+        );
+        assert_eq!(
+            restored[2].refinement.as_ref().map(|r| r.status.as_str()),
+            Some("refining")
+        );
+    }
 }

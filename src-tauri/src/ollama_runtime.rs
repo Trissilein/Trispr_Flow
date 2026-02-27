@@ -2,7 +2,9 @@ use crate::ai_fallback::provider::{
     is_local_ollama_endpoint, list_ollama_models, ping_ollama, ping_ollama_quick,
 };
 use crate::paths::resolve_data_path;
-use crate::state::{save_settings_file, AppState};
+use crate::state::{
+    record_runtime_start_attempt, record_runtime_start_failure, save_settings_file, AppState,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -26,6 +28,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const DEFAULT_RUNTIME_VERSION: &str = "0.17.0";
 const BACKGROUND_IO_THROTTLE_BYTES: u64 = 16 * 1024 * 1024;
 const BACKGROUND_IO_THROTTLE_SLEEP_MS: u64 = 2;
+const STARTUP_FOREGROUND_WAIT_MS: u64 = 12_000;
 
 struct RuntimeManifest {
     version: &'static str,
@@ -95,6 +98,8 @@ pub struct OllamaRuntimeStartResult {
     pub endpoint: String,
     pub source: String,
     pub already_running: bool,
+    pub pending_start: bool,
+    pub startup_wait_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -780,6 +785,7 @@ fn start_ollama_runtime_impl(
     app: &AppHandle,
 ) -> Result<OllamaRuntimeStartResult, String> {
     let state = app.state::<AppState>();
+    record_runtime_start_attempt(state.inner());
     let settings_snapshot = state.settings.lock().unwrap().clone();
     let endpoint = settings_snapshot
         .providers
@@ -788,22 +794,28 @@ fn start_ollama_runtime_impl(
         .trim()
         .to_string();
     if endpoint.is_empty() {
+        record_runtime_start_failure(state.inner());
         return Err("Ollama endpoint is empty.".to_string());
     }
     if settings_snapshot.ai_fallback.strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
+        record_runtime_start_failure(state.inner());
         return Err(
             "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
                 .to_string(),
         );
     }
     if !is_local_ollama_endpoint(&endpoint) {
+        record_runtime_start_failure(state.inner());
         return Err(
             "Runtime autostart only supports local endpoints. Configure a local endpoint first."
                 .to_string(),
         );
     }
 
-    let (binary_path, source) = select_runtime_binary(&settings_snapshot)?;
+    let (binary_path, source) = select_runtime_binary(&settings_snapshot).map_err(|err| {
+        record_runtime_start_failure(state.inner());
+        err
+    })?;
     let version = parse_ollama_version(&binary_path);
     if runtime_endpoint_reachable(&endpoint) {
         let ts = now_iso();
@@ -823,10 +835,15 @@ fn start_ollama_runtime_impl(
             endpoint,
             source,
             already_running: true,
+            pending_start: false,
+            startup_wait_ms: 0,
         });
     }
 
-    let host = endpoint_host_port(&endpoint)?;
+    let host = endpoint_host_port(&endpoint).map_err(|err| {
+        record_runtime_start_failure(state.inner());
+        err
+    })?;
     let mut cmd = Command::new(&binary_path);
     cmd.arg("serve")
         .env("OLLAMA_HOST", host)
@@ -840,10 +857,14 @@ fn start_ollama_runtime_impl(
     }
     let child = cmd
         .spawn()
-        .map_err(|e| format!("Failed to start Ollama runtime: {}", e))?;
+        .map_err(|e| {
+            record_runtime_start_failure(state.inner());
+            format!("Failed to start Ollama runtime: {}", e)
+        })?;
     let pid = child.id();
 
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let wait_started = Instant::now();
+    let deadline = wait_started + Duration::from_millis(STARTUP_FOREGROUND_WAIT_MS);
     let mut probe_attempt: u32 = 0;
     loop {
         let reachable = ping_ollama_quick(&endpoint).is_ok()
@@ -867,14 +888,30 @@ fn start_ollama_runtime_impl(
                 endpoint,
                 source,
                 already_running: false,
+                pending_start: false,
+                startup_wait_ms: wait_started.elapsed().as_millis() as u64,
             });
         }
         if Instant::now() >= deadline {
+            let ts = now_iso();
+            let _ = update_runtime_in_settings(
+                app,
+                state.inner(),
+                source.clone(),
+                binary_path.to_string_lossy().to_string(),
+                version.clone(),
+                Some(ts),
+                false,
+            );
             emit_runtime_health(app, endpoint.clone(), 0, false);
-            return Err(format!(
-                "Timed out while waiting for Ollama runtime to start at {}. Check whether port 11434 is blocked by another process or firewall, then retry.",
-                endpoint
-            ));
+            return Ok(OllamaRuntimeStartResult {
+                pid: Some(pid),
+                endpoint,
+                source,
+                already_running: false,
+                pending_start: true,
+                startup_wait_ms: wait_started.elapsed().as_millis() as u64,
+            });
         }
         probe_attempt = probe_attempt.saturating_add(1);
         std::thread::sleep(Duration::from_millis(500));

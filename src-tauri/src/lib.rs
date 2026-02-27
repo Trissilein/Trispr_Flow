@@ -25,11 +25,11 @@ use overlay::{update_overlay_state, OverlayState};
 use state::{AppState, HistoryEntry, Settings};
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::menu::{CheckMenuItem, MenuItem};
 use tauri::Wry;
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
@@ -53,13 +53,15 @@ use crate::ollama_runtime::{
     install_ollama_runtime, set_strict_local_mode, start_ollama_runtime, verify_ollama_runtime,
 };
 use crate::state::{
-    load_history, load_settings, load_transcribe_history, normalize_ai_fallback_fields,
-    normalize_continuous_dump_fields, push_history_entry_inner, push_transcribe_entry_inner,
-    save_settings_file, sync_model_dir_env,
+    get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_history, load_settings,
+    load_transcribe_history, normalize_ai_fallback_fields, normalize_continuous_dump_fields,
+    push_history_entry_inner, push_transcribe_entry_inner, record_refinement_fallback_timed_out,
+    record_refinement_timeout, save_settings_file, sync_model_dir_env,
 };
 use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, start_transcribe_monitor,
-    stop_transcribe_monitor, toggle_transcribe_state,
+    stop_transcribe_monitor, toggle_transcribe_state, transcribe_audio,
+    last_transcription_accelerator,
 };
 
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
@@ -728,6 +730,373 @@ fn refine_transcript(
         .map_err(|e| e.to_string())?;
 
     serde_json::to_value(&result).map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default)]
+struct LatencyBenchmarkRequest {
+    fixture_paths: Vec<String>,
+    warmup_runs: u32,
+    measure_runs: u32,
+    include_refinement: bool,
+}
+
+impl Default for LatencyBenchmarkRequest {
+    fn default() -> Self {
+        Self {
+            fixture_paths: Vec::new(),
+            warmup_runs: 3,
+            measure_runs: 30,
+            include_refinement: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct LatencyBenchmarkSample {
+    fixture: String,
+    whisper_ms: u64,
+    refine_ms: u64,
+    total_ms: u64,
+    mode: String,
+    accelerator: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct LatencyBenchmarkResult {
+    warmup_runs: u32,
+    measure_runs: u32,
+    p50_ms: u64,
+    p95_ms: u64,
+    slo_p50_ms: u64,
+    slo_p95_ms: u64,
+    slo_pass: bool,
+    samples: Vec<LatencyBenchmarkSample>,
+    warnings: Vec<String>,
+}
+
+fn run_latency_benchmark_inner(
+    app: &AppHandle,
+    state: &AppState,
+    request: &LatencyBenchmarkRequest,
+) -> Result<LatencyBenchmarkResult, String> {
+    let warmup_runs = request.warmup_runs.min(10);
+    let measure_runs = request.measure_runs.clamp(1, 200);
+    let include_refinement = request.include_refinement;
+
+    let fixture_paths: Vec<PathBuf> = if request.fixture_paths.is_empty() {
+        default_latency_fixture_paths()
+    } else {
+        request
+            .fixture_paths
+            .iter()
+            .map(PathBuf::from)
+            .collect()
+    };
+
+    if fixture_paths.is_empty() {
+        return Err(
+            "No benchmark fixtures found. Add WAV files under bench/fixtures/short/.".to_string(),
+        );
+    }
+
+    let mut fixtures: Vec<(String, Vec<i16>)> = Vec::new();
+    for path in fixture_paths {
+        let samples = read_wav_for_latency_benchmark(&path)?;
+        let label = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        fixtures.push((label, samples));
+    }
+
+    let settings_snapshot = state.settings.lock().unwrap().clone();
+    let mut samples: Vec<LatencyBenchmarkSample> = Vec::with_capacity(measure_runs as usize);
+    let mut warnings: Vec<String> = Vec::new();
+    let total_runs = warmup_runs + measure_runs;
+
+    for run_idx in 0..total_runs {
+        let fixture_idx = run_idx as usize % fixtures.len();
+        let (fixture_name, fixture_samples) = (&fixtures[fixture_idx].0, &fixtures[fixture_idx].1);
+
+        let whisper_started = Instant::now();
+        let (raw_text, _source) = transcribe_audio(app, &settings_snapshot, fixture_samples)?;
+        let whisper_ms = whisper_started.elapsed().as_millis() as u64;
+
+        let mut refine_ms = 0u64;
+        let mut mode = "raw".to_string();
+        if include_refinement && settings_snapshot.ai_fallback.enabled {
+            let refine_started = Instant::now();
+            match refine_transcript_for_benchmark(app, &settings_snapshot, &raw_text) {
+                Ok(_) => {
+                    refine_ms = refine_started.elapsed().as_millis() as u64;
+                    mode = "refined".to_string();
+                }
+                Err(error) => {
+                    refine_ms = refine_started.elapsed().as_millis() as u64;
+                    mode = if error.to_lowercase().contains("timed out") {
+                        "fallback_timeout".to_string()
+                    } else {
+                        "fallback_error".to_string()
+                    };
+                    warnings.push(format!("{}: {}", fixture_name, error));
+                }
+            }
+        }
+
+        if run_idx < warmup_runs {
+            continue;
+        }
+
+        let total_ms = whisper_ms.saturating_add(refine_ms);
+        samples.push(LatencyBenchmarkSample {
+            fixture: fixture_name.clone(),
+            whisper_ms,
+            refine_ms,
+            total_ms,
+            mode,
+            accelerator: last_transcription_accelerator().to_string(),
+        });
+    }
+
+    let mut totals: Vec<u64> = samples.iter().map(|sample| sample.total_ms).collect();
+    totals.sort_unstable();
+    let p50_ms = percentile(&totals, 0.50);
+    let p95_ms = percentile(&totals, 0.95);
+    let slo_p50_ms = 2_500;
+    let slo_p95_ms = 4_000;
+    let slo_pass = p50_ms <= slo_p50_ms && p95_ms <= slo_p95_ms;
+
+    Ok(LatencyBenchmarkResult {
+        warmup_runs,
+        measure_runs,
+        p50_ms,
+        p95_ms,
+        slo_p50_ms,
+        slo_p95_ms,
+        slo_pass,
+        samples,
+        warnings,
+    })
+}
+
+fn write_latency_benchmark_report(result: &LatencyBenchmarkResult) -> Result<PathBuf, String> {
+    let root = resolve_benchmark_root_dir();
+    let out_dir = root.join("bench").join("results");
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("Failed creating benchmark output dir '{}': {}", out_dir.display(), e))?;
+    let out_path = out_dir.join("latest.json");
+    let serialized = serde_json::to_string_pretty(result).map_err(|e| e.to_string())?;
+    std::fs::write(&out_path, serialized)
+        .map_err(|e| format!("Failed writing benchmark report '{}': {}", out_path.display(), e))?;
+    Ok(out_path)
+}
+
+fn default_latency_fixture_paths() -> Vec<PathBuf> {
+    let root = resolve_benchmark_root_dir();
+    let fixture_dir = root.join("bench").join("fixtures").join("short");
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&fixture_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_wav = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("wav"))
+                .unwrap_or(false);
+            if is_wav {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+fn resolve_benchmark_root_dir() -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if cwd.join("bench").is_dir() {
+        return cwd;
+    }
+
+    let mut candidate = cwd.clone();
+    for _ in 0..4 {
+        if let Some(parent) = candidate.parent() {
+            if parent.join("bench").is_dir() {
+                return parent.to_path_buf();
+            }
+            candidate = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+
+    cwd
+}
+
+fn read_wav_for_latency_benchmark(path: &Path) -> Result<Vec<i16>, String> {
+    let mut reader = hound::WavReader::open(path)
+        .map_err(|e| format!("Failed to open WAV fixture '{}': {}", path.display(), e))?;
+    let spec = reader.spec();
+    if spec.sample_rate != crate::constants::TARGET_SAMPLE_RATE {
+        return Err(format!(
+            "Fixture '{}' uses unsupported sample rate {} (expected {}).",
+            path.display(),
+            spec.sample_rate,
+            crate::constants::TARGET_SAMPLE_RATE
+        ));
+    }
+
+    let channels = spec.channels.max(1) as usize;
+    let mut mono = Vec::<i16>::new();
+
+    match spec.sample_format {
+        hound::SampleFormat::Int => {
+            if spec.bits_per_sample != 16 {
+                return Err(format!(
+                    "Fixture '{}' must be 16-bit PCM for benchmark (got {} bits).",
+                    path.display(),
+                    spec.bits_per_sample
+                ));
+            }
+            let samples: Vec<i16> = reader
+                .samples::<i16>()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("Failed reading fixture '{}': {}", path.display(), e))?;
+            for frame in samples.chunks(channels) {
+                if let Some(first) = frame.first() {
+                    mono.push(*first);
+                }
+            }
+        }
+        hound::SampleFormat::Float => {
+            let samples: Vec<f32> = reader
+                .samples::<f32>()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("Failed reading float fixture '{}': {}", path.display(), e))?;
+            for frame in samples.chunks(channels) {
+                if let Some(first) = frame.first() {
+                    let clamped = first.clamp(-1.0, 1.0);
+                    mono.push((clamped * i16::MAX as f32) as i16);
+                }
+            }
+        }
+    }
+
+    if mono.is_empty() {
+        return Err(format!("Fixture '{}' has no audio samples.", path.display()));
+    }
+    Ok(mono)
+}
+
+fn percentile(sorted_values: &[u64], quantile: f64) -> u64 {
+    if sorted_values.is_empty() {
+        return 0;
+    }
+    let q = quantile.clamp(0.0, 1.0);
+    let idx = ((sorted_values.len() - 1) as f64 * q).round() as usize;
+    sorted_values[idx]
+}
+
+fn refine_transcript_for_benchmark(
+    app: &AppHandle,
+    settings_snapshot: &Settings,
+    transcript: &str,
+) -> Result<crate::ai_fallback::models::RefinementResult, String> {
+    let ai_settings = settings_snapshot.ai_fallback.clone();
+    if !ai_settings.enabled {
+        return Err("AI fallback is disabled in current settings.".to_string());
+    }
+
+    let is_ollama = ai_settings.provider == "ollama";
+    let provider_client = if is_ollama {
+        let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
+        if ai_settings.strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
+            return Err(
+                "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
+                    .to_string(),
+            );
+        }
+        ProviderFactory::create_ollama(endpoint)
+    } else {
+        ProviderFactory::create(&ai_settings.provider).map_err(|e| e.to_string())?
+    };
+
+    let api_key = if is_ollama {
+        String::new()
+    } else {
+        ai_fallback_keyring::read_api_key(app, &ai_settings.provider)?
+            .ok_or_else(|| format!("No API key stored for provider '{}'.", ai_settings.provider))?
+    };
+    if !is_ollama {
+        provider_client
+            .validate_api_key(&api_key)
+            .map_err(|e| e.to_string())?;
+    }
+
+    let mut model = ai_settings.model.trim().to_string();
+    if is_ollama {
+        let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
+        let preferred = settings_snapshot.providers.ollama.preferred_model.clone();
+        model = resolve_effective_local_model(&model, &preferred, &endpoint)
+            .map_err(|e| e.to_string())?
+            .model;
+    } else if model.is_empty() {
+        model = match ai_settings.provider.as_str() {
+            "claude" => settings_snapshot.providers.claude.preferred_model.trim().to_string(),
+            "openai" => settings_snapshot.providers.openai.preferred_model.trim().to_string(),
+            "gemini" => settings_snapshot.providers.gemini.preferred_model.trim().to_string(),
+            _ => String::new(),
+        };
+    }
+
+    if model.is_empty() {
+        return Err("No model configured for benchmark refinement.".to_string());
+    }
+
+    let options = RefinementOptions {
+        temperature: ai_settings.temperature,
+        max_tokens: ai_settings.max_tokens,
+        low_latency_mode: ai_settings.low_latency_mode,
+        language: Some(settings_snapshot.language_mode.clone()),
+        custom_prompt: prompt_for_profile(
+            &ai_settings.prompt_profile,
+            &settings_snapshot.language_mode,
+            Some(ai_settings.custom_prompt.as_str()),
+        ),
+    };
+
+    provider_client
+        .refine_transcript(transcript, &model, &options, &api_key)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn run_latency_benchmark(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: Option<LatencyBenchmarkRequest>,
+) -> Result<LatencyBenchmarkResult, String> {
+    let request = request.unwrap_or_default();
+    run_latency_benchmark_inner(&app, state.inner(), &request)
+}
+
+#[tauri::command]
+fn get_runtime_metrics_snapshot(state: State<'_, AppState>) -> crate::state::RuntimeMetricsSnapshot {
+    runtime_metrics_snapshot(state.inner())
+}
+
+#[tauri::command]
+fn record_runtime_metric(state: State<'_, AppState>, metric: String) -> Result<(), String> {
+    match metric.trim() {
+        "refinement_timeout" | "refinement_fallback_timed_out" => {
+            record_refinement_timeout(state.inner());
+            record_refinement_fallback_timed_out(state.inner());
+            Ok(())
+        }
+        other => Err(format!("Unknown runtime metric '{}'", other)),
+    }
 }
 
 fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
@@ -1631,6 +2000,50 @@ fn load_local_env() {
     }
 }
 
+fn env_flag(name: &str) -> bool {
+    matches!(
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    )
+}
+
+fn latency_benchmark_request_from_env() -> LatencyBenchmarkRequest {
+    let mut request = LatencyBenchmarkRequest::default();
+
+    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_WARMUP_RUNS") {
+        if let Ok(parsed) = value.trim().parse::<u32>() {
+            request.warmup_runs = parsed;
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_MEASURE_RUNS") {
+        if let Ok(parsed) = value.trim().parse::<u32>() {
+            request.measure_runs = parsed;
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_INCLUDE_REFINEMENT") {
+        request.include_refinement = matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
+    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_FIXTURES") {
+        let fixtures = value
+            .split(';')
+            .map(|part| part.trim())
+            .filter(|part| !part.is_empty())
+            .map(|part| part.to_string())
+            .collect::<Vec<_>>();
+        if !fixtures.is_empty() {
+            request.fixture_paths = fixtures;
+        }
+    }
+
+    request
+}
+
 /// Snapshot of clipboard content before we overwrite it.
 enum ClipboardSnapshot {
     Text(String),
@@ -2206,9 +2619,57 @@ pub fn run() {
                 refinement_active_count: AtomicUsize::new(0),
                 refinement_watchdog_generation: AtomicU64::new(0),
                 refinement_last_change_ms: AtomicU64::new(0),
+                runtime_start_attempts: AtomicU64::new(0),
+                runtime_start_failures: AtomicU64::new(0),
+                refinement_timeouts: AtomicU64::new(0),
+                refinement_fallback_failed: AtomicU64::new(0),
+                refinement_fallback_timed_out: AtomicU64::new(0),
                 last_mic_recording_path: Mutex::new(None),
                 last_system_recording_path: Mutex::new(None),
             });
+
+            if env_flag("TRISPR_RUN_LATENCY_BENCHMARK") {
+                let app_handle = app.handle().clone();
+                thread::spawn(move || {
+                    let request = latency_benchmark_request_from_env();
+                    let result = {
+                        let state = app_handle.state::<AppState>();
+                        run_latency_benchmark_inner(&app_handle, state.inner(), &request)
+                    };
+
+                    match result {
+                        Ok(report) => match write_latency_benchmark_report(&report) {
+                            Ok(path) => {
+                                info!(
+                                    "Latency benchmark complete: p50={}ms p95={}ms (report: {})",
+                                    report.p50_ms,
+                                    report.p95_ms,
+                                    path.display()
+                                );
+                                if !report.slo_pass {
+                                    warn!(
+                                        "Latency benchmark SLO warning: p50={}ms (target {}), p95={}ms (target {})",
+                                        report.p50_ms,
+                                        report.slo_p50_ms,
+                                        report.p95_ms,
+                                        report.slo_p95_ms
+                                    );
+                                }
+                            }
+                            Err(err) => {
+                                error!("Failed to write latency benchmark report: {}", err);
+                            }
+                        },
+                        Err(err) => {
+                            error!("Latency benchmark failed: {}", err);
+                        }
+                    }
+
+                    if env_flag("TRISPR_RUN_LATENCY_BENCHMARK_EXIT") {
+                        app_handle.exit(0);
+                    }
+                });
+            }
 
             let _ = app.emit("transcribe:state", "idle");
 
@@ -2571,6 +3032,9 @@ pub fn run() {
             import_ollama_model_from_file,
             set_strict_local_mode,
             refine_transcript,
+            run_latency_benchmark,
+            get_runtime_metrics_snapshot,
+            record_runtime_metric,
             pull_ollama_model,
             delete_ollama_model,
             get_ollama_model_info,

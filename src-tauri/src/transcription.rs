@@ -31,7 +31,7 @@ use std::io::ErrorKind;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 #[cfg(target_os = "windows")]
@@ -41,6 +41,19 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{error, warn};
 #[cfg(target_os = "windows")]
 use tracing::info;
+
+const TRANSCRIPTION_ACCEL_UNKNOWN: u8 = 0;
+const TRANSCRIPTION_ACCEL_CPU: u8 = 1;
+const TRANSCRIPTION_ACCEL_GPU: u8 = 2;
+static LAST_TRANSCRIPTION_ACCELERATOR: AtomicU8 = AtomicU8::new(TRANSCRIPTION_ACCEL_UNKNOWN);
+
+pub(crate) fn last_transcription_accelerator() -> &'static str {
+    match LAST_TRANSCRIPTION_ACCELERATOR.load(Ordering::Relaxed) {
+        TRANSCRIPTION_ACCEL_GPU => "gpu",
+        TRANSCRIPTION_ACCEL_CPU => "cpu",
+        _ => "unknown",
+    }
+}
 
 #[cfg(target_os = "windows")]
 #[derive(Debug, Clone, Serialize)]
@@ -1397,6 +1410,12 @@ fn emit_transcription_gpu_activity(
     backend: &str,
     message: Option<String>,
 ) {
+    let accel_code = if accelerator == "gpu" {
+        TRANSCRIPTION_ACCEL_GPU
+    } else {
+        TRANSCRIPTION_ACCEL_CPU
+    };
+    LAST_TRANSCRIPTION_ACCELERATOR.store(accel_code, Ordering::Relaxed);
     let _ = app.emit(
         "transcription:gpu-activity",
         TranscriptionGpuActivityEvent {

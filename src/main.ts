@@ -131,6 +131,12 @@ function rememberDeferredPasteOutcome(
   }
 }
 
+function reportRuntimeMetric(metric: string): void {
+  void invoke("record_runtime_metric", { metric }).catch((error) => {
+    console.warn("record_runtime_metric failed", metric, error);
+  });
+}
+
 function queueTranscriptPaste(text: string, context: string): void {
   const trimmed = text.trim();
   if (!trimmed) return;
@@ -173,6 +179,7 @@ function handleDeferredPasteTimeout(jobId: string): void {
 
   pendingDeferredPasteJobs.delete(jobId);
   rememberDeferredPasteOutcome(jobId, "timed_out");
+  reportRuntimeMetric("refinement_timeout");
   queueTranscriptPaste(pending.rawText, `timeout:${jobId}`);
 }
 

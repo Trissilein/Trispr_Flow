@@ -95,26 +95,34 @@ pub fn is_local_ollama_endpoint(endpoint: &str) -> bool {
 /// Return preferred endpoint plus a localhost/127.0.0.1 fallback variant.
 pub fn ollama_endpoint_candidates(endpoint: &str) -> Vec<String> {
     let primary = normalize_ollama_endpoint(endpoint);
-    let mut candidates = vec![primary.clone()];
+    let mut candidates = Vec::with_capacity(2);
+    let mut push_unique = |value: String| {
+        if !candidates.iter().any(|existing| existing == &value) {
+            candidates.push(value);
+        }
+    };
 
     if let Ok(parsed) = Url::parse(&primary) {
-        let alt_host = match parsed.host_str().map(|h| h.to_ascii_lowercase()) {
-            Some(host) if host == "localhost" => Some("127.0.0.1"),
-            Some(host) if host == "127.0.0.1" => Some("localhost"),
-            _ => None,
-        };
-
-        if let Some(host) = alt_host {
-            let mut alt = parsed;
-            if alt.set_host(Some(host)).is_ok() {
-                let alt_str = alt.to_string().trim_end_matches('/').to_string();
-                if !candidates.iter().any(|c| c == &alt_str) {
-                    candidates.push(alt_str);
-                }
+        let host = parsed.host_str().map(|h| h.to_ascii_lowercase());
+        if matches!(host.as_deref(), Some("localhost") | Some("127.0.0.1")) {
+            // Prefer numeric loopback first. On some Windows setups, localhost
+            // resolution for /api/tags can add ~2s per call.
+            let mut ipv4 = parsed.clone();
+            if ipv4.set_host(Some("127.0.0.1")).is_ok() {
+                push_unique(ipv4.to_string().trim_end_matches('/').to_string());
             }
+
+            let mut localhost = parsed.clone();
+            if localhost.set_host(Some("localhost")).is_ok() {
+                push_unique(localhost.to_string().trim_end_matches('/').to_string());
+            }
+
+            push_unique(primary);
+            return candidates;
         }
     }
 
+    push_unique(primary);
     candidates
 }
 
@@ -1100,8 +1108,9 @@ mod tests {
     #[test]
     fn endpoint_candidates_include_ipv4_fallback_for_localhost() {
         let candidates = ollama_endpoint_candidates("http://localhost:11434");
-        assert_eq!(candidates[0], "http://localhost:11434");
+        assert_eq!(candidates[0], "http://127.0.0.1:11434");
         assert!(candidates.iter().any(|c| c == "http://127.0.0.1:11434"));
+        assert!(candidates.iter().any(|c| c == "http://localhost:11434"));
     }
 
     #[test]

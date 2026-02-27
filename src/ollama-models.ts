@@ -22,6 +22,8 @@ const DEFAULT_LOCAL_ENDPOINT = "http://localhost:11434";
 const DEFAULT_RUNTIME_VERSION = "0.17.0";
 const AUTOSTART_WARNING_COOLDOWN_MS = 60_000;
 const LOCAL_OLLAMA_HOSTS = new Set(["localhost", "127.0.0.1"]);
+const BACKGROUND_START_POLL_INTERVAL_MS = 2_000;
+const BACKGROUND_START_POLL_MAX_MS = 30_000;
 
 type WizardStage =
   | "not_detected"
@@ -71,6 +73,8 @@ let runtimeBusyAction: string | null = null;
 let runtimeStateRefreshInFlight: Promise<void> | null = null;
 let runtimeStateLastRefreshMs = 0;
 let lastAutostartWarningMs = 0;
+let runtimeBackgroundStartUntilMs = 0;
+let runtimeBackgroundStartPollInFlight: Promise<void> | null = null;
 
 let renderFrame: number | null = null;
 const PASSIVE_RUNTIME_REFRESH_TTL_MS = 1500;
@@ -100,6 +104,7 @@ export type OllamaRuntimeCardState = {
   version: string;
   endpoint: string;
   busy: boolean;
+  backgroundStarting: boolean;
   busyAction: string | null;
   stage: WizardStage;
   primaryAction: OllamaRuntimePrimaryAction;
@@ -175,6 +180,47 @@ function runtimeIsHealthy(): boolean {
   return Boolean(runtimeVerify?.ok || runtimeHealth?.ok);
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isRuntimeBackgroundStarting(): boolean {
+  return runtimeBackgroundStartUntilMs > Date.now() && !runtimeIsHealthy();
+}
+
+function startRuntimeBackgroundPolling(reason: "autostart" | "manual"): void {
+  runtimeBackgroundStartUntilMs = Date.now() + BACKGROUND_START_POLL_MAX_MS;
+  renderOllamaModelManager();
+
+  if (runtimeBackgroundStartPollInFlight) {
+    return;
+  }
+
+  runtimeBackgroundStartPollInFlight = (async () => {
+    while (Date.now() < runtimeBackgroundStartUntilMs) {
+      await refreshOllamaRuntimeState({ force: true, verify: true });
+      if (runtimeIsHealthy()) {
+        await refreshOllamaInstalledModels();
+        runtimeBackgroundStartUntilMs = 0;
+        return;
+      }
+      await sleep(BACKGROUND_START_POLL_INTERVAL_MS);
+    }
+
+    if (!runtimeIsHealthy() && reason === "manual") {
+      showToast({
+        type: "warning",
+        title: "Runtime still starting",
+        message: "Local runtime did not become reachable yet. You can keep working and retry verify.",
+        duration: 4200,
+      });
+    }
+  })().finally(() => {
+    runtimeBackgroundStartPollInFlight = null;
+    renderOllamaModelManager();
+  });
+}
+
 function effectiveRuntimeBusyAction(): string | null {
   if (!runtimeBusyAction) return null;
   if ((runtimeBusyAction === "start" || runtimeBusyAction === "ensure-runtime") && runtimeIsHealthy()) {
@@ -204,10 +250,15 @@ export async function autoStartLocalRuntimeIfNeeded(
   runtimeInstallError = null;
   renderOllamaModelManager();
   try {
-    await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
-    await refreshOllamaRuntimeState({ force: true, verify: true });
-    if (getOllamaRuntimeCardState().healthy) {
-      await refreshOllamaInstalledModels();
+    const startResult = await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
+    if (startResult.pending_start) {
+      startRuntimeBackgroundPolling("autostart");
+      await refreshOllamaRuntimeState({ force: true });
+    } else {
+      await refreshOllamaRuntimeState({ force: true, verify: true });
+      if (getOllamaRuntimeCardState().healthy) {
+        await refreshOllamaInstalledModels();
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -303,6 +354,13 @@ function resolvePrimaryAction(): {
       disabled: true,
     };
   }
+  if (isRuntimeBackgroundStarting()) {
+    return {
+      action: "start",
+      label: "Runtime starting in background...",
+      disabled: false,
+    };
+  }
   if (runtimeDetect?.found) {
     return {
       action: "start",
@@ -322,10 +380,15 @@ export function getOllamaRuntimeCardState(): OllamaRuntimeCardState {
   const version = runtimeDetect?.version || settings?.providers?.ollama?.runtime_version || "unknown";
   const endpoint = settings?.providers?.ollama?.endpoint || DEFAULT_LOCAL_ENDPOINT;
   const busyAction = effectiveRuntimeBusyAction();
+  const backgroundStarting = isRuntimeBackgroundStarting();
   const stage = computeWizardStage();
   const primary = resolvePrimaryAction();
   const detail = runtimeInstallProgress?.message
-    || (busyAction ? runtimeActionLabel(busyAction) : stageHint(stage));
+    || (busyAction
+      ? runtimeActionLabel(busyAction)
+      : backgroundStarting
+        ? "Starting runtime in background..."
+        : stageHint(stage));
 
   return {
     detected: Boolean(runtimeDetect?.found),
@@ -334,6 +397,7 @@ export function getOllamaRuntimeCardState(): OllamaRuntimeCardState {
     version: version || "unknown",
     endpoint,
     busy: Boolean(busyAction),
+    backgroundStarting,
     busyAction,
     stage,
     primaryAction: primary.action,
@@ -497,7 +561,18 @@ export async function ensureLocalRuntimeReady(): Promise<void> {
       message: "Starting local runtime...",
     };
     renderOllamaModelManager();
-    await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
+    const startResult = await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
+    if (startResult.pending_start) {
+      startRuntimeBackgroundPolling("manual");
+      await refreshOllamaRuntimeState({ force: true });
+      showToast({
+        type: "warning",
+        title: "Runtime starting in background",
+        message: "Startup is taking longer than usual. Verification continues in background.",
+        duration: 4200,
+      });
+      return;
+    }
 
     flowStage = "verify_runtime";
     runtimeInstallProgress = {
@@ -563,18 +638,29 @@ async function handleUseSystemRuntime(): Promise<void> {
       throw new Error("No system Ollama found in PATH.");
     }
 
-    await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
-    runtimeVerify = await invoke<OllamaRuntimeVerifyResult>("verify_ollama_runtime");
-    await refreshOllamaInstalledModels();
-    await refreshOllamaRuntimeState();
-    await maybePersistWizardState();
+    const startResult = await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
+    if (startResult.pending_start) {
+      startRuntimeBackgroundPolling("manual");
+      await refreshOllamaRuntimeState({ force: true });
+      showToast({
+        type: "warning",
+        title: "Using system Ollama",
+        message: "System runtime detected and starting in background.",
+        duration: 4200,
+      });
+    } else {
+      runtimeVerify = await invoke<OllamaRuntimeVerifyResult>("verify_ollama_runtime");
+      await refreshOllamaInstalledModels();
+      await refreshOllamaRuntimeState();
+      await maybePersistWizardState();
 
-    showToast({
-      type: "success",
-      title: "Using system Ollama",
-      message: `Detected ${detect.version || "installed version"} from PATH.`,
-      duration: 3500,
-    });
+      showToast({
+        type: "success",
+        title: "Using system Ollama",
+        message: `Detected ${detect.version || "installed version"} from PATH.`,
+        duration: 3500,
+      });
+    }
   });
 }
 
@@ -585,6 +671,18 @@ export async function useSystemOllamaRuntime(): Promise<void> {
 async function handleStartRuntime(): Promise<void> {
   await runRuntimeAction("start", async () => {
     const result = await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
+    if (result.pending_start) {
+      startRuntimeBackgroundPolling("manual");
+      await refreshOllamaRuntimeState({ force: true });
+      showToast({
+        type: "warning",
+        title: "Runtime starting in background",
+        message: `${result.endpoint} is still warming up. Verification continues in background.`,
+        duration: 4200,
+      });
+      return;
+    }
+
     runtimeHealth = {
       ok: true,
       endpoint: result.endpoint,
@@ -907,6 +1005,10 @@ export async function refreshOllamaRuntimeState(
       await maybePersistWizardState();
     } catch (error) {
       console.warn("Failed to persist local AI wizard state:", error);
+    }
+
+    if (runtimeHealth?.ok) {
+      runtimeBackgroundStartUntilMs = 0;
     }
 
     runtimeStateLastRefreshMs = Date.now();

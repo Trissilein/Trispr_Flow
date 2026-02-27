@@ -3073,8 +3073,10 @@ input[type="range"]:focus-visible {
 
 .pipeline-machine-board {
   position: relative;
-  min-width: 1120px;
-  height: 360px;
+  width: 900px;
+  min-width: 900px;
+  max-width: 900px;
+  height: 340px;
   border-radius: 10px;
   border: 1px solid rgba(112, 128, 155, 0.32);
   background:
@@ -3195,39 +3197,39 @@ input[type="range"]:focus-visible {
 }
 
 .machine-node--transcribe {
-  left: 28px;
-  top: 52px;
-  width: 220px;
+  left: 25px;
+  top: 42px;
+  width: 190px;
 }
 
 .machine-node--rules {
-  left: 320px;
-  top: 52px;
-  width: 210px;
+  left: 235px;
+  top: 42px;
+  width: 190px;
 }
 
 .machine-node--ai {
-  left: 600px;
-  top: 52px;
-  width: 210px;
+  left: 445px;
+  top: 42px;
+  width: 190px;
 }
 
 .machine-node--gate {
-  left: 880px;
-  top: 52px;
-  width: 210px;
+  left: 655px;
+  top: 42px;
+  width: 190px;
 }
 
 .machine-node--refined {
-  left: 760px;
-  top: 238px;
-  width: 250px;
+  left: 520px;
+  top: 210px;
+  width: 215px;
 }
 
 .machine-node--raw {
-  left: 585px;
-  top: 258px;
-  width: 250px;
+  left: 300px;
+  top: 230px;
+  width: 215px;
 }
 
 .pipeline-node[data-state="active"] {
@@ -3303,8 +3305,10 @@ input[type="range"]:focus-visible {
 
 @media (max-width: 1220px) {
   .pipeline-machine-board {
-    min-width: 980px;
-    height: 350px;
+    width: 900px;
+    min-width: 900px;
+    max-width: 900px;
+    height: 340px;
   }
 }
 

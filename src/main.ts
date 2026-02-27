@@ -73,6 +73,14 @@ import {
   renderRefinementInspector,
 } from "./refinement-inspector";
 import {
+  handlePipelineRefined,
+  handlePipelineRefinementFailed,
+  handlePipelineRefinementReset,
+  handlePipelineRefinementStarted,
+  handlePipelineRefinementTimeout,
+  handlePipelineTranscriptionResult,
+} from "./refinement-pipeline-graph";
+import {
   autoStartLocalRuntimeIfNeeded,
   clearActiveOllamaPull,
   getOllamaRuntimeCardState,
@@ -179,6 +187,7 @@ function handleDeferredPasteTimeout(jobId: string): void {
 
   pendingDeferredPasteJobs.delete(jobId);
   rememberDeferredPasteOutcome(jobId, "timed_out");
+  handlePipelineRefinementTimeout(jobId);
   reportRuntimeMetric("refinement_timeout");
   queueTranscriptPaste(pending.rawText, `timeout:${jobId}`);
 }
@@ -362,6 +371,7 @@ async function bootstrap() {
 
   eventUnlisteners.push(await listen<TranscriptionResultEvent>("transcription:result", (event) => {
     const payload = event.payload;
+    handlePipelineTranscriptionResult(payload);
     handleTranscriptionResultForInspector(payload);
     renderHistory();
     if (dom.statusMessage) dom.statusMessage.textContent = "";
@@ -400,6 +410,7 @@ async function bootstrap() {
 
   eventUnlisteners.push(
     await listen<TranscriptionRefinementStartedEvent>("transcription:refinement-started", (event) => {
+      handlePipelineRefinementStarted(event.payload);
       handleRefinementStartedForInspector(event.payload);
       renderHistory();
     })
@@ -410,15 +421,19 @@ async function bootstrap() {
     handleRefinementSuccessForInspector(event.payload);
     renderHistory();
     const { refined, model, execution_time_ms, job_id: jobId } = event.payload;
+    const priorOutcome = deferredPasteOutcomes.get(jobId);
     const pending = settleDeferredPasteJob(jobId);
     if (pending) {
       rememberDeferredPasteOutcome(jobId, "refined", refined);
+      handlePipelineRefined(event.payload);
       queueTranscriptPaste(refined, `refined:${jobId}`);
-    } else if (deferredPasteOutcomes.get(jobId) === "timed_out") {
+    } else if (priorOutcome === "timed_out") {
       rememberDeferredPasteOutcome(jobId, "refined", refined);
+      handlePipelineRefinementTimeout(jobId);
       console.debug(`[AI] Late refinement received after timeout (${jobId}); history updated only.`);
     } else {
       rememberDeferredPasteOutcome(jobId, "refined", refined);
+      handlePipelineRefined(event.payload);
     }
     console.debug(`[AI] Refinement done (${model}, ${execution_time_ms}ms):`, refined);
   }));
@@ -426,6 +441,12 @@ async function bootstrap() {
   // AI Fallback: refinement failed — log, no disruption to user workflow.
   eventUnlisteners.push(await listen<TranscriptionRefinementFailedEvent>("transcription:refinement-failed", (event) => {
     const payload = event.payload;
+    const priorOutcome = deferredPasteOutcomes.get(payload.job_id);
+    if (priorOutcome === "timed_out") {
+      handlePipelineRefinementTimeout(payload.job_id);
+    } else {
+      handlePipelineRefinementFailed(payload);
+    }
     handleRefinementFailureForInspector(payload);
     renderHistory();
     const pending = settleDeferredPasteJob(payload.job_id);
@@ -444,6 +465,7 @@ async function bootstrap() {
       const activeCount = Number(payload?.active_count ?? 0);
       setRefiningActive(activeCount > 0);
       if (payload?.reason === "watchdog_reset" || payload?.reason === "forced_reset") {
+        handlePipelineRefinementReset(payload.reason);
         markAllPendingAsFailed(payload.reason);
         renderHistory();
         showToast({

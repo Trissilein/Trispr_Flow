@@ -7,6 +7,7 @@ import { renderVocabulary } from "./event-listeners";
 import { getTopicKeywords, setTopicKeywords } from "./history";
 import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
 import { getOllamaRuntimeCardState } from "./ollama-models";
+import { syncRefinementPipelineGraphFromSettings } from "./refinement-pipeline-graph";
 import {
   normalizeRefinementPromptPreset,
   resolveEffectiveRefinementPrompt,
@@ -509,6 +510,7 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackEnabled.checked = Boolean(ai?.enabled);
   }
   renderRefinementPipelineNote();
+  syncRefinementPipelineGraphFromSettings();
   if (dom.aiFallbackSettings) {
     dom.aiFallbackSettings.style.display = "block";
     dom.aiFallbackSettings.classList.toggle("is-disabled", !ai?.enabled);

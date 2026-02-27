@@ -76,6 +76,8 @@ export const activationWordsList = $("activation-words-list") as HTMLTextAreaEle
 // Post-processing controls
 export const postprocEnabled = $("postproc-enabled") as HTMLInputElement | null;
 export const refinementPipelineNote = $("refinement-pipeline-note") as HTMLSpanElement | null;
+export const refinementPipelineGraph = $("refinement-pipeline-graph") as HTMLDivElement | null;
+export const refinementPipelineLive = $("refinement-pipeline-live") as HTMLDivElement | null;
 export const postprocSettings = $("postproc-settings") as HTMLDivElement | null;
 export const postprocLanguage = $("postproc-language") as HTMLSelectElement | null;
 export const postprocPunctuation = $("postproc-punctuation") as HTMLInputElement | null;

@@ -3059,42 +3059,58 @@ input[type="range"]:focus-visible {
 
 .refinement-pipeline-graph {
   display: grid;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 8px;
   border: 1px solid rgba(120, 138, 168, 0.35);
   border-radius: 12px;
-  background: linear-gradient(145deg, rgba(22, 29, 42, 0.74), rgba(16, 23, 34, 0.78));
+  background: linear-gradient(145deg, rgba(22, 29, 42, 0.74), rgba(14, 20, 30, 0.82));
 }
 
-.refinement-pipeline-main {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
+.pipeline-machine-scroll {
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
-.refinement-pipeline-outputs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+.pipeline-machine-board {
+  position: relative;
+  min-width: 1120px;
+  height: 360px;
+  border-radius: 10px;
+  border: 1px solid rgba(112, 128, 155, 0.32);
+  background:
+    radial-gradient(circle at 12% 18%, rgba(71, 193, 181, 0.12), transparent 32%),
+    radial-gradient(circle at 84% 70%, rgba(58, 168, 255, 0.12), transparent 40%),
+    linear-gradient(160deg, rgba(12, 18, 28, 0.9), rgba(8, 13, 22, 0.92));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.02),
+    0 20px 30px rgba(0, 0, 0, 0.33);
+  overflow: hidden;
 }
 
-.pipeline-output-branch {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.pipeline-machine-board::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 24px 24px;
+  pointer-events: none;
+  opacity: 0.5;
 }
 
 .pipeline-node {
-  min-width: 0;
-  flex: 1;
+  min-width: 180px;
   display: grid;
   gap: 5px;
   border: 1px solid rgba(126, 142, 168, 0.3);
-  border-radius: 10px;
-  background: rgba(14, 20, 30, 0.78);
+  border-radius: 12px;
+  background: linear-gradient(165deg, rgba(18, 25, 37, 0.92), rgba(14, 20, 32, 0.9));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  padding: 9px 10px;
+  padding: 10px 11px;
   transition: border-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+  position: absolute;
+  z-index: 2;
 }
 
 .pipeline-node h4 {
@@ -3109,6 +3125,44 @@ input[type="range"]:focus-visible {
   font-size: 0.69rem;
   line-height: 1.35;
   color: var(--muted);
+}
+
+.pipeline-machine-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.pipeline-wire {
+  fill: none;
+  stroke: rgba(128, 145, 172, 0.48);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke 150ms ease, opacity 150ms ease;
+}
+
+.pipeline-wire[data-state="active"] {
+  stroke: rgba(84, 226, 209, 0.96);
+  stroke-dasharray: 12 10;
+  animation: pipeline-wire-flow 1.05s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(84, 226, 209, 0.55));
+}
+
+.pipeline-wire[data-state="muted"] {
+  opacity: 0.22;
+}
+
+@keyframes pipeline-wire-flow {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -44;
+  }
 }
 
 .pipeline-node-step {
@@ -3136,23 +3190,44 @@ input[type="range"]:focus-visible {
   color: var(--ink-soft);
 }
 
-.pipeline-edge {
-  align-self: center;
-  width: 18px;
-  flex: 0 0 18px;
-  text-align: center;
-  font-size: 0.9rem;
-  color: rgba(130, 146, 172, 0.55);
-  transition: color 120ms ease, opacity 120ms ease;
-}
-
-.pipeline-edge-branch {
-  width: 14px;
-  flex: 0 0 14px;
-}
-
 .pipeline-node-output {
-  min-height: 72px;
+  min-height: 78px;
+}
+
+.machine-node--transcribe {
+  left: 28px;
+  top: 52px;
+  width: 220px;
+}
+
+.machine-node--rules {
+  left: 320px;
+  top: 52px;
+  width: 210px;
+}
+
+.machine-node--ai {
+  left: 600px;
+  top: 52px;
+  width: 210px;
+}
+
+.machine-node--gate {
+  left: 880px;
+  top: 52px;
+  width: 210px;
+}
+
+.machine-node--refined {
+  left: 760px;
+  top: 238px;
+  width: 250px;
+}
+
+.machine-node--raw {
+  left: 585px;
+  top: 258px;
+  width: 250px;
 }
 
 .pipeline-node[data-state="active"] {
@@ -3184,16 +3259,42 @@ input[type="range"]:focus-visible {
   box-shadow: 0 0 0 1px rgba(247, 200, 111, 0.24);
 }
 
-.pipeline-edge[data-state="active"] {
-  color: rgba(94, 217, 202, 0.95);
+.pipeline-node[data-state="active"] .pipeline-node-step {
+  border-color: rgba(94, 217, 202, 0.8);
+  background: rgba(94, 217, 202, 0.24);
+  color: #d9fffa;
 }
 
-.pipeline-edge[data-state="muted"] {
-  color: rgba(115, 128, 150, 0.34);
+.pipeline-node[data-state="success"] .pipeline-node-step {
+  border-color: rgba(111, 223, 147, 0.85);
+  background: rgba(111, 223, 147, 0.26);
+  color: #defee8;
+}
+
+.pipeline-node[data-state="error"] .pipeline-node-step {
+  border-color: rgba(244, 95, 95, 0.82);
+  background: rgba(244, 95, 95, 0.22);
+  color: #ffe0e0;
+}
+
+.pipeline-node[data-state="timeout"] .pipeline-node-step {
+  border-color: rgba(247, 200, 111, 0.82);
+  background: rgba(247, 200, 111, 0.24);
+  color: #fff3d7;
+}
+
+.pipeline-node[data-state="blocked"] .pipeline-node-step {
+  border-color: rgba(255, 173, 78, 0.82);
+  background: rgba(255, 173, 78, 0.2);
+  color: #fff0d7;
 }
 
 .refinement-pipeline-live {
-  margin-top: -2px;
+  margin-top: 2px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(112, 130, 156, 0.3);
+  background: rgba(10, 16, 26, 0.58);
 }
 
 .refinement-pipeline-advanced {
@@ -3201,37 +3302,9 @@ input[type="range"]:focus-visible {
 }
 
 @media (max-width: 1220px) {
-  .refinement-pipeline-main {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 6px;
-  }
-
-  .pipeline-edge {
-    width: auto;
-    flex: 0 0 auto;
-    justify-self: center;
-  }
-
-  .pipeline-edge::after {
-    content: "↓";
-  }
-
-  .pipeline-edge {
-    color: rgba(130, 146, 172, 0.52);
-    font-size: 0;
-  }
-
-  .pipeline-edge[data-state="active"]::after {
-    color: rgba(94, 217, 202, 0.95);
-  }
-
-  .pipeline-edge[data-state="muted"]::after {
-    color: rgba(115, 128, 150, 0.34);
-  }
-
-  .refinement-pipeline-outputs {
-    grid-template-columns: minmax(0, 1fr);
+  .pipeline-machine-board {
+    min-width: 980px;
+    height: 350px;
   }
 }
 

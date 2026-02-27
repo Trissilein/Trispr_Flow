@@ -1218,57 +1218,62 @@
                       </div>
 
                       <div id="refinement-pipeline-graph" class="refinement-pipeline-graph span-2" role="group" aria-label="Refinement pipeline visual graph">
-                        <div class="refinement-pipeline-main">
-                          <article id="pipeline-node-transcribe" class="pipeline-node" data-state="idle">
-                            <span class="pipeline-node-step">1</span>
-                            <h4>Transcribe</h4>
-                            <p>Whisper decodes audio to raw text.</p>
-                          </article>
-                          <div id="pipeline-edge-transcribe-rules" class="pipeline-edge" data-state="idle" aria-hidden="true">→</div>
-                          <article id="pipeline-node-rules" class="pipeline-node" data-state="idle">
-                            <span class="pipeline-node-step">2</span>
-                            <h4>Rule-Based Refiner</h4>
-                            <p>Fast punctuation, capitalization, numbers, vocabulary.</p>
-                            <label class="pipeline-node-toggle toggle-row">
-                              <span class="pipeline-node-toggle-label">Enable rule-based</span>
-                              <input id="postproc-enabled" type="checkbox" title="Run local punctuation/capitalization/normalization rules on every transcript" />
-                              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                            </label>
-                          </article>
-                          <div id="pipeline-edge-rules-ai" class="pipeline-edge" data-state="idle" aria-hidden="true">→</div>
-                          <article id="pipeline-node-ai" class="pipeline-node" data-state="idle">
-                            <span class="pipeline-node-step">3</span>
-                            <h4>AI Refiner</h4>
-                            <p>Ollama local refinement for final wording.</p>
-                            <label class="pipeline-node-toggle toggle-row">
-                              <span class="pipeline-node-toggle-label">Enable AI refinement</span>
-                              <input id="ai-fallback-enabled" type="checkbox" title="Send transcripts to an AI provider for refinement and correction" />
-                              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                            </label>
-                          </article>
-                          <div id="pipeline-edge-ai-gate" class="pipeline-edge" data-state="idle" aria-hidden="true">→</div>
-                          <article id="pipeline-node-gate" class="pipeline-node" data-state="idle">
-                            <span class="pipeline-node-step">4</span>
-                            <h4>Deferred Insert Gate</h4>
-                            <p>Waits for refined result. Falls back after timeout.</p>
-                          </article>
-                        </div>
-                        <div class="refinement-pipeline-outputs">
-                          <div class="pipeline-output-branch">
-                            <div id="pipeline-edge-gate-refined" class="pipeline-edge pipeline-edge-branch" data-state="idle" aria-hidden="true">↘</div>
-                            <article id="pipeline-node-output-refined" class="pipeline-node pipeline-node-output" data-state="idle">
+                        <div class="pipeline-machine-scroll">
+                          <div class="pipeline-machine-board">
+                            <svg class="pipeline-machine-wires" viewBox="0 0 1180 410" preserveAspectRatio="none" aria-hidden="true">
+                              <path id="pipeline-edge-transcribe-rules" class="pipeline-wire" data-state="idle" d="M250 105 C280 105 290 105 320 105"></path>
+                              <path id="pipeline-edge-rules-ai" class="pipeline-wire" data-state="idle" d="M530 105 C560 105 570 105 600 105"></path>
+                              <path id="pipeline-edge-ai-gate" class="pipeline-wire" data-state="idle" d="M810 105 C840 105 850 105 880 105"></path>
+                              <path id="pipeline-edge-gate-refined" class="pipeline-wire" data-state="idle" d="M1060 145 C1040 235 920 285 810 285"></path>
+                              <path id="pipeline-edge-rules-raw" class="pipeline-wire" data-state="idle" d="M460 145 C500 245 560 305 665 305"></path>
+                            </svg>
+
+                            <article id="pipeline-node-transcribe" class="pipeline-node machine-node machine-node--transcribe" data-state="idle">
+                              <span class="pipeline-node-step">1</span>
+                              <h4>Transcribe</h4>
+                              <p>Whisper decodes audio to raw text.</p>
+                            </article>
+
+                            <article id="pipeline-node-rules" class="pipeline-node machine-node machine-node--rules" data-state="idle">
+                              <span class="pipeline-node-step">2</span>
+                              <h4>Rule-Based Refiner</h4>
+                              <p>Fast punctuation, capitalization, numbers, vocabulary.</p>
+                              <label class="pipeline-node-toggle toggle-row">
+                                <span class="pipeline-node-toggle-label">Enable rule-based</span>
+                                <input id="postproc-enabled" type="checkbox" title="Run local punctuation/capitalization/normalization rules on every transcript" />
+                                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                              </label>
+                            </article>
+
+                            <article id="pipeline-node-ai" class="pipeline-node machine-node machine-node--ai" data-state="idle">
+                              <span class="pipeline-node-step">3</span>
+                              <h4>AI Refiner</h4>
+                              <p>Ollama local refinement for final wording.</p>
+                              <label class="pipeline-node-toggle toggle-row">
+                                <span class="pipeline-node-toggle-label">Enable AI refinement</span>
+                                <input id="ai-fallback-enabled" type="checkbox" title="Send transcripts to an AI provider for refinement and correction" />
+                                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                              </label>
+                            </article>
+
+                            <article id="pipeline-node-gate" class="pipeline-node machine-node machine-node--gate" data-state="idle">
+                              <span class="pipeline-node-step">4</span>
+                              <h4>Deferred Insert Gate</h4>
+                              <p>Waits for refined result. Falls back after timeout.</p>
+                            </article>
+
+                            <article id="pipeline-node-output-refined" class="pipeline-node pipeline-node-output machine-node machine-node--refined" data-state="idle">
                               <h4>Output: Refined</h4>
                               <p>Preferred final paste target.</p>
                             </article>
-                          </div>
-                          <div class="pipeline-output-branch">
-                            <div id="pipeline-edge-rules-raw" class="pipeline-edge pipeline-edge-branch" data-state="idle" aria-hidden="true">↙</div>
-                            <article id="pipeline-node-output-raw" class="pipeline-node pipeline-node-output" data-state="idle">
+
+                            <article id="pipeline-node-output-raw" class="pipeline-node pipeline-node-output machine-node machine-node--raw" data-state="idle">
                               <h4>Output: Raw Fallback</h4>
                               <p>Used on AI fail or timeout.</p>
                             </article>
                           </div>
                         </div>
+
                         <div id="refinement-pipeline-live" class="field-hint refinement-pipeline-live" aria-live="polite">
                           Awaiting next transcription job.
                         </div>

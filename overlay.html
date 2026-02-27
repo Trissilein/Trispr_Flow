@@ -23,24 +23,29 @@
       }
 
       #dot {
+        position: relative;
+        z-index: 2;
         width: 16px;
         height: 16px;
         border-radius: 50%;
         background: #ff3d2e;
-        transition: opacity 0.12s ease-out, width 0.05s ease-out, height 0.05s ease-out;
+        transition: opacity 0.12s ease-out, width 0.04s linear, height 0.04s linear;
       }
 
       #kitt {
         display: none;
+        position: relative;
+        z-index: 2;
         width: 20px;
         height: 20px;
         border-radius: 4px;
         background: #ff3d2e;
-        transition: opacity 0.12s ease-out, width 0.05s ease-out;
+        transition: opacity 0.12s ease-out, width 0.04s linear;
       }
 
       #transcribe-indicator {
         position: absolute;
+        z-index: 3;
         width: 10px;
         height: 10px;
         border-radius: 50%;
@@ -74,6 +79,7 @@
       #refine-indicator {
         position: absolute;
         inset: 0;
+        z-index: 1;
         display: grid;
         place-items: center;
         pointer-events: none;
@@ -327,7 +333,17 @@
         if (!rgb) return;
         const active = Math.max(0.05, Math.min(1, opacityActive));
         const inactive = Math.max(0.05, Math.min(1, opacityInactive));
-        kitt.style.background = `linear-gradient(90deg, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${inactive}) 0%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${active}) 50%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${inactive}) 100%)`;
+        // Keep edge fade subtle so perceived width tracks configured pixel width.
+        const edge = Math.max(inactive, active * 0.42);
+        const shoulder = Math.max(edge, active * 0.78);
+        kitt.style.background = `linear-gradient(90deg,
+          rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${edge}) 0%,
+          rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${shoulder}) 14%,
+          rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${active}) 35%,
+          rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${active}) 65%,
+          rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${shoulder}) 86%,
+          rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${edge}) 100%)`;
+        kitt.style.boxShadow = `0 0 10px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${Math.max(0.18, active * 0.38)})`;
       }
 
       function updateRefiningAppearance() {
@@ -391,16 +407,33 @@
       };
 
       window.setKittDimensions = function(minWidth, maxWidth, height) {
-        kittMinWidth = Math.max(4, Math.min(40, minWidth));
-        kittMaxWidth = Math.max(50, Math.min(800, maxWidth));
-        kittHeight = Math.max(8, Math.min(40, height));
+        const parsedMin = Number(minWidth);
+        const parsedMax = Number(maxWidth);
+        const parsedHeight = Number(height);
+        const normalizedMin = Number.isFinite(parsedMin) ? parsedMin : 20;
+        const normalizedMax = Number.isFinite(parsedMax) ? parsedMax : 200;
+        const normalizedHeight = Number.isFinite(parsedHeight) ? parsedHeight : 20;
+
+        kittMinWidth = Math.max(4, Math.min(10000, normalizedMin));
+        kittMaxWidth = Math.max(50, Math.min(20000, normalizedMax));
+        if (kittMaxWidth < kittMinWidth) {
+          kittMaxWidth = Math.max(50, kittMinWidth);
+        }
+        kittHeight = Math.max(8, Math.min(400, normalizedHeight));
         kitt.style.height = kittHeight + "px";
+        kitt.style.minWidth = kittMinWidth + "px";
+        kitt.style.maxWidth = kittMaxWidth + "px";
         kitt.style.width = kittMinWidth + "px";
       };
 
       window.setDotDimensions = function(minRadius, maxRadius) {
-        dotMinRadius = Math.max(4, Math.min(64, minRadius));
-        dotMaxRadius = Math.max(8, Math.min(96, maxRadius));
+        const parsedMin = Number(minRadius);
+        const parsedMax = Number(maxRadius);
+        const normalizedMin = Number.isFinite(parsedMin) ? parsedMin : 16;
+        const normalizedMax = Number.isFinite(parsedMax) ? parsedMax : 64;
+
+        dotMinRadius = Math.max(4, Math.min(5000, normalizedMin));
+        dotMaxRadius = Math.max(8, Math.min(10000, normalizedMax));
         if (dotMaxRadius < dotMinRadius) {
           dotMaxRadius = dotMinRadius;
         }
@@ -412,7 +445,8 @@
       window.setOverlayLevel = function(level) {
         const clamped = Math.max(0, Math.min(1, level));
         if (currentStyle === "kitt") {
-          const width = kittMinWidth + (kittMaxWidth - kittMinWidth) * clamped;
+          const widthRaw = kittMinWidth + (kittMaxWidth - kittMinWidth) * clamped;
+          const width = Math.max(kittMinWidth, Math.min(kittMaxWidth, widthRaw));
           kitt.style.width = width + "px";
         } else {
           const radius = dotMinRadius + (dotMaxRadius - dotMinRadius) * clamped;

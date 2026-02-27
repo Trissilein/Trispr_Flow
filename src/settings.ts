@@ -51,6 +51,51 @@ export async function persistSettings() {
   }
 }
 
+function detectOverlayViewport(): { width: number; height: number } {
+  const screenWidth = Number(
+    (typeof window !== "undefined"
+      ? window.screen?.availWidth ?? window.screen?.width
+      : 0) ?? 0
+  );
+  const screenHeight = Number(
+    (typeof window !== "undefined"
+      ? window.screen?.availHeight ?? window.screen?.height
+      : 0) ?? 0
+  );
+  const width = Number.isFinite(screenWidth) && screenWidth > 0 ? screenWidth : 1920;
+  const height = Number.isFinite(screenHeight) && screenHeight > 0 ? screenHeight : 1080;
+  return { width, height };
+}
+
+function applyOverlayDimensionSliderBounds() {
+  const { width, height } = detectOverlayViewport();
+  const kittMaxWidthCap = Math.max(50, Math.round(width * 0.5));
+  const dotMaxRadiusCap = Math.max(8, Math.round(Math.min(width, height) * 0.25)); // 50% diameter
+
+  if (dom.overlayKittMaxWidth) {
+    dom.overlayKittMaxWidth.max = String(kittMaxWidthCap);
+    dom.overlayKittMaxWidth.setAttribute("aria-valuemax", String(kittMaxWidthCap));
+  }
+  if (dom.overlayMaxRadius) {
+    dom.overlayMaxRadius.max = String(dotMaxRadiusCap);
+    dom.overlayMaxRadius.setAttribute("aria-valuemax", String(dotMaxRadiusCap));
+  }
+  if (dom.overlayMinRadius) {
+    const minRadiusCap = Math.max(4, dotMaxRadiusCap);
+    dom.overlayMinRadius.max = String(minRadiusCap);
+    dom.overlayMinRadius.setAttribute("aria-valuemax", String(minRadiusCap));
+  }
+}
+
+function clampToSliderBounds(input: HTMLInputElement, value: number): number {
+  const parsedMin = Number(input.min);
+  const parsedMax = Number(input.max);
+  let out = value;
+  if (Number.isFinite(parsedMin)) out = Math.max(parsedMin, out);
+  if (Number.isFinite(parsedMax)) out = Math.min(parsedMax, out);
+  return out;
+}
+
 export function updateOverlayStyleVisibility(style: string) {
   const isKitt = style === "kitt";
   if (dom.overlayDotSettings) dom.overlayDotSettings.style.display = isKitt ? "none" : "block";
@@ -83,10 +128,26 @@ export function applyOverlaySharedUi(style: string) {
   if (!shared) return;
 
   if (dom.overlayColor) dom.overlayColor.value = shared.color;
+  let effectiveRise = shared.rise_ms;
   if (dom.overlayRise) dom.overlayRise.value = shared.rise_ms.toString();
-  if (dom.overlayRiseValue) dom.overlayRiseValue.textContent = `${shared.rise_ms}`;
+  if (dom.overlayRise) {
+    const maxRise = Number(dom.overlayRise.max || "200");
+    if (Number.isFinite(maxRise) && maxRise > 0 && shared.rise_ms > maxRise) {
+      dom.overlayRise.value = String(maxRise);
+      effectiveRise = maxRise;
+    }
+  }
+  if (dom.overlayRiseValue) dom.overlayRiseValue.textContent = `${effectiveRise}`;
+  let effectiveFall = shared.fall_ms;
   if (dom.overlayFall) dom.overlayFall.value = shared.fall_ms.toString();
-  if (dom.overlayFallValue) dom.overlayFallValue.textContent = `${shared.fall_ms}`;
+  if (dom.overlayFall) {
+    const maxFall = Number(dom.overlayFall.max || "200");
+    if (Number.isFinite(maxFall) && maxFall > 0 && shared.fall_ms > maxFall) {
+      dom.overlayFall.value = String(maxFall);
+      effectiveFall = maxFall;
+    }
+  }
+  if (dom.overlayFallValue) dom.overlayFallValue.textContent = `${effectiveFall}`;
   if (dom.overlayOpacityInactive) {
     dom.overlayOpacityInactive.value = Math.round(shared.opacity_inactive * 100).toString();
   }
@@ -373,6 +434,25 @@ function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedMode
   }
 }
 
+function renderRefinementPipelineNote() {
+  if (!settings || !dom.refinementPipelineNote) return;
+  const aiEnabled = Boolean(settings.ai_fallback?.enabled);
+  const rulesEnabled = Boolean(settings.postproc_enabled);
+
+  let note = "No refinement active: raw transcription output is used.";
+  if (aiEnabled && rulesEnabled) {
+    note =
+      "Primary output: AI refinement. Rule-based refiner remains active for fast baseline cleanup and fallback safety.";
+  } else if (aiEnabled) {
+    note = "Primary output: AI refinement only. Rule-based fallback is disabled.";
+  } else if (rulesEnabled) {
+    note = "Primary output: Rule-based refiner only (AI refinement disabled).";
+  }
+
+  dom.refinementPipelineNote.textContent = note;
+  dom.refinementPipelineNote.classList.toggle("is-warning", !rulesEnabled);
+}
+
 export function renderAIFallbackSettingsUi() {
   if (!settings) return;
   ensureSetupDefaults();
@@ -428,6 +508,7 @@ export function renderAIFallbackSettingsUi() {
   if (dom.aiFallbackEnabled) {
     dom.aiFallbackEnabled.checked = Boolean(ai?.enabled);
   }
+  renderRefinementPipelineNote();
   if (dom.aiFallbackSettings) {
     dom.aiFallbackSettings.style.display = "block";
     dom.aiFallbackSettings.classList.toggle("is-disabled", !ai?.enabled);
@@ -469,8 +550,13 @@ export function renderAIFallbackSettingsUi() {
   if (dom.aiFallbackLocalRuntimeNote) {
     dom.aiFallbackLocalRuntimeNote.textContent = runtimeCardState.busy
       ? `${runtimeCardState.detail} Running in background.`
-      : runtimeCardState.detail;
-    dom.aiFallbackLocalRuntimeNote.classList.toggle("ai-runtime-busy-note", runtimeCardState.busy);
+      : runtimeCardState.backgroundStarting
+        ? "Starting runtime in background. Controls remain available."
+        : runtimeCardState.detail;
+    dom.aiFallbackLocalRuntimeNote.classList.toggle(
+      "ai-runtime-busy-note",
+      runtimeCardState.busy || runtimeCardState.backgroundStarting
+    );
     dom.aiFallbackLocalRuntimeNote.setAttribute("aria-live", "polite");
   }
   if (dom.aiFallbackLocalPrimaryAction) {
@@ -550,6 +636,7 @@ export function renderSettings() {
   if (!settings) return;
   ensureContinuousDumpDefaults();
   ensureSetupDefaults();
+  applyOverlayDimensionSliderBounds();
   if (dom.captureEnabledToggle) dom.captureEnabledToggle.checked = settings.capture_enabled;
   if (dom.transcribeEnabledToggle) dom.transcribeEnabledToggle.checked = settings.transcribe_enabled;
   if (dom.modeSelect) dom.modeSelect.value = settings.mode;
@@ -664,9 +751,23 @@ export function renderSettings() {
     dom.transcribeVadSilenceField.classList.toggle("is-disabled", disabled);
     dom.transcribeVadSilence?.toggleAttribute("disabled", disabled);
   }
-  if (dom.overlayMinRadius) dom.overlayMinRadius.value = Math.round(settings.overlay_min_radius).toString();
+  if (dom.overlayMinRadius) {
+    const clamped = clampToSliderBounds(
+      dom.overlayMinRadius,
+      Math.round(settings.overlay_min_radius)
+    );
+    dom.overlayMinRadius.value = clamped.toString();
+    settings.overlay_min_radius = clamped;
+  }
   if (dom.overlayMinRadiusValue) dom.overlayMinRadiusValue.textContent = `${Math.round(settings.overlay_min_radius)}`;
-  if (dom.overlayMaxRadius) dom.overlayMaxRadius.value = Math.round(settings.overlay_max_radius).toString();
+  if (dom.overlayMaxRadius) {
+    const clamped = clampToSliderBounds(
+      dom.overlayMaxRadius,
+      Math.round(settings.overlay_max_radius)
+    );
+    dom.overlayMaxRadius.value = clamped.toString();
+    settings.overlay_max_radius = clamped;
+  }
   if (dom.overlayMaxRadiusValue) dom.overlayMaxRadiusValue.textContent = `${Math.round(settings.overlay_max_radius)}`;
   const overlayStyleValue = settings.overlay_style || "dot";
   if (dom.overlayStyle) dom.overlayStyle.value = overlayStyleValue;
@@ -717,7 +818,14 @@ export function renderSettings() {
   }
   if (dom.overlayKittMinWidth) dom.overlayKittMinWidth.value = Math.round(settings.overlay_kitt_min_width).toString();
   if (dom.overlayKittMinWidthValue) dom.overlayKittMinWidthValue.textContent = `${Math.round(settings.overlay_kitt_min_width)}`;
-  if (dom.overlayKittMaxWidth) dom.overlayKittMaxWidth.value = Math.round(settings.overlay_kitt_max_width).toString();
+  if (dom.overlayKittMaxWidth) {
+    const clamped = clampToSliderBounds(
+      dom.overlayKittMaxWidth,
+      Math.round(settings.overlay_kitt_max_width)
+    );
+    dom.overlayKittMaxWidth.value = clamped.toString();
+    settings.overlay_kitt_max_width = clamped;
+  }
   if (dom.overlayKittMaxWidthValue) dom.overlayKittMaxWidthValue.textContent = `${Math.round(settings.overlay_kitt_max_width)}`;
   if (dom.overlayKittHeight) dom.overlayKittHeight.value = Math.round(settings.overlay_kitt_height).toString();
   if (dom.overlayKittHeightValue) dom.overlayKittHeightValue.textContent = `${Math.round(settings.overlay_kitt_height)}`;

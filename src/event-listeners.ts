@@ -800,12 +800,6 @@ export function wireEvents() {
     switchMainTab("ai-refinement");
   });
 
-  // "AI Refinement →" link in Post-Processing hint
-  document.getElementById("go-to-ai-refinement")?.addEventListener("click", () => {
-    switchMainTab("ai-refinement");
-  });
-
-
   dom.captureEnabledToggle?.addEventListener("change", async () => {
     if (!settings) return;
     settings.capture_enabled = dom.captureEnabledToggle!.checked;

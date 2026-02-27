@@ -841,123 +841,6 @@
           </div>
         </section>
 
-        <section class="panel" data-panel="postprocessing" data-default-collapsed="true" style="--delay: 0.19s">
-          <div class="panel-header">
-            <div class="panel-title">
-              <h2>Post-Processing</h2>
-              <p>Enhance transcription quality with intelligent text refinement</p>
-            </div>
-            <div class="panel-actions">
-              <button class="panel-collapse-btn"
-                      data-panel-collapse="postprocessing"
-                      title="Collapse"
-                      aria-expanded="true"
-                      aria-controls="postprocessing-panel-body"
-                      aria-label="Collapse post-processing panel">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          <div class="panel-body" id="postprocessing-panel-body">
-            <div class="panel-grid">
-
-              <!-- Master toggle -->
-              <div class="field toggle span-2">
-                <label class="toggle-row">
-                  <span class="field-label">Enable post-processing</span>
-                  <input id="postproc-enabled" type="checkbox" title="Run post-processing rules on every transcript" />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                </label>
-                <span class="toggle-hint">Apply intelligent text enhancements to transcriptions</span>
-              </div>
-
-              <div id="postproc-settings" class="span-2" style="display: none;">
-
-                <!-- Language -->
-                <label class="field">
-                  <span class="field-label">Processing language</span>
-                  <select id="postproc-language" title="Language used for post-processing rules">
-                    <option value="en">English</option>
-                    <option value="de">Deutsch (German)</option>
-                    <option value="multi">Multilingual (EN/DE)</option>
-                  </select>
-                  <span class="field-hint">Multilingual mode applies both English and German rules simultaneously</span>
-                </label>
-
-                <!-- Rule-based toggles -->
-                <div class="field toggle">
-                  <label class="toggle-row">
-                    <span class="field-label">Punctuation</span>
-                    <input id="postproc-punctuation" type="checkbox" title="Automatically add punctuation (periods, commas, question marks)" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-hint">Add periods, commas, question marks</span>
-                </div>
-
-                <div class="field toggle">
-                  <label class="toggle-row">
-                    <span class="field-label">Capitalization</span>
-                    <input id="postproc-capitalization" type="checkbox" title="Capitalize the first letter of sentences and proper nouns" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-hint">Capitalize sentences and proper words</span>
-                </div>
-
-                <div class="field toggle">
-                  <label class="toggle-row">
-                    <span class="field-label">Number normalization</span>
-                    <input id="postproc-numbers" type="checkbox" title="Convert written-out numbers to digits (e.g. &quot;three&quot; → &quot;3&quot;)" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-hint">Convert number words to digits (e.g., "three" → "3")</span>
-                </div>
-
-                <!-- Custom Vocabulary -->
-                <details class="expander span-2">
-                  <summary>Custom Vocabulary</summary>
-                  <div class="expander-content">
-                    <div class="field toggle">
-                      <label class="toggle-row">
-                        <span class="field-label">Enable custom vocabulary</span>
-                        <input id="postproc-custom-vocab-enabled" type="checkbox" title="Apply custom find-and-replace rules to every transcript" />
-                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                      </label>
-                      <span class="toggle-hint">Replace specific words or phrases</span>
-                    </div>
-                    <div id="postproc-custom-vocab-config" style="display: none;">
-                      <p class="field-hint" style="margin-bottom: 10px;">
-                        Define word replacements with word boundary matching.
-                        <span style="opacity: 0.7;">Example: <code style="font-size: 11px; padding: 2px 5px; background: rgba(255,255,255,0.05); border-radius: 3px;">api</code> → <code style="font-size: 11px; padding: 2px 5px; background: rgba(255,255,255,0.05); border-radius: 3px;">API</code></span>
-                      </p>
-                      <div class="custom-vocab-table">
-                        <div class="vocab-header">
-                          <span>Match Word</span>
-                          <span>Replace With</span>
-                          <span aria-label="Actions"></span>
-                        </div>
-                        <div id="postproc-vocab-rows">
-                          <!-- Dynamically populated -->
-                        </div>
-                      </div>
-                      <button id="postproc-vocab-add" class="btn-secondary" title="Add a new find-and-replace entry" style="margin-top: 10px; font-size: 13px; font-weight: 600;">
-                        <span style="font-size: 16px; margin-right: 4px; line-height: 1;">+</span> Add Entry
-                      </button>
-                    </div>
-                  </div>
-                </details>
-                <div class="field span-2">
-                  <span class="field-hint">AI-powered refinement is configured in the
-                    <button type="button" class="link-btn" id="go-to-ai-refinement">AI Refinement tab →</button>
-                  </span>
-                </div>
-
-              </div>
-            </div>
-          </div>
-        </section>
-
         <section class="panel transcription-panel" data-panel="model" data-default-collapsed="true" style="--delay: 0.18s">
           <div class="panel-header">
             <div class="panel-title">
@@ -1095,10 +978,10 @@
               <label class="field range">
                 <span class="field-label">Max radius (px)</span>
                 <div class="range-row">
-                  <input id="overlay-max-radius" type="range" min="8" max="64" step="1"
+                  <input id="overlay-max-radius" type="range" min="8" max="1080" step="1"
                          title="Largest dot size on the recording overlay"
                          aria-valuemin="8"
-                         aria-valuemax="64"
+                         aria-valuemax="1080"
                          aria-valuenow="24"
                          aria-label="Overlay dot maximum radius"
                          aria-describedby="overlay-max-radius-value" />
@@ -1124,10 +1007,10 @@
               <label class="field range">
                 <span class="field-label">Max width (px)</span>
                 <div class="range-row">
-                  <input id="overlay-kitt-max-width" type="range" min="50" max="800" step="10"
+                  <input id="overlay-kitt-max-width" type="range" min="50" max="3840" step="10"
                          title="Maximum bar width for the KITT overlay style"
                          aria-valuemin="50"
-                         aria-valuemax="800"
+                         aria-valuemax="3840"
                          aria-valuenow="200"
                          aria-label="Overlay KITT bar maximum width"
                          aria-describedby="overlay-kitt-max-width-value" />
@@ -1153,10 +1036,10 @@
               <label class="field range">
                 <span class="field-label">Rise smoothing (ms)</span>
                 <div class="range-row">
-                  <input id="overlay-rise" type="range" min="20" max="600" step="10"
+                  <input id="overlay-rise" type="range" min="20" max="200" step="10"
                          title="How fast the overlay reacts to rising audio (ms)"
                          aria-valuemin="20"
-                         aria-valuemax="600"
+                         aria-valuemax="200"
                          aria-valuenow="80"
                          aria-label="Overlay animation rise smoothing"
                          aria-describedby="overlay-rise-value" />
@@ -1166,10 +1049,10 @@
               <label class="field range">
                 <span class="field-label">Fall smoothing (ms)</span>
                 <div class="range-row">
-                  <input id="overlay-fall" type="range" min="20" max="800" step="10"
+                  <input id="overlay-fall" type="range" min="20" max="200" step="10"
                          title="How fast the overlay fades after audio drops (ms)"
                          aria-valuemin="20"
-                         aria-valuemax="800"
+                         aria-valuemax="200"
                          aria-valuenow="160"
                          aria-label="Overlay animation fall smoothing"
                          aria-describedby="overlay-fall-value" />
@@ -1325,7 +1208,114 @@
                   <input id="ai-fallback-enabled" type="checkbox" title="Send transcripts to an AI provider for refinement and correction" />
                   <span class="toggle-track"><span class="toggle-thumb"></span></span>
                 </label>
-                <span class="toggle-hint">Apply provider-based refinement after local post-processing rules</span>
+                <span class="toggle-hint">Primary path uses AI output. Rule-based refinement can remain as baseline and local fallback.</span>
+              </div>
+
+              <!-- Refinement Pipeline -->
+              <div class="ai-refine-section">
+                <details id="ai-refinement-rules-expander" class="expander ai-refine-expander" open>
+                  <summary>
+                    <h3 class="ai-refine-section-title">Refinement Pipeline</h3>
+                  </summary>
+                  <div class="expander-body">
+                    <div class="panel-grid">
+
+                      <div class="field span-2">
+                        <span class="field-label">Primary + fallback</span>
+                        <span id="refinement-pipeline-note" class="field-hint">
+                          Primary output: Rule-based refiner only (AI refinement disabled).
+                        </span>
+                      </div>
+
+                      <!-- Master toggle -->
+                      <div class="field toggle span-2">
+                        <label class="toggle-row">
+                          <span class="field-label">Enable rule-based refiner</span>
+                          <input id="postproc-enabled" type="checkbox" title="Run local punctuation/capitalization/normalization rules on every transcript" />
+                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span class="toggle-hint">Fast local cleanup. When AI is active, it remains available as baseline/fallback behavior.</span>
+                      </div>
+
+                      <div id="postproc-settings" class="span-2" style="display: none;">
+
+                        <!-- Language -->
+                        <label class="field">
+                          <span class="field-label">Processing language</span>
+                          <select id="postproc-language" title="Language used for rule-based post-processing">
+                            <option value="en">English</option>
+                            <option value="de">Deutsch (German)</option>
+                            <option value="multi">Multilingual (EN/DE)</option>
+                          </select>
+                          <span class="field-hint">Multilingual mode applies both English and German rules simultaneously</span>
+                        </label>
+
+                        <!-- Rule-based toggles -->
+                        <div class="field toggle">
+                          <label class="toggle-row">
+                            <span class="field-label">Punctuation</span>
+                            <input id="postproc-punctuation" type="checkbox" title="Automatically add punctuation (periods, commas, question marks)" />
+                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                          </label>
+                          <span class="toggle-hint">Add periods, commas, and question marks</span>
+                        </div>
+
+                        <div class="field toggle">
+                          <label class="toggle-row">
+                            <span class="field-label">Capitalization</span>
+                            <input id="postproc-capitalization" type="checkbox" title="Capitalize the first letter of sentences and proper nouns" />
+                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                          </label>
+                          <span class="toggle-hint">Capitalize sentences and proper words</span>
+                        </div>
+
+                        <div class="field toggle">
+                          <label class="toggle-row">
+                            <span class="field-label">Number normalization</span>
+                            <input id="postproc-numbers" type="checkbox" title="Convert written-out numbers to digits (e.g. &quot;three&quot; → &quot;3&quot;)" />
+                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                          </label>
+                          <span class="toggle-hint">Convert number words to digits (e.g., "three" → "3")</span>
+                        </div>
+
+                        <!-- Custom Vocabulary -->
+                        <details class="expander span-2">
+                          <summary>Custom Vocabulary</summary>
+                          <div class="expander-content">
+                            <div class="field toggle">
+                              <label class="toggle-row">
+                                <span class="field-label">Enable custom vocabulary</span>
+                                <input id="postproc-custom-vocab-enabled" type="checkbox" title="Apply custom find-and-replace rules to every transcript" />
+                                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                              </label>
+                              <span class="toggle-hint">Replace specific words or phrases</span>
+                            </div>
+                            <div id="postproc-custom-vocab-config" style="display: none;">
+                              <p class="field-hint" style="margin-bottom: 10px;">
+                                Define word replacements with word boundary matching.
+                                <span style="opacity: 0.7;">Example: <code style="font-size: 11px; padding: 2px 5px; background: rgba(255,255,255,0.05); border-radius: 3px;">api</code> → <code style="font-size: 11px; padding: 2px 5px; background: rgba(255,255,255,0.05); border-radius: 3px;">API</code></span>
+                              </p>
+                              <div class="custom-vocab-table">
+                                <div class="vocab-header">
+                                  <span>Match Word</span>
+                                  <span>Replace With</span>
+                                  <span aria-label="Actions"></span>
+                                </div>
+                                <div id="postproc-vocab-rows">
+                                  <!-- Dynamically populated -->
+                                </div>
+                              </div>
+                              <button id="postproc-vocab-add" class="btn-secondary" title="Add a new find-and-replace entry" style="margin-top: 10px; font-size: 13px; font-weight: 600;">
+                                <span style="font-size: 16px; margin-right: 4px; line-height: 1;">+</span> Add Entry
+                              </button>
+                            </div>
+                          </div>
+                        </details>
+
+                      </div>
+                    </div>
+                  </div>
+                </details>
               </div>
 
               <!-- Runtime & Provider Setup -->

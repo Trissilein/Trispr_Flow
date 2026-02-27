@@ -396,7 +396,6 @@ h1 {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-areas:
     "capture system"
-    "postprocessing postprocessing"
     "model model"
     "interface interface";
   gap: 10px;
@@ -426,10 +425,6 @@ h1 {
 
 .transcribe-panel {
   grid-area: system;
-}
-
-.panel[data-panel="postprocessing"] {
-  grid-area: postprocessing;
 }
 
 .transcription-panel {
@@ -3261,6 +3256,10 @@ input[type="range"]:focus-visible {
 
 .link-btn:hover {
   color: #fff;
+}
+
+#refinement-pipeline-note.is-warning {
+  color: #ffd388;
 }
 
 /* Unified app tooltips */

@@ -144,6 +144,7 @@ pub(crate) struct Settings {
     pub(crate) postproc_custom_vocab: HashMap<String, String>,
     pub(crate) postproc_llm_enabled: bool,
     pub(crate) postproc_llm_provider: String,
+    #[serde(skip_serializing)]
     pub(crate) postproc_llm_api_key: String,
     pub(crate) postproc_llm_model: String,
     pub(crate) postproc_llm_prompt: String,
@@ -381,6 +382,8 @@ pub(crate) struct AppState {
     pub(crate) last_mic_recording_path: Mutex<Option<String>>,
     /// Last recorded OPUS file path for system audio.
     pub(crate) last_system_recording_path: Mutex<Option<String>>,
+    /// Handle to the managed Ollama child process for cleanup on app exit.
+    pub(crate) managed_ollama_child: Mutex<Option<std::process::Child>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

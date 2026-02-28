@@ -1,5 +1,6 @@
 // History management and panel state functions
 
+import { escapeHtml } from "./utils";
 import type { HistoryEntry, HistoryTab } from "./types";
 import { history, transcribeHistory, currentHistoryTab, setCurrentHistoryTab as setCurrentTab } from "./state";
 import * as dom from "./dom-refs";
@@ -444,7 +445,10 @@ export function detectTopicsForHistory(): Record<string, string[]> {
 export function buildTopicBadges(topics: string[]): string {
   if (!topics.length) return "";
   return topics
-    .map((topic) => `<span class="topic-badge" data-topic="${topic}">${topic}</span>`)
+    .map((topic) => {
+      const safe = escapeHtml(topic);
+      return `<span class="topic-badge" data-topic="${safe}">${safe}</span>`;
+    })
     .join("");
 }
 
@@ -523,10 +527,11 @@ function filterEntriesByTopic(entries: HistoryEntry[]): HistoryEntry[] {
  * Highlight search matches in text
  */
 function highlightSearchMatches(text: string): string {
-  if (!currentSearchQuery) return text;
+  const escaped = escapeHtml(text);
+  if (!currentSearchQuery) return escaped;
 
   const regex = new RegExp(`(${currentSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
-  return text.replace(regex, "<mark>$1</mark>");
+  return escaped.replace(regex, "<mark>$1</mark>");
 }
 
 function setEntryTextContent(node: HTMLElement, text: string): void {

@@ -862,6 +862,8 @@ fn start_ollama_runtime_impl(
             format!("Failed to start Ollama runtime: {}", e)
         })?;
     let pid = child.id();
+    // Store child handle for cleanup on app exit
+    *state.managed_ollama_child.lock().unwrap() = Some(child);
 
     let wait_started = Instant::now();
     let deadline = wait_started + Duration::from_millis(STARTUP_FOREGROUND_WAIT_MS);

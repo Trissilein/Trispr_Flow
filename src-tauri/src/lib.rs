@@ -39,7 +39,7 @@ use tracing::{error, info, warn};
 use crate::ai_fallback::keyring as ai_fallback_keyring;
 use crate::ai_fallback::models::RefinementOptions;
 use crate::ai_fallback::provider::{
-    default_models_for_provider, is_local_ollama_endpoint, list_ollama_models,
+    default_models_for_provider, is_local_ollama_endpoint, is_ssrf_target, list_ollama_models,
     list_ollama_models_with_size, ping_ollama, ping_ollama_quick, prompt_for_profile,
     resolve_effective_local_model, ProviderFactory,
 };
@@ -609,6 +609,10 @@ fn save_ollama_endpoint(
     if trimmed.is_empty() {
         return Err("Endpoint cannot be empty.".to_string());
     }
+    // Block SSRF-sensitive targets (cloud metadata, link-local)
+    if is_ssrf_target(&trimmed) {
+        return Err("This endpoint address is not allowed (SSRF protection).".to_string());
+    }
     {
         let settings = state.settings.lock().unwrap();
         if settings.ai_fallback.strict_local_mode && !is_local_ollama_endpoint(&trimmed) {
@@ -787,11 +791,16 @@ fn run_latency_benchmark_inner(
     let fixture_paths: Vec<PathBuf> = if request.fixture_paths.is_empty() {
         default_latency_fixture_paths()
     } else {
-        request
-            .fixture_paths
-            .iter()
-            .map(PathBuf::from)
-            .collect()
+        // Validate user-provided paths against app data directory
+        let allowed_root = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+        let mut validated = Vec::new();
+        for path_str in &request.fixture_paths {
+            validated.push(validate_path_within(path_str, &allowed_root)?);
+        }
+        validated
     };
 
     if fixture_paths.is_empty() {
@@ -1643,66 +1652,105 @@ fn save_transcript(filename: String, content: String, format: String) -> Result<
 }
 
 #[tauri::command]
-fn save_crash_recovery(content: String) -> Result<(), String> {
-    use std::env;
-    use std::fs;
+fn save_crash_recovery(app: AppHandle, content: String) -> Result<(), String> {
+    // Write to app data dir (user-private) instead of world-readable %TEMP%
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let _ = std::fs::create_dir_all(&data_dir);
 
-    // Use %TEMP% or /tmp for crash recovery file
-    let temp_dir = if cfg!(windows) {
-        env::var("TEMP").unwrap_or_else(|_| "C:\\Users\\AppData\\Local\\Temp".to_string())
-    } else {
-        env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
-    };
-
-    let crash_recovery_file = PathBuf::from(&temp_dir).join("trispr_crash_recovery.json");
-
-    // Write JSON content to crash recovery file
-    fs::write(&crash_recovery_file, content)
+    let crash_file = data_dir.join(".crash_recovery.json");
+    std::fs::write(&crash_file, content)
         .map_err(|e| format!("Failed to save crash recovery: {}", e))?;
 
     Ok(())
 }
 
 #[tauri::command]
-fn clear_crash_recovery() -> Result<(), String> {
-    use std::env;
-    use std::fs;
+fn clear_crash_recovery(app: AppHandle) -> Result<(), String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
 
-    // Use %TEMP% or /tmp for crash recovery file
-    let temp_dir = if cfg!(windows) {
-        env::var("TEMP").unwrap_or_else(|_| "C:\\Users\\AppData\\Local\\Temp".to_string())
-    } else {
-        env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
-    };
-
-    let crash_recovery_file = PathBuf::from(&temp_dir).join("trispr_crash_recovery.json");
-
-    // Delete crash recovery file if it exists
-    if crash_recovery_file.exists() {
-        fs::remove_file(&crash_recovery_file)
+    let crash_file = data_dir.join(".crash_recovery.json");
+    if crash_file.exists() {
+        std::fs::remove_file(&crash_file)
             .map_err(|e| format!("Failed to clear crash recovery: {}", e))?;
+    }
+
+    // Also clean up legacy TEMP file if it exists
+    let legacy_temp = if cfg!(windows) {
+        std::env::var("TEMP").ok()
+    } else {
+        std::env::var("TMPDIR").ok().or(Some("/tmp".to_string()))
+    };
+    if let Some(temp_dir) = legacy_temp {
+        let legacy_file = PathBuf::from(&temp_dir).join("trispr_crash_recovery.json");
+        let _ = std::fs::remove_file(&legacy_file); // best-effort cleanup
     }
 
     Ok(())
 }
 
+/// Validate that a path resolves within the allowed root directory.
+/// For existing files: canonicalize the full path.
+/// For new files (output): canonicalize the parent directory.
+fn validate_path_within(path_str: &str, allowed_root: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let path = std::path::PathBuf::from(path_str);
+
+    // For existing files, canonicalize directly
+    if path.exists() {
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve path '{}': {}", path_str, e))?;
+        if !canonical.starts_with(allowed_root) {
+            return Err(format!("Path '{}' is outside allowed directory", path_str));
+        }
+        return Ok(canonical);
+    }
+
+    // For non-existing files (e.g. output), canonicalize the parent
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Path '{}' has no parent directory", path_str))?;
+    if !parent.exists() {
+        return Err(format!("Parent directory of '{}' does not exist", path_str));
+    }
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve parent of '{}': {}", path_str, e))?;
+    if !canonical_parent.starts_with(allowed_root) {
+        return Err(format!("Path '{}' is outside allowed directory", path_str));
+    }
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("Path '{}' has no file name", path_str))?;
+    Ok(canonical_parent.join(file_name))
+}
+
 #[tauri::command]
 fn encode_to_opus(
+    app: tauri::AppHandle,
     input_path: String,
     output_path: String,
     bitrate_kbps: Option<u32>,
 ) -> Result<opus::OpusEncodeResult, String> {
-    use std::path::Path;
+    let allowed_root = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
 
-    let input = Path::new(&input_path);
-    let output = Path::new(&output_path);
+    let input = validate_path_within(&input_path, &allowed_root)?;
+    let output = validate_path_within(&output_path, &allowed_root)?;
 
     if let Some(bitrate) = bitrate_kbps {
         let mut config = opus::OpusEncoderConfig::default();
         config.bitrate_kbps = bitrate;
-        opus::encode_wav_to_opus(input, output, &config)
+        opus::encode_wav_to_opus(&input, &output, &config)
     } else {
-        opus::encode_wav_to_opus_default(input, output)
+        opus::encode_wav_to_opus_default(&input, &output)
     }
 }
 
@@ -2626,6 +2674,7 @@ pub fn run() {
                 refinement_fallback_timed_out: AtomicU64::new(0),
                 last_mic_recording_path: Mutex::new(None),
                 last_system_recording_path: Mutex::new(None),
+                managed_ollama_child: Mutex::new(None),
             });
 
             if env_flag("TRISPR_RUN_LATENCY_BENCHMARK") {
@@ -3039,6 +3088,21 @@ pub fn run() {
             delete_ollama_model,
             get_ollama_model_info,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Kill managed Ollama child process on app exit
+                let child = app_handle
+                    .state::<AppState>()
+                    .managed_ollama_child
+                    .lock()
+                    .unwrap()
+                    .take();
+                if let Some(mut child) = child {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        });
 }

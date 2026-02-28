@@ -1,3 +1,4 @@
+import { escapeHtml } from "./utils";
 import * as dom from "./dom-refs";
 import type {
   HistoryEntry,
@@ -154,15 +155,6 @@ function restoreSnapshotStateFromStorage(entryIds: Set<string>): void {
     latest = null;
     focusedEntryId = null;
   }
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 export type RefinementDiffKind = "same" | "added" | "removed";
@@ -405,6 +397,22 @@ export function resetRefinementInspector(): void {
   snapshotsByEntryId.clear();
   persistSnapshotStateToStorage();
   renderLatestInspector();
+}
+
+/** Remove snapshots for entries that no longer exist and persist the change. */
+export function pruneOrphanedSnapshots(validEntryIds: Set<string>): void {
+  let pruned = false;
+  for (const entryId of snapshotsByEntryId.keys()) {
+    if (!validEntryIds.has(entryId)) {
+      const snapshot = snapshotsByEntryId.get(entryId);
+      if (snapshot?.jobId) snapshotsByJobId.delete(snapshot.jobId);
+      snapshotsByEntryId.delete(entryId);
+      pruned = true;
+    }
+  }
+  if (pruned) {
+    persistSnapshotStateToStorage();
+  }
 }
 
 export function restoreRefinementInspector(entries: HistoryEntry[]): void {

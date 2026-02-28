@@ -92,6 +92,31 @@ pub fn is_local_ollama_endpoint(endpoint: &str) -> bool {
     true
 }
 
+/// Check if an endpoint targets a known SSRF-sensitive address
+/// (cloud metadata services, link-local ranges).
+pub fn is_ssrf_target(endpoint: &str) -> bool {
+    let normalized = normalize_ollama_endpoint(endpoint);
+    let parsed = match Url::parse(&normalized) {
+        Ok(url) => url,
+        Err(_) => return false,
+    };
+    let host = parsed
+        .host_str()
+        .map(|h| h.to_ascii_lowercase())
+        .unwrap_or_default();
+    // Block cloud metadata endpoint (AWS/GCP/Azure)
+    if host == "169.254.169.254" || host == "metadata.google.internal" {
+        return true;
+    }
+    // Block link-local range (169.254.x.x) entirely
+    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+        if ip.octets()[0] == 169 && ip.octets()[1] == 254 {
+            return true;
+        }
+    }
+    false
+}
+
 /// Return preferred endpoint plus a localhost/127.0.0.1 fallback variant.
 pub fn ollama_endpoint_candidates(endpoint: &str) -> Vec<String> {
     let primary = normalize_ollama_endpoint(endpoint);

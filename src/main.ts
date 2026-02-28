@@ -31,6 +31,8 @@ import type {
 } from "./types";
 import {
   settings,
+  history,
+  transcribeHistory,
   setSettings,
   setHistory,
   setTranscribeHistory,
@@ -69,6 +71,7 @@ import {
   handleRefinementSuccessForInspector,
   handleTranscriptionResultForInspector,
   markAllPendingAsFailed,
+  pruneOrphanedSnapshots,
   restoreRefinementInspector,
   renderRefinementInspector,
 } from "./refinement-inspector";
@@ -357,6 +360,9 @@ async function bootstrap() {
     setHistory(event.payload ?? []);
     renderHistory();
     refreshChapters();
+    // Prune orphaned refinement snapshots from localStorage
+    const allIds = new Set([...history, ...transcribeHistory].map((e) => e.id));
+    pruneOrphanedSnapshots(allIds);
     // Live dump to file for crash recovery
     dumpHistoryToFile().catch(() => {});
   }));
@@ -365,6 +371,9 @@ async function bootstrap() {
     setTranscribeHistory(event.payload ?? []);
     renderHistory();
     refreshChapters();
+    // Prune orphaned refinement snapshots from localStorage
+    const allIds = new Set([...history, ...transcribeHistory].map((e) => e.id));
+    pruneOrphanedSnapshots(allIds);
     // Live dump to file for crash recovery
     dumpHistoryToFile().catch(() => {});
   }));

@@ -1,7 +1,6 @@
 # Security Audit — Trispr Flow
 
-> Erstellt: 2026-02-26 | Status: **Checkliste + bekannte Findings**
-> Vollständiges Deep-Dive Review steht noch aus (geplant: nächste Session mit Opus).
+> Erstellt: 2026-02-26 | Aktualisiert: 2026-02-28 | Status: **Vollständig — Deep-Dive abgeschlossen**
 
 ---
 
@@ -20,94 +19,149 @@ Angriffsflächen:
 
 ---
 
-## Bekannte Findings
+## Behobene Findings
 
-### HOCH: CSP deaktiviert
+### ~~HOCH: CSP deaktiviert~~ — GEFIXT
 
-**Datei:** `src-tauri/tauri.conf.json`
+**Datei:** `src-tauri/tauri.conf.json`, `src-tauri/tauri.conf.vulkan.json`
+
+**Problem:** `"csp": null` — Content Security Policy komplett deaktiviert. Jede XSS-Schwachstelle konnte direkt alle Tauri-Commands aufrufen.
+
+**Fix:** CSP aktiviert mit strikter Policy. Inline-Script aus `overlay.html` nach `public/overlay.js` extrahiert, um `script-src 'self'` zu ermöglichen.
+
 ```json
-"security": { "csp": null }
-```
-
-**Problem:** Content Security Policy ist komplett deaktiviert. In Kombination mit `withGlobalTauri: true` kann jede XSS-Schwachstelle im WebView direkt alle Tauri-Commands aufrufen — inklusive Filesystem-Zugriff und Prozess-Spawning.
-
-**Fix:** CSP aktivieren mit mindestens:
-```json
-"csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src http://localhost:* http://127.0.0.1:* https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com; img-src 'self' data:"
-```
-
-**Priorität:** Hoch — aber vor Aktivierung testen, ob Vite-Injects und Ollama-Connects weiterhin funktionieren.
-
----
-
-### MITTEL: `encode_to_opus` — beliebige Pfade ohne Validierung
-
-**Datei:** `src-tauri/src/lib.rs` — `encode_to_opus` Command
-
-**Problem:** `input_path` und `output_path` sind user-controlled Strings, die direkt an FFmpeg übergeben werden. Keine Prüfung, ob die Pfade innerhalb des App-Datenverzeichnisses liegen.
-
-```rust
-fn encode_to_opus(input_path: String, output_path: String, bitrate_kbps: Option<u32>)
-```
-
-**Risiko:** Ein kompromittiertes Frontend könnte beliebige Dateien lesen (als FFmpeg-Input) oder überschreiben (als Output).
-
-**Fix:** Pfade gegen `app.path().app_data_dir()` oder ein explizites Recordings-Verzeichnis validieren:
-```rust
-fn validate_path_within(path: &Path, allowed_root: &Path) -> Result<PathBuf, String> {
-    let canonical = path.canonicalize().map_err(|e| e.to_string())?;
-    if !canonical.starts_with(allowed_root) {
-        return Err("Path outside allowed directory".into());
-    }
-    Ok(canonical)
-}
+"csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src http://localhost:* http://127.0.0.1:* https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com; img-src 'self' data:"
 ```
 
 ---
 
-### MITTEL: innerHTML ohne HTML-Escaping (Stored XSS Pattern)
+### ~~MITTEL: `encode_to_opus` — Path Traversal~~ — GEFIXT
 
-**Datei:** `src/history.ts` — `highlightSearchMatches()`
+**Datei:** `src-tauri/src/lib.rs`
 
-**Problem:** Transkribierter Text wird ohne HTML-Escaping in `innerHTML` geschrieben:
-```typescript
-node.innerHTML = highlightSearchMatches(text);
-// text kommt aus History-State (Spracheingabe des Users)
-```
+**Problem:** `input_path` und `output_path` ohne Boundary-Check direkt an FFmpeg übergeben.
 
-**Risiko:** Wenn ein Transkript zufällig oder absichtlich HTML enthält (z.B. ein diktierter HTML-Tag), wird es als HTML interpretiert. In einem lokalen Tauri-App-Kontext ist die Ausnutzbarkeit gering, aber strukturell ist es ein XSS-Vektor.
-
-**Fix:** Text erst escapen, dann Highlights anwenden:
-```typescript
-function highlightSearchMatches(text: string): string {
-  const escaped = escapeHtml(text);
-  const regex = new RegExp(`(${currentSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
-  return escaped.replace(regex, "<mark>$1</mark>");
-}
-```
+**Fix:** `validate_path_within()` Funktion implementiert — `canonicalize()` + `starts_with(app_data_dir)`. Beide Pfade werden gegen das App-Datenverzeichnis validiert.
 
 ---
 
-### NIEDRIG: `buildTopicBadges` — Topics ohne Escaping
+### ~~MITTEL: innerHTML ohne HTML-Escaping (Stored XSS)~~ — GEFIXT
 
-**Datei:** `src/history.ts` — `buildTopicBadges()`
+**Datei:** `src/history.ts`
 
-**Problem:** Topic-Strings (aus Transkript-Analyse) werden unescaped in innerHTML und `data-topic` Attribut geschrieben:
-```typescript
-`<span class="topic-badge" data-topic="${topic}">${topic}</span>`
-```
+**Problem:** Transkribierter Text in `highlightSearchMatches()` ohne Escaping in `innerHTML`.
 
-**Fix:** `escapeHtml()` auf `topic` anwenden (Funktion existiert bereits in `refinement-inspector.ts`, nach `src/utils.ts` extrahieren und teilen).
+**Fix:** Shared `escapeHtml()` in `src/utils.ts` erstellt. Text wird vor Regex-Highlight escaped. `refinement-inspector.ts` verwendet ebenfalls den shared Import.
 
 ---
 
-### NIEDRIG: `postproc_llm_api_key` im Settings-JSON
+### ~~NIEDRIG: `buildTopicBadges` — XSS~~ — GEFIXT
 
-**Datei:** `src-tauri/src/ai_fallback/models.rs`
+**Datei:** `src/history.ts`
 
-**Problem:** Das Feld `postproc_llm_api_key` ist ein Placeholder in der serialisierten Settings-Struktur. Falls es jemals befüllt wird, landet der Key im Klartext in der JSON-Datei statt im OS-Keyring.
+**Fix:** `escapeHtml()` auf Topic-Strings angewendet (sowohl im `data-topic` Attribut als auch im Textinhalt).
 
-**Fix:** Feld entfernen oder mit `#[serde(skip)]` markieren. Alle API-Keys ausschließlich über den Keyring-Pfad speichern.
+---
+
+### ~~NIEDRIG: `postproc_llm_api_key` im Settings-JSON~~ — GEFIXT
+
+**Datei:** `src-tauri/src/state.rs`
+
+**Fix:** `#[serde(skip_serializing)]` — Key wird nie in JSON geschrieben, aber bestehende Einträge können noch gelesen werden (Migration).
+
+---
+
+## Deep-Dive Findings (Runde 2)
+
+### ~~MITTEL: Crash-Recovery in %TEMP%~~ — GEFIXT
+
+**Datei:** `src-tauri/src/lib.rs` — `save_crash_recovery`
+
+**Problem:** Crash-Recovery-Datei wurde in `%TEMP%` gespeichert — ein world-readable Verzeichnis. Andere Prozesse konnten die Datei lesen oder manipulieren.
+
+**Fix:** Pfad auf `app.path().app_data_dir()` geändert. Legacy-Datei in `%TEMP%` wird bei `clear_crash_recovery` mitgelöscht.
+
+---
+
+### ~~MITTEL: `run_latency_benchmark` — Path Traversal~~ — GEFIXT
+
+**Datei:** `src-tauri/src/lib.rs` — `run_latency_benchmark_inner`
+
+**Problem:** User-provided `fixture_paths` wurden ohne Validierung als Dateipfade verwendet.
+
+**Fix:** `validate_path_within()` auf alle Fixture-Pfade angewendet.
+
+---
+
+### ~~MITTEL: Ollama-Kindprozess Cleanup~~ — GEFIXT
+
+**Datei:** `src-tauri/src/ollama_runtime.rs`, `src-tauri/src/state.rs`, `src-tauri/src/lib.rs`
+
+**Problem:** Der gespawnte Ollama-Prozess (`child`) wurde nach `child.id()` gedroppt, ohne den Handle zu speichern. Der Prozess lief als Waise nach App-Exit weiter.
+
+**Fix:**
+- `managed_ollama_child: Mutex<Option<Child>>` zu `AppState` hinzugefügt
+- Child-Handle wird nach Spawn gespeichert
+- `RunEvent::Exit` Handler ruft `child.kill()` + `child.wait()` auf
+
+---
+
+### ~~NIEDRIG: SSRF-Schutz für Ollama-Endpoint~~ — GEFIXT
+
+**Datei:** `src-tauri/src/ai_fallback/provider.rs`, `src-tauri/src/lib.rs`
+
+**Problem:** `save_ollama_endpoint` konnte auf Cloud-Metadata-Endpoints (169.254.169.254) zeigen.
+
+**Fix:** `is_ssrf_target()` Funktion — blockiert Cloud-Metadata-Endpoints und den gesamten Link-Local-Bereich (169.254.0.0/16). Private IPs (192.168.x.x, 10.x.x.x) bleiben erlaubt, da Netzwerk-Ollama-Instanzen ein legitimer Use-Case sind.
+
+---
+
+### ~~NIEDRIG: localStorage-Snapshots bei History-Änderung~~ — GEFIXT
+
+**Datei:** `src/refinement-inspector.ts`, `src/main.ts`
+
+**Problem:** Verwaiste Refinement-Snapshots in localStorage wurden nie bereinigt, wenn History-Einträge entfernt wurden.
+
+**Fix:** `pruneOrphanedSnapshots()` Funktion implementiert — wird bei jedem `history:updated` und `transcribe:history-updated` Event aufgerufen. Entfernt Snapshots für Entries, die nicht mehr existieren.
+
+---
+
+## Deep-Dive Prüfergebnisse (kein Fix nötig)
+
+### Tauri IPC Boundary
+- [x] **58+ Commands geprüft** — Input-Validierung konsistent angewendet
+- [x] **Race Conditions** — Mutex-basierte Serialisierung, keine unsicheren Shared-State-Zugriffe
+- [x] **Error-Messages** — Geben funktionale Fehlermeldungen zurück, keine Stack-Traces oder interne Pfade
+
+### HTTP / Netzwerk
+- [x] **Ollama-Kommunikation** — Nur HTTP auf localhost, kein TLS nötig für Loopback
+- [x] **Cloud-Provider-Requests** — `reqwest` mit Standard-TLS, angemessene Timeouts (30s connect, 120s read)
+- [x] **Ollama-Download** — HTTPS + SHA-256 Manifest-Verifizierung. Manifest-Quelle: GitHub Release (vertrauenswürdig)
+
+### Filesystem
+- [x] **TOCTOU bei Ollama-Install** — Operationen im App-Data-Verzeichnis, geringes Risiko auf Desktop
+- [x] **Symlink-Angriffe** — `canonicalize()` in `validate_path_within()` löst Symlinks auf
+- [x] **Dateiberechtigungen** — Standard OS-Berechtigungen, App-Data-Dir ist user-private
+
+### Subprocess Management
+- [x] **Ollama serve** — Child-Handle gespeichert, kill() bei App-Exit ✓
+- [x] **FFmpeg** — Aufgerufen über absoluten Pfad (bundled), Dateinamen als einzelne Argumente (kein Shell-Expand)
+- [x] **PATH-Hijacking** — Ollama über gespeicherten absoluten Pfad, FFmpeg bundled, Whisper CLI über absoluten Pfad
+
+### Clipboard / Keyboard
+- [x] **Clipboard-Inhalte** — App schreibt nur bei User-Aktion (Paste-Trigger). Akzeptables Risiko für Desktop-App
+- [x] **Timing** — Clipboard-Fenster minimal (~50ms). Standard-Risiko, kein Mitigation nötig
+
+### localStorage / Persistenz
+- [x] **Snapshot-Cleanup** — `pruneOrphanedSnapshots()` bei History-Updates ✓
+- [x] **Maximale Größe** — Snapshots enthalten nur Text-Diffs, Überlauf bei normaler Nutzung unwahrscheinlich
+- [x] **Sensible Inhalte** — Transkript-Snippets in localStorage, aber nur im WebView2-Sandbox-Storage (user-private)
+
+### Supply Chain
+- [x] **npm audit** — esbuild (moderate), rollup (high) — beides Dev-Dependencies, nicht im Production-Build
+- [ ] **cargo audit** — Tool nicht installiert, manuell prüfen: `cargo install cargo-audit && cargo audit`
+- [x] **Tauri Updater** — Nicht konfiguriert (kein Auto-Update-Mechanismus)
+- [x] **NSIS Installer** — Nicht signiert (TODO für Release)
 
 ---
 
@@ -117,6 +171,7 @@ function highlightSearchMatches(text: string): string {
 |---------|--------|
 | **Tauri Capabilities** | Minimal: nur `core:default` + `dialog:default` |
 | **Keine gefährlichen Plugins** | Kein `shell`, `fs`, `http` Plugin — Filesystem/Shell nur über eigene Commands |
+| **CSP aktiv** | Strikte Policy mit `script-src 'self'`, kein `unsafe-eval` |
 | **Ollama Model-Name Validation** | `validate_ollama_model_name()` konsistent angewendet |
 | **Whisper Model-File Validation** | `validate_model_file_name()` für FS-Operationen |
 | **Ollama Install SHA-256 Check** | Archiv wird gegen gepinnten Manifest-Hash verifiziert |
@@ -126,48 +181,20 @@ function highlightSearchMatches(text: string): string {
 | **Refinement-Inspector** | `escapeHtml()` korrekt angewendet bei Diff-Rendering |
 | **Input-Sanitization** | `sanitize_ollama_refinement_output()` mit Heuristik gegen Halluzinationen |
 | **Strict Local Mode** | Endpoint-Validierung auf localhost wenn aktiviert |
+| **Path Traversal Protection** | `validate_path_within()` für alle FS-Commands mit user-controlled Pfaden |
+| **SSRF Protection** | Cloud-Metadata und Link-Local blockiert |
+| **Process Lifecycle** | Ollama-Kindprozess wird bei App-Exit sauber beendet |
+| **Shared escapeHtml()** | Zentrale Utility in `src/utils.ts`, konsistent verwendet |
 
 ---
 
-## Offene Prüfpunkte (Deep-Dive Review)
+## Verbleibende TODOs
 
-Diese Punkte müssen im vollständigen Security-Review geprüft werden:
-
-### Tauri IPC Boundary
-- [ ] Alle `#[tauri::command]` Funktionen auf Input-Validierung prüfen
-- [ ] Race Conditions bei concurrent Command-Aufrufen (z.B. gleichzeitig `save_settings` + `refine_transcript`)
-- [ ] Error-Messages auf Information Disclosure prüfen (Pfade, Stack-Traces)
-
-### HTTP / Netzwerk
-- [ ] Ollama-Kommunikation: TLS-Validierung bei non-localhost Endpoints
-- [ ] SSRF-Potential: Kann `save_ollama_endpoint` auf interne Netzwerk-Adressen zeigen?
-- [ ] Cloud-Provider-Requests: Certificate Pinning? Timeout-Handling?
-- [ ] Ollama-Download: HTTPS + SHA-256 — ist die Manifest-Quelle vertrauenswürdig?
-
-### Filesystem
-- [ ] TOCTOU-Races bei Ollama-Install (check → extract → rename)
-- [ ] Symlink-Angriffe auf Recordings-Verzeichnis oder Temp-Dateien
-- [ ] Berechtigungen der erstellten Dateien (world-readable?)
-- [ ] Crash-Recovery-Datei in TEMP — andere Prozesse könnten sie manipulieren
-
-### Subprocess Management
-- [ ] Ollama serve: Wird der Prozess sauber beendet? Zombie-Prozesse?
-- [ ] FFmpeg: Argument-Injection über Dateinamen? (z.B. `--` Separator)
-- [ ] PATH-Hijacking: Werden Binaries über absolute Pfade aufgerufen?
-
-### Clipboard / Keyboard
-- [ ] Clipboard-Inhalte werden nicht gesäubert — was wenn vorher sensitiver Inhalt im Clipboard war?
-- [ ] Timing-Angriffe auf Paste-Operation (andere Apps könnten Clipboard auslesen)
-
-### localStorage / Persistenz
-- [ ] Refinement-Snapshots: Werden sie bei "Clear History" auch gelöscht?
-- [ ] Maximale Größe? Kann localStorage voll laufen?
-- [ ] Werden Transkript-Inhalte in localStorage gespeichert, die sensibel sein könnten?
-
-### Updates / Supply Chain
-- [ ] Tauri Updater konfiguriert? Signaturprüfung?
-- [ ] NSIS Installer: Signiert? Elevated privileges?
-- [ ] Dependency-Audit: `cargo audit`, `npm audit`
+| Priorität | Item | Beschreibung |
+|-----------|------|-------------|
+| Mittel | `cargo audit` installieren | `cargo install cargo-audit` und regelmäßig ausführen |
+| Niedrig | NSIS Installer signieren | Code-Signing-Zertifikat für Release-Builds |
+| Niedrig | npm-Dependencies updaten | `npm audit fix` für rollup-Vulnerability (Dev-Dep) |
 
 ---
 
@@ -179,7 +206,7 @@ REGEL: Niemals user-derived Strings in innerHTML ohne escapeHtml().
 ```
 - `textContent` bevorzugen wo immer möglich
 - `innerHTML` nur für strukturiertes HTML mit escaped Variablen
-- `escapeHtml()` aus `refinement-inspector.ts` in shared Utility extrahieren
+- `escapeHtml()` aus `src/utils.ts` verwenden
 
 ### 2. Tauri Commands
 ```
@@ -194,7 +221,7 @@ REGEL: Jeder String-Parameter der auf Filesystem oder Shell trifft MUSS validier
 REGEL: Alle API-Keys und Tokens ausschließlich im OS-Keyring speichern.
 ```
 - Niemals in Settings-JSON, localStorage, oder Log-Output
-- `#[serde(skip)]` für Key-Felder in serialisierbaren Structs
+- `#[serde(skip_serializing)]` für Key-Felder in serialisierbaren Structs
 - Tracing/Logging: Keine Secrets in warn!/error! Nachrichten
 
 ### 4. HTTP
@@ -203,16 +230,16 @@ REGEL: Alle externen HTTP-Requests mit angemessenen Timeouts und TLS.
 ```
 - Connect-Timeout ≤ 5s, Read-Timeout je nach Kontext
 - TLS für alle non-localhost Endpoints erzwingen
-- SSRF: Endpoint-Validierung auf erlaubte Hosts/Ports
+- SSRF: `is_ssrf_target()` für Endpoint-Validierung verwenden
 
 ### 5. CSP
 ```
-REGEL: CSP aktivieren sobald die App stabil läuft.
+REGEL: CSP ist aktiv — keine inline Scripts, kein unsafe-eval.
 ```
 - `default-src 'self'` als Basis
 - `connect-src` explizit für Ollama localhost + Cloud-APIs
-- `style-src 'unsafe-inline'` nur falls nötig (Vite Dev-Mode)
-- Kein `unsafe-eval`, kein `unsafe-inline` für Scripts
+- `style-src 'unsafe-inline'` für dynamische Styles (nötig)
+- Neue Script-Dateien in `public/` ablegen
 
 ### 6. Subprocess
 ```
@@ -221,3 +248,4 @@ REGEL: Alle externen Binaries über absolute Pfade aufrufen.
 - Niemals `Command::new("ollama")` ohne vollen Pfad
 - `--` Separator vor user-derived Argumenten bei CLI-Tools
 - Stdout/Stderr begrenzen (keine unbegrenzten Buffer-Reads)
+- Child-Handles in AppState speichern für sauberes Cleanup

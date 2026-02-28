@@ -178,6 +178,8 @@ export interface Settings {
   conv_window_monitor?: string | null;
   conv_window_always_on_top?: boolean;
   main_window_start_state?: "normal" | "minimized" | "tray";
+  // UI theming
+  accent_color?: string;
 }
 
 export interface HistoryEntry {

@@ -205,11 +205,10 @@ function scrollToChapter(chapter: Chapter): void {
       block: "start",
     });
 
-    // Highlight briefly
-    entry.style.transition = "background 0.3s ease";
-    entry.style.background = "rgba(29, 166, 160, 0.2)";
+    // Highlight briefly with accent color
+    entry.classList.add("chapter-highlight-flash");
     setTimeout(() => {
-      entry.style.background = "";
+      entry.classList.remove("chapter-highlight-flash");
     }, 1000);
   }
 

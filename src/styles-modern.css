@@ -184,8 +184,8 @@
 .history-search-input:focus {
   outline: none;
   border-color: var(--accent-2);
-  background: rgba(29, 166, 160, 0.06);
-  box-shadow: 0 0 0 3px rgba(29, 166, 160, 0.15);
+  background: rgba(var(--accent-2-rgb), 0.06);
+  box-shadow: 0 0 0 3px rgba(var(--accent-2-rgb), 0.15);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -216,7 +216,7 @@
   background: linear-gradient(
     90deg,
     var(--accent-2) 0%,
-    #4be0d4       40%,
+    var(--accent-2-bright)       40%,
     var(--accent-2) 60%,
     var(--accent-2) 100%
   );
@@ -254,4 +254,65 @@ textarea:focus-visible,
 .toast {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   MODEL ITEMS — Provider-Lane-Stil für Whisper- & Ollama-Modelle
+   Ersetzt das farblose rgba(255,255,255,0.02)-Background durch
+   denselben Teal-Gradient wie die .ai-provider-lane--local-Karte.
+   ───────────────────────────────────────────────────────────── */
+
+.model-item {
+  background: linear-gradient(
+    135deg,
+    rgba(24, 53, 58, 0.38) 0%,
+    rgba(22, 32, 42, 0.48) 100%
+  );
+  border: 1px solid rgba(var(--accent-2-bright-rgb), 0.22);
+  border-radius: 10px;
+  transition: border-color var(--transition-fast),
+              box-shadow    var(--transition-fast),
+              transform     var(--transition-fast);
+}
+
+.model-item:hover {
+  border-color: rgba(var(--accent-2-bright-rgb), 0.45);
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(var(--accent-2-bright-rgb), 0.12);
+  transform: translateY(-1px);
+}
+
+/* Ausgewähltes Modell: Provider-Lane-Stil — kein äußerer Ring */
+.model-item.selected {
+  background: linear-gradient(
+    135deg,
+    rgba(24, 53, 58, 0.55) 0%,
+    rgba(22, 32, 42, 0.60) 100%
+  );
+  border-color: rgba(var(--accent-2-bright-rgb), 0.72);
+  border-width: 1px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.30);
+  transform: translateY(-1px);
+}
+
+/* Top-Accent-Bar: border-radius stimmt nicht mit 10px-Karte überein → ausblenden */
+.model-item.selected::before {
+  display: none;
+}
+
+/* Active-Badge: statischer Glow, kein Pulse (verhindert doppelte Bewegung) */
+.model-status.active,
+.model-status--active {
+  animation: none;
+  box-shadow: 0 0 6px rgba(var(--accent-2-rgb), 0.25);
+}
+
+/* Dimm-Zustand für noch nicht heruntergeladene Modelle */
+.model-item--available {
+  opacity: 0.55;
+}
+
+.model-item--available:hover {
+  opacity: 0.85;
 }

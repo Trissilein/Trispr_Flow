@@ -37,6 +37,10 @@ impl Default for SetupSettings {
     }
 }
 
+fn default_accent_color() -> String {
+    "#4be0d4".to_string()
+}
+
 fn default_overlay_refining_indicator_enabled() -> bool {
     true
 }
@@ -114,6 +118,8 @@ pub(crate) struct Settings {
     pub(crate) overlay_kitt_pos_x: f64,
     pub(crate) overlay_kitt_pos_y: f64,
     pub(crate) overlay_style: String, // "dot" | "kitt"
+    #[serde(default = "default_accent_color")]
+    pub(crate) accent_color: String,
     #[serde(default = "default_overlay_refining_indicator_enabled")]
     pub(crate) overlay_refining_indicator_enabled: bool,
     #[serde(default = "default_overlay_refining_indicator_preset")]
@@ -247,6 +253,7 @@ impl Default for Settings {
       overlay_kitt_pos_x: 50.0,     // 50% = horizontal center
       overlay_kitt_pos_y: 90.0,     // 90% = bottom area
       overlay_style: "dot".to_string(),
+      accent_color: "#4be0d4".to_string(),
       overlay_refining_indicator_enabled: true,
       overlay_refining_indicator_preset: "standard".to_string(),
       overlay_refining_indicator_color: "#6ec8ff".to_string(),
@@ -671,6 +678,9 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
                 || settings.overlay_refining_indicator_color.len() != 7
             {
                 settings.overlay_refining_indicator_color = "#6ec8ff".to_string();
+            }
+            if !settings.accent_color.starts_with('#') || settings.accent_color.len() != 7 {
+                settings.accent_color = "#4be0d4".to_string();
             }
             if settings.overlay_refining_indicator_speed_ms < 450 {
                 settings.overlay_refining_indicator_speed_ms = 450;

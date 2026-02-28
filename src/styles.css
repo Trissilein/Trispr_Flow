@@ -7,6 +7,9 @@
   --muted: #9ca3af;
   --accent: #ff6b3d;
   --accent-2: #1da6a0;
+  --accent-2-rgb: 29, 166, 160;
+  --accent-2-bright: var(--accent-2-bright);
+  --accent-2-bright-rgb: 76, 224, 212;
   --accent-3: #f5b342;
   --card: rgba(30, 35, 42, 0.95);
   --card-hover: rgba(35, 40, 47, 1);
@@ -67,13 +70,13 @@ body {
   display: inline-flex;
   padding: 3px 10px;
   border-radius: 999px;
-  background: rgba(29, 166, 160, 0.2);
-  color: #4be0d4;
+  background: rgba(var(--accent-2-rgb), 0.2);
+  color: var(--accent-2-bright);
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
   font-size: 0.65rem;
-  border: 1px solid rgba(29, 166, 160, 0.35);
+  border: 1px solid rgba(var(--accent-2-rgb), 0.35);
 }
 
 .badge--online {
@@ -136,9 +139,9 @@ h1 {
 }
 
 .status-pill--enabled {
-  background: rgba(29, 166, 160, 0.2);
-  color: #4be0d4;
-  border-color: rgba(29, 166, 160, 0.4);
+  background: rgba(var(--accent-2-rgb), 0.2);
+  color: var(--accent-2-bright);
+  border-color: rgba(var(--accent-2-rgb), 0.4);
 }
 
 .status-pill--disabled {
@@ -360,7 +363,7 @@ h1 {
 .main-tab-btn.active {
   background: var(--accent-2);
   color: #fff;
-  box-shadow: 0 2px 8px rgba(29, 166, 160, 0.25);
+  box-shadow: 0 2px 8px rgba(var(--accent-2-rgb), 0.25);
 }
 
 /* LAYOUT GRIDS */
@@ -718,7 +721,7 @@ h1 {
   outline: none;
   border-color: var(--accent-2);
   background-color: rgba(255, 255, 255, 0.05);
-  box-shadow: 0 0 0 3px rgba(29, 166, 160, 0.15);
+  box-shadow: 0 0 0 3px rgba(var(--accent-2-rgb), 0.15);
 }
 
 .field input:hover,
@@ -1149,9 +1152,9 @@ button:disabled {
 
 .history-tab.active {
   color: var(--ink);
-  background: rgba(29, 166, 160, 0.15);
-  border-color: rgba(29, 166, 160, 0.4);
-  box-shadow: 0 0 0 1px rgba(29, 166, 160, 0.1);
+  background: rgba(var(--accent-2-rgb), 0.15);
+  border-color: rgba(var(--accent-2-rgb), 0.4);
+  box-shadow: 0 0 0 1px rgba(var(--accent-2-rgb), 0.1);
 }
 
 .history-tab:hover {
@@ -1181,7 +1184,7 @@ button:disabled {
   outline: none;
   border-color: var(--accent);
   background: rgba(255, 255, 255, 0.05);
-  box-shadow: 0 0 0 2px rgba(29, 166, 160, 0.1);
+  box-shadow: 0 0 0 2px rgba(var(--accent-2-rgb), 0.1);
 }
 
 .history-search-input::placeholder {
@@ -1275,7 +1278,7 @@ button:disabled {
 .chapter-method-select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(29, 166, 160, 0.1);
+  box-shadow: 0 0 0 2px rgba(var(--accent-2-rgb), 0.1);
 }
 
 .chapters-list {
@@ -1301,8 +1304,13 @@ button:disabled {
 }
 
 .chapter-item.active {
-  background: rgba(29, 166, 160, 0.12);
-  border-color: rgba(29, 166, 160, 0.3);
+  background: rgba(var(--accent-2-rgb), 0.12);
+  border-color: rgba(var(--accent-2-rgb), 0.3);
+}
+
+.chapter-highlight-flash {
+  background: rgba(var(--accent-2-rgb), 0.2) !important;
+  transition: background 0.3s ease;
 }
 
 .chapter-number {
@@ -1318,7 +1326,7 @@ button:disabled {
 }
 
 .chapter-item.active .chapter-number {
-  background: rgba(29, 166, 160, 0.2);
+  background: rgba(var(--accent-2-rgb), 0.2);
   color: var(--accent);
 }
 
@@ -1422,8 +1430,8 @@ button:disabled {
 }
 
 .chat-message--mic .chat-message-bubble {
-  border-color: rgba(29, 166, 160, 0.32);
-  background: rgba(29, 166, 160, 0.14);
+  border-color: rgba(var(--accent-2-rgb), 0.32);
+  background: rgba(var(--accent-2-rgb), 0.14);
 }
 
 .chat-message-meta {
@@ -1620,7 +1628,7 @@ button.refinement-chip:hover {
 }
 
 button.refinement-chip:focus-visible {
-  outline: 2px solid rgba(76, 224, 212, 0.65);
+  outline: 2px solid rgba(var(--accent-2-bright-rgb), 0.65);
   outline-offset: 1px;
 }
 
@@ -1669,17 +1677,17 @@ button.refinement-chip:focus-visible {
   font-size: 0.65rem;
   font-weight: 500;
   border-radius: 3px;
-  background: rgba(29, 166, 160, 0.15);
+  background: rgba(var(--accent-2-rgb), 0.15);
   color: var(--accent);
-  border: 1px solid rgba(29, 166, 160, 0.25);
+  border: 1px solid rgba(var(--accent-2-rgb), 0.25);
   letter-spacing: 0.02em;
   text-transform: lowercase;
   transition: all 0.2s ease;
 }
 
 .topic-badge:hover {
-  background: rgba(29, 166, 160, 0.25);
-  border-color: rgba(29, 166, 160, 0.4);
+  background: rgba(var(--accent-2-rgb), 0.25);
+  border-color: rgba(var(--accent-2-rgb), 0.4);
   transform: scale(1.05);
 }
 
@@ -1868,10 +1876,10 @@ button.refinement-chip:focus-visible {
 /* Removed .model-item.selectable cursor - only Apply button switches models */
 
 .model-item.selected {
-  background: linear-gradient(135deg, rgba(29, 166, 160, 0.12) 0%, rgba(29, 166, 160, 0.08) 100%);
+  background: linear-gradient(135deg, rgba(var(--accent-2-rgb), 0.12) 0%, rgba(var(--accent-2-rgb), 0.08) 100%);
   border-color: var(--accent-2);
   border-width: 2px;
-  box-shadow: 0 0 0 1px rgba(29, 166, 160, 0.15), 0 4px 12px rgba(29, 166, 160, 0.08);
+  box-shadow: 0 0 0 1px rgba(var(--accent-2-rgb), 0.15), 0 4px 12px rgba(var(--accent-2-rgb), 0.08);
   position: relative;
 }
 
@@ -1882,7 +1890,7 @@ button.refinement-chip:focus-visible {
   left: 0;
   right: 0;
   height: 3px;
-  background: linear-gradient(90deg, var(--accent-2) 0%, rgba(29, 166, 160, 0.5) 100%);
+  background: linear-gradient(90deg, var(--accent-2) 0%, rgba(var(--accent-2-rgb), 0.5) 100%);
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
@@ -1937,20 +1945,20 @@ button.refinement-chip:focus-visible {
 
 .model-status.active,
 .model-status--active {
-  background: rgba(29, 166, 160, 0.25);
-  color: #4be0d4;
-  border: 1px solid rgba(29, 166, 160, 0.5);
+  background: rgba(var(--accent-2-rgb), 0.25);
+  color: var(--accent-2-bright);
+  border: 1px solid rgba(var(--accent-2-rgb), 0.5);
   font-weight: 700;
-  box-shadow: 0 0 8px rgba(29, 166, 160, 0.3);
+  box-shadow: 0 0 8px rgba(var(--accent-2-rgb), 0.3);
   animation: pulseActiveBadge 2s ease-in-out infinite;
 }
 
 @keyframes pulseActiveBadge {
   0%, 100% {
-    box-shadow: 0 0 8px rgba(29, 166, 160, 0.3);
+    box-shadow: 0 0 8px rgba(var(--accent-2-rgb), 0.3);
   }
   50% {
-    box-shadow: 0 0 12px rgba(29, 166, 160, 0.5);
+    box-shadow: 0 0 12px rgba(var(--accent-2-rgb), 0.5);
   }
 }
 
@@ -1985,7 +1993,7 @@ button.refinement-chip:focus-visible {
   gap: 6px;
   padding: 8px 16px !important;
   background: linear-gradient(135deg, var(--accent-2) 0%, #17948f 100%);
-  border: 1px solid rgba(29, 166, 160, 0.6) !important;
+  border: 1px solid rgba(var(--accent-2-rgb), 0.6) !important;
   border-radius: var(--radius-sm);
   color: #fff !important;
   font-weight: 700;
@@ -2008,9 +2016,9 @@ button.refinement-chip:focus-visible {
 
 .btn-apply-model:hover {
   background: linear-gradient(135deg, #1bb8b1 0%, #17948f 100%);
-  border-color: rgba(29, 166, 160, 0.8) !important;
+  border-color: rgba(var(--accent-2-rgb), 0.8) !important;
   transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(29, 166, 160, 0.35);
+  box-shadow: 0 4px 16px rgba(var(--accent-2-rgb), 0.35);
 }
 
 .btn-apply-model:hover::before {
@@ -2038,8 +2046,8 @@ button.refinement-chip:focus-visible {
 
 /* Loading State */
 .btn-apply-model.is-loading {
-  background: rgba(29, 166, 160, 0.3);
-  border-color: rgba(29, 166, 160, 0.4) !important;
+  background: rgba(var(--accent-2-rgb), 0.3);
+  border-color: rgba(var(--accent-2-rgb), 0.4) !important;
   cursor: wait;
   pointer-events: none;
 }
@@ -2259,7 +2267,7 @@ button.refinement-chip:focus-visible {
 /* During recording - highlight */
 .hotkey-input-group input.recording {
   border-color: var(--accent-2);
-  background-color: rgba(29, 166, 160, 0.08);
+  background-color: rgba(var(--accent-2-rgb), 0.08);
   color: var(--accent-2);
   font-weight: 600;
 }
@@ -2285,7 +2293,7 @@ button.refinement-chip:focus-visible {
   height: 12px;
   border-radius: 999px;
   border: 2px solid rgba(255, 255, 255, 0.28);
-  border-top-color: rgba(76, 224, 212, 0.95);
+  border-top-color: rgba(var(--accent-2-bright-rgb), 0.95);
   transform: translateY(-50%);
   animation: runtime-spin 0.9s linear infinite;
 }
@@ -2330,7 +2338,7 @@ button.refinement-chip:focus-visible {
   height: 100%;
   width: 0%;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(29, 166, 160, 0.75), rgba(245, 179, 66, 0.9));
+  background: linear-gradient(90deg, rgba(var(--accent-2-rgb), 0.75), rgba(245, 179, 66, 0.9));
   transition: width 80ms linear;
 }
 
@@ -2544,7 +2552,7 @@ button.refinement-chip:focus-visible {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(29, 166, 160, 0.15) 50%,
+    rgba(var(--accent-2-rgb), 0.15) 50%,
     transparent 100%
   );
   animation: shimmer 2s ease-in-out infinite;
@@ -2828,7 +2836,7 @@ input[type="range"]:focus-visible {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, rgba(29, 166, 160, 0.03) 0%, transparent 50%);
+  background: linear-gradient(135deg, rgba(var(--accent-2-rgb), 0.03) 0%, transparent 50%);
   pointer-events: none;
 }
 
@@ -2904,7 +2912,7 @@ input[type="range"]:focus-visible {
   outline: none;
   border-color: var(--accent-2);
   background: rgba(30, 35, 42, 1);
-  box-shadow: 0 0 0 3px rgba(29, 166, 160, 0.1);
+  box-shadow: 0 0 0 3px rgba(var(--accent-2-rgb), 0.1);
   transform: translateY(-1px);
 }
 
@@ -2981,8 +2989,8 @@ input[type="range"]:focus-visible {
 
 /* Add Entry Button */
 #postproc-vocab-add {
-  background: rgba(29, 166, 160, 0.12);
-  border: 1px solid rgba(29, 166, 160, 0.3);
+  background: rgba(var(--accent-2-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-2-rgb), 0.3);
   color: var(--accent-2);
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -2995,17 +3003,17 @@ input[type="range"]:focus-visible {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, rgba(29, 166, 160, 0.2) 0%, transparent 100%);
+  background: linear-gradient(135deg, rgba(var(--accent-2-rgb), 0.2) 0%, transparent 100%);
   opacity: 0;
   transition: opacity 0.25s ease;
 }
 
 #postproc-vocab-add:hover {
-  background: rgba(29, 166, 160, 0.18);
-  border-color: rgba(29, 166, 160, 0.5);
-  color: #4be0d4;
+  background: rgba(var(--accent-2-rgb), 0.18);
+  border-color: rgba(var(--accent-2-rgb), 0.5);
+  color: var(--accent-2-bright);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(29, 166, 160, 0.2);
+  box-shadow: 0 4px 12px rgba(var(--accent-2-rgb), 0.2);
 }
 
 #postproc-vocab-add:hover::before {
@@ -3361,7 +3369,7 @@ input[type="range"]:focus-visible {
 }
 
 .ai-provider-lane--local.is-active {
-  border-color: rgba(76, 224, 212, 0.62);
+  border-color: rgba(var(--accent-2-bright-rgb), 0.62);
 }
 
 .ai-provider-lane--online.is-active {
@@ -3369,7 +3377,7 @@ input[type="range"]:focus-visible {
 }
 
 .ai-provider-lane--local {
-  border-color: rgba(76, 224, 212, 0.35);
+  border-color: rgba(var(--accent-2-bright-rgb), 0.35);
   background: linear-gradient(135deg, rgba(24, 53, 58, 0.45), rgba(22, 32, 42, 0.5));
 }
 
@@ -3529,9 +3537,9 @@ input[type="range"]:focus-visible {
   letter-spacing: 0.06em;
   padding: 2px 7px;
   border-radius: 10px;
-  background: rgba(29, 166, 160, 0.15);
-  color: var(--accent-1, #4be0d4);
-  border: 1px solid rgba(29, 166, 160, 0.3);
+  background: rgba(var(--accent-2-rgb), 0.15);
+  color: var(--accent-1, var(--accent-2-bright));
+  border: 1px solid rgba(var(--accent-2-rgb), 0.3);
 }
 
 /* Inline link-button used in Post-Processing hint */
@@ -3539,7 +3547,7 @@ input[type="range"]:focus-visible {
   background: none;
   border: none;
   padding: 0;
-  color: var(--accent-1, #4be0d4);
+  color: var(--accent-1, var(--accent-2-bright));
   font-size: inherit;
   cursor: pointer;
   text-decoration: underline;
@@ -3562,7 +3570,7 @@ input[type="range"]:focus-visible {
 .ai-refine-section-title.has-help-tooltip,
 .ollama-card-title.has-help-tooltip,
 .ollama-runtime-heading.has-help-tooltip {
-  text-decoration: underline dotted rgba(76, 224, 212, 0.45);
+  text-decoration: underline dotted rgba(var(--accent-2-bright-rgb), 0.45);
   text-underline-offset: 3px;
 }
 
@@ -3570,7 +3578,7 @@ input[type="range"]:focus-visible {
   position: absolute;
   width: clamp(220px, 36vw, 340px);
   border-radius: 10px;
-  border: 1px solid rgba(76, 224, 212, 0.34);
+  border: 1px solid rgba(var(--accent-2-bright-rgb), 0.34);
   background: linear-gradient(180deg, rgba(22, 28, 38, 0.96), rgba(14, 20, 28, 0.96));
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.42);
   color: var(--ink);
@@ -3747,9 +3755,9 @@ input[type="range"]:focus-visible {
 }
 
 .ollama-runtime-badge.is-ready {
-  background: rgba(76, 224, 212, 0.14);
-  border-color: rgba(76, 224, 212, 0.4);
-  color: #4be0d4;
+  background: rgba(var(--accent-2-bright-rgb), 0.14);
+  border-color: rgba(var(--accent-2-bright-rgb), 0.4);
+  color: var(--accent-2-bright);
 }
 
 .ollama-runtime-badge.is-busy {
@@ -3777,7 +3785,7 @@ input[type="range"]:focus-visible {
 }
 
 .ai-provider-lane--local.is-runtime-busy {
-  box-shadow: 0 0 0 1px rgba(76, 224, 212, 0.3), 0 0 18px rgba(76, 224, 212, 0.14);
+  box-shadow: 0 0 0 1px rgba(var(--accent-2-bright-rgb), 0.3), 0 0 18px rgba(var(--accent-2-bright-rgb), 0.14);
 }
 
 .ai-provider-lane--local.is-runtime-busy .badge {
@@ -3859,8 +3867,8 @@ input[type="range"]:focus-visible {
 }
 
 .hotkey-record-btn.is-recommended {
-  border-color: rgba(76, 224, 212, 0.5);
-  color: #4be0d4;
+  border-color: rgba(var(--accent-2-bright-rgb), 0.5);
+  color: var(--accent-2-bright);
 }
 
 .refinement-inspector-content {
@@ -3976,7 +3984,7 @@ input[type="range"]:focus-visible {
   position: relative;
   width: min(560px, 92vw);
   border-radius: 12px;
-  border: 1px solid rgba(76, 224, 212, 0.3);
+  border: 1px solid rgba(var(--accent-2-bright-rgb), 0.3);
   background: linear-gradient(180deg, rgba(20, 27, 36, 0.96), rgba(14, 19, 26, 0.96));
   box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
   padding: 14px;

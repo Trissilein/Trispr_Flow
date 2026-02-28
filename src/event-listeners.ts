@@ -21,6 +21,7 @@ import { setupHotkeyRecorder } from "./hotkeys";
 import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
+import { applyAccentColor } from "./utils";
 import { updateChaptersVisibility } from "./chapters";
 import {
   DEFAULT_REFINEMENT_PROMPT_PRESET,
@@ -2096,6 +2097,29 @@ export function wireEvents() {
 
   dom.overlayRefiningIndicatorColor?.addEventListener("change", async () => {
     if (!settings) return;
+    await persistSettings();
+  });
+
+  // Accent color picker — live preview while dragging
+  dom.accentColor?.addEventListener("input", () => {
+    if (!settings || !dom.accentColor) return;
+    settings.accent_color = dom.accentColor.value;
+    applyAccentColor(dom.accentColor.value);
+  });
+
+  // Accent color picker — persist when picker closes
+  dom.accentColor?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  // Reset accent color to default teal
+  dom.accentColorReset?.addEventListener("click", async () => {
+    if (!settings) return;
+    const defaultColor = "#4be0d4";
+    settings.accent_color = defaultColor;
+    if (dom.accentColor) dom.accentColor.value = defaultColor;
+    applyAccentColor(defaultColor);
     await persistSettings();
   });
 

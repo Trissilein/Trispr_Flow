@@ -98,7 +98,7 @@ pub fn is_ssrf_target(endpoint: &str) -> bool {
     let normalized = normalize_ollama_endpoint(endpoint);
     let parsed = match Url::parse(&normalized) {
         Ok(url) => url,
-        Err(_) => return false,
+        Err(_) => return true, // Fail-closed: unparseable URLs treated as SSRF targets
     };
     let host = parsed
         .host_str()
@@ -980,7 +980,7 @@ pub fn validate_ollama_model_name(name: &str) -> Result<(), String> {
     }
     if !name
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '.' || c == '-' || c == '_')
+        .all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '.' || c == '-' || c == '_' || c == '/')
     {
         return Err("Invalid characters in model name".to_string());
     }

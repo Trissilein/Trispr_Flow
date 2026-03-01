@@ -200,6 +200,24 @@ export function refreshUnifiedTooltips(root: ParentNode = document): void {
   convertNativeTitles(root);
 }
 
+export function cleanupUnifiedTooltips(): void {
+  if (!initialized) return;
+  document.removeEventListener("mouseover", onMouseOver, true);
+  document.removeEventListener("mouseout", onMouseOut, true);
+  document.removeEventListener("focusin", onFocusIn, true);
+  document.removeEventListener("focusout", onFocusOut, true);
+  window.removeEventListener("scroll", onViewportChanged, true);
+  window.removeEventListener("resize", onViewportChanged, true);
+  if (observer) { observer.disconnect(); observer = null; }
+  if (tooltipEl?.parentNode) { tooltipEl.parentNode.removeChild(tooltipEl); }
+  tooltipEl = null;
+  tooltipTitleEl = null;
+  tooltipBodyEl = null;
+  tooltipConsequenceEl = null;
+  activeTarget = null;
+  initialized = false;
+}
+
 export function initUnifiedTooltips(): void {
   if (initialized || typeof document === "undefined") return;
   initialized = true;

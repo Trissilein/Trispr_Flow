@@ -604,7 +604,7 @@ fn build_input_stream_f32(
 ) -> Result<cpal::Stream, String> {
     let channels = config.channels as usize;
     let sample_rate = config.sample_rate.0;
-    let err_fn = |err| eprintln!("audio stream error: {}", err);
+    let err_fn = |err| tracing::error!("audio stream error: {}", err);
 
     device
         .build_input_stream(
@@ -654,7 +654,7 @@ fn build_input_stream_i16(
 ) -> Result<cpal::Stream, String> {
     let channels = config.channels as usize;
     let sample_rate = config.sample_rate.0;
-    let err_fn = |err| eprintln!("audio stream error: {}", err);
+    let err_fn = |err| tracing::error!("audio stream error: {}", err);
 
     device
         .build_input_stream(
@@ -704,7 +704,7 @@ fn build_input_stream_u16(
 ) -> Result<cpal::Stream, String> {
     let channels = config.channels as usize;
     let sample_rate = config.sample_rate.0;
-    let err_fn = |err| eprintln!("audio stream error: {}", err);
+    let err_fn = |err| tracing::error!("audio stream error: {}", err);
 
     device
         .build_input_stream(

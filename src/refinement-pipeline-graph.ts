@@ -135,7 +135,7 @@ export function renderRefinementPipelineGraph(): void {
 
   let aiState: NodeState = "idle";
   if (!localAiPath) {
-    aiState = aiEnabled ? "bypassed" : "bypassed";
+    aiState = "bypassed";
   } else if (aiBlocked) {
     aiState = "blocked";
   } else if (!hasJob) {

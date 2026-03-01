@@ -430,9 +430,14 @@ function resolveCardStatus(modelName: string): CardStatus {
   return isModelActive(modelName) ? "active" : "downloaded";
 }
 
+
 async function persistCurrentSettings(): Promise<void> {
   if (!settings) return;
-  await invoke("save_settings", { settings });
+  try {
+    await invoke("save_settings", { settings });
+  } catch (error) {
+    console.error("save_settings failed:", error);
+  }
 }
 
 async function maybePersistWizardState(): Promise<void> {
@@ -1032,12 +1037,13 @@ async function handleOllamaPull(modelName: string): Promise<void> {
   try {
     await invoke("pull_ollama_model", { model: modelName });
   } catch (error) {
-    activeOllamaPulls.delete(modelName);
     showToast({
       type: "error",
       title: "Pull Failed",
       message: String(error),
     });
+  } finally {
+    activeOllamaPulls.delete(modelName);
     renderOllamaModelManager();
   }
 }

@@ -58,8 +58,8 @@ import {
 import { renderHistory, setHistoryTab } from "./history";
 import { initPanelState, isPanelCollapsed, setPanelCollapsed } from "./panels";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
-import { wireEvents, initMainTab } from "./event-listeners";
-import { initUnifiedTooltips } from "./custom-tooltips";
+import { wireEvents, initMainTab, cleanupWindowListeners } from "./event-listeners";
+import { initUnifiedTooltips, cleanupUnifiedTooltips } from "./custom-tooltips";
 import { dismissToast, showToast, showErrorToast } from "./toast";
 import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
@@ -197,6 +197,8 @@ function handleDeferredPasteTimeout(jobId: string): void {
 
 function cleanupEventListeners() {
   clearPendingDeferredPasteJobs();
+  cleanupUnifiedTooltips();
+  cleanupWindowListeners();
   eventUnlisteners.forEach((unlisten) => unlisten());
   eventUnlisteners = [];
   dismissToast(backlogWarningToastId);
@@ -218,12 +220,12 @@ function initConversationView() {
     applyConversationOnly();
   }
 
-  window.addEventListener("trispr:view", (event) => {
+  const onTrisprView = (event: Event) => {
     const detail = (event as CustomEvent<string>).detail;
-    if (detail === "conversation") {
-      applyConversationOnly();
-    }
-  });
+    if (detail === "conversation") applyConversationOnly();
+  };
+  window.addEventListener("trispr:view", onTrisprView);
+  eventUnlisteners.push(() => window.removeEventListener("trispr:view", onTrisprView));
 
   const stored = Number(localStorage.getItem("conversationFontSize") ?? "16");
   const size = Number.isFinite(stored) ? stored : 16;
@@ -313,7 +315,7 @@ async function bootstrap() {
     renderSettings();
     renderHero();
     renderModels();
-    refreshModelsDir();
+    void refreshModelsDir().catch((e) => console.error("refreshModelsDir failed:", e));
     if (settings?.ai_fallback?.provider === "ollama") {
       if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshInstalledModels) {
         void refreshOllamaInstalledModels();

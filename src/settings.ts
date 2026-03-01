@@ -22,7 +22,7 @@ import type {
   OverlayRefiningIndicatorPreset,
 } from "./types";
 
-function ensureContinuousDumpDefaults() {
+export function ensureContinuousDumpDefaults() {
   if (!settings) return;
   settings.auto_save_mic_audio ??= false;
   settings.continuous_dump_enabled ??= true;

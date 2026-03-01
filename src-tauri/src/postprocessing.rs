@@ -417,21 +417,6 @@ fn apply_custom_vocabulary(text: &str, vocab: &HashMap<String, String>) -> Strin
 /// - HTTP errors (401, 429, 500)
 ///
 /// Returns error on failure - caller should fallback to original text.
-#[allow(dead_code)]
-async fn refine_with_llm(
-    text: &str,
-    settings: &Settings,
-    _app: &AppHandle,
-) -> Result<String, String> {
-    // TODO: Implement in Phase 5
-    // For now, check API key and return error if empty
-    if settings.postproc_llm_api_key.is_empty() {
-        return Err("LLM API key not configured".to_string());
-    }
-
-    // Placeholder - will implement Claude API client in Phase 5
-    Ok(text.to_string())
-}
 
 #[cfg(test)]
 mod tests {

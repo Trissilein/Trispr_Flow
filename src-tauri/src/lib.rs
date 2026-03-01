@@ -3092,16 +3092,17 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
-                // Kill managed Ollama child process on app exit
-                let child = app_handle
+                // Kill managed Ollama child process on app exit.
+                // Use if-let to gracefully handle a poisoned mutex (e.g. from a prior panic).
+                if let Ok(mut guard) = app_handle
                     .state::<AppState>()
                     .managed_ollama_child
                     .lock()
-                    .unwrap()
-                    .take();
-                if let Some(mut child) = child {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                {
+                    if let Some(mut child) = guard.take() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
                 }
             }
         });

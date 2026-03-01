@@ -10,7 +10,7 @@ import type {
 } from "./types";
 import { settings, currentHistoryTab } from "./state";
 import * as dom from "./dom-refs";
-import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, updateTranscribeVadVisibility, updateTranscribeThreshold, renderAIFallbackSettingsUi, renderTopicKeywords } from "./settings";
+import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, updateTranscribeVadVisibility, updateTranscribeThreshold, renderAIFallbackSettingsUi, renderTopicKeywords, ensureContinuousDumpDefaults } from "./settings";
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
 import { refreshModels, refreshModelsDir } from "./models";
@@ -42,6 +42,13 @@ import {
   useSystemOllamaRuntime,
   verifyOllamaRuntime,
 } from "./ollama-models";
+
+// Cleanup registry for window-level listeners added by wireEvents()
+const _windowCleanups: Array<() => void> = [];
+export function cleanupWindowListeners(): void {
+  _windowCleanups.forEach((fn) => fn());
+  _windowCleanups.length = 0;
+}
 
 const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini", "ollama"];
 const CLOUD_PROVIDER_IDS: CloudAIFallbackProvider[] = ["claude", "openai", "gemini"];
@@ -296,27 +303,6 @@ function ensureAIFallbackSettingsDefaults() {
   settings.setup.ollama_remote_expert_opt_in ??= false;
 }
 
-function ensureContinuousDumpDefaults() {
-  if (!settings) return;
-  settings.auto_save_mic_audio ??= false;
-  settings.continuous_dump_enabled ??= true;
-  settings.continuous_dump_profile ??= "balanced";
-  settings.continuous_soft_flush_ms ??= 10000;
-  settings.continuous_silence_flush_ms ??= 1200;
-  settings.continuous_hard_cut_ms ??= 45000;
-  settings.continuous_min_chunk_ms ??= 1000;
-  settings.continuous_pre_roll_ms ??= 300;
-  settings.continuous_post_roll_ms ??= 200;
-  settings.continuous_idle_keepalive_ms ??= 60000;
-  settings.continuous_mic_override_enabled ??= false;
-  settings.continuous_mic_soft_flush_ms ??= settings.continuous_soft_flush_ms;
-  settings.continuous_mic_silence_flush_ms ??= settings.continuous_silence_flush_ms;
-  settings.continuous_mic_hard_cut_ms ??= settings.continuous_hard_cut_ms;
-  settings.continuous_system_override_enabled ??= false;
-  settings.continuous_system_soft_flush_ms ??= settings.continuous_soft_flush_ms;
-  settings.continuous_system_silence_flush_ms ??= settings.continuous_silence_flush_ms;
-  settings.continuous_system_hard_cut_ms ??= settings.continuous_hard_cut_ms;
-}
 
 function applyContinuousProfile(profile: "balanced" | "low_latency" | "high_quality") {
   if (!settings) return;
@@ -532,12 +518,8 @@ async function clearProviderApiKey(provider: CloudAIFallbackProvider): Promise<v
     providerSettings.auth_status = "locked";
     providerSettings.auth_verified_at = null;
   }
-  const forcedLocal = ensureOnlineModeConstraints(true);
-  if (forcedLocal) {
-    await persistSettings();
-  } else {
-    await persistSettings();
-  }
+  ensureOnlineModeConstraints(true);
+  await persistSettings();
   renderAIFallbackSettingsUi();
   refreshAuthModalContent();
 }
@@ -593,12 +575,8 @@ async function verifyProviderCredentials(provider: CloudAIFallbackProvider): Pro
       providerSettings.auth_status = "locked";
       providerSettings.auth_verified_at = null;
     }
-    const forcedLocal = ensureOnlineModeConstraints(true);
-    if (forcedLocal) {
-      await persistSettings();
-    } else {
-      await persistSettings();
-    }
+    ensureOnlineModeConstraints(true);
+    await persistSettings();
     renderAIFallbackSettingsUi();
     refreshAuthModalContent();
     showToast({
@@ -911,7 +889,11 @@ export function wireEvents() {
     const entries = buildConversationHistory();
     if (!entries.length) return;
     const transcript = buildConversationText(entries);
-    await navigator.clipboard.writeText(transcript);
+    try {
+      await navigator.clipboard.writeText(transcript);
+    } catch {
+      showToast({ type: "error", title: "Kopieren fehlgeschlagen", message: "Clipboard-Zugriff verweigert." });
+    }
   });
 
   dom.analyseButton?.addEventListener("click", () => {
@@ -1017,7 +999,9 @@ export function wireEvents() {
   setupHotkeyRecorder("transcribe", dom.transcribeHotkey, dom.transcribeHotkeyRecord, dom.transcribeHotkeyStatus);
   setupHotkeyRecorder("toggleActivationWords", dom.toggleActivationWordsHotkey, dom.toggleActivationWordsHotkeyRecord, dom.toggleActivationWordsHotkeyStatus);
 
-  window.addEventListener("resize", () => updateDeviceLineClamp());
+  const _onResize = () => updateDeviceLineClamp();
+  window.addEventListener("resize", _onResize);
+  _windowCleanups.push(() => window.removeEventListener("resize", _onResize));
 
   dom.deviceSelect?.addEventListener("change", async () => {
     if (!settings) return;
@@ -1470,11 +1454,13 @@ export function wireEvents() {
   dom.aiAuthModalBackdrop?.addEventListener("click", () => {
     closeAuthModal();
   });
-  window.addEventListener("keydown", (event) => {
+  const _onKeydown = (event: KeyboardEvent) => {
     if (event.key === "Escape" && dom.aiAuthModal && !dom.aiAuthModal.hidden) {
       closeAuthModal();
     }
-  });
+  };
+  window.addEventListener("keydown", _onKeydown);
+  _windowCleanups.push(() => window.removeEventListener("keydown", _onKeydown));
   dom.aiAuthMethod?.addEventListener("change", async () => {
     if (!settings || !dom.aiAuthMethod || !authModalProvider) return;
     ensureAIFallbackSettingsDefaults();

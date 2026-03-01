@@ -23,6 +23,7 @@ type ChapterMethod = "silence" | "time" | "hybrid";
 let currentChapters: Chapter[] = [];
 let activeChapterId: string | null = null;
 let isChaptersVisible = false;
+let chapterHighlightTimeout: number | undefined;
 
 /**
  * Check if chapters should be shown based on settings and active tab
@@ -205,9 +206,12 @@ function scrollToChapter(chapter: Chapter): void {
       block: "start",
     });
 
-    // Highlight briefly with accent color
+    // Highlight briefly with accent color (cancel any previous flash)
+    entry.classList.remove("chapter-highlight-flash");
+    void entry.offsetWidth; // force reflow to restart CSS transition
     entry.classList.add("chapter-highlight-flash");
-    setTimeout(() => {
+    clearTimeout(chapterHighlightTimeout);
+    chapterHighlightTimeout = window.setTimeout(() => {
       entry.classList.remove("chapter-highlight-flash");
     }, 1000);
   }

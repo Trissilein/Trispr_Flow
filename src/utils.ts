@@ -14,6 +14,14 @@ export function escapeHtml(value: string): string {
 // Accent color theming
 // ---------------------------------------------------------------------------
 
+export const DEFAULT_ACCENT_COLOR = "#4be0d4";
+
+/** Validate a hex color string, falling back to a given default. */
+export function normalizeColorHex(value: string | undefined, fallback: string): string {
+  const trimmed = (value || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed : fallback;
+}
+
 /** Parse a #RRGGBB hex string into [r, g, b] (0–255). */
 function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
@@ -81,8 +89,12 @@ function deriveAccentPair(brightHex: string): {
  * Apply accent color CSS variables to :root for live theming.
  * Sets --accent-2, --accent-2-rgb, --accent-2-bright, --accent-2-bright-rgb.
  * Call on page load and on every color picker "input" event.
+ * Skips DOM writes when the color hasn't changed.
  */
+let _lastAppliedAccent = "";
 export function applyAccentColor(brightHex: string): void {
+  if (brightHex === _lastAppliedAccent) return;
+  _lastAppliedAccent = brightHex;
   const { brightRgb, darkRgb, darkHex } = deriveAccentPair(brightHex);
   const root = document.documentElement.style;
   root.setProperty("--accent-2", darkHex);

@@ -21,7 +21,7 @@ import { setupHotkeyRecorder } from "./hotkeys";
 import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
-import { applyAccentColor } from "./utils";
+import { applyAccentColor, DEFAULT_ACCENT_COLOR } from "./utils";
 import { updateChaptersVisibility } from "./chapters";
 import {
   DEFAULT_REFINEMENT_PROMPT_PRESET,
@@ -2116,10 +2116,9 @@ export function wireEvents() {
   // Reset accent color to default teal
   dom.accentColorReset?.addEventListener("click", async () => {
     if (!settings) return;
-    const defaultColor = "#4be0d4";
-    settings.accent_color = defaultColor;
-    if (dom.accentColor) dom.accentColor.value = defaultColor;
-    applyAccentColor(defaultColor);
+    settings.accent_color = DEFAULT_ACCENT_COLOR;
+    if (dom.accentColor) dom.accentColor.value = DEFAULT_ACCENT_COLOR;
+    applyAccentColor(DEFAULT_ACCENT_COLOR);
     await persistSettings();
   });
 

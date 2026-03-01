@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { settings } from "./state";
 import * as dom from "./dom-refs";
 import { thresholdToDb, VAD_DB_FLOOR } from "./ui-helpers";
-import { applyAccentColor } from "./utils";
+import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "./utils";
 import { renderVocabulary } from "./event-listeners";
 import { getTopicKeywords, setTopicKeywords } from "./history";
 import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
@@ -196,14 +196,8 @@ export function updateTranscribeThreshold(threshold: number) {
 
 const CLOUD_PROVIDER_IDS: CloudAIFallbackProvider[] = ["claude", "openai", "gemini"];
 
-function normalizeAccentColor(value: string | undefined): string {
-  const trimmed = (value || "").trim();
-  return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed : "#4be0d4";
-}
-
 function normalizeRefiningIndicatorColor(value: string | undefined): string {
-  const trimmed = (value || "").trim();
-  return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed : "#6ec8ff";
+  return normalizeColorHex(value, "#6ec8ff");
 }
 
 function normalizeRefiningIndicatorSpeedMs(value: number | undefined): number {
@@ -789,7 +783,7 @@ export function renderSettings() {
     dom.overlayRefiningIndicatorPreset.value = settings.overlay_refining_indicator_preset;
   }
   // Apply accent color
-  settings.accent_color = normalizeAccentColor(settings.accent_color);
+  settings.accent_color = normalizeColorHex(settings.accent_color, DEFAULT_ACCENT_COLOR);
   if (dom.accentColor) dom.accentColor.value = settings.accent_color;
   applyAccentColor(settings.accent_color);
 

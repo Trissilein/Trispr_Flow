@@ -10,7 +10,6 @@ import { updateRangeAria } from "./accessibility";
 import {
   getHistoryAliases,
   getHistoryFontSize,
-  resolveSourceLabel,
 } from "./history-preferences";
 import {
   buildRefinementWordDiff,
@@ -27,7 +26,7 @@ export function buildConversationHistory(): HistoryEntry[] {
 export function buildConversationText(entries: HistoryEntry[]) {
   return entries
     .map((entry) => {
-      const speaker = resolveSourceLabel(entry.source);
+      const speaker = speakerName(entry);
       return `[${formatTime(entry.timestamp_ms)}] ${speaker}: ${getPreferredEntryText(entry)}`;
     })
     .join("\n");
@@ -228,6 +227,46 @@ export function generateHybridChapters(
   return chapters;
 }
 
+// ---------------------------------------------------------------------------
+// Export helper functions
+// ---------------------------------------------------------------------------
+
+const PAUSE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+function fmtRelOffset(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return h > 0
+    ? `+${h}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`
+    : `+${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+}
+
+function fmtTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function fmtDate(ms: number): string {
+  return new Date(ms).toLocaleDateString("sv"); // "2026-03-02"
+}
+
+function speakerName(entry: HistoryEntry): string {
+  const snapshot = entry.speaker_name?.trim();
+  if (snapshot) return snapshot;
+  const aliases = getHistoryAliases();
+  if (entry.source === "mic") return aliases.mic;
+  return aliases.system;
+}
+
+function entryText(entry: HistoryEntry): string {
+  return entry.refinement?.refined ?? entry.text;
+}
+
 /**
  * Builds export text in the requested format
  * @param entries - Array of history entries to export
@@ -249,61 +288,103 @@ export function buildExportText(entries: HistoryEntry[], format: ExportFormat): 
   return "";
 }
 
-function buildExportTxt(entries: HistoryEntry[], exportDate: string): string {
-  const lines = [
-    "Trispr Flow - Transcript Export",
-    `Date: ${exportDate}`,
-    `Entries: ${entries.length}`,
-    "",
-    "---",
-    "",
-  ];
+function buildExportTxt(entries: HistoryEntry[], _exportDate: string): string {
+  const sorted = [...entries].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
+  const lines: string[] = [];
+  let sectionStart: number | null = null;
+  let lastEntryMs = 0;
+  let lastDate: string | null = null;
 
-  entries.forEach((entry) => {
-    const speaker = entry.source === "output" ? "System audio" : "Input";
-    const time = formatTime(entry.timestamp_ms);
-    lines.push(`[${time}] ${speaker}: ${entry.text}`);
-  });
+  for (const entry of sorted) {
+    const isPause =
+      lastEntryMs > 0 && entry.timestamp_ms - lastEntryMs > PAUSE_THRESHOLD_MS;
+
+    if (sectionStart === null || isPause) {
+      const dateStr = fmtDate(entry.timestamp_ms);
+      const timeStr = fmtTime(entry.timestamp_ms);
+
+      if (sectionStart === null) {
+        // First section header
+        lines.push(`${dateStr} \u2014 ${timeStr}`);
+        lines.push("\u2500".repeat(40));
+        lines.push("");
+      } else if (dateStr !== lastDate) {
+        // New day
+        lines.push("");
+        lines.push(`\u2500\u2500 ${dateStr}  ${timeStr} ${"\u2500".repeat(20)}`);
+        lines.push("");
+      } else {
+        // Same day, new section
+        lines.push("");
+        lines.push(`\u2500\u2500 ${timeStr} ${"\u2500".repeat(32)}`);
+        lines.push("");
+      }
+
+      sectionStart = entry.timestamp_ms;
+      lastDate = dateStr;
+    }
+
+    const offset = fmtRelOffset(entry.timestamp_ms - sectionStart!);
+    const speaker = speakerName(entry);
+    lines.push(`[${offset}] ${speaker}: ${entryText(entry)}`);
+    lastEntryMs = entry.timestamp_ms;
+  }
 
   return lines.join("\n");
 }
 
 function buildExportMarkdown(entries: HistoryEntry[], exportDate: string): string {
-  const lines = [
+  const sorted = [...entries].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
+  const lines: string[] = [
     "# Transcript Export",
     "",
-    "**Date**: " + exportDate,
-    "**Total Entries**: " + entries.length,
+    `**Date**: ${exportDate}`,
+    `**Entries**: ${sorted.length}`,
     "",
     "---",
     "",
   ];
 
-  // Group by source for cleaner organization
-  const inputEntries = entries.filter((e) => e.source === "mic");
-  const outputEntries = entries.filter((e) => e.source === "output" || e.source === "system");
+  let sectionStart: number | null = null;
+  let lastEntryMs = 0;
+  let lastDate: string | null = null;
+  let tableOpen = false;
 
-  if (inputEntries.length > 0) {
-    lines.push("## Input Transcription");
-    lines.push("");
-    inputEntries.forEach((entry) => {
-      const time = formatTime(entry.timestamp_ms);
-      lines.push(`- **${time}**: ${entry.text}`);
-    });
-    lines.push("");
+  for (const entry of sorted) {
+    const isPause =
+      lastEntryMs > 0 && entry.timestamp_ms - lastEntryMs > PAUSE_THRESHOLD_MS;
+
+    if (sectionStart === null || isPause) {
+      const dateStr = fmtDate(entry.timestamp_ms);
+      const timeStr = fmtTime(entry.timestamp_ms);
+
+      if (tableOpen) {
+        lines.push("");
+      }
+
+      if (sectionStart === null || dateStr !== lastDate) {
+        lines.push(`## ${dateStr} \u2014 ${timeStr}`);
+      } else {
+        lines.push(`## ${timeStr}`);
+      }
+      lines.push("");
+      lines.push("| Zeit | Sprecher | Text |");
+      lines.push("| ---- | -------- | ---- |");
+
+      sectionStart = entry.timestamp_ms;
+      lastDate = dateStr;
+      tableOpen = true;
+    }
+
+    const offset = fmtRelOffset(entry.timestamp_ms - sectionStart!);
+    const speaker = speakerName(entry);
+    // Escape pipe characters in text for markdown table
+    const text = entryText(entry).replace(/\|/g, "\\|");
+    lines.push(`| ${offset} | ${speaker} | ${text} |`);
+    lastEntryMs = entry.timestamp_ms;
   }
 
-  if (outputEntries.length > 0) {
-    lines.push("## Output Transcription");
-    lines.push("");
-    outputEntries.forEach((entry) => {
-      const time = formatTime(entry.timestamp_ms);
-      const source = entry.source === "output" ? "System audio" : "System";
-      lines.push(`- **${time}** (${source}): ${entry.text}`);
-    });
-    lines.push("");
-  }
-
+  lines.push("");
   lines.push("---");
   lines.push("*Generated by Trispr Flow*");
 
@@ -311,16 +392,19 @@ function buildExportMarkdown(entries: HistoryEntry[], exportDate: string): strin
 }
 
 export function buildExportJson(entries: HistoryEntry[], exportDate: string): string {
+  const sorted = [...entries].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
   const exportData = {
     export_date: exportDate,
-    format_version: "1.0",
-    entry_count: entries.length,
-    entries: entries.map((entry) => ({
+    format_version: "2.0",
+    entry_count: sorted.length,
+    entries: sorted.map((entry) => ({
       id: entry.id,
       timestamp_ms: entry.timestamp_ms,
       timestamp: new Date(entry.timestamp_ms).toISOString(),
       source: entry.source,
+      speaker_name: speakerName(entry),
       text: entry.text,
+      refined_text: entry.refinement?.refined ?? null,
     })),
   };
 
@@ -339,6 +423,11 @@ export const DEFAULT_TOPICS: TopicKeywords = {
 
 let manualChapters: Chapter[] = [];
 let topicKeywords: TopicKeywords = { ...DEFAULT_TOPICS };
+
+// Module-level regex cache: keyword string → compiled RegExp.
+// Keyed by keyword so we only compile each unique keyword once.
+// Invalidated whenever topicKeywords changes via setTopicKeywords().
+const _topicRegexCache = new Map<string, RegExp>();
 
 /**
  * Get current manual chapters
@@ -398,6 +487,7 @@ export function getTopicKeywords(): TopicKeywords {
  */
 export function setTopicKeywords(keywords: TopicKeywords): void {
   topicKeywords = { ...keywords };
+  _topicRegexCache.clear();
 }
 
 /**
@@ -411,8 +501,14 @@ export function detectTopics(text: string): string[] {
 
   Object.entries(topicKeywords).forEach(([topic, keywords]) => {
     keywords.forEach((keyword) => {
-      // Word boundary matching: match whole words only
-      const regex = new RegExp(`\\b${keyword}\\b`, "gi");
+      // Retrieve or compile cached RegExp for this keyword.
+      let regex = _topicRegexCache.get(keyword);
+      if (!regex) {
+        regex = new RegExp(`\\b${keyword}\\b`, "gi");
+        _topicRegexCache.set(keyword, regex);
+      }
+      // Reset lastIndex since the same RegExp instance (with flag g) is reused.
+      regex.lastIndex = 0;
       if (regex.test(lowerText)) {
         detectedTopics.add(topic);
       }
@@ -452,6 +548,26 @@ export function buildTopicBadges(topics: string[]): string {
     .join("");
 }
 
+// RAF guard: ensures renderHistory() is called at most once per animation frame
+// even when multiple state changes occur synchronously in one tick.
+let _historyRenderFrame: number | null = null;
+
+export function scheduleHistoryRender(): void {
+  if (_historyRenderFrame !== null) return;
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    _historyRenderFrame = window.requestAnimationFrame(() => {
+      _historyRenderFrame = null;
+      renderHistory();
+    });
+  } else {
+    // Fallback for environments without RAF (e.g. tests)
+    _historyRenderFrame = window.setTimeout(() => {
+      _historyRenderFrame = null;
+      renderHistory();
+    }, 16) as unknown as number;
+  }
+}
+
 let currentSearchQuery = "";
 let selectedTopicFilters: Set<string> = new Set();
 
@@ -460,7 +576,7 @@ let selectedTopicFilters: Set<string> = new Set();
  */
 export function setSearchQuery(query: string) {
   currentSearchQuery = query.trim().toLowerCase();
-  renderHistory();
+  scheduleHistoryRender();
 }
 
 /**
@@ -479,7 +595,7 @@ export function toggleTopicFilter(topic: string): void {
   } else {
     selectedTopicFilters.add(topic);
   }
-  renderHistory();
+  scheduleHistoryRender();
 }
 
 /**
@@ -494,7 +610,7 @@ export function getSelectedTopicFilters(): string[] {
  */
 export function clearTopicFilters(): void {
   selectedTopicFilters.clear();
-  renderHistory();
+  scheduleHistoryRender();
 }
 
 /**
@@ -730,7 +846,7 @@ function buildRefinementChip(entry: HistoryEntry): HTMLElement {
 }
 
 function buildConversationMessage(entry: HistoryEntry, role: "mic" | "system"): HTMLElement {
-  const sender = getHistoryAliases()[role];
+  const sender = speakerName(entry);
 
   const wrapper = document.createElement("article");
   wrapper.className = `chat-message history-entry chat-message--${role}`;
@@ -844,8 +960,7 @@ export function renderHistory() {
 
   dataset.forEach((entry) => {
     const wrapper = document.createElement("div");
-    wrapper.className = "history-item";
-    wrapper.className += " history-entry"; // For search highlighting
+    wrapper.className = "history-item history-entry"; // For search highlighting
     wrapper.dataset.entryId = entry.id; // For chapter navigation
 
     const textWrap = document.createElement("div");
@@ -862,15 +977,7 @@ export function renderHistory() {
       topicContainer.innerHTML = buildTopicBadges(topics);
 
       // Add click handlers to topic badges for filtering
-      topicContainer.querySelectorAll(".topic-badge").forEach((badge) => {
-        badge.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const topic = (badge as HTMLElement).dataset.topic;
-          if (topic) {
-            toggleTopicFilter(topic);
-          }
-        });
-      });
+      // Click handled by delegated listener on historyList (see initHistoryDelegation)
 
       textWrap.appendChild(topicContainer);
     }
@@ -899,9 +1006,7 @@ export function renderHistory() {
     const copyButton = document.createElement("button");
     copyButton.textContent = "Copy";
     copyButton.title = "Copy transcript text to clipboard";
-    copyButton.addEventListener("click", async () => {
-      await navigator.clipboard.writeText(textPresentation.displayText);
-    });
+    // Click handled by delegated listener on historyList (see initHistoryDelegation)
 
     actions.appendChild(copyButton);
 
@@ -912,11 +1017,44 @@ export function renderHistory() {
   });
 }
 
+/**
+ * Initialize delegated event handlers on the history list container.
+ * Called once at startup instead of attaching per-element listeners on every render.
+ */
+export function initHistoryDelegation(): void {
+  if (!dom.historyList) return;
+  dom.historyList.addEventListener("click", (e) => {
+    const target = e.target as Element;
+
+    // Topic badge: filter by topic on click
+    const badge = target.closest(".topic-badge");
+    if (badge) {
+      e.stopPropagation();
+      const topic = (badge as HTMLElement).dataset.topic;
+      if (topic) toggleTopicFilter(topic);
+      return;
+    }
+
+    // Copy button: look up entry by wrapper's data-entry-id
+    const button = target.closest(".history-actions button");
+    if (button) {
+      const wrapper = target.closest("[data-entry-id]");
+      const entryId = (wrapper as HTMLElement | null)?.dataset.entryId;
+      if (!entryId) return;
+      const entry = [...history, ...transcribeHistory].find((e) => e.id === entryId);
+      if (entry) {
+        const text = buildEntryTextPresentation(entry, "history-text").displayText;
+        navigator.clipboard.writeText(text).catch(() => {});
+      }
+    }
+  });
+}
+
 export function setHistoryTab(tab: HistoryTab) {
   setCurrentTab(tab);
   if (dom.historyTabMic) dom.historyTabMic.classList.toggle("active", tab === "mic");
   if (dom.historyTabSystem) dom.historyTabSystem.classList.toggle("active", tab === "system");
   if (dom.historyTabConversation) dom.historyTabConversation.classList.toggle("active", tab === "conversation");
-  renderHistory();
+  scheduleHistoryRender();
   updateChaptersVisibility();
 }

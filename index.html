@@ -175,11 +175,7 @@
                   Analyse
                 </button>
                 <div class="export-controls">
-                  <select id="export-format" class="export-format" title="Select export format">
-                    <option value="txt">TXT</option>
-                    <option value="md">Markdown</option>
-                    <option value="json">JSON</option>
-                  </select>
+                  <button id="archive-browse-btn" class="ghost-btn" title="Browse archived months">Archive</button>
                   <button id="history-export" class="ghost-btn" title="Export transcript">Export</button>
                 </div>
                 <div id="conversation-font-controls" class="font-controls" title="Adjust transcript font size for the active tab">
@@ -250,6 +246,16 @@
 
         <!-- Settings Tab -->
         <div id="tab-settings" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-settings">
+        <div class="expert-mode-bar">
+          <label class="toggle-row" for="expert-mode-toggle">
+            <span class="field-label">Expert Mode</span>
+            <input id="expert-mode-toggle" type="checkbox" title="Show advanced settings controls" />
+            <span class="toggle-track">
+              <span class="toggle-thumb"></span>
+            </span>
+          </label>
+          <span id="expert-mode-label" class="toggle-hint">Standard mode active.</span>
+        </div>
         <section class="panel capture-panel" data-panel="capture" data-default-collapsed="true" data-panel-group="input-source" style="--delay: 0.16s">
           <div class="panel-header">
             <div class="panel-title">
@@ -1592,6 +1598,107 @@
           <button id="ai-auth-verify-key" class="hotkey-record-btn" type="button">Verify</button>
         </div>
         <span id="ai-auth-status" class="field-hint">No API key stored.</span>
+      </div>
+    </div>
+
+    <div id="export-dialog" class="auth-modal" hidden>
+      <div id="export-dialog-backdrop" class="auth-modal-backdrop"></div>
+      <div class="auth-modal-card export-modal-card" role="dialog" aria-modal="true" aria-labelledby="export-dialog-title">
+        <div class="auth-modal-header">
+          <h3 id="export-dialog-title" class="ai-refine-section-title">Export Transcript</h3>
+          <button id="export-dialog-close" type="button" class="hotkey-record-btn">Close</button>
+        </div>
+
+        <div class="export-range-grid" role="group" aria-label="Export range">
+          <button type="button" class="ghost-btn export-range-btn is-active" data-export-range="session" aria-pressed="true">Session</button>
+          <button type="button" class="ghost-btn export-range-btn" data-export-range="today" aria-pressed="false">Today</button>
+          <button type="button" class="ghost-btn export-range-btn" data-export-range="yesterday" aria-pressed="false">Yesterday</button>
+          <button type="button" class="ghost-btn export-range-btn" data-export-range="week" aria-pressed="false">Week</button>
+          <button type="button" class="ghost-btn export-range-btn" data-export-range="month" aria-pressed="false">Month</button>
+          <button type="button" class="ghost-btn export-range-btn" data-export-range="custom" aria-pressed="false">Custom</button>
+        </div>
+
+        <div id="export-custom-range" class="export-custom-range" hidden>
+          <label class="field">
+            <span class="field-label">From</span>
+            <input id="export-custom-from" type="datetime-local" />
+          </label>
+          <label class="field">
+            <span class="field-label">To</span>
+            <input id="export-custom-to" type="datetime-local" />
+          </label>
+        </div>
+
+        <div class="export-dialog-row">
+          <label class="field toggle">
+            <div class="toggle-row">
+              <span class="field-label">Include Input</span>
+              <input id="export-include-mic" type="checkbox" checked />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </div>
+          </label>
+          <label class="field toggle">
+            <div class="toggle-row">
+              <span class="field-label">Include System Audio</span>
+              <input id="export-include-system" type="checkbox" checked />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </div>
+          </label>
+        </div>
+
+        <div class="export-dialog-row">
+          <label class="field">
+            <span class="field-label">Format</span>
+            <select id="export-dialog-format">
+              <option value="txt">TXT</option>
+              <option value="md">Markdown</option>
+              <option value="json">JSON</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="export-preview">
+          <span id="export-preview-count" class="export-preview-count">0 entries</span>
+          <span id="export-preview-span" class="export-preview-span">Current runtime session</span>
+        </div>
+
+        <div class="auth-modal-actions">
+          <button id="export-dialog-run" class="hotkey-record-btn" type="button">Export</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="archive-browser" class="auth-modal" hidden>
+      <div id="archive-browser-backdrop" class="auth-modal-backdrop"></div>
+      <div class="auth-modal-card archive-modal-card" role="dialog" aria-modal="true" aria-labelledby="archive-browser-title">
+        <div class="auth-modal-header">
+          <h3 id="archive-browser-title" class="ai-refine-section-title">History Archive</h3>
+          <button id="archive-browser-close" type="button" class="hotkey-record-btn">Close</button>
+        </div>
+
+        <div class="archive-grid">
+          <section class="archive-column">
+            <h4 class="archive-heading">Input</h4>
+            <div id="archive-mic-partitions" class="archive-partition-list"></div>
+            <h4 class="archive-heading">System Audio</h4>
+            <div id="archive-system-partitions" class="archive-partition-list"></div>
+          </section>
+
+          <section class="archive-column archive-column-entries">
+            <div class="archive-head-row">
+              <span id="archive-selection-meta" class="field-hint">No partition selected.</span>
+              <div class="archive-export-controls">
+                <select id="archive-export-format">
+                  <option value="txt">TXT</option>
+                  <option value="md">Markdown</option>
+                  <option value="json">JSON</option>
+                </select>
+                <button id="archive-export-btn" class="hotkey-record-btn" type="button">Export Loaded</button>
+              </div>
+            </div>
+            <div id="archive-entries" class="archive-entries"></div>
+          </section>
+        </div>
       </div>
     </div>
   </body>

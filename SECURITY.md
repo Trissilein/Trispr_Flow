@@ -158,8 +158,8 @@ Angriffsflächen:
 - [x] **Sensible Inhalte** — Transkript-Snippets in localStorage, aber nur im WebView2-Sandbox-Storage (user-private)
 
 ### Supply Chain
-- [x] **npm audit** — esbuild (moderate), rollup (high) — beides Dev-Dependencies, nicht im Production-Build
-- [ ] **cargo audit** — Tool nicht installiert, manuell prüfen: `cargo install cargo-audit && cargo audit`
+- [x] **npm audit** — aktuell 0 bekannte Befunde (`npm audit --json`)
+- [x] **cargo audit** — im Dev-Workflow integriert (`npm run audit:rust`)
 - [x] **Tauri Updater** — Nicht konfiguriert (kein Auto-Update-Mechanismus)
 - [x] **NSIS Installer** — Nicht signiert (TODO für Release)
 
@@ -192,9 +192,17 @@ Angriffsflächen:
 
 | Priorität | Item | Beschreibung |
 |-----------|------|-------------|
-| Mittel | `cargo audit` installieren | `cargo install cargo-audit` und regelmäßig ausführen |
+| Mittel | Rust Advisory-Befunde beheben | `cargo audit` meldet aktuell `RUSTSEC-2026-0007` (`bytes 1.11.0` -> `>=1.11.1`) und `RUSTSEC-2026-0009` (`time 0.3.46` -> `>=0.3.47`) |
 | Niedrig | NSIS Installer signieren | Code-Signing-Zertifikat für Release-Builds |
-| Niedrig | npm-Dependencies updaten | `npm audit fix` für rollup-Vulnerability (Dev-Dep) |
+| Niedrig | npm-Dependencies laufend prüfen | Regelmäßig `npm audit --json` im Release-Prep ausführen |
+
+## Letzter Rust-Audit-Befund
+
+- Datum: 2026-03-02
+- Command: `npm run audit:rust`
+- Ergebnis:
+  - 2 Vulnerabilities (siehe oben: `bytes`, `time`)
+  - 20 Warnings in allowlist (vor allem unmaintained GTK3/Linux-Transitives via Tauri/wry)
 
 ---
 

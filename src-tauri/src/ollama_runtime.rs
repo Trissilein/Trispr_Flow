@@ -1,6 +1,8 @@
 use crate::ai_fallback::provider::{
     is_local_ollama_endpoint, list_ollama_models, ping_ollama, ping_ollama_quick,
 };
+use crate::check_strict_local_mode;
+use crate::now_iso;
 use crate::paths::resolve_data_path;
 use crate::state::{
     record_runtime_start_attempt, record_runtime_start_failure, save_settings_file, AppState,
@@ -140,6 +142,13 @@ fn resolve_manifest(version: Option<&str>) -> Result<&'static RuntimeManifest, S
         })
 }
 
+/// Resolves the root directory for the managed Ollama runtime installation.
+///
+/// This intentionally does NOT use paths.rs because:
+/// 1. On Windows, the runtime must live under %LOCALAPPDATA%\TrisprFlow to keep
+///    the path short and predictable (Ollama is sensitive to long paths).
+/// 2. paths.rs uses Tauri's app_data_dir / app_config_dir which resolve to an
+///    app-identifier-based subdirectory that differs from what we need here.
 fn resolve_runtime_root(app: &AppHandle) -> PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -410,10 +419,6 @@ fn update_runtime_in_settings(
     save_settings_file(app, &snapshot)?;
     let _ = app.emit("settings-changed", snapshot);
     Ok(())
-}
-
-fn now_iso() -> String {
-    chrono::Utc::now().to_rfc3339()
 }
 
 fn runtime_endpoint_reachable(endpoint: &str) -> bool {
@@ -944,12 +949,7 @@ fn verify_ollama_runtime_impl(
     if endpoint.is_empty() {
         return Err("Ollama endpoint is empty.".to_string());
     }
-    if settings_snapshot.ai_fallback.strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
-        return Err(
-            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                .to_string(),
-        );
-    }
+    check_strict_local_mode(&settings_snapshot)?;
     let models = list_ollama_models(&endpoint);
     if models.is_empty() {
         ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
@@ -981,12 +981,7 @@ pub fn import_ollama_model_from_file(
 
     let settings_snapshot = state.settings.lock().unwrap().clone();
     let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
-    if settings_snapshot.ai_fallback.strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
-        return Err(
-            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                .to_string(),
-        );
-    }
+    check_strict_local_mode(&settings_snapshot)?;
     ping_ollama(&endpoint).map_err(|e| {
         format!(
             "Ollama runtime is not reachable. Start runtime first: {}",

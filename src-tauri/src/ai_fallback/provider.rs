@@ -1,10 +1,26 @@
 use super::error::AIError;
 use super::models::{RefinementOptions, RefinementResult, TokenUsage};
 use std::collections::HashSet;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tauri::Emitter;
 use tracing::warn;
 use url::Url;
+
+/// Shared ureq agent for general Ollama HTTP calls (list models, ping, inference).
+/// Defaults: connect 5 s, read 60 s — generous enough for inference, snappy enough
+/// for metadata queries.  `ping_ollama_quick` and `pull_ollama_model_inner` have
+/// fundamentally different timeout budgets and keep their own agents.
+static UREQ_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+
+fn shared_agent() -> &'static ureq::Agent {
+    UREQ_AGENT.get_or_init(|| {
+        ureq::builder()
+            .timeout_connect(Duration::from_secs(5))
+            .timeout_read(Duration::from_secs(60))
+            .build()
+    })
+}
 
 // Prompt templates optimized for local models (Ollama: qwen3, mistral-small).
 // Guidelines: no translation, no explanations, preserve register and proper nouns.
@@ -108,10 +124,24 @@ pub fn is_ssrf_target(endpoint: &str) -> bool {
     if host == "169.254.169.254" || host == "metadata.google.internal" {
         return true;
     }
-    // Block link-local range (169.254.x.x) entirely
+    // Block IPv4 link-local range (169.254.x.x) entirely
     if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
         if ip.octets()[0] == 169 && ip.octets()[1] == 254 {
             return true;
+        }
+    }
+    // Block IPv6 link-local (fe80::/10) and IPv4-mapped link-local (::ffff:169.254.x.x).
+    // host_str() already strips brackets from IPv6 literals like [fe80::1].
+    if let Ok(ip) = host.parse::<std::net::Ipv6Addr>() {
+        // fe80::/10 — first 10 bits are 1111111010
+        if (ip.segments()[0] & 0xffc0) == 0xfe80 {
+            return true;
+        }
+        // ::ffff:169.254.x.x — IPv4-mapped link-local
+        if let Some(ipv4) = ip.to_ipv4_mapped() {
+            if ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254 {
+                return true;
+            }
         }
     }
     false
@@ -222,10 +252,7 @@ pub fn resolve_effective_local_model(
 /// Fetch model list with size information from a running Ollama instance.
 /// Each entry is (model_name, size_bytes). Returns empty Vec on any error.
 pub fn list_ollama_models_with_size(endpoint: &str) -> Vec<(String, u64)> {
-    let agent = ureq::builder()
-        .timeout_connect(Duration::from_secs(2))
-        .timeout_read(Duration::from_secs(5))
-        .build();
+    let agent = shared_agent();
 
     for candidate in ollama_endpoint_candidates(endpoint) {
         let url = format!("{}/api/tags", candidate);
@@ -257,10 +284,7 @@ pub fn list_ollama_models_with_size(endpoint: &str) -> Vec<(String, u64)> {
 /// Test whether Ollama is reachable at the given endpoint.
 /// Returns Ok(()) if the server responds, Err(AIError::OllamaNotRunning) otherwise.
 pub fn ping_ollama(endpoint: &str) -> Result<(), AIError> {
-    let agent = ureq::builder()
-        .timeout_connect(Duration::from_secs(3))
-        .timeout_read(Duration::from_secs(5))
-        .build();
+    let agent = shared_agent();
 
     for candidate in ollama_endpoint_candidates(endpoint) {
         let url = format!("{}/api/tags", candidate);
@@ -320,14 +344,8 @@ pub fn default_prompt_for_language(language: &str) -> &'static str {
 }
 
 pub fn normalize_prompt_profile(profile: &str) -> &'static str {
-    match profile.trim().to_lowercase().as_str() {
-        "wording" => "wording",
-        "summary" => "summary",
-        "technical_specs" => "technical_specs",
-        "action_items" => "action_items",
-        "custom" => "custom",
-        _ => "wording",
-    }
+    let id = crate::ai_fallback::models::normalize_prompt_profile_id(profile);
+    if id.is_empty() { "wording" } else { id }
 }
 
 pub fn prompt_for_profile(
@@ -370,12 +388,15 @@ pub fn prompt_for_profile(
 }
 
 fn normalize_provider(provider: &str) -> &str {
-    match provider.trim().to_lowercase().as_str() {
-        "claude" => "claude",
-        "openai" => "openai",
-        "gemini" => "gemini",
-        "ollama" => "ollama",
-        _ => "unknown",
+    // Delegates to the canonical normalize_provider_id in models.rs.
+    // The only difference: unrecognized providers yield "unknown" here (not "ollama")
+    // so callers like ProviderFactory::create can surface a proper error.
+    let canonical = super::models::normalize_provider_id(provider);
+    let trimmed = provider.trim();
+    if canonical == "ollama" && !trimmed.eq_ignore_ascii_case("ollama") {
+        "unknown"
+    } else {
+        canonical
     }
 }
 
@@ -810,14 +831,9 @@ impl AIProvider for OllamaProvider {
             "keep_alive": keep_alive
         });
 
-        // 45 s read timeout: with think:false, inference on 8B models takes 2-15 s.
-        // Two candidates × 50 s total budget stays comfortably under the 90 s watchdog.
-        // 5 s connect timeout: if Ollama is running, it should accept immediately.
-        let read_timeout_secs = if options.low_latency_mode { 20 } else { 45 };
-        let agent = ureq::builder()
-            .timeout_connect(Duration::from_secs(5))
-            .timeout_read(Duration::from_secs(read_timeout_secs))
-            .build();
+        // Shared agent has a 60 s read timeout — generous enough for both normal
+        // (≤45 s) and low-latency (≤20 s) inference on 8B models.
+        let agent = shared_agent();
 
         let mut last_transport_error: Option<AIError> = None;
 

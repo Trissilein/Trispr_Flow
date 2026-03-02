@@ -24,6 +24,7 @@ const AUTOSTART_WARNING_COOLDOWN_MS = 60_000;
 const LOCAL_OLLAMA_HOSTS = new Set(["localhost", "127.0.0.1"]);
 const BACKGROUND_START_POLL_INTERVAL_MS = 2_000;
 const BACKGROUND_START_POLL_MAX_MS = 30_000;
+const RUNTIME_BUSY_START_STALE_MS = 45_000;
 
 type WizardStage =
   | "not_detected"
@@ -70,6 +71,7 @@ let runtimeInstallProgress: OllamaRuntimeInstallProgress | null = null;
 let runtimeInstallError: OllamaRuntimeInstallError | null = null;
 let runtimeHealth: OllamaRuntimeHealth | null = null;
 let runtimeBusyAction: string | null = null;
+let runtimeBusyActionStartedMs = 0;
 let runtimeStateRefreshInFlight: Promise<void> | null = null;
 let runtimeStateLastRefreshMs = 0;
 let lastAutostartWarningMs = 0;
@@ -222,11 +224,25 @@ function startRuntimeBackgroundPolling(reason: "autostart" | "manual"): void {
 }
 
 function effectiveRuntimeBusyAction(): string | null {
+  if (
+    (runtimeBusyAction === "start" || runtimeBusyAction === "ensure-runtime")
+    && runtimeBusyActionStartedMs > 0
+    && Date.now() - runtimeBusyActionStartedMs > RUNTIME_BUSY_START_STALE_MS
+  ) {
+    console.warn(`Clearing stale runtime busy state: ${runtimeBusyAction}`);
+    runtimeBusyAction = null;
+    runtimeBusyActionStartedMs = 0;
+  }
   if (!runtimeBusyAction) return null;
   if ((runtimeBusyAction === "start" || runtimeBusyAction === "ensure-runtime") && runtimeIsHealthy()) {
     return null;
   }
   return runtimeBusyAction;
+}
+
+function setRuntimeBusyAction(action: string | null): void {
+  runtimeBusyAction = action;
+  runtimeBusyActionStartedMs = action ? Date.now() : 0;
 }
 
 export async function autoStartLocalRuntimeIfNeeded(
@@ -246,7 +262,7 @@ export async function autoStartLocalRuntimeIfNeeded(
     return;
   }
 
-  runtimeBusyAction = "start";
+  setRuntimeBusyAction("start");
   runtimeInstallError = null;
   renderOllamaModelManager();
   try {
@@ -265,7 +281,7 @@ export async function autoStartLocalRuntimeIfNeeded(
     console.warn(`Ollama autostart failed (${trigger}):`, message);
     showAutostartWarning(trigger, message);
   } finally {
-    runtimeBusyAction = null;
+    setRuntimeBusyAction(null);
     renderOllamaModelManager();
   }
 }
@@ -466,7 +482,7 @@ async function maybePersistWizardState(): Promise<void> {
 
 async function runRuntimeAction(action: string, task: () => Promise<void>): Promise<void> {
   if (runtimeBusyAction) return;
-  runtimeBusyAction = action;
+  setRuntimeBusyAction(action);
   runtimeInstallError = null;
   renderOllamaModelManager();
 
@@ -485,7 +501,7 @@ async function runRuntimeAction(action: string, task: () => Promise<void>): Prom
       duration: 6000,
     });
   } finally {
-    runtimeBusyAction = null;
+    setRuntimeBusyAction(null);
     renderOllamaModelManager();
   }
 }
@@ -510,7 +526,7 @@ async function handleDetectRuntime(): Promise<void> {
 export async function ensureLocalRuntimeReady(): Promise<void> {
   if (runtimeBusyAction) return;
 
-  runtimeBusyAction = "ensure-runtime";
+  setRuntimeBusyAction("ensure-runtime");
   runtimeInstallError = null;
   renderOllamaModelManager();
 
@@ -622,7 +638,7 @@ export async function ensureLocalRuntimeReady(): Promise<void> {
       });
     }
   } finally {
-    runtimeBusyAction = null;
+    setRuntimeBusyAction(null);
     runtimeInstallProgress = null;
     renderOllamaModelManager();
   }

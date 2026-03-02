@@ -76,9 +76,11 @@ function snapshotFromHistoryEntry(entry: HistoryEntry): InspectorSnapshot | null
   return snapshot;
 }
 
+const MAX_PERSISTED_SNAPSHOTS = 100;
+
 function persistSnapshotStateToStorage(): void {
   try {
-    const snapshots = Array.from(snapshotsByEntryId.entries()).map(([entryId, snapshot]) => ({
+    let snapshots = Array.from(snapshotsByEntryId.entries()).map(([entryId, snapshot]) => ({
       ...snapshot,
       entryId,
     }));
@@ -86,13 +88,17 @@ function persistSnapshotStateToStorage(): void {
       window.localStorage.removeItem(REFINEMENT_SNAPSHOTS_STORAGE_KEY);
       return;
     }
+    // Cap to most recent entries to avoid QuotaExceededError on large history sets.
+    if (snapshots.length > MAX_PERSISTED_SNAPSHOTS) {
+      snapshots = snapshots.slice(-MAX_PERSISTED_SNAPSHOTS);
+    }
     const payload: PersistedSnapshotState = {
       latest_entry_id: latest?.entryId,
       snapshots,
     };
     window.localStorage.setItem(REFINEMENT_SNAPSHOTS_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // ignore localStorage failures
+  } catch (e) {
+    console.warn("Failed to persist refinement snapshots to localStorage:", e);
   }
 }
 

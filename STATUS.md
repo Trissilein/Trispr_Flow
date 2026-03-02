@@ -1,11 +1,11 @@
 # Trispr Flow - Status
 
-Last updated: 2026-02-26
+Last updated: 2026-03-02
 
 ## Snapshot
 
 - Current release: `v0.7.0`
-- Current planning phase: `v0.7.0 stabilization only`
+- Current planning phase: `v0.7.1 stabilization execution`
 - Canonical next steps: `ROADMAP.md`
 
 ## Working State
@@ -15,6 +15,7 @@ Last updated: 2026-02-26
 - Continuous dump profiles and per-source overrides are available in Settings.
 - Session chunk persistence is source-specific (`mic` and `output`) to avoid finalize collisions.
 - AI fallback foundation is in place in Post-Processing settings.
+- Release QA automation is available via `npm run qa:release` (build/test/rust/audit + strict latency SLO gate).
 - Installer variants are now:
   - CUDA (base)
   - Vulkan (base)
@@ -38,6 +39,7 @@ Last updated: 2026-02-26
 
 ## Next Focus
 
-1. Lock `v0.7.0` baseline (no scope expansion during stabilization).
-2. Run architecture review and produce prioritized findings.
-3. Performance hardening for transcription -> refinement turnaround.
+1. Finalize latency benchmark baseline (`benchmark:latency`) and track p50/p95 trend.
+2. Validate runtime-start background behavior on Windows (no stuck "Starting runtime..." state).
+3. Continue Block E (UX/UI consistency + settings IA cleanup).
+4. Complete Block F reliability hardening + release QA.

@@ -1,6 +1,5 @@
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WindowEvent};
 use serde::{Deserialize, Serialize};
-use std::thread;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,7 +35,10 @@ pub struct OverlaySettings {
 
 /// Called when the overlay webview signals readiness.
 /// Settings are applied via the overlay:ready listener in lib.rs.
-pub fn mark_overlay_ready() {}
+pub fn mark_overlay_ready() {
+    // Intentional no-op: actual settings application is handled by the
+    // overlay:ready event listener registered in lib.rs setup().
+}
 
 /// Creates and configures the overlay window for recording status
 pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
@@ -115,11 +117,13 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
     };
     let _ = window.eval(&js);
 
-    // Re-emit after a short delay to ensure the overlay webview is ready
+    // Re-emit after a short delay to ensure the overlay webview is ready.
+    // Uses the managed tokio blocking-thread pool instead of spawning a
+    // dedicated OS thread for a trivial 120 ms sleep.
     let app_handle = app.clone();
     let state_clone = state.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(120));
+    tauri::async_runtime::spawn_blocking(move || {
+        std::thread::sleep(Duration::from_millis(120));
         let _ = app_handle.emit("overlay:state", &state_clone);
     });
 

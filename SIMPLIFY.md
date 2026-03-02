@@ -146,126 +146,120 @@ Regel: **Nur konkrete Findings mit konkreten Fixes.** Keine Style-Nits, keine op
 
 ---
 
-## Batch 1+2 Findings — Rust (Opus Review abgeschlossen)
+## Findings-Status — Rust + TypeScript (alle 3 Wellen abgeschlossen)
 
-### HOCH — Security-kritisch
+### Rust HOCH — Security
 
-| ID | Finding | Datei | Fix |
-|----|---------|-------|-----|
-| H1 | `is_ssrf_target()` Fail-Open bei Parse-Fehlern (`Err(_) => return false`) | provider.rs:99 | `Err(_) => return true` |
-| H2 | SSRF deckt IPv6 nicht ab (`[::ffff:169.254.169.254]`, `fe80::`) | provider.rs:97-118 | IPv6-Parsing + mapped-IPv4 Check |
-| H3 | `validate_path_within` anfällig für UNC-Pfade (`\\attacker\share`) → NTLM-Leak | lib.rs:1700-1731 | UNC-Prefix ablehnen + Filename-Sanitize |
+| ID | Finding | Status |
+|----|---------|--------|
+| H1 | `is_ssrf_target()` Fail-Open | ✅ |
+| H2 | SSRF IPv6 nicht abgedeckt | ✅ |
+| H3 | UNC-Pfade → NTLM-Leak | ✅ |
+| P-H1 | WAV Temp-File-Leak | ✅ |
+| P-H2 | Whisper `output()` ohne Timeout | ✅ |
+| P-H3 | Transcription-Result-Handling 3× | ✅ |
 
-### MITTEL — Robustheit + Duplikation
+### Rust MITTEL — Robustheit + Duplikation
 
-| ID | Finding | Datei | Fix |
-|----|---------|-------|-----|
-| M1 | Exit-Handler `lock().unwrap()` panikt bei poisoned Mutex | lib.rs:3094-3106 | `if let Ok(mut guard) = ...lock()` |
-| M2 | Pull-Cleanup Race: Panic → Model permanent "in progress" | lib.rs:1143-1188 | Drop-Guard für Pull-Cleanup |
-| M3 | `save_settings_file` nicht atomar → Crash korrumpiert JSON | state.rs:950-958 | Write-to-tmp + rename |
-| M4 | Settings-Save+Emit Boilerplate 15x copy-pasted | lib.rs diverse | `update_and_persist_settings()` Helper |
-| M5 | Strict-Local-Mode Guard 12x identisch | lib.rs + ollama_runtime.rs | `enforce_strict_local()` Funktion |
-| M6 | Refinement-Setup 3x dupliziert (50+ Zeilen/Kopie) | lib.rs:639+1011, audio.rs | `prepare_refinement_context()` |
-| M7 | Provider-ID-Normalisierung 5 separate Funktionen | provider.rs, models.rs, state.rs, keyring.rs | Eine kanonische Funktion |
-| M8 | Full History Clone+Serialize+Write pro Eintrag (HOT) | state.rs:1023-1078 | Debounced/async persist |
-| M9 | Sync HTTP in sync Tauri-Commands blockiert Thread-Pool | lib.rs diverse | `async` + `spawn_blocking` |
-| M10 | `validate_ollama_model_name` blockiert `/` für Namespaces | provider.rs:977-991 | `/` zur Allowlist |
-| M11 | `save_settings_file` bei Window-Drag ohne Debounce | lib.rs:1412-1464 | Debounce (500ms) |
-| M12 | `Vec::insert(0)` statt `VecDeque::push_front` | state.rs:1038,1066 | `VecDeque` |
+| ID | Finding | Status |
+|----|---------|--------|
+| M1 | Exit-Handler Mutex-Poisoning | ✅ |
+| M2 | Pull-Cleanup Drop-Guard | ✅ |
+| M3 | `save_settings_file` nicht atomar | ✅ |
+| M4 | Settings-Save+Emit Boilerplate 15× | ✅ (7 Stellen) |
+| M5 | Strict-Local-Mode Guard 12× | ✅ (10 Stellen) |
+| M6 | Refinement-Setup 3× dupliziert | ✅ (`prepare_refinement()`) |
+| M7 | Provider-ID-Normalisierung 5 Funktionen | ✅ (models.rs kanonisch) |
+| M8 | Full History Write pro Eintrag (HOT) | ✅ (200ms Debounce) |
+| M9 | Sync HTTP blockiert Thread-Pool | ⏭ Übersprungen (zu riskant) |
+| M10 | `validate_ollama_model_name` blockiert `/` | ✅ |
+| M11 | Window-Drag ohne Debounce | ✅ (500ms AtomicU64) |
+| M12 | `Vec::insert(0)` statt `VecDeque` | ✅ |
+| P-M1 | `ContinuousDumpEvent` 2× definiert | ✅ |
+| P-M2 | `lock().unwrap()` 36 Stellen | ⏭ Übersprungen (zu riskant) |
+| P-M3 | Regex pro Wort neu kompiliert | ✅ (OnceLock Cache) |
+| P-M4 | `build_input_stream` 3× Callbacks | ✅ (Makro) |
+| P-M5 | `update_overlay_state` OS-Thread | ✅ (spawn_blocking) |
+| P-M6 | Whisper Seiteneffekte nicht aufgeräumt | ✅ |
+| P-M7 | `paths.rs` Fallback ohne Warnung | ✅ |
+| P-M8 | Question-Detection 3× dupliziert | ✅ |
 
-### NIEDRIG
+### Rust NIEDRIG
 
-| ID | Finding | Datei |
-|----|---------|-------|
-| L1 | `ureq::Agent` bei jedem Call neu (kein Connection-Reuse) | provider.rs |
-| L2 | `now_iso()` dupliziert | ollama_runtime.rs:415 vs lib.rs:579 |
-| L3 | Doppelter SHA-256-Hash bei Download | ollama_runtime.rs:606+656 |
-| L4 | Window-Geometry-Restore 2x copy-pasted | lib.rs:2511+2950 |
-| L5 | `Settings::default()` bei jedem normalize-Aufruf | state.rs:869 |
-| L6 | `sanitize_model_name` / `sanitize_session_name` fast identisch | ollama_runtime.rs:324, lib.rs:1916 |
-| L7 | Redundanter State: `transcribe_active` vs `transcribe_enabled` | state.rs:379 |
-| L8 | Prompt-Profile-Normalisierung 2x | provider.rs:322, models.rs:389 |
-| L9 | `resolve_runtime_root` umgeht paths.rs | ollama_runtime.rs:143 |
+| ID | Finding | Status |
+|----|---------|--------|
+| L1 | `ureq::Agent` kein Connection-Reuse | ✅ (OnceLock shared_agent) |
+| L2 | `now_iso()` dupliziert | ✅ |
+| L3 | SHA-256 Doppel-Hash | ⏭ Übersprungen (absichtlich doppelt — Security) |
+| L4 | Window-Geometry-Restore 2× | ✅ |
+| L5 | `Settings::default()` bei normalize | ✅ (const-Werte) |
+| L6 | `sanitize_model_name` / `sanitize_session_name` | ⏭ Übersprungen (zu unterschiedlich) |
+| L7 | `transcribe_active` vs `transcribe_enabled` | ⏭ Übersprungen (State-Semantik unklar) |
+| L8 | Prompt-Profile-Normalisierung 2× | ✅ |
+| L9 | `resolve_runtime_root` umgeht paths.rs | ✅ (Kommentar + Begründung) |
+| P-L1 | `mark_overlay_ready()` leerer Body | ✅ (Kommentar) |
+| P-L2 | `whisper_cli_supports_gpu_layers` --help jedes Mal | ✅ (OnceLock Cache) |
+| P-L3 | `refine_with_llm` toter Stub | ✅ (entfernt) |
+| P-L4 | `eprintln!` statt `tracing::error!` | ✅ |
 
-## Batch 2 Findings — Rust Peripheral (Opus Review abgeschlossen)
+### TypeScript HOCH
 
-### HOCH
+| ID | Finding | Status |
+|----|---------|--------|
+| TS-H1 | `window.addEventListener` 3× ohne Cleanup | ✅ |
+| TS-H2 | AI-Provider-Normalisierung 6 Funktionen dupliziert | ✅ (`ai-provider-utils.ts`) |
+| TS-H3 | `ensureContinuousDumpDefaults` dupliziert | ✅ |
+| TS-H4 | Render-Tripel 5× | ✅ (`refreshAIUi()`) |
+| TS-H5 | `handleOllamaPull` fehlendes `finally` | ✅ |
+| TS-H6 | `detectTopics` 18 RegExp pro Render | ✅ (Map-Cache) |
+| TS-H7 | Event-Listener-Leak bei `renderHistory()` | ✅ (Event-Delegation) |
+| TS-H8 | Tooltip Memory Leak | ✅ (`cleanupUnifiedTooltips()`) |
 
-| ID | Finding | Datei | Fix |
-|----|---------|-------|-----|
-| P-H1 | Temp-File-Leak: WAV-Datei bleibt bei Early-Return-Fehlerpfaden liegen | transcription.rs:1495-1657 | `Drop`-Guard (`TempFileGuard`) |
-| P-H2 | `command.output()` ohne Timeout — hängender Whisper blockiert Worker-Thread | transcription.rs:1575-1577 | `spawn()` + 120s Timeout + `child.kill()` |
-| P-H3 | Transcription-Result-Handling 3x kopiert (40 Zeilen/Kopie) | audio.rs:1215,1773,1936 | `handle_transcription_result()` extrahieren |
+### TypeScript MITTEL
 
-### MITTEL
+| ID | Finding | Status |
+|----|---------|--------|
+| TS-M1 | `refreshModelsDir()` kein `.catch()` | ✅ |
+| TS-M2 | Identische `forcedLocal`-Branches | ✅ |
+| TS-M3 | 24 identische change-Persist-Handler | ✅ (`onChangePersist()`) |
+| TS-M4 | History-Update-Handler 2× | ✅ (Factory) |
+| TS-M5 | Inline DOM-Queries | ✅ (dom-refs.ts) |
+| TS-M6 | `postproc_llm` sync 7× | ✅ (`syncLegacyProviderFields()`) |
+| TS-M7 | `persistCurrentSettings` Duplikat | ⏭ Offen (Circular Import Blocker) |
+| TS-M8 | Circular Import settings.ts ↔ event-listeners.ts | ⏭ Übersprungen (Architektur-Risiko) |
+| TS-M9 | `renderHistory/Settings` ohne RAF-Batching | ✅ (`scheduleHistoryRender/scheduleSettingsRender`) |
+| TS-M10 | localStorage ohne Größenlimit | ✅ (Cap 100 + console.warn) |
+| TS-M11 | `clipboard.writeText` ohne try/catch | ✅ |
+| TS-M12 | Dead ternary in Pipeline-Graph | ✅ |
+| TS-M13 | CSS backdrop-filter inkonsistent | ✅ (16px vereinheitlicht) |
+| TS-M14 | Hardcoded Farbe `#1da6a0` | ✅ (`var(--accent-2)`) |
 
-| ID | Finding | Datei | Fix |
-|----|---------|-------|-----|
-| P-M1 | `ContinuousDumpEvent` struct 2x definiert | audio.rs:105 + transcription.rs:60 | Gemeinsames Modul |
-| P-M2 | `lock().unwrap()` 36 Stellen in audio.rs + transcription.rs | audio.rs:588,1889 + transcription.rs:234 | `unwrap_or_else(\|e\| e.into_inner())` |
-| P-M3 | Regex wird pro Wort bei jedem Aufruf neu kompiliert | postprocessing.rs:392 | `OnceLock<HashMap<String, Regex>>` Cache |
-| P-M4 | `build_input_stream_f32/i16/u16` — 3x identische Callbacks (~50 Zeilen/Kopie) | audio.rs:597-746 | Generische Funktion + Conversion-Trait |
-| P-M5 | `update_overlay_state` spawnt OS-Thread nur für 120ms Sleep | overlay.rs:121-124 | Channel + Debounce |
-| P-M6 | Whisper-Seiteneffekte (.srt/.vtt/.json) nicht aufgeräumt | transcription.rs:1651-1657 | Glob-Cleanup oder dediziertes Temp-Dir |
-| P-M7 | `paths.rs` Fallback auf `"."` ohne Warnung | paths.rs:6-20 | `Result` zurückgeben + Logging |
-| P-M8 | Question-Detection im `multi`-Modus 3x dupliziert | postprocessing.rs:69-196 | `const` Arrays + einmalige Prüfung |
+### TypeScript NIEDRIG
 
-### NIEDRIG
-
-| ID | Finding | Datei | Fix |
-|----|---------|-------|-----|
-| P-L1 | `mark_overlay_ready()` leerer Funktionskörper (Dead Code) | overlay.rs:39 | Entfernen oder `todo!()` |
-| P-L2 | `whisper_cli_supports_gpu_layers` ruft `--help` bei jeder Transkription auf | transcription.rs:1317-1341 | `OnceLock<bool>` |
-| P-L3 | `refine_with_llm` toter Stub mit `#[allow(dead_code)]` | postprocessing.rs:420-434 | Entfernen |
-| P-L4 | `eprintln!` in Audio-Stream-Callbacks statt `tracing::error!` | audio.rs:607,657,707 | `tracing::error!()` |
+| ID | Finding | Status |
+|----|---------|--------|
+| TS-L1 | `checkModelOnStartup` ruft `get_settings` 2× auf | ✅ |
+| TS-L2 | `pasteQueue` bei Re-Bootstrap nicht reset | ✅ |
+| TS-L3 | Ungetypte Tauri-Event-Payloads | ✅ (benannte Types) |
+| TS-L4 | `wrapper.className` zweifach gesetzt | ✅ |
+| TS-L5 | `syncAIRefinementExpanders` liest localStorage immer | ✅ (In-Memory-Cache) |
+| TS-L6 | accessibility.ts nicht exhaustive | ✅ (Record-Annotation) |
+| TS-L7 | chapters.ts scrollt zur falschen Entry | ✅ (Timestamp-Nähe) |
 
 ---
 
-## Batch 3+4 Findings — TypeScript Core + Features (Sonnet Review abgeschlossen)
+## Bewusst offengelassene Findings
 
-### HOCH
+Diese 6 Findings wurden nach Abwägung **absichtlich nicht gefixt**. Sie sind kein Versehen.
 
-| ID | Finding | Datei | Fix |
-|----|---------|-------|-----|
-| TS-H1 | `window.addEventListener` 3x ohne Cleanup → akkumuliert bei Re-Bootstrap | main.ts:221, event-listeners.ts:1020,1473 | In `eventUnlisteners` aufnehmen |
-| TS-H2 | AI-Provider-Normalisierung 6 Funktionen + 2 Konstanten dupliziert | event-listeners.ts:46-76, settings.ts:197-239 | `src/ai-provider-utils.ts` extrahieren |
-| TS-H3 | `ensureContinuousDumpDefaults` vollständig dupliziert | event-listeners.ts:299, settings.ts:25 | Export aus settings.ts, Import in event-listeners |
-| TS-H4 | Render-Tripel (`renderAIFallbackSettingsUi/OllamaModelManager/Hero`) 5x copy-pasted | event-listeners.ts:1511,1541,1591,1615,1635 | `refreshAIUi()` + `commitLocalPrimary()` extrahieren |
-| TS-H5 | `handleOllamaPull` fehlendes `finally` → UI bleibt bei Erfolg in "Downloading"-State | ollama-models.ts:1028-1043 | `finally { activeOllamaPulls.delete(modelName) }` |
-| TS-H6 | `detectTopics` erstellt 18 neue RegExp-Instanzen pro History-Entry bei jedem Render | history.ts:408-423,858 | Regex-Cache als `Map<string, RegExp[]>` |
-| TS-H7 | Memory Leak: Event-Listener auf weggeworfenen DOM-Nodes bei `renderHistory()` | history.ts:860-904 | Event-Delegation auf `historyList`-Container |
-| TS-H8 | Tooltip Memory Leak: `initUnifiedTooltips` ohne Cleanup-Funktion | custom-tooltips.ts:210-238 | `cleanupUnifiedTooltips()` + in `cleanupEventListeners()` aufrufen |
-
-### MITTEL
-
-| ID | Finding | Datei | Fix |
-|----|---------|-------|-----|
-| TS-M1 | `refreshModelsDir()` fire-and-forget ohne `.catch()` | main.ts:316 | `void refreshModelsDir().catch(...)` |
-| TS-M2 | `if (forcedLocal) { persist } else { persist }` → identische Branches | event-listeners.ts:535-540,596-601 | if/else entfernen, einmal `persistSettings()` |
-| TS-M3 | 24 identische `change`-only-Persist-Handler | event-listeners.ts diverse | `onChangePersist(el)` Helper |
-| TS-M4 | History-Update-Handler für 2 Events: identischer Body bis auf Setter | main.ts:359-379 | `makeHistoryUpdateHandler(setter)` Factory |
-| TS-M5 | Inline DOM-Queries außerhalb dom-refs.ts | event-listeners.ts:2192, main.ts:687 | `applyOverlayBtn` in dom-refs.ts |
-| TS-M6 | `postproc_llm_provider/model` sync 7x ohne Helper-Funktion | event-listeners.ts+settings.ts+ollama-models.ts | `syncLegacyProviderFields(settings)` |
-| TS-M7 | `persistCurrentSettings` in ollama-models.ts: Duplikat ohne Error-Handling | ollama-models.ts:433-436 | Löschen, `persistSettings` aus settings.ts importieren |
-| TS-M8 | Circular Import: settings.ts ↔ event-listeners.ts | settings.ts:7, event-listeners.ts:13 | `renderVocabulary` auslagern |
-| TS-M9 | `renderHistory()` + `renderSettings()` ohne RAF-Batching (werden 8x sync aufgerufen) | main.ts:359-378, event-listeners.ts:diverse | RAF-Guard analog `scheduleRender()` |
-| TS-M10 | localStorage Snapshot-Store ohne Größenlimit → `QuotaExceededError` still geschluckt | refinement-inspector.ts:79-97 | Max 100 Snapshots + Quota-Fehler loggen |
-| TS-M11 | `navigator.clipboard.writeText` ohne try/catch | event-listeners.ts:910-915 | `try/catch` + `showToast` |
-| TS-M12 | Dead logic: `aiEnabled ? "bypassed" : "bypassed"` in Pipeline-Graph | refinement-pipeline-graph.ts:137-138 | `aiState = "bypassed"` direkt |
-| TS-M13 | CSS: `.panel` vs `.hero-card` backdrop-filter inkonsistent (16px vs 20px) | styles-modern.css:101-172 | Vereinheitlichen |
-| TS-M14 | CSS: Fallback-Farben `#1da6a0` hardcoded statt CSS-Variable | styles.css:3705 | `var(--accent-2)` ohne Fallback |
-
-### NIEDRIG
-
-| ID | Finding | Datei |
-|----|---------|-------|
-| TS-L1 | `checkModelOnStartup` ruft `get_settings` 2x auf, shadowt Modul-Level-Variable | main.ts:670-709 |
-| TS-L2 | `pasteQueue` wird bei Re-Bootstrap nicht zurückgesetzt | main.ts:103 |
-| TS-L3 | Ungetypte Tauri-Event-Payloads (`event.payload as "idle" | "recording"`) | main.ts:331,336,636 |
-| TS-L4 | `wrapper.className` zweifach gesetzt (redundante Zuweisung) | history.ts:846-848 |
-| TS-L5 | `syncAIRefinementExpanders` liest localStorage bei jedem Render | settings.ts:314-329 |
-| TS-L6 | `accessibility.ts` Dataset-Mapping nicht exhaustive type-safe | accessibility.ts:31-55 |
-| TS-L7 | `chapters.ts` TODO: scrollt immer zur ersten statt nächsten Entry | chapters.ts:191 |
+| ID | Finding | Warum offen gelassen |
+| -- | ------- | -------------------- |
+| **M9** | Sync HTTP blockiert Tauri Thread-Pool | Alle `ureq`-Aufrufe sitzen in `#[tauri::command]`-Funktionen, die Tauri bereits auf einem Blocking-Thread ausführt. Eine Migration auf `reqwest` async würde alle Provider-Aufrufe, State-Guards und Error-Propagation neu schneiden — zu hohes Regressionsrisiko ohne End-to-End-Testabdeckung für Cloud-Provider (Block I noch nicht implementiert). |
+| **P-M2** | `lock().unwrap()` an 36 Stellen | Mutex-Poisoning tritt nur auf, wenn ein Thread mit gehaltener Lock panict. Das passiert in diesem Codebase nur bei echten Bugs — die man dann lieber als Panic sieht als als Silent-Corruption. Eine flächendeckende Migration auf `lock().unwrap_or_else(PoisonError::into_inner)` würde Silent-Recovery einführen, ohne das Root-Problem zu fixen. Offen bis konkreter Anlass (reproduzierbarer Poison-Fall) auftritt. |
+| **L6** | `sanitize_model_name` vs. `sanitize_session_name` zusammenführen | Die Funktionen haben unterschiedliche erlaubte Zeichen (`.` und `-` vs. `-` und `_`), unterschiedliche Case-Behandlung (preserve vs. lowercase), unterschiedliche Ersetzungszeichen und unterschiedliche Max-Längen. Eine gemeinsame Abstraktion würde Parameter-Sprawl erzeugen, der schwerer lesbar ist als zwei klare Einzelfunktionen. |
+| **L7** | `transcribe_active` vs. `transcribe_enabled` konsolidieren | Die State-Semantik ist unklar: `transcribe_enabled` ist eine persistierte User-Einstellung (Settings-JSON), `transcribe_active` ist transienter Laufzeit-State (läuft gerade eine Aufnahme?). Beide zu einem Feld zusammenzuführen würde diese Unterscheidung verwischen und ist ein Architektur-Entscheid, der Diskussion braucht. |
+| **TS-M7** | `persistCurrentSettings` in `ollama-models.ts` dupliziert | Blockiert durch TS-M8: Um `persistSettings` aus `settings.ts` importieren zu können, müsste der Circular Import aufgebrochen werden. Das Duplikat ist minimal (3 Zeilen) und hat korrekte Error-Behandlung — vertretbar bis zum Architektur-Refactor. |
+| **TS-M8** | Circular Import `settings.ts` ↔ `event-listeners.ts` | Beide Module importieren gegenseitig Funktionen. Auflösung erfordert Extraktion eines `render-core.ts` o.ä. Moduls — ein größerer Architektur-Eingriff der am besten in einem dedizierten Refactor-Branch landet, nicht als Teil dieses Feature-Branches. |
 
 ---
 

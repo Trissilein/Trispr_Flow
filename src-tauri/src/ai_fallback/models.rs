@@ -342,7 +342,7 @@ fn is_valid_auth_method_preference(method: &str) -> bool {
     matches!(method.trim(), AUTH_METHOD_API_KEY | AUTH_METHOD_OAUTH)
 }
 
-fn normalize_cloud_provider_id(provider: &str) -> Option<&'static str> {
+pub(crate) fn normalize_cloud_provider_id(provider: &str) -> Option<&'static str> {
     match provider.trim().to_lowercase().as_str() {
         "claude" => Some("claude"),
         "openai" => Some("openai"),

@@ -13,6 +13,8 @@ export const tabBtnAiRefinement = $("tab-btn-ai-refinement") as HTMLButtonElemen
 export const tabTranscription = $("tab-transcription") as HTMLDivElement | null;
 export const tabSettings = $("tab-settings") as HTMLDivElement | null;
 export const tabAiRefinement = $("tab-ai-refinement") as HTMLDivElement | null;
+export const expertModeToggle = $("expert-mode-toggle") as HTMLInputElement | null;
+export const expertModeLabel = $("expert-mode-label") as HTMLSpanElement | null;
 
 // Status and hero elements
 export const statusLabel = $("status-label");
@@ -228,7 +230,7 @@ export const historyTabConversation = $("history-tab-conversation");
 export const historyCopyConversation = $("history-copy-conversation") as HTMLButtonElement | null;
 export const analyseButton = $("analyse-button") as HTMLButtonElement | null;
 export const historyExport = $("history-export") as HTMLButtonElement | null;
-export const exportFormat = $("export-format") as HTMLSelectElement | null;
+export const archiveBrowseBtn = $("archive-browse-btn") as HTMLButtonElement | null;
 export const historySearch = $("history-search") as HTMLInputElement | null;
 export const historySearchClear = $("history-search-clear") as HTMLButtonElement | null;
 export const conversationFontControls = $("conversation-font-controls");
@@ -246,6 +248,31 @@ export const refinementInspectorRaw = $("refinement-inspector-raw") as HTMLDivEl
 export const refinementInspectorRefined = $("refinement-inspector-refined") as HTMLDivElement | null;
 export const refinementInspectorDiff = $("refinement-inspector-diff") as HTMLDivElement | null;
 export const refinementInspectorError = $("refinement-inspector-error") as HTMLDivElement | null;
+
+// Export dialog
+export const exportDialog = $("export-dialog") as HTMLDivElement | null;
+export const exportDialogBackdrop = $("export-dialog-backdrop") as HTMLDivElement | null;
+export const exportDialogClose = $("export-dialog-close") as HTMLButtonElement | null;
+export const exportCustomRange = $("export-custom-range") as HTMLDivElement | null;
+export const exportCustomFrom = $("export-custom-from") as HTMLInputElement | null;
+export const exportCustomTo = $("export-custom-to") as HTMLInputElement | null;
+export const exportIncludeMic = $("export-include-mic") as HTMLInputElement | null;
+export const exportIncludeSystem = $("export-include-system") as HTMLInputElement | null;
+export const exportDialogFormat = $("export-dialog-format") as HTMLSelectElement | null;
+export const exportPreviewCount = $("export-preview-count") as HTMLSpanElement | null;
+export const exportPreviewSpan = $("export-preview-span") as HTMLSpanElement | null;
+export const exportDialogRun = $("export-dialog-run") as HTMLButtonElement | null;
+
+// Archive browser
+export const archiveBrowser = $("archive-browser") as HTMLDivElement | null;
+export const archiveBrowserBackdrop = $("archive-browser-backdrop") as HTMLDivElement | null;
+export const archiveBrowserClose = $("archive-browser-close") as HTMLButtonElement | null;
+export const archiveMicPartitions = $("archive-mic-partitions") as HTMLDivElement | null;
+export const archiveSystemPartitions = $("archive-system-partitions") as HTMLDivElement | null;
+export const archiveSelectionMeta = $("archive-selection-meta") as HTMLSpanElement | null;
+export const archiveEntries = $("archive-entries") as HTMLDivElement | null;
+export const archiveExportFormat = $("archive-export-format") as HTMLSelectElement | null;
+export const archiveExportBtn = $("archive-export-btn") as HTMLButtonElement | null;
 
 // Chapter controls (Transcription tab)
 export const chaptersContainer = $("chapters-container") as HTMLDivElement | null;
@@ -283,3 +310,12 @@ export const modelStoragePath = $("model-storage-path") as HTMLInputElement | nu
 export const modelStorageBrowse = $("model-storage-browse") as HTMLButtonElement | null;
 export const modelStorageReset = $("model-storage-reset") as HTMLButtonElement | null;
 export const modelList = $("model-list");
+
+// Overlay controls (button not reachable via id helper above)
+export const applyOverlayBtn = $("apply-overlay-btn") as HTMLButtonElement | null;
+
+// Model panel (queried by data attribute, not id)
+export const modelPanel =
+  typeof document !== "undefined"
+    ? (document.querySelector('[data-panel="model"]') as HTMLElement | null)
+    : null;

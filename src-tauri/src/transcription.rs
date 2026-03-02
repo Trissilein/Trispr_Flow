@@ -1,6 +1,8 @@
 #[cfg(target_os = "windows")]
 use crate::audio::CaptureBuffer;
 #[cfg(target_os = "windows")]
+use crate::audio::ContinuousDumpEvent;
+#[cfg(target_os = "windows")]
 use crate::constants::TRANSCRIBE_IDLE_METER_MS;
 #[cfg(target_os = "windows")]
 use crate::constants::{MIN_AUDIO_MS, VAD_THRESHOLD_SUSTAIN_DEFAULT};
@@ -11,7 +13,7 @@ use crate::constants::{
 #[cfg(any(test, target_os = "windows"))]
 use crate::constants::TRANSCRIBE_BACKLOG_WARNING_PERCENT;
 #[cfg(target_os = "windows")]
-use crate::continuous_dump::{AdaptiveSegmenter, AdaptiveSegmenterConfig, SegmentFlushReason};
+use crate::continuous_dump::{AdaptiveSegmenter, AdaptiveSegmenterConfig};
 use crate::errors::AppError;
 use crate::models::resolve_model_path;
 use crate::overlay::{update_overlay_state, OverlayState};
@@ -24,7 +26,7 @@ use crate::postprocessing::process_transcript;
 use crate::state::push_transcribe_entry_inner;
 use crate::state::{AppState, Settings};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::ErrorKind;
 #[cfg(target_os = "windows")]
@@ -55,15 +57,6 @@ pub(crate) fn last_transcription_accelerator() -> &'static str {
     }
 }
 
-#[cfg(target_os = "windows")]
-#[derive(Debug, Clone, Serialize)]
-struct ContinuousDumpEvent {
-    source: &'static str,
-    reason: SegmentFlushReason,
-    duration_ms: u64,
-    rms: f32,
-    text_len: usize,
-}
 
 #[cfg(target_os = "windows")]
 #[derive(Debug, Clone, Serialize)]
@@ -789,16 +782,67 @@ fn transcribe_worker(
                     };
 
                     let state = app.state::<AppState>();
-                    let _ = push_transcribe_entry_inner(
+                    let push_result = push_transcribe_entry_inner(
                         &app,
                         &state.history_transcribe,
-                        processed_text,
+                        processed_text.clone(),
                     );
+
+                    // System audio cluster tracking for AI refinement
+                    if let Ok(ref updated) = push_result {
+                        if let Some(new_entry) = updated.first() {
+                            let now = crate::util::now_ms();
+                            let flush_entries = {
+                                let mut cluster = state.system_cluster_buffer.lock().unwrap();
+                                const CLUSTER_GAP_MS: u64 = 8_000;
+                                let should_flush = cluster.last_chunk_ms > 0
+                                    && now.saturating_sub(cluster.last_chunk_ms) > CLUSTER_GAP_MS
+                                    && cluster.entries.len() >= 2;
+                                let flushed = if should_flush {
+                                    Some(std::mem::take(&mut cluster.entries))
+                                } else {
+                                    None
+                                };
+                                cluster.entries.push((
+                                    new_entry.id.clone(),
+                                    processed_text.clone(),
+                                    new_entry.timestamp_ms,
+                                ));
+                                cluster.last_chunk_ms = now;
+                                flushed
+                            };
+
+                            if let Some(entries) = flush_entries {
+                                let app_c = app.clone();
+                                let settings_c = settings.clone();
+                                std::thread::spawn(move || {
+                                    flush_system_cluster(&app_c, entries, &settings_c);
+                                });
+                            }
+                        }
+                    }
                 }
             }
             Err(err) => {
                 let _ = app.emit("transcription:error", err);
             }
+        }
+    }
+
+    // Flush remaining system audio cluster before worker exit
+    {
+        let state = app.state::<AppState>();
+        let remaining = {
+            let mut cluster = state.system_cluster_buffer.lock().unwrap();
+            if cluster.entries.len() >= 2 {
+                Some(std::mem::take(&mut cluster.entries))
+            } else {
+                cluster.entries.clear();
+                None
+            }
+        };
+        if let Some(entries) = remaining {
+            flush_system_cluster(&app, entries, &settings);
         }
     }
 
@@ -815,6 +859,66 @@ fn transcribe_worker(
             Ok(None) => info!("System audio session ended with no chunks"),
             Err(e) => error!("Failed to finalize system audio session: {}", e),
         }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn flush_system_cluster(
+    app: &AppHandle,
+    entries: Vec<(String, String, u64)>,
+    settings: &crate::state::Settings,
+) {
+    use std::collections::HashSet;
+
+    if entries.is_empty() {
+        return;
+    }
+
+    // Preserve timestamp of FIRST entry for chronological ordering
+    let first_ts = entries[0].2;
+    let joined = entries
+        .iter()
+        .map(|(_, t, _)| t.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let merged_id = format!("o_cluster_{}", crate::util::now_ms());
+
+    // Atomically update history: remove cluster entries, insert merged entry
+    let state = app.state::<crate::state::AppState>();
+    {
+        let speaker_name = {
+            let current_settings = state.settings.lock().unwrap();
+            Some(crate::state::speaker_name_for_source(&current_settings, "output"))
+        };
+        let cluster_ids: HashSet<&str> =
+            entries.iter().map(|(id, _, _)| id.as_str()).collect();
+        let mut ph = state.history_transcribe.lock().unwrap();
+        ph.retain_active(|e| !cluster_ids.contains(e.id.as_str()));
+        ph.push_entry(crate::state::HistoryEntry {
+            id: merged_id.clone(),
+            text: joined.clone(),
+            timestamp_ms: first_ts,
+            source: "output".to_string(),
+            speaker_name,
+            refinement: None,
+        });
+        let updated: Vec<crate::state::HistoryEntry> =
+            ph.active.iter().cloned().collect();
+        drop(ph);
+        let _ = app.emit("transcribe:history-updated", updated);
+    }
+
+    // Trigger AI refinement if enabled
+    if settings.ai_fallback.enabled {
+        let job_id = format!("syscluster_{}", crate::util::now_ms());
+        crate::audio::maybe_spawn_ai_refinement(
+            app.clone(),
+            joined,
+            "output".to_string(),
+            job_id,
+            Some(merged_id),
+            settings,
+        );
     }
 }
 
@@ -1315,6 +1419,25 @@ fn resolve_whisper_threads(gpu_hint: bool) -> usize {
 }
 
 fn whisper_cli_supports_gpu_layers(cli_path: &Path) -> bool {
+    static CACHE: std::sync::OnceLock<Mutex<HashMap<PathBuf, bool>>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    if let Ok(guard) = cache.lock() {
+        if let Some(&cached) = guard.get(cli_path) {
+            return cached;
+        }
+    }
+
+    let result = whisper_cli_probe_gpu_layers(cli_path);
+
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(cli_path.to_path_buf(), result);
+    }
+
+    result
+}
+
+fn whisper_cli_probe_gpu_layers(cli_path: &Path) -> bool {
     let mut probe = Command::new(cli_path);
     #[cfg(target_os = "windows")]
     probe.creation_flags(0x08000000); // CREATE_NO_WINDOW
@@ -1477,6 +1600,24 @@ impl Drop for WhisperGpuActivityGuard {
     }
 }
 
+/// RAII guard that deletes a temporary file when dropped.
+/// Ensures cleanup on every early-return path and panics, not just happy path.
+struct TempFileGuard {
+    path: std::path::PathBuf,
+}
+
+impl TempFileGuard {
+    fn new(path: std::path::PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 fn transcribe_local(
     app: &AppHandle,
     settings: &Settings,
@@ -1499,6 +1640,8 @@ fn transcribe_local(
             e
         )
     })?;
+    // Guard ensures wav_path is deleted on every exit path (early returns, panic).
+    let _wav_guard = TempFileGuard::new(wav_path.clone());
 
     let model_path = resolve_model_path(app, &settings.model).ok_or_else(|| {
         "Model file not found. Set TRISPR_WHISPER_MODEL_DIR or TRISPR_WHISPER_MODEL.".to_string()
@@ -1572,9 +1715,33 @@ fn transcribe_local(
     let mut gpu_activity_guard =
         WhisperGpuActivityGuard::new(app, if expected_gpu { "gpu" } else { "cpu" }, backend);
 
-    let output = command
-        .output()
+    // Use spawn + polling instead of output() to enforce a hard timeout.
+    // command.output() blocks forever if whisper-cli hangs (e.g. GPU deadlock).
+    let mut child = command
+        .spawn()
         .map_err(|e| map_whisper_spawn_error(cli_path.as_path(), e))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let output = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                break child
+                    .wait_with_output()
+                    .map_err(|e| format!("Failed to collect whisper-cli output: {}", e))?;
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "whisper-cli timed out after 120 seconds ('{}')",
+                        cli_path.display()
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("Failed to wait for whisper-cli: {}", e)),
+        }
+    };
     let stderr = String::from_utf8_lossy(&output.stderr);
     if whisper_stderr_indicates_gpu(&stderr) {
         gpu_activity_guard.set_accelerator("gpu");
@@ -1654,6 +1821,12 @@ fn transcribe_local(
     }
     if let Some(path) = transcript_path {
         let _ = fs::remove_file(path);
+    }
+
+    // Clean up additional side-effect files whisper may produce alongside the .txt output
+    for ext in &["srt", "vtt", "json", "lrc", "tsv"] {
+        let _ = fs::remove_file(output_base.with_extension(ext));
+        let _ = fs::remove_file(wav_path.with_extension(ext));
     }
 
     Ok(text.trim().to_string())

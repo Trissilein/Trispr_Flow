@@ -60,8 +60,8 @@
 
 | Version | Phase | Status | Highlights |
 | --- | --- | --- | --- |
-| **v0.7.0** | 🟢 LIVE | Complete | Local AI refinement flow, runtime manager, overlay split, GPU indicator |
-| **v0.7.1** | 🔵 In Progress | Hardening | Reliability + performance + QA |
+| **v0.7.0** | 🟢 LIVE | Complete | Stable offline-first baseline |
+| **v0.7.1** | 🔵 In Progress | Stabilization | Block E (UX/UI consistency) + Block F (reliability/QA) |
 | **v0.7.3** | 📋 Planned | Cloud rollout | Claude/OpenAI/Gemini provider activation |
 
 👉 **[Full Roadmap](ROADMAP.md)** — See milestones, implementation schedule, and competitor analysis
@@ -146,5 +146,5 @@ For WSL/Linux development, install dependencies listed in [DEVELOPMENT.md](docs/
 
 - 📝 See [CONTRIBUTING.md](CONTRIBUTING.md) for PR process
 - 🎯 For large features, see [SCOPE.md](SCOPE.md) to understand project direction
-- 🚀 **Next tasks available**: See [ROADMAP.md](ROADMAP.md) for the live Done/Open task ledger (v0.7 Block H)
+- 🚀 **Next tasks available**: See [ROADMAP.md](ROADMAP.md) for the live Done/Open task ledger (active: Block E/F, planned: Block J/K)
 - 💬 Discussions welcome in Issues

@@ -6,18 +6,25 @@ use crate::constants::{
     HALLUCINATION_RMS_THRESHOLD, VAD_SILENCE_MS_DEFAULT, VAD_THRESHOLD_START_DEFAULT,
     VAD_THRESHOLD_SUSTAIN_DEFAULT,
 };
+use crate::history_partition::PartitionedHistory;
 use crate::paths::{resolve_config_path, resolve_data_path};
 use crate::transcription::TranscribeRecorder;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::warn;
 
 const HISTORY_LOCK_WARN_MS: u128 = 20;
+
+/// Debounce flags for asynchronous history persistence.  When set, a background
+/// thread is already scheduled to flush the corresponding history to disk within
+/// 200 ms — additional writes during that window are coalesced.
+static HISTORY_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
+static TRANSCRIBE_HISTORY_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -61,6 +68,14 @@ fn default_overlay_refining_indicator_range() -> f32 {
     100.0
 }
 
+fn default_history_alias_mic() -> String {
+    "Input".to_string()
+}
+
+fn default_history_alias_system() -> String {
+    "System audio".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
@@ -96,6 +111,10 @@ pub(crate) struct Settings {
     pub(crate) transcribe_chunk_overlap_ms: u64,
     pub(crate) transcribe_input_gain_db: f32,
     pub(crate) mic_input_gain_db: f32,
+    #[serde(default = "default_history_alias_mic")]
+    pub(crate) history_alias_mic: String,
+    #[serde(default = "default_history_alias_system")]
+    pub(crate) history_alias_system: String,
     pub(crate) capture_enabled: bool,
     pub(crate) model_source: String,
     pub(crate) model_custom_url: String,
@@ -231,6 +250,8 @@ impl Default for Settings {
       transcribe_chunk_overlap_ms: 1000,
       transcribe_input_gain_db: 0.0,
       mic_input_gain_db: 0.0,
+      history_alias_mic: default_history_alias_mic(),
+      history_alias_system: default_history_alias_system(),
       capture_enabled: false,
       model_source: "default".to_string(),
       model_custom_url: "".to_string(),
@@ -356,6 +377,8 @@ pub(crate) struct HistoryEntry {
     pub(crate) timestamp_ms: u64,
     pub(crate) source: String,
     #[serde(default)]
+    pub(crate) speaker_name: Option<String>,
+    #[serde(default)]
     pub(crate) refinement: Option<HistoryRefinement>,
 }
 
@@ -367,10 +390,23 @@ pub(crate) struct Chapter {
     pub(crate) entry_count: u32,
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) struct SystemClusterBuffer {
+    pub(crate) entries: Vec<(String, String, u64)>, // (entry_id, text, timestamp_ms)
+    pub(crate) last_chunk_ms: u64,
+}
+
+#[cfg(target_os = "windows")]
+impl Default for SystemClusterBuffer {
+    fn default() -> Self {
+        Self { entries: Vec::new(), last_chunk_ms: 0 }
+    }
+}
+
 pub(crate) struct AppState {
     pub(crate) settings: Mutex<Settings>,
-    pub(crate) history: Mutex<Vec<HistoryEntry>>,
-    pub(crate) history_transcribe: Mutex<Vec<HistoryEntry>>,
+    pub(crate) history: Mutex<PartitionedHistory>,
+    pub(crate) history_transcribe: Mutex<PartitionedHistory>,
     pub(crate) chapters: Mutex<Vec<Chapter>>,
     pub(crate) recorder: Mutex<Recorder>,
     pub(crate) transcribe: Mutex<TranscribeRecorder>,
@@ -391,6 +427,8 @@ pub(crate) struct AppState {
     pub(crate) last_system_recording_path: Mutex<Option<String>>,
     /// Handle to the managed Ollama child process for cleanup on app exit.
     pub(crate) managed_ollama_child: Mutex<Option<std::process::Child>>,
+    #[cfg(target_os = "windows")]
+    pub(crate) system_cluster_buffer: Mutex<SystemClusterBuffer>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -503,6 +541,7 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
                 settings.transcribe_vad_silence_ms = 5000;
             }
             normalize_continuous_dump_fields(&mut settings);
+            normalize_history_alias_fields(&mut settings);
             if settings.transcribe_backend.trim().is_empty() {
                 settings.transcribe_backend = "whisper_cpp".to_string();
             }
@@ -730,12 +769,8 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
 
 pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
     fn normalize_cloud_provider(provider: &str) -> Option<String> {
-        match provider.trim().to_lowercase().as_str() {
-            "claude" => Some("claude".to_string()),
-            "openai" => Some("openai".to_string()),
-            "gemini" => Some("gemini".to_string()),
-            _ => None,
-        }
+        crate::ai_fallback::models::normalize_cloud_provider_id(provider)
+            .map(str::to_string)
     }
 
     fn is_verified_auth_status(status: &str) -> bool {
@@ -866,7 +901,16 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
 }
 
 pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
-    let defaults = Settings::default();
+    // Default values for legacy migration comparisons — avoids constructing a full
+    // Settings::default() on every call.
+    const DEFAULT_CONTINUOUS_SOFT_FLUSH_MS: u64 = 10_000;
+    const DEFAULT_CONTINUOUS_SYSTEM_SOFT_FLUSH_MS: u64 = 10_000;
+    const DEFAULT_CONTINUOUS_SILENCE_FLUSH_MS: u64 = 1_200;
+    const DEFAULT_CONTINUOUS_SYSTEM_SILENCE_FLUSH_MS: u64 = 1_200;
+    const DEFAULT_CONTINUOUS_PRE_ROLL_MS: u64 = 300;
+    const DEFAULT_TRANSCRIBE_BATCH_INTERVAL_MS: u64 = 8_000;
+    const DEFAULT_TRANSCRIBE_VAD_SILENCE_MS: u64 = 900;
+    const DEFAULT_TRANSCRIBE_CHUNK_OVERLAP_MS: u64 = 1_000;
 
     if settings.continuous_dump_profile != "balanced"
         && settings.continuous_dump_profile != "low_latency"
@@ -876,28 +920,28 @@ pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
     }
 
     // Legacy migration from interval/overlap system-audio settings.
-    if settings.continuous_soft_flush_ms == defaults.continuous_soft_flush_ms
-        && settings.transcribe_batch_interval_ms != defaults.transcribe_batch_interval_ms
+    if settings.continuous_soft_flush_ms == DEFAULT_CONTINUOUS_SOFT_FLUSH_MS
+        && settings.transcribe_batch_interval_ms != DEFAULT_TRANSCRIBE_BATCH_INTERVAL_MS
     {
         settings.continuous_soft_flush_ms = settings.transcribe_batch_interval_ms;
     }
-    if settings.continuous_system_soft_flush_ms == defaults.continuous_system_soft_flush_ms
-        && settings.transcribe_batch_interval_ms != defaults.transcribe_batch_interval_ms
+    if settings.continuous_system_soft_flush_ms == DEFAULT_CONTINUOUS_SYSTEM_SOFT_FLUSH_MS
+        && settings.transcribe_batch_interval_ms != DEFAULT_TRANSCRIBE_BATCH_INTERVAL_MS
     {
         settings.continuous_system_soft_flush_ms = settings.transcribe_batch_interval_ms;
     }
-    if settings.continuous_silence_flush_ms == defaults.continuous_silence_flush_ms
-        && settings.transcribe_vad_silence_ms != defaults.transcribe_vad_silence_ms
+    if settings.continuous_silence_flush_ms == DEFAULT_CONTINUOUS_SILENCE_FLUSH_MS
+        && settings.transcribe_vad_silence_ms != DEFAULT_TRANSCRIBE_VAD_SILENCE_MS
     {
         settings.continuous_silence_flush_ms = settings.transcribe_vad_silence_ms;
     }
-    if settings.continuous_system_silence_flush_ms == defaults.continuous_system_silence_flush_ms
-        && settings.transcribe_vad_silence_ms != defaults.transcribe_vad_silence_ms
+    if settings.continuous_system_silence_flush_ms == DEFAULT_CONTINUOUS_SYSTEM_SILENCE_FLUSH_MS
+        && settings.transcribe_vad_silence_ms != DEFAULT_TRANSCRIBE_VAD_SILENCE_MS
     {
         settings.continuous_system_silence_flush_ms = settings.transcribe_vad_silence_ms;
     }
-    if settings.continuous_pre_roll_ms == defaults.continuous_pre_roll_ms
-        && settings.transcribe_chunk_overlap_ms != defaults.transcribe_chunk_overlap_ms
+    if settings.continuous_pre_roll_ms == DEFAULT_CONTINUOUS_PRE_ROLL_MS
+        && settings.transcribe_chunk_overlap_ms != DEFAULT_TRANSCRIBE_CHUNK_OVERLAP_MS
     {
         settings.continuous_pre_roll_ms = settings.transcribe_chunk_overlap_ms;
     }
@@ -947,13 +991,45 @@ pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
     }
 }
 
+fn normalize_history_alias_value(value: &str, fallback: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.chars().take(32).collect()
+    }
+}
+
+pub(crate) fn normalize_history_alias_fields(settings: &mut Settings) {
+    settings.history_alias_mic = normalize_history_alias_value(
+        &settings.history_alias_mic,
+        &default_history_alias_mic(),
+    );
+    settings.history_alias_system = normalize_history_alias_value(
+        &settings.history_alias_system,
+        &default_history_alias_system(),
+    );
+}
+
+pub(crate) fn speaker_name_for_source(settings: &Settings, source: &str) -> String {
+    match source {
+        "mic" => settings.history_alias_mic.clone(),
+        "output" | "system" => settings.history_alias_system.clone(),
+        _ => source.to_string(),
+    }
+}
+
 pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     let path = resolve_config_path(app, "settings.json");
     let mut persisted = settings.clone();
     // Do not persist session-only transcribe enablement.
     persisted.transcribe_enabled = false;
+    normalize_history_alias_fields(&mut persisted);
     let raw = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
-    fs::write(path, raw).map_err(|e| e.to_string())?;
+    // Atomic write: write to .tmp then rename to avoid partial/corrupted JSON on crash.
+    let tmp_path = path.with_extension("json.tmp");
+    fs::write(&tmp_path, &raw).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_path, &path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -964,16 +1040,6 @@ pub(crate) fn sync_model_dir_env(settings: &Settings) {
     } else {
         std::env::set_var("TRISPR_WHISPER_MODEL_DIR", trimmed);
     }
-}
-
-pub(crate) fn load_history(app: &AppHandle) -> Vec<HistoryEntry> {
-    let path = resolve_data_path(app, "history.json");
-    load_history_from_path(&path)
-}
-
-pub(crate) fn save_history_file(app: &AppHandle, history: &[HistoryEntry]) -> Result<(), String> {
-    let path = resolve_data_path(app, "history.json");
-    save_history_to_path(&path, history)
 }
 
 pub(crate) fn load_chapters(app: &AppHandle) -> Vec<Chapter> {
@@ -991,26 +1057,15 @@ pub(crate) fn save_chapters_file(app: &AppHandle, chapters: &[Chapter]) -> Resul
     Ok(())
 }
 
-pub(crate) fn load_transcribe_history(app: &AppHandle) -> Vec<HistoryEntry> {
-    let path = resolve_data_path(app, "history_transcribe.json");
-    load_history_from_path(&path)
-}
-
-pub(crate) fn save_transcribe_history_file(
-    app: &AppHandle,
-    history: &[HistoryEntry],
-) -> Result<(), String> {
-    let path = resolve_data_path(app, "history_transcribe.json");
-    save_history_to_path(&path, history)
-}
-
-pub(crate) fn load_history_from_path(path: &std::path::Path) -> Vec<HistoryEntry> {
+#[cfg(test)]
+pub(crate) fn load_history_from_path(path: &std::path::Path) -> std::collections::VecDeque<HistoryEntry> {
     match fs::read_to_string(path) {
         Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(_) => Vec::new(),
+        Err(_) => std::collections::VecDeque::new(),
     }
 }
 
+#[cfg(test)]
 pub(crate) fn save_history_to_path(
     path: &std::path::Path,
     history: &[HistoryEntry],
@@ -1022,58 +1077,99 @@ pub(crate) fn save_history_to_path(
 
 pub(crate) fn push_history_entry_inner(
     app: &AppHandle,
-    history: &Mutex<Vec<HistoryEntry>>,
+    history: &Mutex<PartitionedHistory>,
     text: String,
     source: String,
 ) -> Result<Vec<HistoryEntry>, String> {
+    let speaker_name = {
+        let state = app.state::<AppState>();
+        let settings = state.settings.lock().unwrap();
+        Some(speaker_name_for_source(&settings, &source))
+    };
     let lock_started = Instant::now();
-    let mut history = history.lock().unwrap();
+    let mut ph = history.lock().unwrap();
     let entry = HistoryEntry {
         id: format!("h_{}", crate::util::now_ms()),
         text,
         timestamp_ms: crate::util::now_ms(),
         source,
+        speaker_name,
         refinement: None,
     };
-    history.insert(0, entry);
-    let updated = history.clone();
+    ph.push_entry(entry);
+    let updated: Vec<HistoryEntry> = ph.active.iter().cloned().collect();
     let lock_elapsed_ms = lock_started.elapsed().as_millis();
-    drop(history);
+    drop(ph);
     if lock_elapsed_ms > HISTORY_LOCK_WARN_MS {
         warn!(
             "History lock hold exceeded threshold in push_history_entry_inner: {}ms",
             lock_elapsed_ms
         );
     }
-    save_history_file(app, &updated)?;
+
+    // Debounced persist: only schedule a disk write if none is already pending.
+    if !HISTORY_SAVE_PENDING.swap(true, Ordering::AcqRel) {
+        let app_clone = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            HISTORY_SAVE_PENDING.store(false, Ordering::Release);
+            let state = app_clone.state::<AppState>();
+            let ph = state.history.lock().unwrap();
+            if let Err(e) = ph.flush_to_disk() {
+                warn!("Debounced history save failed: {}", e);
+            }
+        });
+    }
+
     Ok(updated)
 }
 
 pub(crate) fn push_transcribe_entry_inner(
     app: &AppHandle,
-    history: &Mutex<Vec<HistoryEntry>>,
+    history: &Mutex<PartitionedHistory>,
     text: String,
 ) -> Result<Vec<HistoryEntry>, String> {
+    let speaker_name = {
+        let state = app.state::<AppState>();
+        let settings = state.settings.lock().unwrap();
+        Some(speaker_name_for_source(&settings, "output"))
+    };
     let lock_started = Instant::now();
-    let mut history = history.lock().unwrap();
+    let mut ph = history.lock().unwrap();
     let entry = HistoryEntry {
         id: format!("o_{}", crate::util::now_ms()),
         text,
         timestamp_ms: crate::util::now_ms(),
         source: "output".to_string(),
+        speaker_name,
         refinement: None,
     };
-    history.insert(0, entry);
-    let updated = history.clone();
+    ph.push_entry(entry);
+    let updated: Vec<HistoryEntry> = ph.active.iter().cloned().collect();
     let lock_elapsed_ms = lock_started.elapsed().as_millis();
-    drop(history);
+    drop(ph);
     if lock_elapsed_ms > HISTORY_LOCK_WARN_MS {
         warn!(
             "History lock hold exceeded threshold in push_transcribe_entry_inner: {}ms",
             lock_elapsed_ms
         );
     }
-    save_transcribe_history_file(app, &updated)?;
+
+    // Debounced persist: only schedule a disk write if none is already pending.
+    if !TRANSCRIBE_HISTORY_SAVE_PENDING.swap(true, Ordering::AcqRel) {
+        let app_clone = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            TRANSCRIBE_HISTORY_SAVE_PENDING.store(false, Ordering::Release);
+            let state = app_clone.state::<AppState>();
+            let ph = state.history_transcribe.lock().unwrap();
+            if let Err(e) = ph.flush_to_disk() {
+                warn!("Debounced transcribe history save failed: {}", e);
+            }
+        });
+    }
+
+    // Event emission remains synchronous — UI always gets the update immediately.
     let _ = app.emit("transcribe:history-updated", updated.clone());
     Ok(updated)
 }
@@ -1084,8 +1180,7 @@ fn emit_updated_history(app: &AppHandle, event_name: &str, updated: Vec<HistoryE
 
 fn update_history_entry_in_store<F>(
     app: &AppHandle,
-    store: &Mutex<Vec<HistoryEntry>>,
-    save_fn: fn(&AppHandle, &[HistoryEntry]) -> Result<(), String>,
+    store: &Mutex<PartitionedHistory>,
     event_name: &str,
     entry_id: &str,
     apply: &mut F,
@@ -1094,21 +1189,21 @@ where
     F: FnMut(&mut HistoryEntry),
 {
     let lock_started = Instant::now();
-    let mut history = store.lock().unwrap();
-    let Some(entry) = history.iter_mut().find(|entry| entry.id == entry_id) else {
+    let mut ph = store.lock().unwrap();
+    let Some(entry) = ph.active.iter_mut().find(|entry| entry.id == entry_id) else {
         return Ok(false);
     };
     apply(entry);
-    let updated = history.clone();
+    let updated: Vec<HistoryEntry> = ph.active.iter().cloned().collect();
+    ph.flush_to_disk().ok();
     let lock_elapsed_ms = lock_started.elapsed().as_millis();
-    drop(history);
+    drop(ph);
     if lock_elapsed_ms > HISTORY_LOCK_WARN_MS {
         warn!(
             "History lock hold exceeded threshold in update_history_entry_in_store ({}): {}ms",
             event_name, lock_elapsed_ms
         );
     }
-    save_fn(app, &updated)?;
     emit_updated_history(app, event_name, updated);
     Ok(true)
 }
@@ -1128,7 +1223,6 @@ where
     if update_history_entry_in_store(
         app,
         &state.history,
-        save_history_file,
         "history:updated",
         entry_id,
         &mut apply,
@@ -1138,7 +1232,6 @@ where
     let _ = update_history_entry_in_store(
         app,
         &state.history_transcribe,
-        save_transcribe_history_file,
         "transcribe:history-updated",
         entry_id,
         &mut apply,
@@ -1236,6 +1329,7 @@ mod tests {
             text: "raw transcript".to_string(),
             timestamp_ms: 1_772_101_100_000,
             source: "local".to_string(),
+            speaker_name: Some("local".to_string()),
             refinement: Some(HistoryRefinement {
                 job_id: format!("job-{id}"),
                 raw: "raw transcript".to_string(),

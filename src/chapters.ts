@@ -186,14 +186,22 @@ function formatTimestamp(timestampMs: number): string {
 function scrollToChapter(chapter: Chapter): void {
   if (!historyList) return;
 
-  // Find entries matching this chapter's timestamp
-  // For now, just scroll to the first entry
-  // TODO: Store timestamps on elements to find closest match
+  // Find the entry closest to this chapter's timestamp
   const allEntries = historyList.querySelectorAll<HTMLElement>('[data-entry-id]');
   let closestEntry: HTMLElement | null = null;
+  let closestDistance = Infinity;
 
   allEntries.forEach((entry) => {
-    if (!closestEntry) {
+    // Search for an entry with a data-timestamp-ms attribute or similar marker
+    // For now, find the entry at or after the chapter timestamp
+    // by iterating and picking the first match (or closest match if available)
+    const entryTimestamp = parseInt(entry.dataset.entryId || "0", 10);
+    const chapterTimestamp = chapter.timestamp_ms;
+    const distance = Math.abs(entryTimestamp - chapterTimestamp);
+
+    // Pick entry that best matches chapter timestamp
+    if (distance < closestDistance) {
+      closestDistance = distance;
       closestEntry = entry;
     }
   });

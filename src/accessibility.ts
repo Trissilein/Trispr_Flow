@@ -28,7 +28,7 @@ export function updateRecordingStatus(state: RecordingState): void {
 
   const announcement = document.getElementById("recording-announcement");
   if (announcement) {
-    const announcements = {
+    const announcements: Record<RecordingState, string> = {
       disabled: "Recording disabled.",
       idle: "Recording stopped. Ready to record.",
       recording: "Recording started. Speaking now.",
@@ -46,7 +46,7 @@ export function updateTranscribeStatus(state: RecordingState): void {
 
   const announcement = document.getElementById("transcribe-announcement");
   if (announcement) {
-    const announcements = {
+    const announcements: Record<RecordingState, string> = {
       disabled: "Transcription disabled.",
       idle: "Transcription idle.",
       recording: "Output monitoring active.",

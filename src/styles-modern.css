@@ -120,8 +120,8 @@
 /* Hero-Card: kein transform (würde Tooltips verschieben) */
 .hero-card {
   background: rgba(36, 42, 51, 0.94);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 /* ─────────────────────────────────────────────────────────────

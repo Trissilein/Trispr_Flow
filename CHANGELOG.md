@@ -280,10 +280,12 @@ This release delivers **VibeVoice-ASR Integration** for speaker-aware meeting tr
 
 ### What's Next?
 
-Version 0.7.0 will introduce the **AI Fallback Overhaul** with:
+Current focus is **v0.7.1 stabilization** with:
 
-- Multi-provider support (Claude, OpenAI, Gemini)
-- User-editable post-processing prompts
-- Per-provider model selection and API key management
+- UX/UI consistency and settings IA cleanup (Block E)
+- Reliability hardening and release QA (Block F)
+- Latency benchmark baseline + runtime-start validation
+
+Cloud provider rollout (OpenAI/Claude/Gemini) remains planned for **v0.7.3**.
 
 See [ROADMAP.md](ROADMAP.md) for the full development plan.

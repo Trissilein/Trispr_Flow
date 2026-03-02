@@ -8,14 +8,23 @@ import type {
   AIProviderAuthStatus,
   Settings,
 } from "./types";
+import {
+  CLOUD_PROVIDER_IDS,
+  CLOUD_PROVIDER_LABELS,
+  normalizeCloudProvider,
+  normalizeExecutionMode,
+  normalizeAuthMethodPreference,
+  isVerifiedAuthStatus,
+  normalizeAIFallbackProvider,
+} from "./ai-provider-utils";
 import { settings, currentHistoryTab } from "./state";
 import * as dom from "./dom-refs";
 import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, updateTranscribeVadVisibility, updateTranscribeThreshold, renderAIFallbackSettingsUi, renderTopicKeywords, ensureContinuousDumpDefaults } from "./settings";
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
 import { refreshModels, refreshModelsDir } from "./models";
-import { setHistoryTab, buildConversationHistory, buildConversationText, buildExportText, setSearchQuery, setTopicKeywords, DEFAULT_TOPICS, renderHistory, syncHistoryToolbarState } from "./history";
-import { setHistoryAlias, setHistoryFontSize } from "./history-preferences";
+import { setHistoryTab, buildConversationHistory, buildConversationText, setSearchQuery, setTopicKeywords, DEFAULT_TOPICS, scheduleHistoryRender, syncHistoryToolbarState } from "./history";
+import { setHistoryAlias, setHistoryFontSize, syncHistoryAliasesIntoSettings } from "./history-preferences";
 import { isPanelId, togglePanel } from "./panels";
 import { setupHotkeyRecorder } from "./hotkeys";
 import { updateRangeAria } from "./accessibility";
@@ -42,6 +51,8 @@ import {
   useSystemOllamaRuntime,
   verifyOllamaRuntime,
 } from "./ollama-models";
+import { openExportDialog } from "./export-dialog";
+import { openArchiveBrowser } from "./archive-browser";
 
 // Cleanup registry for window-level listeners added by wireEvents()
 const _windowCleanups: Array<() => void> = [];
@@ -50,36 +61,33 @@ export function cleanupWindowListeners(): void {
   _windowCleanups.length = 0;
 }
 
-const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini", "ollama"];
-const CLOUD_PROVIDER_IDS: CloudAIFallbackProvider[] = ["claude", "openai", "gemini"];
-const CLOUD_PROVIDER_LABELS: Record<CloudAIFallbackProvider, string> = {
-  claude: "Claude (Anthropic)",
-  openai: "OpenAI",
-  gemini: "Gemini (Google)",
-};
+// RAF guard: ensures renderSettings() is called at most once per animation frame
+// even when multiple settings toggles fire synchronously in one tick.
+let _settingsRenderFrame: number | null = null;
+
+export function scheduleSettingsRender(): void {
+  if (_settingsRenderFrame !== null) return;
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    _settingsRenderFrame = window.requestAnimationFrame(() => {
+      _settingsRenderFrame = null;
+      renderSettings();
+    });
+  } else {
+    _settingsRenderFrame = window.setTimeout(() => {
+      _settingsRenderFrame = null;
+      renderSettings();
+    }, 16) as unknown as number;
+  }
+}
+
 let authModalProvider: CloudAIFallbackProvider | null = null;
 
-function isCloudProvider(provider?: string | null): provider is CloudAIFallbackProvider {
-  if (!provider) return false;
-  return CLOUD_PROVIDER_IDS.includes(provider as CloudAIFallbackProvider);
-}
-
-function normalizeCloudProvider(provider?: string | null): CloudAIFallbackProvider | null {
-  if (!provider) return null;
-  const normalized = provider.trim().toLowerCase();
-  return isCloudProvider(normalized) ? (normalized as CloudAIFallbackProvider) : null;
-}
-
-function normalizeExecutionMode(mode?: string | null): AIExecutionMode {
-  return mode === "online_fallback" ? "online_fallback" : "local_primary";
-}
-
-function normalizeAuthMethodPreference(method?: string | null): "api_key" | "oauth" {
-  return method === "oauth" ? "oauth" : "api_key";
-}
-
-function isVerifiedAuthStatus(status?: string | null): boolean {
-  return status === "verified_api_key" || status === "verified_oauth";
+// Renders the three UI sections that always need to be refreshed together after
+// a local/online runtime change or model-import action.
+function refreshAIUi(): void {
+  renderAIFallbackSettingsUi();
+  renderOllamaModelManager();
+  renderHero();
 }
 
 function getCredentialTargetProvider(): CloudAIFallbackProvider | null {
@@ -158,13 +166,6 @@ async function activateOnlineFallback(provider: CloudAIFallbackProvider): Promis
     console.warn(`Failed to refresh models for ${provider}:`, error);
   }
   syncCloudModelForProvider(provider);
-}
-
-function normalizeAIFallbackProvider(provider?: string): AIFallbackProvider {
-  if (provider && AI_FALLBACK_PROVIDER_IDS.includes(provider as AIFallbackProvider)) {
-    return provider as AIFallbackProvider;
-  }
-  return "ollama";
 }
 
 function isLaneControlTarget(target: EventTarget | null): boolean {
@@ -762,9 +763,22 @@ export function renderVocabulary() {
   }
 }
 
+// Registers a "change" event listener that only saves settings.
+// Use for sliders / toggles whose value was already written to the settings
+// object by the companion "input" listener; this just persists the final value.
+function onChangePersist(el: Element | null | undefined): void {
+  el?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+}
+
 export function wireEvents() {
   ensureAIFallbackSettingsDefaults();
   ensureContinuousDumpDefaults();
+  if (syncHistoryAliasesIntoSettings()) {
+    void persistSettings();
+  }
 
   // Main tab switching
   dom.tabBtnTranscription?.addEventListener("click", () => {
@@ -804,7 +818,7 @@ export function wireEvents() {
     if (!settings || !dom.modelSourceSelect) return;
     settings.model_source = dom.modelSourceSelect.value as Settings["model_source"];
     await persistSettings();
-    renderSettings();
+    scheduleSettingsRender();
     await refreshModels();
   });
 
@@ -905,49 +919,12 @@ export function wireEvents() {
     });
   });
 
-  dom.historyExport?.addEventListener("click", async () => {
-    const entries = buildConversationHistory();
-    if (!entries.length) {
-      showToast({
-        type: "warning",
-        title: "Nothing to export",
-        message: "No transcript entries available",
-        duration: 3000,
-      });
-      return;
-    }
+  dom.historyExport?.addEventListener("click", () => {
+    void openExportDialog();
+  });
 
-    const format = (dom.exportFormat?.value as "txt" | "md" | "json") || "txt";
-    const exportContent = buildExportText(entries, format);
-
-    // Determine file extension
-    const ext = format === "md" ? "md" : format;
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const filename = `transcript-${timestamp}.${ext}`;
-
-    try {
-      // Save file using Tauri
-      await invoke("save_transcript", {
-        filename,
-        content: exportContent,
-        format,
-      });
-
-      showToast({
-        type: "success",
-        title: "Export successful",
-        message: `Transcript saved as ${filename}`,
-        duration: 4000,
-      });
-    } catch (error) {
-      console.error("Export failed:", error);
-      showToast({
-        type: "error",
-        title: "Export failed",
-        message: String(error),
-        duration: 5000,
-      });
-    }
+  dom.archiveBrowseBtn?.addEventListener("click", () => {
+    void openArchiveBrowser();
   });
 
   dom.historySearch?.addEventListener("input", () => {
@@ -971,14 +948,15 @@ export function wireEvents() {
       dom.conversationFontSizeValue.textContent = `${size}px`;
     }
     updateRangeAria("conversation-font-size", size);
-    renderHistory();
+    scheduleHistoryRender();
   });
 
   const commitAlias = (key: "mic" | "system", input: HTMLInputElement | null): void => {
     if (!input) return;
     input.value = setHistoryAlias(key, input.value);
     syncHistoryToolbarState();
-    renderHistory();
+    scheduleHistoryRender();
+    void persistSettings();
   };
 
   dom.historyAliasMicInput?.addEventListener("change", () =>
@@ -1055,10 +1033,7 @@ export function wireEvents() {
     updateTranscribeThreshold(settings.transcribe_vad_threshold);
   });
 
-  dom.transcribeVadThreshold?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.transcribeVadThreshold);
 
   dom.transcribeVadSilence?.addEventListener("input", () => {
     if (!settings || !dom.transcribeVadSilence) return;
@@ -1074,10 +1049,7 @@ export function wireEvents() {
     updateRangeAria("transcribe-vad-silence", value);
   });
 
-  dom.transcribeVadSilence?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.transcribeVadSilence);
 
   dom.transcribeBatchInterval?.addEventListener("input", () => {
     if (!settings || !dom.transcribeBatchInterval) return;
@@ -1093,10 +1065,7 @@ export function wireEvents() {
     updateRangeAria("transcribe-batch-interval", value);
   });
 
-  dom.transcribeBatchInterval?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.transcribeBatchInterval);
 
   dom.transcribeChunkOverlap?.addEventListener("input", () => {
     if (!settings || !dom.transcribeChunkOverlap) return;
@@ -1114,10 +1083,7 @@ export function wireEvents() {
     updateRangeAria("transcribe-chunk-overlap", settings.transcribe_chunk_overlap_ms);
   });
 
-  dom.transcribeChunkOverlap?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.transcribeChunkOverlap);
 
   dom.transcribeGain?.addEventListener("input", () => {
     if (!settings || !dom.transcribeGain) return;
@@ -1130,10 +1096,7 @@ export function wireEvents() {
     updateRangeAria("transcribe-gain", value);
   });
 
-  dom.transcribeGain?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.transcribeGain);
 
   dom.languageSelect?.addEventListener("change", async () => {
     if (!settings) return;
@@ -1171,10 +1134,7 @@ export function wireEvents() {
     updateRangeAria("audio-cues-volume", value);
   });
 
-  dom.audioCuesVolume?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.audioCuesVolume);
 
   dom.hallucinationFilterToggle?.addEventListener("change", async () => {
     if (!settings) return;
@@ -1186,7 +1146,7 @@ export function wireEvents() {
     if (!settings) return;
     settings.activation_words_enabled = dom.activationWordsToggle!.checked;
     await persistSettings();
-    renderSettings();
+    scheduleSettingsRender();
   });
 
   dom.activationWordsList?.addEventListener("change", async () => {
@@ -1234,7 +1194,7 @@ export function wireEvents() {
     if (!settings || !dom.continuousDumpProfile) return;
     settings.continuous_dump_profile = dom.continuousDumpProfile.value as "balanced" | "low_latency" | "high_quality";
     applyContinuousProfile(settings.continuous_dump_profile);
-    renderSettings();
+    scheduleSettingsRender();
     await persistSettings();
   });
 
@@ -1247,7 +1207,7 @@ export function wireEvents() {
     if (dom.continuousHardCutValue) dom.continuousHardCutValue.textContent = `${Math.round(value / 1000)}s`;
     updateRangeAria("continuous-hard-cut", value);
   });
-  dom.continuousHardCut?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousHardCut);
 
   dom.continuousMinChunk?.addEventListener("input", () => {
     if (!settings || !dom.continuousMinChunk) return;
@@ -1256,7 +1216,7 @@ export function wireEvents() {
     if (dom.continuousMinChunkValue) dom.continuousMinChunkValue.textContent = `${(value / 1000).toFixed(1)}s`;
     updateRangeAria("continuous-min-chunk", value);
   });
-  dom.continuousMinChunk?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousMinChunk);
 
   dom.continuousPreRoll?.addEventListener("input", () => {
     if (!settings || !dom.continuousPreRoll) return;
@@ -1268,7 +1228,7 @@ export function wireEvents() {
     if (dom.transcribeOverlapValue) dom.transcribeOverlapValue.textContent = `${(settings.transcribe_chunk_overlap_ms / 1000).toFixed(1)}s`;
     updateRangeAria("continuous-pre-roll", value);
   });
-  dom.continuousPreRoll?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousPreRoll);
 
   dom.continuousPostRoll?.addEventListener("input", () => {
     if (!settings || !dom.continuousPostRoll) return;
@@ -1277,7 +1237,7 @@ export function wireEvents() {
     if (dom.continuousPostRollValue) dom.continuousPostRollValue.textContent = `${(value / 1000).toFixed(2)}s`;
     updateRangeAria("continuous-post-roll", value);
   });
-  dom.continuousPostRoll?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousPostRoll);
 
   dom.continuousKeepalive?.addEventListener("input", () => {
     if (!settings || !dom.continuousKeepalive) return;
@@ -1286,7 +1246,7 @@ export function wireEvents() {
     if (dom.continuousKeepaliveValue) dom.continuousKeepaliveValue.textContent = `${Math.round(value / 1000)}s`;
     updateRangeAria("continuous-keepalive", value);
   });
-  dom.continuousKeepalive?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousKeepalive);
 
   dom.continuousSystemOverrideToggle?.addEventListener("change", async () => {
     if (!settings) return;
@@ -1296,7 +1256,7 @@ export function wireEvents() {
       settings.continuous_system_silence_flush_ms = settings.continuous_silence_flush_ms!;
       settings.continuous_system_hard_cut_ms = settings.continuous_hard_cut_ms!;
     }
-    renderSettings();
+    scheduleSettingsRender();
     await persistSettings();
   });
 
@@ -1310,7 +1270,7 @@ export function wireEvents() {
     if (dom.transcribeBatchValue) dom.transcribeBatchValue.textContent = `${Math.round(settings.transcribe_batch_interval_ms / 1000)}s`;
     updateRangeAria("continuous-system-soft-flush", value);
   });
-  dom.continuousSystemSoftFlush?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousSystemSoftFlush);
 
   dom.continuousSystemSilenceFlush?.addEventListener("input", () => {
     if (!settings || !dom.continuousSystemSilenceFlush) return;
@@ -1322,7 +1282,7 @@ export function wireEvents() {
     if (dom.transcribeVadSilenceValue) dom.transcribeVadSilenceValue.textContent = `${Math.round(settings.transcribe_vad_silence_ms / 100) / 10}s`;
     updateRangeAria("continuous-system-silence-flush", value);
   });
-  dom.continuousSystemSilenceFlush?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousSystemSilenceFlush);
 
   dom.continuousSystemHardCut?.addEventListener("input", () => {
     if (!settings || !dom.continuousSystemHardCut) return;
@@ -1331,7 +1291,7 @@ export function wireEvents() {
     if (dom.continuousSystemHardCutValue) dom.continuousSystemHardCutValue.textContent = `${Math.round(value / 1000)}s`;
     updateRangeAria("continuous-system-hard-cut", value);
   });
-  dom.continuousSystemHardCut?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousSystemHardCut);
 
   dom.continuousMicOverrideToggle?.addEventListener("change", async () => {
     if (!settings) return;
@@ -1341,7 +1301,7 @@ export function wireEvents() {
       settings.continuous_mic_silence_flush_ms = settings.continuous_silence_flush_ms!;
       settings.continuous_mic_hard_cut_ms = settings.continuous_hard_cut_ms!;
     }
-    renderSettings();
+    scheduleSettingsRender();
     await persistSettings();
   });
 
@@ -1352,7 +1312,7 @@ export function wireEvents() {
     if (dom.continuousMicSoftFlushValue) dom.continuousMicSoftFlushValue.textContent = `${Math.round(value / 1000)}s`;
     updateRangeAria("continuous-mic-soft-flush", value);
   });
-  dom.continuousMicSoftFlush?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousMicSoftFlush);
 
   dom.continuousMicSilenceFlush?.addEventListener("input", () => {
     if (!settings || !dom.continuousMicSilenceFlush) return;
@@ -1361,7 +1321,7 @@ export function wireEvents() {
     if (dom.continuousMicSilenceFlushValue) dom.continuousMicSilenceFlushValue.textContent = `${(value / 1000).toFixed(1)}s`;
     updateRangeAria("continuous-mic-silence-flush", value);
   });
-  dom.continuousMicSilenceFlush?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousMicSilenceFlush);
 
   dom.continuousMicHardCut?.addEventListener("input", () => {
     if (!settings || !dom.continuousMicHardCut) return;
@@ -1370,14 +1330,14 @@ export function wireEvents() {
     if (dom.continuousMicHardCutValue) dom.continuousMicHardCutValue.textContent = `${Math.round(value / 1000)}s`;
     updateRangeAria("continuous-mic-hard-cut", value);
   });
-  dom.continuousMicHardCut?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousMicHardCut);
 
   // Post-processing event listeners
   dom.postprocEnabled?.addEventListener("change", async () => {
     if (!settings) return;
     settings.postproc_enabled = dom.postprocEnabled!.checked;
     await persistSettings();
-    renderSettings();
+    scheduleSettingsRender();
   });
 
   dom.postprocLanguage?.addEventListener("change", async () => {
@@ -1408,7 +1368,7 @@ export function wireEvents() {
     if (!settings) return;
     settings.postproc_custom_vocab_enabled = dom.postprocCustomVocabEnabled!.checked;
     await persistSettings();
-    renderSettings();
+    scheduleSettingsRender();
   });
 
   dom.postprocVocabAdd?.addEventListener("click", () => {
@@ -1494,9 +1454,7 @@ export function wireEvents() {
       await refreshOllamaInstalledModels();
     }
     await persistSettings();
-    renderAIFallbackSettingsUi();
-    renderOllamaModelManager();
-    renderHero();
+    refreshAIUi();
     if (notify && switched) {
       showToast({
         type: "success",
@@ -1525,9 +1483,7 @@ export function wireEvents() {
     }
     await activateOnlineFallback(fallbackProvider);
     await persistSettings();
-    renderAIFallbackSettingsUi();
-    renderOllamaModelManager();
-    renderHero();
+    refreshAIUi();
   };
 
   dom.aiFallbackLocalLane?.addEventListener("click", (event) => {
@@ -1590,9 +1546,7 @@ export function wireEvents() {
       renderAIFallbackSettingsUi();
       await ensurePromise;
     }
-    renderAIFallbackSettingsUi();
-    renderOllamaModelManager();
-    renderHero();
+    refreshAIUi();
   });
 
   dom.aiFallbackLocalImportAction?.addEventListener("click", async () => {
@@ -1603,9 +1557,7 @@ export function wireEvents() {
     const importPromise = importOllamaModelFromLocalFile();
     renderAIFallbackSettingsUi();
     await importPromise;
-    renderAIFallbackSettingsUi();
-    renderOllamaModelManager();
-    renderHero();
+    refreshAIUi();
   });
 
   dom.aiFallbackLocalDetectAction?.addEventListener("click", async () => {
@@ -1623,9 +1575,7 @@ export function wireEvents() {
     const systemPromise = useSystemOllamaRuntime();
     renderAIFallbackSettingsUi();
     await systemPromise;
-    renderAIFallbackSettingsUi();
-    renderOllamaModelManager();
-    renderHero();
+    refreshAIUi();
   });
 
   dom.aiFallbackLocalVerifyAction?.addEventListener("click", async () => {
@@ -1752,10 +1702,7 @@ export function wireEvents() {
     updateRangeAria("ai-fallback-temperature", Math.round(value * 100));
   });
 
-  dom.aiFallbackTemperature?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.aiFallbackTemperature);
 
   dom.aiFallbackLowLatencyMode?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackLowLatencyMode) return;
@@ -1834,10 +1781,7 @@ export function wireEvents() {
     updateRangeAria("mic-gain", value);
   });
 
-  dom.micGain?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.micGain);
 
   dom.vadThreshold?.addEventListener("input", () => {
     if (!settings || !dom.vadThreshold) return;
@@ -1859,10 +1803,7 @@ export function wireEvents() {
     updateThresholdMarkers();
   });
 
-  dom.vadThreshold?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.vadThreshold);
 
   dom.vadSilence?.addEventListener("input", () => {
     if (!settings || !dom.vadSilence) return;
@@ -1874,10 +1815,7 @@ export function wireEvents() {
     updateRangeAria("vad-silence", value);
   });
 
-  dom.vadSilence?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.vadSilence);
 
   dom.overlayColor?.addEventListener("input", () => {
     if (!settings || !dom.overlayColor) return;
@@ -1888,10 +1826,7 @@ export function wireEvents() {
     }
   });
 
-  dom.overlayColor?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayColor);
 
   dom.overlayMinRadius?.addEventListener("input", () => {
     if (!settings || !dom.overlayMinRadius || !dom.overlayMaxRadius) return;
@@ -1909,10 +1844,7 @@ export function wireEvents() {
     updateRangeAria("overlay-min-radius", settings.overlay_min_radius);
   });
 
-  dom.overlayMinRadius?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayMinRadius);
 
   dom.overlayMaxRadius?.addEventListener("input", () => {
     if (!settings || !dom.overlayMaxRadius || !dom.overlayMinRadius) return;
@@ -1930,10 +1862,7 @@ export function wireEvents() {
     updateRangeAria("overlay-max-radius", settings.overlay_max_radius);
   });
 
-  dom.overlayMaxRadius?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayMaxRadius);
 
   dom.overlayRise?.addEventListener("input", () => {
     if (!settings || !dom.overlayRise) return;
@@ -1947,10 +1876,7 @@ export function wireEvents() {
     updateRangeAria("overlay-rise", value);
   });
 
-  dom.overlayRise?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayRise);
 
   dom.overlayFall?.addEventListener("input", () => {
     if (!settings || !dom.overlayFall) return;
@@ -1964,10 +1890,7 @@ export function wireEvents() {
     updateRangeAria("overlay-fall", value);
   });
 
-  dom.overlayFall?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayFall);
 
   dom.overlayOpacityInactive?.addEventListener("input", () => {
     if (!settings || !dom.overlayOpacityInactive || !dom.overlayOpacityActive) return;
@@ -2000,10 +1923,7 @@ export function wireEvents() {
     updateRangeAria("overlay-opacity-inactive", Number(dom.overlayOpacityInactive.value));
   });
 
-  dom.overlayOpacityInactive?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayOpacityInactive);
 
   dom.overlayOpacityActive?.addEventListener("input", () => {
     if (!settings || !dom.overlayOpacityActive || !dom.overlayOpacityInactive) return;
@@ -2029,10 +1949,7 @@ export function wireEvents() {
     updateRangeAria("overlay-opacity-active", Number(dom.overlayOpacityActive.value));
   });
 
-  dom.overlayOpacityActive?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayOpacityActive);
 
   dom.overlayPosX?.addEventListener("change", async () => {
     if (!settings || !dom.overlayPosX) return;
@@ -2081,10 +1998,7 @@ export function wireEvents() {
     settings.overlay_refining_indicator_color = dom.overlayRefiningIndicatorColor.value;
   });
 
-  dom.overlayRefiningIndicatorColor?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayRefiningIndicatorColor);
 
   // Accent color picker — live preview while dragging
   dom.accentColor?.addEventListener("input", () => {
@@ -2175,8 +2089,7 @@ export function wireEvents() {
   });
 
   // Apply Overlay Settings button
-  const applyOverlayBtn = document.getElementById("apply-overlay-btn");
-  applyOverlayBtn?.addEventListener("click", async () => {
+  dom.applyOverlayBtn?.addEventListener("click", async () => {
     if (!settings) return;
     await persistSettings();
     showToast({ title: "Applied", message: "Overlay settings applied", type: "success" });
@@ -2193,7 +2106,7 @@ export function wireEvents() {
     }
 
     await persistSettings();
-    renderSettings();
+    scheduleSettingsRender();
     updateChaptersVisibility();
   });
 

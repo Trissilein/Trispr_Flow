@@ -21,6 +21,14 @@ import type {
   AIProviderAuthMethodPreference,
   OverlayRefiningIndicatorPreset,
 } from "./types";
+import {
+  CLOUD_PROVIDER_IDS,
+  CLOUD_PROVIDER_LABELS,
+  normalizeCloudProvider,
+  normalizeExecutionMode,
+  normalizeAuthMethodPreference,
+  isVerifiedAuthStatus,
+} from "./ai-provider-utils";
 
 export function ensureContinuousDumpDefaults() {
   if (!settings) return;
@@ -194,8 +202,6 @@ export function updateTranscribeThreshold(threshold: number) {
   }
 }
 
-const CLOUD_PROVIDER_IDS: CloudAIFallbackProvider[] = ["claude", "openai", "gemini"];
-
 function normalizeRefiningIndicatorColor(value: string | undefined): string {
   return normalizeColorHex(value, "#6ec8ff");
 }
@@ -210,33 +216,6 @@ function normalizeRefiningIndicatorRange(value: number | undefined): number {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return 100;
   return Math.max(60, Math.min(180, Math.round(numberValue)));
-}
-const CLOUD_PROVIDER_LABELS: Record<CloudAIFallbackProvider, string> = {
-  claude: "Claude (Anthropic)",
-  openai: "OpenAI",
-  gemini: "Gemini (Google)",
-};
-
-function normalizeCloudProvider(provider?: string | null): CloudAIFallbackProvider | null {
-  if (!provider) return null;
-  const normalized = provider.trim().toLowerCase();
-  return CLOUD_PROVIDER_IDS.includes(normalized as CloudAIFallbackProvider)
-    ? (normalized as CloudAIFallbackProvider)
-    : null;
-}
-
-function normalizeExecutionMode(mode?: string | null): AIExecutionMode {
-  return mode === "online_fallback" ? "online_fallback" : "local_primary";
-}
-
-function normalizeAuthMethodPreference(
-  method?: string | null
-): AIProviderAuthMethodPreference {
-  return method === "oauth" ? "oauth" : "api_key";
-}
-
-function isVerifiedAuthStatus(status?: string | null): boolean {
-  return status === "verified_api_key" || status === "verified_oauth";
 }
 
 function authStatusLabel(status?: string | null): string {
@@ -282,13 +261,22 @@ const AI_REFINEMENT_EXPANDER_DEFAULTS: Record<string, boolean> = {
   "ai-refinement-topic-expander": true,
 };
 
+// In-memory cache: populated once from localStorage, then kept in sync via toggle listeners.
+// null means "not yet loaded".
+let _expanderStateCache: Record<string, boolean> | null = null;
+
 function readAIRefinementExpanderState(): Record<string, boolean> {
+  if (_expanderStateCache !== null) return _expanderStateCache;
   if (typeof window === "undefined") {
-    return { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+    _expanderStateCache = { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+    return _expanderStateCache;
   }
   try {
     const raw = window.localStorage.getItem(AI_REFINEMENT_EXPANDER_STATE_KEY);
-    if (!raw) return { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+    if (!raw) {
+      _expanderStateCache = { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+      return _expanderStateCache;
+    }
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const merged = { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
     Object.keys(merged).forEach((key) => {
@@ -296,13 +284,16 @@ function readAIRefinementExpanderState(): Record<string, boolean> {
         merged[key] = parsed[key] as boolean;
       }
     });
-    return merged;
+    _expanderStateCache = merged;
+    return _expanderStateCache;
   } catch {
-    return { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+    _expanderStateCache = { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+    return _expanderStateCache;
   }
 }
 
 function writeAIRefinementExpanderState(next: Record<string, boolean>): void {
+  _expanderStateCache = next;
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(AI_REFINEMENT_EXPANDER_STATE_KEY, JSON.stringify(next));

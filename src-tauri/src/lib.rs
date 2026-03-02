@@ -6,6 +6,7 @@ mod audio;
 mod constants;
 mod continuous_dump;
 mod errors;
+mod history_partition;
 mod hotkeys;
 mod models;
 mod ollama_runtime;
@@ -29,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::{CheckMenuItem, MenuItem};
 use tauri::Wry;
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
@@ -41,7 +42,7 @@ use crate::ai_fallback::models::RefinementOptions;
 use crate::ai_fallback::provider::{
     default_models_for_provider, is_local_ollama_endpoint, is_ssrf_target, list_ollama_models,
     list_ollama_models_with_size, ping_ollama, ping_ollama_quick, prompt_for_profile,
-    resolve_effective_local_model, ProviderFactory,
+    resolve_effective_local_model, AIProvider, ProviderFactory,
 };
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
 use crate::models::{
@@ -52,9 +53,11 @@ use crate::ollama_runtime::{
     detect_ollama_runtime, download_ollama_runtime, import_ollama_model_from_file,
     install_ollama_runtime, set_strict_local_mode, start_ollama_runtime, verify_ollama_runtime,
 };
+use crate::history_partition::PartitionedHistory;
 use crate::state::{
-    get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_history, load_settings,
-    load_transcribe_history, normalize_ai_fallback_fields, normalize_continuous_dump_fields,
+    get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
+    normalize_ai_fallback_fields, normalize_continuous_dump_fields,
+    normalize_history_alias_fields,
     push_history_entry_inner, push_transcribe_entry_inner, record_refinement_fallback_timed_out,
     record_refinement_timeout, save_settings_file, sync_model_dir_env,
 };
@@ -82,6 +85,145 @@ static BACKLOG_PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
 static MAIN_WINDOW_RESTORED: AtomicBool = AtomicBool::new(false);
 static CLIPBOARD_PASTE_GENERATION: AtomicU64 = AtomicU64::new(0);
+static LAST_GEOMETRY_SAVE_MS: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+/// Guard that rejects requests when strict-local-mode is active and the
+/// configured Ollama endpoint is not a local address.
+/// Lock settings, apply a mutation, persist to disk, and emit a change event.
+///
+/// The closure receives `&mut Settings` and may return `Err` to abort.  On
+/// success the updated settings are saved and broadcast.
+fn update_and_persist_settings<F>(
+    app: &AppHandle,
+    state: &AppState,
+    f: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&mut Settings) -> Result<(), String>,
+{
+    let snapshot = {
+        let mut settings = state.settings.lock().map_err(|e| e.to_string())?;
+        f(&mut settings)?;
+        settings.clone()
+    };
+    save_settings_file(app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot);
+    Ok(())
+}
+
+pub(crate) fn check_strict_local_mode(settings: &Settings) -> Result<(), String> {
+    if settings.ai_fallback.strict_local_mode
+        && !is_local_ollama_endpoint(&settings.providers.ollama.endpoint)
+    {
+        return Err(
+            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Common result of preparing a refinement call: provider client, API key,
+/// resolved model name, whether the model resolution repaired a stale setting,
+/// and the `RefinementOptions` to pass to the provider.
+pub(crate) struct RefinementSetup {
+    pub provider: Box<dyn AIProvider>,
+    pub api_key: String,
+    pub model: String,
+    pub repaired: bool,
+    pub options: RefinementOptions,
+}
+
+/// Shared refinement-context preparation used by the Tauri command, the
+/// benchmark helper, and the auto-refinement worker.  Validates settings,
+/// creates the provider client, resolves the model, and builds options.
+///
+/// Does **not** persist model-repair changes — callers decide if/how to do that.
+pub(crate) fn prepare_refinement(
+    app: &AppHandle,
+    settings: &Settings,
+) -> Result<RefinementSetup, String> {
+    let ai = &settings.ai_fallback;
+    if !ai.enabled {
+        return Err("AI Fallback is disabled.".to_string());
+    }
+
+    let is_ollama = ai.provider == "ollama";
+
+    let provider = if is_ollama {
+        check_strict_local_mode(settings)?;
+        ProviderFactory::create_ollama(settings.providers.ollama.endpoint.clone())
+    } else {
+        ProviderFactory::create(&ai.provider).map_err(|e| e.to_string())?
+    };
+
+    let api_key = if is_ollama {
+        String::new()
+    } else {
+        ai_fallback_keyring::read_api_key(app, &ai.provider)?
+            .ok_or_else(|| format!("No API key stored for provider '{}'.", ai.provider))?
+    };
+
+    if !is_ollama {
+        provider
+            .validate_api_key(&api_key)
+            .map_err(|e| e.to_string())?;
+    }
+
+    let mut model = ai.model.trim().to_string();
+    let mut repaired = false;
+    if is_ollama {
+        let endpoint = settings.providers.ollama.endpoint.clone();
+        let preferred = settings.providers.ollama.preferred_model.clone();
+        let resolved =
+            resolve_effective_local_model(&model, &preferred, &endpoint).map_err(|e| e.to_string())?;
+        repaired = resolved.repaired
+            || settings.ai_fallback.model.trim() != resolved.model
+            || settings.providers.ollama.preferred_model.trim() != resolved.model
+            || settings.postproc_llm_model.trim() != resolved.model;
+        model = resolved.model;
+    } else if model.is_empty() {
+        model = match ai.provider.as_str() {
+            "claude" => settings.providers.claude.preferred_model.trim().to_string(),
+            "openai" => settings.providers.openai.preferred_model.trim().to_string(),
+            "gemini" => settings.providers.gemini.preferred_model.trim().to_string(),
+            _ => String::new(),
+        };
+    }
+
+    if model.is_empty() {
+        return Err(if is_ollama {
+            "No local Ollama model configured. Download a model and set it active first."
+                .to_string()
+        } else {
+            "No cloud model configured for the selected provider.".to_string()
+        });
+    }
+
+    let options = RefinementOptions {
+        temperature: ai.temperature,
+        max_tokens: ai.max_tokens,
+        low_latency_mode: ai.low_latency_mode,
+        language: Some(settings.language_mode.clone()),
+        custom_prompt: prompt_for_profile(
+            &ai.prompt_profile,
+            &settings.language_mode,
+            Some(ai.custom_prompt.as_str()),
+        ),
+    };
+
+    Ok(RefinementSetup {
+        provider,
+        api_key,
+        model,
+        repaired,
+        options,
+    })
+}
 
 fn cancel_backlog_auto_expand(app: &AppHandle) {
     BACKLOG_PROMPT_CANCELLED.store(true, Ordering::Release);
@@ -339,19 +481,11 @@ fn fetch_available_models(
 
     // Ollama: always query live /api/tags for up-to-date model list
     if provider_id == "ollama" {
-        let (endpoint, strict_local_mode) = {
+        let endpoint = {
             let settings = state.settings.lock().unwrap();
-            (
-                settings.providers.ollama.endpoint.clone(),
-                settings.ai_fallback.strict_local_mode,
-            )
+            check_strict_local_mode(&settings)?;
+            settings.providers.ollama.endpoint.clone()
         };
-        if strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
-            return Err(
-                "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                    .to_string(),
-            );
-        }
         let models = list_ollama_models(&endpoint);
         if models.is_empty() {
             // Distinguish "Ollama not reachable" from "reachable but no models installed".
@@ -384,19 +518,11 @@ fn fetch_available_models(
 fn fetch_ollama_models_with_size(
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let (endpoint, strict_local_mode) = {
+    let endpoint = {
         let settings = state.settings.lock().unwrap();
-        (
-            settings.providers.ollama.endpoint.clone(),
-            settings.ai_fallback.strict_local_mode,
-        )
+        check_strict_local_mode(&settings)?;
+        settings.providers.ollama.endpoint.clone()
     };
-    if strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
-        return Err(
-            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                .to_string(),
-        );
-    }
     let models = list_ollama_models_with_size(&endpoint);
     if models.is_empty() {
         // Distinguish "Ollama not reachable" from "reachable but no models installed".
@@ -419,19 +545,11 @@ fn test_provider_connection(
 
     // Ollama: perform a real HTTP ping instead of API key validation
     if provider_id == "ollama" {
-        let (endpoint, strict_local_mode) = {
+        let endpoint = {
             let settings = state.settings.lock().unwrap();
-            (
-                settings.providers.ollama.endpoint.clone(),
-                settings.ai_fallback.strict_local_mode,
-            )
+            check_strict_local_mode(&settings)?;
+            settings.providers.ollama.endpoint.clone()
         };
-        if strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
-            return Err(
-                "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                    .to_string(),
-            );
-        }
         ping_ollama(&endpoint).map_err(|e| e.to_string())?;
         let models = list_ollama_models(&endpoint);
         return Ok(serde_json::json!({
@@ -468,14 +586,11 @@ fn save_provider_api_key(
         .map_err(|e| e.to_string())?;
     ai_fallback_keyring::store_api_key(&app, &provider_id, api_key.trim())?;
 
-    let snapshot = {
-        let mut settings = state.settings.lock().unwrap();
-        settings.providers.set_api_key_stored(&provider_id, true)?;
-        normalize_ai_fallback_fields(&mut settings);
-        settings.clone()
-    };
-    save_settings_file(&app, &snapshot)?;
-    let _ = app.emit("settings-changed", snapshot.clone());
+    update_and_persist_settings(&app, state.inner(), |s| {
+        s.providers.set_api_key_stored(&provider_id, true)?;
+        normalize_ai_fallback_fields(s);
+        Ok(())
+    })?;
 
     Ok(serde_json::json!({
       "status": "success",
@@ -494,14 +609,11 @@ fn clear_provider_api_key(
     let provider_id = provider.trim().to_lowercase();
     ai_fallback_keyring::clear_api_key(&app, &provider_id)?;
 
-    let snapshot = {
-        let mut settings = state.settings.lock().unwrap();
-        settings.providers.set_api_key_stored(&provider_id, false)?;
-        normalize_ai_fallback_fields(&mut settings);
-        settings.clone()
-    };
-    save_settings_file(&app, &snapshot)?;
-    let _ = app.emit("settings-changed", snapshot.clone());
+    update_and_persist_settings(&app, state.inner(), |s| {
+        s.providers.set_api_key_stored(&provider_id, false)?;
+        normalize_ai_fallback_fields(s);
+        Ok(())
+    })?;
 
     Ok(serde_json::json!({
       "status": "success",
@@ -539,56 +651,44 @@ fn verify_provider_auth(
     }
 
     if method_id == "oauth" {
-        let snapshot = {
-            let mut settings = state.settings.lock().unwrap();
-            settings.providers.lock_auth(&provider_id)?;
-            normalize_ai_fallback_fields(&mut settings);
-            settings.clone()
-        };
-        save_settings_file(&app, &snapshot)?;
-        let _ = app.emit("settings-changed", snapshot.clone());
+        update_and_persist_settings(&app, state.inner(), |s| {
+            s.providers.lock_auth(&provider_id)?;
+            normalize_ai_fallback_fields(s);
+            Ok(())
+        })?;
         return Err("OAuth verification is not supported yet. Use API key verification.".to_string());
     }
 
     let stored_key = ai_fallback_keyring::read_api_key(&app, &provider_id)?;
     let Some(api_key) = stored_key else {
-        let snapshot = {
-            let mut settings = state.settings.lock().unwrap();
-            settings.providers.lock_auth(&provider_id)?;
-            normalize_ai_fallback_fields(&mut settings);
-            settings.clone()
-        };
-        save_settings_file(&app, &snapshot)?;
-        let _ = app.emit("settings-changed", snapshot.clone());
+        update_and_persist_settings(&app, state.inner(), |s| {
+            s.providers.lock_auth(&provider_id)?;
+            normalize_ai_fallback_fields(s);
+            Ok(())
+        })?;
         return Err(format!("No stored API key found for provider '{}'.", provider_id));
     };
 
     let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
     if let Err(error) = provider_client.validate_api_key(api_key.trim()) {
-        let snapshot = {
-            let mut settings = state.settings.lock().unwrap();
-            settings.providers.lock_auth(&provider_id)?;
-            normalize_ai_fallback_fields(&mut settings);
-            settings.clone()
-        };
-        save_settings_file(&app, &snapshot)?;
-        let _ = app.emit("settings-changed", snapshot.clone());
+        update_and_persist_settings(&app, state.inner(), |s| {
+            s.providers.lock_auth(&provider_id)?;
+            normalize_ai_fallback_fields(s);
+            Ok(())
+        })?;
         return Err(error.to_string());
     }
 
-    let verified_at = chrono::Utc::now().to_rfc3339();
-    let snapshot = {
-        let mut settings = state.settings.lock().unwrap();
-        settings.providers.set_auth_verified(
+    let verified_at = now_iso();
+    update_and_persist_settings(&app, state.inner(), |s| {
+        s.providers.set_auth_verified(
             &provider_id,
             "verified_api_key",
             Some(verified_at.clone()),
         )?;
-        normalize_ai_fallback_fields(&mut settings);
-        settings.clone()
-    };
-    save_settings_file(&app, &snapshot)?;
-    let _ = app.emit("settings-changed", snapshot.clone());
+        normalize_ai_fallback_fields(s);
+        Ok(())
+    })?;
 
     Ok(serde_json::json!({
       "ok": true,
@@ -622,13 +722,10 @@ fn save_ollama_endpoint(
             );
         }
     }
-    let snapshot = {
-        let mut settings = state.settings.lock().unwrap();
-        settings.providers.ollama.endpoint = trimmed.clone();
-        settings.clone()
-    };
-    save_settings_file(&app, &snapshot)?;
-    let _ = app.emit("settings-changed", snapshot.clone());
+    update_and_persist_settings(&app, state.inner(), |s| {
+        s.providers.ollama.endpoint = trimmed.clone();
+        Ok(())
+    })?;
     Ok(serde_json::json!({
         "status": "success",
         "endpoint": trimmed,
@@ -642,95 +739,23 @@ fn refine_transcript(
     transcript: String,
 ) -> Result<serde_json::Value, String> {
     let settings_snapshot = state.settings.lock().unwrap().clone();
-    let ai_settings = settings_snapshot.ai_fallback.clone();
 
-    if !ai_settings.enabled {
-        return Err("AI Fallback is disabled.".to_string());
+    let setup = prepare_refinement(&app, &settings_snapshot)?;
+
+    if setup.repaired {
+        let model = setup.model.clone();
+        update_and_persist_settings(&app, state.inner(), |s| {
+            s.ai_fallback.model = model.clone();
+            s.providers.ollama.preferred_model = model.clone();
+            s.postproc_llm_model = model;
+            normalize_ai_fallback_fields(s);
+            Ok(())
+        })?;
     }
 
-    let is_ollama = ai_settings.provider == "ollama";
-
-    let provider_client = if is_ollama {
-        let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
-        if ai_settings.strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
-            return Err(
-                "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                    .to_string(),
-            );
-        }
-        ProviderFactory::create_ollama(endpoint)
-    } else {
-        ProviderFactory::create(&ai_settings.provider).map_err(|e| e.to_string())?
-    };
-
-    let api_key = if is_ollama {
-        String::new()
-    } else {
-        ai_fallback_keyring::read_api_key(&app, &ai_settings.provider)?
-            .ok_or_else(|| format!("No API key stored for provider '{}'.", ai_settings.provider))?
-    };
-
-    if !is_ollama {
-        provider_client
-            .validate_api_key(&api_key)
-            .map_err(|e| e.to_string())?;
-    }
-
-    let mut model = ai_settings.model.trim().to_string();
-    if is_ollama {
-        let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
-        let preferred = settings_snapshot.providers.ollama.preferred_model.clone();
-        let resolved =
-            resolve_effective_local_model(&model, &preferred, &endpoint).map_err(|e| e.to_string())?;
-        model = resolved.model;
-
-        if resolved.repaired
-            || settings_snapshot.ai_fallback.model.trim() != model
-            || settings_snapshot.providers.ollama.preferred_model.trim() != model
-            || settings_snapshot.postproc_llm_model.trim() != model
-        {
-            let snapshot = {
-                let mut settings = state.settings.lock().unwrap();
-                settings.ai_fallback.model = model.clone();
-                settings.providers.ollama.preferred_model = model.clone();
-                settings.postproc_llm_model = model.clone();
-                normalize_ai_fallback_fields(&mut settings);
-                settings.clone()
-            };
-            save_settings_file(&app, &snapshot)?;
-            let _ = app.emit("settings-changed", snapshot.clone());
-        }
-    } else if model.is_empty() {
-        model = match ai_settings.provider.as_str() {
-            "claude" => settings_snapshot.providers.claude.preferred_model.trim().to_string(),
-            "openai" => settings_snapshot.providers.openai.preferred_model.trim().to_string(),
-            "gemini" => settings_snapshot.providers.gemini.preferred_model.trim().to_string(),
-            _ => String::new(),
-        };
-    }
-    if model.is_empty() {
-        return Err(if is_ollama {
-            "No local Ollama model configured. Download a model and set it active first."
-                .to_string()
-        } else {
-            "No cloud model configured for the selected provider.".to_string()
-        });
-    }
-
-    let options = RefinementOptions {
-        temperature: ai_settings.temperature,
-        max_tokens: ai_settings.max_tokens,
-        low_latency_mode: ai_settings.low_latency_mode,
-        language: Some(settings_snapshot.language_mode.clone()),
-        custom_prompt: prompt_for_profile(
-            &ai_settings.prompt_profile,
-            &settings_snapshot.language_mode,
-            Some(ai_settings.custom_prompt.as_str()),
-        ),
-    };
-
-    let result = provider_client
-        .refine_transcript(&transcript, &model, &options, &api_key)
+    let result = setup
+        .provider
+        .refine_transcript(&transcript, &setup.model, &setup.options, &setup.api_key)
         .map_err(|e| e.to_string())?;
 
     serde_json::to_value(&result).map_err(|e| e.to_string())
@@ -1013,71 +1038,11 @@ fn refine_transcript_for_benchmark(
     settings_snapshot: &Settings,
     transcript: &str,
 ) -> Result<crate::ai_fallback::models::RefinementResult, String> {
-    let ai_settings = settings_snapshot.ai_fallback.clone();
-    if !ai_settings.enabled {
-        return Err("AI fallback is disabled in current settings.".to_string());
-    }
+    let setup = prepare_refinement(app, settings_snapshot)?;
 
-    let is_ollama = ai_settings.provider == "ollama";
-    let provider_client = if is_ollama {
-        let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
-        if ai_settings.strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
-            return Err(
-                "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                    .to_string(),
-            );
-        }
-        ProviderFactory::create_ollama(endpoint)
-    } else {
-        ProviderFactory::create(&ai_settings.provider).map_err(|e| e.to_string())?
-    };
-
-    let api_key = if is_ollama {
-        String::new()
-    } else {
-        ai_fallback_keyring::read_api_key(app, &ai_settings.provider)?
-            .ok_or_else(|| format!("No API key stored for provider '{}'.", ai_settings.provider))?
-    };
-    if !is_ollama {
-        provider_client
-            .validate_api_key(&api_key)
-            .map_err(|e| e.to_string())?;
-    }
-
-    let mut model = ai_settings.model.trim().to_string();
-    if is_ollama {
-        let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
-        let preferred = settings_snapshot.providers.ollama.preferred_model.clone();
-        model = resolve_effective_local_model(&model, &preferred, &endpoint)
-            .map_err(|e| e.to_string())?
-            .model;
-    } else if model.is_empty() {
-        model = match ai_settings.provider.as_str() {
-            "claude" => settings_snapshot.providers.claude.preferred_model.trim().to_string(),
-            "openai" => settings_snapshot.providers.openai.preferred_model.trim().to_string(),
-            "gemini" => settings_snapshot.providers.gemini.preferred_model.trim().to_string(),
-            _ => String::new(),
-        };
-    }
-
-    if model.is_empty() {
-        return Err("No model configured for benchmark refinement.".to_string());
-    }
-
-    let options = RefinementOptions {
-        temperature: ai_settings.temperature,
-        max_tokens: ai_settings.max_tokens,
-        low_latency_mode: ai_settings.low_latency_mode,
-        language: Some(settings_snapshot.language_mode.clone()),
-        custom_prompt: prompt_for_profile(
-            &ai_settings.prompt_profile,
-            &settings_snapshot.language_mode,
-            Some(ai_settings.custom_prompt.as_str()),
-        ),
-    };
-
-    provider_client
-        .refine_transcript(transcript, &model, &options, &api_key)
+    setup
+        .provider
+        .refine_transcript(transcript, &setup.model, &setup.options, &setup.api_key)
         .map_err(|e| e.to_string())
 }
 
@@ -1158,30 +1123,35 @@ fn pull_ollama_model(
         pulls.insert(model.clone());
     }
 
-    let (endpoint, strict_local_mode) = {
+    let endpoint = {
         let settings = state.settings.lock().unwrap();
-        (
-            settings.providers.ollama.endpoint.clone(),
-            settings.ai_fallback.strict_local_mode,
-        )
+        if let Err(e) = check_strict_local_mode(&settings) {
+            let mut pulls = state.ollama_pulls.lock().unwrap();
+            pulls.remove(&model);
+            return Err(e);
+        }
+        settings.providers.ollama.endpoint.clone()
     };
-    if strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
-        let mut pulls = state.ollama_pulls.lock().unwrap();
-        pulls.remove(&model);
-        return Err(
-            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                .to_string(),
-        );
+
+    // Drop-Guard ensures the model is removed from ollama_pulls even if the
+    // thread panics (e.g. due to a bug in pull_ollama_model_inner).
+    struct PullGuard {
+        app: AppHandle,
+        model: String,
+    }
+    impl Drop for PullGuard {
+        fn drop(&mut self) {
+            if let Ok(mut pulls) = self.app.state::<AppState>().ollama_pulls.lock() {
+                pulls.remove(&self.model);
+            }
+        }
     }
 
     let app_handle = app.clone();
     let model_clone = model.clone();
     std::thread::spawn(move || {
-        pull_ollama_model_inner(app_handle.clone(), model_clone.clone(), endpoint);
-        // Clean up: remove from active pulls
-        let state = app_handle.state::<AppState>();
-        let mut pulls = state.ollama_pulls.lock().unwrap();
-        pulls.remove(&model_clone);
+        let _guard = PullGuard { app: app_handle.clone(), model: model_clone.clone() };
+        pull_ollama_model_inner(app_handle, model_clone, endpoint);
     });
 
     Ok(())
@@ -1193,19 +1163,11 @@ fn delete_ollama_model(state: State<'_, AppState>, model: String) -> Result<(), 
 
     validate_ollama_model_name(&model)?;
 
-    let (endpoint, strict_local_mode) = {
+    let endpoint = {
         let settings = state.settings.lock().unwrap();
-        (
-            settings.providers.ollama.endpoint.clone(),
-            settings.ai_fallback.strict_local_mode,
-        )
+        check_strict_local_mode(&settings)?;
+        settings.providers.ollama.endpoint.clone()
     };
-    if strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
-        return Err(
-            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                .to_string(),
-        );
-    }
 
     let body = serde_json::json!({ "model": model });
 
@@ -1249,19 +1211,11 @@ fn get_ollama_model_info(
 
     validate_ollama_model_name(&model)?;
 
-    let (endpoint, strict_local_mode) = {
+    let endpoint = {
         let settings = state.settings.lock().unwrap();
-        (
-            settings.providers.ollama.endpoint.clone(),
-            settings.ai_fallback.strict_local_mode,
-        )
+        check_strict_local_mode(&settings)?;
+        settings.providers.ollama.endpoint.clone()
     };
-    if strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
-        return Err(
-            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                .to_string(),
-        );
-    }
 
     let body = serde_json::json!({ "model": model });
 
@@ -1323,6 +1277,7 @@ fn save_settings(
     };
     normalize_ai_fallback_fields(&mut settings);
     normalize_continuous_dump_fields(&mut settings);
+    normalize_history_alias_fields(&mut settings);
 
     {
         let mut current = state.settings.lock().unwrap();
@@ -1456,21 +1411,55 @@ fn save_window_state(
         _ => return Err("Unknown window label".to_string()),
     }
 
+    // Debounce: skip disk write if less than 500ms since last geometry save.
+    // The in-memory settings are always updated above so the latest geometry is
+    // available for other code paths even when the disk write is skipped.
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let last = LAST_GEOMETRY_SAVE_MS.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < 500 {
+        return Ok(());
+    }
+    LAST_GEOMETRY_SAVE_MS.store(now, Ordering::Relaxed);
+
     let settings = current.clone();
     drop(current);
 
-    save_settings_file(&app, &settings)?;
+    let _ = save_settings_file(&app, &settings);
     Ok(())
 }
 
 #[tauri::command]
 fn get_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
-    state.history.lock().unwrap().clone()
+    state.history.lock().unwrap().active.iter().cloned().collect()
 }
 
 #[tauri::command]
 fn get_transcribe_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
-    state.history_transcribe.lock().unwrap().clone()
+    state.history_transcribe.lock().unwrap().active.iter().cloned().collect()
+}
+
+#[tauri::command]
+fn list_history_partitions(app: AppHandle, kind: String) -> Result<Vec<crate::history_partition::PartitionInfo>, String> {
+    let state = app.state::<AppState>();
+    match kind.as_str() {
+        "mic" => Ok(state.history.lock().unwrap().list_partitions()),
+        "system" => Ok(state.history_transcribe.lock().unwrap().list_partitions()),
+        _ => Err(format!("Unknown history kind: {}", kind)),
+    }
+}
+
+#[tauri::command]
+fn load_history_partition(app: AppHandle, kind: String, key: String) -> Result<Vec<HistoryEntry>, String> {
+    let state = app.state::<AppState>();
+    let pk = crate::history_partition::PartitionKey::parse(&key)?;
+    match kind.as_str() {
+        "mic" => Ok(state.history.lock().unwrap().load_partition(&pk)),
+        "system" => Ok(state.history_transcribe.lock().unwrap().load_partition(&pk)),
+        _ => Err(format!("Unknown history kind: {}", kind)),
+    }
 }
 
 #[tauri::command]
@@ -1698,6 +1687,11 @@ fn clear_crash_recovery(app: AppHandle) -> Result<(), String> {
 /// For existing files: canonicalize the full path.
 /// For new files (output): canonicalize the parent directory.
 fn validate_path_within(path_str: &str, allowed_root: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    // Reject UNC paths (\\server\share) before canonicalize — they trigger an SMB
+    // round-trip which can leak NTLM credentials even if starts_with() later rejects them.
+    if path_str.starts_with("\\\\") || path_str.starts_with("//") {
+        return Err(format!("UNC paths are not allowed: '{}'", path_str));
+    }
     let path = std::path::PathBuf::from(path_str);
 
     // For existing files, canonicalize directly
@@ -2508,54 +2502,55 @@ fn is_valid_window_state(x: i32, y: i32, width: u32, height: u32) -> bool {
     true
 }
 
+/// Restore saved window geometry (position + size), falling back to centering on
+/// the primary monitor when the saved state is invalid or the target monitor has
+/// been disconnected.
+fn restore_window_geometry(window: &tauri::WebviewWindow, settings: &Settings) {
+    if let (Some(x), Some(y), Some(w), Some(h)) = (
+        settings.main_window_x,
+        settings.main_window_y,
+        settings.main_window_width,
+        settings.main_window_height,
+    ) {
+        let state_valid = is_valid_window_state(x, y, w, h);
+
+        let monitor_valid = window
+            .available_monitors()
+            .ok()
+            .map(|monitors| {
+                if let Some(monitor_name) = &settings.main_window_monitor {
+                    monitors.iter().any(|m| {
+                        m.name().as_ref().map(|n| n.as_str()) == Some(monitor_name.as_str())
+                    })
+                } else {
+                    true // No specific monitor was saved, so any monitor is valid
+                }
+            })
+            .unwrap_or(false);
+
+        if state_valid && monitor_valid {
+            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+            let _ = window.set_size(tauri::PhysicalSize::new(w, h));
+        } else {
+            if let Ok(Some(primary)) = window.primary_monitor() {
+                let primary_size = primary.size();
+                let window_w = w.max(980);
+                let window_h = h.max(640);
+                let center_x = (primary_size.width as i32 - window_w as i32) / 2;
+                let center_y = (primary_size.height as i32 - window_h as i32) / 2;
+                let _ = window.set_position(tauri::PhysicalPosition::new(center_x, center_y));
+                let _ = window.set_size(tauri::PhysicalSize::new(window_w, window_h));
+            }
+        }
+    }
+}
+
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         // Restore window geometry on first show
         if !MAIN_WINDOW_RESTORED.swap(true, Ordering::AcqRel) {
             let settings = load_settings(app);
-
-            if let (Some(x), Some(y), Some(w), Some(h)) = (
-                settings.main_window_x,
-                settings.main_window_y,
-                settings.main_window_width,
-                settings.main_window_height,
-            ) {
-                // Validate window state (reject minimized positions and invalid sizes)
-                let state_valid = is_valid_window_state(x, y, w, h);
-
-                // Validate monitor still exists
-                let monitor_valid = window
-                    .available_monitors()
-                    .ok()
-                    .map(|monitors| {
-                        if let Some(monitor_name) = &settings.main_window_monitor {
-                            monitors.iter().any(|m| {
-                                m.name().as_ref().map(|n| n.as_str()) == Some(monitor_name.as_str())
-                            })
-                        } else {
-                            true // No specific monitor was saved, so any monitor is valid
-                        }
-                    })
-                    .unwrap_or(false);
-
-                if state_valid && monitor_valid {
-                    // Restore saved geometry
-                    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
-                    let _ = window.set_size(tauri::PhysicalSize::new(w, h));
-                } else {
-                    // Fallback: center on primary monitor
-                    if let Ok(Some(primary)) = window.primary_monitor() {
-                        let primary_size = primary.size();
-                        let window_w = w.max(980);
-                        let window_h = h.max(640);
-                        let center_x = (primary_size.width as i32 - window_w as i32) / 2;
-                        let center_y = (primary_size.height as i32 - window_h as i32) / 2;
-                        let _ =
-                            window.set_position(tauri::PhysicalPosition::new(center_x, center_y));
-                        let _ = window.set_size(tauri::PhysicalSize::new(window_w, window_h));
-                    }
-                }
-            }
+            restore_window_geometry(&window, &settings);
         }
 
         let _ = window.show();
@@ -2650,9 +2645,25 @@ pub fn run() {
     with_dialog_plugin(builder)
         .setup(|app| {
             let settings = load_settings(app.handle());
-            let history = load_history(app.handle());
-            let history_transcribe = load_transcribe_history(app.handle());
             let chapters = state::load_chapters(app.handle());
+
+            // Compute partition base directories and legacy paths for migration.
+            let app_data_dir = app.path().app_data_dir().unwrap_or_else(|_| {
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            });
+            let mic_history_dir = app_data_dir.join("history").join("mic");
+            let system_history_dir = app_data_dir.join("history").join("system");
+            let legacy_mic_path = app_data_dir.join("history.json");
+            let legacy_system_path = app_data_dir.join("history_transcribe.json");
+
+            let history = PartitionedHistory::load_or_migrate(
+                mic_history_dir,
+                Some(&legacy_mic_path),
+            );
+            let history_transcribe = PartitionedHistory::load_or_migrate(
+                system_history_dir,
+                Some(&legacy_system_path),
+            );
 
             app.manage(AppState {
                 settings: Mutex::new(settings.clone()),
@@ -2675,6 +2686,8 @@ pub fn run() {
                 last_mic_recording_path: Mutex::new(None),
                 last_system_recording_path: Mutex::new(None),
                 managed_ollama_child: Mutex::new(None),
+                #[cfg(target_os = "windows")]
+                system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
             });
 
             if env_flag("TRISPR_RUN_LATENCY_BENCHMARK") {
@@ -2950,48 +2963,7 @@ pub fn run() {
             // Restore main window geometry and visibility state
             if let Some(window) = app.get_webview_window("main") {
                 let window_settings = load_settings(app.handle());
-
-                if let (Some(x), Some(y), Some(w), Some(h)) = (
-                    window_settings.main_window_x,
-                    window_settings.main_window_y,
-                    window_settings.main_window_width,
-                    window_settings.main_window_height,
-                ) {
-                    // Validate window state (reject minimized positions and invalid sizes)
-                    let state_valid = is_valid_window_state(x, y, w, h);
-
-                    // Validate monitor still exists
-                    let monitor_valid = window
-                        .available_monitors()
-                        .ok()
-                        .map(|monitors| {
-                            if let Some(monitor_name) = &window_settings.main_window_monitor {
-                                monitors.iter().any(|m| {
-                                    m.name().as_ref().map(|n| n.as_str())
-                                        == Some(monitor_name.as_str())
-                                })
-                            } else {
-                                true
-                            }
-                        })
-                        .unwrap_or(false);
-
-                    if state_valid && monitor_valid {
-                        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
-                        let _ = window.set_size(tauri::PhysicalSize::new(w, h));
-                    } else {
-                        if let Ok(Some(primary)) = window.primary_monitor() {
-                            let primary_size = primary.size();
-                            let window_w = w.max(980);
-                            let window_h = h.max(640);
-                            let center_x = (primary_size.width as i32 - window_w as i32) / 2;
-                            let center_y = (primary_size.height as i32 - window_h as i32) / 2;
-                            let _ = window
-                                .set_position(tauri::PhysicalPosition::new(center_x, center_y));
-                            let _ = window.set_size(tauri::PhysicalSize::new(window_w, window_h));
-                        }
-                    }
-                }
+                restore_window_geometry(&window, &window_settings);
 
                 // Restore window visibility state from last session
                 match window_settings.main_window_start_state.as_str() {
@@ -3043,6 +3015,8 @@ pub fn run() {
             get_models_dir,
             get_history,
             get_transcribe_history,
+            list_history_partitions,
+            load_history_partition,
             add_history_entry,
             add_transcribe_entry,
             get_chapters,

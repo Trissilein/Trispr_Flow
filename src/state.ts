@@ -13,6 +13,8 @@ import type {
 export let settings: Settings | null = null;
 export let history: HistoryEntry[] = [];
 export let transcribeHistory: HistoryEntry[] = [];
+// Runtime session anchor used by export range "session" (resets on app restart).
+export const appRuntimeStartedMs = Date.now();
 export let devices: AudioDevice[] = [];
 export let outputDevices: AudioDevice[] = [];
 export let models: ModelInfo[] = [];

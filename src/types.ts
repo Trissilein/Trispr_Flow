@@ -92,6 +92,8 @@ export interface Settings {
   transcribe_chunk_overlap_ms: number;
   transcribe_input_gain_db: number;
   mic_input_gain_db: number;
+  history_alias_mic: string;
+  history_alias_system: string;
   capture_enabled: boolean;
   model_source: "default" | "custom";
   model_custom_url: string;
@@ -187,6 +189,7 @@ export interface HistoryEntry {
   text: string;
   timestamp_ms: number;
   source: string;
+  speaker_name?: string | null;
   refinement?: HistoryRefinement | null;
 }
 
@@ -402,4 +405,12 @@ export interface OllamaRuntimeHealth {
   ok: boolean;
   endpoint: string;
   models_count: number;
+}
+
+export interface PartitionInfo {
+  key: string;
+  label: string;
+  entry_count: number;
+  size_bytes: number;
+  is_active: boolean;
 }

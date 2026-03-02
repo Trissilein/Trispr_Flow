@@ -1,7 +1,3 @@
-use crate::ai_fallback::models::RefinementOptions;
-use crate::ai_fallback::provider::{
-    prompt_for_profile, resolve_effective_local_model, ProviderFactory,
-};
 use crate::constants::{
     TARGET_SAMPLE_RATE, VAD_MIN_CONSECUTIVE_CHUNKS, VAD_MIN_VOICE_MS,
 };
@@ -102,12 +98,12 @@ fn mic_min_samples() -> usize {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-struct ContinuousDumpEvent {
-    source: &'static str,
-    reason: SegmentFlushReason,
-    duration_ms: u64,
-    rms: f32,
-    text_len: usize,
+pub(crate) struct ContinuousDumpEvent {
+    pub(crate) source: &'static str,
+    pub(crate) reason: SegmentFlushReason,
+    pub(crate) duration_ms: u64,
+    pub(crate) rms: f32,
+    pub(crate) text_len: usize,
 }
 
 fn mic_segmenter_config(settings: &Settings) -> AdaptiveSegmenterConfig {
@@ -594,156 +590,75 @@ fn handle_vad_audio(
     }
 }
 
-fn build_input_stream_f32(
-    device: &cpal::Device,
-    config: &StreamConfig,
-    buffer: Arc<Mutex<CaptureBuffer>>,
-    overlay: Option<Arc<OverlayLevelEmitter>>,
-    vad: Option<VadHandle>,
-    gain_db: Arc<AtomicI64>,
-) -> Result<cpal::Stream, String> {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate.0;
-    let err_fn = |err| tracing::error!("audio stream error: {}", err);
+/// Macro that generates a `build_input_stream_*` function for a specific sample
+/// type.  The only thing that varies across f32 / i16 / u16 is how one raw
+/// sample is normalised to `f32` in the range `[-1, 1]`.  Everything else
+/// (gain, mono down-mix, RMS / level calculation, VAD dispatch) is identical.
+macro_rules! build_input_stream_typed {
+    ($fn_name:ident, $sample_ty:ty, $to_f32:expr) => {
+        fn $fn_name(
+            device: &cpal::Device,
+            config: &StreamConfig,
+            buffer: Arc<Mutex<CaptureBuffer>>,
+            overlay: Option<Arc<OverlayLevelEmitter>>,
+            vad: Option<VadHandle>,
+            gain_db: Arc<AtomicI64>,
+        ) -> Result<cpal::Stream, String> {
+            let channels = config.channels as usize;
+            let sample_rate = config.sample_rate.0;
+            let err_fn = |err| tracing::error!("audio stream error: {}", err);
 
-    device
-        .build_input_stream(
-            config,
-            move |data: &[f32], _| {
-                let mut mono = Vec::with_capacity(data.len() / channels.max(1));
-                let mut sum_squared = 0.0f32;
-                let gain_db = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
-                let gain = (10.0f32).powf(gain_db / 20.0);
-                for frame in data.chunks(channels.max(1)) {
-                    let mut sum = 0.0f32;
-                    for &sample in frame {
-                        sum += sample;
-                    }
-                    let sample = (sum / channels.max(1) as f32 * gain).clamp(-1.0, 1.0);
-                    mono.push(sample);
-                    sum_squared += sample * sample;
-                }
-                let level = if mono.is_empty() {
-                    0.0
-                } else {
-                    let rms = (sum_squared / mono.len() as f32).sqrt();
-                    (rms * 2.5).min(1.0)
-                };
-                if let Some(emitter) = overlay.as_ref() {
-                    emitter.emit_level(level);
-                }
-                if let Some(vad_handle) = vad.as_ref() {
-                    handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
-                } else {
-                    push_mono_samples(&buffer, &mono, sample_rate);
-                }
-            },
-            err_fn,
-            None,
-        )
-        .map_err(|e| e.to_string())
+            // Converter closure produced by the caller expression.
+            let convert: fn(&$sample_ty) -> f32 = $to_f32;
+
+            device
+                .build_input_stream(
+                    config,
+                    move |data: &[$sample_ty], _| {
+                        let ch = channels.max(1);
+                        let mut mono = Vec::with_capacity(data.len() / ch);
+                        let mut sum_squared = 0.0f32;
+                        let gain_db_val = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
+                        let gain = (10.0f32).powf(gain_db_val / 20.0);
+                        for frame in data.chunks(ch) {
+                            let mut sum = 0.0f32;
+                            for sample in frame {
+                                sum += convert(sample);
+                            }
+                            let sample = (sum / ch as f32 * gain).clamp(-1.0, 1.0);
+                            mono.push(sample);
+                            sum_squared += sample * sample;
+                        }
+                        let level = if mono.is_empty() {
+                            0.0
+                        } else {
+                            let rms = (sum_squared / mono.len() as f32).sqrt();
+                            (rms * 2.5).min(1.0)
+                        };
+                        if let Some(emitter) = overlay.as_ref() {
+                            emitter.emit_level(level);
+                        }
+                        if let Some(vad_handle) = vad.as_ref() {
+                            handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
+                        } else {
+                            push_mono_samples(&buffer, &mono, sample_rate);
+                        }
+                    },
+                    err_fn,
+                    None,
+                )
+                .map_err(|e| e.to_string())
+        }
+    };
 }
 
-fn build_input_stream_i16(
-    device: &cpal::Device,
-    config: &StreamConfig,
-    buffer: Arc<Mutex<CaptureBuffer>>,
-    overlay: Option<Arc<OverlayLevelEmitter>>,
-    vad: Option<VadHandle>,
-    gain_db: Arc<AtomicI64>,
-) -> Result<cpal::Stream, String> {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate.0;
-    let err_fn = |err| tracing::error!("audio stream error: {}", err);
-
-    device
-        .build_input_stream(
-            config,
-            move |data: &[i16], _| {
-                let mut mono = Vec::with_capacity(data.len() / channels.max(1));
-                let mut sum_squared = 0.0f32;
-                let gain_db = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
-                let gain = (10.0f32).powf(gain_db / 20.0);
-                for frame in data.chunks(channels.max(1)) {
-                    let mut sum = 0.0f32;
-                    for &sample in frame {
-                        sum += sample as f32 / i16::MAX as f32;
-                    }
-                    let sample = (sum / channels.max(1) as f32 * gain).clamp(-1.0, 1.0);
-                    mono.push(sample);
-                    sum_squared += sample * sample;
-                }
-                let level = if mono.is_empty() {
-                    0.0
-                } else {
-                    let rms = (sum_squared / mono.len() as f32).sqrt();
-                    (rms * 2.5).min(1.0)
-                };
-                if let Some(emitter) = overlay.as_ref() {
-                    emitter.emit_level(level);
-                }
-                if let Some(vad_handle) = vad.as_ref() {
-                    handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
-                } else {
-                    push_mono_samples(&buffer, &mono, sample_rate);
-                }
-            },
-            err_fn,
-            None,
-        )
-        .map_err(|e| e.to_string())
-}
-
-fn build_input_stream_u16(
-    device: &cpal::Device,
-    config: &StreamConfig,
-    buffer: Arc<Mutex<CaptureBuffer>>,
-    overlay: Option<Arc<OverlayLevelEmitter>>,
-    vad: Option<VadHandle>,
-    gain_db: Arc<AtomicI64>,
-) -> Result<cpal::Stream, String> {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate.0;
-    let err_fn = |err| tracing::error!("audio stream error: {}", err);
-
-    device
-        .build_input_stream(
-            config,
-            move |data: &[u16], _| {
-                let mut mono = Vec::with_capacity(data.len() / channels.max(1));
-                let mut sum_squared = 0.0f32;
-                let gain_db = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
-                let gain = (10.0f32).powf(gain_db / 20.0);
-                for frame in data.chunks(channels.max(1)) {
-                    let mut sum = 0.0f32;
-                    for &sample in frame {
-                        let centered = sample as f32 - 32768.0;
-                        sum += centered / 32768.0;
-                    }
-                    let sample = (sum / channels.max(1) as f32 * gain).clamp(-1.0, 1.0);
-                    mono.push(sample);
-                    sum_squared += sample * sample;
-                }
-                let level = if mono.is_empty() {
-                    0.0
-                } else {
-                    let rms = (sum_squared / mono.len() as f32).sqrt();
-                    (rms * 2.5).min(1.0)
-                };
-                if let Some(emitter) = overlay.as_ref() {
-                    emitter.emit_level(level);
-                }
-                if let Some(vad_handle) = vad.as_ref() {
-                    handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
-                } else {
-                    push_mono_samples(&buffer, &mono, sample_rate);
-                }
-            },
-            err_fn,
-            None,
-        )
-        .map_err(|e| e.to_string())
-}
+build_input_stream_typed!(build_input_stream_f32, f32, |s: &f32| *s);
+build_input_stream_typed!(build_input_stream_i16, i16, |s: &i16| {
+    *s as f32 / i16::MAX as f32
+});
+build_input_stream_typed!(build_input_stream_u16, u16, |s: &u16| {
+    (*s as f32 - 32768.0) / 32768.0
+});
 
 pub(crate) fn start_recording_with_settings(
     app: &AppHandle,
@@ -860,6 +775,80 @@ pub(crate) fn start_recording_with_settings(
     Ok(())
 }
 
+/// Common transcription-result handling: post-process, push to history, emit
+/// events, and optionally spawn AI refinement. Returns `Some(processed_text_len)`
+/// when a result was emitted, `None` when the transcript was filtered/dropped.
+fn handle_transcription_ok(
+    app_handle: &AppHandle,
+    text: &str,
+    source: &str,
+    settings: &Settings,
+    level: f32,
+    duration_ms: u64,
+) -> Option<usize> {
+    if text.trim().is_empty()
+        || should_drop_transcript(text, level, duration_ms, false)
+        || crate::transcription::should_drop_by_activation_words(
+            text,
+            &settings.activation_words,
+            settings.activation_words_enabled,
+        )
+    {
+        return None;
+    }
+
+    let processed_text = if settings.postproc_enabled {
+        match process_transcript(text, settings, app_handle) {
+            Ok(processed) => processed,
+            Err(err) => {
+                error!("Post-processing failed: {}", err);
+                text.to_string()
+            }
+        }
+    } else {
+        text.to_string()
+    };
+
+    let job_id = next_transcription_job_id(source);
+    let state = app_handle.state::<AppState>();
+    let mut entry_id: Option<String> = None;
+    if let Ok(updated) = push_history_entry_inner(
+        app_handle,
+        &state.history,
+        processed_text.clone(),
+        source.to_string(),
+    ) {
+        entry_id = updated.first().map(|entry| entry.id.clone());
+        let _ = app_handle.emit("history:updated", updated);
+    }
+    let paste_deferred = should_defer_paste_for_refinement(settings);
+    let _ = app_handle.emit(
+        "transcription:result",
+        TranscriptionResult {
+            text: processed_text.clone(),
+            source: source.to_string(),
+            job_id: job_id.clone(),
+            paste_deferred,
+            paste_timeout_ms: if paste_deferred {
+                Some(REFINEMENT_PASTE_TIMEOUT_MS)
+            } else {
+                None
+            },
+            entry_id: entry_id.clone(),
+        },
+    );
+    maybe_spawn_ai_refinement(
+        app_handle.clone(),
+        processed_text.clone(),
+        source.to_string(),
+        job_id,
+        entry_id,
+        settings,
+    );
+
+    Some(processed_text.len())
+}
+
 fn should_defer_paste_for_refinement(settings: &Settings) -> bool {
     settings.ai_fallback.enabled
         && settings.ai_fallback.provider == "ollama"
@@ -875,7 +864,7 @@ fn next_transcription_job_id(source: &str) -> String {
 /// Spawn a background thread to refine `text` via Ollama AI fallback.
 /// On success emits `"transcription:refined"`; on failure emits
 /// `"transcription:refinement-failed"` and logs the error.
-fn maybe_spawn_ai_refinement(
+pub(crate) fn maybe_spawn_ai_refinement(
     app_handle: AppHandle,
     text: String,
     source: String,
@@ -891,31 +880,15 @@ fn maybe_spawn_ai_refinement(
         return;
     }
 
-    let endpoint = settings.providers.ollama.endpoint.clone();
-    let configured_model = settings.ai_fallback.model.clone();
-    let preferred_model = settings.providers.ollama.preferred_model.clone();
-    let postproc_model = settings.postproc_llm_model.clone();
-    let options = RefinementOptions {
-        temperature: settings.ai_fallback.temperature,
-        max_tokens: settings.ai_fallback.max_tokens,
-        low_latency_mode: settings.ai_fallback.low_latency_mode,
-        language: Some(settings.language_mode.clone()),
-        custom_prompt: prompt_for_profile(
-            &settings.ai_fallback.prompt_profile,
-            &settings.language_mode,
-            Some(settings.ai_fallback.custom_prompt.as_str()),
-        ),
-    };
+    let settings_snapshot = settings.clone();
 
     thread::spawn(move || {
-        // Resolve model BEFORE signalling "started" — if Ollama is down or no
-        // model is available the frontend never sees a spinner for a doomed job.
-        let model_resolution = match resolve_effective_local_model(
-            &configured_model,
-            &preferred_model,
-            &endpoint,
-        ) {
-            Ok(resolved) => resolved,
+        // Resolve provider, model, and options via the shared helper.
+        // This performs model resolution BEFORE signalling "started" — if
+        // Ollama is down or no model is available the frontend never sees a
+        // spinner for a doomed job.
+        let setup = match crate::prepare_refinement(&app_handle, &settings_snapshot) {
+            Ok(s) => s,
             Err(error) => {
                 error!("AI refinement skipped: {}", error);
                 record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
@@ -925,7 +898,7 @@ fn maybe_spawn_ai_refinement(
                         entry_id_value,
                         &job_id,
                         &text,
-                        &error.to_string(),
+                        &error,
                     );
                 }
                 let _ = app_handle.emit(
@@ -935,7 +908,7 @@ fn maybe_spawn_ai_refinement(
                         "entry_id": entry_id.clone(),
                         "source": source.clone(),
                         "original": text.clone(),
-                        "error": error.to_string(),
+                        "error": error,
                     }),
                 );
                 return;
@@ -960,12 +933,8 @@ fn maybe_spawn_ai_refinement(
             }),
         );
 
-        let model = model_resolution.model.clone();
-        if model_resolution.repaired
-            || configured_model.trim() != model
-            || preferred_model.trim() != model
-            || postproc_model.trim() != model
-        {
+        if setup.repaired {
+            let model = setup.model.clone();
             let snapshot = {
                 let state = app_handle.state::<AppState>();
                 let mut live = state.settings.lock().unwrap();
@@ -982,8 +951,7 @@ fn maybe_spawn_ai_refinement(
             }
         }
 
-        let provider = ProviderFactory::create_ollama(endpoint);
-        match provider.refine_transcript(&text, &model, &options, "") {
+        match setup.provider.refine_transcript(&text, &setup.model, &setup.options, &setup.api_key) {
             Ok(result) => {
                 if let Some(entry_id_value) = entry_id.as_deref() {
                     let _ = mark_entry_refinement_success(
@@ -1010,7 +978,7 @@ fn maybe_spawn_ai_refinement(
                 );
             }
             Err(e) => {
-                error!("AI refinement failed ({}): {}", model, e);
+                error!("AI refinement failed ({}): {}", setup.model, e);
                 record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
                 if let Some(entry_id_value) = entry_id.as_deref() {
                     let _ = mark_entry_refinement_failed(
@@ -1214,63 +1182,14 @@ fn process_toggle_segment(
 
     match result {
         Ok((text, source)) => {
-            if !text.trim().is_empty()
-                && !should_drop_transcript(&text, segment_rms, duration_ms, false)
-                && !crate::transcription::should_drop_by_activation_words(
-                    &text,
-                    &effective_settings.activation_words,
-                    effective_settings.activation_words_enabled,
-                )
-            {
-                let processed_text = if effective_settings.postproc_enabled {
-                    match process_transcript(&text, &effective_settings, app_handle) {
-                        Ok(processed) => processed,
-                        Err(err) => {
-                            error!("Post-processing failed: {}", err);
-                            text.clone()
-                        }
-                    }
-                } else {
-                    text.clone()
-                };
-
-                let job_id = next_transcription_job_id(&source);
-                let state = app_handle.state::<AppState>();
-                let mut entry_id: Option<String> = None;
-                if let Ok(updated) = push_history_entry_inner(
-                    app_handle,
-                    &state.history,
-                    processed_text.clone(),
-                    source.clone(),
-                ) {
-                    entry_id = updated.first().map(|entry| entry.id.clone());
-                    let _ = app_handle.emit("history:updated", updated);
-                }
-                let paste_deferred = should_defer_paste_for_refinement(&effective_settings);
-                let _ = app_handle.emit(
-                    "transcription:result",
-                    TranscriptionResult {
-                        text: processed_text.clone(),
-                        source: source.clone(),
-                        job_id: job_id.clone(),
-                        paste_deferred,
-                        paste_timeout_ms: if paste_deferred {
-                            Some(REFINEMENT_PASTE_TIMEOUT_MS)
-                        } else {
-                            None
-                        },
-                        entry_id: entry_id.clone(),
-                    },
-                );
-                maybe_spawn_ai_refinement(
-                    app_handle.clone(),
-                    processed_text.clone(),
-                    source.clone(),
-                    job_id,
-                    entry_id,
-                    &effective_settings,
-                );
-
+            if let Some(text_len) = handle_transcription_ok(
+                app_handle,
+                &text,
+                &source,
+                &effective_settings,
+                segment_rms,
+                duration_ms,
+            ) {
                 let _ = app_handle.emit(
                     "continuous-dump:segment",
                     ContinuousDumpEvent {
@@ -1278,7 +1197,7 @@ fn process_toggle_segment(
                         reason,
                         duration_ms,
                         rms: segment_rms,
-                        text_len: processed_text.len(),
+                        text_len,
                     },
                 );
             }
@@ -1773,63 +1692,7 @@ fn process_vad_segment(
     match result {
         Ok((text, source)) => {
             let settings = state.settings.lock().unwrap().clone();
-            if !text.trim().is_empty()
-                && !should_drop_transcript(&text, level, duration_ms, false)
-                && !crate::transcription::should_drop_by_activation_words(
-                    &text,
-                    &settings.activation_words,
-                    settings.activation_words_enabled,
-                )
-            {
-                // Apply post-processing if enabled
-                let processed_text = if settings.postproc_enabled {
-                    match process_transcript(&text, &settings, &app_handle) {
-                        Ok(processed) => processed,
-                        Err(e) => {
-                            error!("Post-processing failed: {}", e);
-                            text.clone() // Fallback to original
-                        }
-                    }
-                } else {
-                    text.clone()
-                };
-
-                let job_id = next_transcription_job_id(&source);
-                let mut entry_id: Option<String> = None;
-                if let Ok(updated) = push_history_entry_inner(
-                    &app_handle,
-                    &state.history,
-                    processed_text.clone(),
-                    source.clone(),
-                ) {
-                    entry_id = updated.first().map(|entry| entry.id.clone());
-                    let _ = app_handle.emit("history:updated", updated);
-                }
-                let paste_deferred = should_defer_paste_for_refinement(&settings);
-                let _ = app_handle.emit(
-                    "transcription:result",
-                    TranscriptionResult {
-                        text: processed_text.clone(),
-                        source: source.clone(),
-                        job_id: job_id.clone(),
-                        paste_deferred,
-                        paste_timeout_ms: if paste_deferred {
-                            Some(REFINEMENT_PASTE_TIMEOUT_MS)
-                        } else {
-                            None
-                        },
-                        entry_id: entry_id.clone(),
-                    },
-                );
-                maybe_spawn_ai_refinement(
-                    app_handle.clone(),
-                    processed_text.clone(),
-                    source.clone(),
-                    job_id,
-                    entry_id,
-                    &settings,
-                );
-            }
+            handle_transcription_ok(&app_handle, &text, &source, &settings, level, duration_ms);
         }
         Err(err) => {
             let _ = app_handle.emit("transcription:error", err);
@@ -1936,63 +1799,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         match result {
             Ok((text, source)) => {
                 let settings = state.settings.lock().unwrap().clone();
-                if !text.trim().is_empty()
-                    && !should_drop_transcript(&text, level, duration_ms, false)
-                    && !crate::transcription::should_drop_by_activation_words(
-                        &text,
-                        &settings.activation_words,
-                        settings.activation_words_enabled,
-                    )
-                {
-                    // Apply post-processing if enabled
-                    let processed_text = if settings.postproc_enabled {
-                        match process_transcript(&text, &settings, &app_handle) {
-                            Ok(processed) => processed,
-                            Err(e) => {
-                                error!("Post-processing failed: {}", e);
-                                text.clone() // Fallback to original
-                            }
-                        }
-                    } else {
-                        text.clone()
-                    };
-
-                    let job_id = next_transcription_job_id(&source);
-                    let mut entry_id: Option<String> = None;
-                    if let Ok(updated) = push_history_entry_inner(
-                        &app_handle,
-                        &state.history,
-                        processed_text.clone(),
-                        source.clone(),
-                    ) {
-                        entry_id = updated.first().map(|entry| entry.id.clone());
-                        let _ = app_handle.emit("history:updated", updated);
-                    }
-                    let paste_deferred = should_defer_paste_for_refinement(&settings);
-                    let _ = app_handle.emit(
-                        "transcription:result",
-                        TranscriptionResult {
-                            text: processed_text.clone(),
-                            source: source.clone(),
-                            job_id: job_id.clone(),
-                            paste_deferred,
-                            paste_timeout_ms: if paste_deferred {
-                                Some(REFINEMENT_PASTE_TIMEOUT_MS)
-                            } else {
-                                None
-                            },
-                            entry_id: entry_id.clone(),
-                        },
-                    );
-                    maybe_spawn_ai_refinement(
-                        app_handle.clone(),
-                        processed_text.clone(),
-                        source.clone(),
-                        job_id,
-                        entry_id,
-                        &settings,
-                    );
-                }
+                handle_transcription_ok(&app_handle, &text, &source, &settings, level, duration_ms);
             }
             Err(err) => {
                 let _ = app_handle.emit("transcription:error", err);

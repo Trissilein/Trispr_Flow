@@ -1,12 +1,19 @@
 use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
+use tracing::warn;
 
 pub(crate) fn resolve_config_path(app: &AppHandle, filename: &str) -> PathBuf {
   let base = app
     .path()
     .app_config_dir()
-    .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    .unwrap_or_else(|e| {
+      warn!("app_config_dir failed, falling back to current directory: {}", e);
+      std::env::current_dir().unwrap_or_else(|e2| {
+        warn!("current_dir also failed, falling back to \".\": {}", e2);
+        PathBuf::from(".")
+      })
+    });
   let _ = fs::create_dir_all(&base);
   base.join(filename)
 }
@@ -15,7 +22,13 @@ pub(crate) fn resolve_data_path(app: &AppHandle, filename: &str) -> PathBuf {
   let base = app
     .path()
     .app_data_dir()
-    .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    .unwrap_or_else(|e| {
+      warn!("app_data_dir failed, falling back to current directory: {}", e);
+      std::env::current_dir().unwrap_or_else(|e2| {
+        warn!("current_dir also failed, falling back to \".\": {}", e2);
+        PathBuf::from(".")
+      })
+    });
   let _ = fs::create_dir_all(&base);
   base.join(filename)
 }
@@ -24,7 +37,13 @@ pub(crate) fn resolve_recordings_dir(app: &AppHandle) -> PathBuf {
   let base = app
     .path()
     .app_data_dir()
-    .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    .unwrap_or_else(|e| {
+      warn!("app_data_dir failed, falling back to current directory: {}", e);
+      std::env::current_dir().unwrap_or_else(|e2| {
+        warn!("current_dir also failed, falling back to \".\": {}", e2);
+        PathBuf::from(".")
+      })
+    });
   let dir = base.join("recordings");
   let _ = fs::create_dir_all(&dir);
   dir
@@ -43,7 +62,13 @@ pub(crate) fn resolve_models_dir(app: &AppHandle) -> PathBuf {
   let base = app
     .path()
     .app_data_dir()
-    .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    .unwrap_or_else(|e| {
+      warn!("app_data_dir failed, falling back to current directory: {}", e);
+      std::env::current_dir().unwrap_or_else(|e2| {
+        warn!("current_dir also failed, falling back to \".\": {}", e2);
+        PathBuf::from(".")
+      })
+    });
   let dir = base.join("models");
   let _ = fs::create_dir_all(&dir);
   dir

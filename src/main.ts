@@ -5,6 +5,9 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { initWindowStatePersistence } from "./window-state";
 
+type TranscriptionStatus = "idle" | "recording" | "transcribing";
+type AudioCueType = "start" | "stop";
+
 import type {
   Settings,
   HistoryEntry,
@@ -55,16 +58,19 @@ import {
   setTranscribeStatus,
   updateThresholdMarkers,
 } from "./ui-state";
-import { renderHistory, setHistoryTab } from "./history";
+import { renderHistory, scheduleHistoryRender, setHistoryTab, initHistoryDelegation } from "./history";
 import { initPanelState, isPanelCollapsed, setPanelCollapsed } from "./panels";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
-import { wireEvents, initMainTab, cleanupWindowListeners } from "./event-listeners";
+import { wireEvents, initMainTab, cleanupWindowListeners, scheduleSettingsRender } from "./event-listeners";
 import { initUnifiedTooltips, cleanupUnifiedTooltips } from "./custom-tooltips";
 import { dismissToast, showToast, showErrorToast } from "./toast";
 import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
 import { dumpHistoryToFile, initLiveDump } from "./live-dump";
 import { initChaptersUI, refreshChapters } from "./chapters";
+import { initExportDialog } from "./export-dialog";
+import { initArchiveBrowser } from "./archive-browser";
+import { initExpertMode } from "./expert-mode";
 import {
   handleRefinementFailureForInspector,
   handleRefinementStartedForInspector,
@@ -241,6 +247,8 @@ function initConversationView() {
 async function bootstrap() {
   // Clean up old listeners if re-bootstrapping to prevent memory leaks
   cleanupEventListeners();
+  // Reset the paste queue to prevent accumulation across re-bootstrap cycles
+  pasteQueue = Promise.resolve();
 
   // Phase 1: Load data from backend — any failure here is fatal
   const fetchedSettings = await invoke<Settings>("get_settings");
@@ -269,6 +277,10 @@ async function bootstrap() {
   initConversationView();
   initChaptersUI();
   initUnifiedTooltips();
+  initHistoryDelegation();
+  initExportDialog();
+  initArchiveBrowser();
+  initExpertMode();
 
   // Phase 3: Render UI — failures here should not block interaction
   try {
@@ -312,7 +324,7 @@ async function bootstrap() {
   eventUnlisteners.push(await listen<Settings>("settings-changed", (event) => {
     setSettings(event.payload ?? null);
     if (!settings?.ai_fallback?.enabled) setRefiningActive(false);
-    renderSettings();
+    scheduleSettingsRender();
     renderHero();
     renderModels();
     void refreshModelsDir().catch((e) => console.error("refreshModelsDir failed:", e));
@@ -330,12 +342,12 @@ async function bootstrap() {
   }));
 
   eventUnlisteners.push(await listen<string>("capture:state", (event) => {
-    const state = event.payload as "idle" | "recording" | "transcribing";
+    const state = event.payload as TranscriptionStatus;
     setCaptureStatus(state ?? "idle");
   }));
 
   eventUnlisteners.push(await listen<string>("transcribe:state", (event) => {
-    const state = event.payload as "idle" | "recording" | "transcribing";
+    const state = event.payload as TranscriptionStatus;
     setTranscribeStatus(state ?? "idle");
   }));
 
@@ -358,33 +370,28 @@ async function bootstrap() {
     dom.transcribeMeterDb.textContent = `${clamped.toFixed(1)} dB`;
   }));
 
-  eventUnlisteners.push(await listen<HistoryEntry[]>("history:updated", async (event) => {
-    setHistory(event.payload ?? []);
-    renderHistory();
-    refreshChapters();
-    // Prune orphaned refinement snapshots from localStorage
-    const allIds = new Set([...history, ...transcribeHistory].map((e) => e.id));
-    pruneOrphanedSnapshots(allIds);
-    // Live dump to file for crash recovery
-    dumpHistoryToFile().catch(() => {});
-  }));
+  function makeHistoryUpdateHandler(setter: (entries: HistoryEntry[]) => void) {
+    return async (event: { payload: HistoryEntry[] }) => {
+      setter(event.payload ?? []);
+      scheduleHistoryRender();
+      refreshChapters();
+      // Prune orphaned refinement snapshots from localStorage
+      const allIds = new Set([...history, ...transcribeHistory].map((e) => e.id));
+      pruneOrphanedSnapshots(allIds);
+      // Live dump to file for crash recovery
+      dumpHistoryToFile().catch(() => {});
+    };
+  }
 
-  eventUnlisteners.push(await listen<HistoryEntry[]>("transcribe:history-updated", async (event) => {
-    setTranscribeHistory(event.payload ?? []);
-    renderHistory();
-    refreshChapters();
-    // Prune orphaned refinement snapshots from localStorage
-    const allIds = new Set([...history, ...transcribeHistory].map((e) => e.id));
-    pruneOrphanedSnapshots(allIds);
-    // Live dump to file for crash recovery
-    dumpHistoryToFile().catch(() => {});
-  }));
+  eventUnlisteners.push(await listen<HistoryEntry[]>("history:updated", makeHistoryUpdateHandler(setHistory)));
+
+  eventUnlisteners.push(await listen<HistoryEntry[]>("transcribe:history-updated", makeHistoryUpdateHandler(setTranscribeHistory)));
 
   eventUnlisteners.push(await listen<TranscriptionResultEvent>("transcription:result", (event) => {
     const payload = event.payload;
     handlePipelineTranscriptionResult(payload);
     handleTranscriptionResultForInspector(payload);
-    renderHistory();
+    scheduleHistoryRender();
     if (dom.statusMessage) dom.statusMessage.textContent = "";
 
     const jobId = typeof payload?.job_id === "string" ? payload.job_id.trim() : "";
@@ -423,14 +430,14 @@ async function bootstrap() {
     await listen<TranscriptionRefinementStartedEvent>("transcription:refinement-started", (event) => {
       handlePipelineRefinementStarted(event.payload);
       handleRefinementStartedForInspector(event.payload);
-      renderHistory();
+      scheduleHistoryRender();
     })
   );
 
   // AI Fallback: refined transcript available — log silently (original already shown).
   eventUnlisteners.push(await listen<TranscriptionRefinedEvent>("transcription:refined", (event) => {
     handleRefinementSuccessForInspector(event.payload);
-    renderHistory();
+    scheduleHistoryRender();
     const { refined, model, execution_time_ms, job_id: jobId } = event.payload;
     const priorOutcome = deferredPasteOutcomes.get(jobId);
     const pending = settleDeferredPasteJob(jobId);
@@ -459,7 +466,7 @@ async function bootstrap() {
       handlePipelineRefinementFailed(payload);
     }
     handleRefinementFailureForInspector(payload);
-    renderHistory();
+    scheduleHistoryRender();
     const pending = settleDeferredPasteJob(payload.job_id);
     if (pending) {
       rememberDeferredPasteOutcome(payload.job_id, "failed");
@@ -478,7 +485,7 @@ async function bootstrap() {
       if (payload?.reason === "watchdog_reset" || payload?.reason === "forced_reset") {
         handlePipelineRefinementReset(payload.reason);
         markAllPendingAsFailed(payload.reason);
-        renderHistory();
+        scheduleHistoryRender();
         showToast({
           type: "warning",
           title: "Refinement reset",
@@ -635,7 +642,7 @@ async function bootstrap() {
 
   // Listen for audio cues (beep on recording start/stop)
   eventUnlisteners.push(await listen<string>("audio:cue", (event) => {
-    const type = event.payload as "start" | "stop";
+    const type = event.payload as AudioCueType;
     if (settings?.audio_cues) {
       playAudioCue(type);
     }
@@ -671,7 +678,11 @@ async function bootstrap() {
 
 async function checkModelOnStartup() {
   try {
-    const settings = await invoke<Settings>("get_settings");
+    // Use the already-loaded settings from bootstrap to avoid redundant backend call
+    if (!settings) {
+      console.warn("Settings not available during model check");
+      return;
+    }
     const modelAvailable = await invoke<boolean>("check_model_available", {
       modelId: settings.model,
     });
@@ -686,21 +697,20 @@ async function checkModelOnStartup() {
 
       // Scroll to model manager panel and expand it after a short delay
       setTimeout(() => {
-        const modelPanel = document.querySelector('[data-panel="model"]');
-        if (modelPanel) {
+        if (dom.modelPanel) {
           // Expand the panel if it's collapsed
-          const collapseButton = modelPanel.querySelector('[data-panel-collapse="model"]') as HTMLButtonElement;
+          const collapseButton = dom.modelPanel.querySelector('[data-panel-collapse="model"]') as HTMLButtonElement;
           if (collapseButton && isPanelCollapsed("model")) {
             setPanelCollapsed("model", false);
           }
 
           // Scroll to the panel
-          modelPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+          dom.modelPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 
           // Highlight the panel briefly
-          modelPanel.classList.add('panel-highlight');
+          dom.modelPanel.classList.add('panel-highlight');
           setTimeout(() => {
-            modelPanel.classList.remove('panel-highlight');
+            dom.modelPanel!.classList.remove('panel-highlight');
           }, 2000);
         }
       }, 1000);

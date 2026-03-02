@@ -273,7 +273,7 @@ Implementation uses `data-expert-only` attributes on DOM elements — CSS hides 
 
 | Task | Name | Complexity | Dependencies | Status | Description |
 | --- | --- | --- | --- | --- | --- |
-| K1 | Expert-mode toggle (header/settings, localStorage persistence) | Low | Block E | PLANNED | Small toggle button; persists via localStorage `trispr-expert-mode`. |
+| K1 | Expert-mode toggle (header/settings, localStorage persistence) | Low | Block E | DONE | Toggle implemented in Settings tab, persisted via localStorage `trispr-expert-mode`, adds `expert-mode`/`standard-mode` root classes for follow-up K3. |
 | K2 | Audit & classify all settings (agent-assisted) | Medium | Block E | PLANNED | Agent reviews every settings field; outputs two lists: standard vs expert. Decision document added to DECISIONS.md. |
 | K3 | Apply `data-expert-only` attributes + CSS hide/show | Medium | K1, K2 | PLANNED | Add attribute to expert-only elements; CSS rule `.expert-mode [data-expert-only]` toggles visibility. |
 | K4 | Settings re-ordering within panels (expert items sink to bottom) | Medium | K3 | PLANNED | Visual grouping: essential controls at top, expert controls below a subtle divider. |

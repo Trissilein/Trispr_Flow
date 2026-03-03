@@ -424,7 +424,7 @@
               </label>
             </div>
             <details class="expander span-2">
-              <summary>Dumping</summary>
+              <summary>Audio Dumping</summary>
               <div class="expander-content">
                 <div class="field toggle">
                   <label class="toggle-row">
@@ -877,7 +877,7 @@
                   <option value="custom">Custom URL</option>
                 </select>
               </label>
-              <label class="field span-2" id="model-custom-url-field">
+              <label class="field span-2" id="model-custom-url-field" data-expert-only="true">
                 <span class="field-label">Custom model URL</span>
                 <div class="hotkey-input-group">
                   <input
@@ -891,7 +891,7 @@
                 <span class="field-hint">Supports JSON index or direct model file URL.</span>
               </label>
             </div>
-            <div class="panel-grid model-storage-grid">
+            <div class="panel-grid model-storage-grid" data-expert-only="true">
               <label class="field span-2">
                 <span class="field-label">Model storage</span>
                 <div class="hotkey-input-group">
@@ -919,7 +919,7 @@
         <section class="panel interface-panel" data-panel="interface" data-default-collapsed="true" style="--delay: 0.22s">
           <div class="panel-header">
             <div class="panel-title">
-              <h2>UX / UI-Adjustments</h2>
+              <h2>Interface</h2>
               <p>Overlay, layout, and visual feedback settings.</p>
             </div>
             <div class="panel-actions">
@@ -938,11 +938,11 @@
           <div class="panel-body" id="interface-panel-body">
           <div class="panel-grid">
             <label class="field">
-              <span class="field-label">Akzentfarbe</span>
+              <span class="field-label">Accent color</span>
               <div style="display: flex; align-items: center; gap: 8px;">
-                <input id="accent-color" type="color" title="Akzentfarbe der Benutzeroberfläche — ändert sich live beim Auswählen" />
-                <button id="accent-color-reset" class="hotkey-record-btn" type="button" title="Auf Standard-Teal zurücksetzen (#4be0d4)">
-                  Zurücksetzen
+                <input id="accent-color" type="color" title="UI accent color (applies immediately)" />
+                <button id="accent-color-reset" class="hotkey-record-btn" type="button" title="Reset accent color to default teal (#4be0d4)">
+                  Reset
                 </button>
               </div>
             </label>
@@ -1114,7 +1114,7 @@
                          title="Vertical overlay position (0 = top, 100 = bottom)" />
                 </label>
               </div>
-              <div id="overlay-refinement-settings-section" class="overlay-refinement-settings">
+              <div id="overlay-refinement-settings-section" class="overlay-refinement-settings" data-expert-only="true">
                 <div class="overlay-refinement-settings-header">
                   <span class="field-label">AI Refinement Overlay</span>
                   <span class="field-hint">Separate settings for refinement animation only</span>
@@ -1533,7 +1533,7 @@
                         </select>
                       </label>
 
-                      <div id="ai-fallback-prompt-preview-field" class="field span-2">
+                      <div id="ai-fallback-prompt-preview-field" class="field span-2" data-expert-only="true">
                         <span id="ai-fallback-prompt-preview-label" class="field-label">Prompt preview</span>
                         <textarea id="ai-fallback-custom-prompt" rows="6" placeholder="Define your custom refinement prompt..."
                                   title="Prompt sent to the AI before each refinement"></textarea>

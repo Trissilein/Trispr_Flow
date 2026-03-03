@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import * as dom from "./dom-refs";
 import { buildExportText, type ExportFormat } from "./history";
 import { appRuntimeStartedMs, history, transcribeHistory } from "./state";
+import { focusFirstElement, trapFocusInModal } from "./modal-focus";
 import { showToast } from "./toast";
 import type { HistoryEntry, PartitionInfo } from "./types";
 
@@ -32,6 +33,7 @@ const partitionEntriesCache = new Map<string, HistoryEntry[]>();
 let initialized = false;
 let activeRange: ExportRange = "session";
 let previewGeneration = 0;
+let lastFocusedBeforeOpen: HTMLElement | null = null;
 
 function isExportRange(value: string): value is ExportRange {
   return EXPORT_RANGES.includes(value as ExportRange);
@@ -336,15 +338,21 @@ async function executeExport(): Promise<void> {
 export function closeExportDialog(): void {
   if (!dom.exportDialog) return;
   dom.exportDialog.hidden = true;
+  const restoreTarget = lastFocusedBeforeOpen ?? dom.historyExport ?? null;
+  lastFocusedBeforeOpen = null;
+  restoreTarget?.focus();
 }
 
 export async function openExportDialog(): Promise<void> {
   initExportDialog();
   if (!dom.exportDialog) return;
 
+  lastFocusedBeforeOpen = document.activeElement as HTMLElement | null;
   partitionInfoCache.clear();
   partitionEntriesCache.clear();
   dom.exportDialog.hidden = false;
+  const modalCard = dom.exportDialog.querySelector<HTMLElement>(".export-modal-card");
+  focusFirstElement(modalCard ?? dom.exportDialog, dom.exportDialogClose ?? dom.exportDialogRun);
   await updatePreview();
 }
 
@@ -383,8 +391,12 @@ export function initExportDialog(): void {
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
     if (!dom.exportDialog || dom.exportDialog.hidden) return;
-    closeExportDialog();
+    if (event.key === "Escape") {
+      closeExportDialog();
+      return;
+    }
+    const modalCard = dom.exportDialog.querySelector<HTMLElement>(".export-modal-card");
+    trapFocusInModal(event, modalCard ?? dom.exportDialog);
   });
 }

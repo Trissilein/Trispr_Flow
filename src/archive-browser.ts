@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import * as dom from "./dom-refs";
 import { buildExportText, type ExportFormat } from "./history";
 import { resolveSourceLabel } from "./history-preferences";
+import { focusFirstElement, trapFocusInModal } from "./modal-focus";
 import { showToast } from "./toast";
 import { escapeHtml } from "./utils";
 import type { HistoryEntry, PartitionInfo } from "./types";
@@ -14,6 +15,7 @@ let systemPartitions: PartitionInfo[] = [];
 let currentKind: HistoryKind | null = null;
 let currentKey: string | null = null;
 let currentEntries: HistoryEntry[] = [];
+let lastFocusedBeforeOpen: HTMLElement | null = null;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -233,12 +235,18 @@ function onPartitionListClick(event: Event): void {
 export function closeArchiveBrowser(): void {
   if (!dom.archiveBrowser) return;
   dom.archiveBrowser.hidden = true;
+  const restoreTarget = lastFocusedBeforeOpen ?? dom.archiveBrowseBtn ?? null;
+  lastFocusedBeforeOpen = null;
+  restoreTarget?.focus();
 }
 
 export async function openArchiveBrowser(): Promise<void> {
   initArchiveBrowser();
   if (!dom.archiveBrowser) return;
+  lastFocusedBeforeOpen = document.activeElement as HTMLElement | null;
   dom.archiveBrowser.hidden = false;
+  const modalCard = dom.archiveBrowser.querySelector<HTMLElement>(".archive-modal-card");
+  focusFirstElement(modalCard ?? dom.archiveBrowser, dom.archiveBrowserClose ?? dom.archiveExportBtn);
   await refreshPartitionLists();
 }
 
@@ -264,9 +272,13 @@ export function initArchiveBrowser(): void {
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
     if (!dom.archiveBrowser || dom.archiveBrowser.hidden) return;
-    closeArchiveBrowser();
+    if (event.key === "Escape") {
+      closeArchiveBrowser();
+      return;
+    }
+    const modalCard = dom.archiveBrowser.querySelector<HTMLElement>(".archive-modal-card");
+    trapFocusInModal(event, modalCard ?? dom.archiveBrowser);
   });
 
   renderEntries([]);

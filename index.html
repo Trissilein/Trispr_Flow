@@ -434,7 +434,7 @@
                   </label>
                   <span class="toggle-hint">Save mic Toggle/VAD sessions as OPUS.</span>
                 </div>
-                <div class="field toggle span-2">
+                <div class="field toggle span-2" data-expert-only="true">
                   <label class="toggle-row">
                     <span class="field-label">Mic continuous override</span>
                     <input id="continuous-mic-override-toggle" type="checkbox" title="Use custom timing settings for mic instead of global defaults" />
@@ -442,7 +442,7 @@
                   </label>
                   <span class="toggle-hint">Use source-specific dump timings for mic Toggle/VAD.</span>
                 </div>
-                <label class="field range span-2">
+                <label class="field range span-2" data-expert-only="true">
                   <span class="field-label">Mic soft flush</span>
                   <div class="range-row">
                     <input id="continuous-mic-soft-flush" type="range" min="4000" max="30000" step="500"
@@ -455,7 +455,7 @@
                     <span id="continuous-mic-soft-flush-value" class="range-value" aria-live="polite">10s</span>
                   </div>
                 </label>
-                <label class="field range span-2">
+                <label class="field range span-2" data-expert-only="true">
                   <span class="field-label">Mic silence flush</span>
                   <div class="range-row">
                     <input id="continuous-mic-silence-flush" type="range" min="300" max="5000" step="100"
@@ -468,7 +468,7 @@
                     <span id="continuous-mic-silence-flush-value" class="range-value" aria-live="polite">1.2s</span>
                   </div>
                 </label>
-                <label class="field range span-2">
+                <label class="field range span-2" data-expert-only="true">
                   <span class="field-label">Mic hard cut</span>
                   <div class="range-row">
                     <input id="continuous-mic-hard-cut" type="range" min="15000" max="120000" step="1000"
@@ -483,7 +483,7 @@
                 </label>
               </div>
             </details>
-            <details class="expander span-2">
+            <details class="expander span-2" data-expert-only="true">
               <summary>Advanced</summary>
               <div class="expander-content">
                 <div class="field toggle span-2">
@@ -673,7 +673,7 @@
                 <span id="transcribe-gain-value" class="range-value" aria-live="polite">+0 dB</span>
               </div>
             </label>
-            <label class="field range" id="transcribe-batch-field">
+            <label class="field range" id="transcribe-batch-field" data-expert-only="true">
               <span class="field-label">Soft flush target</span>
               <span class="field-hint">Preferred interval for adaptive flush when no clear silence cut appears.</span>
               <div class="range-row">
@@ -687,7 +687,7 @@
                 <span id="transcribe-batch-value" class="range-value" aria-live="polite">8s</span>
               </div>
             </label>
-            <label class="field range" id="transcribe-overlap-field">
+            <label class="field range" id="transcribe-overlap-field" data-expert-only="true">
               <span class="field-label">Context pre-roll</span>
               <span class="field-hint">Leading context kept for adaptive segment starts.</span>
               <div class="range-row">
@@ -701,7 +701,7 @@
                 <span id="transcribe-overlap-value" class="range-value" aria-live="polite">1s</span>
               </div>
             </label>
-            <details class="expander span-2">
+            <details class="expander span-2" data-expert-only="true">
               <summary>Advanced</summary>
               <div class="expander-content">
                 <div class="field toggle">
@@ -1411,7 +1411,7 @@
                               Import model
                             </button>
                           </div>
-                          <details id="ai-fallback-local-advanced" class="ai-provider-advanced">
+                          <details id="ai-fallback-local-advanced" class="ai-provider-advanced" data-expert-only="true">
                             <summary>Advanced runtime tools</summary>
                             <div class="ai-provider-advanced-actions">
                               <button id="ai-fallback-local-detect-action" class="hotkey-record-btn" type="button" title="Scan for local/runtime PATH installation">

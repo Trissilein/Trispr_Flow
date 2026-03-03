@@ -419,6 +419,25 @@ h1 {
   gap: 6px;
 }
 
+html.standard-mode [data-expert-only="true"] {
+  display: none !important;
+}
+
+html.expert-mode details[data-expert-only="true"] > summary::after {
+  content: "Expert";
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #f3a13f;
+  border: 1px solid rgba(243, 161, 63, 0.35);
+  background: rgba(243, 161, 63, 0.12);
+  vertical-align: middle;
+}
+
 /* AI Refinement Tab */
 #tab-ai-refinement {
   display: none;

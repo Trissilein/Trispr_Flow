@@ -76,6 +76,137 @@ fn default_history_alias_system() -> String {
     "System audio".to_string()
 }
 
+fn default_topic_keywords() -> HashMap<String, Vec<String>> {
+    let mut topics: HashMap<String, Vec<String>> = HashMap::new();
+    topics.insert(
+        "technical".to_string(),
+        vec![
+            "code",
+            "coding",
+            "debug",
+            "debugging",
+            "bug",
+            "error",
+            "stacktrace",
+            "exception",
+            "function",
+            "variable",
+            "api",
+            "endpoint",
+            "database",
+            "sql",
+            "query",
+            "schema",
+            "deploy",
+            "deployment",
+            "build",
+            "compile",
+            "performance",
+            "latency",
+            "memory",
+            "thread",
+            "integration",
+            "schnittstelle",
+            "fehler",
+            "datenbank",
+            "abfrage",
+            "bereitstellung",
+            "leistung",
+            "speicher",
+            "konfiguration",
+            "version",
+            "docker",
+            "kubernetes",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    );
+    topics.insert(
+        "meeting".to_string(),
+        vec![
+            "meeting",
+            "agenda",
+            "minutes",
+            "action",
+            "action item",
+            "deadline",
+            "owner",
+            "follow-up",
+            "stakeholder",
+            "alignment",
+            "decision",
+            "next step",
+            "roadmap",
+            "priority",
+            "milestone",
+            "planning",
+            "sync",
+            "standup",
+            "retrospective",
+            "workshop",
+            "besprechung",
+            "termin",
+            "protokoll",
+            "entscheidung",
+            "naechster schritt",
+            "prioritaet",
+            "meilenstein",
+            "planung",
+            "abstimmung",
+            "aufgabe",
+            "verantwortlich",
+            "rueckmeldung",
+            "review",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    );
+    topics.insert(
+        "personal".to_string(),
+        vec![
+            "personal",
+            "note",
+            "reminder",
+            "todo",
+            "to-do",
+            "follow-up",
+            "errand",
+            "appointment",
+            "family",
+            "health",
+            "habit",
+            "journal",
+            "private",
+            "vacation",
+            "shopping",
+            "budget",
+            "finance",
+            "bank",
+            "insurance",
+            "medicine",
+            "persoenlich",
+            "erinnerung",
+            "notiz",
+            "einkauf",
+            "urlaub",
+            "arzt",
+            "haushalt",
+            "konto",
+            "rechnung",
+            "gesundheit",
+            "routine",
+            "privat",
+            "aufraeumen",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    );
+    topics
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
@@ -159,6 +290,8 @@ pub(crate) struct Settings {
     pub(crate) hallucination_max_chars: u32,
     pub(crate) activation_words_enabled: bool,
     pub(crate) activation_words: Vec<String>,
+    #[serde(default = "default_topic_keywords")]
+    pub(crate) topic_keywords: HashMap<String, Vec<String>>,
     // Post-processing settings
     pub(crate) postproc_enabled: bool,
     pub(crate) postproc_language: String,
@@ -290,6 +423,7 @@ impl Default for Settings {
       hallucination_max_chars: HALLUCINATION_MAX_CHARS as u32,
       activation_words_enabled: false,
       activation_words: vec!["computer".to_string(), "hey assistant".to_string()],
+      topic_keywords: default_topic_keywords(),
       postproc_enabled: false,
       postproc_language: "en".to_string(),
       postproc_punctuation_enabled: true,
@@ -399,7 +533,10 @@ pub(crate) struct SystemClusterBuffer {
 #[cfg(target_os = "windows")]
 impl Default for SystemClusterBuffer {
     fn default() -> Self {
-        Self { entries: Vec::new(), last_chunk_ms: 0 }
+        Self {
+            entries: Vec::new(),
+            last_chunk_ms: 0,
+        }
     }
 }
 
@@ -441,15 +578,21 @@ pub(crate) struct RuntimeMetricsSnapshot {
 }
 
 pub(crate) fn record_runtime_start_attempt(state: &AppState) {
-    state.runtime_start_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state
+        .runtime_start_attempts
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub(crate) fn record_runtime_start_failure(state: &AppState) {
-    state.runtime_start_failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state
+        .runtime_start_failures
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub(crate) fn record_refinement_timeout(state: &AppState) {
-    state.refinement_timeouts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state
+        .refinement_timeouts
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub(crate) fn record_refinement_fallback_failed(state: &AppState) {
@@ -753,6 +896,7 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             {
                 settings.main_window_start_state = "normal".to_string();
             }
+            normalize_topic_keywords_fields(&mut settings);
             // Normalize v0.7 AI fallback settings and legacy compatibility fields.
             normalize_ai_fallback_fields(&mut settings);
             if settings.setup.local_ai_wizard_completed {
@@ -767,17 +911,53 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
     }
 }
 
+pub(crate) fn normalize_topic_keywords_fields(settings: &mut Settings) {
+    let defaults = default_topic_keywords();
+    if settings.topic_keywords.is_empty() {
+        settings.topic_keywords = defaults;
+        return;
+    }
+
+    let mut normalized: HashMap<String, Vec<String>> = HashMap::new();
+    for (topic, words) in settings.topic_keywords.iter() {
+        let key = topic.trim().to_lowercase();
+        if key.is_empty() {
+            continue;
+        }
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut cleaned: Vec<String> = Vec::new();
+        for word in words {
+            let normalized_word = word.trim().to_lowercase();
+            if normalized_word.is_empty() {
+                continue;
+            }
+            if seen.insert(normalized_word.clone()) {
+                cleaned.push(normalized_word);
+            }
+        }
+        if !cleaned.is_empty() {
+            normalized.insert(key, cleaned);
+        }
+    }
+
+    if normalized.is_empty() {
+        settings.topic_keywords = defaults;
+        return;
+    }
+
+    for (topic, words) in defaults {
+        normalized.entry(topic).or_insert(words);
+    }
+    settings.topic_keywords = normalized;
+}
+
 pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
     fn normalize_cloud_provider(provider: &str) -> Option<String> {
-        crate::ai_fallback::models::normalize_cloud_provider_id(provider)
-            .map(str::to_string)
+        crate::ai_fallback::models::normalize_cloud_provider_id(provider).map(str::to_string)
     }
 
     fn is_verified_auth_status(status: &str) -> bool {
-        matches!(
-            status.trim(),
-            "verified_api_key" | "verified_oauth"
-        )
+        matches!(status.trim(), "verified_api_key" | "verified_oauth")
     }
 
     // Migrate legacy postproc_llm toggle and values if still used.
@@ -812,8 +992,7 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
     }
 
     // Preserve legacy cloud provider selection as optional fallback candidate.
-    if settings.ai_fallback.fallback_provider.is_none()
-        && settings.ai_fallback.provider != "ollama"
+    if settings.ai_fallback.fallback_provider.is_none() && settings.ai_fallback.provider != "ollama"
     {
         settings.ai_fallback.fallback_provider =
             normalize_cloud_provider(&settings.ai_fallback.provider);
@@ -838,12 +1017,12 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
         }
     }
 
-    settings.ai_fallback.execution_mode = if settings.ai_fallback.execution_mode == "online_fallback"
-    {
-        "online_fallback".to_string()
-    } else {
-        "local_primary".to_string()
-    };
+    settings.ai_fallback.execution_mode =
+        if settings.ai_fallback.execution_mode == "online_fallback" {
+            "online_fallback".to_string()
+        } else {
+            "local_primary".to_string()
+        };
 
     settings.ai_fallback.fallback_provider = settings
         .ai_fallback
@@ -892,6 +1071,7 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
         &settings.ai_fallback.prompt_profile,
         &settings.language_mode,
         Some(settings.ai_fallback.custom_prompt.as_str()),
+        settings.ai_fallback.preserve_source_language,
     ) {
         settings.postproc_llm_prompt = prompt;
     }
@@ -1001,10 +1181,8 @@ fn normalize_history_alias_value(value: &str, fallback: &str) -> String {
 }
 
 pub(crate) fn normalize_history_alias_fields(settings: &mut Settings) {
-    settings.history_alias_mic = normalize_history_alias_value(
-        &settings.history_alias_mic,
-        &default_history_alias_mic(),
-    );
+    settings.history_alias_mic =
+        normalize_history_alias_value(&settings.history_alias_mic, &default_history_alias_mic());
     settings.history_alias_system = normalize_history_alias_value(
         &settings.history_alias_system,
         &default_history_alias_system(),
@@ -1058,7 +1236,9 @@ pub(crate) fn save_chapters_file(app: &AppHandle, chapters: &[Chapter]) -> Resul
 }
 
 #[cfg(test)]
-pub(crate) fn load_history_from_path(path: &std::path::Path) -> std::collections::VecDeque<HistoryEntry> {
+pub(crate) fn load_history_from_path(
+    path: &std::path::Path,
+) -> std::collections::VecDeque<HistoryEntry> {
     match fs::read_to_string(path) {
         Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
         Err(_) => std::collections::VecDeque::new(),
@@ -1220,13 +1400,8 @@ where
         return Ok(());
     }
     let state = app.state::<AppState>();
-    if update_history_entry_in_store(
-        app,
-        &state.history,
-        "history:updated",
-        entry_id,
-        &mut apply,
-    )? {
+    if update_history_entry_in_store(app, &state.history, "history:updated", entry_id, &mut apply)?
+    {
         return Ok(());
     }
     let _ = update_history_entry_in_store(
@@ -1243,7 +1418,10 @@ fn ensure_history_refinement(entry: &mut HistoryEntry) -> &mut HistoryRefinement
     if entry.refinement.is_none() {
         entry.refinement = Some(HistoryRefinement::default());
     }
-    entry.refinement.as_mut().expect("refinement just initialized")
+    entry
+        .refinement
+        .as_mut()
+        .expect("refinement just initialized")
 }
 
 pub(crate) fn mark_entry_refinement_started(

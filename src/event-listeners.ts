@@ -110,15 +110,11 @@ function isProviderVerified(provider: CloudAIFallbackProvider | null): boolean {
 
 function applyExecutionModeInSettings(mode: AIExecutionMode): void {
   if (!settings) return;
-  settings.ai_fallback.execution_mode = mode;
-  const fallbackProvider = getFallbackProvider();
-  if (mode === "online_fallback" && fallbackProvider && isProviderVerified(fallbackProvider)) {
-    settings.ai_fallback.provider = fallbackProvider;
-    settings.postproc_llm_provider = fallbackProvider;
-  } else {
+  settings.ai_fallback.execution_mode = "local_primary";
+  settings.ai_fallback.provider = "ollama";
+  settings.postproc_llm_provider = "ollama";
+  if (mode === "online_fallback") {
     settings.ai_fallback.execution_mode = "local_primary";
-    settings.ai_fallback.provider = "ollama";
-    settings.postproc_llm_provider = "ollama";
   }
 }
 
@@ -143,31 +139,6 @@ function ensureOnlineModeConstraints(notify: boolean): boolean {
   return false;
 }
 
-function syncCloudModelForProvider(provider: CloudAIFallbackProvider): void {
-  if (!settings) return;
-  const providerSettings = getAIFallbackProviderSettings(provider);
-  if (!providerSettings) return;
-  if (!providerSettings.preferred_model) {
-    providerSettings.preferred_model = providerSettings.available_models[0] ?? "";
-  }
-  settings.ai_fallback.model = providerSettings.preferred_model || providerSettings.available_models[0] || "";
-  settings.postproc_llm_model = settings.ai_fallback.model;
-}
-
-async function activateOnlineFallback(provider: CloudAIFallbackProvider): Promise<void> {
-  if (!settings) return;
-  settings.ai_fallback.fallback_provider = provider;
-  settings.ai_fallback.execution_mode = "online_fallback";
-  settings.ai_fallback.provider = provider;
-  settings.postproc_llm_provider = provider;
-  try {
-    await refreshAIFallbackModels(provider);
-  } catch (error) {
-    console.warn(`Failed to refresh models for ${provider}:`, error);
-  }
-  syncCloudModelForProvider(provider);
-}
-
 function isLaneControlTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   return Boolean(
@@ -184,6 +155,40 @@ function getAIFallbackProviderSettings(provider: AIFallbackProvider) {
   return null;
 }
 
+function cloneDefaultTopicKeywords(): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  Object.entries(DEFAULT_TOPICS).forEach(([topic, words]) => {
+    out[topic] = [...words];
+  });
+  return out;
+}
+
+function normalizeTopicKeywordsInput(
+  input: Record<string, unknown> | null | undefined
+): Record<string, string[]> {
+  const fallback = cloneDefaultTopicKeywords();
+  if (!input || typeof input !== "object") return fallback;
+
+  const normalized: Record<string, string[]> = {};
+  Object.entries(input).forEach(([topic, words]) => {
+    const key = topic.trim().toLowerCase();
+    if (!key || !Array.isArray(words)) return;
+    const cleaned = words
+      .map((word) => String(word).trim().toLowerCase())
+      .filter((word) => word.length > 0);
+    if (cleaned.length === 0) return;
+    normalized[key] = Array.from(new Set(cleaned));
+  });
+
+  if (Object.keys(normalized).length === 0) return fallback;
+  Object.entries(DEFAULT_TOPICS).forEach(([topic, defaults]) => {
+    if (!normalized[topic] || normalized[topic].length === 0) {
+      normalized[topic] = [...defaults];
+    }
+  });
+  return normalized;
+}
+
 function ensureAIFallbackSettingsDefaults() {
   if (!settings) return;
   if (!settings.ai_fallback) {
@@ -193,6 +198,7 @@ function ensureAIFallbackSettingsDefaults() {
       fallback_provider: null,
       execution_mode: "local_primary",
       strict_local_mode: true,
+      preserve_source_language: true,
       model: "",
       temperature: 0.3,
       max_tokens: 4000,
@@ -253,6 +259,7 @@ function ensureAIFallbackSettingsDefaults() {
     };
   }
   settings.ai_fallback.strict_local_mode ??= true;
+  settings.ai_fallback.preserve_source_language ??= true;
   settings.ai_fallback.prompt_profile = normalizeRefinementPromptPreset(
     settings.ai_fallback.prompt_profile
   );
@@ -266,17 +273,12 @@ function ensureAIFallbackSettingsDefaults() {
   if (!settings.ai_fallback.fallback_provider && settings.ai_fallback.provider !== "ollama") {
     settings.ai_fallback.fallback_provider = normalizeCloudProvider(settings.ai_fallback.provider);
   }
-  if (settings.ai_fallback.execution_mode === "online_fallback") {
-    const fallbackProvider = settings.ai_fallback.fallback_provider;
-    if (fallbackProvider && isProviderVerified(fallbackProvider)) {
-      settings.ai_fallback.provider = fallbackProvider;
-    } else {
-      settings.ai_fallback.execution_mode = "local_primary";
-      settings.ai_fallback.provider = "ollama";
-    }
-  } else {
-    settings.ai_fallback.provider = "ollama";
-  }
+  // Online fallback lane is intentionally roadmap-only for now.
+  settings.ai_fallback.execution_mode = "local_primary";
+  settings.ai_fallback.provider = "ollama";
+  settings.postproc_llm_provider = "ollama";
+  settings.topic_keywords = normalizeTopicKeywordsInput(settings.topic_keywords);
+  setTopicKeywords(settings.topic_keywords);
   settings.providers.ollama.runtime_source ??= "manual";
   settings.providers.ollama.runtime_path ??= "";
   settings.providers.ollama.runtime_version ??= "";
@@ -430,69 +432,12 @@ function refreshAuthModalContent(): void {
   }
 }
 
-function openAuthModal(provider: CloudAIFallbackProvider): void {
-  authModalProvider = provider;
-  if (dom.aiAuthApiKeyInput) {
-    dom.aiAuthApiKeyInput.value = "";
-  }
-  refreshAuthModalContent();
-  setAuthModalOpen(true);
-}
-
 function closeAuthModal(): void {
   setAuthModalOpen(false);
   authModalProvider = null;
   if (dom.aiAuthApiKeyInput) {
     dom.aiAuthApiKeyInput.value = "";
   }
-}
-
-async function applyFallbackProviderSelection(
-  selected: CloudAIFallbackProvider | null
-): Promise<void> {
-  if (!settings) return;
-  ensureAIFallbackSettingsDefaults();
-
-  if (!selected) {
-    settings.ai_fallback.fallback_provider = null;
-    if (settings.ai_fallback.execution_mode === "online_fallback") {
-      applyExecutionModeInSettings("local_primary");
-      await persistSettings();
-      showToast({
-        type: "warning",
-        title: "Fallback switched to local",
-        message: "No verified fallback provider selected. Switched back to local Ollama.",
-        duration: 3600,
-      });
-    } else {
-      await persistSettings();
-    }
-    renderAIFallbackSettingsUi();
-    renderHero();
-    return;
-  }
-
-  settings.ai_fallback.fallback_provider = selected;
-  if (settings.ai_fallback.execution_mode === "online_fallback") {
-    if (!isProviderVerified(selected)) {
-      applyExecutionModeInSettings("local_primary");
-      await persistSettings();
-      showToast({
-        type: "warning",
-        title: "Fallback provider locked",
-        message: "Selected provider is not verified. Switched to local Ollama.",
-        duration: 3600,
-      });
-    } else {
-      await activateOnlineFallback(selected);
-      await persistSettings();
-    }
-  } else {
-    await persistSettings();
-  }
-
-  renderAIFallbackSettingsUi();
-  renderHero();
 }
 
 async function saveProviderApiKey(provider: CloudAIFallbackProvider, apiKey: string): Promise<void> {
@@ -1396,16 +1341,13 @@ export function wireEvents() {
     const target = event.target as HTMLElement | null;
     const actionBtn = target?.closest<HTMLButtonElement>("[data-ai-provider-action]");
     if (!actionBtn) return;
-    const provider = normalizeCloudProvider(actionBtn.dataset.provider ?? null);
-    if (!provider) return;
-    const action = actionBtn.dataset.aiProviderAction;
-    if (action === "select-fallback") {
-      void applyFallbackProviderSelection(provider);
-      return;
-    }
-    if (action === "authenticate") {
-      openAuthModal(provider);
-    }
+    event.preventDefault();
+    showToast({
+      type: "info",
+      title: "Roadmap-only",
+      message: "Online fallback controls are visible for roadmap transparency and are currently read-only.",
+      duration: 3200,
+    });
   });
 
   dom.aiAuthModalClose?.addEventListener("click", () => {
@@ -1466,24 +1408,16 @@ export function wireEvents() {
   };
 
   const activateOnlineLane = async () => {
-    if (!settings) return;
-    ensureAIFallbackSettingsDefaults();
-    const fallbackProvider = getFallbackProvider();
-    if (!fallbackProvider || !isProviderVerified(fallbackProvider)) {
-      applyExecutionModeInSettings("local_primary");
-      renderAIFallbackSettingsUi();
-      renderOllamaModelManager();
-      showToast({
-        type: "warning",
-        title: "Fallback provider locked",
-        message: "Verify a cloud provider before enabling online fallback.",
-        duration: 3600,
-      });
-      return;
-    }
-    await activateOnlineFallback(fallbackProvider);
-    await persistSettings();
-    refreshAIUi();
+    applyExecutionModeInSettings("local_primary");
+    renderAIFallbackSettingsUi();
+    renderOllamaModelManager();
+    renderHero();
+    showToast({
+      type: "info",
+      title: "Roadmap-only",
+      message: "Online fallback is currently read-only and not active in production.",
+      duration: 3600,
+    });
   };
 
   dom.aiFallbackLocalLane?.addEventListener("click", (event) => {
@@ -1704,6 +1638,20 @@ export function wireEvents() {
 
   onChangePersist(dom.aiFallbackTemperature);
 
+  dom.aiFallbackPreserveLanguage?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackPreserveLanguage) return;
+    ensureAIFallbackSettingsDefaults();
+    settings.ai_fallback.preserve_source_language = dom.aiFallbackPreserveLanguage.checked;
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      normalizeRefinementPromptPreset(settings.ai_fallback.prompt_profile),
+      settings.language_mode,
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+  });
+
   dom.aiFallbackLowLatencyMode?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackLowLatencyMode) return;
     ensureAIFallbackSettingsDefaults();
@@ -1740,7 +1688,8 @@ export function wireEvents() {
     settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
       profile,
       settings.language_mode,
-      settings.ai_fallback.custom_prompt
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
     );
     await persistSettings();
     renderAIFallbackSettingsUi();
@@ -1753,7 +1702,12 @@ export function wireEvents() {
     settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value;
     settings.ai_fallback.custom_prompt_enabled = true;
     settings.ai_fallback.use_default_prompt = false;
-    settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt.trim();
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      "custom",
+      settings.language_mode,
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
   });
 
   dom.aiFallbackCustomPrompt?.addEventListener("change", async () => {
@@ -1766,7 +1720,12 @@ export function wireEvents() {
     settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value.trim();
     settings.ai_fallback.custom_prompt_enabled = true;
     settings.ai_fallback.use_default_prompt = false;
-    settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt;
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      "custom",
+      settings.language_mode,
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
     await persistSettings();
   });
 
@@ -2126,7 +2085,9 @@ export function wireEvents() {
 
   // Topic keywords reset
   dom.topicKeywordsReset?.addEventListener("click", async () => {
-    setTopicKeywords(DEFAULT_TOPICS);
+    if (!settings) return;
+    settings.topic_keywords = cloneDefaultTopicKeywords();
+    setTopicKeywords(settings.topic_keywords);
     await renderTopicKeywords();
     await persistSettings();
   });

@@ -7,6 +7,23 @@ function isGermanLanguage(language: string | null | undefined): boolean {
   return normalized === "de" || normalized === "german" || normalized.startsWith("de-");
 }
 
+function languageLockInstruction(language: string | null | undefined): string {
+  return isGermanLanguage(language)
+    ? "Behalte die Ausgabe in derselben Sprache wie die Eingabe. Nicht uebersetzen."
+    : "Keep the output in the same language as the input. Do not translate.";
+}
+
+function withLanguageLockGuard(
+  prompt: string,
+  language: string | null | undefined,
+  preserveSourceLanguage: boolean
+): string {
+  const normalized = prompt.trim();
+  if (!normalized) return normalized;
+  if (!preserveSourceLanguage) return normalized;
+  return `${normalized}\n\n${languageLockInstruction(language)}`;
+}
+
 const PRESET_PROMPTS: Record<
   Exclude<RefinementPromptPreset, "custom">,
   { en: string; de: string }
@@ -59,13 +76,17 @@ export function resolveRefinementPresetPrompt(
 export function resolveEffectiveRefinementPrompt(
   preset: RefinementPromptPreset,
   language: string | null | undefined,
-  customPrompt: string | null | undefined
+  customPrompt: string | null | undefined,
+  preserveSourceLanguage: boolean
 ): string {
   if (preset === "custom") {
     const normalized = (customPrompt || "").trim();
-    if (normalized.length > 0) return normalized;
+    if (normalized.length > 0) {
+      return normalized;
+    }
     return resolveRefinementPresetPrompt(DEFAULT_REFINEMENT_PROMPT_PRESET, language) || "";
   }
-  return resolveRefinementPresetPrompt(preset, language) || "";
-}
 
+  const base = resolveRefinementPresetPrompt(preset, language) || "";
+  return withLanguageLockGuard(base, language, preserveSourceLanguage);
+}

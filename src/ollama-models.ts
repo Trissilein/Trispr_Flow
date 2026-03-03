@@ -19,7 +19,7 @@ import type {
 } from "./types";
 
 const DEFAULT_LOCAL_ENDPOINT = "http://localhost:11434";
-const DEFAULT_RUNTIME_VERSION = "0.17.0";
+const DEFAULT_RUNTIME_VERSION = "0.17.5";
 const AUTOSTART_WARNING_COOLDOWN_MS = 60_000;
 const LOCAL_OLLAMA_HOSTS = new Set(["localhost", "127.0.0.1"]);
 const BACKGROUND_START_POLL_INTERVAL_MS = 2_000;
@@ -40,25 +40,32 @@ type CardStatus = "available" | "downloaded" | "active";
 
 export const OLLAMA_RECOMMENDED_MODELS = [
   {
-    name: "qwen3:8b",
-    label: "Qwen3 8B",
-    size_gb: 5.2,
-    profile: "Fast Fallback",
-    description: "Fastest recommended model. Ideal for low latency.",
+    name: "qwen3.5:0.8b",
+    label: "Qwen3.5 0.8B",
+    size_gb: 1.0,
+    profile: "Ultra Fast",
+    description: "Smallest footprint. Best for low VRAM and minimal latency.",
   },
   {
-    name: "qwen3:14b",
-    label: "Qwen3 14B",
-    size_gb: 9.0,
-    profile: "Primary",
-    description: "Recommended main model. Best balance of quality and speed.",
+    name: "qwen3.5:2b",
+    label: "Qwen3.5 2B",
+    size_gb: 2.7,
+    profile: "Fast",
+    description: "Reliable speed/quality profile for everyday dictation cleanup.",
   },
   {
-    name: "mistral-small3.1:24b",
-    label: "Mistral Small 3.1 24B",
-    size_gb: 15.0,
+    name: "qwen3.5:4b",
+    label: "Qwen3.5 4B",
+    size_gb: 3.4,
+    profile: "Balanced",
+    description: "Recommended default. Strong quality with low local resource usage.",
+  },
+  {
+    name: "qwen3.5:9b",
+    label: "Qwen3.5 9B",
+    size_gb: 6.6,
     profile: "Quality",
-    description: "Highest quality. Requires 16+ GB RAM. Optional.",
+    description: "Highest local quality in the Qwen3.5 lineup; still practical on modern GPUs.",
   },
 ];
 
@@ -822,7 +829,8 @@ function renderModelsSection(container: HTMLElement): void {
 
   const hint = document.createElement("p");
   hint.className = "field-hint";
-  hint.textContent = "Download, activate, or remove local models for offline refinement.";
+  hint.textContent =
+    "Qwen3.5 local refinement lineup. Start with 4B for balance, use 9B for best quality. Model files are downloaded separately via this UI.";
   section.appendChild(hint);
 
   const list = document.createElement("div");

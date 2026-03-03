@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   detectTopics,
+  detectTopicScores,
   getTopicKeywords,
   setTopicKeywords,
   DEFAULT_TOPICS,
@@ -126,6 +127,15 @@ describe("Block B: E2E Integration Tests", () => {
         mockEntries[2].text // "todo reminder for personal follow-up"
       );
       expect(personalTopics).toContain("personal");
+    });
+
+    it("should rank overlaps with score percentages", () => {
+      setTopicKeywords(DEFAULT_TOPICS);
+      const overlap = "debug error api query database meeting agenda";
+      const scores = detectTopicScores(overlap);
+      expect(scores.length).toBeGreaterThan(1);
+      expect(scores[0].topic).toBe("technical");
+      expect(scores[0].share).toBeGreaterThan(scores[1].share);
     });
 
     it("should support custom topic keywords", () => {

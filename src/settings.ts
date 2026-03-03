@@ -5,7 +5,7 @@ import * as dom from "./dom-refs";
 import { thresholdToDb, VAD_DB_FLOOR } from "./ui-helpers";
 import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "./utils";
 import { renderVocabulary } from "./event-listeners";
-import { getTopicKeywords, setTopicKeywords } from "./history";
+import { DEFAULT_TOPICS, setTopicKeywords, type TopicKeywords } from "./history";
 import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
 import { getOllamaRuntimeCardState } from "./ollama-models";
 import { syncRefinementPipelineGraphFromSettings } from "./refinement-pipeline-graph";
@@ -254,6 +254,49 @@ function ensureSetupDefaults() {
   settings.setup.ollama_remote_expert_opt_in ??= false;
 }
 
+function cloneTopicKeywords(input: TopicKeywords): TopicKeywords {
+  const out: TopicKeywords = {};
+  Object.entries(input).forEach(([topic, words]) => {
+    out[topic] = [...words];
+  });
+  return out;
+}
+
+function normalizeTopicKeywords(
+  input: Record<string, unknown> | null | undefined
+): TopicKeywords {
+  const fallback = cloneTopicKeywords(DEFAULT_TOPICS);
+  if (!input || typeof input !== "object") return fallback;
+
+  const normalized: TopicKeywords = {};
+  Object.entries(input).forEach(([topic, words]) => {
+    const key = topic.trim().toLowerCase();
+    if (!key) return;
+    if (!Array.isArray(words)) return;
+    const cleaned = words
+      .map((word) => String(word).trim().toLowerCase())
+      .filter((word) => word.length > 0);
+    if (cleaned.length === 0) return;
+    normalized[key] = Array.from(new Set(cleaned));
+  });
+
+  if (Object.keys(normalized).length === 0) return fallback;
+
+  Object.entries(DEFAULT_TOPICS).forEach(([topic, defaults]) => {
+    if (!normalized[topic] || normalized[topic].length === 0) {
+      normalized[topic] = [...defaults];
+    }
+  });
+
+  return normalized;
+}
+
+function ensureTopicKeywordDefaults() {
+  if (!settings) return;
+  settings.topic_keywords = normalizeTopicKeywords(settings.topic_keywords);
+  setTopicKeywords(settings.topic_keywords);
+}
+
 const AI_REFINEMENT_EXPANDER_STATE_KEY = "ai_refinement_expanders_v1";
 const AI_REFINEMENT_EXPANDER_DEFAULTS: Record<string, boolean> = {
   "ai-refinement-runtime-expander": true,
@@ -329,7 +372,7 @@ function applyProviderLaneVisibility(isOnlineMode: boolean) {
   }
 }
 
-function renderCloudProviderList(fallbackProvider: CloudAIFallbackProvider | null, isOnlineMode: boolean) {
+function renderCloudProviderList(fallbackProvider: CloudAIFallbackProvider | null) {
   if (!dom.aiFallbackCloudProviderList) return;
 
   dom.aiFallbackCloudProviderList.innerHTML = "";
@@ -339,7 +382,8 @@ function renderCloudProviderList(fallbackProvider: CloudAIFallbackProvider | nul
     const verified = isVerifiedAuthStatus(providerConfig?.auth_status);
     const selectedFallback = fallbackProvider === providerId;
     const row = document.createElement("div");
-    row.className = `cloud-provider-row${selectedFallback ? " is-selected" : ""}`;
+    row.className = `cloud-provider-row is-disabled${selectedFallback ? " is-selected" : ""}`;
+    row.setAttribute("aria-disabled", "true");
 
     const left = document.createElement("div");
     left.className = "cloud-provider-main";
@@ -364,16 +408,12 @@ function renderCloudProviderList(fallbackProvider: CloudAIFallbackProvider | nul
     selectBtn.type = "button";
     selectBtn.dataset.aiProviderAction = "select-fallback";
     selectBtn.dataset.provider = providerId;
-    if (selectedFallback && isOnlineMode) {
-      selectBtn.textContent = "Active fallback";
-      selectBtn.disabled = true;
-    } else if (selectedFallback) {
-      selectBtn.textContent = "Selected fallback";
-      selectBtn.disabled = !verified;
+    if (selectedFallback) {
+      selectBtn.textContent = verified ? "Saved fallback" : "Saved (locked)";
     } else {
-      selectBtn.textContent = "Use as fallback";
-      selectBtn.disabled = !verified;
+      selectBtn.textContent = "Roadmap";
     }
+    selectBtn.disabled = true;
     actions.appendChild(selectBtn);
 
     const authBtn = document.createElement("button");
@@ -381,7 +421,8 @@ function renderCloudProviderList(fallbackProvider: CloudAIFallbackProvider | nul
     authBtn.type = "button";
     authBtn.dataset.aiProviderAction = "authenticate";
     authBtn.dataset.provider = providerId;
-    authBtn.textContent = "Authenticate";
+    authBtn.textContent = "Read-only";
+    authBtn.disabled = true;
     actions.appendChild(authBtn);
 
     row.appendChild(left);
@@ -434,11 +475,11 @@ function renderRefinementPipelineNote() {
   let note = "No refinement active: raw transcription output is used.";
   if (aiEnabled && rulesEnabled) {
     note =
-      "Primary output: AI refinement. Rule-based refiner remains active for fast baseline cleanup and fallback safety.";
+      "Primary output: AI refinement. Rule-based refiner remains active as non-AI fallback (no token/API cost).";
   } else if (aiEnabled) {
-    note = "Primary output: AI refinement only. Rule-based fallback is disabled.";
+    note = "Primary output: AI refinement only. Rule-based non-AI fallback is disabled.";
   } else if (rulesEnabled) {
-    note = "Primary output: Rule-based refiner only (AI refinement disabled).";
+    note = "Primary output: Rule-based refiner only (non-AI, zero token/API cost).";
   }
 
   dom.refinementPipelineNote.textContent = note;
@@ -459,6 +500,7 @@ export function renderAIFallbackSettingsUi() {
   ai.prompt_profile = normalizeRefinementPromptPreset(ai.prompt_profile);
   ai.custom_prompt_enabled = ai.prompt_profile === "custom";
   ai.use_default_prompt = false;
+  ai.preserve_source_language ??= true;
   ai.fallback_provider = normalizeCloudProvider(ai?.fallback_provider ?? null);
   ai.execution_mode = normalizeExecutionMode(ai?.execution_mode);
   if (!ai.fallback_provider && ai.provider !== "ollama") {
@@ -467,33 +509,11 @@ export function renderAIFallbackSettingsUi() {
 
   const fallbackProvider = normalizeCloudProvider(ai?.fallback_provider ?? null);
   const fallbackConfig = fallbackProvider ? getProviderSettings(fallbackProvider) : null;
-  const fallbackVerified = Boolean(
-    fallbackProvider && fallbackConfig && isVerifiedAuthStatus(fallbackConfig.auth_status)
-  );
-  const executionMode: AIExecutionMode =
-    ai.execution_mode === "online_fallback" && fallbackVerified ? "online_fallback" : "local_primary";
-  const provider: AIFallbackProvider =
-    executionMode === "online_fallback" && fallbackProvider ? fallbackProvider : "ollama";
+  const executionMode: AIExecutionMode = "local_primary";
+  const provider: AIFallbackProvider = "ollama";
   ai.execution_mode = executionMode;
   ai.provider = provider;
-
-  const isOnlineMode = executionMode === "online_fallback";
-
-  if (isOnlineMode && provider !== "ollama") {
-    const onlineProviderSettings = getProviderSettings(provider);
-    const available = onlineProviderSettings?.available_models ?? [];
-    if (available.length > 0 && !available.includes(ai.model)) {
-      const nextModel =
-        onlineProviderSettings?.preferred_model && available.includes(onlineProviderSettings.preferred_model)
-          ? onlineProviderSettings.preferred_model
-          : available[0];
-      ai.model = nextModel;
-      settings.postproc_llm_model = nextModel;
-      if (onlineProviderSettings) {
-        onlineProviderSettings.preferred_model = nextModel;
-      }
-    }
-  }
+  settings.postproc_llm_provider = "ollama";
 
   const runtimeCardState = getOllamaRuntimeCardState();
 
@@ -506,31 +526,33 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackSettings.style.display = "block";
     dom.aiFallbackSettings.classList.toggle("is-disabled", !ai?.enabled);
   }
-  renderCloudProviderList(fallbackProvider, isOnlineMode);
+  renderCloudProviderList(fallbackProvider);
 
   if (dom.aiFallbackFallbackStatus) {
-    dom.aiFallbackFallbackStatus.textContent = fallbackProvider
-      ? `${CLOUD_PROVIDER_LABELS[fallbackProvider]}: ${authStatusLabel(fallbackConfig?.auth_status)}`
-      : "No verified online fallback selected.";
+    const providerStatus = fallbackProvider
+      ? `${CLOUD_PROVIDER_LABELS[fallbackProvider]} stored (${authStatusLabel(fallbackConfig?.auth_status)})`
+      : "No provider selected.";
+    dom.aiFallbackFallbackStatus.textContent =
+      `${providerStatus} Online fallback is roadmap-only and not active in production.`;
   }
 
   if (dom.aiFallbackLocalLane) {
-    dom.aiFallbackLocalLane.classList.toggle("is-active", !isOnlineMode);
+    dom.aiFallbackLocalLane.classList.toggle("is-active", true);
     dom.aiFallbackLocalLane.classList.toggle("is-runtime-busy", runtimeCardState.busy);
-    dom.aiFallbackLocalLane.setAttribute("aria-pressed", (!isOnlineMode).toString());
+    dom.aiFallbackLocalLane.setAttribute("aria-pressed", "true");
   }
   if (dom.aiFallbackOnlineLane) {
-    dom.aiFallbackOnlineLane.classList.toggle("is-active", isOnlineMode);
-    dom.aiFallbackOnlineLane.setAttribute("aria-pressed", isOnlineMode.toString());
+    dom.aiFallbackOnlineLane.classList.remove("is-active");
+    dom.aiFallbackOnlineLane.classList.add("is-roadmap-disabled");
+    dom.aiFallbackOnlineLane.setAttribute("aria-pressed", "false");
+    dom.aiFallbackOnlineLane.setAttribute("aria-disabled", "true");
   }
 
   if (dom.aiFallbackOnlineStatusBadge) {
-    dom.aiFallbackOnlineStatusBadge.textContent = fallbackVerified
-      ? (isOnlineMode ? "Online • Active" : "Online • Verified")
-      : "Online • Locked";
-    dom.aiFallbackOnlineStatusBadge.classList.toggle("is-locked", !fallbackVerified);
-    dom.aiFallbackOnlineStatusBadge.classList.toggle("is-verified", fallbackVerified);
-    dom.aiFallbackOnlineStatusBadge.classList.toggle("is-active", isOnlineMode && fallbackVerified);
+    dom.aiFallbackOnlineStatusBadge.textContent = "Roadmap • Not active";
+    dom.aiFallbackOnlineStatusBadge.classList.add("is-locked");
+    dom.aiFallbackOnlineStatusBadge.classList.remove("is-verified");
+    dom.aiFallbackOnlineStatusBadge.classList.remove("is-active");
   }
   if (dom.aiFallbackLocalPrimaryStatus) {
     const healthText = runtimeCardState.healthy
@@ -578,7 +600,7 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackLocalRefreshAction.disabled = runtimeCardState.busy;
   }
 
-  applyProviderLaneVisibility(isOnlineMode);
+  applyProviderLaneVisibility(false);
   renderAIFallbackModelOptions(provider, ai?.model || "");
 
   if (dom.aiFallbackTemperature) {
@@ -589,13 +611,21 @@ export function renderAIFallbackSettingsUi() {
     const temp = Math.max(0, Math.min(1, Number(ai?.temperature ?? 0.3)));
     dom.aiFallbackTemperatureValue.textContent = temp.toFixed(2);
   }
+  if (dom.aiFallbackPreserveLanguage) {
+    dom.aiFallbackPreserveLanguage.checked = Boolean(ai?.preserve_source_language ?? true);
+  }
+  if (dom.aiFallbackPreserveLanguageNote) {
+    dom.aiFallbackPreserveLanguageNote.textContent = ai?.preserve_source_language
+      ? "Language lock is active for built-in presets. Custom prompts are sent unchanged."
+      : "Language lock is off for built-in presets. Refinement may switch language when model confidence drifts.";
+  }
   if (dom.aiFallbackLowLatencyMode) {
     dom.aiFallbackLowLatencyMode.checked = Boolean(ai?.low_latency_mode);
   }
   if (dom.aiFallbackLowLatencyNote) {
     dom.aiFallbackLowLatencyNote.textContent = ai?.low_latency_mode
-      ? "Low latency active: max_tokens and context are reduced for faster turnaround."
-      : "Standard latency: higher response budgets, potentially slower refinement.";
+      ? "Low latency active: max_tokens is capped to <= 512 and temperature to <= 0.2 (currently forced to 0.15 if higher)."
+      : "Standard latency: larger generation/context budgets, potentially slower refinement.";
   }
   if (dom.aiFallbackMaxTokens) {
     dom.aiFallbackMaxTokens.value = String(ai?.max_tokens ?? 4000);
@@ -604,7 +634,8 @@ export function renderAIFallbackSettingsUi() {
   const promptPreview = resolveEffectiveRefinementPrompt(
     promptProfile,
     settings.language_mode,
-    ai?.custom_prompt
+    ai?.custom_prompt,
+    Boolean(ai?.preserve_source_language ?? true)
   );
   if (dom.aiFallbackPromptPreset) {
     dom.aiFallbackPromptPreset.value = promptProfile;
@@ -615,7 +646,7 @@ export function renderAIFallbackSettingsUi() {
   }
   if (dom.aiFallbackPromptPreviewHint) {
     dom.aiFallbackPromptPreviewHint.textContent = isCustomPrompt
-      ? "This prompt is editable and will be used directly for refinement."
+      ? "Custom prompt is editable and sent as-is. Language lock does not modify custom prompts."
       : "Preset prompt is shown read-only so users can understand prompt structure.";
   }
   if (dom.aiFallbackCustomPrompt) {
@@ -971,6 +1002,7 @@ export function renderSettings() {
  * provider-specific changes.
  */
 export function renderAIRefinementTab(): void {
+  ensureTopicKeywordDefaults();
   syncAIRefinementExpanders();
   renderAIFallbackSettingsUi();
   renderTopicKeywords();
@@ -981,8 +1013,10 @@ export function renderAIRefinementTab(): void {
  * Render topic keyword editor in settings
  */
 export async function renderTopicKeywords(): Promise<void> {
-  if (!dom.topicKeywordsList) return;
-  const keywords = getTopicKeywords();
+  if (!dom.topicKeywordsList || !settings) return;
+  const currentSettings = settings;
+  ensureTopicKeywordDefaults();
+  const keywords = cloneTopicKeywords(currentSettings.topic_keywords);
 
   dom.topicKeywordsList.innerHTML = "";
 
@@ -1001,12 +1035,13 @@ export async function renderTopicKeywords(): Promise<void> {
     input.placeholder = "Separate keywords with commas";
     input.title = `Comma-separated keywords for the "${topic}" topic`;
     input.addEventListener("change", async () => {
-      const updated = { ...keywords };
+      const updated = cloneTopicKeywords(currentSettings.topic_keywords);
       updated[topic] = input.value
         .split(",")
-        .map((w) => w.trim())
+        .map((w) => w.trim().toLowerCase())
         .filter((w) => w.length > 0);
-      setTopicKeywords(updated);
+      currentSettings.topic_keywords = normalizeTopicKeywords(updated);
+      setTopicKeywords(currentSettings.topic_keywords);
       await persistSettings();
     });
 

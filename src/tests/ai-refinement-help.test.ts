@@ -26,6 +26,8 @@ describe("ai-refinement-help", () => {
       <div class="field"><span class="field-label">API key</span><input id="ai-fallback-api-key-input" /></div>
       <div class="hotkey-input-group"><button id="ai-fallback-save-key">Save</button><button id="ai-fallback-clear-key">Clear</button><button id="ai-fallback-test-key">Test</button></div>
       <label class="field range"><span class="field-label">Temperature</span><input id="ai-fallback-temperature" /></label>
+      <div class="field toggle"><label class="toggle-row"><span class="field-label">Preserve source language</span><input id="ai-fallback-preserve-language" /></label></div>
+      <div class="field toggle"><label class="toggle-row"><span class="field-label">Speed Mode</span><input id="ai-fallback-low-latency-mode" /></label></div>
       <label class="field"><span class="field-label">Max tokens</span><select id="ai-fallback-max-tokens"></select></label>
       <div class="field toggle"><label class="toggle-row"><span class="field-label">Use custom prompt</span><input id="ai-fallback-custom-prompt-enabled" /></label></div>
       <div class="field"><span class="field-label">Custom prompt</span><textarea id="ai-fallback-custom-prompt"></textarea></div>
@@ -45,5 +47,11 @@ describe("ai-refinement-help", () => {
 
     const topicHeading = document.getElementById("ai-refinement-topic-title");
     expect(topicHeading?.dataset.helpKey).toBe("ai_refinement_topic_section");
+
+    const temperatureControl = document.getElementById("ai-fallback-temperature");
+    expect(temperatureControl?.dataset.helpKey).toBe("ai_refinement_temperature");
+
+    const speedModeControl = document.getElementById("ai-fallback-low-latency-mode");
+    expect(speedModeControl?.dataset.helpKey).toBe("ai_refinement_speed_mode");
   });
 });

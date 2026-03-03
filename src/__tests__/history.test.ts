@@ -4,6 +4,9 @@ import {
   buildConversationHistory,
   buildConversationText,
   buildExportText,
+  detectTopicScores,
+  DEFAULT_TOPICS,
+  setTopicKeywords,
   type ExportFormat,
   generateSilenceBasedChapters,
   generateHybridChapters,
@@ -61,6 +64,23 @@ describe("history helpers", () => {
     expect(text).toContain("System audio: World");
     expect(text).toContain("\n");
     expect(text.trim().startsWith("[")).toBe(true);
+  });
+});
+
+describe("topic scoring", () => {
+  it("ranks topics by hit count and computes share percentages", () => {
+    setTopicKeywords(DEFAULT_TOPICS);
+    const text =
+      "debug error api database query deploy meeting agenda deadline owner personal reminder todo";
+
+    const scores = detectTopicScores(text);
+    expect(scores.length).toBeGreaterThan(1);
+    expect(scores[0].topic).toBe("technical");
+    expect(scores[0].hits).toBeGreaterThan(scores[1].hits);
+
+    const totalShare = scores.reduce((sum, score) => sum + score.share, 0);
+    expect(totalShare).toBeGreaterThan(99);
+    expect(totalShare).toBeLessThanOrEqual(100.5);
   });
 });
 

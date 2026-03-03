@@ -4,6 +4,7 @@ param(
   [switch]$Live,
   [switch]$NoRefinement,
   [switch]$FailOnSloMiss,
+  [string]$RefinementModel,
   [string[]]$Fixtures
 )
 
@@ -24,6 +25,27 @@ if (Test-Path $benchConfigPath) {
   Remove-Item $benchConfigPath -Force
 }
 
+function Resolve-NpmCmd {
+  $npmCandidates = @(
+    (Get-Command npm.cmd -ErrorAction SilentlyContinue),
+    (Get-Command npm -ErrorAction SilentlyContinue)
+  ) | Where-Object { $_ -and $_.Source }
+  if ($npmCandidates.Count -gt 0) {
+    return $npmCandidates[0].Source
+  }
+
+  $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+  if ($nodeCmd -and $nodeCmd.Source) {
+    $nodeDir = Split-Path $nodeCmd.Source -Parent
+    $npmCmd = Join-Path $nodeDir "npm.cmd"
+    if (Test-Path $npmCmd) {
+      return $npmCmd
+    }
+  }
+
+  throw "npm.cmd not found. Install Node.js or add npm.cmd to PATH."
+}
+
 function Get-FreeTcpPort {
   $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
   $listener.Start()
@@ -41,6 +63,11 @@ $env:TRISPR_RUN_LATENCY_BENCHMARK_EXIT = '1'
 $env:TRISPR_BENCHMARK_WARMUP_RUNS = [string]$Warmup
 $env:TRISPR_BENCHMARK_MEASURE_RUNS = [string]$Runs
 $env:TRISPR_BENCHMARK_INCLUDE_REFINEMENT = if ($NoRefinement) { '0' } else { '1' }
+if ([string]::IsNullOrWhiteSpace($RefinementModel)) {
+  Remove-Item Env:TRISPR_BENCHMARK_REFINE_MODEL -ErrorAction SilentlyContinue
+} else {
+  $env:TRISPR_BENCHMARK_REFINE_MODEL = $RefinementModel.Trim()
+}
 
 if ($Fixtures -and $Fixtures.Count -gt 0) {
   $resolvedFixtures = @()
@@ -52,8 +79,9 @@ if ($Fixtures -and $Fixtures.Count -gt 0) {
   Remove-Item Env:TRISPR_BENCHMARK_FIXTURES -ErrorAction SilentlyContinue
 }
 
-Write-Host "[Latency Benchmark] Warmup=$Warmup Runs=$Runs Refinement=$([string](-not $NoRefinement)) FailOnSloMiss=$([string]$FailOnSloMiss)"
+Write-Host "[Latency Benchmark] Warmup=$Warmup Runs=$Runs Refinement=$([string](-not $NoRefinement)) FailOnSloMiss=$([string]$FailOnSloMiss) Model=$($env:TRISPR_BENCHMARK_REFINE_MODEL)"
 $devPort = Get-FreeTcpPort
+$npmCmd = Resolve-NpmCmd
 $overrideConfig = @{
   build = @{
     beforeDevCommand = "npm run dev -- --port $devPort --strictPort"
@@ -68,13 +96,17 @@ Get-Process -Name "trispr-flow" -ErrorAction SilentlyContinue | Stop-Process -Fo
 Start-Sleep -Milliseconds 250
 
 try {
-  npm run tauri -- dev --no-watch --config $benchConfigPath
+  & $npmCmd run tauri -- dev --no-watch --config $benchConfigPath
+  if ($LASTEXITCODE -ne 0) {
+    throw "tauri dev benchmark run failed with exit code $LASTEXITCODE"
+  }
 } finally {
   Remove-Item Env:TRISPR_RUN_LATENCY_BENCHMARK -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_RUN_LATENCY_BENCHMARK_EXIT -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_BENCHMARK_WARMUP_RUNS -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_BENCHMARK_MEASURE_RUNS -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_BENCHMARK_INCLUDE_REFINEMENT -ErrorAction SilentlyContinue
+  Remove-Item Env:TRISPR_BENCHMARK_REFINE_MODEL -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_BENCHMARK_FIXTURES -ErrorAction SilentlyContinue
   Remove-Item $benchConfigPath -ErrorAction SilentlyContinue
 }

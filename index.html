@@ -1229,7 +1229,7 @@
                       <div class="field span-2">
                         <span class="field-label">Primary + fallback</span>
                         <span id="refinement-pipeline-note" class="field-hint">
-                          Primary output: Rule-based refiner only (AI refinement disabled).
+                          Primary output: Rule-based refiner only (non-AI, zero token/API cost).
                         </span>
                       </div>
 
@@ -1256,7 +1256,7 @@
                             <article id="pipeline-node-rules" class="pipeline-node machine-node machine-node--rules" data-state="idle">
                               <span class="pipeline-node-step">2</span>
                               <h4>Rule-Based Refiner</h4>
-                              <p>Fast punctuation, capitalization, numbers, vocabulary.</p>
+                              <p>Rule-based cleanup only. No AI inference, no token/API cost.</p>
                               <label class="pipeline-node-toggle toggle-row">
                                 <span class="pipeline-node-toggle-label">Enable rule-based</span>
                                 <input id="postproc-enabled" type="checkbox" title="Run local punctuation/capitalization/normalization rules on every transcript" />
@@ -1433,17 +1433,17 @@
                           </span>
                         </div>
 
-                        <div id="ai-fallback-online-lane" data-lane="online" class="ai-provider-lane ai-provider-lane--online" role="button" tabindex="0" aria-pressed="false">
+                        <div id="ai-fallback-online-lane" data-lane="online" class="ai-provider-lane ai-provider-lane--online is-roadmap-disabled" role="button" tabindex="0" aria-pressed="false" aria-disabled="true">
                           <div class="ai-provider-lane-header">
-                            <span id="ai-fallback-online-lane-title" class="field-label">Online Fallback (Optional)</span>
-                            <span id="ai-fallback-online-status-badge" class="badge badge--online is-locked">Online • Locked</span>
+                            <span id="ai-fallback-online-lane-title" class="field-label">Online Fallback (Roadmap)</span>
+                            <span id="ai-fallback-online-status-badge" class="badge badge--online is-locked">Roadmap • Not active</span>
                           </div>
                           <div class="field">
                             <span class="field-label">Cloud providers</span>
                             <div id="ai-fallback-cloud-provider-list" class="cloud-provider-list"></div>
                           </div>
                           <span id="ai-fallback-fallback-status" class="field-hint">
-                            Save and verify credentials to unlock cloud fallback providers.
+                            Not active in production. Planned roadmap item and may change.
                           </span>
                         </div>
                       </div>
@@ -1475,7 +1475,7 @@
                         <span class="field-label">Temperature</span>
                         <div class="range-row">
                           <input id="ai-fallback-temperature" type="range" min="0" max="1" step="0.05"
-                                 title="AI creativity level — lower = more literal, higher = more creative"
+                                 title="0.1 keeps edits literal and minimal. 1.0 allows aggressive reformulation and stronger wording changes."
                                  aria-valuemin="0"
                                  aria-valuemax="1"
                                  aria-valuenow="0.3"
@@ -1483,22 +1483,34 @@
                                  aria-describedby="ai-fallback-temperature-value" />
                           <span id="ai-fallback-temperature-value" class="range-value" aria-live="polite">0.30</span>
                         </div>
+                        <span class="field-hint">0.1 = very literal/minimal rewrites; 1.0 = aggressive reformulation.</span>
                       </label>
 
                       <div class="field toggle span-2">
                         <label class="toggle-row">
+                          <span class="field-label">Preserve source language</span>
+                          <input id="ai-fallback-preserve-language" type="checkbox" title="Keep refinement output in the same language as input. Default: enabled." />
+                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span id="ai-fallback-preserve-language-note" class="toggle-hint">
+                          Prevents unintended language switches for built-in presets. Custom prompts are not modified.
+                        </span>
+                      </div>
+
+                      <div class="field toggle span-2">
+                        <label class="toggle-row">
                           <span class="field-label">Speed Mode (Low Latency)</span>
-                          <input id="ai-fallback-low-latency-mode" type="checkbox" title="Prefer faster refinement with reduced output budget" />
+                          <input id="ai-fallback-low-latency-mode" type="checkbox" title="Faster refinement by reducing generation/context budget. ON clamps max_tokens to &lt;= 512 and temperature to &lt;= 0.2 (currently forced to 0.15 when above)." />
                           <span class="toggle-track"><span class="toggle-thumb"></span></span>
                         </label>
                         <span id="ai-fallback-low-latency-note" class="toggle-hint">
-                          Targets faster turnaround by reducing output/context budget for short dictation.
+                          Targets faster turnaround by reducing generation/context budget (max_tokens &lt;= 512, temperature &lt;= 0.2).
                         </span>
                       </div>
 
                       <label class="field">
                         <span class="field-label">Max tokens</span>
-                        <select id="ai-fallback-max-tokens" title="Maximum number of tokens the AI can output per refinement">
+                        <select id="ai-fallback-max-tokens" title="Upper bound for refinement output. Around 2000 tokens is usually a few pages of text, not a full book.">
                           <option value="256">256</option>
                           <option value="512">512</option>
                           <option value="1024">1024</option>
@@ -1507,6 +1519,7 @@
                           <option value="4000">4000</option>
                           <option value="8192">8192</option>
                         </select>
+                        <span class="field-hint">~2000 tokens is roughly a few pages of text, not a full book.</span>
                       </label>
 
                       <label class="field">
@@ -1525,7 +1538,7 @@
                         <textarea id="ai-fallback-custom-prompt" rows="6" placeholder="Define your custom refinement prompt..."
                                   title="Prompt sent to the AI before each refinement"></textarea>
                         <span id="ai-fallback-prompt-preview-hint" class="field-hint">
-                          Presets are shown read-only so users can learn prompt structure. Select "Custom Prompt" to edit.
+                          Presets are shown read-only so users can learn prompt structure. Custom prompt is sent as-is.
                         </span>
                       </div>
 

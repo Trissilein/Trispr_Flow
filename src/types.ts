@@ -19,6 +19,7 @@ export interface AIFallbackSettings {
   fallback_provider: CloudAIFallbackProvider | null;
   execution_mode: AIExecutionMode;
   strict_local_mode: boolean;
+  preserve_source_language: boolean;
   model: string;
   temperature: number;
   max_tokens: number;
@@ -127,6 +128,7 @@ export interface Settings {
   hallucination_filter_enabled: boolean;
   activation_words_enabled: boolean;
   activation_words: string[];
+  topic_keywords: Record<string, string[]>;
   // Post-processing settings
   postproc_enabled: boolean;
   postproc_language: string;
@@ -201,6 +203,12 @@ export interface HistoryRefinement {
   model: string;
   execution_time_ms?: number | null;
   error: string;
+}
+
+export interface TopicScore {
+  topic: string;
+  hits: number;
+  share: number; // Percentage of total keyword hits (0..100)
 }
 
 export interface AudioDevice {

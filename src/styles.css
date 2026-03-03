@@ -1662,6 +1662,7 @@ button.refinement-chip:focus-visible {
   letter-spacing: 0.02em;
   text-transform: lowercase;
   transition: all 0.2s ease;
+  white-space: nowrap;
 }
 
 .topic-badge:hover {
@@ -3365,6 +3366,15 @@ input[type="range"]:focus-visible {
   background: linear-gradient(135deg, rgba(74, 53, 26, 0.38), rgba(33, 30, 25, 0.48));
 }
 
+.ai-provider-lane.is-roadmap-disabled {
+  border-style: dashed;
+  opacity: 0.56;
+  filter: saturate(0.35);
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
 .ai-provider-lane-header {
   display: flex;
   align-items: center;
@@ -3429,6 +3439,10 @@ input[type="range"]:focus-visible {
   background: rgba(245, 179, 66, 0.08);
 }
 
+.cloud-provider-row.is-disabled {
+  opacity: 0.62;
+}
+
 .cloud-provider-title {
   font-size: 0.82rem;
   font-weight: 600;
@@ -3449,6 +3463,11 @@ input[type="range"]:focus-visible {
 .cloud-provider-actions .hotkey-record-btn {
   min-width: 0;
   white-space: nowrap;
+}
+
+.cloud-provider-row.is-disabled .hotkey-record-btn {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .ai-provider-advanced {

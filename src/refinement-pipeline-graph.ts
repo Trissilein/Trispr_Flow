@@ -52,13 +52,13 @@ function isLocalAiPathEnabled(): boolean {
 
 function describeIdleState(aiEnabled: boolean, rulesEnabled: boolean): string {
   if (aiEnabled && rulesEnabled) {
-    return "Idle: AI refinement is primary, rule-based refinement remains available.";
+    return "Idle: AI refinement is primary, rule-based refinement remains available (non-AI, no token/API cost).";
   }
   if (aiEnabled) {
-    return "Idle: AI-only path is active (rule-based fallback disabled).";
+    return "Idle: AI-only path is active (rule-based non-AI fallback disabled).";
   }
   if (rulesEnabled) {
-    return "Idle: rule-based path is active (AI disabled).";
+    return "Idle: rule-based path is active (non-AI, no token/API cost).";
   }
   return "Idle: raw transcription output (no refinement active).";
 }

@@ -7,6 +7,7 @@ const DEFAULT_TEMPERATURE: f32 = 0.3;
 const DEFAULT_MAX_TOKENS: u32 = 4000;
 const DEFAULT_EXECUTION_MODE: &str = "local_primary";
 const DEFAULT_PROMPT_PROFILE: &str = "wording";
+const DEFAULT_PRESERVE_SOURCE_LANGUAGE: bool = true;
 const AUTH_STATUS_LOCKED: &str = "locked";
 const AUTH_STATUS_VERIFIED_API_KEY: &str = "verified_api_key";
 const AUTH_STATUS_VERIFIED_OAUTH: &str = "verified_oauth";
@@ -21,6 +22,7 @@ pub struct AIFallbackSettings {
     pub fallback_provider: Option<String>, // "claude" | "openai" | "gemini"
     pub execution_mode: String, // "local_primary" | "online_fallback"
     pub strict_local_mode: bool,
+    pub preserve_source_language: bool,
     pub model: String,
     pub temperature: f32,
     pub max_tokens: u32,
@@ -44,6 +46,7 @@ impl Default for AIFallbackSettings {
             fallback_provider: None,
             execution_mode: DEFAULT_EXECUTION_MODE.to_string(),
             strict_local_mode: true,
+            preserve_source_language: DEFAULT_PRESERVE_SOURCE_LANGUAGE,
             model,
             temperature: DEFAULT_TEMPERATURE,
             max_tokens: DEFAULT_MAX_TOKENS,
@@ -116,7 +119,7 @@ impl AIFallbackSettings {
 pub struct AIProviderSettings {
     pub api_key_stored: bool,
     pub auth_method_preference: String, // "api_key" | "oauth"
-    pub auth_status: String, // "locked" | "verified_api_key" | "verified_oauth"
+    pub auth_status: String,            // "locked" | "verified_api_key" | "verified_oauth"
     pub auth_verified_at: Option<String>,
     pub available_models: Vec<String>,
     pub preferred_model: String,

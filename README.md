@@ -36,6 +36,7 @@
 
 - ✅ Local post-processing (punctuation, capitalization, numbers, custom vocabulary)
 - ✅ Local AI refinement (Ollama runtime management, presets, low-latency mode)
+- ✅ Qwen3.5 local model presets in UI (`0.8b`, `2b`, `4b`, `9b`)
 - 🔄 Cloud provider rollout (Claude, OpenAI, Gemini) — planned v0.7.3
 - ✅ Custom prompt support (user-editable with defaults)
 
@@ -72,6 +73,8 @@
 Download the latest installer from [Releases](https://github.com/Trissilein/Trispr_Flow/releases):
 - **Trispr_Flow_0.7.0_CUDA_Edition.exe** — For NVIDIA GPU systems (RTX 4000+ series recommended)
 - **Trispr_Flow_0.7.0_Vulkan_Edition.exe** — For systems without CUDA support
+
+Ollama models are downloaded separately in-app (AI Refinement -> Models).
 
 ### For Developers
 ```bash

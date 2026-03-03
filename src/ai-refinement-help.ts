@@ -15,6 +15,8 @@ export type HelpKey =
   | "ai_refinement_model"
   | "ai_refinement_auth_method"
   | "ai_refinement_api_key"
+  | "ai_refinement_language_lock"
+  | "ai_refinement_speed_mode"
   | "ai_refinement_temperature"
   | "ai_refinement_max_tokens"
   | "ai_refinement_custom_prompt_toggle"
@@ -64,8 +66,8 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
   },
   ai_refinement_online_fallback: {
     title: "Online Fallback",
-    description: "Optional cloud provider path when you explicitly switch execution mode.",
-    consequence: "Cloud mode can send transcript text to the selected provider.",
+    description: "Visible for roadmap transparency only. Online fallback is currently read-only and not active in production.",
+    consequence: "Clicks are blocked; behavior may change in a future release.",
   },
   ai_refinement_execution_mode: {
     title: "Execution Mode",
@@ -97,15 +99,25 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
     description: "Credential for cloud providers to authenticate refinement requests.",
     consequence: "Without a valid key, cloud refinement requests will fail.",
   },
+  ai_refinement_language_lock: {
+    title: "Preserve Source Language",
+    description: "Appends a non-editable guard to keep output in the same language as the input.",
+    consequence: "Prevents accidental language switches (for example DE -> EN) during refinement.",
+  },
+  ai_refinement_speed_mode: {
+    title: "Speed Mode (Low Latency)",
+    description: "Prioritizes response speed by reducing generation/context budgets.",
+    consequence: "When enabled, max tokens are capped to <= 512 and temperature to <= 0.2 (currently forced to 0.15 if higher).",
+  },
   ai_refinement_temperature: {
     title: "Temperature",
-    description: "Controls output randomness; lower values keep corrections conservative.",
-    consequence: "Higher values can sound more natural but may alter phrasing more aggressively.",
+    description: "Controls rewrite intensity. 0.1 keeps edits very literal; 1.0 allows aggressive reformulation.",
+    consequence: "Use lower values for faithful corrections, higher values for stronger wording changes.",
   },
   ai_refinement_max_tokens: {
     title: "Max Tokens",
     description: "Upper bound for refinement output length.",
-    consequence: "Too low may truncate long responses; too high can increase cost and latency.",
+    consequence: "~2000 tokens is typically a few pages of text, not a full book. Too low can truncate, too high increases latency.",
   },
   ai_refinement_custom_prompt_toggle: {
     title: "Custom Prompt",
@@ -194,7 +206,7 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
   },
   ollama_models_section: {
     title: "Models",
-    description: "Recommended local models for refinement with status and actions.",
+    description: "Recommended local Qwen3.5 models for refinement with status and actions.",
     consequence: "Only the selected active model is used for refinement calls.",
   },
   ollama_action_install: {
@@ -279,5 +291,9 @@ export function renderAIRefinementStaticHelp(): void {
   applyHelpTooltip(document.getElementById("ai-refinement-models-title"), "ollama_models_section");
   applyHelpTooltip(document.getElementById("ai-fallback-cloud-provider-list"), "ai_refinement_auth_method");
   applyHelpTooltip(document.getElementById("ai-auth-method"), "ai_refinement_auth_method");
+  applyHelpTooltip(document.getElementById("ai-fallback-preserve-language"), "ai_refinement_language_lock");
+  applyHelpTooltip(document.getElementById("ai-fallback-low-latency-mode"), "ai_refinement_speed_mode");
+  applyHelpTooltip(document.getElementById("ai-fallback-temperature"), "ai_refinement_temperature");
+  applyHelpTooltip(document.getElementById("ai-fallback-max-tokens"), "ai_refinement_max_tokens");
   applyHelpTooltip(document.getElementById("ai-refinement-topic-title"), "ai_refinement_topic_section");
 }

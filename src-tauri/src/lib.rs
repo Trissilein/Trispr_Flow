@@ -45,6 +45,7 @@ use crate::ai_fallback::provider::{
     resolve_effective_local_model, AIProvider, ProviderFactory,
 };
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
+use crate::history_partition::PartitionedHistory;
 use crate::models::{
     check_model_available, clear_hidden_external_models, download_model, get_models_dir,
     hide_external_model, list_models, pick_model_dir, quantize_model, remove_model,
@@ -53,18 +54,15 @@ use crate::ollama_runtime::{
     detect_ollama_runtime, download_ollama_runtime, import_ollama_model_from_file,
     install_ollama_runtime, set_strict_local_mode, start_ollama_runtime, verify_ollama_runtime,
 };
-use crate::history_partition::PartitionedHistory;
 use crate::state::{
     get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
-    normalize_ai_fallback_fields, normalize_continuous_dump_fields,
-    normalize_history_alias_fields,
+    normalize_ai_fallback_fields, normalize_continuous_dump_fields, normalize_history_alias_fields,
     push_history_entry_inner, push_transcribe_entry_inner, record_refinement_fallback_timed_out,
     record_refinement_timeout, save_settings_file, sync_model_dir_env,
 };
 use crate::transcription::{
-    expand_transcribe_backlog as expand_transcribe_backlog_inner, start_transcribe_monitor,
-    stop_transcribe_monitor, toggle_transcribe_state, transcribe_audio,
-    last_transcription_accelerator,
+    expand_transcribe_backlog as expand_transcribe_backlog_inner, last_transcription_accelerator,
+    start_transcribe_monitor, stop_transcribe_monitor, toggle_transcribe_state, transcribe_audio,
 };
 
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
@@ -97,11 +95,7 @@ pub(crate) fn now_iso() -> String {
 ///
 /// The closure receives `&mut Settings` and may return `Err` to abort.  On
 /// success the updated settings are saved and broadcast.
-fn update_and_persist_settings<F>(
-    app: &AppHandle,
-    state: &AppState,
-    f: F,
-) -> Result<(), String>
+fn update_and_persist_settings<F>(app: &AppHandle, state: &AppState, f: F) -> Result<(), String>
 where
     F: FnOnce(&mut Settings) -> Result<(), String>,
 {
@@ -179,8 +173,8 @@ pub(crate) fn prepare_refinement(
     if is_ollama {
         let endpoint = settings.providers.ollama.endpoint.clone();
         let preferred = settings.providers.ollama.preferred_model.clone();
-        let resolved =
-            resolve_effective_local_model(&model, &preferred, &endpoint).map_err(|e| e.to_string())?;
+        let resolved = resolve_effective_local_model(&model, &preferred, &endpoint)
+            .map_err(|e| e.to_string())?;
         repaired = resolved.repaired
             || settings.ai_fallback.model.trim() != resolved.model
             || settings.providers.ollama.preferred_model.trim() != resolved.model
@@ -213,6 +207,7 @@ pub(crate) fn prepare_refinement(
             &ai.prompt_profile,
             &settings.language_mode,
             Some(ai.custom_prompt.as_str()),
+            ai.preserve_source_language,
         ),
     };
 
@@ -631,11 +626,7 @@ fn verify_provider_auth(
     method: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let provider_id = provider.trim().to_lowercase();
-    let method_id = method
-        .as_deref()
-        .unwrap_or("api_key")
-        .trim()
-        .to_lowercase();
+    let method_id = method.as_deref().unwrap_or("api_key").trim().to_lowercase();
 
     if provider_id == "ollama" {
         return Err("Ollama does not require cloud credential verification.".to_string());
@@ -656,7 +647,9 @@ fn verify_provider_auth(
             normalize_ai_fallback_fields(s);
             Ok(())
         })?;
-        return Err("OAuth verification is not supported yet. Use API key verification.".to_string());
+        return Err(
+            "OAuth verification is not supported yet. Use API key verification.".to_string(),
+        );
     }
 
     let stored_key = ai_fallback_keyring::read_api_key(&app, &provider_id)?;
@@ -666,7 +659,10 @@ fn verify_provider_auth(
             normalize_ai_fallback_fields(s);
             Ok(())
         })?;
-        return Err(format!("No stored API key found for provider '{}'.", provider_id));
+        return Err(format!(
+            "No stored API key found for provider '{}'.",
+            provider_id
+        ));
     };
 
     let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
@@ -768,6 +764,7 @@ struct LatencyBenchmarkRequest {
     warmup_runs: u32,
     measure_runs: u32,
     include_refinement: bool,
+    refinement_model: Option<String>,
 }
 
 impl Default for LatencyBenchmarkRequest {
@@ -777,6 +774,7 @@ impl Default for LatencyBenchmarkRequest {
             warmup_runs: 3,
             measure_runs: 30,
             include_refinement: true,
+            refinement_model: None,
         }
     }
 }
@@ -789,6 +787,7 @@ struct LatencyBenchmarkSample {
     total_ms: u64,
     mode: String,
     accelerator: String,
+    refinement_model: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -845,7 +844,28 @@ fn run_latency_benchmark_inner(
         fixtures.push((label, samples));
     }
 
-    let settings_snapshot = state.settings.lock().unwrap().clone();
+    let mut settings_snapshot = state.settings.lock().unwrap().clone();
+    if include_refinement {
+        if let Some(model) = request
+            .refinement_model
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            let model = model.to_string();
+            settings_snapshot.ai_fallback.enabled = true;
+            settings_snapshot.ai_fallback.provider = "ollama".to_string();
+            settings_snapshot.ai_fallback.execution_mode = "local_primary".to_string();
+            settings_snapshot.ai_fallback.model = model.clone();
+            settings_snapshot.postproc_llm_model = model.clone();
+            settings_snapshot.providers.ollama.preferred_model = model;
+        }
+    }
+    let active_refinement_model = if include_refinement && settings_snapshot.ai_fallback.enabled {
+        Some(settings_snapshot.ai_fallback.model.clone())
+    } else {
+        None
+    };
     let mut samples: Vec<LatencyBenchmarkSample> = Vec::with_capacity(measure_runs as usize);
     let mut warnings: Vec<String> = Vec::new();
     let total_runs = warmup_runs + measure_runs;
@@ -860,12 +880,14 @@ fn run_latency_benchmark_inner(
 
         let mut refine_ms = 0u64;
         let mut mode = "raw".to_string();
+        let mut refinement_model_used = active_refinement_model.clone();
         if include_refinement && settings_snapshot.ai_fallback.enabled {
             let refine_started = Instant::now();
             match refine_transcript_for_benchmark(app, &settings_snapshot, &raw_text) {
-                Ok(_) => {
+                Ok(result) => {
                     refine_ms = refine_started.elapsed().as_millis() as u64;
                     mode = "refined".to_string();
+                    refinement_model_used = Some(result.model);
                 }
                 Err(error) => {
                     refine_ms = refine_started.elapsed().as_millis() as u64;
@@ -891,6 +913,7 @@ fn run_latency_benchmark_inner(
             total_ms,
             mode,
             accelerator: last_transcription_accelerator().to_string(),
+            refinement_model: refinement_model_used,
         });
     }
 
@@ -918,12 +941,22 @@ fn run_latency_benchmark_inner(
 fn write_latency_benchmark_report(result: &LatencyBenchmarkResult) -> Result<PathBuf, String> {
     let root = resolve_benchmark_root_dir();
     let out_dir = root.join("bench").join("results");
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("Failed creating benchmark output dir '{}': {}", out_dir.display(), e))?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| {
+        format!(
+            "Failed creating benchmark output dir '{}': {}",
+            out_dir.display(),
+            e
+        )
+    })?;
     let out_path = out_dir.join("latest.json");
     let serialized = serde_json::to_string_pretty(result).map_err(|e| e.to_string())?;
-    std::fs::write(&out_path, serialized)
-        .map_err(|e| format!("Failed writing benchmark report '{}': {}", out_path.display(), e))?;
+    std::fs::write(&out_path, serialized).map_err(|e| {
+        format!(
+            "Failed writing benchmark report '{}': {}",
+            out_path.display(),
+            e
+        )
+    })?;
     Ok(out_path)
 }
 
@@ -1019,7 +1052,10 @@ fn read_wav_for_latency_benchmark(path: &Path) -> Result<Vec<i16>, String> {
     }
 
     if mono.is_empty() {
-        return Err(format!("Fixture '{}' has no audio samples.", path.display()));
+        return Err(format!(
+            "Fixture '{}' has no audio samples.",
+            path.display()
+        ));
     }
     Ok(mono)
 }
@@ -1057,7 +1093,9 @@ fn run_latency_benchmark(
 }
 
 #[tauri::command]
-fn get_runtime_metrics_snapshot(state: State<'_, AppState>) -> crate::state::RuntimeMetricsSnapshot {
+fn get_runtime_metrics_snapshot(
+    state: State<'_, AppState>,
+) -> crate::state::RuntimeMetricsSnapshot {
     runtime_metrics_snapshot(state.inner())
 }
 
@@ -1150,7 +1188,10 @@ fn pull_ollama_model(
     let app_handle = app.clone();
     let model_clone = model.clone();
     std::thread::spawn(move || {
-        let _guard = PullGuard { app: app_handle.clone(), model: model_clone.clone() };
+        let _guard = PullGuard {
+            app: app_handle.clone(),
+            model: model_clone.clone(),
+        };
         pull_ollama_model_inner(app_handle, model_clone, endpoint);
     });
 
@@ -1433,16 +1474,33 @@ fn save_window_state(
 
 #[tauri::command]
 fn get_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
-    state.history.lock().unwrap().active.iter().cloned().collect()
+    state
+        .history
+        .lock()
+        .unwrap()
+        .active
+        .iter()
+        .cloned()
+        .collect()
 }
 
 #[tauri::command]
 fn get_transcribe_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
-    state.history_transcribe.lock().unwrap().active.iter().cloned().collect()
+    state
+        .history_transcribe
+        .lock()
+        .unwrap()
+        .active
+        .iter()
+        .cloned()
+        .collect()
 }
 
 #[tauri::command]
-fn list_history_partitions(app: AppHandle, kind: String) -> Result<Vec<crate::history_partition::PartitionInfo>, String> {
+fn list_history_partitions(
+    app: AppHandle,
+    kind: String,
+) -> Result<Vec<crate::history_partition::PartitionInfo>, String> {
     let state = app.state::<AppState>();
     match kind.as_str() {
         "mic" => Ok(state.history.lock().unwrap().list_partitions()),
@@ -1452,7 +1510,11 @@ fn list_history_partitions(app: AppHandle, kind: String) -> Result<Vec<crate::hi
 }
 
 #[tauri::command]
-fn load_history_partition(app: AppHandle, kind: String, key: String) -> Result<Vec<HistoryEntry>, String> {
+fn load_history_partition(
+    app: AppHandle,
+    kind: String,
+    key: String,
+) -> Result<Vec<HistoryEntry>, String> {
     let state = app.state::<AppState>();
     let pk = crate::history_partition::PartitionKey::parse(&key)?;
     match kind.as_str() {
@@ -1686,7 +1748,10 @@ fn clear_crash_recovery(app: AppHandle) -> Result<(), String> {
 /// Validate that a path resolves within the allowed root directory.
 /// For existing files: canonicalize the full path.
 /// For new files (output): canonicalize the parent directory.
-fn validate_path_within(path_str: &str, allowed_root: &std::path::Path) -> Result<std::path::PathBuf, String> {
+fn validate_path_within(
+    path_str: &str,
+    allowed_root: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
     // Reject UNC paths (\\server\share) before canonicalize — they trigger an SMB
     // round-trip which can leak NTLM credentials even if starts_with() later rejects them.
     if path_str.starts_with("\\\\") || path_str.starts_with("//") {
@@ -2080,6 +2145,12 @@ fn latency_benchmark_request_from_env() -> LatencyBenchmarkRequest {
             .collect::<Vec<_>>();
         if !fixtures.is_empty() {
             request.fixture_paths = fixtures;
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_REFINE_MODEL") {
+        let model = value.trim();
+        if !model.is_empty() {
+            request.refinement_model = Some(model.to_string());
         }
     }
 

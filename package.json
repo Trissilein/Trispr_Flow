@@ -14,6 +14,7 @@
     "benchmark:latency": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1",
     "benchmark:latency:live": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1 -Live",
     "benchmark:latency:strict": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1 -FailOnSloMiss",
+    "benchmark:ollama-models": "node scripts/eval-ollama-models.mjs",
     "qa:release": "node scripts/release-qa.mjs"
   },
   "dependencies": {

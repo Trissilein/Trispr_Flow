@@ -1,7 +1,7 @@
 // History management and panel state functions
 
 import { escapeHtml } from "./utils";
-import type { HistoryEntry, HistoryTab } from "./types";
+import type { HistoryEntry, HistoryTab, TopicScore } from "./types";
 import { history, transcribeHistory, currentHistoryTab, setCurrentHistoryTab as setCurrentTab } from "./state";
 import * as dom from "./dom-refs";
 import { formatTime } from "./ui-helpers";
@@ -416,9 +416,114 @@ export interface TopicKeywords {
 }
 
 export const DEFAULT_TOPICS: TopicKeywords = {
-  technical: ["code", "debug", "error", "function", "variable", "api", "database"],
-  meeting: ["meeting", "discuss", "agenda", "action", "deadline", "responsible"],
-  personal: ["personal", "note", "reminder", "todo", "follow-up"],
+  technical: [
+    "code",
+    "coding",
+    "debug",
+    "debugging",
+    "bug",
+    "error",
+    "stacktrace",
+    "exception",
+    "function",
+    "variable",
+    "api",
+    "endpoint",
+    "database",
+    "sql",
+    "query",
+    "schema",
+    "deploy",
+    "deployment",
+    "build",
+    "compile",
+    "performance",
+    "latency",
+    "memory",
+    "thread",
+    "integration",
+    "schnittstelle",
+    "fehler",
+    "datenbank",
+    "abfrage",
+    "bereitstellung",
+    "leistung",
+    "speicher",
+    "konfiguration",
+    "version",
+    "docker",
+    "kubernetes",
+  ],
+  meeting: [
+    "meeting",
+    "agenda",
+    "minutes",
+    "action",
+    "action item",
+    "deadline",
+    "owner",
+    "follow-up",
+    "stakeholder",
+    "alignment",
+    "decision",
+    "next step",
+    "roadmap",
+    "priority",
+    "milestone",
+    "planning",
+    "sync",
+    "standup",
+    "retrospective",
+    "workshop",
+    "besprechung",
+    "termin",
+    "protokoll",
+    "entscheidung",
+    "naechster schritt",
+    "prioritaet",
+    "meilenstein",
+    "planung",
+    "abstimmung",
+    "aufgabe",
+    "verantwortlich",
+    "rueckmeldung",
+    "review",
+  ],
+  personal: [
+    "personal",
+    "note",
+    "reminder",
+    "todo",
+    "to-do",
+    "follow-up",
+    "errand",
+    "appointment",
+    "family",
+    "health",
+    "habit",
+    "journal",
+    "private",
+    "vacation",
+    "shopping",
+    "budget",
+    "finance",
+    "bank",
+    "insurance",
+    "medicine",
+    "persoenlich",
+    "erinnerung",
+    "notiz",
+    "einkauf",
+    "urlaub",
+    "arzt",
+    "haushalt",
+    "konto",
+    "rechnung",
+    "gesundheit",
+    "routine",
+    "privat",
+    "aufraeumen",
+  ],
 };
 
 let manualChapters: Chapter[] = [];
@@ -428,6 +533,36 @@ let topicKeywords: TopicKeywords = { ...DEFAULT_TOPICS };
 // Keyed by keyword so we only compile each unique keyword once.
 // Invalidated whenever topicKeywords changes via setTopicKeywords().
 const _topicRegexCache = new Map<string, RegExp>();
+
+function escapeRegexLiteral(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function compileTopicKeywordRegex(keyword: string): RegExp | null {
+  const normalized = keyword.trim().toLowerCase();
+  if (!normalized) return null;
+
+  let regex = _topicRegexCache.get(normalized);
+  if (!regex) {
+    const escaped = escapeRegexLiteral(normalized);
+    regex = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "giu");
+    _topicRegexCache.set(normalized, regex);
+  }
+  return regex;
+}
+
+function countTopicKeywordHits(text: string, regex: RegExp): number {
+  regex.lastIndex = 0;
+  let hits = 0;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    hits += 1;
+    if (match.index === regex.lastIndex) {
+      regex.lastIndex += 1;
+    }
+  }
+  return hits;
+}
 
 /**
  * Get current manual chapters
@@ -479,15 +614,51 @@ export function updateChapterLabel(chapterId: string, newLabel: string): Chapter
  * Get topic keywords
  */
 export function getTopicKeywords(): TopicKeywords {
-  return { ...topicKeywords };
+  const out: TopicKeywords = {};
+  Object.entries(topicKeywords).forEach(([topic, words]) => {
+    out[topic] = [...words];
+  });
+  return out;
 }
 
 /**
  * Set topic keywords
  */
 export function setTopicKeywords(keywords: TopicKeywords): void {
-  topicKeywords = { ...keywords };
+  const next: TopicKeywords = {};
+  Object.entries(keywords).forEach(([topic, words]) => {
+    next[topic] = [...words];
+  });
+  topicKeywords = next;
   _topicRegexCache.clear();
+}
+
+export function detectTopicScores(text: string): TopicScore[] {
+  const lowerText = text.toLowerCase();
+  const ranked: Array<{ topic: string; hits: number }> = [];
+
+  Object.entries(topicKeywords).forEach(([topic, keywords]) => {
+    let topicHits = 0;
+    keywords.forEach((keyword) => {
+      const regex = compileTopicKeywordRegex(keyword);
+      if (!regex) return;
+      topicHits += countTopicKeywordHits(lowerText, regex);
+    });
+    if (topicHits > 0) {
+      ranked.push({ topic, hits: topicHits });
+    }
+  });
+
+  if (ranked.length === 0) return [];
+
+  const totalHits = ranked.reduce((sum, item) => sum + item.hits, 0);
+  return ranked
+    .sort((a, b) => b.hits - a.hits || a.topic.localeCompare(b.topic))
+    .map((item) => ({
+      topic: item.topic,
+      hits: item.hits,
+      share: Number(((item.hits / totalHits) * 100).toFixed(1)),
+    }));
 }
 
 /**
@@ -496,26 +667,7 @@ export function setTopicKeywords(keywords: TopicKeywords): void {
  * @returns Array of detected topic names
  */
 export function detectTopics(text: string): string[] {
-  const lowerText = text.toLowerCase();
-  const detectedTopics = new Set<string>();
-
-  Object.entries(topicKeywords).forEach(([topic, keywords]) => {
-    keywords.forEach((keyword) => {
-      // Retrieve or compile cached RegExp for this keyword.
-      let regex = _topicRegexCache.get(keyword);
-      if (!regex) {
-        regex = new RegExp(`\\b${keyword}\\b`, "gi");
-        _topicRegexCache.set(keyword, regex);
-      }
-      // Reset lastIndex since the same RegExp instance (with flag g) is reused.
-      regex.lastIndex = 0;
-      if (regex.test(lowerText)) {
-        detectedTopics.add(topic);
-      }
-    });
-  });
-
-  return Array.from(detectedTopics);
+  return detectTopicScores(text).map((score) => score.topic);
 }
 
 /**
@@ -535,15 +687,24 @@ export function detectTopicsForHistory(): Record<string, string[]> {
 
 /**
  * Build HTML for topic badges
- * @param topics - Array of topic names
+ * @param topics - Array of topic names or scored topics
  * @returns HTML string for topic badges
  */
-export function buildTopicBadges(topics: string[]): string {
+export function buildTopicBadges(topics: string[] | TopicScore[]): string {
   if (!topics.length) return "";
-  return topics
-    .map((topic) => {
-      const safe = escapeHtml(topic);
-      return `<span class="topic-badge" data-topic="${safe}">${safe}</span>`;
+  const scoredTopics: TopicScore[] = typeof topics[0] === "string"
+    ? (topics as string[]).map((topic) => ({
+      topic,
+      hits: 1,
+      share: 0,
+    }))
+    : (topics as TopicScore[]);
+  return scoredTopics
+    .map((score) => {
+      const safeTopic = escapeHtml(score.topic);
+      const percentage = Math.round(score.share);
+      const label = percentage > 0 ? `${safeTopic} ${percentage}%` : safeTopic;
+      return `<span class="topic-badge" data-topic="${safeTopic}">${label}</span>`;
     })
     .join("");
 }
@@ -970,11 +1131,11 @@ export function renderHistory() {
     textWrap.appendChild(text);
 
     // Add topic badges
-    const topics = detectTopics(textPresentation.displayText);
-    if (topics.length > 0) {
+    const topicScores = detectTopicScores(textPresentation.displayText);
+    if (topicScores.length > 0) {
       const topicContainer = document.createElement("div");
       topicContainer.className = "history-topics";
-      topicContainer.innerHTML = buildTopicBadges(topics);
+      topicContainer.innerHTML = buildTopicBadges(topicScores);
 
       // Add click handlers to topic badges for filtering
       // Click handled by delegated listener on historyList (see initHistoryDelegation)

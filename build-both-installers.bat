@@ -43,6 +43,8 @@ call :verify_hook_consistency "src-tauri\nsis\hooks.nsh"
 if not "!ERRORLEVEL!"=="0" goto :fail
 call :verify_hook_consistency "src-tauri\nsis\hooks.vulkan.nsh"
 if not "!ERRORLEVEL!"=="0" goto :fail
+call :verify_ollama_runtime_manifest
+if not "!ERRORLEVEL!"=="0" goto :fail
 call :verify_variant_resource_scope "src-tauri\tauri.conf.json" "bin/cuda/" "bin/vulkan/" "CUDA"
 if not "!ERRORLEVEL!"=="0" goto :fail
 call :verify_variant_resource_scope "src-tauri\tauri.conf.vulkan.json" "bin/vulkan/" "bin/cuda/" "VULKAN"
@@ -59,9 +61,14 @@ if not exist "src-tauri\bin\cuda\cudart64_13.dll" (
     echo   ERROR: cudart64_13.dll not found!
     set DLL_MISSING=1
 )
+if exist "src-tauri\bin\cuda\cublasLt64_13.dll" (
+    echo   ERROR: redundant cublasLt64_13.dll found in CUDA bundle.
+    echo          Remove it to keep installer lean ^(whisper.cpp does not require it^).
+    set DLL_MISSING=1
+)
 if "!DLL_MISSING!"=="1" (
     echo.
-    echo CRITICAL ERROR: CUDA runtime DLLs are missing.
+    echo CRITICAL ERROR: CUDA runtime DLL set is invalid ^(missing or redundant files^).
     goto :fail
 )
 echo   OK: CUDA DLLs found
@@ -162,6 +169,43 @@ if not errorlevel 1 (
     exit /b 1
 )
 echo   OK: %LABEL% config resource scope verified.
+exit /b 0
+
+:verify_ollama_runtime_manifest
+set "FRONTEND_RUNTIME_VER="
+set "BACKEND_RUNTIME_VER="
+
+for /f "tokens=2 delims==" %%a in ('findstr /C:"const DEFAULT_RUNTIME_VERSION =" "src\\ollama-models.ts"') do set "FRONTEND_RUNTIME_VER=%%a"
+for /f "tokens=2 delims==" %%a in ('findstr /C:"const DEFAULT_RUNTIME_VERSION: &str =" "src-tauri\\src\\ollama_runtime.rs"') do set "BACKEND_RUNTIME_VER=%%a"
+
+set "FRONTEND_RUNTIME_VER=%FRONTEND_RUNTIME_VER: =%"
+set "FRONTEND_RUNTIME_VER=%FRONTEND_RUNTIME_VER:\"=%"
+set "FRONTEND_RUNTIME_VER=%FRONTEND_RUNTIME_VER:;=%"
+set "BACKEND_RUNTIME_VER=%BACKEND_RUNTIME_VER: =%"
+set "BACKEND_RUNTIME_VER=%BACKEND_RUNTIME_VER:\"=%"
+set "BACKEND_RUNTIME_VER=%BACKEND_RUNTIME_VER:;=%"
+
+if "%FRONTEND_RUNTIME_VER%"=="" (
+    echo ERROR: Failed to read frontend DEFAULT_RUNTIME_VERSION from src/ollama-models.ts
+    exit /b 1
+)
+if "%BACKEND_RUNTIME_VER%"=="" (
+    echo ERROR: Failed to read backend DEFAULT_RUNTIME_VERSION from src-tauri/src/ollama_runtime.rs
+    exit /b 1
+)
+if /I not "%FRONTEND_RUNTIME_VER%"=="%BACKEND_RUNTIME_VER%" (
+    echo ERROR: Ollama runtime version mismatch:
+    echo   frontend: %FRONTEND_RUNTIME_VER%
+    echo   backend:  %BACKEND_RUNTIME_VER%
+    exit /b 1
+)
+
+findstr /C:"releases/download/v%BACKEND_RUNTIME_VER%/ollama-windows-amd64.zip" "src-tauri\src\ollama_runtime.rs" >nul
+if errorlevel 1 (
+    echo ERROR: Ollama runtime manifest URL does not match DEFAULT_RUNTIME_VERSION v%BACKEND_RUNTIME_VER%.
+    exit /b 1
+)
+echo   OK: Ollama runtime manifest pinned to v%BACKEND_RUNTIME_VER% and frontend/backend are in sync.
 exit /b 0
 
 :build_variant

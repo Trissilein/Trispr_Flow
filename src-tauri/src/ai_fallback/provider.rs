@@ -343,47 +343,73 @@ pub fn default_prompt_for_language(language: &str) -> &'static str {
     }
 }
 
+fn language_lock_suffix(language: &str) -> &'static str {
+    match language.trim().to_lowercase().as_str() {
+        "de" | "german" => {
+            "Behalte die Ausgabe in derselben Sprache wie die Eingabe. Nicht uebersetzen."
+        }
+        _ => "Keep the output in the same language as the input. Do not translate.",
+    }
+}
+
+fn with_language_lock(prompt: &str, language: &str, preserve_source_language: bool) -> String {
+    let normalized = prompt.trim();
+    if normalized.is_empty() {
+        return String::new();
+    }
+    if !preserve_source_language {
+        return normalized.to_string();
+    }
+    format!("{}\n\n{}", normalized, language_lock_suffix(language))
+}
+
 pub fn normalize_prompt_profile(profile: &str) -> &'static str {
     let id = crate::ai_fallback::models::normalize_prompt_profile_id(profile);
-    if id.is_empty() { "wording" } else { id }
+    if id.is_empty() {
+        "wording"
+    } else {
+        id
+    }
 }
 
 pub fn prompt_for_profile(
     profile: &str,
     language: &str,
     custom_prompt: Option<&str>,
+    preserve_source_language: bool,
 ) -> Option<String> {
-    match normalize_prompt_profile(profile) {
-        "custom" => {
-            let normalized = custom_prompt.unwrap_or("").trim();
-            if normalized.is_empty() {
-                None
-            } else {
-                Some(normalized.to_string())
-            }
+    if normalize_prompt_profile(profile) == "custom" {
+        let normalized = custom_prompt.unwrap_or("").trim();
+        if normalized.is_empty() {
+            return Some(default_prompt_for_language(language).to_string());
         }
-        "summary" => Some(
-            match language.trim().to_lowercase().as_str() {
-                "de" | "german" => OLLAMA_PROMPT_SUMMARY_DE,
-                _ => OLLAMA_PROMPT_SUMMARY_EN,
-            }
-            .to_string(),
-        ),
-        "technical_specs" => Some(
-            match language.trim().to_lowercase().as_str() {
-                "de" | "german" => OLLAMA_PROMPT_TECHNICAL_DE,
-                _ => OLLAMA_PROMPT_TECHNICAL_EN,
-            }
-            .to_string(),
-        ),
-        "action_items" => Some(
-            match language.trim().to_lowercase().as_str() {
-                "de" | "german" => OLLAMA_PROMPT_ACTION_ITEMS_DE,
-                _ => OLLAMA_PROMPT_ACTION_ITEMS_EN,
-            }
-            .to_string(),
-        ),
-        _ => Some(default_prompt_for_language(language).to_string()),
+        return Some(normalized.to_string());
+    }
+
+    let base = match normalize_prompt_profile(profile) {
+        "summary" => match language.trim().to_lowercase().as_str() {
+            "de" | "german" => OLLAMA_PROMPT_SUMMARY_DE,
+            _ => OLLAMA_PROMPT_SUMMARY_EN,
+        }
+        .to_string(),
+        "technical_specs" => match language.trim().to_lowercase().as_str() {
+            "de" | "german" => OLLAMA_PROMPT_TECHNICAL_DE,
+            _ => OLLAMA_PROMPT_TECHNICAL_EN,
+        }
+        .to_string(),
+        "action_items" => match language.trim().to_lowercase().as_str() {
+            "de" | "german" => OLLAMA_PROMPT_ACTION_ITEMS_DE,
+            _ => OLLAMA_PROMPT_ACTION_ITEMS_EN,
+        }
+        .to_string(),
+        _ => default_prompt_for_language(language).to_string(),
+    };
+
+    let effective = with_language_lock(&base, language, preserve_source_language);
+    if effective.is_empty() {
+        None
+    } else {
+        Some(effective)
     }
 }
 
@@ -539,15 +565,20 @@ fn build_ollama_options_payload(
     system_prompt: &str,
 ) -> serde_json::Value {
     let mut payload = serde_json::Map::new();
-    payload.insert("temperature".to_string(), serde_json::json!(options.temperature));
-    let num_predict = adaptive_num_predict(input_text, options.max_tokens, options.low_latency_mode);
+    payload.insert(
+        "temperature".to_string(),
+        serde_json::json!(options.temperature),
+    );
+    let num_predict =
+        adaptive_num_predict(input_text, options.max_tokens, options.low_latency_mode);
     payload.insert("num_predict".to_string(), serde_json::json!(num_predict));
     let num_ctx = parse_env_usize("TRISPR_OLLAMA_NUM_CTX")
         .map(|n| n.clamp(1024, 8192))
         .unwrap_or_else(|| adaptive_num_ctx(input_text, system_prompt, options.low_latency_mode));
     payload.insert("num_ctx".to_string(), serde_json::json!(num_ctx));
 
-    let num_thread = parse_env_usize("TRISPR_OLLAMA_NUM_THREAD").unwrap_or_else(default_ollama_num_thread);
+    let num_thread =
+        parse_env_usize("TRISPR_OLLAMA_NUM_THREAD").unwrap_or_else(default_ollama_num_thread);
     payload.insert("num_thread".to_string(), serde_json::json!(num_thread));
 
     // Optional advanced override. Example: TRISPR_OLLAMA_NUM_GPU=999
@@ -616,8 +647,14 @@ fn suspicious_refinement_shape(original: &str, refined: &str) -> bool {
         return false;
     }
 
-    let original_chars = original_trimmed.chars().filter(|c| !c.is_whitespace()).count();
-    let refined_chars = refined_trimmed.chars().filter(|c| !c.is_whitespace()).count();
+    let original_chars = original_trimmed
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .count();
+    let refined_chars = refined_trimmed
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .count();
 
     let original_blank_lines = original_trimmed
         .lines()
@@ -994,10 +1031,9 @@ pub fn validate_ollama_model_name(name: &str) -> Result<(), String> {
     if name.trim().is_empty() {
         return Err("Model name cannot be empty".to_string());
     }
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '.' || c == '-' || c == '_' || c == '/')
-    {
+    if !name.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c == ':' || c == '.' || c == '-' || c == '_' || c == '/'
+    }) {
         return Err("Invalid characters in model name".to_string());
     }
     if name.len() > 200 {
@@ -1210,6 +1246,17 @@ mod tests {
         assert_eq!(default_prompt_for_language("de"), OLLAMA_PROMPT_DE);
         assert_eq!(default_prompt_for_language("german"), OLLAMA_PROMPT_DE);
         assert_eq!(default_prompt_for_language("DE"), OLLAMA_PROMPT_DE);
+    }
+
+    #[test]
+    fn custom_profile_prompt_is_not_modified_by_language_lock() {
+        let prompt = prompt_for_profile(
+            "custom",
+            "en",
+            Some("Custom prompt stays unchanged."),
+            true,
+        );
+        assert_eq!(prompt.as_deref(), Some("Custom prompt stays unchanged."));
     }
 
     // --- OllamaProvider: validate_api_key is always Ok (no key needed) ---

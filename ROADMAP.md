@@ -47,12 +47,13 @@ This file is the canonical source for priorities and execution order.
 | 44a | Persistence and threshold logic for learned vocabulary | Planned |
 | 44b | Learned vocabulary settings UI | Planned |
 | 44c | Adaptive vocabulary regression tests | Planned |
+| 45 | Refinement quantization profiles + quality/speed recommendation matrix | Deferred (future iteration) |
 
 ## AI Direction (Decision Snapshot)
 
 - Primary fallback mode is now offline-first via locally running Ollama.
 - Runtime assumption: external Ollama install, local endpoint, model once downloaded then offline-capable.
-- Recommended baseline model track: `qwen3:14b` primary, `qwen3:8b` fast fallback, optional `mistral-small3.1:24b` quality profile.
+- Recommended baseline model track: `qwen3.5:4b` primary, `qwen3.5:2b` fast fallback, `qwen3.5:9b` quality profile.
 - Cloud provider UX/activation is intentionally postponed to v0.7.3.
 
 ## Immediate Next Actions
@@ -62,6 +63,7 @@ This file is the canonical source for priorities and execution order.
 3. Complete reliability hardening and release QA for v0.7.1.
 4. Continue Block E: UX/UI consistency and settings IA cleanup.
 5. Keep Block J and Block G (v0.7.3) out of stabilization scope.
+6. Keep quantization configurability (Task 45) deferred until a dedicated benchmark iteration.
 
 ## References
 

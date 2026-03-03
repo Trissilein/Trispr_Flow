@@ -27,7 +27,7 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-const DEFAULT_RUNTIME_VERSION: &str = "0.17.0";
+const DEFAULT_RUNTIME_VERSION: &str = "0.17.5";
 const BACKGROUND_IO_THROTTLE_BYTES: u64 = 16 * 1024 * 1024;
 const BACKGROUND_IO_THROTTLE_SLEEP_MS: u64 = 2;
 const STARTUP_FOREGROUND_WAIT_MS: u64 = 12_000;
@@ -39,9 +39,9 @@ struct RuntimeManifest {
 }
 
 const WINDOWS_MANIFESTS: [RuntimeManifest; 1] = [RuntimeManifest {
-    version: "0.17.0",
-    url: "https://github.com/ollama/ollama/releases/download/v0.17.0/ollama-windows-amd64.zip",
-    sha256: "cd17faeda399324db3aee1be49b5143b00681e74c3023aeb7306223f7203be0d",
+    version: "0.17.5",
+    url: "https://github.com/ollama/ollama/releases/download/v0.17.5/ollama-windows-amd64.zip",
+    sha256: "2748fe1a44a2cef4c3071f84d000e5cbe1ff614c574465f4404f66f559e414b6",
 }];
 
 #[derive(Debug, Clone, Serialize)]
@@ -290,6 +290,39 @@ fn find_file_recursive(root: &Path, target_name: &str) -> Option<PathBuf> {
     None
 }
 
+fn runtime_dependency_dirs(binary_path: &Path) -> Vec<PathBuf> {
+    let Some(runtime_dir) = binary_path.parent() else {
+        return Vec::new();
+    };
+
+    let ollama_lib_dir = runtime_dir.join("lib").join("ollama");
+    let candidates = [
+        runtime_dir.to_path_buf(),
+        ollama_lib_dir.clone(),
+        ollama_lib_dir.join("cuda_v13"),
+        ollama_lib_dir.join("cuda_v12"),
+        ollama_lib_dir.join("vulkan"),
+    ];
+
+    candidates
+        .into_iter()
+        .filter(|path| path.is_dir())
+        .collect()
+}
+
+fn with_runtime_paths_prepend(dependency_dirs: &[PathBuf]) -> Option<std::ffi::OsString> {
+    if dependency_dirs.is_empty() {
+        return None;
+    }
+
+    let mut merged = dependency_dirs.to_vec();
+    if let Some(current) = std::env::var_os("PATH") {
+        merged.extend(std::env::split_paths(&current));
+    }
+
+    std::env::join_paths(merged).ok()
+}
+
 fn parse_ollama_version(binary_path: &Path) -> String {
     static VERSION_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     let cache = VERSION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -465,11 +498,8 @@ pub fn detect_ollama_runtime(
             None
         }
     };
-    let binary_info = binary_info.or_else(|| {
-        which("ollama")
-            .ok()
-            .map(|p| ("system".to_string(), p))
-    });
+    let binary_info =
+        binary_info.or_else(|| which("ollama").ok().map(|p| ("system".to_string(), p)));
 
     match binary_info {
         None => Ok(OllamaRuntimeDetectResult {
@@ -499,11 +529,9 @@ pub async fn download_ollama_runtime(
     version: Option<String>,
 ) -> Result<OllamaRuntimeDownloadResult, String> {
     let app_handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        download_ollama_runtime_impl(&app_handle, version)
-    })
-    .await
-    .map_err(|e| format!("Runtime download task failed: {}", e))?
+    tauri::async_runtime::spawn_blocking(move || download_ollama_runtime_impl(&app_handle, version))
+        .await
+        .map_err(|e| format!("Runtime download task failed: {}", e))?
 }
 
 fn download_ollama_runtime_impl(
@@ -741,8 +769,13 @@ fn install_ollama_runtime_impl(
 
     // Remove existing target first; Windows rename fails if target dir exists.
     if target_dir.exists() {
-        fs::remove_dir_all(&target_dir)
-            .map_err(|e| format!("Failed to remove previous runtime at '{}': {}", target_dir.display(), e))?;
+        fs::remove_dir_all(&target_dir).map_err(|e| {
+            format!(
+                "Failed to remove previous runtime at '{}': {}",
+                target_dir.display(),
+                e
+            )
+        })?;
     }
     fs::rename(&staging_dir, &target_dir)
         .map_err(|e| format!("Failed to move runtime into final location: {}", e))?;
@@ -777,18 +810,14 @@ fn install_ollama_runtime_impl(
 }
 
 #[tauri::command]
-pub async fn start_ollama_runtime(
-    app: AppHandle,
-) -> Result<OllamaRuntimeStartResult, String> {
+pub async fn start_ollama_runtime(app: AppHandle) -> Result<OllamaRuntimeStartResult, String> {
     let app_handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || start_ollama_runtime_impl(&app_handle))
         .await
         .map_err(|e| format!("Runtime start task failed: {}", e))?
 }
 
-fn start_ollama_runtime_impl(
-    app: &AppHandle,
-) -> Result<OllamaRuntimeStartResult, String> {
+fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult, String> {
     let state = app.state::<AppState>();
     record_runtime_start_attempt(state.inner());
     let settings_snapshot = state.settings.lock().unwrap().clone();
@@ -849,6 +878,11 @@ fn start_ollama_runtime_impl(
         record_runtime_start_failure(state.inner());
         err
     })?;
+    let runtime_dep_dirs = runtime_dependency_dirs(&binary_path);
+    let runners_dir = binary_path
+        .parent()
+        .map(|dir| dir.join("lib").join("ollama"))
+        .filter(|dir| dir.is_dir());
     let mut cmd = Command::new(&binary_path);
     cmd.arg("serve")
         .env("OLLAMA_HOST", host)
@@ -856,16 +890,23 @@ fn start_ollama_runtime_impl(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if let Some(runtime_dir) = binary_path.parent() {
+        cmd.current_dir(runtime_dir);
+    }
+    if let Some(path_value) = with_runtime_paths_prepend(&runtime_dep_dirs) {
+        cmd.env("PATH", path_value);
+    }
+    if let Some(dir) = runners_dir {
+        cmd.env("OLLAMA_RUNNERS_DIR", dir.as_os_str());
+    }
     #[cfg(target_os = "windows")]
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let child = cmd
-        .spawn()
-        .map_err(|e| {
-            record_runtime_start_failure(state.inner());
-            format!("Failed to start Ollama runtime: {}", e)
-        })?;
+    let child = cmd.spawn().map_err(|e| {
+        record_runtime_start_failure(state.inner());
+        format!("Failed to start Ollama runtime: {}", e)
+    })?;
     let pid = child.id();
     // Store child handle for cleanup on app exit
     *state.managed_ollama_child.lock().unwrap() = Some(child);
@@ -926,18 +967,14 @@ fn start_ollama_runtime_impl(
 }
 
 #[tauri::command]
-pub async fn verify_ollama_runtime(
-    app: AppHandle,
-) -> Result<OllamaRuntimeVerifyResult, String> {
+pub async fn verify_ollama_runtime(app: AppHandle) -> Result<OllamaRuntimeVerifyResult, String> {
     let app_handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || verify_ollama_runtime_impl(&app_handle))
         .await
         .map_err(|e| format!("Runtime verify task failed: {}", e))?
 }
 
-fn verify_ollama_runtime_impl(
-    app: &AppHandle,
-) -> Result<OllamaRuntimeVerifyResult, String> {
+fn verify_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeVerifyResult, String> {
     let state = app.state::<AppState>();
     let settings_snapshot = state.settings.lock().unwrap().clone();
     let endpoint = settings_snapshot

@@ -755,6 +755,7 @@ export function wireEvents() {
   dom.modeSelect?.addEventListener("change", async () => {
     if (!settings) return;
     settings.mode = dom.modeSelect!.value as Settings["mode"];
+    renderSettings();
     await persistSettings();
     renderHero();
   });

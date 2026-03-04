@@ -298,7 +298,7 @@
                 <option value="vad">Voice Activation</option>
               </select>
             </label>
-            <label class="field">
+            <label class="field" data-expert-only="true">
               <span class="field-label">Language</span>
               <select id="language-select" title="Transcription language (or Auto-detect)">
                 <option value="auto">Auto-detect</option>
@@ -319,7 +319,7 @@
                 <option value="hi">हिन्दी (Hindi)</option>
               </select>
             </label>
-            <label class="field toggle">
+            <label class="field toggle" data-expert-only="true">
               <div class="toggle-row">
                 <span class="field-label">Pin language</span>
                 <input id="language-pinned-toggle" type="checkbox" title="Lock to selected language instead of auto-detecting" />
@@ -345,7 +345,7 @@
                       role="status"
                       aria-live="polite"></span>
               </div>
-              <div class="field hotkey-field">
+              <div class="field hotkey-field" data-expert-only="true">
                 <span class="field-label">Toggle hotkey (click)</span>
                 <div class="hotkey-input-group">
                   <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" readonly title="Current toggle hotkey — click Record to change" />
@@ -360,13 +360,13 @@
                       role="status"
                       aria-live="polite"></span>
               </div>
-              <label class="field toggle">
+              <label class="field toggle" data-expert-only="true">
                 <span class="field-label">Use Voice Activation in PTT</span>
                 <input id="ptt-use-vad-toggle" type="checkbox" title="Detect speech automatically while holding the PTT key" />
                 <span class="toggle-hint">Only record when audio exceeds threshold, even while holding PTT key</span>
               </label>
             </div>
-            <div id="vad-block" class="field-group hidden">
+            <div id="vad-block" class="field-group hidden" data-expert-only="true">
               <label class="field range">
                 <span class="field-label">Voice Activation threshold</span>
                 <div class="range-row">
@@ -393,38 +393,41 @@
                   <span id="vad-silence-value" class="range-value" aria-live="polite">700 ms</span>
                 </div>
               </label>
-              <div class="field">
-                <span class="field-label">Input level <span id="vad-level-dbm" class="dbm-value">-∞ dB</span></span>
-                <div class="vad-meter-container">
-                  <div id="vad-meter" class="vad-meter">
-                    <div id="vad-meter-fill" class="vad-meter-fill"></div>
-                    <div id="vad-marker-start" class="vad-marker vad-marker-start" title="Start threshold"></div>
-                    <div id="vad-marker-sustain" class="vad-marker vad-marker-sustain" title="Sustain threshold (dynamic)"></div>
-                  </div>
-                  <div class="vad-meter-scale">
-                    <span data-db="-60">-60</span>
-                    <span data-db="-40">-40</span>
-                    <span data-db="-20">-20</span>
-                    <span data-db="0">0 dB</span>
-                  </div>
+            </div>
+            <div class="field span-2">
+              <span class="field-label">Input level <span id="vad-level-dbm" class="dbm-value">-∞ dB</span></span>
+              <div class="vad-meter-container">
+                <div id="vad-meter" class="vad-meter">
+                  <div id="vad-meter-fill" class="vad-meter-fill"></div>
+                  <div id="vad-marker-start" class="vad-marker vad-marker-start" title="Start threshold"></div>
+                  <div id="vad-marker-sustain" class="vad-marker vad-marker-sustain" title="Sustain threshold (dynamic)"></div>
+                </div>
+                <div class="vad-meter-scale">
+                  <span data-db="-60">-60</span>
+                  <span data-db="-40">-40</span>
+                  <span data-db="-20">-20</span>
+                  <span data-db="0">0 dB</span>
                 </div>
               </div>
-              <label class="field range span-2">
-                <span class="field-label">Mic input gain</span>
-                <div class="range-row">
-                  <input id="mic-gain" type="range" min="-30" max="30" step="1"
-                         title="Boost or reduce microphone input level (dB)"
-                         aria-valuemin="-30"
-                         aria-valuemax="30"
-                         aria-valuenow="0"
-                       aria-label="Input gain"
-                         aria-describedby="mic-gain-value" />
-                  <span id="mic-gain-value" class="range-value" aria-live="polite">+0 dB</span>
-                </div>
-              </label>
             </div>
-            <details class="expander span-2">
-              <summary>Audio Dumping</summary>
+            <label class="field range span-2">
+              <span class="field-label">Mic input gain</span>
+              <div class="range-row">
+                <input id="mic-gain" type="range" min="-30" max="30" step="1"
+                       title="Boost or reduce microphone input level (dB)"
+                       aria-valuemin="-30"
+                       aria-valuemax="30"
+                       aria-valuenow="0"
+                     aria-label="Input gain"
+                       aria-describedby="mic-gain-value" />
+                <span id="mic-gain-value" class="range-value" aria-live="polite">+0 dB</span>
+              </div>
+            </label>
+            <details class="expander span-2" data-expert-only="true">
+              <summary>
+                <span>Audio Dumping</span>
+                <span class="expert-pill" aria-hidden="true">Expert</span>
+              </summary>
               <div class="expander-content">
                 <div class="field toggle">
                   <label class="toggle-row">

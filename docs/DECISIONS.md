@@ -199,6 +199,62 @@ Last updated: 2026-02-18
 - Context: Voice Analysis is optional; hard-failing full app install because of optional dependency setup blocks core use cases.
 - Why: Maximizes successful installs while still guiding users to feature readiness.
 
+### DEC-032 Managed module platform baseline (2026-03-04)
+
+- Status: `accepted`
+- Decision: Introduce a managed internal module platform (`not_installed | installed | enabled | active | error`) with explicit dependencies, lifecycle hooks, and permission consent.
+- Context: Feature scope now includes larger optional capabilities (GDD automation, analysis relaunch, integrations) that should not increase baseline complexity for all users.
+- Why: Controlled modular growth without introducing external plugin execution risk. Keeps core transcription stable while optional modules can fail independently.
+
+### DEC-033 GDD automation as standalone module (2026-03-04)
+
+- Status: `accepted`
+- Decision: Implement GDD generation as a dedicated module, not as part of AI refinement.
+- Context: GDD creation requires multi-pass chunking, structured synthesis, schema validation, and publish routing—very different runtime profile than per-entry refinement.
+- Why: Better token-budget control, clearer UX boundaries, simpler reliability guarantees, and lower regression risk for transcription/refinement paths.
+
+### DEC-034 Module permission model (2026-03-04)
+
+- Status: `accepted`
+- Decision: Require explicit per-module permission consent before first enable (`network_confluence`, `filesystem_history`, `filesystem_exports`, `keyring_access`).
+- Context: Optional modules touch sensitive resources (network publishing, credential storage).
+- Why: Transparent trust model and auditability with minimal friction.
+
+### DEC-035 Confluence target platform and auth strategy (2026-03-04)
+
+- Status: `accepted`
+- Decision: Scope first integration to **Confluence Cloud** with dual auth tracks: OAuth 3LO and API token.
+- Context: Cloud has stable public APIs and aligns with current target workflows.
+- Why: Fastest path to production utility while preserving enterprise-compatible auth options.
+
+### DEC-036 Confluence publish policy (2026-03-04)
+
+- Status: `accepted`
+- Decision: Default flow is `Draft + Review + Publish`; optional one-click mode is supported but must fall back to confirmation when routing confidence is low.
+- Context: Automatic document placement has unavoidable ambiguity.
+- Why: Balances speed and safety; protects data integrity while still enabling automation.
+
+### DEC-037 GDD template source strategy (2026-03-04)
+
+- Status: `implemented`
+- Decision: GDD generation accepts optional template guidance loaded from Confluence URLs or uploaded files (`pdf`, `docx`, `txt`, `md`).
+- Context: Teams often already maintain structure/style templates. Reusing these reduces setup friction and improves output consistency.
+- Why: Keeps baseline preset system intact while allowing low-friction adaptation without building a full template DSL.
+
+### DEC-038 GDD module UX baseline (2026-03-04)
+
+- Status: `implemented`
+- Decision: Deliver a single modal-based GDD workflow in Modules with explicit stages: detect preset -> generate draft -> validate -> suggest target -> publish.
+- Context: Early module integration needed a concrete end-to-end path before introducing complex automation modes.
+- Why: Gives users an immediately useful manual flow with clear checkpoints and minimal hidden automation.
+
+### DEC-039 Confluence OAuth runtime handling (2026-03-04)
+
+- Status: `implemented`
+- Decision: Use OAuth code exchange + refresh-token retry on 401 and persist selected cloud site context (`site_base_url`, `oauth_cloud_id`) in settings.
+- Context: Confluence Cloud 3LO tokens are short-lived and workspace selection is required for API gateway routes.
+- Why: Prevents brittle session failures and avoids repeated manual reconfiguration between restarts.
+
 ## Open Decisions
 
 ### DEC-011 Optional backend scope

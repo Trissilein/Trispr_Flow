@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-26 (v0.7.1 stabilization pass)
+Last updated: 2026-03-04 (v0.7.1 stabilization + v0.8.0 module platform in execution)
 
 This file is the canonical source for priorities and execution order.
 
@@ -9,7 +9,7 @@ This file is the canonical source for priorities and execution order.
 - Released: `v0.7.0`
 - Current phase: `v0.7.1` stabilization execution
 - Foundation complete: Blocks F + G + H
-- Active execution block: UX/UI consistency (Block E)
+- Active execution blocks: UX/UI consistency (Block E) + Module Platform (Block L)
 
 ## Analysis De-Scope Decision
 
@@ -28,6 +28,7 @@ This file is the canonical source for priorities and execution order.
 | G | Cloud provider rollout (OpenAI/Claude/Gemini) | High | D, F | Deferred to v0.7.3 |
 | J | Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary) | Medium | D | Planned |
 | K | Expert Mode UX Overhaul (standard/expert toggle, hide technical settings) | Medium | E | Planned |
+| L | Module Platform + GDD Automation + Confluence Cloud publishing | Extra High | E, F, K | In progress |
 
 ## v0.7 Task Ledger
 
@@ -55,6 +56,7 @@ This file is the canonical source for priorities and execution order.
 - Runtime assumption: external Ollama install, local endpoint, model once downloaded then offline-capable.
 - Recommended baseline model track: `qwen3.5:4b` primary, `qwen3.5:2b` fast fallback, `qwen3.5:9b` quality profile.
 - Cloud provider UX/activation is intentionally postponed to v0.7.3.
+- GDD automation is designed as a standalone managed module (not part of AI refinement).
 
 ## Immediate Next Actions
 
@@ -64,6 +66,9 @@ This file is the canonical source for priorities and execution order.
 4. Continue Block E: UX/UI consistency and settings IA cleanup.
 5. Keep Block J and Block G (v0.7.3) out of stabilization scope.
 6. Keep quantization configurability (Task 45) deferred until a dedicated benchmark iteration.
+7. Complete Block L hardening: module/GDD regression coverage and publish conflict handling.
+8. Add preset-clone derivation workflow from imported templates (PDF/DOCX/Confluence).
+9. Add one-click publish policy gates (confidence threshold fallback to confirm).
 
 ## References
 
@@ -72,3 +77,4 @@ This file is the canonical source for priorities and execution order.
 - `docs/ARCHITECTURE_REVIEW_0.7.md`
 - `docs/V0.7.0_ARCHITECTURE.md`
 - `docs/INSTALLER_VARIANTS.md`
+- `docs/GDD_MODULE_WORKFLOW.md`

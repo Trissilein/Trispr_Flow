@@ -1,6 +1,6 @@
 # Task Schedule - Trispr Flow
 
-Last updated: 2026-02-19
+Last updated: 2026-03-04
 
 ## Overview
 
@@ -278,6 +278,35 @@ Implementation uses `data-expert-only` attributes on DOM elements — CSS hides 
 | K3 | Apply `data-expert-only` attributes + CSS hide/show | Medium | K1, K2 | PLANNED | Add attribute to expert-only elements; CSS rule `.expert-mode [data-expert-only]` toggles visibility. |
 | K4 | Settings re-ordering within panels (expert items sink to bottom) | Medium | K3 | PLANNED | Visual grouping: essential controls at top, expert controls below a subtle divider. |
 | K5 | Regression tests (mode toggle shows correct subsets) | Low | K3, K4 | PLANNED | Unit tests verify standard mode hides expert elements; expert mode shows all. |
+
+---
+
+### Block L: Module Platform + GDD Automation --- IN PROGRESS
+
+**Duration**: 4-6 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: v0.7.1 stabilization (Blocks E/F) | **Status**: In progress
+
+Goal: Introduce a managed module platform and deliver a production-ready first module that turns transcripts into strict GDD drafts and publishes to Confluence Cloud.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| L1 | Module registry + lifecycle core (Rust) | High | E, F | DONE | Managed module states, dependency checks, lifecycle orchestration and command surface are implemented. |
+| L2 | Settings schema migration for modules | High | L1 | DONE | `module_settings`, `gdd_module_settings`, `confluence_settings` with safe normalization/migration are live. |
+| L3 | Module health/update commands | Medium | L1 | DONE | `get_module_health` and `check_module_updates` implemented and emitted to UI. |
+| L4 | Modules tab UI shell | Medium | L1 | DONE | Modules tab with cards, status badges, dependencies and actions implemented. |
+| L5 | Permission consent UX | Medium | L4 | DONE | Consent gating before first enable is implemented and persisted. |
+| L6 | Analyse button -> module launcher migration | Low | L4 | DONE | Analyse now routes to Modules tab and focuses module launcher path. |
+| L7 | Universal strict GDD preset schema | High | L2 | DONE | Universal strict preset and section schema implemented. |
+| L8 | Clone-preset persistence and editor API | Medium | L7 | DONE | Clone preset list/save API implemented with validation. |
+| L9 | Preset recognition engine | Medium | L7, L8 | DONE | Heuristic scoring with confidence/candidates/reasoning implemented. |
+| L10 | Token-safe extraction pipeline | High | L7 | DONE | Chunked extraction + synthesis pipeline implemented. |
+| L11 | GDD synthesis + validation | High | L10 | DONE | Strict draft generation with `TBD` fallback + validation command implemented. |
+| L12 | Draft rendering (Markdown + Confluence storage) | Medium | L11 | DONE | Markdown and Confluence storage rendering implemented and wired. |
+| L13 | Confluence auth and secret handling | High | L2 | DONE | OAuth exchange/refresh + API-token mode + keyring/file fallback implemented. |
+| L14 | Confluence discovery and routing suggestion | High | L13 | DONE | Space listing + target suggestion implemented and integrated in GDD flow. |
+| L15 | Confluence publish create/update lifecycle | High | L14, L12 | DONE | Create/update publish lifecycle implemented with version bump handling. |
+| L16 | Review flow + one-click mode policy | Medium | L11, L15 | PARTIAL | Draft/review/publish UI implemented; one-click policy gate remains pending. |
+| L17 | E2E + resilience tests | High | L1-L16 | PARTIAL | Build/test/check green; dedicated publish conflict/retry suites pending. |
+| L18 | Documentation and rollout packet | Medium | L17 | IN PROGRESS | Core planning docs updated; hardening checklist continues. |
 
 ---
 

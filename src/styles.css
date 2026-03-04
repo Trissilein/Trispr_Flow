@@ -423,19 +423,28 @@ html.standard-mode [data-expert-only="true"] {
   display: none !important;
 }
 
-html.expert-mode details[data-expert-only="true"] > summary::after {
-  content: "Expert";
-  display: inline-block;
-  margin-left: 8px;
-  padding: 2px 6px;
+html.expert-mode details[data-expert-only="true"] > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 34px;
+}
+
+.expert-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 10px;
   border-radius: 999px;
-  font-size: 0.65rem;
+  font-size: 0.68rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  line-height: 1;
+  letter-spacing: 0.03em;
   color: #f3a13f;
-  border: 1px solid rgba(243, 161, 63, 0.35);
-  background: rgba(243, 161, 63, 0.12);
-  vertical-align: middle;
+  border: 1px solid rgba(243, 161, 63, 0.45);
+  background: rgba(243, 161, 63, 0.16);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* AI Refinement Tab */
@@ -3528,7 +3537,7 @@ input[type="range"]:focus-visible {
 }
 
 .ai-provider-advanced[open] > summary::after {
-  transform: translateY(-50%) rotate(180deg);
+  transform: translateY(-50%) rotate(-180deg);
 }
 
 .ai-provider-advanced-actions {

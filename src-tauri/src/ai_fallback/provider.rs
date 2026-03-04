@@ -345,6 +345,9 @@ pub fn default_prompt_for_language(language: &str) -> &'static str {
 
 fn language_lock_suffix(language: &str) -> &'static str {
     match language.trim().to_lowercase().as_str() {
+        "auto" => {
+            "Detect the input language and keep it unchanged. Do not translate. If the input is mixed-language, preserve each segment in its original language."
+        }
         "de" | "german" => {
             "Behalte die Ausgabe in derselben Sprache wie die Eingabe. Nicht uebersetzen."
         }
@@ -637,6 +640,192 @@ fn shared_word_ratio(original: &str, refined: &str) -> f64 {
     shared as f64 / original_words.len() as f64
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScriptFamily {
+    Latin,
+    Cyrillic,
+    Cjk,
+    Arabic,
+}
+
+fn classify_script_family(ch: char) -> Option<ScriptFamily> {
+    let code = ch as u32;
+    if (0x0041..=0x024F).contains(&code) || (0x1E00..=0x1EFF).contains(&code) {
+        return Some(ScriptFamily::Latin);
+    }
+    if (0x0400..=0x052F).contains(&code)
+        || (0x2DE0..=0x2DFF).contains(&code)
+        || (0xA640..=0xA69F).contains(&code)
+    {
+        return Some(ScriptFamily::Cyrillic);
+    }
+    if (0x3040..=0x30FF).contains(&code)
+        || (0x31F0..=0x31FF).contains(&code)
+        || (0x3400..=0x4DBF).contains(&code)
+        || (0x4E00..=0x9FFF).contains(&code)
+        || (0xAC00..=0xD7AF).contains(&code)
+    {
+        return Some(ScriptFamily::Cjk);
+    }
+    if (0x0600..=0x06FF).contains(&code)
+        || (0x0750..=0x077F).contains(&code)
+        || (0x08A0..=0x08FF).contains(&code)
+        || (0xFB50..=0xFDFF).contains(&code)
+        || (0xFE70..=0xFEFF).contains(&code)
+    {
+        return Some(ScriptFamily::Arabic);
+    }
+    None
+}
+
+fn script_family_name(family: ScriptFamily) -> &'static str {
+    match family {
+        ScriptFamily::Latin => "latin",
+        ScriptFamily::Cyrillic => "cyrillic",
+        ScriptFamily::Cjk => "cjk",
+        ScriptFamily::Arabic => "arabic",
+    }
+}
+
+fn dominant_script_family(text: &str) -> Option<ScriptFamily> {
+    let mut latin = 0usize;
+    let mut cyrillic = 0usize;
+    let mut cjk = 0usize;
+    let mut arabic = 0usize;
+
+    for ch in text.chars() {
+        match classify_script_family(ch) {
+            Some(ScriptFamily::Latin) => latin += 1,
+            Some(ScriptFamily::Cyrillic) => cyrillic += 1,
+            Some(ScriptFamily::Cjk) => cjk += 1,
+            Some(ScriptFamily::Arabic) => arabic += 1,
+            None => {}
+        }
+    }
+
+    let total = latin + cyrillic + cjk + arabic;
+    if total < 12 {
+        return None;
+    }
+
+    let counts = [
+        (ScriptFamily::Latin, latin),
+        (ScriptFamily::Cyrillic, cyrillic),
+        (ScriptFamily::Cjk, cjk),
+        (ScriptFamily::Arabic, arabic),
+    ];
+    let (family, max_count) = counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .unwrap_or((ScriptFamily::Latin, 0));
+
+    if max_count * 100 >= total * 70 {
+        Some(family)
+    } else {
+        None
+    }
+}
+
+fn tokenize_language_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphabetic())
+        .filter_map(|token| {
+            let trimmed = token.trim();
+            if trimmed.len() < 2 {
+                None
+            } else {
+                Some(trimmed.to_lowercase())
+            }
+        })
+        .collect()
+}
+
+fn stopword_hits(words: &[String], stopwords: &[&str]) -> usize {
+    words
+        .iter()
+        .filter(|word| stopwords.contains(&word.as_str()))
+        .count()
+}
+
+fn detect_en_de_language_hint(text: &str) -> Option<&'static str> {
+    const EN_STOPWORDS: &[&str] = &[
+        "the", "and", "is", "are", "to", "of", "in", "for", "with", "that", "this", "it", "on",
+        "we", "you", "can", "will", "not",
+    ];
+    const DE_STOPWORDS: &[&str] = &[
+        "der", "die", "das", "und", "ist", "sind", "nicht", "mit", "ein", "eine", "ich", "du",
+        "wir", "sie", "auf", "im", "den", "zu", "fuer",
+    ];
+
+    let words = tokenize_language_words(text);
+    if words.len() < 8 {
+        return None;
+    }
+
+    let en_hits = stopword_hits(&words, EN_STOPWORDS);
+    let de_hits = stopword_hits(&words, DE_STOPWORDS);
+
+    if en_hits >= 3 && en_hits >= de_hits + 2 {
+        Some("en")
+    } else if de_hits >= 3 && de_hits >= en_hits + 2 {
+        Some("de")
+    } else {
+        None
+    }
+}
+
+fn likely_mixed_en_de(text: &str) -> bool {
+    const EN_STOPWORDS: &[&str] = &[
+        "the", "and", "is", "are", "to", "of", "in", "for", "with", "that", "this", "it", "on",
+        "we", "you", "can", "will", "not",
+    ];
+    const DE_STOPWORDS: &[&str] = &[
+        "der", "die", "das", "und", "ist", "sind", "nicht", "mit", "ein", "eine", "ich", "du",
+        "wir", "sie", "auf", "im", "den", "zu", "fuer",
+    ];
+
+    let words = tokenize_language_words(text);
+    if words.len() < 8 {
+        return false;
+    }
+    let en_hits = stopword_hits(&words, EN_STOPWORDS);
+    let de_hits = stopword_hits(&words, DE_STOPWORDS);
+    en_hits >= 2 && de_hits >= 2
+}
+
+fn detect_language_drift_reason(original: &str, refined: &str) -> Option<String> {
+    if likely_mixed_en_de(original) {
+        return None;
+    }
+
+    let original_script = dominant_script_family(original);
+    let refined_script = dominant_script_family(refined);
+    if let (Some(orig), Some(new)) = (original_script, refined_script) {
+        if orig != new && !likely_mixed_en_de(refined) {
+            return Some(format!(
+                "script-family mismatch ({} -> {})",
+                script_family_name(orig),
+                script_family_name(new)
+            ));
+        }
+    }
+
+    let original_lang = detect_en_de_language_hint(original);
+    let refined_lang = detect_en_de_language_hint(refined);
+    if let (Some(orig), Some(new)) = (original_lang, refined_lang) {
+        if orig != new && !likely_mixed_en_de(refined) {
+            let overlap = shared_word_ratio(original, refined);
+            if overlap < 0.65 {
+                return Some(format!(
+                    "stopword-language mismatch ({} -> {}, overlap={:.2})",
+                    orig, new, overlap
+                ));
+            }
+        }
+    }
+
+    None
+}
+
 fn suspicious_refinement_shape(original: &str, refined: &str) -> bool {
     let original_trimmed = original.trim();
     let refined_trimmed = refined.trim();
@@ -674,7 +863,11 @@ fn suspicious_refinement_shape(original: &str, refined: &str) -> bool {
     (severe_shrink && low_overlap) || (blank_line_spike && severe_shrink)
 }
 
-fn sanitize_ollama_refinement_output(original: &str, refined: &str) -> String {
+fn sanitize_ollama_refinement_output(
+    original: &str,
+    refined: &str,
+    options: &RefinementOptions,
+) -> String {
     let normalized = refined.replace("\r\n", "\n").replace('\r', "\n");
     let collapsed = collapse_excessive_blank_lines(normalized.trim());
     if suspicious_refinement_shape(original, &collapsed) {
@@ -684,6 +877,17 @@ fn sanitize_ollama_refinement_output(original: &str, refined: &str) -> String {
             collapsed.len()
         );
         return original.to_string();
+    }
+    if options.enforce_language_guard {
+        if let Some(reason) = detect_language_drift_reason(original, &collapsed) {
+            warn!(
+                "Discarding refinement due to language drift guard (reason={}, orig_len={}, refined_len={})",
+                reason,
+                original.len(),
+                collapsed.len()
+            );
+            return original.to_string();
+        }
     }
     if collapsed.is_empty() {
         return original.to_string();
@@ -917,7 +1121,7 @@ impl AIProvider for OllamaProvider {
                             .to_string(),
                     )
                 })?;
-                let refined_text = sanitize_ollama_refinement_output(text, &refined_text);
+                let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
                 let (input_tokens, output_tokens) = parse_ollama_usage(&json);
                 let elapsed_ms = start.elapsed().as_millis() as u64;
                 return Ok(RefinementResult {
@@ -977,7 +1181,7 @@ impl AIProvider for OllamaProvider {
                         .to_string(),
                 )
             })?;
-            let refined_text = sanitize_ollama_refinement_output(text, &refined_text);
+            let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
             let (input_tokens, output_tokens) = parse_ollama_usage(&json);
             let elapsed_ms = start.elapsed().as_millis() as u64;
 
@@ -1168,6 +1372,17 @@ pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) 
 mod tests {
     use super::*;
 
+    fn test_options(enforce_language_guard: bool) -> RefinementOptions {
+        RefinementOptions {
+            temperature: 0.3,
+            max_tokens: 512,
+            low_latency_mode: false,
+            language: Some("en".to_string()),
+            custom_prompt: None,
+            enforce_language_guard,
+        }
+    }
+
     #[test]
     fn factory_creates_known_providers() {
         assert!(ProviderFactory::create("claude").is_ok());
@@ -1250,13 +1465,16 @@ mod tests {
 
     #[test]
     fn custom_profile_prompt_is_not_modified_by_language_lock() {
-        let prompt = prompt_for_profile(
-            "custom",
-            "en",
-            Some("Custom prompt stays unchanged."),
-            true,
-        );
+        let prompt =
+            prompt_for_profile("custom", "en", Some("Custom prompt stays unchanged."), true);
         assert_eq!(prompt.as_deref(), Some("Custom prompt stays unchanged."));
+    }
+
+    #[test]
+    fn auto_language_lock_suffix_mentions_mixed_language_preservation() {
+        let prompt = prompt_for_profile("wording", "auto", None, true).unwrap_or_default();
+        assert!(prompt.contains("Detect the input language and keep it unchanged."));
+        assert!(prompt.contains("mixed-language"));
     }
 
     // --- OllamaProvider: validate_api_key is always Ok (no key needed) ---
@@ -1331,13 +1549,7 @@ mod tests {
     #[test]
     fn ollama_provider_connection_refused_returns_not_running() {
         let provider = OllamaProvider::with_endpoint("http://127.0.0.1:19999".to_string());
-        let options = RefinementOptions {
-            temperature: 0.3,
-            max_tokens: 512,
-            low_latency_mode: false,
-            language: Some("en".to_string()),
-            custom_prompt: None,
-        };
+        let options = test_options(false);
         let result = provider.refine_transcript("hello world", "qwen3:14b", &options, "");
         assert!(
             matches!(result, Err(AIError::OllamaNotRunning)),
@@ -1434,7 +1646,7 @@ mod tests {
     fn suspicious_refinement_falls_back_to_original_text() {
         let original = "This is a fairly long transcript sentence with multiple technical terms and enough context to detect aggressive truncation in refinement output.";
         let refined = "summary only";
-        let sanitized = sanitize_ollama_refinement_output(original, refined);
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(false));
         assert_eq!(sanitized, original);
     }
 
@@ -1442,7 +1654,32 @@ mod tests {
     fn refinement_output_collapses_excessive_blank_lines() {
         let original = "First line\nSecond line\nThird line";
         let refined = "First line\n\n\n\nSecond line\n\n\nThird line";
-        let sanitized = sanitize_ollama_refinement_output(original, refined);
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(false));
         assert_eq!(sanitized, "First line\n\nSecond line\n\nThird line");
+    }
+
+    #[test]
+    fn language_guard_rejects_high_confidence_de_to_en_drift() {
+        let original = "das ist ein test und wir sind im meeting und die aufgabe ist nicht offen";
+        let refined = "this is a test and we are in the meeting and the task is not open";
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(true));
+        assert_eq!(sanitized, original);
+    }
+
+    #[test]
+    fn language_guard_allows_drift_when_guard_disabled() {
+        let original = "das ist ein test und wir sind im meeting und die aufgabe ist nicht offen";
+        let refined = "this is a test and we are in the meeting and the task is not open";
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(false));
+        assert_eq!(sanitized, refined);
+    }
+
+    #[test]
+    fn language_guard_does_not_trip_on_mixed_language_input() {
+        let original =
+            "wir deployen den service and we monitor the logs im dashboard und in production";
+        let refined = "we deploy the service and monitor the logs in the dashboard and production";
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(true));
+        assert_eq!(sanitized, refined);
     }
 }

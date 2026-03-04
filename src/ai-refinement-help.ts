@@ -11,6 +11,7 @@ export type HelpKey =
   | "ai_refinement_online_fallback"
   | "ai_refinement_execution_mode"
   | "ai_refinement_enable"
+  | "ai_refinement_asr_language_hint"
   | "ai_refinement_provider"
   | "ai_refinement_model"
   | "ai_refinement_auth_method"
@@ -79,6 +80,13 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
     description: "Runs an LLM pass after transcription to fix wording, punctuation, and clarity.",
     consequence: "Turning this off uses only base transcription and local post-processing rules.",
   },
+  ai_refinement_asr_language_hint: {
+    title: "ASR Language Hint + Pin",
+    description:
+      "Controls speech recognition language behavior. Unpinned uses auto-detect; pinned forces the selected language.",
+    consequence:
+      "Rule-based processing language is derived from this: pinned EN/DE -> EN/DE rules, otherwise multilingual rules.",
+  },
   ai_refinement_provider: {
     title: "Refinement Provider",
     description: "Select the service that executes the LLM refinement step.",
@@ -101,8 +109,10 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
   },
   ai_refinement_language_lock: {
     title: "Preserve Source Language",
-    description: "Appends a non-editable guard to keep output in the same language as the input.",
-    consequence: "Prevents accidental language switches (for example DE -> EN) during refinement.",
+    description:
+      "Adds a built-in language guard for non-custom presets to keep refinement output in the source language.",
+    consequence:
+      "Prevents accidental language switches (for example DE -> EN). Custom prompts stay fully user-controlled.",
   },
   ai_refinement_speed_mode: {
     title: "Speed Mode (Low Latency)",
@@ -206,7 +216,7 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
   },
   ollama_models_section: {
     title: "Models",
-    description: "Recommended local Qwen3.5 models for refinement with status and actions.",
+    description: "Recommended local Qwen3 and Qwen3.5 models for refinement with status and actions.",
     consequence: "Only the selected active model is used for refinement calls.",
   },
   ollama_action_install: {
@@ -291,6 +301,8 @@ export function renderAIRefinementStaticHelp(): void {
   applyHelpTooltip(document.getElementById("ai-refinement-models-title"), "ollama_models_section");
   applyHelpTooltip(document.getElementById("ai-fallback-cloud-provider-list"), "ai_refinement_auth_method");
   applyHelpTooltip(document.getElementById("ai-auth-method"), "ai_refinement_auth_method");
+  applyHelpTooltip(document.getElementById("language-select"), "ai_refinement_asr_language_hint");
+  applyHelpTooltip(document.getElementById("language-pinned-toggle"), "ai_refinement_asr_language_hint");
   applyHelpTooltip(document.getElementById("ai-fallback-preserve-language"), "ai_refinement_language_lock");
   applyHelpTooltip(document.getElementById("ai-fallback-low-latency-mode"), "ai_refinement_speed_mode");
   applyHelpTooltip(document.getElementById("ai-fallback-temperature"), "ai_refinement_temperature");

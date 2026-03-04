@@ -8,9 +8,6 @@ import {
   DEFAULT_TOPICS,
   setTopicKeywords,
   type ExportFormat,
-  generateSilenceBasedChapters,
-  generateHybridChapters,
-  generateTimeBasedChapters,
 } from "../history";
 import { setHistory, setTranscribeHistory } from "../state";
 
@@ -339,207 +336,7 @@ describe("export serialization", () => {
   });
 });
 
-describe("chapter generation", () => {
-  describe("generateSilenceBasedChapters", () => {
-    it("creates chapters based on silence gaps", () => {
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Entry 1", timestamp_ms: 1000, source: "mic" },
-        { id: "2", text: "Entry 2", timestamp_ms: 1500, source: "mic" },
-        // 3 second gap (silence)
-        { id: "3", text: "Entry 3", timestamp_ms: 4500, source: "mic" },
-        { id: "4", text: "Entry 4", timestamp_ms: 5000, source: "mic" },
-        // 2.5 second gap (silence)
-        { id: "5", text: "Entry 5", timestamp_ms: 7500, source: "mic" },
-      ];
-
-      const chapters = generateSilenceBasedChapters(entries, 2000);
-
-      expect(chapters).toHaveLength(3);
-      expect(chapters[0].entry_count).toBe(2); // Entries 1-2
-      expect(chapters[1].entry_count).toBe(2); // Entries 3-4
-      expect(chapters[2].entry_count).toBe(1); // Entry 5
-    });
-
-    it("uses default 2s threshold when not specified", () => {
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Entry 1", timestamp_ms: 1000, source: "mic" },
-        { id: "2", text: "Entry 2", timestamp_ms: 2000, source: "mic" },
-        // 2.1 second gap (just over threshold)
-        { id: "3", text: "Entry 3", timestamp_ms: 4100, source: "mic" },
-      ];
-
-      const chapters = generateSilenceBasedChapters(entries);
-
-      expect(chapters).toHaveLength(2);
-      expect(chapters[0].entry_count).toBe(2);
-      expect(chapters[1].entry_count).toBe(1);
-    });
-
-    it("creates single chapter when no silence gaps exceed threshold", () => {
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Entry 1", timestamp_ms: 1000, source: "mic" },
-        { id: "2", text: "Entry 2", timestamp_ms: 1500, source: "mic" },
-        { id: "3", text: "Entry 3", timestamp_ms: 2000, source: "mic" },
-      ];
-
-      const chapters = generateSilenceBasedChapters(entries, 2000);
-
-      expect(chapters).toHaveLength(1);
-      expect(chapters[0].entry_count).toBe(3);
-    });
-
-    it("handles empty entries array", () => {
-      const chapters = generateSilenceBasedChapters([]);
-      expect(chapters).toEqual([]);
-    });
-
-    it("handles single entry", () => {
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Only entry", timestamp_ms: 1000, source: "mic" },
-      ];
-
-      const chapters = generateSilenceBasedChapters(entries);
-
-      expect(chapters).toHaveLength(1);
-      expect(chapters[0].entry_count).toBe(1);
-      expect(chapters[0].timestamp_ms).toBe(1000);
-    });
-
-    it("sets chapter timestamps to first entry of each chapter", () => {
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Entry 1", timestamp_ms: 1000, source: "mic" },
-        { id: "2", text: "Entry 2", timestamp_ms: 1500, source: "mic" },
-        // Silence gap
-        { id: "3", text: "Entry 3", timestamp_ms: 5000, source: "mic" },
-      ];
-
-      const chapters = generateSilenceBasedChapters(entries, 2000);
-
-      expect(chapters[0].timestamp_ms).toBe(1000); // First chapter starts at entry 1
-      expect(chapters[1].timestamp_ms).toBe(5000); // Second chapter starts at entry 3
-    });
-
-    it("generates unique chapter IDs", () => {
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Entry 1", timestamp_ms: 1000, source: "mic" },
-        { id: "2", text: "Entry 2", timestamp_ms: 5000, source: "mic" },
-        { id: "3", text: "Entry 3", timestamp_ms: 10000, source: "mic" },
-      ];
-
-      const chapters = generateSilenceBasedChapters(entries, 2000);
-
-      expect(chapters[0].id).toBe("chapter-silence-1");
-      expect(chapters[1].id).toBe("chapter-silence-2");
-      expect(chapters[2].id).toBe("chapter-silence-3");
-    });
-  });
-
-  describe("generateHybridChapters", () => {
-    it("creates chapters based on both silence and max duration", () => {
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Entry 1", timestamp_ms: 0, source: "mic" },
-        { id: "2", text: "Entry 2", timestamp_ms: 1000, source: "mic" },
-        // 3s gap (silence trigger)
-        { id: "3", text: "Entry 3", timestamp_ms: 4000, source: "mic" },
-        { id: "4", text: "Entry 4", timestamp_ms: 5000, source: "mic" },
-        // Long duration (11 minutes total) - should force break
-        { id: "5", text: "Entry 5", timestamp_ms: 15 * 60 * 1000, source: "mic" },
-      ];
-
-      const chapters = generateHybridChapters(entries, 2000, 10 * 60 * 1000);
-
-      expect(chapters.length).toBeGreaterThanOrEqual(2);
-    });
-
-    it("respects max chapter duration parameter", () => {
-      const maxDuration = 5000; // 5 seconds
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Entry 1", timestamp_ms: 0, source: "mic" },
-        { id: "2", text: "Entry 2", timestamp_ms: 1000, source: "mic" },
-        { id: "3", text: "Entry 3", timestamp_ms: 2000, source: "mic" },
-        // 6 seconds total - exceeds max duration
-        { id: "4", text: "Entry 4", timestamp_ms: 6000, source: "mic" },
-      ];
-
-      const chapters = generateHybridChapters(entries, 10000, maxDuration);
-
-      expect(chapters).toHaveLength(2);
-    });
-
-    it("uses default parameters when not specified", () => {
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Entry 1", timestamp_ms: 1000, source: "mic" },
-        { id: "2", text: "Entry 2", timestamp_ms: 2000, source: "mic" },
-      ];
-
-      const chapters = generateHybridChapters(entries);
-
-      expect(chapters).toHaveLength(1); // No silence gaps or duration exceeded
-    });
-
-    it("prevents single-entry chapters from duration breaks", () => {
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Entry 1", timestamp_ms: 0, source: "mic" },
-        // Very long gap but only 1 entry in chapter so far
-        { id: "2", text: "Entry 2", timestamp_ms: 20 * 60 * 1000, source: "mic" },
-      ];
-
-      const chapters = generateHybridChapters(entries, 2000, 10 * 60 * 1000);
-
-      // Should create chapters, but first chapter shouldn't force-break with only 1 entry
-      expect(chapters.length).toBeGreaterThanOrEqual(1);
-    });
-
-    it("handles empty entries array", () => {
-      const chapters = generateHybridChapters([]);
-      expect(chapters).toEqual([]);
-    });
-  });
-
-  describe("generateTimeBasedChapters", () => {
-    it("creates chapters at fixed time intervals", () => {
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Entry 1", timestamp_ms: 0, source: "mic" },
-        { id: "2", text: "Entry 2", timestamp_ms: 1000, source: "mic" },
-        // 5 minute mark
-        { id: "3", text: "Entry 3", timestamp_ms: 5 * 60 * 1000, source: "mic" },
-        { id: "4", text: "Entry 4", timestamp_ms: 6 * 60 * 1000, source: "mic" },
-        // 10 minute mark
-        { id: "5", text: "Entry 5", timestamp_ms: 10 * 60 * 1000, source: "mic" },
-      ];
-
-      const chapters = generateTimeBasedChapters(entries, 5);
-
-      expect(chapters).toHaveLength(3);
-      expect(chapters[0].entry_count).toBe(2); // 0-5 min
-      expect(chapters[1].entry_count).toBe(2); // 5-10 min
-      expect(chapters[2].entry_count).toBe(1); // 10+ min
-    });
-
-    it("uses default 5 minute interval when not specified", () => {
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Entry 1", timestamp_ms: 0, source: "mic" },
-        { id: "2", text: "Entry 2", timestamp_ms: 6 * 60 * 1000, source: "mic" },
-      ];
-
-      const chapters = generateTimeBasedChapters(entries);
-
-      expect(chapters).toHaveLength(2);
-    });
-
-    it("handles entries within single interval", () => {
-      const entries: HistoryEntry[] = [
-        { id: "1", text: "Entry 1", timestamp_ms: 0, source: "mic" },
-        { id: "2", text: "Entry 2", timestamp_ms: 1000, source: "mic" },
-        { id: "3", text: "Entry 3", timestamp_ms: 2000, source: "mic" },
-      ];
-
-      const chapters = generateTimeBasedChapters(entries, 5);
-
-      expect(chapters).toHaveLength(1);
-      expect(chapters[0].entry_count).toBe(3);
-    });
-  });
+describe("integration scenarios", () => {
 
   describe("End-to-End Integration Tests", () => {
     describe("Complete Export Workflow", () => {
@@ -639,53 +436,6 @@ describe("chapter generation", () => {
       });
     });
 
-    describe("Chapter + Export Integration", () => {
-      it("generates chapters and exports with metadata", () => {
-        const entries: HistoryEntry[] = [
-          { id: "1", text: "First entry", timestamp_ms: 0, source: "mic" },
-          { id: "2", text: "Second entry", timestamp_ms: 1000, source: "mic" },
-          { id: "3", text: "Gap entry", timestamp_ms: 5000, source: "mic" }, // 4s gap
-          { id: "4", text: "Fourth entry", timestamp_ms: 6000, source: "mic" },
-        ];
-
-        // Generate silence-based chapters
-        const chapters = generateSilenceBasedChapters(entries, 2000);
-        expect(chapters).toHaveLength(2);
-
-        // Export with chapters available
-        const jsonExport = buildExportText(entries, "json");
-        const parsed = JSON.parse(jsonExport);
-        expect(parsed.entries).toHaveLength(4);
-
-        // Verify chapter structure (chapters only have entry_count, not entries array)
-        expect(chapters[0].entry_count).toBe(2);
-        expect(chapters[1].entry_count).toBe(2);
-      });
-
-      it("hybrid chapters handle max duration correctly", () => {
-        const entries: HistoryEntry[] = [];
-        const baseTime = Date.now();
-
-        // Create entries spanning 25 minutes (should trigger max duration split)
-        for (let i = 0; i < 10; i++) {
-          entries.push({
-            id: `e${i}`,
-            text: `Entry ${i}`,
-            timestamp_ms: baseTime + i * 3 * 60 * 1000, // 3 min intervals
-            source: "mic",
-          });
-        }
-
-        const chapters = generateHybridChapters(entries, 2000, 10 * 60 * 1000); // 10 min max
-        expect(chapters.length).toBeGreaterThan(2); // Should split into multiple chapters
-
-        // Export and verify
-        const jsonExport = buildExportText(entries, "json");
-        const parsed = JSON.parse(jsonExport);
-        expect(parsed.entry_count).toBe(10);
-      });
-    });
-
     describe("Topic Detection Integration", () => {
       it("detects topics in realistic transcript", () => {
         const entries: HistoryEntry[] = [
@@ -741,15 +491,11 @@ describe("chapter generation", () => {
           { id: "c4", text: "Noted", timestamp_ms: 6000, source: "output" },
         ];
 
-        // Step 2: Generate chapters
-        const chapters = generateSilenceBasedChapters(capturedEntries, 2000);
-        expect(chapters).toHaveLength(2); // Gap at 3s creates 2 chapters
-
-        // Step 3: Verify entries are processable (sorted by timestamp)
+        // Step 2: Verify entries are processable (sorted by timestamp)
         const sortedEntries = [...capturedEntries].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
         expect(sortedEntries).toHaveLength(4);
 
-        // Step 4: Export in all formats
+        // Step 3: Export in all formats
         const formats: ExportFormat[] = ["txt", "md", "json"];
         formats.forEach((format) => {
           const exported = buildExportText(capturedEntries, format);
@@ -761,12 +507,6 @@ describe("chapter generation", () => {
             expect(parsed.entries).toHaveLength(4);
           }
         });
-
-        // Step 5: Verify chapter metadata
-        expect(chapters[0].entry_count).toBe(2);
-        expect(chapters[1].entry_count).toBe(2);
-        expect(chapters[0].id).toBe("chapter-silence-1");
-        expect(chapters[1].id).toBe("chapter-silence-2");
       });
 
       it("handles large transcript export performance", () => {

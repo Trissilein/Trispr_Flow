@@ -1,12 +1,13 @@
 // History management and panel state functions
 
+import { invoke } from "@tauri-apps/api/core";
 import { escapeHtml } from "./utils";
 import type { HistoryEntry, HistoryTab, TopicScore } from "./types";
 import { history, transcribeHistory, currentHistoryTab, setCurrentHistoryTab as setCurrentTab } from "./state";
 import * as dom from "./dom-refs";
 import { formatTime } from "./ui-helpers";
-import { updateChaptersVisibility } from "./chapters";
 import { updateRangeAria } from "./accessibility";
+import { showToast } from "./toast";
 import {
   getHistoryAliases,
   getHistoryFontSize,
@@ -33,199 +34,6 @@ export function buildConversationText(entries: HistoryEntry[]) {
 }
 
 export type ExportFormat = "txt" | "md" | "json";
-
-export interface Chapter {
-  id: string;
-  label: string;
-  timestamp_ms: number;
-  entry_count: number;
-}
-
-/**
- * Generates chapters based on time intervals
- * @param entries - History entries to segment
- * @param intervalMinutes - Time interval in minutes between chapters (default: 5)
- * @returns Array of chapters
- */
-export function generateTimeBasedChapters(entries: HistoryEntry[], intervalMinutes: number = 5): Chapter[] {
-  if (!entries.length) return [];
-
-  const sortedEntries = [...entries].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
-  const intervalMs = intervalMinutes * 60 * 1000;
-  const startTime = sortedEntries[0].timestamp_ms;
-
-  const chapters: Chapter[] = [];
-  let currentChapterTime = startTime;
-  let currentChapterEntries = 0;
-  let chapterIndex = 1;
-
-  sortedEntries.forEach((entry) => {
-    const timeSinceChapter = entry.timestamp_ms - currentChapterTime;
-
-    if (timeSinceChapter >= intervalMs && currentChapterEntries > 0) {
-      // Create chapter
-      chapters.push({
-        id: `chapter-${chapterIndex}`,
-        label: `Chapter ${chapterIndex}`,
-        timestamp_ms: currentChapterTime,
-        entry_count: currentChapterEntries,
-      });
-
-      // Start new chapter
-      currentChapterTime = entry.timestamp_ms;
-      currentChapterEntries = 1;
-      chapterIndex++;
-    } else {
-      currentChapterEntries++;
-    }
-  });
-
-  // Add final chapter
-  if (currentChapterEntries > 0) {
-    chapters.push({
-      id: `chapter-${chapterIndex}`,
-      label: `Chapter ${chapterIndex}`,
-      timestamp_ms: currentChapterTime,
-      entry_count: currentChapterEntries,
-    });
-  }
-
-  return chapters;
-}
-
-/**
- * Generates chapters based on silence gaps between entries
- * @param entries - History entries to segment
- * @param silenceThresholdMs - Minimum silence gap in milliseconds to trigger new chapter (default: 2000ms = 2s)
- * @returns Array of chapters
- */
-export function generateSilenceBasedChapters(entries: HistoryEntry[], silenceThresholdMs: number = 2000): Chapter[] {
-  if (!entries.length) return [];
-
-  const sortedEntries = [...entries].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
-  const chapters: Chapter[] = [];
-  let currentChapterStartTime = sortedEntries[0].timestamp_ms;
-  let currentChapterEntries: HistoryEntry[] = [];
-  let chapterIndex = 1;
-
-  sortedEntries.forEach((entry, index) => {
-    const isLastEntry = index === sortedEntries.length - 1;
-
-    // Add entry to current chapter
-    currentChapterEntries.push(entry);
-
-    if (!isLastEntry) {
-      const nextEntry = sortedEntries[index + 1];
-      const silenceGap = nextEntry.timestamp_ms - entry.timestamp_ms;
-
-      // If silence gap exceeds threshold, create a new chapter
-      if (silenceGap >= silenceThresholdMs) {
-        chapters.push({
-          id: `chapter-silence-${chapterIndex}`,
-          label: `Chapter ${chapterIndex}`,
-          timestamp_ms: currentChapterStartTime,
-          entry_count: currentChapterEntries.length,
-        });
-
-        // Start new chapter
-        currentChapterStartTime = nextEntry.timestamp_ms;
-        currentChapterEntries = [];
-        chapterIndex++;
-      }
-    } else {
-      // Last entry - finalize current chapter
-      if (currentChapterEntries.length > 0) {
-        chapters.push({
-          id: `chapter-silence-${chapterIndex}`,
-          label: `Chapter ${chapterIndex}`,
-          timestamp_ms: currentChapterStartTime,
-          entry_count: currentChapterEntries.length,
-        });
-      }
-    }
-  });
-
-  return chapters;
-}
-
-/**
- * Generates chapters using hybrid approach (silence + time)
- * @param entries - History entries to segment
- * @param silenceThresholdMs - Minimum silence gap to trigger new chapter (default: 2000ms)
- * @param maxChapterDurationMs - Maximum chapter duration before forcing split (default: 10 minutes)
- * @returns Array of chapters
- */
-export function generateHybridChapters(
-  entries: HistoryEntry[],
-  silenceThresholdMs: number = 2000,
-  maxChapterDurationMs: number = 10 * 60 * 1000
-): Chapter[] {
-  if (!entries.length) return [];
-
-  const sortedEntries = [...entries].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
-  const chapters: Chapter[] = [];
-  let currentChapterStartTime = sortedEntries[0].timestamp_ms;
-  let currentChapterEntries: HistoryEntry[] = [];
-  let chapterIndex = 1;
-
-  sortedEntries.forEach((entry, index) => {
-    const isLastEntry = index === sortedEntries.length - 1;
-
-    // Check if adding this entry would exceed max duration
-    const chapterDurationWithEntry = entry.timestamp_ms - currentChapterStartTime;
-    const wouldExceedDuration = chapterDurationWithEntry >= maxChapterDurationMs && currentChapterEntries.length > 0;
-
-    // If adding this entry would force a break, create chapter BEFORE adding it
-    if (wouldExceedDuration) {
-      chapters.push({
-        id: `chapter-hybrid-${chapterIndex}`,
-        label: `Chapter ${chapterIndex}`,
-        timestamp_ms: currentChapterStartTime,
-        entry_count: currentChapterEntries.length,
-      });
-
-      // Start new chapter with current entry
-      currentChapterStartTime = entry.timestamp_ms;
-      currentChapterEntries = [];
-      chapterIndex++;
-    }
-
-    // Add entry to current chapter
-    currentChapterEntries.push(entry);
-
-    if (!isLastEntry) {
-      const nextEntry = sortedEntries[index + 1];
-      const silenceGap = nextEntry.timestamp_ms - entry.timestamp_ms;
-
-      // Create new chapter if silence gap exceeded
-      if (silenceGap >= silenceThresholdMs) {
-        chapters.push({
-          id: `chapter-hybrid-${chapterIndex}`,
-          label: `Chapter ${chapterIndex}`,
-          timestamp_ms: currentChapterStartTime,
-          entry_count: currentChapterEntries.length,
-        });
-
-        // Start new chapter with the NEXT entry
-        currentChapterStartTime = nextEntry.timestamp_ms;
-        currentChapterEntries = [];
-        chapterIndex++;
-      }
-    } else {
-      // Last entry - finalize current chapter
-      if (currentChapterEntries.length > 0) {
-        chapters.push({
-          id: `chapter-hybrid-${chapterIndex}`,
-          label: `Chapter ${chapterIndex}`,
-          timestamp_ms: currentChapterStartTime,
-          entry_count: currentChapterEntries.length,
-        });
-      }
-    }
-  });
-
-  return chapters;
-}
 
 // ---------------------------------------------------------------------------
 // Export helper functions
@@ -526,7 +334,6 @@ export const DEFAULT_TOPICS: TopicKeywords = {
   ],
 };
 
-let manualChapters: Chapter[] = [];
 let topicKeywords: TopicKeywords = { ...DEFAULT_TOPICS };
 
 // Module-level regex cache: keyword string → compiled RegExp.
@@ -562,52 +369,6 @@ function countTopicKeywordHits(text: string, regex: RegExp): number {
     }
   }
   return hits;
-}
-
-/**
- * Get current manual chapters
- */
-export function getManualChapters(): Chapter[] {
-  return [...manualChapters];
-}
-
-/**
- * Add manual chapter at current position
- * @param label - Chapter label
- * @param timestamp_ms - Timestamp in milliseconds
- * @returns Updated chapters array
- */
-export function addManualChapter(label: string, timestamp_ms: number): Chapter[] {
-  const entries = buildConversationHistory();
-  const relevantEntries = entries.filter((e) => e.timestamp_ms >= timestamp_ms);
-
-  const chapter: Chapter = {
-    id: `chapter-manual-${Date.now()}`,
-    label: label || `Chapter ${manualChapters.length + 1}`,
-    timestamp_ms,
-    entry_count: relevantEntries.length,
-  };
-
-  manualChapters = [...manualChapters, chapter].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
-  return manualChapters;
-}
-
-/**
- * Remove manual chapter by ID
- */
-export function removeManualChapter(chapterId: string): Chapter[] {
-  manualChapters = manualChapters.filter((c) => c.id !== chapterId);
-  return manualChapters;
-}
-
-/**
- * Update manual chapter label
- */
-export function updateChapterLabel(chapterId: string, newLabel: string): Chapter[] {
-  manualChapters = manualChapters.map((c) =>
-    c.id === chapterId ? { ...c, label: newLabel } : c
-  );
-  return manualChapters;
 }
 
 /**
@@ -1006,6 +767,23 @@ function buildRefinementChip(entry: HistoryEntry): HTMLElement {
   return chip;
 }
 
+function buildHistoryActionButton(action: "copy" | "delete"): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.dataset.action = action;
+  if (action === "delete") {
+    button.className = "history-delete-btn";
+    button.textContent = "\u{1F5D1}";
+    button.title = "Delete transcript entry from history";
+    button.setAttribute("aria-label", "Delete transcript entry");
+    return button;
+  }
+
+  button.textContent = "Copy";
+  button.title = "Copy transcript text to clipboard";
+  button.setAttribute("aria-label", "Copy transcript text");
+  return button;
+}
+
 function buildConversationMessage(entry: HistoryEntry, role: "mic" | "system"): HTMLElement {
   const sender = speakerName(entry);
 
@@ -1029,7 +807,15 @@ function buildConversationMessage(entry: HistoryEntry, role: "mic" | "system"): 
 
   const metaRight = document.createElement("span");
   metaRight.className = "chat-message-meta-right";
-  metaRight.append(timeEl, buildRefinementChip(entry));
+
+  const actions = document.createElement("span");
+  actions.className = "history-actions chat-message-actions";
+  actions.append(
+    buildHistoryActionButton("copy"),
+    buildHistoryActionButton("delete")
+  );
+
+  metaRight.append(timeEl, buildRefinementChip(entry), actions);
 
   meta.append(senderEl, metaRight);
 
@@ -1122,7 +908,7 @@ export function renderHistory() {
   dataset.forEach((entry) => {
     const wrapper = document.createElement("div");
     wrapper.className = "history-item history-entry"; // For search highlighting
-    wrapper.dataset.entryId = entry.id; // For chapter navigation
+    wrapper.dataset.entryId = entry.id;
 
     const textWrap = document.createElement("div");
     textWrap.className = "history-content";
@@ -1163,13 +949,10 @@ export function renderHistory() {
 
     const actions = document.createElement("div");
     actions.className = "history-actions";
-
-    const copyButton = document.createElement("button");
-    copyButton.textContent = "Copy";
-    copyButton.title = "Copy transcript text to clipboard";
-    // Click handled by delegated listener on historyList (see initHistoryDelegation)
-
-    actions.appendChild(copyButton);
+    actions.append(
+      buildHistoryActionButton("copy"),
+      buildHistoryActionButton("delete")
+    );
 
     wrapper.appendChild(textWrap);
     wrapper.appendChild(actions);
@@ -1184,7 +967,7 @@ export function renderHistory() {
  */
 export function initHistoryDelegation(): void {
   if (!dom.historyList) return;
-  dom.historyList.addEventListener("click", (e) => {
+  dom.historyList.addEventListener("click", async (e) => {
     const target = e.target as Element;
 
     // Topic badge: filter by topic on click
@@ -1196,16 +979,45 @@ export function initHistoryDelegation(): void {
       return;
     }
 
-    // Copy button: look up entry by wrapper's data-entry-id
-    const button = target.closest(".history-actions button");
+    // Row action button: copy/delete for the associated entry id.
+    const button = target.closest<HTMLButtonElement>(".history-actions button[data-action]");
     if (button) {
+      e.stopPropagation();
       const wrapper = target.closest("[data-entry-id]");
       const entryId = (wrapper as HTMLElement | null)?.dataset.entryId;
       if (!entryId) return;
-      const entry = [...history, ...transcribeHistory].find((e) => e.id === entryId);
-      if (entry) {
-        const text = buildEntryTextPresentation(entry, "history-text").displayText;
-        navigator.clipboard.writeText(text).catch(() => {});
+
+      const action = button.dataset.action;
+      if (action === "copy") {
+        const entry = [...history, ...transcribeHistory].find((item) => item.id === entryId);
+        if (entry) {
+          const text = buildEntryTextPresentation(entry, "history-text").displayText;
+          navigator.clipboard.writeText(text).catch(() => {});
+        }
+        return;
+      }
+
+      if (action === "delete") {
+        const confirmed = window.confirm(
+          "Delete this transcript entry permanently?\n\nThis cannot be undone."
+        );
+        if (!confirmed) return;
+        try {
+          const deleted = await invoke<number>("delete_active_transcript_entry", { entryId });
+          if (deleted === 0) {
+            showToast({
+              type: "info",
+              title: "Entry not found",
+              message: "The selected entry is no longer in the active history.",
+            });
+          }
+        } catch (error) {
+          showToast({
+            type: "error",
+            title: "Delete failed",
+            message: String(error),
+          });
+        }
       }
     }
   });
@@ -1217,5 +1029,4 @@ export function setHistoryTab(tab: HistoryTab) {
   if (dom.historyTabSystem) dom.historyTabSystem.classList.toggle("active", tab === "system");
   if (dom.historyTabConversation) dom.historyTabConversation.classList.toggle("active", tab === "conversation");
   scheduleHistoryRender();
-  updateChaptersVisibility();
 }

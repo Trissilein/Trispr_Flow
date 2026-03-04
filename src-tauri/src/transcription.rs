@@ -1105,11 +1105,6 @@ fn run_transcribe_loopback(
         TRANSCRIBE_IDLE_METER_MS
     };
 
-    // Chapter silence detection state
-    let mut chapter_silence_enabled = settings.chapter_silence_enabled;
-    let mut chapter_silence_threshold_ms = settings.chapter_silence_threshold_ms;
-    let mut chapter_detected_for_current_silence = false;
-
     loop {
         match stop_rx.try_recv() {
             Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
@@ -1157,8 +1152,6 @@ fn run_transcribe_loopback(
                 vad_threshold = current.transcribe_vad_threshold;
                 vad_silence_ms = current.transcribe_vad_silence_ms;
                 segmenter.update_config(system_segmenter_config(&current));
-                chapter_silence_enabled = current.chapter_silence_enabled;
-                chapter_silence_threshold_ms = current.chapter_silence_threshold_ms;
                 monitor_threshold = if vad_enabled {
                     vad_threshold
                 } else {
@@ -1222,23 +1215,6 @@ fn run_transcribe_loopback(
             if next_state != last_state {
                 let _ = app.emit("transcribe:state", next_state);
                 last_state = next_state;
-            }
-
-            // Chapter silence detection
-            if chapter_silence_enabled && !active {
-                let silence_duration_ms = last_activity.elapsed().as_millis() as u64;
-                if silence_duration_ms >= chapter_silence_threshold_ms
-                    && !chapter_detected_for_current_silence
-                {
-                    let timestamp_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis() as u64;
-                    let _ = app.emit("chapter:detected", timestamp_ms);
-                    chapter_detected_for_current_silence = true;
-                }
-            } else if active {
-                chapter_detected_for_current_silence = false;
             }
         }
 

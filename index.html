@@ -112,6 +112,9 @@
         <button id="tab-btn-ai-refinement" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-ai-refinement">
           AI Refinement
         </button>
+        <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules">
+          Modules
+        </button>
       </div>
 
       <div class="layout-grid">
@@ -171,6 +174,14 @@
                   </label>
                 </div>
                 <button id="history-copy-conversation" class="ghost-btn" title="Copy the full conversation to clipboard">Copy</button>
+                <button
+                  id="history-delete-conversation"
+                  class="ghost-btn history-delete-btn"
+                  title="Delete the full transcript from history"
+                  aria-label="Delete full transcript from history"
+                >
+                  &#128465;
+                </button>
                 <button id="analyse-button" class="ghost-btn" title="Analyse module coming soon">
                   Analyse
                 </button>
@@ -195,20 +206,6 @@
               <input id="history-search" type="text" class="history-search-input" placeholder="Search transcripts..."
                      title="Filter transcripts by keyword" />
               <button id="history-search-clear" class="history-search-clear" title="Clear search">×</button>
-            </div>
-            <div id="chapters-container" class="chapters-container" style="display: none;">
-              <div class="chapters-header">
-                <span class="chapters-title">📑 Chapters</span>
-                <div class="chapters-controls">
-                  <select id="chapter-method" class="chapter-method-select" title="Chapter generation method">
-                    <option value="silence">Silence-based</option>
-                    <option value="time">Time-based (5min)</option>
-                    <option value="hybrid">Hybrid</option>
-                  </select>
-                  <button id="chapters-toggle" class="ghost-btn" title="Hide chapters">Hide</button>
-                </div>
-              </div>
-              <div id="chapters-list" class="chapters-list"></div>
             </div>
             <div id="history-list" class="history-list"></div>
             <details id="refinement-inspector" class="expander refinement-inspector" open>
@@ -298,37 +295,6 @@
                 <option value="vad">Voice Activation</option>
               </select>
             </label>
-            <label class="field" data-expert-only="true">
-              <span class="field-label">Language</span>
-              <select id="language-select" title="Transcription language (or Auto-detect)">
-                <option value="auto">Auto-detect</option>
-                <option value="en">English</option>
-                <option value="de">Deutsch (German)</option>
-                <option value="fr">Français (French)</option>
-                <option value="es">Español (Spanish)</option>
-                <option value="it">Italiano (Italian)</option>
-                <option value="pt">Português (Portuguese)</option>
-                <option value="nl">Nederlands (Dutch)</option>
-                <option value="pl">Polski (Polish)</option>
-                <option value="ru">Русский (Russian)</option>
-                <option value="ja">日本語 (Japanese)</option>
-                <option value="ko">한국어 (Korean)</option>
-                <option value="zh">中文 (Chinese)</option>
-                <option value="ar">العربية (Arabic)</option>
-                <option value="tr">Türkçe (Turkish)</option>
-                <option value="hi">हिन्दी (Hindi)</option>
-              </select>
-            </label>
-            <label class="field toggle" data-expert-only="true">
-              <div class="toggle-row">
-                <span class="field-label">Pin language</span>
-                <input id="language-pinned-toggle" type="checkbox" title="Lock to selected language instead of auto-detecting" />
-                <span class="toggle-track">
-                  <span class="toggle-thumb"></span>
-                </span>
-              </div>
-              <span class="toggle-hint">Force selected language instead of auto-detection</span>
-            </label>
             <div id="hotkeys-block" class="field-group">
               <div class="field hotkey-field">
                 <span class="field-label">PTT hotkey (hold)</span>
@@ -360,13 +326,16 @@
                       role="status"
                       aria-live="polite"></span>
               </div>
-              <label class="field toggle" data-expert-only="true">
-                <span class="field-label">Use Voice Activation in PTT</span>
-                <input id="ptt-use-vad-toggle" type="checkbox" title="Detect speech automatically while holding the PTT key" />
+              <div class="field toggle-with-hint" data-expert-only="true">
+                <label class="toggle-row" for="ptt-use-vad-toggle">
+                  <span class="field-label">Use Voice Activation in PTT</span>
+                  <input id="ptt-use-vad-toggle" type="checkbox" title="Detect speech automatically while holding the PTT key" />
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
                 <span class="toggle-hint">Only record when audio exceeds threshold, even while holding PTT key</span>
-              </label>
+              </div>
             </div>
-            <div id="vad-block" class="field-group hidden" data-expert-only="true">
+            <div id="vad-block" class="field-group hidden">
               <label class="field range">
                 <span class="field-label">Voice Activation threshold</span>
                 <div class="range-row">
@@ -380,7 +349,7 @@
                   <span id="vad-threshold-value" class="range-value" aria-live="polite">-34 dB</span>
                 </div>
               </label>
-              <label class="field range">
+              <label class="field range" data-expert-only="true">
                 <span class="field-label">Silence grace</span>
                 <div class="range-row">
                   <input id="vad-silence" type="range" min="200" max="4000" step="50"
@@ -603,14 +572,14 @@
                 <span class="toggle-thumb"></span>
               </span>
             </label>
-            <label class="field toggle">
+            <label class="field toggle" data-expert-only="true">
               <span class="field-label">Intelligent auto-dumping</span>
               <input id="continuous-dump-enabled-toggle" type="checkbox" title="Automatically split and flush long system audio recordings" />
               <span class="toggle-track">
                 <span class="toggle-thumb"></span>
               </span>
             </label>
-            <label class="field span-2">
+            <label class="field span-2" data-expert-only="true">
               <span class="field-label">Auto-dump profile</span>
               <select id="continuous-dump-profile" title="Pre-set timing profile for continuous audio splitting">
                 <option value="balanced">Balanced (recommended)</option>
@@ -632,7 +601,7 @@
                 <span id="transcribe-vad-threshold-value" class="range-value" aria-live="polite">-28 dB</span>
               </div>
             </label>
-            <label class="field range" id="transcribe-vad-silence-field">
+            <label class="field range" id="transcribe-vad-silence-field" data-expert-only="true">
               <span class="field-label">Silence grace</span>
               <div class="range-row">
                 <input id="transcribe-vad-silence" type="range" min="200" max="5000" step="100"
@@ -1179,38 +1148,6 @@
               <button id="apply-overlay-btn" class="button primary" title="Apply overlay position and style settings" style="margin-top: 12px; width: 100%;">Apply Overlay Settings</button>
             </div>
           </details>
-          <details class="expander">
-            <summary>Chapters</summary>
-            <div class="expander-body">
-              <div class="field toggle">
-                <label class="toggle-row">
-                  <span class="field-label">Enable chapters</span>
-                  <input id="chapters-enabled" type="checkbox" title="Automatically add chapter markers to long transcripts" />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                </label>
-                <span class="toggle-hint">Show chapter markers in long transcripts</span>
-              </div>
-              <div id="chapters-settings" style="display: none;">
-                <label class="field">
-                  <span class="field-label">Show chapters in</span>
-                  <select id="chapters-show-in" title="Panel where chapter markers are displayed">
-                    <option value="conversation">Conversation tab only</option>
-                    <option value="all">All tabs</option>
-                  </select>
-                  <span class="field-hint">Conversation mode recommended for meetings and lectures</span>
-                </label>
-                <label class="field">
-                  <span class="field-label">Chapter generation method</span>
-                  <select id="chapters-method" title="Algorithm used to detect chapter boundaries">
-                    <option value="silence">Silence-based</option>
-                    <option value="time">Time-based (5min)</option>
-                    <option value="hybrid">Hybrid (recommended)</option>
-                  </select>
-                  <span class="field-hint">Hybrid combines silence detection with time-based fallback</span>
-                </label>
-              </div>
-            </div>
-          </details>
           </div>
         </section>
         </div>
@@ -1312,16 +1249,12 @@
                         <div class="expander-content">
                           <div id="postproc-settings" class="span-2" style="display: none;">
 
-                        <!-- Language -->
-                        <label class="field">
+                        <div class="field">
                           <span class="field-label">Processing language</span>
-                          <select id="postproc-language" title="Language used for rule-based post-processing">
-                            <option value="en">English</option>
-                            <option value="de">Deutsch (German)</option>
-                            <option value="multi">Multilingual (EN/DE)</option>
-                          </select>
-                          <span class="field-hint">Multilingual mode applies both English and German rules simultaneously</span>
-                        </label>
+                          <span id="postproc-language-derived" class="field-hint">
+                            Automatically derived from transcription language hint.
+                          </span>
+                        </div>
 
                         <!-- Rule-based toggles -->
                         <div class="field toggle">
@@ -1498,7 +1431,41 @@
                         <span class="field-hint">0.1 = very literal/minimal rewrites; 1.0 = aggressive reformulation.</span>
                       </label>
 
-                      <div class="field toggle span-2">
+                      <label id="asr-language-field" class="field">
+                        <span class="field-label">Transcription language hint</span>
+                        <select id="language-select" title="Language hint passed to ASR. Keep Auto-detect unless you need a fixed language.">
+                          <option value="auto">Auto-detect</option>
+                          <option value="en">English</option>
+                          <option value="de">Deutsch (German)</option>
+                          <option value="fr">Français (French)</option>
+                          <option value="es">Español (Spanish)</option>
+                          <option value="it">Italiano (Italian)</option>
+                          <option value="pt">Português (Portuguese)</option>
+                          <option value="nl">Nederlands (Dutch)</option>
+                          <option value="pl">Polski (Polish)</option>
+                          <option value="ru">Русский (Russian)</option>
+                          <option value="ja">日本語 (Japanese)</option>
+                          <option value="ko">한국어 (Korean)</option>
+                          <option value="zh">中文 (Chinese)</option>
+                          <option value="ar">العربية (Arabic)</option>
+                          <option value="tr">Türkçe (Turkish)</option>
+                          <option value="hi">हिन्दी (Hindi)</option>
+                        </select>
+                        <span id="asr-language-hint-note" class="field-hint">Auto-detect is active until language pinning is enabled.</span>
+                      </label>
+
+                      <label class="field toggle">
+                        <div class="toggle-row">
+                          <span class="field-label">Pin ASR language</span>
+                          <input id="language-pinned-toggle" type="checkbox" title="Lock ASR to the selected language instead of auto-detecting." />
+                          <span class="toggle-track">
+                            <span class="toggle-thumb"></span>
+                          </span>
+                        </div>
+                        <span class="toggle-hint">When off, ASR uses auto-detect and rule-based processing runs multilingual rules.</span>
+                      </label>
+
+                      <div class="field toggle span-2" data-expert-only="true">
                         <label class="toggle-row">
                           <span class="field-label">Preserve source language</span>
                           <input id="ai-fallback-preserve-language" type="checkbox" title="Keep refinement output in the same language as input. Default: enabled." />
@@ -1545,7 +1512,7 @@
                         </select>
                       </label>
 
-                      <div id="ai-fallback-prompt-preview-field" class="field span-2" data-expert-only="true">
+                      <div id="ai-fallback-prompt-preview-field" class="field span-2">
                         <span id="ai-fallback-prompt-preview-label" class="field-label">Prompt preview</span>
                         <textarea id="ai-fallback-custom-prompt" rows="6" placeholder="Define your custom refinement prompt..."
                                   title="Prompt sent to the AI before each refinement"></textarea>
@@ -1591,6 +1558,24 @@
                 </details>
               </div>
 
+            </div>
+          </section>
+        </div>
+
+        <!-- Modules Tab -->
+        <div id="tab-modules" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-modules">
+          <section class="panel modules-panel" style="--delay: 0.12s">
+            <div class="panel-header">
+              <div class="panel-title">
+                <h2>Modules</h2>
+                <p>Managed modules with explicit permissions, lifecycle state, and health checks.</p>
+              </div>
+              <div class="panel-actions">
+                <span id="modules-status" class="field-hint">Loading…</span>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div id="modules-list" class="modules-list"></div>
             </div>
           </section>
         </div>
@@ -1724,6 +1709,104 @@
             <div id="archive-entries" class="archive-entries"></div>
           </section>
         </div>
+      </div>
+    </div>
+
+    <div id="gdd-flow-modal" class="auth-modal" hidden>
+      <div id="gdd-flow-backdrop" class="auth-modal-backdrop"></div>
+      <div class="auth-modal-card gdd-flow-modal-card" role="dialog" aria-modal="true" aria-labelledby="gdd-flow-title-label">
+        <div class="auth-modal-header">
+          <h3 id="gdd-flow-title-label" class="ai-refine-section-title">GDD Draft Generator</h3>
+          <button id="gdd-flow-close" type="button" class="hotkey-record-btn">Close</button>
+        </div>
+
+        <div class="gdd-flow-grid">
+          <label class="field">
+            <span class="field-label">Preset</span>
+            <select id="gdd-flow-preset"></select>
+          </label>
+          <div class="field">
+            <span class="field-label">Preset Recognition</span>
+            <button id="gdd-flow-detect-preset" type="button" class="hotkey-record-btn">Auto-detect Preset</button>
+          </div>
+
+          <label class="field">
+            <span class="field-label">Draft title</span>
+            <input id="gdd-flow-title" type="text" placeholder="Game Design Document" />
+          </label>
+        </div>
+
+        <label class="field">
+          <span class="field-label">Chunk size</span>
+          <select id="gdd-flow-max-chunk">
+            <option value="2200">2200 chars</option>
+            <option value="3500" selected>3500 chars (recommended)</option>
+            <option value="5000">5000 chars</option>
+            <option value="7000">7000 chars</option>
+          </select>
+        </label>
+
+        <div class="gdd-template-box">
+          <label class="field">
+            <span class="field-label">Template source (optional)</span>
+            <select id="gdd-flow-template-source">
+              <option value="none">No external template</option>
+              <option value="confluence">Confluence page URL</option>
+              <option value="file">PDF/DOCX/TXT file</option>
+            </select>
+          </label>
+
+          <div id="gdd-flow-template-confluence-group" class="gdd-template-group" hidden>
+            <label class="field">
+              <span class="field-label">Confluence page URL</span>
+              <input id="gdd-flow-template-confluence-url" type="url" placeholder="https://your-site.atlassian.net/wiki/.../pages/12345/..." />
+            </label>
+            <button id="gdd-flow-template-confluence-load" type="button" class="hotkey-record-btn">Load from Confluence</button>
+          </div>
+
+          <div id="gdd-flow-template-file-group" class="gdd-template-group" hidden>
+            <label class="field">
+              <span class="field-label">Template file</span>
+              <input id="gdd-flow-template-file-path" type="text" placeholder="No file selected" readonly />
+            </label>
+            <div class="gdd-template-file-actions">
+              <button id="gdd-flow-template-file-pick" type="button" class="hotkey-record-btn">Choose file</button>
+              <button id="gdd-flow-template-file-load" type="button" class="hotkey-record-btn">Load file</button>
+            </div>
+          </div>
+
+          <span id="gdd-flow-template-meta" class="field-hint">No template loaded.</span>
+          <textarea id="gdd-flow-template-preview" class="gdd-template-preview" rows="8" placeholder="Template preview appears here..." readonly></textarea>
+        </div>
+
+        <div class="auth-modal-actions">
+          <button id="gdd-flow-generate" type="button" class="hotkey-record-btn">Generate Draft</button>
+          <button id="gdd-flow-validate" type="button" class="hotkey-record-btn">Validate</button>
+        </div>
+
+        <span id="gdd-flow-status" class="field-hint">Uses the current conversation transcript as input.</span>
+        <div class="gdd-publish-box">
+          <div class="gdd-flow-grid">
+            <label class="field">
+              <span class="field-label">Confluence space key</span>
+              <input id="gdd-flow-space-key" type="text" placeholder="GAME" />
+            </label>
+            <label class="field">
+              <span class="field-label">Parent page id (optional)</span>
+              <input id="gdd-flow-parent-page-id" type="text" placeholder="123456789" />
+            </label>
+          </div>
+          <label class="field">
+            <span class="field-label">Target page id (optional)</span>
+            <input id="gdd-flow-target-page-id" type="text" placeholder="Leave empty to auto-create or title-match" />
+          </label>
+          <div class="auth-modal-actions">
+            <button id="gdd-flow-suggest-target" type="button" class="hotkey-record-btn">Suggest Target</button>
+            <button id="gdd-flow-publish" type="button" class="hotkey-record-btn">Publish to Confluence</button>
+          </div>
+          <a id="gdd-flow-publish-link" class="field-hint gdd-publish-link" href="#" target="_blank" rel="noopener" hidden>Open published page</a>
+        </div>
+        <textarea id="gdd-flow-output" class="gdd-output-preview" rows="12" placeholder="Draft output appears here..." readonly></textarea>
       </div>
     </div>
   </body>

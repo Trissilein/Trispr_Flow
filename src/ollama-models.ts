@@ -40,6 +40,27 @@ type CardStatus = "available" | "downloaded" | "active";
 
 export const OLLAMA_RECOMMENDED_MODELS = [
   {
+    name: "qwen3:4b",
+    label: "Qwen3 4B",
+    size_gb: 2.6,
+    profile: "Balanced (Qwen3)",
+    description: "Strong fallback option to Qwen3.5 with lower VRAM demand and stable multilingual refinement.",
+  },
+  {
+    name: "qwen3:8b",
+    label: "Qwen3 8B",
+    size_gb: 5.2,
+    profile: "Quality (Qwen3)",
+    description: "Good quality/speed tradeoff when you prefer Qwen3 behavior over Qwen3.5.",
+  },
+  {
+    name: "qwen3:14b",
+    label: "Qwen3 14B",
+    size_gb: 9.0,
+    profile: "Max Quality (Qwen3)",
+    description: "Highest-quality Qwen3 option for local refinement on larger GPUs.",
+  },
+  {
     name: "qwen3.5:0.8b",
     label: "Qwen3.5 0.8B",
     size_gb: 1.0,
@@ -830,13 +851,23 @@ function renderModelsSection(container: HTMLElement): void {
   const hint = document.createElement("p");
   hint.className = "field-hint";
   hint.textContent =
-    "Qwen3.5 local refinement lineup. Start with 4B for balance, use 9B for best quality. Model files are downloaded separately via this UI.";
+    "Qwen3 + Qwen3.5 local refinement lineup. Start with Qwen3:8b or Qwen3.5:4b for balance, then scale up for quality. Model files are downloaded separately via this UI.";
   section.appendChild(hint);
 
   const list = document.createElement("div");
   list.className = "model-list ollama-model-list";
 
-  OLLAMA_RECOMMENDED_MODELS.forEach((spec) => {
+  const orderedModels = OLLAMA_RECOMMENDED_MODELS
+    .map((spec, index) => {
+      const active = isModelActive(spec.name);
+      const installed = isModelInstalled(spec.name);
+      const rank = active ? 0 : installed ? 1 : 2;
+      return { spec, index, rank };
+    })
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((entry) => entry.spec);
+
+  orderedModels.forEach((spec) => {
     const installed = isModelInstalled(spec.name);
     const active = isModelActive(spec.name);
     const isPulling = ollamaPullProgress.has(spec.name) || activeOllamaPulls.has(spec.name);

@@ -17,9 +17,22 @@ import {
   isVerifiedAuthStatus,
   normalizeAIFallbackProvider,
 } from "./ai-provider-utils";
-import { settings, currentHistoryTab } from "./state";
+import { settings, currentHistoryTab, history, transcribeHistory } from "./state";
 import * as dom from "./dom-refs";
-import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, updateTranscribeVadVisibility, updateTranscribeThreshold, renderAIFallbackSettingsUi, renderTopicKeywords, ensureContinuousDumpDefaults } from "./settings";
+import {
+  persistSettings,
+  updateOverlayStyleVisibility,
+  applyOverlaySharedUi,
+  updateTranscribeVadVisibility,
+  updateTranscribeThreshold,
+  renderAIFallbackSettingsUi,
+  renderTopicKeywords,
+  ensureContinuousDumpDefaults,
+  resolveEffectiveAsrLanguageHint,
+  derivePostprocLanguageFromAsr,
+  syncCaptureModeVisibility,
+  syncDerivedLanguageSettings,
+} from "./settings";
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
 import { refreshModels, refreshModelsDir } from "./models";
@@ -31,7 +44,6 @@ import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
 import { applyAccentColor, DEFAULT_ACCENT_COLOR } from "./utils";
-import { updateChaptersVisibility } from "./chapters";
 import {
   DEFAULT_REFINEMENT_PROMPT_PRESET,
   normalizeRefinementPromptPreset,
@@ -277,6 +289,20 @@ function ensureAIFallbackSettingsDefaults() {
   settings.ai_fallback.execution_mode = "local_primary";
   settings.ai_fallback.provider = "ollama";
   settings.postproc_llm_provider = "ollama";
+  settings.postproc_language = derivePostprocLanguageFromAsr(
+    settings.language_mode,
+    settings.language_pinned
+  );
+  const effectiveLanguageHint = resolveEffectiveAsrLanguageHint(
+    settings.language_mode,
+    settings.language_pinned
+  );
+  settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+    settings.ai_fallback.prompt_profile,
+    effectiveLanguageHint,
+    settings.ai_fallback.custom_prompt,
+    settings.ai_fallback.preserve_source_language
+  );
   settings.topic_keywords = normalizeTopicKeywordsInput(settings.topic_keywords);
   setTopicKeywords(settings.topic_keywords);
   settings.providers.ollama.runtime_source ??= "manual";
@@ -304,6 +330,45 @@ function ensureAIFallbackSettingsDefaults() {
     ollama_remote_expert_opt_in: false,
   };
   settings.setup.ollama_remote_expert_opt_in ??= false;
+  settings.module_settings ??= {
+    enabled_modules: [],
+    consented_permissions: {},
+    module_overrides: {},
+  };
+  settings.module_settings.enabled_modules ??= [];
+  settings.module_settings.consented_permissions ??= {};
+  settings.module_settings.module_overrides ??= {};
+  settings.gdd_module_settings ??= {
+    enabled: false,
+    default_preset_id: "universal_strict",
+    detect_preset_automatically: true,
+    prefer_one_click_publish: false,
+    preset_clones: [],
+  };
+  settings.gdd_module_settings.default_preset_id ??= "universal_strict";
+  settings.gdd_module_settings.detect_preset_automatically ??= true;
+  settings.gdd_module_settings.prefer_one_click_publish ??= false;
+  settings.gdd_module_settings.preset_clones ??= [];
+  settings.confluence_settings ??= {
+    enabled: false,
+    site_base_url: "",
+    oauth_cloud_id: "",
+    default_space_key: "",
+    api_user_email: "",
+    default_parent_page_id: "",
+    auth_mode: "oauth",
+    routing_memory: {},
+  };
+  settings.confluence_settings.enabled ??= false;
+  settings.confluence_settings.site_base_url ??= "";
+  settings.confluence_settings.oauth_cloud_id ??= "";
+  settings.confluence_settings.default_space_key ??= "";
+  settings.confluence_settings.api_user_email ??= "";
+  settings.confluence_settings.default_parent_page_id ??= "";
+  settings.confluence_settings.auth_mode =
+    settings.confluence_settings.auth_mode === "api_token" ? "api_token" : "oauth";
+  settings.confluence_settings.routing_memory ??= {};
+  syncDerivedLanguageSettings();
 }
 
 
@@ -592,7 +657,7 @@ function addVocabRow(original: string, replacement: string) {
 }
 
 // Main tab switching
-type MainTab = "transcription" | "settings" | "ai-refinement";
+type MainTab = "transcription" | "settings" | "ai-refinement" | "modules";
 let aiRefinementTabRefreshInFlight: Promise<void> | null = null;
 
 async function refreshAiRefinementTabState(): Promise<void> {
@@ -620,18 +685,25 @@ async function refreshAiRefinementTabState(): Promise<void> {
   }
 }
 
+export function openMainTab(tab: MainTab) {
+  switchMainTab(tab);
+}
+
 function switchMainTab(tab: MainTab) {
   const isTranscription = tab === "transcription";
   const isSettings = tab === "settings";
   const isAiRefinement = tab === "ai-refinement";
+  const isModules = tab === "modules";
 
   dom.tabBtnTranscription?.classList.toggle("active", isTranscription);
   dom.tabBtnSettings?.classList.toggle("active", isSettings);
   dom.tabBtnAiRefinement?.classList.toggle("active", isAiRefinement);
+  dom.tabBtnModules?.classList.toggle("active", isModules);
 
   dom.tabBtnTranscription?.setAttribute("aria-selected", isTranscription.toString());
   dom.tabBtnSettings?.setAttribute("aria-selected", isSettings.toString());
   dom.tabBtnAiRefinement?.setAttribute("aria-selected", isAiRefinement.toString());
+  dom.tabBtnModules?.setAttribute("aria-selected", isModules.toString());
 
   // Update tab content visibility — clear any inline display styles first
   if (dom.tabTranscription) {
@@ -645,6 +717,10 @@ function switchMainTab(tab: MainTab) {
   if (dom.tabAiRefinement) {
     dom.tabAiRefinement.style.removeProperty("display");
     dom.tabAiRefinement.classList.toggle("active", isAiRefinement);
+  }
+  if (dom.tabModules) {
+    dom.tabModules.style.removeProperty("display");
+    dom.tabModules.classList.toggle("active", isModules);
   }
 
   // Persist to localStorage
@@ -669,7 +745,12 @@ function switchMainTab(tab: MainTab) {
 export function initMainTab() {
   try {
     const savedTab = localStorage.getItem("trispr-active-tab") as MainTab | null;
-    if (savedTab === "settings" || savedTab === "transcription" || savedTab === "ai-refinement") {
+    if (
+      savedTab === "settings" ||
+      savedTab === "transcription" ||
+      savedTab === "ai-refinement" ||
+      savedTab === "modules"
+    ) {
       switchMainTab(savedTab);
     } else {
       // Default to transcription tab
@@ -737,6 +818,9 @@ export function wireEvents() {
   dom.tabBtnAiRefinement?.addEventListener("click", () => {
     switchMainTab("ai-refinement");
   });
+  dom.tabBtnModules?.addEventListener("click", () => {
+    switchMainTab("modules");
+  });
 
   dom.captureEnabledToggle?.addEventListener("change", async () => {
     if (!settings) return;
@@ -755,6 +839,7 @@ export function wireEvents() {
   dom.modeSelect?.addEventListener("change", async () => {
     if (!settings) return;
     settings.mode = dom.modeSelect!.value as Settings["mode"];
+    syncCaptureModeVisibility(settings.mode, settings.ptt_use_vad);
     renderSettings();
     await persistSettings();
     renderHero();
@@ -856,13 +941,44 @@ export function wireEvents() {
     }
   });
 
+  dom.historyDeleteConversation?.addEventListener("click", async () => {
+    const totalEntries = history.length + transcribeHistory.length;
+    if (totalEntries === 0) {
+      showToast({
+        type: "info",
+        title: "Nichts zu löschen",
+        message: "Der aktuelle Verlauf ist bereits leer.",
+      });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Gesamtes Transkript (Input + System) aus dem aktuellen Verlauf löschen?\n\nDiese Aktion kann nicht rückgängig gemacht werden."
+    );
+    if (!confirmed) return;
+
+    try {
+      const deletedCount = await invoke<number>("clear_active_transcript_history");
+      showToast({
+        type: "success",
+        title: "Transkript gelöscht",
+        message: `${deletedCount} Einträge wurden dauerhaft entfernt.`,
+      });
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Löschen fehlgeschlagen",
+        message: String(error),
+      });
+    }
+  });
+
   dom.analyseButton?.addEventListener("click", () => {
-    showToast({
-      type: "info",
-      title: "Analyse module",
-      message: "Analyse module coming soon.",
-      duration: 2800,
-    });
+    switchMainTab("modules");
+    window.dispatchEvent(new CustomEvent("modules:focus", { detail: "analysis" }));
+  });
+  dom.openModulesBtn?.addEventListener("click", () => {
+    switchMainTab("modules");
   });
 
   dom.historyExport?.addEventListener("click", () => {
@@ -1047,13 +1163,35 @@ export function wireEvents() {
   dom.languageSelect?.addEventListener("change", async () => {
     if (!settings) return;
     settings.language_mode = dom.languageSelect!.value as Settings["language_mode"];
+    settings.postproc_language = derivePostprocLanguageFromAsr(
+      settings.language_mode,
+      settings.language_pinned
+    );
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      normalizeRefinementPromptPreset(settings.ai_fallback.prompt_profile),
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
     await persistSettings();
+    renderSettings();
   });
 
   dom.languagePinnedToggle?.addEventListener("change", async () => {
     if (!settings) return;
     settings.language_pinned = dom.languagePinnedToggle!.checked;
+    settings.postproc_language = derivePostprocLanguageFromAsr(
+      settings.language_mode,
+      settings.language_pinned
+    );
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      normalizeRefinementPromptPreset(settings.ai_fallback.prompt_profile),
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
     await persistSettings();
+    renderSettings();
   });
 
 
@@ -1067,6 +1205,7 @@ export function wireEvents() {
   dom.pttUseVadToggle?.addEventListener("change", async () => {
     if (!settings) return;
     settings.ptt_use_vad = dom.pttUseVadToggle!.checked;
+    syncCaptureModeVisibility(settings.mode, settings.ptt_use_vad);
     await persistSettings();
   });
 
@@ -1284,12 +1423,6 @@ export function wireEvents() {
     settings.postproc_enabled = dom.postprocEnabled!.checked;
     await persistSettings();
     scheduleSettingsRender();
-  });
-
-  dom.postprocLanguage?.addEventListener("change", async () => {
-    if (!settings || !dom.postprocLanguage) return;
-    settings.postproc_language = dom.postprocLanguage.value;
-    await persistSettings();
   });
 
   dom.postprocPunctuation?.addEventListener("change", async () => {
@@ -1645,7 +1778,7 @@ export function wireEvents() {
     settings.ai_fallback.preserve_source_language = dom.aiFallbackPreserveLanguage.checked;
     settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
       normalizeRefinementPromptPreset(settings.ai_fallback.prompt_profile),
-      settings.language_mode,
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
       settings.ai_fallback.custom_prompt,
       settings.ai_fallback.preserve_source_language
     );
@@ -1688,7 +1821,7 @@ export function wireEvents() {
     settings.ai_fallback.use_default_prompt = false;
     settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
       profile,
-      settings.language_mode,
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
       settings.ai_fallback.custom_prompt,
       settings.ai_fallback.preserve_source_language
     );
@@ -1705,7 +1838,7 @@ export function wireEvents() {
     settings.ai_fallback.use_default_prompt = false;
     settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
       "custom",
-      settings.language_mode,
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
       settings.ai_fallback.custom_prompt,
       settings.ai_fallback.preserve_source_language
     );
@@ -1723,7 +1856,7 @@ export function wireEvents() {
     settings.ai_fallback.use_default_prompt = false;
     settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
       "custom",
-      settings.language_mode,
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
       settings.ai_fallback.custom_prompt,
       settings.ai_fallback.preserve_source_language
     );
@@ -2053,35 +2186,6 @@ export function wireEvents() {
     if (!settings) return;
     await persistSettings();
     showToast({ title: "Applied", message: "Overlay settings applied", type: "success" });
-  });
-
-  // Chapter settings
-  dom.chaptersEnabled?.addEventListener("change", async () => {
-    if (!settings || !dom.chaptersEnabled) return;
-    settings.chapters_enabled = dom.chaptersEnabled.checked;
-
-    // Toggle visibility of chapter settings
-    if (dom.chaptersSettings) {
-      dom.chaptersSettings.style.display = dom.chaptersEnabled.checked ? "block" : "none";
-    }
-
-    await persistSettings();
-    scheduleSettingsRender();
-    updateChaptersVisibility();
-  });
-
-  dom.chaptersShowIn?.addEventListener("change", async () => {
-    if (!settings || !dom.chaptersShowIn) return;
-    settings.chapters_show_in = dom.chaptersShowIn.value as "conversation" | "all";
-    await persistSettings();
-    updateChaptersVisibility();
-  });
-
-  dom.chaptersMethod?.addEventListener("change", async () => {
-    if (!settings || !dom.chaptersMethod) return;
-    settings.chapters_method = dom.chaptersMethod.value as "silence" | "time" | "hybrid";
-    await persistSettings();
-    updateChaptersVisibility();
   });
 
   // Topic keywords reset

@@ -4,9 +4,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, ToSocketAddrs};
 use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -388,6 +391,24 @@ mod tests {
     assert!(validate_model_file_name("ggml large.bin").is_err());
     assert!(validate_model_file_name("ggml-large-v3.exe").is_err());
   }
+
+  #[test]
+  fn quant_type_accepts_q5_and_q8() {
+    let q5 = "q5_0".to_string();
+    let q8 = "Q8_0".to_string();
+    assert!(q5.eq_ignore_ascii_case("q5_0"));
+    assert!(q8.eq_ignore_ascii_case("q8_0"));
+  }
+
+  #[test]
+  fn quantized_file_name_detection_covers_q5_and_q8() {
+    let q5_name = "ggml-large-v3-turbo-q5_0.bin".to_ascii_lowercase();
+    let q8_name = "ggml-large-v3-turbo-q8_0.bin".to_ascii_lowercase();
+    let plain = "ggml-large-v3-turbo.bin".to_ascii_lowercase();
+    assert!(q5_name.contains("-q5_0") || q5_name.contains("-q8_0"));
+    assert!(q8_name.contains("-q5_0") || q8_name.contains("-q8_0"));
+    assert!(!(plain.contains("-q5_0") || plain.contains("-q8_0")));
+  }
 }
 
 fn find_model_in_dir(dir: &PathBuf, spec: &ModelSpec) -> Option<PathBuf> {
@@ -545,6 +566,153 @@ fn resolve_model_path_by_file(app: &AppHandle, file_name: &str) -> Option<PathBu
   }
 
   None
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct QuantizeProgressEvent {
+  file_name: String,
+  quant: String,
+  phase: String, // "starting" | "running" | "finalizing" | "done"
+  percent: Option<u8>,
+  message: String,
+}
+
+fn emit_quantize_progress(
+  app: &AppHandle,
+  file_name: &str,
+  quant: &str,
+  phase: &str,
+  percent: Option<u8>,
+  message: impl Into<String>,
+) {
+  let _ = app.emit(
+    "model:quantize-progress",
+    QuantizeProgressEvent {
+      file_name: file_name.to_string(),
+      quant: quant.to_string(),
+      phase: phase.to_string(),
+      percent,
+      message: message.into(),
+    },
+  );
+}
+
+fn parse_quantize_fraction(line: &str) -> Option<(u64, u64)> {
+  let bytes = line.as_bytes();
+  let mut i = 0usize;
+  while i < bytes.len() {
+    if bytes[i] != b'[' {
+      i += 1;
+      continue;
+    }
+    let mut j = i + 1;
+    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+      j += 1;
+    }
+    let start_cur = j;
+    while j < bytes.len() && bytes[j].is_ascii_digit() {
+      j += 1;
+    }
+    if j == start_cur {
+      i += 1;
+      continue;
+    }
+    let current = line[start_cur..j].parse::<u64>().ok()?;
+    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+      j += 1;
+    }
+    if j >= bytes.len() || bytes[j] != b'/' {
+      i += 1;
+      continue;
+    }
+    j += 1;
+    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+      j += 1;
+    }
+    let start_total = j;
+    while j < bytes.len() && bytes[j].is_ascii_digit() {
+      j += 1;
+    }
+    if j == start_total {
+      i += 1;
+      continue;
+    }
+    let total = line[start_total..j].parse::<u64>().ok()?;
+    if total == 0 || current > total {
+      i += 1;
+      continue;
+    }
+    return Some((current, total));
+  }
+  None
+}
+
+fn maybe_emit_quantize_percent(
+  app: &AppHandle,
+  file_name: &str,
+  quant: &str,
+  percent: u8,
+  message: &str,
+  progress_gate: &Arc<AtomicU8>,
+) {
+  let clamped = percent.min(99);
+  let mut prev = progress_gate.load(Ordering::Relaxed);
+  loop {
+    if prev != u8::MAX && clamped <= prev {
+      return;
+    }
+    match progress_gate.compare_exchange(prev, clamped, Ordering::Relaxed, Ordering::Relaxed) {
+      Ok(_) => {
+        emit_quantize_progress(
+          app,
+          file_name,
+          quant,
+          "running",
+          Some(clamped),
+          message.to_string(),
+        );
+        return;
+      }
+      Err(actual) => prev = actual,
+    }
+  }
+}
+
+fn spawn_quantize_output_reader<R: Read + Send + 'static>(
+  reader: R,
+  app: AppHandle,
+  file_name: String,
+  quant: String,
+  progress_gate: Arc<AtomicU8>,
+) -> thread::JoinHandle<()> {
+  thread::spawn(move || {
+    let mut buf = BufReader::new(reader);
+    let mut line = String::new();
+    loop {
+      line.clear();
+      match buf.read_line(&mut line) {
+        Ok(0) => break,
+        Ok(_) => {
+          let trimmed = line.trim();
+          if trimmed.is_empty() {
+            continue;
+          }
+          if let Some((current, total)) = parse_quantize_fraction(trimmed) {
+            let percent = ((current as f64 / total as f64) * 100.0).round() as u8;
+            maybe_emit_quantize_percent(
+              &app,
+              &file_name,
+              &quant,
+              percent,
+              "Quantizing model tensors...",
+              &progress_gate,
+            );
+          }
+        }
+        Err(_) => break,
+      }
+    }
+  })
 }
 
 #[derive(Debug, Clone)]
@@ -825,6 +993,7 @@ pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<Mod
       }
       let label = match file_name.as_str() {
         "ggml-large-v3-turbo-q5_0.bin" => "Whisper large-v3-turbo (q5_0)".to_string(),
+        "ggml-large-v3-turbo-q8_0.bin" => "Whisper large-v3-turbo (q8_0)".to_string(),
         _ => file_name.clone(),
       };
       let size_mb = entry
@@ -949,13 +1118,17 @@ pub(crate) fn quantize_model(
   if !file_name.ends_with(".bin") {
     return Err("Only .bin models can be quantized".to_string());
   }
-  if file_name.contains("-q5_0") {
+  let lower_file_name = file_name.to_ascii_lowercase();
+  if lower_file_name.contains("-q5_0") || lower_file_name.contains("-q8_0") {
     return Err("Model already looks quantized".to_string());
   }
 
-  let quant_type = quant.unwrap_or_else(|| "q5_0".to_string());
-  if quant_type != "q5_0" {
-    return Err("Only q5_0 is supported for now".to_string());
+  let quant_type = quant
+    .unwrap_or_else(|| "q5_0".to_string())
+    .trim()
+    .to_ascii_lowercase();
+  if quant_type != "q5_0" && quant_type != "q8_0" {
+    return Err("Unsupported quantization type. Supported: q5_0, q8_0".to_string());
   }
 
   let models_dir = resolve_models_dir(&app);
@@ -964,7 +1137,11 @@ pub(crate) fn quantize_model(
     return Err("Model file not found in app cache".to_string());
   }
 
-  let output_name = file_name.trim_end_matches(".bin").to_string() + "-q5_0.bin";
+  let output_name = format!(
+    "{}-{}.bin",
+    file_name.trim_end_matches(".bin"),
+    quant_type
+  );
   validate_model_file_name(&output_name)?;
   let output_path = models_dir.join(&output_name);
   if output_path.exists() {
@@ -974,8 +1151,23 @@ pub(crate) fn quantize_model(
   let quantize_path = resolve_quantize_path(&app)
     .ok_or_else(|| "quantize.exe not found. Install/bundle it or set TRISPR_WHISPER_QUANTIZE.".to_string())?;
 
+  emit_quantize_progress(
+    &app,
+    &file_name,
+    &quant_type,
+    "starting",
+    Some(0),
+    "Preparing quantizer...",
+  );
+
   let mut quantize_cmd = std::process::Command::new(quantize_path);
+  #[cfg(target_os = "windows")]
+  {
+    apply_quantize_windows_env(&mut quantize_cmd, &app);
+  }
   quantize_cmd
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
     .arg(&input_path)
     .arg(&output_path)
     .arg(&quant_type);
@@ -986,15 +1178,191 @@ pub(crate) fn quantize_model(
     quantize_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
   }
 
-  let status = quantize_cmd
-    .status()
+  let mut child = quantize_cmd
+    .spawn()
     .map_err(|e| format!("Failed to launch quantize: {e}"))?;
+  let progress_gate = Arc::new(AtomicU8::new(0));
+  let mut reader_handles = Vec::new();
 
-  if !status.success() {
-    return Err(format!("Quantize failed with exit code {}", status));
+  if let Some(stdout) = child.stdout.take() {
+    reader_handles.push(spawn_quantize_output_reader(
+      stdout,
+      app.clone(),
+      file_name.clone(),
+      quant_type.clone(),
+      progress_gate.clone(),
+    ));
+  }
+  if let Some(stderr) = child.stderr.take() {
+    reader_handles.push(spawn_quantize_output_reader(
+      stderr,
+      app.clone(),
+      file_name.clone(),
+      quant_type.clone(),
+      progress_gate.clone(),
+    ));
   }
 
+  let input_size_bytes = fs::metadata(&input_path).map(|m| m.len()).unwrap_or(0);
+  let expected_ratio = if quant_type == "q8_0" { 0.85f64 } else { 0.55f64 };
+  let expected_output_bytes = ((input_size_bytes as f64) * expected_ratio)
+    .max(1.0)
+    .round() as u64;
+
+  let status = loop {
+    match child.try_wait() {
+      Ok(Some(status)) => break status,
+      Ok(None) => {
+        if let Ok(meta) = fs::metadata(&output_path) {
+          if meta.len() > 0 && expected_output_bytes > 0 {
+            let approx_percent = ((meta.len() as f64 / expected_output_bytes as f64) * 100.0)
+              .round()
+              .clamp(1.0, 99.0) as u8;
+            maybe_emit_quantize_percent(
+              &app,
+              &file_name,
+              &quant_type,
+              approx_percent,
+              "Quantizing model...",
+              &progress_gate,
+            );
+          }
+        }
+        thread::sleep(Duration::from_millis(150));
+      }
+      Err(e) => return Err(format!("Failed while quantize was running: {e}")),
+    }
+  };
+
+  for handle in reader_handles {
+    let _ = handle.join();
+  }
+
+  if !status.success() {
+    #[cfg(target_os = "windows")]
+    if let Some(code) = status.code() {
+      let win_code = code as u32;
+      if win_code == 0xC0000135 {
+        return Err(format!(
+          "Quantize failed for {} (exit code 0x{win_code:08x}). Missing DLL dependency for quantize.exe. \
+Please reinstall/update Trispr Flow so runtime files in bin/cuda or bin/vulkan are present.",
+          quant_type
+        ));
+      }
+    }
+    return Err(format!(
+      "Quantize failed for {} ({})",
+      quant_type,
+      format_exit_status(status)
+    ));
+  }
+
+  emit_quantize_progress(
+    &app,
+    &file_name,
+    &quant_type,
+    "finalizing",
+    Some(99),
+    "Finalizing quantized model...",
+  );
+  emit_quantize_progress(
+    &app,
+    &file_name,
+    &quant_type,
+    "done",
+    Some(100),
+    "Quantization complete.",
+  );
+
   Ok(())
+}
+
+fn format_exit_status(status: std::process::ExitStatus) -> String {
+  #[cfg(target_os = "windows")]
+  {
+    if let Some(code) = status.code() {
+      return format!("exit code 0x{:08x}", code as u32);
+    }
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    if let Some(code) = status.code() {
+      return format!("exit code {}", code);
+    }
+  }
+  status.to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn apply_quantize_windows_env(cmd: &mut std::process::Command, app: &AppHandle) {
+  use std::ffi::OsString;
+
+  fn push_dir_if_exists(
+    dirs: &mut Vec<PathBuf>,
+    seen: &mut HashSet<OsString>,
+    dir: impl AsRef<std::path::Path>,
+  ) {
+    let dir = dir.as_ref();
+    if !dir.is_dir() {
+      return;
+    }
+    let key = dir.as_os_str().to_os_string();
+    if seen.insert(key) {
+      dirs.push(dir.to_path_buf());
+    }
+  }
+
+  let mut dll_dirs: Vec<PathBuf> = Vec::new();
+  let mut seen_dirs: HashSet<OsString> = HashSet::new();
+
+  if let Some(quantize_dir) = resolve_quantize_path(app).and_then(|p| p.parent().map(|d| d.to_path_buf())) {
+    push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, quantize_dir);
+  }
+
+  if let Ok(resource_dir) = app.path().resource_dir() {
+    push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, resource_dir.join("bin"));
+    push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, resource_dir.join("bin/cuda"));
+    push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, resource_dir.join("bin/vulkan"));
+  }
+
+  if let Ok(exe_path) = std::env::current_exe() {
+    if let Some(exe_dir) = exe_path.parent() {
+      push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, exe_dir);
+      push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, exe_dir.join("bin"));
+      push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, exe_dir.join("bin/cuda"));
+      push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, exe_dir.join("bin/vulkan"));
+    }
+  }
+
+  if let Ok(cwd) = std::env::current_dir() {
+    push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, cwd.join("src-tauri/bin"));
+    push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, cwd.join("src-tauri/bin/cuda"));
+    push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, cwd.join("src-tauri/bin/vulkan"));
+    push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, cwd.join("bin"));
+    push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, cwd.join("bin/cuda"));
+    push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, cwd.join("bin/vulkan"));
+  }
+
+  let mut merged_paths = dll_dirs.clone();
+  if let Some(existing) = std::env::var_os("PATH") {
+    for existing_path in std::env::split_paths(&existing) {
+      if existing_path.as_os_str().is_empty() {
+        continue;
+      }
+      let key = existing_path.as_os_str().to_os_string();
+      if seen_dirs.insert(key) {
+        merged_paths.push(existing_path);
+      }
+    }
+  }
+
+  if let Ok(joined_path) = std::env::join_paths(merged_paths) {
+    cmd.env("PATH", joined_path);
+  }
+
+  if let Some(first_dir) = dll_dirs.first() {
+    cmd.current_dir(first_dir);
+  }
 }
 
 #[tauri::command]

@@ -34,4 +34,10 @@ describe("refinement prompt presets", () => {
     const prompt = resolveEffectiveRefinementPrompt("wording", "en", "", true);
     expect(prompt).toContain("Keep the output in the same language as the input. Do not translate.");
   });
+
+  it("uses auto language-lock guard when language hint is auto", () => {
+    const prompt = resolveEffectiveRefinementPrompt("wording", "auto", "", true);
+    expect(prompt).toContain("Detect the input language and keep it unchanged.");
+    expect(prompt).toContain("preserve each segment in its original language");
+  });
 });

@@ -202,6 +202,79 @@ export function updateTranscribeThreshold(threshold: number) {
   }
 }
 
+function normalizeLanguageModeValue(languageMode: string | null | undefined): string {
+  const normalized = (languageMode || "auto").trim().toLowerCase();
+  if (!normalized) return "auto";
+  return normalized;
+}
+
+export function resolveEffectiveAsrLanguageHint(
+  languageMode: string | null | undefined,
+  languagePinned: boolean | null | undefined
+): string {
+  const normalized = normalizeLanguageModeValue(languageMode);
+  return languagePinned ? normalized : "auto";
+}
+
+export function derivePostprocLanguageFromAsr(
+  languageMode: string | null | undefined,
+  languagePinned: boolean | null | undefined
+): "en" | "de" | "multi" {
+  if (!languagePinned) return "multi";
+  const normalized = normalizeLanguageModeValue(languageMode);
+  if (normalized === "en") return "en";
+  if (normalized === "de") return "de";
+  return "multi";
+}
+
+function derivedPostprocLanguageLabel(postprocLanguage: "en" | "de" | "multi"): string {
+  if (postprocLanguage === "en") {
+    return "Derived: English rules (ASR language pinned to English).";
+  }
+  if (postprocLanguage === "de") {
+    return "Derived: German rules (ASR language pinned to German).";
+  }
+  return "Derived: Multilingual rules (ASR auto-detect or non EN/DE language).";
+}
+
+export function syncCaptureModeVisibility(mode: string, pttUseVad = false): void {
+  const hotkeysEnabled = mode === "ptt";
+  const vadEnabled = mode === "vad" || (mode === "ptt" && pttUseVad);
+  if (dom.hotkeysBlock) dom.hotkeysBlock.classList.toggle("hidden", !hotkeysEnabled);
+  if (dom.vadBlock) dom.vadBlock.classList.toggle("hidden", !vadEnabled);
+  // In PTT+VAD mode we only use threshold gating while the key is held.
+  // Silence grace is VAD-mode specific and should not appear for PTT.
+  const vadSilenceField = dom.vadSilence?.closest(".field");
+  if (vadSilenceField) {
+    vadSilenceField.classList.toggle("hidden", mode === "ptt");
+  }
+}
+
+export function syncDerivedLanguageSettings(): void {
+  if (!settings) return;
+  settings.postproc_language = derivePostprocLanguageFromAsr(
+    settings.language_mode,
+    settings.language_pinned
+  );
+}
+
+function syncAsrLanguageHintUi(): void {
+  if (!settings) return;
+  const pinned = Boolean(settings.language_pinned);
+  if (dom.languageSelect) {
+    dom.languageSelect.disabled = !pinned;
+    dom.languageSelect.setAttribute("aria-disabled", String(!pinned));
+  }
+  if (dom.asrLanguageField) {
+    dom.asrLanguageField.classList.toggle("is-disabled", !pinned);
+  }
+  if (dom.asrLanguageHintNote) {
+    dom.asrLanguageHintNote.textContent = pinned
+      ? "Pinned: ASR is locked to the selected language."
+      : "Auto-detect is active. Enable pinning to lock a specific ASR language.";
+  }
+}
+
 function normalizeRefiningIndicatorColor(value: string | undefined): string {
   return normalizeColorHex(value, "#6ec8ff");
 }
@@ -489,6 +562,7 @@ function renderRefinementPipelineNote() {
 export function renderAIFallbackSettingsUi() {
   if (!settings) return;
   ensureSetupDefaults();
+  syncDerivedLanguageSettings();
   CLOUD_PROVIDER_IDS.forEach((providerId) => {
     const providerSettings = getProviderSettings(providerId);
     if (!providerSettings) return;
@@ -631,9 +705,13 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackMaxTokens.value = String(ai?.max_tokens ?? 4000);
   }
   const promptProfile = normalizeRefinementPromptPreset(ai?.prompt_profile);
+  const effectiveLanguageHint = resolveEffectiveAsrLanguageHint(
+    settings.language_mode,
+    settings.language_pinned
+  );
   const promptPreview = resolveEffectiveRefinementPrompt(
     promptProfile,
-    settings.language_mode,
+    effectiveLanguageHint,
     ai?.custom_prompt,
     Boolean(ai?.preserve_source_language ?? true)
   );
@@ -660,18 +738,18 @@ export function renderSettings() {
   if (!settings) return;
   ensureContinuousDumpDefaults();
   ensureSetupDefaults();
+  syncDerivedLanguageSettings();
   applyOverlayDimensionSliderBounds();
   if (dom.captureEnabledToggle) dom.captureEnabledToggle.checked = settings.capture_enabled;
   if (dom.transcribeEnabledToggle) dom.transcribeEnabledToggle.checked = settings.transcribe_enabled;
   if (dom.modeSelect) dom.modeSelect.value = settings.mode;
   if (dom.pttHotkey) dom.pttHotkey.value = settings.hotkey_ptt;
   if (dom.toggleHotkey) dom.toggleHotkey.value = settings.hotkey_toggle;
-  const hotkeysEnabled = settings.mode === "ptt";
-  if (dom.hotkeysBlock) dom.hotkeysBlock.classList.toggle("hidden", !hotkeysEnabled);
-  if (dom.vadBlock) dom.vadBlock.classList.toggle("hidden", hotkeysEnabled);
+  syncCaptureModeVisibility(settings.mode, settings.ptt_use_vad);
   if (dom.deviceSelect) dom.deviceSelect.value = settings.input_device;
   if (dom.languageSelect) dom.languageSelect.value = settings.language_mode;
   if (dom.languagePinnedToggle) dom.languagePinnedToggle.checked = settings.language_pinned;
+  syncAsrLanguageHintUi();
   if (dom.modelSourceSelect) dom.modelSourceSelect.value = settings.model_source;
   if (dom.modelCustomUrl) dom.modelCustomUrl.value = settings.model_custom_url ?? "";
   if (dom.modelStoragePath && settings.model_storage_dir) {
@@ -958,8 +1036,10 @@ export function renderSettings() {
   if (dom.postprocSettings) {
     dom.postprocSettings.style.display = settings.postproc_enabled ? "grid" : "none";
   }
-  if (dom.postprocLanguage) {
-    dom.postprocLanguage.value = settings.postproc_language;
+  if (dom.postprocLanguageDerived) {
+    dom.postprocLanguageDerived.textContent = derivedPostprocLanguageLabel(
+      settings.postproc_language as "en" | "de" | "multi"
+    );
   }
   if (dom.postprocPunctuation) {
     dom.postprocPunctuation.checked = settings.postproc_punctuation_enabled;
@@ -977,20 +1057,6 @@ export function renderSettings() {
     dom.postprocCustomVocabConfig.style.display = settings.postproc_custom_vocab_enabled ? "block" : "none";
   }
   renderVocabulary();
-
-  // Chapter settings
-  if (dom.chaptersEnabled) {
-    dom.chaptersEnabled.checked = settings.chapters_enabled ?? false;
-  }
-  if (dom.chaptersSettings) {
-    dom.chaptersSettings.style.display = (settings.chapters_enabled ?? false) ? "block" : "none";
-  }
-  if (dom.chaptersShowIn) {
-    dom.chaptersShowIn.value = settings.chapters_show_in ?? "conversation";
-  }
-  if (dom.chaptersMethod) {
-    dom.chaptersMethod.value = settings.chapters_method ?? "hybrid";
-  }
 
   renderAIRefinementTab();
 }

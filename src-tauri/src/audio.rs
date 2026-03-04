@@ -14,7 +14,7 @@ use crate::transcription::{
 };
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -22,6 +22,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{error, info, warn};
 
 const MIC_MIN_AUDIO_MS: u64 = 120;
+const VAD_PRE_ROLL_MS_MIN: u64 = 250;
+const VAD_PRE_ROLL_MS_MAX: u64 = 350;
+const VAD_PRE_ROLL_MIN_MS: u64 = 60;
+const VAD_PRE_ROLL_ENERGY_FACTOR: f32 = 0.45;
 const REFINEMENT_WATCHDOG_TIMEOUT_MS: u64 = 90_000;
 const REFINEMENT_WATCHDOG_POLL_MS: u64 = 1_000;
 const REFINEMENT_PASTE_TIMEOUT_MS: u64 = 10_000;
@@ -147,6 +151,10 @@ pub(crate) struct Recorder {
     vad_tx: Option<std::sync::mpsc::Sender<VadEvent>>,
     vad_runtime: Option<Arc<VadRuntime>>,
     pub(crate) input_gain_db: Arc<AtomicI64>,
+    ptt_hot_stop_tx: Option<std::sync::mpsc::Sender<()>>,
+    ptt_hot_join_handle: Option<thread::JoinHandle<()>>,
+    ptt_hot_recording: Arc<AtomicBool>,
+    ptt_hot_device_id: Option<String>,
 }
 
 impl Recorder {
@@ -163,6 +171,10 @@ impl Recorder {
             vad_tx: None,
             vad_runtime: None,
             input_gain_db: Arc::new(AtomicI64::new(0)),
+            ptt_hot_stop_tx: None,
+            ptt_hot_join_handle: None,
+            ptt_hot_recording: Arc::new(AtomicBool::new(false)),
+            ptt_hot_device_id: None,
         }
     }
 
@@ -414,6 +426,9 @@ struct VadHandle {
     runtime: Arc<VadRuntime>,
     tx: std::sync::mpsc::Sender<VadEvent>,
     app: AppHandle,
+    pre_roll_buffer: Arc<Mutex<CaptureBuffer>>,
+    pre_roll_samples: usize,
+    pre_roll_min_samples: usize,
 }
 
 #[tauri::command]
@@ -555,8 +570,17 @@ fn handle_vad_audio(
             runtime.recording.store(true, Ordering::Relaxed);
             runtime.start_ms.store(now, Ordering::Relaxed);
             runtime.pending_flush.store(false, Ordering::Relaxed);
+            let warmup = {
+                let mut pre = vad_handle.pre_roll_buffer.lock().unwrap();
+                pre.take_all_samples()
+            };
+            let include_pre_roll = warmup.len() >= vad_handle.pre_roll_min_samples
+                && rms_i16(&warmup) >= runtime.threshold_start() * VAD_PRE_ROLL_ENERGY_FACTOR;
             if let Ok(mut buf) = buffer.lock() {
                 buf.reset();
+                if include_pre_roll {
+                    buf.samples.extend_from_slice(&warmup);
+                }
             }
             let _ = vad_handle.app.emit("capture:state", "recording");
             let _ = update_overlay_state(&vad_handle.app, OverlayState::Recording);
@@ -585,6 +609,14 @@ fn handle_vad_audio(
                     buf.drain()
                 };
                 let _ = vad_handle.tx.send(VadEvent::Finalize(samples));
+            }
+        }
+    } else if vad_handle.pre_roll_samples > 0 {
+        if let Ok(mut pre) = vad_handle.pre_roll_buffer.lock() {
+            pre.push_samples(&mono, sample_rate);
+            if pre.samples.len() > vad_handle.pre_roll_samples {
+                let overflow = pre.samples.len() - vad_handle.pre_roll_samples;
+                pre.samples.drain(0..overflow);
             }
         }
     }
@@ -660,11 +692,294 @@ build_input_stream_typed!(build_input_stream_u16, u16, |s: &u16| {
     (*s as f32 - 32768.0) / 32768.0
 });
 
+macro_rules! build_ptt_hot_stream_typed {
+    ($fn_name:ident, $sample_ty:ty, $to_f32:expr) => {
+        fn $fn_name(
+            device: &cpal::Device,
+            config: &StreamConfig,
+            buffer: Arc<Mutex<CaptureBuffer>>,
+            overlay: Option<Arc<OverlayLevelEmitter>>,
+            gain_db: Arc<AtomicI64>,
+            recording_flag: Arc<AtomicBool>,
+            pre_roll_samples: usize,
+        ) -> Result<cpal::Stream, String> {
+            let channels = config.channels as usize;
+            let sample_rate = config.sample_rate.0;
+            let err_fn = |err| tracing::error!("audio stream error: {}", err);
+
+            let convert: fn(&$sample_ty) -> f32 = $to_f32;
+
+            let mut pre_roll = CaptureBuffer::default();
+            let mut was_recording = false;
+
+            device
+                .build_input_stream(
+                    config,
+                    move |data: &[$sample_ty], _| {
+                        let ch = channels.max(1);
+                        let mut mono = Vec::with_capacity(data.len() / ch);
+                        let mut sum_squared = 0.0f32;
+                        let gain_db_val = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
+                        let gain = (10.0f32).powf(gain_db_val / 20.0);
+                        for frame in data.chunks(ch) {
+                            let mut sum = 0.0f32;
+                            for sample in frame {
+                                sum += convert(sample);
+                            }
+                            let sample = (sum / ch as f32 * gain).clamp(-1.0, 1.0);
+                            mono.push(sample);
+                            sum_squared += sample * sample;
+                        }
+
+                        let level = if mono.is_empty() {
+                            0.0
+                        } else {
+                            let rms = (sum_squared / mono.len() as f32).sqrt();
+                            (rms * 2.5).min(1.0)
+                        };
+                        if let Some(emitter) = overlay.as_ref() {
+                            emitter.emit_level(level);
+                        }
+
+                        let recording_now = recording_flag.load(Ordering::Relaxed);
+
+                        if recording_now {
+                            if !was_recording {
+                                let warmup = pre_roll.take_all_samples();
+                                if let Ok(mut guard) = buffer.lock() {
+                                    guard.reset();
+                                    if !warmup.is_empty() {
+                                        guard.samples.extend_from_slice(&warmup);
+                                    }
+                                }
+                            }
+                            push_mono_samples(&buffer, &mono, sample_rate);
+                        } else if pre_roll_samples > 0 {
+                            pre_roll.push_samples(&mono, sample_rate);
+                            if pre_roll.samples.len() > pre_roll_samples {
+                                let overflow = pre_roll.samples.len() - pre_roll_samples;
+                                pre_roll.samples.drain(0..overflow);
+                            }
+                        } else {
+                            pre_roll.reset();
+                        }
+
+                        was_recording = recording_now;
+                    },
+                    err_fn,
+                    None,
+                )
+                .map_err(|e| e.to_string())
+        }
+    };
+}
+
+build_ptt_hot_stream_typed!(build_ptt_hot_stream_f32, f32, |s: &f32| *s);
+build_ptt_hot_stream_typed!(build_ptt_hot_stream_i16, i16, |s: &i16| {
+    *s as f32 / i16::MAX as f32
+});
+build_ptt_hot_stream_typed!(build_ptt_hot_stream_u16, u16, |s: &u16| {
+    (*s as f32 - 32768.0) / 32768.0
+});
+
+fn stop_ptt_hot_standby(state: &State<'_, AppState>) {
+    let (stop_tx, join_handle) = {
+        let mut recorder = state.recorder.lock().unwrap();
+        recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
+        recorder.ptt_hot_device_id = None;
+        (
+            recorder.ptt_hot_stop_tx.take(),
+            recorder.ptt_hot_join_handle.take(),
+        )
+    };
+    if let Some(tx) = stop_tx {
+        let _ = tx.send(());
+    }
+    if let Some(handle) = join_handle {
+        let _ = handle.join();
+    }
+}
+
+fn start_ptt_hot_standby(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    settings: &Settings,
+) -> Result<(), String> {
+    let device_id = settings.input_device.clone();
+
+    let (existing_stop_tx, existing_join_handle, buffer, gain_db, recording_flag) = {
+        let mut recorder = state.recorder.lock().unwrap();
+        recorder.input_gain_db.store(
+            (settings.mic_input_gain_db * 1000.0) as i64,
+            Ordering::Relaxed,
+        );
+
+        let same_device = recorder.ptt_hot_device_id.as_deref() == Some(device_id.as_str());
+        if recorder.ptt_hot_join_handle.is_some() && same_device {
+            return Ok(());
+        }
+
+        recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
+        recorder.ptt_hot_device_id = None;
+
+        (
+            recorder.ptt_hot_stop_tx.take(),
+            recorder.ptt_hot_join_handle.take(),
+            recorder.buffer.clone(),
+            recorder.input_gain_db.clone(),
+            recorder.ptt_hot_recording.clone(),
+        )
+    };
+
+    if let Some(tx) = existing_stop_tx {
+        let _ = tx.send(());
+    }
+    if let Some(handle) = existing_join_handle {
+        let _ = handle.join();
+    }
+
+    let overlay_emitter = Arc::new(OverlayLevelEmitter::new(
+        app.clone(),
+        settings.vad_threshold_sustain,
+        settings.vad_threshold_start,
+    ));
+    let pre_roll_ms = settings.continuous_pre_roll_ms.min(1_500);
+    let pre_roll_samples = ((TARGET_SAMPLE_RATE as u64 * pre_roll_ms) / 1000) as usize;
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
+    let thread_device_id = device_id.clone();
+
+    let join_handle = thread::spawn(move || {
+        let result = (|| -> Result<(), String> {
+            let device = resolve_input_device(&thread_device_id)
+                .ok_or_else(|| "No input device available".to_string())?;
+            let config = device.default_input_config().map_err(|e| e.to_string())?;
+            let stream_config: StreamConfig = config.clone().into();
+            let overlay = Some(overlay_emitter);
+
+            let stream = match config.sample_format() {
+                SampleFormat::F32 => build_ptt_hot_stream_f32(
+                    &device,
+                    &stream_config,
+                    buffer,
+                    overlay.clone(),
+                    gain_db.clone(),
+                    recording_flag.clone(),
+                    pre_roll_samples,
+                )?,
+                SampleFormat::I16 => build_ptt_hot_stream_i16(
+                    &device,
+                    &stream_config,
+                    buffer,
+                    overlay.clone(),
+                    gain_db.clone(),
+                    recording_flag.clone(),
+                    pre_roll_samples,
+                )?,
+                SampleFormat::U16 => build_ptt_hot_stream_u16(
+                    &device,
+                    &stream_config,
+                    buffer,
+                    overlay.clone(),
+                    gain_db.clone(),
+                    recording_flag.clone(),
+                    pre_roll_samples,
+                )?,
+                _ => return Err("Unsupported sample format".to_string()),
+            };
+
+            stream.play().map_err(|e| e.to_string())?;
+            let _ = ready_tx.send(Ok(()));
+            let _ = stop_rx.recv();
+            drop(stream);
+            Ok(())
+        })();
+
+        if let Err(err) = result {
+            let _ = ready_tx.send(Err(err));
+        }
+    });
+
+    let start_result = match ready_rx.recv_timeout(Duration::from_secs(3)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err("Failed to start PTT standby audio stream".to_string()),
+    };
+
+    if let Err(err) = start_result {
+        let _ = stop_tx.send(());
+        let _ = join_handle.join();
+        return Err(err);
+    }
+
+    let mut recorder = state.recorder.lock().unwrap();
+    recorder.ptt_hot_stop_tx = Some(stop_tx);
+    recorder.ptt_hot_join_handle = Some(join_handle);
+    recorder.ptt_hot_device_id = Some(device_id);
+    Ok(())
+}
+
+pub(crate) fn sync_ptt_hot_standby(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    settings: &Settings,
+) {
+    let should_run = settings.capture_enabled && settings.mode == "ptt" && !settings.ptt_use_vad;
+    if should_run {
+        if let Err(err) = start_ptt_hot_standby(app, state, settings) {
+            warn!("Failed to start PTT standby stream: {}", err);
+        }
+    } else {
+        stop_ptt_hot_standby(state);
+    }
+}
+
+fn start_ptt_hot_recording(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    settings: &Settings,
+) -> Result<(), String> {
+    if !settings.capture_enabled {
+        return Ok(());
+    }
+    start_ptt_hot_standby(app, state, settings)?;
+
+    let mut recorder = state.recorder.lock().unwrap();
+    if recorder.active || recorder.transcribing {
+        return Ok(());
+    }
+
+    if let Ok(mut buf) = recorder.buffer.lock() {
+        buf.reset();
+    }
+
+    recorder.input_gain_db.store(
+        (settings.mic_input_gain_db * 1000.0) as i64,
+        Ordering::Relaxed,
+    );
+    recorder.ptt_hot_recording.store(true, Ordering::Relaxed);
+    recorder.active = true;
+    recorder.continuous_toggle_mode = false;
+    recorder.continuous_processor_stop_tx = None;
+    recorder.continuous_processor_join_handle = None;
+
+    let _ = app.emit("capture:state", "recording");
+    let _ = update_overlay_state(app, OverlayState::Recording);
+    if settings.audio_cues {
+        let _ = app.emit("audio:cue", "start");
+    }
+    Ok(())
+}
+
 pub(crate) fn start_recording_with_settings(
     app: &AppHandle,
     state: &State<'_, AppState>,
     settings: &Settings,
 ) -> Result<(), String> {
+    if settings.mode == "ptt" && !settings.ptt_use_vad {
+        return start_ptt_hot_recording(app, state, settings);
+    }
+
     info!("start_recording_with_settings called");
     if !settings.capture_enabled {
         return Ok(());
@@ -1396,6 +1711,7 @@ pub(crate) fn stop_toggle_recording_async(app: AppHandle, state: &State<'_, AppS
             recorder.active = false;
             recorder.transcribing = false;
             recorder.continuous_toggle_mode = false;
+            recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
             (
                 recorder.stop_tx.take(),
                 recorder.join_handle.take(),
@@ -1459,19 +1775,36 @@ pub(crate) fn start_vad_monitor(
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
     let (vad_tx, vad_rx) = std::sync::mpsc::channel::<VadEvent>();
+    let pre_roll_ms = settings
+        .continuous_pre_roll_ms
+        .clamp(VAD_PRE_ROLL_MS_MIN, VAD_PRE_ROLL_MS_MAX);
+    let pre_roll_samples = ((TARGET_SAMPLE_RATE as u64 * pre_roll_ms) / 1000) as usize;
+    let pre_roll_min_samples = ((TARGET_SAMPLE_RATE as u64 * VAD_PRE_ROLL_MIN_MS) / 1000) as usize;
+    let pre_roll_buffer = Arc::new(Mutex::new(CaptureBuffer::default()));
 
-    let flush_on_silence = settings.mode == "vad";
+    let ptt_threshold_gate = settings.mode == "ptt" && settings.ptt_use_vad;
+    let flush_on_silence = settings.mode == "vad" && !ptt_threshold_gate;
+    let silence_ms = if ptt_threshold_gate {
+        // In PTT+VAD we only gate capture start by threshold while key is held.
+        // No silence-based auto-finalize should happen before key release.
+        u64::MAX / 2
+    } else {
+        settings.vad_silence_ms
+    };
     let vad_runtime = Arc::new(VadRuntime::new(
         settings.audio_cues,
         settings.vad_threshold_start,
         settings.vad_threshold_sustain,
-        settings.vad_silence_ms,
+        silence_ms,
         flush_on_silence,
     ));
     let vad_handle = VadHandle {
         runtime: vad_runtime.clone(),
         tx: vad_tx.clone(),
         app: app.clone(),
+        pre_roll_buffer,
+        pre_roll_samples,
+        pre_roll_min_samples,
     };
 
     let app_handle = app.clone();
@@ -1716,6 +2049,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
             recorder.active = false;
             recorder.transcribing = true;
             recorder.continuous_toggle_mode = false;
+            recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
             let stop_tx = recorder.stop_tx.take();
             let join_handle = recorder.join_handle.take();
             let proc_stop_tx = recorder.continuous_processor_stop_tx.take();

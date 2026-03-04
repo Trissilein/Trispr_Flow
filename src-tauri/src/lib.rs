@@ -6,14 +6,17 @@ mod audio;
 mod constants;
 mod continuous_dump;
 mod errors;
+mod gdd;
 mod history_partition;
 mod hotkeys;
 mod models;
+mod modules;
 mod ollama_runtime;
 mod opus;
 mod overlay;
 mod paths;
 mod postprocessing;
+mod confluence;
 mod session_manager;
 mod state;
 mod transcription;
@@ -53,6 +56,10 @@ use crate::models::{
 use crate::ollama_runtime::{
     detect_ollama_runtime, download_ollama_runtime, import_ollama_model_from_file,
     install_ollama_runtime, set_strict_local_mode, start_ollama_runtime, verify_ollama_runtime,
+};
+use crate::modules::{
+    health as module_health, lifecycle as module_lifecycle, normalize_confluence_settings,
+    normalize_gdd_module_settings, normalize_module_settings, registry as module_registry,
 };
 use crate::state::{
     get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
@@ -198,17 +205,25 @@ pub(crate) fn prepare_refinement(
         });
     }
 
+    let effective_language = if settings.language_pinned {
+        settings.language_mode.clone()
+    } else {
+        "auto".to_string()
+    };
+    let enforce_language_guard = ai.preserve_source_language && ai.prompt_profile != "custom";
+
     let options = RefinementOptions {
         temperature: ai.temperature,
         max_tokens: ai.max_tokens,
         low_latency_mode: ai.low_latency_mode,
-        language: Some(settings.language_mode.clone()),
+        language: Some(effective_language.clone()),
         custom_prompt: prompt_for_profile(
             &ai.prompt_profile,
-            &settings.language_mode,
+            &effective_language,
             Some(ai.custom_prompt.as_str()),
             ai.preserve_source_language,
         ),
+        enforce_language_guard,
     };
 
     Ok(RefinementSetup {
@@ -1319,6 +1334,9 @@ fn save_settings(
     normalize_ai_fallback_fields(&mut settings);
     normalize_continuous_dump_fields(&mut settings);
     normalize_history_alias_fields(&mut settings);
+    normalize_module_settings(&mut settings.module_settings);
+    normalize_gdd_module_settings(&mut settings.gdd_module_settings);
+    normalize_confluence_settings(&mut settings.confluence_settings);
 
     {
         let mut current = state.settings.lock().unwrap();
@@ -1363,6 +1381,7 @@ fn save_settings(
             let _ = crate::audio::start_vad_monitor(&app, &state, &settings);
         }
     }
+    crate::audio::sync_ptt_hot_standby(&app, &state, &settings);
 
     let transcribe_enabled_changed = prev_transcribe_enabled != settings.transcribe_enabled;
     let transcribe_device_changed =
@@ -1395,6 +1414,393 @@ fn save_settings(
     let _ = app.emit("menu:update-mic", settings.capture_enabled);
     let _ = app.emit("menu:update-transcribe", settings.transcribe_enabled);
     Ok(())
+}
+
+#[tauri::command]
+fn list_modules(state: State<'_, AppState>) -> Vec<crate::modules::ModuleDescriptor> {
+    let settings = state.settings.lock().unwrap();
+    module_registry::modules_as_descriptors(&settings.module_settings)
+}
+
+#[tauri::command]
+fn enable_module(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    module_id: String,
+    grant_permissions: Option<Vec<String>>,
+) -> Result<serde_json::Value, String> {
+    let module_id = module_id.trim().to_string();
+    if module_id.is_empty() {
+        return Err("Module id cannot be empty.".to_string());
+    }
+
+    let grants = grant_permissions.unwrap_or_default();
+    let (result, snapshot, descriptors) = {
+        let mut settings = state.settings.lock().unwrap();
+        let result = module_lifecycle::enable_module(&mut settings.module_settings, &module_id, &grants);
+        if result.is_ok() {
+            if module_id == "gdd" {
+                settings.gdd_module_settings.enabled = true;
+            }
+            if module_id == "integrations_confluence" {
+                settings.confluence_settings.enabled = true;
+            }
+        }
+        normalize_module_settings(&mut settings.module_settings);
+        normalize_gdd_module_settings(&mut settings.gdd_module_settings);
+        normalize_confluence_settings(&mut settings.confluence_settings);
+        let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
+        (result, settings.clone(), descriptors)
+    };
+
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot);
+    let _ = app.emit("module:state-changed", descriptors);
+
+    match result {
+        Ok(lifecycle) => Ok(serde_json::json!(lifecycle)),
+        Err(error) => {
+            let _ = app.emit(
+                "module:error",
+                serde_json::json!({ "module_id": module_id, "error": error }),
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn disable_module(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    module_id: String,
+) -> Result<serde_json::Value, String> {
+    let module_id = module_id.trim().to_string();
+    if module_id.is_empty() {
+        return Err("Module id cannot be empty.".to_string());
+    }
+
+    let (result, snapshot, descriptors) = {
+        let mut settings = state.settings.lock().unwrap();
+        let result = module_lifecycle::disable_module(&mut settings.module_settings, &module_id);
+        if result.is_ok() {
+            if module_id == "gdd" {
+                settings.gdd_module_settings.enabled = false;
+            }
+            if module_id == "integrations_confluence" {
+                settings.confluence_settings.enabled = false;
+            }
+        }
+        normalize_module_settings(&mut settings.module_settings);
+        normalize_gdd_module_settings(&mut settings.gdd_module_settings);
+        normalize_confluence_settings(&mut settings.confluence_settings);
+        let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
+        (result, settings.clone(), descriptors)
+    };
+
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot);
+    let _ = app.emit("module:state-changed", descriptors);
+
+    match result {
+        Ok(lifecycle) => Ok(serde_json::json!(lifecycle)),
+        Err(error) => {
+            let _ = app.emit(
+                "module:error",
+                serde_json::json!({ "module_id": module_id, "error": error }),
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn get_module_health(
+    state: State<'_, AppState>,
+    module_id: Option<String>,
+) -> Vec<crate::modules::ModuleHealthStatus> {
+    let settings = state.settings.lock().unwrap();
+    module_health::get_health(&settings.module_settings, module_id.as_deref())
+}
+
+#[tauri::command]
+fn check_module_updates(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    module_id: Option<String>,
+) -> Vec<crate::modules::ModuleUpdateInfo> {
+    let settings = state.settings.lock().unwrap();
+    let updates = module_health::check_updates(&settings.module_settings, module_id.as_deref());
+    for update in &updates {
+        let _ = app.emit("module:update-available", update);
+    }
+    updates
+}
+
+#[tauri::command]
+fn list_gdd_presets(state: State<'_, AppState>) -> Vec<crate::gdd::GddPreset> {
+    let settings = state.settings.lock().unwrap();
+    crate::gdd::list_presets(&settings.gdd_module_settings.preset_clones)
+}
+
+#[tauri::command]
+fn save_gdd_preset_clone(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mut preset: crate::gdd::GddPresetClone,
+) -> Result<Vec<crate::gdd::GddPreset>, String> {
+    preset.id = preset.id.trim().to_lowercase();
+    if preset.id.is_empty() {
+        return Err("Preset clone id cannot be empty.".to_string());
+    }
+    if preset.section_order.is_empty() {
+        return Err("Preset clone requires at least one section.".to_string());
+    }
+    if preset.name.trim().is_empty() {
+        return Err("Preset clone name cannot be empty.".to_string());
+    }
+
+    let snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        if let Some(existing) = settings
+            .gdd_module_settings
+            .preset_clones
+            .iter_mut()
+            .find(|candidate| candidate.id == preset.id)
+        {
+            *existing = preset;
+        } else {
+            settings.gdd_module_settings.preset_clones.push(preset);
+        }
+        normalize_gdd_module_settings(&mut settings.gdd_module_settings);
+        settings.clone()
+    };
+
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot.clone());
+
+    Ok(crate::gdd::list_presets(
+        &snapshot.gdd_module_settings.preset_clones,
+    ))
+}
+
+#[tauri::command]
+fn detect_gdd_preset(
+    state: State<'_, AppState>,
+    request: crate::gdd::DetectGddPresetRequest,
+) -> crate::gdd::GddRecognitionResult {
+    let settings = state.settings.lock().unwrap();
+    let presets = crate::gdd::list_presets(&settings.gdd_module_settings.preset_clones);
+    crate::gdd::detect_preset(&request.transcript, &presets)
+}
+
+#[tauri::command]
+fn generate_gdd_draft(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::gdd::GenerateGddDraftRequest,
+) -> Result<crate::gdd::GddDraft, String> {
+    let module_enabled = {
+        let settings = state.settings.lock().unwrap();
+        settings.module_settings.enabled_modules.contains("gdd")
+    };
+    if !module_enabled {
+        return Err("GDD module is disabled. Enable module 'gdd' first.".to_string());
+    }
+
+    let _ = app.emit("gdd:generation-started", serde_json::json!({ "preset": request.preset_id }));
+    let draft = {
+        let settings = state.settings.lock().unwrap();
+        crate::gdd::generate_draft(&request, &settings.gdd_module_settings.preset_clones)
+    };
+    let markdown_preview = crate::gdd::render_storage::render_markdown(&draft);
+    let confluence_storage = crate::gdd::render_storage::render_confluence_storage(&draft);
+    let _ = app.emit(
+        "gdd:generation-progress",
+        serde_json::json!({
+            "stage": "synthesized",
+            "chunk_count": draft.chunk_count,
+            "markdown_chars": markdown_preview.len(),
+            "storage_chars": confluence_storage.len(),
+        }),
+    );
+    let _ = app.emit("gdd:generation-finished", &draft);
+    Ok(draft)
+}
+
+#[tauri::command]
+fn validate_gdd_draft(draft: crate::gdd::GddDraft) -> crate::gdd::ValidateGddDraftResult {
+    crate::gdd::validate_draft(&draft)
+}
+
+#[tauri::command]
+fn render_gdd_for_confluence(draft: crate::gdd::GddDraft) -> String {
+    crate::gdd::render_storage::render_confluence_storage(&draft)
+}
+
+#[tauri::command]
+fn test_confluence_connection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::gdd::confluence::ConfluenceConnectionResult, String> {
+    let settings = state.settings.lock().unwrap();
+    crate::gdd::confluence::test_connection(&app, &settings.confluence_settings)
+}
+
+#[tauri::command]
+fn confluence_oauth_start() -> Result<crate::gdd::confluence::ConfluenceOauthStartResult, String> {
+    crate::gdd::confluence::oauth_start()
+}
+
+#[tauri::command]
+fn confluence_oauth_exchange(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    code: String,
+) -> Result<serde_json::Value, String> {
+    let exchange_result = {
+        let settings = state.settings.lock().unwrap();
+        crate::gdd::confluence::oauth_exchange(&app, &settings.confluence_settings, &code)?
+    };
+
+    let snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.confluence_settings.enabled = true;
+        settings.confluence_settings.auth_mode = "oauth".to_string();
+        settings.confluence_settings.site_base_url = exchange_result.selected_site_url.clone();
+        settings.confluence_settings.oauth_cloud_id = exchange_result.selected_cloud_id.clone();
+        normalize_confluence_settings(&mut settings.confluence_settings);
+        settings.clone()
+    };
+
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot);
+
+    serde_json::to_value(exchange_result).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn confluence_list_spaces(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::gdd::confluence::ConfluenceSpace>, String> {
+    let settings = state.settings.lock().unwrap();
+    crate::gdd::confluence::list_spaces(&app, &settings.confluence_settings)
+}
+
+#[tauri::command]
+fn load_gdd_template_from_file(
+    file_path: String,
+) -> Result<crate::gdd::GddTemplateSourceResult, String> {
+    crate::gdd::load_template_from_file(&file_path)
+}
+
+#[tauri::command]
+fn load_gdd_template_from_confluence(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source_url: String,
+) -> Result<crate::gdd::GddTemplateSourceResult, String> {
+    let settings = state.settings.lock().unwrap();
+    let page = crate::gdd::confluence::load_page_template_from_url(
+        &app,
+        &settings.confluence_settings,
+        &source_url,
+    )?;
+    Ok(crate::gdd::template_sources::from_confluence_page(
+        page.source_url,
+        page.page_title,
+        page.text,
+    ))
+}
+
+#[tauri::command]
+fn suggest_confluence_target(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::gdd::confluence::ConfluenceTargetSuggestionRequest,
+) -> Result<crate::gdd::confluence::ConfluenceTargetSuggestion, String> {
+    let settings = state.settings.lock().unwrap();
+    crate::gdd::confluence::suggest_target(&app, &settings.confluence_settings, &request)
+}
+
+#[tauri::command]
+fn publish_gdd_to_confluence(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::gdd::confluence::ConfluencePublishRequest,
+) -> Result<crate::gdd::confluence::ConfluencePublishResult, String> {
+    let _ = app.emit("gdd:publish-started", serde_json::json!({ "title": request.title }));
+
+    let settings_snapshot = state.settings.lock().unwrap().clone();
+    let result =
+        crate::gdd::confluence::publish(&app, &settings_snapshot.confluence_settings, &request);
+
+    match result {
+        Ok(publish) => {
+            {
+                let mut settings = state.settings.lock().unwrap();
+                let route_key = format!(
+                    "{}::{}",
+                    request.space_key.to_lowercase(),
+                    request.title.to_lowercase()
+                );
+                settings
+                    .confluence_settings
+                    .routing_memory
+                    .insert(route_key, publish.page_id.clone());
+                normalize_confluence_settings(&mut settings.confluence_settings);
+                let _ = save_settings_file(&app, &settings);
+                let _ = app.emit("settings-changed", settings.clone());
+            }
+            let _ = app.emit("gdd:publish-finished", &publish);
+            Ok(publish)
+        }
+        Err(error) => {
+            let _ = app.emit(
+                "gdd:publish-failed",
+                serde_json::json!({ "title": request.title, "error": error }),
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn save_confluence_secret(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    secret_id: String,
+    secret_value: String,
+) -> Result<serde_json::Value, String> {
+    let secret_id = secret_id.trim().to_lowercase();
+    confluence::keyring::store_secret(&app, &secret_id, &secret_value)?;
+
+    let snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.confluence_settings.enabled = true;
+        settings.clone()
+    };
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot);
+
+    Ok(serde_json::json!({
+        "status": "success",
+        "secret_id": secret_id
+    }))
+}
+
+#[tauri::command]
+fn clear_confluence_secret(
+    app: AppHandle,
+    secret_id: String,
+) -> Result<serde_json::Value, String> {
+    let secret_id = secret_id.trim().to_lowercase();
+    confluence::keyring::clear_secret(&app, &secret_id)?;
+    Ok(serde_json::json!({
+        "status": "success",
+        "secret_id": secret_id
+    }))
 }
 
 #[tauri::command]
@@ -1497,6 +1903,78 @@ fn get_transcribe_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
 }
 
 #[tauri::command]
+fn clear_active_transcript_history(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<u64, String> {
+    let mic_deleted = {
+        let mut history = state.history.lock().unwrap();
+        let deleted = history.active.len() as u64;
+        history.active.clear();
+        history.flush_to_disk()?;
+        let updated: Vec<_> = history.active.iter().cloned().collect();
+        drop(history);
+        let _ = app.emit("history:updated", updated);
+        deleted
+    };
+
+    let system_deleted = {
+        let mut history = state.history_transcribe.lock().unwrap();
+        let deleted = history.active.len() as u64;
+        history.active.clear();
+        history.flush_to_disk()?;
+        let updated: Vec<_> = history.active.iter().cloned().collect();
+        drop(history);
+        let _ = app.emit("transcribe:history-updated", updated);
+        deleted
+    };
+
+    Ok(mic_deleted + system_deleted)
+}
+
+#[tauri::command]
+fn delete_active_transcript_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entry_id: String,
+) -> Result<u64, String> {
+    let entry_id = entry_id.trim();
+    if entry_id.is_empty() {
+        return Ok(0);
+    }
+
+    let mic_deleted = {
+        let mut history = state.history.lock().unwrap();
+        let before = history.active.len();
+        history.active.retain(|entry| entry.id != entry_id);
+        let deleted = before.saturating_sub(history.active.len()) as u64;
+        if deleted > 0 {
+            history.flush_to_disk()?;
+            let updated: Vec<_> = history.active.iter().cloned().collect();
+            drop(history);
+            let _ = app.emit("history:updated", updated);
+        }
+        deleted
+    };
+
+    let system_deleted = {
+        let mut history = state.history_transcribe.lock().unwrap();
+        let before = history.active.len();
+        history.active.retain(|entry| entry.id != entry_id);
+        let deleted = before.saturating_sub(history.active.len()) as u64;
+        if deleted > 0 {
+            history.flush_to_disk()?;
+            let updated: Vec<_> = history.active.iter().cloned().collect();
+            drop(history);
+            let _ = app.emit("transcribe:history-updated", updated);
+        }
+        deleted
+    };
+
+    Ok(mic_deleted + system_deleted)
+}
+
+#[tauri::command]
 fn list_history_partitions(
     app: AppHandle,
     kind: String,
@@ -1542,71 +2020,6 @@ fn add_transcribe_entry(
     text: String,
 ) -> Result<Vec<HistoryEntry>, String> {
     push_transcribe_entry_inner(&app, &state.history_transcribe, text)
-}
-
-#[tauri::command]
-fn get_chapters(state: State<'_, AppState>) -> Vec<state::Chapter> {
-    state.chapters.lock().unwrap().clone()
-}
-
-#[tauri::command]
-fn add_chapter(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-    label: String,
-    timestamp_ms: u64,
-    entry_count: u32,
-) -> Result<Vec<state::Chapter>, String> {
-    let new_chapter = state::Chapter {
-        id,
-        label,
-        timestamp_ms,
-        entry_count,
-    };
-
-    let mut chapters = state.chapters.lock().unwrap();
-    chapters.push(new_chapter);
-    let updated = chapters.clone();
-    drop(chapters);
-
-    state::save_chapters_file(&app, &updated)?;
-    Ok(updated)
-}
-
-#[tauri::command]
-fn update_chapter(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-    label: String,
-) -> Result<Vec<state::Chapter>, String> {
-    let mut chapters = state.chapters.lock().unwrap();
-
-    if let Some(chapter) = chapters.iter_mut().find(|c| c.id == id) {
-        chapter.label = label;
-    }
-
-    let updated = chapters.clone();
-    drop(chapters);
-
-    state::save_chapters_file(&app, &updated)?;
-    Ok(updated)
-}
-
-#[tauri::command]
-fn delete_chapter(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<Vec<state::Chapter>, String> {
-    let mut chapters = state.chapters.lock().unwrap();
-    chapters.retain(|c| c.id != id);
-    let updated = chapters.clone();
-    drop(chapters);
-
-    state::save_chapters_file(&app, &updated)?;
-    Ok(updated)
 }
 
 #[tauri::command]
@@ -2716,7 +3129,6 @@ pub fn run() {
     with_dialog_plugin(builder)
         .setup(|app| {
             let settings = load_settings(app.handle());
-            let chapters = state::load_chapters(app.handle());
 
             // Compute partition base directories and legacy paths for migration.
             let app_data_dir = app.path().app_data_dir().unwrap_or_else(|_| {
@@ -2740,7 +3152,6 @@ pub fn run() {
                 settings: Mutex::new(settings.clone()),
                 history: Mutex::new(history),
                 history_transcribe: Mutex::new(history_transcribe),
-                chapters: Mutex::new(chapters),
                 recorder: Mutex::new(crate::audio::Recorder::new()),
                 transcribe: Mutex::new(crate::transcription::TranscribeRecorder::new()),
                 downloads: Mutex::new(HashSet::new()),
@@ -2842,6 +3253,7 @@ pub fn run() {
                     }
                 });
             }
+            crate::audio::sync_ptt_hot_standby(app.handle(), &app.state::<AppState>(), &settings);
 
             let overlay_app = app.handle().clone();
             app.listen("overlay:ready", move |_| {
@@ -3072,6 +3484,27 @@ pub fn run() {
             save_settings,
             save_window_state,
             save_window_visibility_state,
+            list_modules,
+            enable_module,
+            disable_module,
+            get_module_health,
+            check_module_updates,
+            list_gdd_presets,
+            save_gdd_preset_clone,
+            detect_gdd_preset,
+            generate_gdd_draft,
+            validate_gdd_draft,
+            render_gdd_for_confluence,
+            test_confluence_connection,
+            confluence_oauth_start,
+            confluence_oauth_exchange,
+            confluence_list_spaces,
+            load_gdd_template_from_file,
+            load_gdd_template_from_confluence,
+            suggest_confluence_target,
+            publish_gdd_to_confluence,
+            save_confluence_secret,
+            clear_confluence_secret,
             save_transcript,
             list_audio_devices,
             list_output_devices,
@@ -3086,14 +3519,12 @@ pub fn run() {
             get_models_dir,
             get_history,
             get_transcribe_history,
+            clear_active_transcript_history,
+            delete_active_transcript_entry,
             list_history_partitions,
             load_history_partition,
             add_history_entry,
             add_transcribe_entry,
-            get_chapters,
-            add_chapter,
-            update_chapter,
-            delete_chapter,
             start_recording,
             stop_recording,
             toggle_transcribe,

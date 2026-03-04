@@ -2,7 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { ModelInfo } from "./types";
-import { settings, models, setModels, modelProgress } from "./state";
+import { settings, models, setModels, modelProgress, quantizeProgress } from "./state";
 import * as dom from "./dom-refs";
 import { getModelDescription, formatSize, formatProgress } from "./ui-helpers";
 import { persistSettings } from "./settings";
@@ -10,6 +10,7 @@ import { renderHero } from "./ui-state";
 import { showToast } from "./toast";
 
 const optimizingModels = new Set<string>();
+const selectedQuantByModel = new Map<string, "q5_0" | "q8_0">();
 
 export function renderModels() {
   if (!dom.modelList) return;
@@ -89,6 +90,7 @@ export function renderModels() {
 
       const actions = document.createElement("div");
       actions.className = "model-actions";
+      let optimizeProgressElement: HTMLDivElement | null = null;
 
       if (model.installed) {
         // Add Apply button if model is not currently active
@@ -167,27 +169,62 @@ export function renderModels() {
           actions.appendChild(applyBtn);
         }
 
+        const lowerFileName = model.file_name.toLowerCase();
         const canOptimize =
           model.removable &&
           model.file_name.endsWith(".bin") &&
-          !model.file_name.includes("-q5_0");
+          !lowerFileName.includes("-q5_0") &&
+          !lowerFileName.includes("-q8_0");
 
         if (canOptimize) {
+          const quantizeState = quantizeProgress.get(model.file_name);
+          const quantSelect = document.createElement("select");
+          quantSelect.className = "model-quant-select";
+          const quantChoice = selectedQuantByModel.get(model.id) ?? "q5_0";
+          quantSelect.innerHTML = `
+            <option value="q5_0">Q5 (faster, smaller)</option>
+            <option value="q8_0">Q8 (higher quality)</option>
+          `;
+          quantSelect.value = quantChoice;
+          const isOptimizing = optimizingModels.has(model.id) || Boolean(quantizeState);
+          quantSelect.disabled = isOptimizing;
+          quantSelect.title = "Quantization target used by Optimize";
+          quantSelect.addEventListener("click", (event) => {
+            event.stopPropagation();
+          });
+          quantSelect.addEventListener("change", (event) => {
+            event.stopPropagation();
+            const value = quantSelect.value === "q8_0" ? "q8_0" : "q5_0";
+            selectedQuantByModel.set(model.id, value);
+          });
+          actions.appendChild(quantSelect);
+
           const optimizeBtn = document.createElement("button");
-          const isOptimizing = optimizingModels.has(model.id);
-          optimizeBtn.textContent = isOptimizing ? "Optimizing..." : "Optimize";
-          optimizeBtn.title = "Quantize to q5_0 for faster inference with lower memory usage";
+          if (isOptimizing && typeof quantizeState?.percent === "number") {
+            optimizeBtn.textContent = `Optimizing ${Math.max(0, Math.min(100, Math.round(quantizeState.percent)))}%`;
+          } else {
+            optimizeBtn.textContent = isOptimizing ? "Optimizing..." : "Optimize";
+          }
+          optimizeBtn.title = "Create a quantized copy of this model (Q5 or Q8)";
           optimizeBtn.disabled = isOptimizing;
           optimizeBtn.addEventListener("click", async (event) => {
             event.stopPropagation();
             if (optimizingModels.has(model.id)) return;
             optimizingModels.add(model.id);
+            quantizeProgress.set(model.file_name, {
+              file_name: model.file_name,
+              quant: selectedQuantByModel.get(model.id) ?? "q5_0",
+              phase: "starting",
+              percent: 0,
+              message: "Preparing quantizer...",
+            });
             renderModels();
             try {
-              await invoke("quantize_model", { fileName: model.file_name, quant: "q5_0" });
+              const quant = selectedQuantByModel.get(model.id) ?? "q5_0";
+              await invoke("quantize_model", { fileName: model.file_name, quant });
               showToast({
                 title: "Optimized",
-                message: "Quantized model created (q5_0).",
+                message: `Quantized model created (${quant}).`,
                 type: "success",
               });
               await refreshModels();
@@ -199,10 +236,39 @@ export function renderModels() {
               });
             } finally {
               optimizingModels.delete(model.id);
+              quantizeProgress.delete(model.file_name);
               renderModels();
             }
           });
           actions.appendChild(optimizeBtn);
+
+          if (isOptimizing) {
+            const progressWrap = document.createElement("div");
+            progressWrap.className = "model-quantize-progress";
+
+            const numericPercent =
+              typeof quantizeState?.percent === "number"
+                ? Math.max(0, Math.min(100, Math.round(quantizeState.percent)))
+                : null;
+            const message = quantizeState?.message?.trim() || "Quantization in progress...";
+
+            const info = document.createElement("div");
+            info.className = "model-quantize-progress-info";
+            info.textContent =
+              numericPercent !== null
+                ? `${numericPercent}% • ${message}`
+                : message;
+            progressWrap.appendChild(info);
+
+            const bar = document.createElement("div");
+            bar.className = "model-quantize-progress-bar";
+            const fill = document.createElement("div");
+            fill.className = "model-quantize-progress-fill";
+            fill.style.width = numericPercent !== null ? `${numericPercent}%` : "28%";
+            bar.appendChild(fill);
+            progressWrap.appendChild(bar);
+            optimizeProgressElement = progressWrap;
+          }
         }
 
         const removeBtn = document.createElement("button");
@@ -278,6 +344,9 @@ export function renderModels() {
         item.appendChild(pathLine);
       }
       item.appendChild(actions);
+      if (optimizeProgressElement) {
+        item.appendChild(optimizeProgressElement);
+      }
       item.appendChild(progress);
 
       container.appendChild(item);

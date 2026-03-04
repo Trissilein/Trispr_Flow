@@ -5,6 +5,7 @@ import type {
   AudioDevice,
   ModelInfo,
   DownloadProgress,
+  QuantizeProgress,
   RecordingState,
   HistoryTab,
   OllamaPullProgress,
@@ -19,6 +20,7 @@ export let devices: AudioDevice[] = [];
 export let outputDevices: AudioDevice[] = [];
 export let models: ModelInfo[] = [];
 export const modelProgress = new Map<string, DownloadProgress>();
+export const quantizeProgress = new Map<string, QuantizeProgress>();
 export const ollamaPullProgress = new Map<string, OllamaPullProgress>();
 export let currentCaptureStatus: RecordingState = "idle";
 export let currentTranscribeStatus: RecordingState = "idle";
@@ -95,10 +97,22 @@ export const MODEL_DESCRIPTIONS: Record<
     accuracy: "Slightly lower",
     languages: "Multilingual",
   },
+  "ggml-large-v3-turbo-q8_0": {
+    summary: "Q8 quantized large-v3-turbo with higher fidelity than q5 at larger size.",
+    speed: "Moderate",
+    accuracy: "High",
+    languages: "Multilingual",
+  },
   "ggml-large-v3-q5_0": {
     summary: "Quantized large-v3 for balanced quality and size reduction.",
     speed: "Moderately slow",
     accuracy: "Slightly lower than full",
+    languages: "Multilingual",
+  },
+  "ggml-large-v3-q8_0": {
+    summary: "Q8 quantized large-v3 prioritizing quality with moderate size reduction.",
+    speed: "Slow",
+    accuracy: "High",
     languages: "Multilingual",
   },
   "ggml-distil-large-v3-q5_0": {
@@ -107,10 +121,22 @@ export const MODEL_DESCRIPTIONS: Record<
     accuracy: "Medium (EN-focused)",
     languages: "Primarily English",
   },
+  "ggml-distil-large-v3-q8_0": {
+    summary: "Q8 quantized distil model with better wording stability than q5.",
+    speed: "Fast",
+    accuracy: "Medium-high (EN-focused)",
+    languages: "Primarily English",
+  },
   "ggml-large-v3-turbo-german-q5_0": {
     summary: "Quantized German-optimized model for efficient German speech recognition.",
     speed: "Fast",
     accuracy: "Slightly lower",
+    languages: "German-optimized",
+  },
+  "ggml-large-v3-turbo-german-q8_0": {
+    summary: "Q8 German-optimized model for higher quality German speech recognition.",
+    speed: "Moderate",
+    accuracy: "High",
     languages: "German-optimized",
   },
 };

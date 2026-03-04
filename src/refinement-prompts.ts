@@ -7,7 +7,15 @@ function isGermanLanguage(language: string | null | undefined): boolean {
   return normalized === "de" || normalized === "german" || normalized.startsWith("de-");
 }
 
+function isAutoLanguage(language: string | null | undefined): boolean {
+  const normalized = (language || "").trim().toLowerCase();
+  return normalized === "" || normalized === "auto";
+}
+
 function languageLockInstruction(language: string | null | undefined): string {
+  if (isAutoLanguage(language)) {
+    return "Detect the input language and keep it unchanged. Do not translate. If the input is mixed-language, preserve each segment in its original language.";
+  }
   return isGermanLanguage(language)
     ? "Behalte die Ausgabe in derselben Sprache wie die Eingabe. Nicht uebersetzen."
     : "Keep the output in the same language as the input. Do not translate.";

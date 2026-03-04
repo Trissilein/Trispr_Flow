@@ -10,9 +10,11 @@ const $ = <T extends HTMLElement>(id: string) => {
 export const tabBtnTranscription = $("tab-btn-transcription") as HTMLButtonElement | null;
 export const tabBtnSettings = $("tab-btn-settings") as HTMLButtonElement | null;
 export const tabBtnAiRefinement = $("tab-btn-ai-refinement") as HTMLButtonElement | null;
+export const tabBtnModules = $("tab-btn-modules") as HTMLButtonElement | null;
 export const tabTranscription = $("tab-transcription") as HTMLDivElement | null;
 export const tabSettings = $("tab-settings") as HTMLDivElement | null;
 export const tabAiRefinement = $("tab-ai-refinement") as HTMLDivElement | null;
+export const tabModules = $("tab-modules") as HTMLDivElement | null;
 export const expertModeToggle = $("expert-mode-toggle") as HTMLInputElement | null;
 export const expertModeLabel = $("expert-mode-label") as HTMLSpanElement | null;
 
@@ -50,7 +52,9 @@ export const toggleHotkey = $("toggle-hotkey") as HTMLInputElement | null;
 export const toggleHotkeyRecord = $("toggle-hotkey-record") as HTMLButtonElement | null;
 export const toggleHotkeyStatus = $("toggle-hotkey-status") as HTMLSpanElement | null;
 export const deviceSelect = $("device-select") as HTMLSelectElement | null;
+export const asrLanguageField = $("asr-language-field") as HTMLLabelElement | null;
 export const languageSelect = $("language-select") as HTMLSelectElement | null;
+export const asrLanguageHintNote = $("asr-language-hint-note") as HTMLSpanElement | null;
 export const languagePinnedToggle = $("language-pinned-toggle") as HTMLInputElement | null;
 export const audioCuesToggle = $("audio-cues-toggle") as HTMLInputElement | null;
 export const audioCuesVolume = $("audio-cues-volume") as HTMLInputElement | null;
@@ -81,7 +85,7 @@ export const refinementPipelineNote = $("refinement-pipeline-note") as HTMLSpanE
 export const refinementPipelineGraph = $("refinement-pipeline-graph") as HTMLDivElement | null;
 export const refinementPipelineLive = $("refinement-pipeline-live") as HTMLDivElement | null;
 export const postprocSettings = $("postproc-settings") as HTMLDivElement | null;
-export const postprocLanguage = $("postproc-language") as HTMLSelectElement | null;
+export const postprocLanguageDerived = $("postproc-language-derived") as HTMLSpanElement | null;
 export const postprocPunctuation = $("postproc-punctuation") as HTMLInputElement | null;
 export const postprocCapitalization = $("postproc-capitalization") as HTMLInputElement | null;
 export const postprocNumbers = $("postproc-numbers") as HTMLInputElement | null;
@@ -230,9 +234,11 @@ export const historyTabMic = $("history-tab-mic");
 export const historyTabSystem = $("history-tab-system");
 export const historyTabConversation = $("history-tab-conversation");
 export const historyCopyConversation = $("history-copy-conversation") as HTMLButtonElement | null;
+export const historyDeleteConversation = $("history-delete-conversation") as HTMLButtonElement | null;
 export const analyseButton = $("analyse-button") as HTMLButtonElement | null;
 export const historyExport = $("history-export") as HTMLButtonElement | null;
 export const archiveBrowseBtn = $("archive-browse-btn") as HTMLButtonElement | null;
+export const openModulesBtn = $("open-modules-btn") as HTMLButtonElement | null;
 export const historySearch = $("history-search") as HTMLInputElement | null;
 export const historySearchClear = $("history-search-clear") as HTMLButtonElement | null;
 export const conversationFontControls = $("conversation-font-controls");
@@ -250,6 +256,39 @@ export const refinementInspectorRaw = $("refinement-inspector-raw") as HTMLDivEl
 export const refinementInspectorRefined = $("refinement-inspector-refined") as HTMLDivElement | null;
 export const refinementInspectorDiff = $("refinement-inspector-diff") as HTMLDivElement | null;
 export const refinementInspectorError = $("refinement-inspector-error") as HTMLDivElement | null;
+
+// Modules tab
+export const modulesList = $("modules-list") as HTMLDivElement | null;
+export const modulesStatus = $("modules-status") as HTMLSpanElement | null;
+
+// GDD flow modal
+export const gddFlowModal = $("gdd-flow-modal") as HTMLDivElement | null;
+export const gddFlowBackdrop = $("gdd-flow-backdrop") as HTMLDivElement | null;
+export const gddFlowClose = $("gdd-flow-close") as HTMLButtonElement | null;
+export const gddFlowPreset = $("gdd-flow-preset") as HTMLSelectElement | null;
+export const gddFlowDetectPreset = $("gdd-flow-detect-preset") as HTMLButtonElement | null;
+export const gddFlowTitle = $("gdd-flow-title") as HTMLInputElement | null;
+export const gddFlowMaxChunk = $("gdd-flow-max-chunk") as HTMLSelectElement | null;
+export const gddFlowTemplateSource = $("gdd-flow-template-source") as HTMLSelectElement | null;
+export const gddFlowTemplateConfluenceGroup = $("gdd-flow-template-confluence-group") as HTMLDivElement | null;
+export const gddFlowTemplateConfluenceUrl = $("gdd-flow-template-confluence-url") as HTMLInputElement | null;
+export const gddFlowTemplateConfluenceLoad = $("gdd-flow-template-confluence-load") as HTMLButtonElement | null;
+export const gddFlowTemplateFileGroup = $("gdd-flow-template-file-group") as HTMLDivElement | null;
+export const gddFlowTemplateFilePath = $("gdd-flow-template-file-path") as HTMLInputElement | null;
+export const gddFlowTemplateFilePick = $("gdd-flow-template-file-pick") as HTMLButtonElement | null;
+export const gddFlowTemplateFileLoad = $("gdd-flow-template-file-load") as HTMLButtonElement | null;
+export const gddFlowTemplateMeta = $("gdd-flow-template-meta") as HTMLSpanElement | null;
+export const gddFlowTemplatePreview = $("gdd-flow-template-preview") as HTMLTextAreaElement | null;
+export const gddFlowGenerate = $("gdd-flow-generate") as HTMLButtonElement | null;
+export const gddFlowValidate = $("gdd-flow-validate") as HTMLButtonElement | null;
+export const gddFlowStatus = $("gdd-flow-status") as HTMLSpanElement | null;
+export const gddFlowSpaceKey = $("gdd-flow-space-key") as HTMLInputElement | null;
+export const gddFlowParentPageId = $("gdd-flow-parent-page-id") as HTMLInputElement | null;
+export const gddFlowTargetPageId = $("gdd-flow-target-page-id") as HTMLInputElement | null;
+export const gddFlowSuggestTarget = $("gdd-flow-suggest-target") as HTMLButtonElement | null;
+export const gddFlowPublish = $("gdd-flow-publish") as HTMLButtonElement | null;
+export const gddFlowPublishLink = $("gdd-flow-publish-link") as HTMLAnchorElement | null;
+export const gddFlowOutput = $("gdd-flow-output") as HTMLTextAreaElement | null;
 
 // Export dialog
 export const exportDialog = $("export-dialog") as HTMLDivElement | null;
@@ -275,18 +314,6 @@ export const archiveSelectionMeta = $("archive-selection-meta") as HTMLSpanEleme
 export const archiveEntries = $("archive-entries") as HTMLDivElement | null;
 export const archiveExportFormat = $("archive-export-format") as HTMLSelectElement | null;
 export const archiveExportBtn = $("archive-export-btn") as HTMLButtonElement | null;
-
-// Chapter controls (Transcription tab)
-export const chaptersContainer = $("chapters-container") as HTMLDivElement | null;
-export const chaptersList = $("chapters-list") as HTMLDivElement | null;
-export const chapterMethodSelect = $("chapter-method") as HTMLSelectElement | null;
-export const chaptersToggle = $("chapters-toggle") as HTMLButtonElement | null;
-
-// Chapter settings (Settings tab)
-export const chaptersEnabled = $("chapters-enabled") as HTMLInputElement | null;
-export const chaptersSettings = $("chapters-settings") as HTMLDivElement | null;
-export const chaptersShowIn = $("chapters-show-in") as HTMLSelectElement | null;
-export const chaptersMethod = $("chapters-method") as HTMLSelectElement | null;
 
 // Extra hotkeys controls
 export const toggleActivationWordsHotkey = $("toggle-activation-words-hotkey") as HTMLInputElement | null;

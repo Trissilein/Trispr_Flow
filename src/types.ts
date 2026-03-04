@@ -6,12 +6,147 @@ export type AIExecutionMode = "local_primary" | "online_fallback";
 export type AIProviderAuthStatus = "locked" | "verified_api_key" | "verified_oauth";
 export type AIProviderAuthMethodPreference = "api_key" | "oauth";
 export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
+export type ModuleId = "gdd" | "analysis" | "integrations_confluence";
+export type ModuleState = "not_installed" | "installed" | "enabled" | "active" | "error";
+export type ModulePermission =
+  | "network_confluence"
+  | "filesystem_history"
+  | "filesystem_exports"
+  | "keyring_access";
 export type RefinementPromptPreset =
   | "wording"
   | "summary"
   | "technical_specs"
   | "action_items"
   | "custom";
+
+export interface ModuleDescriptor {
+  id: ModuleId | string;
+  name: string;
+  version: string;
+  state: ModuleState;
+  dependencies: string[];
+  permissions: ModulePermission[];
+  restart_required: boolean;
+  last_error?: string | null;
+  bundled: boolean;
+}
+
+export interface ModuleSettings {
+  enabled_modules: string[];
+  consented_permissions: Record<string, string[]>;
+  module_overrides: Record<string, unknown>;
+}
+
+export interface GddPresetSection {
+  id: string;
+  title: string;
+  required: boolean;
+}
+
+export interface GddPreset {
+  id: string;
+  name: string;
+  description: string;
+  is_clone: boolean;
+  base_preset_id?: string | null;
+  detail_level: string;
+  tone: string;
+  keywords: string[];
+  sections: GddPresetSection[];
+}
+
+export interface GddPresetClone {
+  id: string;
+  name: string;
+  detail_level: string;
+  tone: string;
+  keywords: string[];
+  section_order: string[];
+  required_sections: string[];
+}
+
+export interface GddRecognitionCandidate {
+  preset_id: string;
+  label: string;
+  score: number;
+}
+
+export interface GddRecognitionResult {
+  suggested_preset_id: string;
+  confidence: number;
+  candidates: GddRecognitionCandidate[];
+  reasoning_snippets: string[];
+}
+
+export interface GddSectionDraft {
+  id: string;
+  title: string;
+  content: string;
+  evidence_gap: boolean;
+}
+
+export interface GddDraft {
+  preset_id: string;
+  title: string;
+  summary: string;
+  sections: GddSectionDraft[];
+  chunk_count: number;
+  generated_at_iso: string;
+}
+
+export interface GddTemplateSourceResult {
+  source_kind: "confluence" | "file" | string;
+  source_label: string;
+  source_ref: string;
+  text: string;
+  original_chars: number;
+  truncated: boolean;
+}
+
+export interface GenerateGddDraftRequest {
+  transcript: string;
+  preset_id?: string | null;
+  title?: string | null;
+  max_chunk_chars?: number | null;
+  template_hint?: string | null;
+  template_label?: string | null;
+}
+
+export interface GddPublishRequest {
+  title: string;
+  storage_body: string;
+  space_key: string;
+  parent_page_id?: string | null;
+  target_page_id?: string | null;
+}
+
+export interface GddPublishResult {
+  page_id: string;
+  page_url: string;
+  created: boolean;
+  version: number;
+  message: string;
+}
+
+export interface GddModuleSettings {
+  enabled: boolean;
+  default_preset_id: string;
+  detect_preset_automatically: boolean;
+  prefer_one_click_publish: boolean;
+  preset_clones: GddPresetClone[];
+}
+
+export interface ConfluenceSettings {
+  enabled: boolean;
+  site_base_url: string;
+  oauth_cloud_id: string;
+  default_space_key: string;
+  api_user_email: string;
+  default_parent_page_id: string;
+  auth_mode: "oauth" | "api_token";
+  routing_memory: Record<string, string>;
+}
 
 export interface AIFallbackSettings {
   enabled: boolean;
@@ -75,6 +210,9 @@ export interface Settings {
   ai_fallback: AIFallbackSettings;
   providers: AIProvidersSettings;
   setup: SetupSettings;
+  module_settings?: ModuleSettings;
+  gdd_module_settings?: GddModuleSettings;
+  confluence_settings?: ConfluenceSettings;
   audio_cues: boolean;
   audio_cues_volume: number;
   ptt_use_vad: boolean;
@@ -142,10 +280,6 @@ export interface Settings {
   postproc_llm_api_key: string;
   postproc_llm_model: string;
   postproc_llm_prompt: string;
-  // Chapter settings
-  chapters_enabled?: boolean;
-  chapters_show_in?: "conversation" | "all";
-  chapters_method?: "silence" | "time" | "hybrid";
   // Recording export settings
   opus_enabled?: boolean;
   opus_bitrate_kbps?: number;
@@ -244,6 +378,14 @@ export interface DownloadComplete {
 export interface DownloadError {
   id: string;
   error: string;
+}
+
+export interface QuantizeProgress {
+  file_name: string;
+  quant: string;
+  phase: "starting" | "running" | "finalizing" | "done";
+  percent?: number;
+  message?: string;
 }
 
 export interface ValidationResult {
@@ -421,4 +563,31 @@ export interface PartitionInfo {
   entry_count: number;
   size_bytes: number;
   is_active: boolean;
+}
+
+export interface ModuleHealthStatus {
+  module_id: string;
+  state: "ok" | "degraded" | "error";
+  detail: string;
+}
+
+export interface ModuleUpdateInfo {
+  module_id: string;
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+}
+
+export interface ConfluenceSpace {
+  id: string;
+  key: string;
+  name: string;
+}
+
+export interface ConfluenceTargetSuggestion {
+  space_key: string;
+  parent_page_id?: string | null;
+  existing_page_id?: string | null;
+  confidence: number;
+  reasoning: string;
 }

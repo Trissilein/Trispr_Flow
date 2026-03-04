@@ -361,6 +361,7 @@ pub struct RefinementOptions {
     pub low_latency_mode: bool,
     pub language: Option<String>,
     pub custom_prompt: Option<String>,
+    pub enforce_language_guard: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

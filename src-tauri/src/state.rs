@@ -7,7 +7,11 @@ use crate::constants::{
     VAD_THRESHOLD_SUSTAIN_DEFAULT,
 };
 use crate::history_partition::PartitionedHistory;
-use crate::paths::{resolve_config_path, resolve_data_path};
+use crate::modules::{
+    normalize_confluence_settings, normalize_gdd_module_settings, normalize_module_settings,
+    ConfluenceSettings, GddModuleSettings, ModuleSettings,
+};
+use crate::paths::resolve_config_path;
 use crate::transcription::TranscribeRecorder;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -207,6 +211,25 @@ fn default_topic_keywords() -> HashMap<String, Vec<String>> {
     topics
 }
 
+fn derive_postproc_language_from_asr(language_mode: &str, language_pinned: bool) -> String {
+    if !language_pinned {
+        return "multi".to_string();
+    }
+    match language_mode.trim().to_lowercase().as_str() {
+        "en" => "en".to_string(),
+        "de" => "de".to_string(),
+        _ => "multi".to_string(),
+    }
+}
+
+fn effective_asr_language_hint(language_mode: &str, language_pinned: bool) -> String {
+    if language_pinned {
+        language_mode.trim().to_lowercase()
+    } else {
+        "auto".to_string()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
@@ -224,6 +247,10 @@ pub(crate) struct Settings {
     pub(crate) providers: AIProvidersSettings,
     // First-run setup flags
     pub(crate) setup: SetupSettings,
+    // Managed module platform settings
+    pub(crate) module_settings: ModuleSettings,
+    pub(crate) gdd_module_settings: GddModuleSettings,
+    pub(crate) confluence_settings: ConfluenceSettings,
     pub(crate) audio_cues: bool,
     pub(crate) audio_cues_volume: f32,
     pub(crate) ptt_use_vad: bool, // Enable VAD threshold check even in PTT mode
@@ -306,13 +333,6 @@ pub(crate) struct Settings {
     pub(crate) postproc_llm_api_key: String,
     pub(crate) postproc_llm_model: String,
     pub(crate) postproc_llm_prompt: String,
-    // Chapter settings (v0.5.0)
-    pub(crate) chapters_enabled: bool,
-    pub(crate) chapters_show_in: String, // "conversation" | "all"
-    pub(crate) chapters_method: String,  // "silence" | "time" | "hybrid"
-    // Legacy chapter detection settings
-    pub(crate) chapter_silence_enabled: bool,
-    pub(crate) chapter_silence_threshold_ms: u64,
     // Analysis launcher settings (external tool)
     pub(crate) opus_enabled: bool,
     pub(crate) opus_bitrate_kbps: u32,
@@ -365,6 +385,9 @@ impl Default for Settings {
       ai_fallback: AIFallbackSettings::default(),
       providers: AIProvidersSettings::default(),
       setup: SetupSettings::default(),
+      module_settings: ModuleSettings::default(),
+      gdd_module_settings: GddModuleSettings::default(),
+      confluence_settings: ConfluenceSettings::default(),
       audio_cues: true,
       audio_cues_volume: 0.3,
       ptt_use_vad: false,
@@ -425,7 +448,7 @@ impl Default for Settings {
       activation_words: vec!["computer".to_string(), "hey assistant".to_string()],
       topic_keywords: default_topic_keywords(),
       postproc_enabled: false,
-      postproc_language: "en".to_string(),
+      postproc_language: "multi".to_string(),
       postproc_punctuation_enabled: true,
       postproc_capitalization_enabled: true,
       postproc_numbers_enabled: true,
@@ -436,13 +459,6 @@ impl Default for Settings {
       postproc_llm_api_key: String::new(),
       postproc_llm_model: String::new(),
       postproc_llm_prompt: "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
-      // Chapter settings (v0.5.0) - disabled by default per DEC-018
-      chapters_enabled: false,
-      chapters_show_in: "conversation".to_string(),
-      chapters_method: "hybrid".to_string(),
-      // Legacy chapter settings
-      chapter_silence_enabled: false,
-      chapter_silence_threshold_ms: 10000, // 10 seconds
       opus_enabled: true,
       opus_bitrate_kbps: 64,
       auto_save_system_audio: false,
@@ -516,14 +532,6 @@ pub(crate) struct HistoryEntry {
     pub(crate) refinement: Option<HistoryRefinement>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Chapter {
-    pub(crate) id: String,
-    pub(crate) label: String,
-    pub(crate) timestamp_ms: u64,
-    pub(crate) entry_count: u32,
-}
-
 #[cfg(target_os = "windows")]
 pub(crate) struct SystemClusterBuffer {
     pub(crate) entries: Vec<(String, String, u64)>, // (entry_id, text, timestamp_ms)
@@ -544,7 +552,6 @@ pub(crate) struct AppState {
     pub(crate) settings: Mutex<Settings>,
     pub(crate) history: Mutex<PartitionedHistory>,
     pub(crate) history_transcribe: Mutex<PartitionedHistory>,
-    pub(crate) chapters: Mutex<Vec<Chapter>>,
     pub(crate) recorder: Mutex<Recorder>,
     pub(crate) transcribe: Mutex<TranscribeRecorder>,
     pub(crate) downloads: Mutex<HashSet<String>>,
@@ -699,6 +706,10 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if !valid_languages.contains(&settings.language_mode.as_str()) {
                 settings.language_mode = "auto".to_string();
             }
+            settings.postproc_language = derive_postproc_language_from_asr(
+                &settings.language_mode,
+                settings.language_pinned,
+            );
             if settings.model_source.trim().is_empty() {
                 settings.model_source = "default".to_string();
             }
@@ -899,6 +910,9 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             normalize_topic_keywords_fields(&mut settings);
             // Normalize v0.7 AI fallback settings and legacy compatibility fields.
             normalize_ai_fallback_fields(&mut settings);
+            normalize_module_settings(&mut settings.module_settings);
+            normalize_gdd_module_settings(&mut settings.gdd_module_settings);
+            normalize_confluence_settings(&mut settings.confluence_settings);
             if settings.setup.local_ai_wizard_completed {
                 settings.setup.local_ai_wizard_pending = false;
             }
@@ -1067,9 +1081,13 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
     settings.postproc_llm_enabled = settings.ai_fallback.enabled;
     settings.postproc_llm_provider = settings.ai_fallback.provider.clone();
     settings.postproc_llm_model = settings.ai_fallback.model.clone();
+    settings.postproc_language =
+        derive_postproc_language_from_asr(&settings.language_mode, settings.language_pinned);
+    let effective_language =
+        effective_asr_language_hint(&settings.language_mode, settings.language_pinned);
     if let Some(prompt) = prompt_for_profile(
         &settings.ai_fallback.prompt_profile,
-        &settings.language_mode,
+        &effective_language,
         Some(settings.ai_fallback.custom_prompt.as_str()),
         settings.ai_fallback.preserve_source_language,
     ) {
@@ -1203,6 +1221,9 @@ pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result
     // Do not persist session-only transcribe enablement.
     persisted.transcribe_enabled = false;
     normalize_history_alias_fields(&mut persisted);
+    normalize_module_settings(&mut persisted.module_settings);
+    normalize_gdd_module_settings(&mut persisted.gdd_module_settings);
+    normalize_confluence_settings(&mut persisted.confluence_settings);
     let raw = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
     // Atomic write: write to .tmp then rename to avoid partial/corrupted JSON on crash.
     let tmp_path = path.with_extension("json.tmp");
@@ -1218,21 +1239,6 @@ pub(crate) fn sync_model_dir_env(settings: &Settings) {
     } else {
         std::env::set_var("TRISPR_WHISPER_MODEL_DIR", trimmed);
     }
-}
-
-pub(crate) fn load_chapters(app: &AppHandle) -> Vec<Chapter> {
-    let path = resolve_data_path(app, "chapters.json");
-    match fs::read_to_string(path) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    }
-}
-
-pub(crate) fn save_chapters_file(app: &AppHandle, chapters: &[Chapter]) -> Result<(), String> {
-    let path = resolve_data_path(app, "chapters.json");
-    let raw = serde_json::to_string_pretty(chapters).map_err(|e| e.to_string())?;
-    fs::write(path, raw).map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 #[cfg(test)]

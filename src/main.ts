@@ -16,6 +16,7 @@ import type {
   DownloadProgress,
   DownloadComplete,
   DownloadError,
+  QuantizeProgress,
   ErrorEvent,
   TranscribeBacklogStatus,
   OllamaPullProgress,
@@ -45,6 +46,7 @@ import {
   setModels,
   setDynamicSustainThreshold,
   modelProgress,
+  quantizeProgress,
   ollamaPullProgress,
 } from "./state";
 import * as dom from "./dom-refs";
@@ -67,10 +69,11 @@ import { dismissToast, showToast, showErrorToast } from "./toast";
 import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
 import { dumpHistoryToFile, initLiveDump } from "./live-dump";
-import { initChaptersUI, refreshChapters } from "./chapters";
 import { initExportDialog } from "./export-dialog";
 import { initArchiveBrowser } from "./archive-browser";
 import { initExpertMode } from "./expert-mode";
+import { initModulesHub, refreshModulesHub } from "./modules-hub";
+import { initGddFlow } from "./gdd-flow";
 import {
   handleRefinementFailureForInspector,
   handleRefinementStartedForInspector,
@@ -275,12 +278,13 @@ async function bootstrap() {
   initMainTab();
   initPanelState();
   initConversationView();
-  initChaptersUI();
   initUnifiedTooltips();
   initHistoryDelegation();
   initExportDialog();
   initArchiveBrowser();
   initExpertMode();
+  initModulesHub();
+  initGddFlow();
 
   // Phase 3: Render UI — failures here should not block interaction
   try {
@@ -294,6 +298,7 @@ async function bootstrap() {
     renderHistory();
     renderRefinementInspector();
     renderModels();
+    refreshModulesHub();
     await refreshModelsDir();
     // Initialize Ollama model manager if provider is Ollama
     if (settings?.ai_fallback?.provider === "ollama") {
@@ -327,6 +332,7 @@ async function bootstrap() {
     scheduleSettingsRender();
     renderHero();
     renderModels();
+    refreshModulesHub();
     void refreshModelsDir().catch((e) => console.error("refreshModelsDir failed:", e));
     if (settings?.ai_fallback?.provider === "ollama") {
       if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshInstalledModels) {
@@ -374,7 +380,6 @@ async function bootstrap() {
     return async (event: { payload: HistoryEntry[] }) => {
       setter(event.payload ?? []);
       scheduleHistoryRender();
-      refreshChapters();
       // Prune orphaned refinement snapshots from localStorage
       const allIds = new Set([...history, ...transcribeHistory].map((e) => e.id));
       pruneOrphanedSnapshots(allIds);
@@ -386,6 +391,10 @@ async function bootstrap() {
   eventUnlisteners.push(await listen<HistoryEntry[]>("history:updated", makeHistoryUpdateHandler(setHistory)));
 
   eventUnlisteners.push(await listen<HistoryEntry[]>("transcribe:history-updated", makeHistoryUpdateHandler(setTranscribeHistory)));
+
+  eventUnlisteners.push(await listen("module:state-changed", () => {
+    refreshModulesHub();
+  }));
 
   eventUnlisteners.push(await listen<TranscriptionResultEvent>("transcription:result", (event) => {
     const payload = event.payload;
@@ -514,6 +523,13 @@ async function bootstrap() {
     console.error("model download error", event.payload.error);
     modelProgress.delete(event.payload.id);
     await refreshModels();
+  }));
+
+  eventUnlisteners.push(await listen<QuantizeProgress>("model:quantize-progress", (event) => {
+    const payload = event.payload;
+    if (!payload?.file_name) return;
+    quantizeProgress.set(payload.file_name, payload);
+    renderModels();
   }));
 
   // Ollama pull progress events

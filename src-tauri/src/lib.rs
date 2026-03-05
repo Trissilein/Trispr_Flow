@@ -3046,6 +3046,244 @@ fn check_ffmpeg() -> Result<bool, String> {
     Ok(opus::check_ffmpeg_available())
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+struct DependencyPreflightItem {
+    id: String,
+    status: String, // "ok" | "warning" | "error"
+    required: bool,
+    message: String,
+    hint: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct DependencyPreflightReport {
+    generated_at_ms: u64,
+    overall_status: String, // "ok" | "warning" | "error"
+    blocking_count: usize,
+    warning_count: usize,
+    items: Vec<DependencyPreflightItem>,
+}
+
+#[cfg(target_os = "windows")]
+fn check_powershell_available() -> bool {
+    std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", "$PSVersionTable.PSVersion.Major"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn check_powershell_available() -> bool {
+    false
+}
+
+fn build_dependency_preflight_report(
+    app: &AppHandle,
+    state: &AppState,
+) -> DependencyPreflightReport {
+    let settings_snapshot = state.settings.lock().unwrap().clone();
+    let mut items: Vec<DependencyPreflightItem> = Vec::new();
+
+    let whisper_cli = paths::resolve_whisper_cli_path();
+    if let Some(path) = whisper_cli {
+        items.push(DependencyPreflightItem {
+            id: "whisper_runtime".to_string(),
+            status: "ok".to_string(),
+            required: true,
+            message: format!("Whisper runtime found: {}", path.display()),
+            hint: None,
+        });
+    } else {
+        items.push(DependencyPreflightItem {
+            id: "whisper_runtime".to_string(),
+            status: "error".to_string(),
+            required: true,
+            message: "Whisper runtime executable is missing.".to_string(),
+            hint: Some(
+                "Reinstall Trispr Flow and ensure the selected CUDA/VULKAN runtime is present."
+                    .to_string(),
+            ),
+        });
+    }
+
+    let model_ready = check_model_available(app.clone(), settings_snapshot.model.clone());
+    if model_ready {
+        items.push(DependencyPreflightItem {
+            id: "whisper_model".to_string(),
+            status: "ok".to_string(),
+            required: true,
+            message: format!("Speech model '{}' is available.", settings_snapshot.model),
+            hint: None,
+        });
+    } else {
+        items.push(DependencyPreflightItem {
+            id: "whisper_model".to_string(),
+            status: "error".to_string(),
+            required: true,
+            message: format!(
+                "Speech model '{}' is not installed.",
+                settings_snapshot.model
+            ),
+            hint: Some("Download a model in Whisper Model Manager.".to_string()),
+        });
+    }
+
+    let quantize = paths::resolve_quantize_path(app);
+    if let Some(path) = quantize {
+        items.push(DependencyPreflightItem {
+            id: "quantize_binary".to_string(),
+            status: "ok".to_string(),
+            required: false,
+            message: format!("Quantize binary found: {}", path.display()),
+            hint: None,
+        });
+    } else {
+        items.push(DependencyPreflightItem {
+            id: "quantize_binary".to_string(),
+            status: "warning".to_string(),
+            required: false,
+            message: "Model optimization binary (quantize.exe) not found.".to_string(),
+            hint: Some(
+                "Optimize in Whisper Model Manager will be unavailable until quantize.exe is bundled."
+                    .to_string(),
+            ),
+        });
+    }
+
+    match opus::find_ffmpeg() {
+        Ok(path) => items.push(DependencyPreflightItem {
+            id: "ffmpeg".to_string(),
+            status: "ok".to_string(),
+            required: false,
+            message: format!("FFmpeg found: {}", path.display()),
+            hint: None,
+        }),
+        Err(error) => items.push(DependencyPreflightItem {
+            id: "ffmpeg".to_string(),
+            status: "warning".to_string(),
+            required: false,
+            message: "FFmpeg is not available.".to_string(),
+            hint: Some(format!(
+                "{} OPUS encode/merge features may not work until FFmpeg is available.",
+                error
+            )),
+        }),
+    }
+
+    let powershell_ok = check_powershell_available();
+    let tts_enabled = settings_snapshot.voice_output_settings.enabled;
+    if powershell_ok {
+        items.push(DependencyPreflightItem {
+            id: "powershell_tts".to_string(),
+            status: "ok".to_string(),
+            required: tts_enabled,
+            message: "PowerShell runtime is available for Windows TTS.".to_string(),
+            hint: None,
+        });
+    } else {
+        items.push(DependencyPreflightItem {
+            id: "powershell_tts".to_string(),
+            status: if tts_enabled {
+                "error".to_string()
+            } else {
+                "warning".to_string()
+            },
+            required: tts_enabled,
+            message: "PowerShell runtime is not available.".to_string(),
+            hint: Some(
+                "Windows-native TTS requires powershell.exe and System.Speech support.".to_string(),
+            ),
+        });
+    }
+
+    if settings_snapshot.voice_output_settings.enabled
+        && settings_snapshot.voice_output_settings.default_provider == "local_custom"
+    {
+        items.push(DependencyPreflightItem {
+            id: "tts_local_custom".to_string(),
+            status: "warning".to_string(),
+            required: false,
+            message: "Local custom TTS provider is still a placeholder.".to_string(),
+            hint: Some(
+                "Current fallback uses Windows native TTS until the custom runtime is integrated."
+                    .to_string(),
+            ),
+        });
+    }
+
+    if settings_snapshot.ai_fallback.enabled && settings_snapshot.ai_fallback.provider == "ollama" {
+        let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
+        let local_mode = settings_snapshot.ai_fallback.strict_local_mode;
+        let reachable = ping_ollama_quick(&endpoint).is_ok();
+        items.push(DependencyPreflightItem {
+            id: "ollama_runtime".to_string(),
+            status: if reachable {
+                "ok".to_string()
+            } else {
+                "warning".to_string()
+            },
+            required: false,
+            message: if reachable {
+                format!("Ollama endpoint reachable: {}", endpoint)
+            } else {
+                format!("Ollama endpoint not reachable: {}", endpoint)
+            },
+            hint: if reachable {
+                None
+            } else {
+                Some(if local_mode {
+                    "Start/install local Ollama runtime in AI Refinement > Runtime."
+                        .to_string()
+                } else {
+                    "Ensure configured Ollama endpoint is running.".to_string()
+                })
+            },
+        });
+    }
+
+    let module_descriptors = module_registry::modules_as_descriptors(&settings_snapshot.module_settings);
+    for descriptor in module_descriptors.iter().filter(|module| module.state == "error") {
+        let message = descriptor
+            .last_error
+            .clone()
+            .unwrap_or_else(|| "Module is in error state.".to_string());
+        items.push(DependencyPreflightItem {
+            id: format!("module_{}", descriptor.id),
+            status: "warning".to_string(),
+            required: false,
+            message: format!("Module '{}' has an issue: {}", descriptor.name, message),
+            hint: Some("Open Modules tab and run Health / dependency checks.".to_string()),
+        });
+    }
+
+    let blocking_count = items.iter().filter(|item| item.status == "error").count();
+    let warning_count = items.iter().filter(|item| item.status == "warning").count();
+    let overall_status = if blocking_count > 0 {
+        "error"
+    } else if warning_count > 0 {
+        "warning"
+    } else {
+        "ok"
+    };
+
+    DependencyPreflightReport {
+        generated_at_ms: crate::util::now_ms(),
+        overall_status: overall_status.to_string(),
+        blocking_count,
+        warning_count,
+        items,
+    }
+}
+
+#[tauri::command]
+fn get_dependency_preflight_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> DependencyPreflightReport {
+    build_dependency_preflight_report(&app, state.inner())
+}
+
 #[tauri::command]
 fn get_ffmpeg_version_info() -> Result<String, String> {
     opus::get_ffmpeg_version()
@@ -3991,6 +4229,22 @@ pub fn run() {
                 system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
             });
 
+            {
+                let state = app.state::<AppState>();
+                let report = build_dependency_preflight_report(app.handle(), state.inner());
+                if report.overall_status != "ok" {
+                    for item in report.items.iter().filter(|item| item.status != "ok") {
+                        warn!(
+                            "Dependency preflight [{}] {}: {}",
+                            item.status, item.id, item.message
+                        );
+                    }
+                } else {
+                    info!("Dependency preflight passed with no warnings.");
+                }
+                let _ = app.emit("dependency:preflight", &report);
+            }
+
             if env_flag("TRISPR_RUN_LATENCY_BENCHMARK") {
                 let app_handle = app.handle().clone();
                 thread::spawn(move || {
@@ -4377,6 +4631,7 @@ pub fn run() {
             clear_crash_recovery,
             encode_to_opus,
             check_ffmpeg,
+            get_dependency_preflight_status,
             get_ffmpeg_version_info,
             get_last_recording_path,
             get_recordings_directory,

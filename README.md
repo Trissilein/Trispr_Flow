@@ -19,6 +19,10 @@
 - **GPU Activity Visibility**: CPU/GPU activity indicator with persisted status snapshot
 - **Overlay Controls Split**: Separate refinement animation controls under overlay settings
 - **Installer Hardening**: Clear CUDA/Vulkan variant strategy and safer runtime path handling
+- **Managed Module Platform (initial)**: Module states, permissions, health, and updates
+- **GDD + Confluence Flow**: Draft, review, publish, and queue fallback path
+- **Workflow Agent Console (V1)**: Voice-command parsing + session candidate confirm flow
+- **Multimodal Foundations (V1)**: Vision/TTS module surfaces with safe defaults
 
 **v0.7.0 Baseline Locked**: Stabilization + architecture review before next feature wave.
 
@@ -36,7 +40,7 @@
 
 - ✅ Local post-processing (punctuation, capitalization, numbers, custom vocabulary)
 - ✅ Local AI refinement (Ollama runtime management, presets, low-latency mode)
-- ✅ Qwen3.5 local model presets in UI (`0.8b`, `2b`, `4b`, `9b`)
+- ✅ Qwen local model presets in UI (Qwen3 + Qwen3.5 lineup)
 - 🔄 Cloud provider rollout (Claude, OpenAI, Gemini) — planned v0.7.3
 - ✅ Custom prompt support (user-editable with defaults)
 
@@ -56,6 +60,16 @@
 - ✅ Model hot-swap (no restart required)
 - ✅ 16 language support with language pinning
 - 🔄 First-run wizard (planned v0.7.0+)
+
+### Modules (Managed)
+
+- ✅ **GDD Automation (core)**: Transcript -> structured GDD draft generation
+- ✅ **Confluence Integration (core)**: Cloud auth + target suggestion + page publish
+- ✅ **Workflow Agent (optional)**: Wakeword command parsing + plan/confirm execution
+- 🧪 **Screen Vision Input (optional)**: low-fps monitor source pipeline (RAM-only policy)
+- 🧪 **Voice Output TTS (optional)**: Windows native output path + local custom placeholder
+- ✅ Module lifecycle: `not_installed | installed | enabled | active | error`
+- ✅ Permission consent model + dependency-aware enable checks
 
 ## Status & Roadmap
 
@@ -89,7 +103,7 @@ See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for system requirements and build conf
 ## Active Branches
 
 - `main`: Trispr Flow mainline (capture/transcription product)
-- `analysis-module-branch`: standalone analysis-module project line
+- `vibe-voice-branch`: module/voice experimentation line
 
 See `docs/BRANCHING.md` for branch responsibilities.
 
@@ -125,9 +139,12 @@ See `docs/BRANCHING.md` for branch responsibilities.
 - 🌿 [docs/BRANCHING.md](docs/BRANCHING.md) — Branch responsibilities and workflow
 - 🔊 [docs/CONTINUOUS_DUMP_PLAN.md](docs/CONTINUOUS_DUMP_PLAN.md) — Adaptive continuous dump design + rollout
 - 🛠️ [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — Build setup
+- 🧩 [docs/DEPENDENCY_POLICY.md](docs/DEPENDENCY_POLICY.md) — Installer/runtime dependency policy + startup preflight matrix
 - 🔄 [docs/STATE_MANAGEMENT.md](docs/STATE_MANAGEMENT.md) — Internal state flow
 - 📤 [docs/EXPORT_SCHEMA.md](docs/EXPORT_SCHEMA.md) — Export format spec
 - 📋 [docs/TASK_SCHEDULE.md](docs/TASK_SCHEDULE.md) — Implementation blocks and tasks
+- 🤖 [docs/V0.8.1_WORKFLOW_AGENT_PLAN.md](docs/V0.8.1_WORKFLOW_AGENT_PLAN.md) — Voice workflow-agent implementation plan
+- 👁️ [docs/V0.8.2_MULTIMODAL_IO_PLAN.md](docs/V0.8.2_MULTIMODAL_IO_PLAN.md) — Vision/TTS module implementation plan
 - ⚖️ [docs/DOC_SYNC_CONFLICTS.md](docs/DOC_SYNC_CONFLICTS.md) — Contradictions found + discussion points
 - 🔀 [SCOPE.md](SCOPE.md) — How the project evolved vs original plan
 

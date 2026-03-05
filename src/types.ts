@@ -593,6 +593,24 @@ export interface ErrorEvent {
   context?: string;
 }
 
+export type DependencyPreflightStatus = "ok" | "warning" | "error";
+
+export interface DependencyPreflightItem {
+  id: string;
+  status: DependencyPreflightStatus;
+  required: boolean;
+  message: string;
+  hint?: string | null;
+}
+
+export interface DependencyPreflightReport {
+  generated_at_ms: number;
+  overall_status: DependencyPreflightStatus;
+  blocking_count: number;
+  warning_count: number;
+  items: DependencyPreflightItem[];
+}
+
 export type ToastType = "error" | "success" | "warning" | "info";
 
 export interface ToastOptions {

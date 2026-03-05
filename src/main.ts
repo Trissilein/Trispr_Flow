@@ -33,6 +33,7 @@ import type {
   TranscriptionGpuActivityEvent,
   TranscriptionResultEvent,
   TranscriptionRawResultEvent,
+  DependencyPreflightReport,
 } from "./types";
 import {
   settings,
@@ -769,11 +770,47 @@ async function checkModelOnStartup() {
   }
 }
 
+async function checkDependencyPreflightOnStartup() {
+  try {
+    const report = await invoke<DependencyPreflightReport>("get_dependency_preflight_status");
+    if (!report || report.overall_status === "ok") {
+      return;
+    }
+
+    if (report.blocking_count > 0) {
+      const blocking = report.items.filter((item) => item.status === "error");
+      const first = blocking[0];
+      showToast({
+        type: "error",
+        title: "Missing Runtime Dependencies",
+        message: first
+          ? `${first.message}${first.hint ? ` ${first.hint}` : ""}`
+          : `${report.blocking_count} blocking dependency issue(s) detected.`,
+        duration: 12000,
+      });
+    }
+
+    if (report.warning_count > 0) {
+      const warning = report.items.find((item) => item.status === "warning");
+      showToast({
+        type: "warning",
+        title: "Dependency Warnings",
+        message: warning
+          ? `${warning.message}${warning.hint ? ` ${warning.hint}` : ""}`
+          : `${report.warning_count} dependency warning(s) detected.`,
+        duration: 9000,
+      });
+    }
+  } catch (error) {
+    console.error("Failed to run dependency preflight check:", error);
+  }
+}
+
 window.addEventListener("DOMContentLoaded", () => {
   bootstrap()
     .then(() => {
       initWindowStatePersistence();
-      return checkModelOnStartup();
+      return checkModelOnStartup().then(() => checkDependencyPreflightOnStartup());
     })
     .catch((error) => {
       console.error("bootstrap failed", error);

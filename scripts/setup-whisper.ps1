@@ -2,11 +2,13 @@ param(
   [switch]$CpuFallback,
   [string]$CudaRoot = "",
   [string]$CudaToolset = "",
-  [string]$WhisperRoot = "D:\!GIT\whisper.cpp",
+  [string]$WhisperRoot = "",
   [string]$CudaArch = ""
 )
 
 $ErrorActionPreference = "Stop"
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path
 
 function Write-Section($text) {
   Write-Host "== $text =="
@@ -50,9 +52,83 @@ function Detect-CudaArch {
   return ""
 }
 
-if (!(Test-Path $WhisperRoot)) {
-  throw "whisper.cpp not found at $WhisperRoot"
+function Resolve-WhisperRoot {
+  param(
+    [string]$ExplicitRoot,
+    [string]$RepoRootPath
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($ExplicitRoot)) {
+    if (-not (Test-Path $ExplicitRoot)) {
+      throw "whisper.cpp not found at $ExplicitRoot"
+    }
+    return (Resolve-Path $ExplicitRoot).Path
+  }
+
+  $envCandidates = @($env:TRISPR_WHISPER_ROOT, $env:WHISPER_ROOT) |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  foreach ($candidate in $envCandidates) {
+    if (Test-Path $candidate) {
+      return (Resolve-Path $candidate).Path
+    }
+  }
+
+  $siblingRoot = Join-Path $RepoRootPath "..\whisper.cpp"
+  if (Test-Path $siblingRoot) {
+    return (Resolve-Path $siblingRoot).Path
+  }
+
+  throw "whisper.cpp not found. Use -WhisperRoot <path> or set TRISPR_WHISPER_ROOT."
 }
+
+function Resolve-CudaBuildCustomization {
+  param(
+    [string]$VsPath,
+    [string]$VcTag,
+    [string]$RequestedToolset
+  )
+
+  $customizationDir = Join-Path $VsPath "MSBuild\Microsoft\VC\$VcTag\BuildCustomizations"
+  if (-not (Test-Path $customizationDir)) { return $null }
+
+  if (-not [string]::IsNullOrWhiteSpace($RequestedToolset)) {
+    $requestedProps = Join-Path $customizationDir ("CUDA {0}.props" -f $RequestedToolset)
+    if (-not (Test-Path $requestedProps)) {
+      throw "Requested CUDA toolset $RequestedToolset not found at $requestedProps"
+    }
+    return @{
+      PropsPath = $requestedProps
+      Toolset = $RequestedToolset
+    }
+  }
+
+  $propsCandidates = Get-ChildItem -Path $customizationDir -Filter "CUDA *.props" -File -ErrorAction SilentlyContinue |
+    ForEach-Object {
+      $candidateToolset = ([System.IO.Path]::GetFileNameWithoutExtension($_.Name)) -replace '^CUDA\s+', ''
+      $parsedVersion = $null
+      if (-not [version]::TryParse($candidateToolset, [ref]$parsedVersion)) {
+        $parsedVersion = [version]"0.0"
+      }
+      [PSCustomObject]@{
+        File = $_
+        Toolset = $candidateToolset
+        Version = $parsedVersion
+      }
+    } |
+    Sort-Object -Property @{ Expression = 'Version'; Descending = $true }, @{ Expression = 'Toolset'; Descending = $true }
+  if (-not $propsCandidates -or $propsCandidates.Count -eq 0) {
+    return $null
+  }
+
+  $best = $propsCandidates[0]
+  $toolset = $best.Toolset
+  return @{
+    PropsPath = $best.File.FullName
+    Toolset = $toolset
+  }
+}
+
+$WhisperRoot = Resolve-WhisperRoot -ExplicitRoot $WhisperRoot -RepoRootPath $RepoRoot
 
 Write-Section "Trispr Flow :: whisper.cpp build"
 Write-Host "Root: $WhisperRoot"
@@ -91,15 +167,26 @@ if ($selectedVs) {
 $useCuda = -not $CpuFallback
 if ($useCuda) {
   $vcTag = if ($generatorName -eq "Visual Studio 17 2022") { "v170" } else { "v180" }
-  $cudaProps = Join-Path $selectedVs.installationPath "MSBuild\Microsoft\VC\$vcTag\BuildCustomizations\CUDA 13.0.props"
-  if (-not (Test-Path $cudaProps)) {
-    throw "CUDA BuildCustomizations not found at $cudaProps"
+  $cudaBuildCustomization = Resolve-CudaBuildCustomization -VsPath $selectedVs.installationPath -VcTag $vcTag -RequestedToolset $CudaToolset
+  if (-not $cudaBuildCustomization) {
+    throw "CUDA BuildCustomizations not found in $($selectedVs.installationPath)\MSBuild\Microsoft\VC\$vcTag\BuildCustomizations"
   }
+  $CudaToolset = $cudaBuildCustomization.Toolset
 
   $nvcc = Get-Command nvcc -ErrorAction SilentlyContinue
   if (-not $nvcc) {
-    $cudaRoot = if ([string]::IsNullOrWhiteSpace($CudaRoot)) { "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA" } else { $CudaRoot }
-    if (Test-Path $cudaRoot) {
+    $cudaRoot = if ([string]::IsNullOrWhiteSpace($CudaRoot)) {
+      if (-not [string]::IsNullOrWhiteSpace($env:CUDA_PATH)) {
+        $env:CUDA_PATH
+      } elseif (-not [string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
+        Join-Path $env:ProgramFiles "NVIDIA GPU Computing Toolkit\CUDA"
+      } else {
+        ""
+      }
+    } else {
+      $CudaRoot
+    }
+    if (-not [string]::IsNullOrWhiteSpace($cudaRoot) -and (Test-Path $cudaRoot)) {
       $candidates = Get-ChildItem -Path $cudaRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending
       foreach ($dir in $candidates) {
         $candidate = Join-Path $dir.FullName "bin\nvcc.exe"
@@ -136,7 +223,6 @@ try {
   }
 
   if ($useCuda) {
-    if ([string]::IsNullOrWhiteSpace($CudaToolset)) { $CudaToolset = "13.0" }
     $generatorArgs = @("-G", $generatorName, "-A", "x64")
     $toolsetArgs = @("-T", "cuda=$CudaToolset")
     $instanceArg = @("-DCMAKE_GENERATOR_INSTANCE=$($selectedVs.installationPath)")
@@ -165,7 +251,7 @@ if (!(Test-Path $cliPath)) {
   throw "whisper-cli.exe not found at $cliPath"
 }
 
-$envPath = "D:\GIT\Trispr_Flow\.env.local"
+$envPath = Join-Path $RepoRoot ".env.local"
 $envLines = @(
   "TRISPR_WHISPER_CLI=$cliPath",
   "TRISPR_WHISPER_MODEL_DIR=$WhisperRoot\models"
@@ -175,4 +261,4 @@ $envLines | Set-Content -Path $envPath -Encoding UTF8
 
 Write-Host "OK: whisper-cli built"
 Write-Host "OK: wrote $envPath"
-Write-Host "Next: cd D:\GIT\Trispr_Flow; npm run tauri dev"
+Write-Host "Next: cd `"$RepoRoot`"; npm run tauri dev"

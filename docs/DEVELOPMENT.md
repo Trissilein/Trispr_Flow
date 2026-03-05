@@ -78,6 +78,15 @@ Notes:
 ## Environment variables
 See `.env.example` for runtime configuration. You can override the default model download base URL with `TRISPR_WHISPER_MODEL_BASE_URL`.
 
+## Local Ollama runtime (managed)
+
+- Trispr Flow manages Ollama runtime per-user and can install it from the UI (AI Refinement section).
+- Model pulls stay in-app and are not bundled with installers.
+- Runtime dependency policy:
+  - Whisper keeps its own CUDA DLL set in `src-tauri/bin/cuda`.
+  - Ollama keeps its own dependency tree under `%LOCALAPPDATA%\TrisprFlow\ollama-runtime\...`.
+  - Do not copy/mix DLLs between Whisper and Ollama runtime folders.
+
 ## Notes for WSL/Linux builds
 Tauri on Linux requires GTK/WebKit and linker dependencies. In WSL/Linux, install:
 

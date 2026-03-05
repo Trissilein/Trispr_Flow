@@ -3,8 +3,34 @@ param(
   [string]$Model = "turbo",
   [ValidateSet("q5_0")]
   [string]$Quant = "q5_0",
-  [string]$WhisperRoot = "D:\GIT\whisper.cpp"
+  [string]$WhisperRoot = ""
 )
+
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path
+
+if ([string]::IsNullOrWhiteSpace($WhisperRoot)) {
+  $envCandidates = @($env:TRISPR_WHISPER_ROOT, $env:WHISPER_ROOT) |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  foreach ($candidate in $envCandidates) {
+    if (Test-Path $candidate) {
+      $WhisperRoot = (Resolve-Path $candidate).Path
+      break
+    }
+  }
+
+  if ([string]::IsNullOrWhiteSpace($WhisperRoot)) {
+    $siblingRoot = Join-Path $RepoRoot "..\whisper.cpp"
+    if (Test-Path $siblingRoot) {
+      $WhisperRoot = (Resolve-Path $siblingRoot).Path
+    }
+  }
+}
+
+if ([string]::IsNullOrWhiteSpace($WhisperRoot) -or -not (Test-Path $WhisperRoot)) {
+  Write-Error "whisper.cpp not found. Use -WhisperRoot <path> or set TRISPR_WHISPER_ROOT."
+  exit 1
+}
 
 $modelsDir = Join-Path $WhisperRoot "models"
 

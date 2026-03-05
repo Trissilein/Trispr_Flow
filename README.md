@@ -2,7 +2,7 @@
 
 > GPU-first offline dictation + system audio transcription with optional AI refinement, privacy-first by default
 
-[![Version](https://img.shields.io/badge/version-0.6.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.0-blue.svg)](CHANGELOG.md)
 [![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
 [![macOS](https://img.shields.io/badge/macOS-000000?style=flat&logo=apple&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -11,12 +11,16 @@
 
 **Perfect for**: Meeting transcription, research notes, technical documentation, dictation workflows.
 
-## What's New in v0.6.0 ✨
+## What's New in v0.7.0 ✨
 
-- **Adaptive Continuous Dump**: Silence-aware + interval + hard-cut chunking for system audio and mic Toggle mode
-- **Professional Icon**: Cyan/Gold Yin-Yang branding
+- **Refined-Only Insert Flow**: Deferred paste with timeout fallback to raw text
+- **AI Refinement UX Upgrade**: Prompt presets + custom prompt preview + dedicated refinement inspector
+- **Local Ollama Runtime Reliability**: Background autostart + improved runtime state handling
+- **GPU Activity Visibility**: CPU/GPU activity indicator with persisted status snapshot
+- **Overlay Controls Split**: Separate refinement animation controls under overlay settings
+- **Installer Hardening**: Clear CUDA/Vulkan variant strategy and safer runtime path handling
 
-**v0.7.0 In Execution**: Foundation complete (Block F + G), provider integrations (Block H) are next.
+**v0.7.0 Baseline Locked**: Stabilization + architecture review before next feature wave.
 
 ## Core Capabilities
 
@@ -31,7 +35,9 @@
 ### Processing & Refinement
 
 - ✅ Local post-processing (punctuation, capitalization, numbers, custom vocabulary)
-- 🔄 Multi-provider AI Fallback (Claude, OpenAI, Gemini) — planned v0.7.0
+- ✅ Local AI refinement (Ollama runtime management, presets, low-latency mode)
+- ✅ Qwen3.5 local model presets in UI (`0.8b`, `2b`, `4b`, `9b`)
+- 🔄 Cloud provider rollout (Claude, OpenAI, Gemini) — planned v0.7.3
 - ✅ Custom prompt support (user-editable with defaults)
 
 ### Output & Organization
@@ -55,10 +61,9 @@
 
 | Version | Phase | Status | Highlights |
 | --- | --- | --- | --- |
-| **v0.6.0** | 🟢 LIVE | Complete | Core capture/transcription, OPUS, chapters, topics |
-| **v0.7.0** | 📋 Planning | Block F Complete | AI Fallback architecture (Claude/OpenAI/Gemini) |
-| **v0.7.0** | ✅ Complete | Block G (Opus) | Multi-provider architecture, settings migration, config UI |
-| **v0.7.0** | 🔵 In Progress | Block H (Sonnet) | Provider integrations (OpenAI/Claude/Gemini), prompt polish, E2E |
+| **v0.7.0** | 🟢 LIVE | Complete | Stable offline-first baseline |
+| **v0.7.1** | 🔵 In Progress | Stabilization | Block E (UX/UI consistency) + Block F (reliability/QA) |
+| **v0.7.3** | 📋 Planned | Cloud rollout | Claude/OpenAI/Gemini provider activation |
 
 👉 **[Full Roadmap](ROADMAP.md)** — See milestones, implementation schedule, and competitor analysis
 
@@ -66,8 +71,10 @@
 
 ### For Users
 Download the latest installer from [Releases](https://github.com/Trissilein/Trispr_Flow/releases):
-- **Trispr_Flow_0.6.0_CUDA_Edition.exe** — For NVIDIA GPU systems (RTX 4000+ series recommended)
-- **Trispr_Flow_0.6.0_Vulkan_Edition.exe** — For systems without CUDA support
+- **Trispr_Flow_0.7.0_CUDA_Edition.exe** — For NVIDIA GPU systems (RTX 4000+ series recommended)
+- **Trispr_Flow_0.7.0_Vulkan_Edition.exe** — For systems without CUDA support
+
+Ollama models are downloaded separately in-app (AI Refinement -> Models).
 
 ### For Developers
 ```bash
@@ -107,31 +114,31 @@ See `docs/BRANCHING.md` for branch responsibilities.
 ### Processing Pipeline
 1. **Raw Transcription**: Whisper-generated text
 2. **Post-Processing**: Local rules (punctuation, numbers, vocabulary)
-3. **AI Refinement** (optional v0.7.0+): Multi-provider AI enhancement via Claude/OpenAI/Gemini
+3. **AI Refinement** (optional): Local-first refinement via Ollama with deferred paste + fallback
 
 ## Documentation
 
-- 📖 [docs/README.md](docs/README.md) — Documentation map + governance
+- 📖 [READ_ME_FIRST.md](READ_ME_FIRST.md) — Start here
 - 🗺️ [ROADMAP.md](ROADMAP.md) — Project status and milestones
+- 🧱 [docs/ARCHITECTURE_REVIEW_0.7.md](docs/ARCHITECTURE_REVIEW_0.7.md) — v0.7.0 architecture review checklist + findings
 - 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Technical overview
-- 🧭 [docs/APP_FLOW.md](docs/APP_FLOW.md) — App flow and panel behavior
-- 🎨 [docs/frontend/DESIGN_SYSTEM.md](docs/frontend/DESIGN_SYSTEM.md) — Visual tokens and UI patterns
-- 🧱 [docs/frontend/FRONTEND_GUIDELINES.md](docs/frontend/FRONTEND_GUIDELINES.md) — Frontend engineering conventions
 - 🌿 [docs/BRANCHING.md](docs/BRANCHING.md) — Branch responsibilities and workflow
 - 🔊 [docs/CONTINUOUS_DUMP_PLAN.md](docs/CONTINUOUS_DUMP_PLAN.md) — Adaptive continuous dump design + rollout
 - 🛠️ [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — Build setup
 - 🔄 [docs/STATE_MANAGEMENT.md](docs/STATE_MANAGEMENT.md) — Internal state flow
 - 📤 [docs/EXPORT_SCHEMA.md](docs/EXPORT_SCHEMA.md) — Export format spec
 - 📋 [docs/TASK_SCHEDULE.md](docs/TASK_SCHEDULE.md) — Implementation blocks and tasks
-- 🗃️ [docs/archive/SCOPE.md](docs/archive/SCOPE.md) — Project scope evolution (historical)
+- ⚖️ [docs/DOC_SYNC_CONFLICTS.md](docs/DOC_SYNC_CONFLICTS.md) — Contradictions found + discussion points
+- 🔀 [SCOPE.md](SCOPE.md) — How the project evolved vs original plan
 
 ## Testing
 
 ### Run tests
 ```bash
 npm run test          # Unit tests
-npm run test:docs     # Documentation governance checks
 npm run test:smoke    # Smoke test (build + Rust tests)
+npm run benchmark:latency       # Fixture benchmark (p50/p95, warn-gate)
+npm run benchmark:latency:live  # Optional live profile (manual)
 ```
 
 For WSL/Linux development, install dependencies listed in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
@@ -141,6 +148,6 @@ For WSL/Linux development, install dependencies listed in [DEVELOPMENT.md](docs/
 👥 **Contributing Guidelines**
 
 - 📝 See [CONTRIBUTING.md](CONTRIBUTING.md) for PR process
-- 🎯 For feature scope and priority, see [ROADMAP.md](ROADMAP.md) + [docs/DECISIONS.md](docs/DECISIONS.md)
-- 🚀 **Next tasks available**: See [ROADMAP.md](ROADMAP.md) for the live Done/Open task ledger (v0.7 Block H)
+- 🎯 For large features, see [SCOPE.md](SCOPE.md) to understand project direction
+- 🚀 **Next tasks available**: See [ROADMAP.md](ROADMAP.md) for the live Done/Open task ledger (active: Block E/F, planned: Block J/K)
 - 💬 Discussions welcome in Issues

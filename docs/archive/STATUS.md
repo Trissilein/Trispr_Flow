@@ -3,12 +3,12 @@
 > Archive note: this file moved out of repo root during docs housekeeping on 2026-02-20.
 > The canonical operational snapshot now lives in `ROADMAP.md` (`Canonical Current State`).
 
-Last updated: 2026-02-20
+Last updated: 2026-03-02
 
 ## Snapshot
 
-- Current release: `v0.6.0`
-- Current planning phase: `v0.7.0`
+- Current release: `v0.7.0`
+- Current planning phase: `v0.7.1 stabilization execution`
 - Canonical next steps: `ROADMAP.md`
 
 ## Working State
@@ -18,6 +18,7 @@ Last updated: 2026-02-20
 - Continuous dump profiles and per-source overrides are available in Settings.
 - Session chunk persistence is source-specific (`mic` and `output`) to avoid finalize collisions.
 - AI fallback foundation is in place in Post-Processing settings.
+- Release QA automation is available via `npm run qa:release` (build/test/rust/audit + strict latency SLO gate).
 - Installer variants are now:
   - CUDA (base)
   - Vulkan (base)
@@ -41,6 +42,7 @@ Last updated: 2026-02-20
 
 ## Next Focus
 
-1. Continue UX/UI consistency improvements in Settings panels.
-2. Complete provider API integrations for AI fallback.
-3. Execute v0.7 roadmap tasks and stabilize release QA.
+1. Finalize latency benchmark baseline (`benchmark:latency`) and track p50/p95 trend.
+2. Validate runtime-start background behavior on Windows (no stuck "Starting runtime..." state).
+3. Continue Block E (UX/UI consistency + settings IA cleanup).
+4. Complete Block F reliability hardening + release QA.

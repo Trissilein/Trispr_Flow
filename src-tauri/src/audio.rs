@@ -2,22 +2,35 @@ use crate::constants::{
     TARGET_SAMPLE_RATE, VAD_MIN_CONSECUTIVE_CHUNKS, VAD_MIN_VOICE_MS,
 };
 use crate::continuous_dump::{AdaptiveSegmenter, AdaptiveSegmenterConfig, SegmentFlushReason};
-use crate::overlay::{update_overlay_state, OverlayState};
+use crate::overlay::{update_overlay_refining_indicator, update_overlay_state, OverlayState};
 use crate::postprocessing::process_transcript;
-use crate::state::{push_history_entry_inner, AppState, Settings};
+use crate::state::{
+    mark_entry_refinement_failed, mark_entry_refinement_started, mark_entry_refinement_success,
+    normalize_ai_fallback_fields, push_history_entry_inner, record_refinement_fallback_failed,
+    save_settings_file, AppState, Settings,
+};
 use crate::transcription::{
     rms_i16, should_drop_transcript, transcribe_audio, TranscriptionResult,
 };
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 const MIC_MIN_AUDIO_MS: u64 = 120;
+const VAD_PRE_ROLL_MS_MIN: u64 = 250;
+const VAD_PRE_ROLL_MS_MAX: u64 = 350;
+const VAD_PRE_ROLL_MIN_MS: u64 = 60;
+const VAD_PRE_ROLL_ENERGY_FACTOR: f32 = 0.45;
+const REFINEMENT_WATCHDOG_TIMEOUT_MS: u64 = 90_000;
+const REFINEMENT_WATCHDOG_POLL_MS: u64 = 1_000;
+const REFINEMENT_PASTE_TIMEOUT_MS: u64 = 10_000;
+const OVERLAY_EMIT_INTERVAL_MS: u64 = 33; // ~30 FPS for smoother overlay motion
+static TRANSCRIPTION_JOB_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct AudioDevice {
@@ -89,12 +102,12 @@ fn mic_min_samples() -> usize {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-struct ContinuousDumpEvent {
-    source: &'static str,
-    reason: SegmentFlushReason,
-    duration_ms: u64,
-    rms: f32,
-    text_len: usize,
+pub(crate) struct ContinuousDumpEvent {
+    pub(crate) source: &'static str,
+    pub(crate) reason: SegmentFlushReason,
+    pub(crate) duration_ms: u64,
+    pub(crate) rms: f32,
+    pub(crate) text_len: usize,
 }
 
 fn mic_segmenter_config(settings: &Settings) -> AdaptiveSegmenterConfig {
@@ -138,6 +151,10 @@ pub(crate) struct Recorder {
     vad_tx: Option<std::sync::mpsc::Sender<VadEvent>>,
     vad_runtime: Option<Arc<VadRuntime>>,
     pub(crate) input_gain_db: Arc<AtomicI64>,
+    ptt_hot_stop_tx: Option<std::sync::mpsc::Sender<()>>,
+    ptt_hot_join_handle: Option<thread::JoinHandle<()>>,
+    ptt_hot_recording: Arc<AtomicBool>,
+    ptt_hot_device_id: Option<String>,
 }
 
 impl Recorder {
@@ -154,6 +171,10 @@ impl Recorder {
             vad_tx: None,
             vad_runtime: None,
             input_gain_db: Arc::new(AtomicI64::new(0)),
+            ptt_hot_stop_tx: None,
+            ptt_hot_join_handle: None,
+            ptt_hot_recording: Arc::new(AtomicBool::new(false)),
+            ptt_hot_device_id: None,
         }
     }
 
@@ -263,12 +284,17 @@ impl OverlayLevelEmitter {
     fn emit_level(&self, level: f32) {
         let now_ms = self.start.elapsed().as_millis() as u64;
         let last = self.last_emit_ms.load(Ordering::Relaxed);
-        if now_ms.saturating_sub(last) < 50 {
+        if now_ms.saturating_sub(last) < OVERLAY_EMIT_INTERVAL_MS {
             return;
         }
         self.last_emit_ms.store(now_ms, Ordering::Relaxed);
 
         let level_clamped = level.clamp(0.0, 1.0);
+        // Perceptual remap for overlay rendering:
+        // speech RMS often sits in lower ranges, which made configured max pixel
+        // widths/radii feel unreachable. Keep raw level for meters/events and only
+        // boost visual rendering.
+        let visual_target = level_clamped.powf(0.62);
 
         let dynamic_thresh = self.dynamic_threshold.update(level_clamped, now_ms);
 
@@ -287,26 +313,24 @@ impl OverlayLevelEmitter {
                 } else {
                     (state.overlay_rise_ms, state.overlay_fall_ms)
                 };
+                // Fine-tuned coefficients:
+                // Keep slider impact noticeable but avoid "too laggy at low values".
+                let effective_rise_ms = (rise_ms as f32 * 1.15).max(20.0);
+                let effective_fall_ms = (fall_ms as f32 * 1.05).max(20.0);
 
                 let last_smooth = self.last_smooth_ms.load(Ordering::Relaxed);
                 let mut current = self.smooth_level.load(Ordering::Relaxed) as f32 / 1_000_000.0;
                 if last_smooth == 0 {
-                    current = level_clamped;
+                    current = visual_target;
                 } else {
                     let dt = now_ms.saturating_sub(last_smooth).max(1) as f32;
-                    let tau: u64 = if level_clamped > current {
-                        rise_ms
+                    let tau = if visual_target > current {
+                        effective_rise_ms
                     } else {
-                        fall_ms
+                        effective_fall_ms
                     };
-                    let denom = tau.max(1) as f32;
-                    let max_step = (dt / denom).min(1.0);
-                    let delta = level_clamped - current;
-                    if delta.abs() <= max_step {
-                        current = level_clamped;
-                    } else {
-                        current += max_step * delta.signum();
-                    }
+                    let alpha = 1.0 - (-dt / tau.max(1.0)).exp();
+                    current += (visual_target - current) * alpha;
                 }
                 self.last_smooth_ms.store(now_ms, Ordering::Relaxed);
                 let clamped = current.clamp(0.0, 1.0);
@@ -402,6 +426,9 @@ struct VadHandle {
     runtime: Arc<VadRuntime>,
     tx: std::sync::mpsc::Sender<VadEvent>,
     app: AppHandle,
+    pre_roll_buffer: Arc<Mutex<CaptureBuffer>>,
+    pre_roll_samples: usize,
+    pre_roll_min_samples: usize,
 }
 
 #[tauri::command]
@@ -543,8 +570,17 @@ fn handle_vad_audio(
             runtime.recording.store(true, Ordering::Relaxed);
             runtime.start_ms.store(now, Ordering::Relaxed);
             runtime.pending_flush.store(false, Ordering::Relaxed);
+            let warmup = {
+                let mut pre = vad_handle.pre_roll_buffer.lock().unwrap();
+                pre.take_all_samples()
+            };
+            let include_pre_roll = warmup.len() >= vad_handle.pre_roll_min_samples
+                && rms_i16(&warmup) >= runtime.threshold_start() * VAD_PRE_ROLL_ENERGY_FACTOR;
             if let Ok(mut buf) = buffer.lock() {
                 buf.reset();
+                if include_pre_roll {
+                    buf.samples.extend_from_slice(&warmup);
+                }
             }
             let _ = vad_handle.app.emit("capture:state", "recording");
             let _ = update_overlay_state(&vad_handle.app, OverlayState::Recording);
@@ -575,158 +611,364 @@ fn handle_vad_audio(
                 let _ = vad_handle.tx.send(VadEvent::Finalize(samples));
             }
         }
+    } else if vad_handle.pre_roll_samples > 0 {
+        if let Ok(mut pre) = vad_handle.pre_roll_buffer.lock() {
+            pre.push_samples(&mono, sample_rate);
+            if pre.samples.len() > vad_handle.pre_roll_samples {
+                let overflow = pre.samples.len() - vad_handle.pre_roll_samples;
+                pre.samples.drain(0..overflow);
+            }
+        }
     }
 }
 
-fn build_input_stream_f32(
-    device: &cpal::Device,
-    config: &StreamConfig,
-    buffer: Arc<Mutex<CaptureBuffer>>,
-    overlay: Option<Arc<OverlayLevelEmitter>>,
-    vad: Option<VadHandle>,
-    gain_db: Arc<AtomicI64>,
-) -> Result<cpal::Stream, String> {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate.0;
-    let err_fn = |err| eprintln!("audio stream error: {}", err);
+/// Macro that generates a `build_input_stream_*` function for a specific sample
+/// type.  The only thing that varies across f32 / i16 / u16 is how one raw
+/// sample is normalised to `f32` in the range `[-1, 1]`.  Everything else
+/// (gain, mono down-mix, RMS / level calculation, VAD dispatch) is identical.
+macro_rules! build_input_stream_typed {
+    ($fn_name:ident, $sample_ty:ty, $to_f32:expr) => {
+        fn $fn_name(
+            device: &cpal::Device,
+            config: &StreamConfig,
+            buffer: Arc<Mutex<CaptureBuffer>>,
+            overlay: Option<Arc<OverlayLevelEmitter>>,
+            vad: Option<VadHandle>,
+            gain_db: Arc<AtomicI64>,
+        ) -> Result<cpal::Stream, String> {
+            let channels = config.channels as usize;
+            let sample_rate = config.sample_rate.0;
+            let err_fn = |err| tracing::error!("audio stream error: {}", err);
 
-    device
-        .build_input_stream(
-            config,
-            move |data: &[f32], _| {
-                let mut mono = Vec::with_capacity(data.len() / channels.max(1));
-                let mut sum_squared = 0.0f32;
-                let gain_db = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
-                let gain = (10.0f32).powf(gain_db / 20.0);
-                for frame in data.chunks(channels.max(1)) {
-                    let mut sum = 0.0f32;
-                    for &sample in frame {
-                        sum += sample;
-                    }
-                    let sample = (sum / channels.max(1) as f32 * gain).clamp(-1.0, 1.0);
-                    mono.push(sample);
-                    sum_squared += sample * sample;
-                }
-                let level = if mono.is_empty() {
-                    0.0
-                } else {
-                    let rms = (sum_squared / mono.len() as f32).sqrt();
-                    (rms * 2.5).min(1.0)
-                };
-                if let Some(emitter) = overlay.as_ref() {
-                    emitter.emit_level(level);
-                }
-                if let Some(vad_handle) = vad.as_ref() {
-                    handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
-                } else {
-                    push_mono_samples(&buffer, &mono, sample_rate);
-                }
-            },
-            err_fn,
-            None,
-        )
-        .map_err(|e| e.to_string())
+            // Converter closure produced by the caller expression.
+            let convert: fn(&$sample_ty) -> f32 = $to_f32;
+
+            device
+                .build_input_stream(
+                    config,
+                    move |data: &[$sample_ty], _| {
+                        let ch = channels.max(1);
+                        let mut mono = Vec::with_capacity(data.len() / ch);
+                        let mut sum_squared = 0.0f32;
+                        let gain_db_val = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
+                        let gain = (10.0f32).powf(gain_db_val / 20.0);
+                        for frame in data.chunks(ch) {
+                            let mut sum = 0.0f32;
+                            for sample in frame {
+                                sum += convert(sample);
+                            }
+                            let sample = (sum / ch as f32 * gain).clamp(-1.0, 1.0);
+                            mono.push(sample);
+                            sum_squared += sample * sample;
+                        }
+                        let level = if mono.is_empty() {
+                            0.0
+                        } else {
+                            let rms = (sum_squared / mono.len() as f32).sqrt();
+                            (rms * 2.5).min(1.0)
+                        };
+                        if let Some(emitter) = overlay.as_ref() {
+                            emitter.emit_level(level);
+                        }
+                        if let Some(vad_handle) = vad.as_ref() {
+                            handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
+                        } else {
+                            push_mono_samples(&buffer, &mono, sample_rate);
+                        }
+                    },
+                    err_fn,
+                    None,
+                )
+                .map_err(|e| e.to_string())
+        }
+    };
 }
 
-fn build_input_stream_i16(
-    device: &cpal::Device,
-    config: &StreamConfig,
-    buffer: Arc<Mutex<CaptureBuffer>>,
-    overlay: Option<Arc<OverlayLevelEmitter>>,
-    vad: Option<VadHandle>,
-    gain_db: Arc<AtomicI64>,
-) -> Result<cpal::Stream, String> {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate.0;
-    let err_fn = |err| eprintln!("audio stream error: {}", err);
+build_input_stream_typed!(build_input_stream_f32, f32, |s: &f32| *s);
+build_input_stream_typed!(build_input_stream_i16, i16, |s: &i16| {
+    *s as f32 / i16::MAX as f32
+});
+build_input_stream_typed!(build_input_stream_u16, u16, |s: &u16| {
+    (*s as f32 - 32768.0) / 32768.0
+});
 
-    device
-        .build_input_stream(
-            config,
-            move |data: &[i16], _| {
-                let mut mono = Vec::with_capacity(data.len() / channels.max(1));
-                let mut sum_squared = 0.0f32;
-                let gain_db = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
-                let gain = (10.0f32).powf(gain_db / 20.0);
-                for frame in data.chunks(channels.max(1)) {
-                    let mut sum = 0.0f32;
-                    for &sample in frame {
-                        sum += sample as f32 / i16::MAX as f32;
-                    }
-                    let sample = (sum / channels.max(1) as f32 * gain).clamp(-1.0, 1.0);
-                    mono.push(sample);
-                    sum_squared += sample * sample;
-                }
-                let level = if mono.is_empty() {
-                    0.0
-                } else {
-                    let rms = (sum_squared / mono.len() as f32).sqrt();
-                    (rms * 2.5).min(1.0)
-                };
-                if let Some(emitter) = overlay.as_ref() {
-                    emitter.emit_level(level);
-                }
-                if let Some(vad_handle) = vad.as_ref() {
-                    handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
-                } else {
-                    push_mono_samples(&buffer, &mono, sample_rate);
-                }
-            },
-            err_fn,
-            None,
-        )
-        .map_err(|e| e.to_string())
+macro_rules! build_ptt_hot_stream_typed {
+    ($fn_name:ident, $sample_ty:ty, $to_f32:expr) => {
+        fn $fn_name(
+            device: &cpal::Device,
+            config: &StreamConfig,
+            buffer: Arc<Mutex<CaptureBuffer>>,
+            overlay: Option<Arc<OverlayLevelEmitter>>,
+            gain_db: Arc<AtomicI64>,
+            recording_flag: Arc<AtomicBool>,
+            pre_roll_samples: usize,
+        ) -> Result<cpal::Stream, String> {
+            let channels = config.channels as usize;
+            let sample_rate = config.sample_rate.0;
+            let err_fn = |err| tracing::error!("audio stream error: {}", err);
+
+            let convert: fn(&$sample_ty) -> f32 = $to_f32;
+
+            let mut pre_roll = CaptureBuffer::default();
+            let mut was_recording = false;
+
+            device
+                .build_input_stream(
+                    config,
+                    move |data: &[$sample_ty], _| {
+                        let ch = channels.max(1);
+                        let mut mono = Vec::with_capacity(data.len() / ch);
+                        let mut sum_squared = 0.0f32;
+                        let gain_db_val = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
+                        let gain = (10.0f32).powf(gain_db_val / 20.0);
+                        for frame in data.chunks(ch) {
+                            let mut sum = 0.0f32;
+                            for sample in frame {
+                                sum += convert(sample);
+                            }
+                            let sample = (sum / ch as f32 * gain).clamp(-1.0, 1.0);
+                            mono.push(sample);
+                            sum_squared += sample * sample;
+                        }
+
+                        let level = if mono.is_empty() {
+                            0.0
+                        } else {
+                            let rms = (sum_squared / mono.len() as f32).sqrt();
+                            (rms * 2.5).min(1.0)
+                        };
+                        if let Some(emitter) = overlay.as_ref() {
+                            emitter.emit_level(level);
+                        }
+
+                        let recording_now = recording_flag.load(Ordering::Relaxed);
+
+                        if recording_now {
+                            if !was_recording {
+                                let warmup = pre_roll.take_all_samples();
+                                if let Ok(mut guard) = buffer.lock() {
+                                    guard.reset();
+                                    if !warmup.is_empty() {
+                                        guard.samples.extend_from_slice(&warmup);
+                                    }
+                                }
+                            }
+                            push_mono_samples(&buffer, &mono, sample_rate);
+                        } else if pre_roll_samples > 0 {
+                            pre_roll.push_samples(&mono, sample_rate);
+                            if pre_roll.samples.len() > pre_roll_samples {
+                                let overflow = pre_roll.samples.len() - pre_roll_samples;
+                                pre_roll.samples.drain(0..overflow);
+                            }
+                        } else {
+                            pre_roll.reset();
+                        }
+
+                        was_recording = recording_now;
+                    },
+                    err_fn,
+                    None,
+                )
+                .map_err(|e| e.to_string())
+        }
+    };
 }
 
-fn build_input_stream_u16(
-    device: &cpal::Device,
-    config: &StreamConfig,
-    buffer: Arc<Mutex<CaptureBuffer>>,
-    overlay: Option<Arc<OverlayLevelEmitter>>,
-    vad: Option<VadHandle>,
-    gain_db: Arc<AtomicI64>,
-) -> Result<cpal::Stream, String> {
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate.0;
-    let err_fn = |err| eprintln!("audio stream error: {}", err);
+build_ptt_hot_stream_typed!(build_ptt_hot_stream_f32, f32, |s: &f32| *s);
+build_ptt_hot_stream_typed!(build_ptt_hot_stream_i16, i16, |s: &i16| {
+    *s as f32 / i16::MAX as f32
+});
+build_ptt_hot_stream_typed!(build_ptt_hot_stream_u16, u16, |s: &u16| {
+    (*s as f32 - 32768.0) / 32768.0
+});
 
-    device
-        .build_input_stream(
-            config,
-            move |data: &[u16], _| {
-                let mut mono = Vec::with_capacity(data.len() / channels.max(1));
-                let mut sum_squared = 0.0f32;
-                let gain_db = gain_db.load(Ordering::Relaxed) as f32 / 1000.0;
-                let gain = (10.0f32).powf(gain_db / 20.0);
-                for frame in data.chunks(channels.max(1)) {
-                    let mut sum = 0.0f32;
-                    for &sample in frame {
-                        let centered = sample as f32 - 32768.0;
-                        sum += centered / 32768.0;
-                    }
-                    let sample = (sum / channels.max(1) as f32 * gain).clamp(-1.0, 1.0);
-                    mono.push(sample);
-                    sum_squared += sample * sample;
-                }
-                let level = if mono.is_empty() {
-                    0.0
-                } else {
-                    let rms = (sum_squared / mono.len() as f32).sqrt();
-                    (rms * 2.5).min(1.0)
-                };
-                if let Some(emitter) = overlay.as_ref() {
-                    emitter.emit_level(level);
-                }
-                if let Some(vad_handle) = vad.as_ref() {
-                    handle_vad_audio(vad_handle, &buffer, mono, level, sample_rate);
-                } else {
-                    push_mono_samples(&buffer, &mono, sample_rate);
-                }
-            },
-            err_fn,
-            None,
+fn stop_ptt_hot_standby(state: &State<'_, AppState>) {
+    let (stop_tx, join_handle) = {
+        let mut recorder = state.recorder.lock().unwrap();
+        recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
+        recorder.ptt_hot_device_id = None;
+        (
+            recorder.ptt_hot_stop_tx.take(),
+            recorder.ptt_hot_join_handle.take(),
         )
-        .map_err(|e| e.to_string())
+    };
+    if let Some(tx) = stop_tx {
+        let _ = tx.send(());
+    }
+    if let Some(handle) = join_handle {
+        let _ = handle.join();
+    }
+}
+
+fn start_ptt_hot_standby(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    settings: &Settings,
+) -> Result<(), String> {
+    let device_id = settings.input_device.clone();
+
+    let (existing_stop_tx, existing_join_handle, buffer, gain_db, recording_flag) = {
+        let mut recorder = state.recorder.lock().unwrap();
+        recorder.input_gain_db.store(
+            (settings.mic_input_gain_db * 1000.0) as i64,
+            Ordering::Relaxed,
+        );
+
+        let same_device = recorder.ptt_hot_device_id.as_deref() == Some(device_id.as_str());
+        if recorder.ptt_hot_join_handle.is_some() && same_device {
+            return Ok(());
+        }
+
+        recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
+        recorder.ptt_hot_device_id = None;
+
+        (
+            recorder.ptt_hot_stop_tx.take(),
+            recorder.ptt_hot_join_handle.take(),
+            recorder.buffer.clone(),
+            recorder.input_gain_db.clone(),
+            recorder.ptt_hot_recording.clone(),
+        )
+    };
+
+    if let Some(tx) = existing_stop_tx {
+        let _ = tx.send(());
+    }
+    if let Some(handle) = existing_join_handle {
+        let _ = handle.join();
+    }
+
+    let overlay_emitter = Arc::new(OverlayLevelEmitter::new(
+        app.clone(),
+        settings.vad_threshold_sustain,
+        settings.vad_threshold_start,
+    ));
+    let pre_roll_ms = settings.continuous_pre_roll_ms.min(1_500);
+    let pre_roll_samples = ((TARGET_SAMPLE_RATE as u64 * pre_roll_ms) / 1000) as usize;
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
+    let thread_device_id = device_id.clone();
+
+    let join_handle = thread::spawn(move || {
+        let result = (|| -> Result<(), String> {
+            let device = resolve_input_device(&thread_device_id)
+                .ok_or_else(|| "No input device available".to_string())?;
+            let config = device.default_input_config().map_err(|e| e.to_string())?;
+            let stream_config: StreamConfig = config.clone().into();
+            let overlay = Some(overlay_emitter);
+
+            let stream = match config.sample_format() {
+                SampleFormat::F32 => build_ptt_hot_stream_f32(
+                    &device,
+                    &stream_config,
+                    buffer,
+                    overlay.clone(),
+                    gain_db.clone(),
+                    recording_flag.clone(),
+                    pre_roll_samples,
+                )?,
+                SampleFormat::I16 => build_ptt_hot_stream_i16(
+                    &device,
+                    &stream_config,
+                    buffer,
+                    overlay.clone(),
+                    gain_db.clone(),
+                    recording_flag.clone(),
+                    pre_roll_samples,
+                )?,
+                SampleFormat::U16 => build_ptt_hot_stream_u16(
+                    &device,
+                    &stream_config,
+                    buffer,
+                    overlay.clone(),
+                    gain_db.clone(),
+                    recording_flag.clone(),
+                    pre_roll_samples,
+                )?,
+                _ => return Err("Unsupported sample format".to_string()),
+            };
+
+            stream.play().map_err(|e| e.to_string())?;
+            let _ = ready_tx.send(Ok(()));
+            let _ = stop_rx.recv();
+            drop(stream);
+            Ok(())
+        })();
+
+        if let Err(err) = result {
+            let _ = ready_tx.send(Err(err));
+        }
+    });
+
+    let start_result = match ready_rx.recv_timeout(Duration::from_secs(3)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err("Failed to start PTT standby audio stream".to_string()),
+    };
+
+    if let Err(err) = start_result {
+        let _ = stop_tx.send(());
+        let _ = join_handle.join();
+        return Err(err);
+    }
+
+    let mut recorder = state.recorder.lock().unwrap();
+    recorder.ptt_hot_stop_tx = Some(stop_tx);
+    recorder.ptt_hot_join_handle = Some(join_handle);
+    recorder.ptt_hot_device_id = Some(device_id);
+    Ok(())
+}
+
+pub(crate) fn sync_ptt_hot_standby(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    settings: &Settings,
+) {
+    let should_run = settings.capture_enabled && settings.mode == "ptt" && !settings.ptt_use_vad;
+    if should_run {
+        if let Err(err) = start_ptt_hot_standby(app, state, settings) {
+            warn!("Failed to start PTT standby stream: {}", err);
+        }
+    } else {
+        stop_ptt_hot_standby(state);
+    }
+}
+
+fn start_ptt_hot_recording(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    settings: &Settings,
+) -> Result<(), String> {
+    if !settings.capture_enabled {
+        return Ok(());
+    }
+    start_ptt_hot_standby(app, state, settings)?;
+
+    let mut recorder = state.recorder.lock().unwrap();
+    if recorder.active || recorder.transcribing {
+        return Ok(());
+    }
+
+    if let Ok(mut buf) = recorder.buffer.lock() {
+        buf.reset();
+    }
+
+    recorder.input_gain_db.store(
+        (settings.mic_input_gain_db * 1000.0) as i64,
+        Ordering::Relaxed,
+    );
+    recorder.ptt_hot_recording.store(true, Ordering::Relaxed);
+    recorder.active = true;
+    recorder.continuous_toggle_mode = false;
+    recorder.continuous_processor_stop_tx = None;
+    recorder.continuous_processor_join_handle = None;
+
+    let _ = app.emit("capture:state", "recording");
+    let _ = update_overlay_state(app, OverlayState::Recording);
+    if settings.audio_cues {
+        let _ = app.emit("audio:cue", "start");
+    }
+    Ok(())
 }
 
 pub(crate) fn start_recording_with_settings(
@@ -734,6 +976,10 @@ pub(crate) fn start_recording_with_settings(
     state: &State<'_, AppState>,
     settings: &Settings,
 ) -> Result<(), String> {
+    if settings.mode == "ptt" && !settings.ptt_use_vad {
+        return start_ptt_hot_recording(app, state, settings);
+    }
+
     info!("start_recording_with_settings called");
     if !settings.capture_enabled {
         return Ok(());
@@ -844,6 +1090,362 @@ pub(crate) fn start_recording_with_settings(
     Ok(())
 }
 
+/// Common transcription-result handling: post-process, push to history, emit
+/// events, and optionally spawn AI refinement. Returns `Some(processed_text_len)`
+/// when a result was emitted, `None` when the transcript was filtered/dropped.
+fn handle_transcription_ok(
+    app_handle: &AppHandle,
+    text: &str,
+    source: &str,
+    settings: &Settings,
+    level: f32,
+    duration_ms: u64,
+) -> Option<usize> {
+    if text.trim().is_empty()
+        || should_drop_transcript(text, level, duration_ms, false)
+        || crate::transcription::should_drop_by_activation_words(
+            text,
+            &settings.activation_words,
+            settings.activation_words_enabled,
+        )
+    {
+        return None;
+    }
+
+    let processed_text = if settings.postproc_enabled {
+        match process_transcript(text, settings, app_handle) {
+            Ok(processed) => processed,
+            Err(err) => {
+                error!("Post-processing failed: {}", err);
+                text.to_string()
+            }
+        }
+    } else {
+        text.to_string()
+    };
+
+    let job_id = next_transcription_job_id(source);
+    let state = app_handle.state::<AppState>();
+    let mut entry_id: Option<String> = None;
+    if let Ok(updated) = push_history_entry_inner(
+        app_handle,
+        &state.history,
+        processed_text.clone(),
+        source.to_string(),
+    ) {
+        entry_id = updated.first().map(|entry| entry.id.clone());
+        let _ = app_handle.emit("history:updated", updated);
+    }
+    let paste_deferred = should_defer_paste_for_refinement(settings);
+    let _ = app_handle.emit(
+        "transcription:result",
+        TranscriptionResult {
+            text: processed_text.clone(),
+            source: source.to_string(),
+            job_id: job_id.clone(),
+            paste_deferred,
+            paste_timeout_ms: if paste_deferred {
+                Some(REFINEMENT_PASTE_TIMEOUT_MS)
+            } else {
+                None
+            },
+            entry_id: entry_id.clone(),
+        },
+    );
+    maybe_spawn_ai_refinement(
+        app_handle.clone(),
+        processed_text.clone(),
+        source.to_string(),
+        job_id,
+        entry_id,
+        settings,
+    );
+
+    Some(processed_text.len())
+}
+
+fn should_defer_paste_for_refinement(settings: &Settings) -> bool {
+    settings.ai_fallback.enabled
+        && settings.ai_fallback.provider == "ollama"
+        && settings.ai_fallback.execution_mode == "local_primary"
+}
+
+fn next_transcription_job_id(source: &str) -> String {
+    let seq = TRANSCRIPTION_JOB_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let timestamp = crate::util::now_ms();
+    format!("{source}-{timestamp}-{seq}")
+}
+
+/// Spawn a background thread to refine `text` via Ollama AI fallback.
+/// On success emits `"transcription:refined"`; on failure emits
+/// `"transcription:refinement-failed"` and logs the error.
+pub(crate) fn maybe_spawn_ai_refinement(
+    app_handle: AppHandle,
+    text: String,
+    source: String,
+    job_id: String,
+    entry_id: Option<String>,
+    settings: &Settings,
+) {
+    if !settings.ai_fallback.enabled {
+        return;
+    }
+    // Only Ollama is active in v0.7.x (cloud providers deferred to v0.7.3)
+    if settings.ai_fallback.provider != "ollama" {
+        return;
+    }
+
+    let settings_snapshot = settings.clone();
+
+    thread::spawn(move || {
+        // Resolve provider, model, and options via the shared helper.
+        // This performs model resolution BEFORE signalling "started" — if
+        // Ollama is down or no model is available the frontend never sees a
+        // spinner for a doomed job.
+        let setup = match crate::prepare_refinement(&app_handle, &settings_snapshot) {
+            Ok(s) => s,
+            Err(error) => {
+                error!("AI refinement skipped: {}", error);
+                record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
+                if let Some(entry_id_value) = entry_id.as_deref() {
+                    let _ = mark_entry_refinement_failed(
+                        &app_handle,
+                        entry_id_value,
+                        &job_id,
+                        &text,
+                        &error,
+                    );
+                }
+                let _ = app_handle.emit(
+                    "transcription:refinement-failed",
+                    serde_json::json!({
+                        "job_id": job_id.clone(),
+                        "entry_id": entry_id.clone(),
+                        "source": source.clone(),
+                        "original": text.clone(),
+                        "error": error,
+                    }),
+                );
+                return;
+            }
+        };
+
+        // Model resolved successfully — now signal that refinement is active.
+        begin_refinement_activity(&app_handle);
+        let _activity_guard = RefinementActivityGuard {
+            app_handle: app_handle.clone(),
+        };
+        if let Some(entry_id_value) = entry_id.as_deref() {
+            let _ = mark_entry_refinement_started(&app_handle, entry_id_value, &job_id, &text);
+        }
+        let _ = app_handle.emit(
+            "transcription:refinement-started",
+            serde_json::json!({
+                "job_id": job_id.clone(),
+                "entry_id": entry_id.clone(),
+                "source": source.clone(),
+                "original": text.clone(),
+            }),
+        );
+
+        if setup.repaired {
+            let model = setup.model.clone();
+            let snapshot = {
+                let state = app_handle.state::<AppState>();
+                let mut live = state.settings.lock().unwrap();
+                live.ai_fallback.model = model.clone();
+                live.providers.ollama.preferred_model = model.clone();
+                live.postproc_llm_model = model.clone();
+                normalize_ai_fallback_fields(&mut live);
+                live.clone()
+            };
+            if let Err(err) = save_settings_file(&app_handle, &snapshot) {
+                error!("Failed to persist repaired local model selection: {}", err);
+            } else {
+                let _ = app_handle.emit("settings-changed", snapshot.clone());
+            }
+        }
+
+        match setup.provider.refine_transcript(&text, &setup.model, &setup.options, &setup.api_key) {
+            Ok(result) => {
+                if let Some(entry_id_value) = entry_id.as_deref() {
+                    let _ = mark_entry_refinement_success(
+                        &app_handle,
+                        entry_id_value,
+                        &job_id,
+                        &text,
+                        &result.text,
+                        &result.model,
+                        result.execution_time_ms,
+                    );
+                }
+                let _ = app_handle.emit(
+                    "transcription:refined",
+                    serde_json::json!({
+                        "job_id": job_id,
+                        "entry_id": entry_id,
+                        "original": text,
+                        "refined": result.text,
+                        "source": source,
+                        "model": result.model,
+                        "execution_time_ms": result.execution_time_ms,
+                    }),
+                );
+            }
+            Err(e) => {
+                error!("AI refinement failed ({}): {}", setup.model, e);
+                record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
+                if let Some(entry_id_value) = entry_id.as_deref() {
+                    let _ = mark_entry_refinement_failed(
+                        &app_handle,
+                        entry_id_value,
+                        &job_id,
+                        &text,
+                        &e.to_string(),
+                    );
+                }
+                let _ = app_handle.emit(
+                    "transcription:refinement-failed",
+                    serde_json::json!({
+                        "job_id": job_id,
+                        "entry_id": entry_id,
+                        "source": source,
+                        "original": text,
+                        "error": e.to_string(),
+                    }),
+                );
+            }
+        }
+    });
+}
+
+struct RefinementActivityGuard {
+    app_handle: AppHandle,
+}
+
+impl Drop for RefinementActivityGuard {
+    fn drop(&mut self) {
+        end_refinement_activity(&self.app_handle);
+    }
+}
+
+fn emit_refinement_activity(app_handle: &AppHandle, active_count: usize, reason: &str) {
+    let state = if active_count > 0 { "active" } else { "idle" };
+    let _ = app_handle.emit(
+        "transcription:refinement-activity",
+        serde_json::json!({
+            "active_count": active_count,
+            "state": state,
+            "reason": reason,
+        }),
+    );
+}
+
+fn schedule_refinement_watchdog(app_handle: AppHandle, generation: u64) {
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_millis(REFINEMENT_WATCHDOG_POLL_MS));
+
+            let state = app_handle.state::<AppState>();
+            if state.refinement_watchdog_generation.load(Ordering::SeqCst) != generation {
+                return;
+            }
+
+            let active_count = state.refinement_active_count.load(Ordering::SeqCst);
+            if active_count == 0 {
+                return;
+            }
+
+            let last_change_ms = state.refinement_last_change_ms.load(Ordering::SeqCst);
+            let now_ms = crate::util::now_ms();
+            if now_ms.saturating_sub(last_change_ms) <= REFINEMENT_WATCHDOG_TIMEOUT_MS {
+                continue;
+            }
+
+            state.refinement_active_count.store(0, Ordering::SeqCst);
+            state.refinement_watchdog_generation.fetch_add(1, Ordering::SeqCst);
+            state.refinement_last_change_ms.store(now_ms, Ordering::SeqCst);
+            let _ = update_overlay_refining_indicator(&app_handle, false);
+            emit_refinement_activity(&app_handle, 0, "watchdog_reset");
+            warn!(
+                "Refinement watchdog reset triggered after {}ms without lifecycle completion",
+                REFINEMENT_WATCHDOG_TIMEOUT_MS
+            );
+            return;
+        }
+    });
+}
+
+pub(crate) fn force_reset_refinement_activity(app_handle: &AppHandle, reason: &str) {
+    let state = app_handle.state::<AppState>();
+    state.refinement_active_count.store(0, Ordering::SeqCst);
+    state.refinement_watchdog_generation.fetch_add(1, Ordering::SeqCst);
+    state
+        .refinement_last_change_ms
+        .store(crate::util::now_ms(), Ordering::SeqCst);
+    let _ = update_overlay_refining_indicator(app_handle, false);
+    emit_refinement_activity(app_handle, 0, reason);
+}
+
+fn begin_refinement_activity(app_handle: &AppHandle) {
+    let state = app_handle.state::<AppState>();
+    let previous = state.refinement_active_count.fetch_add(1, Ordering::SeqCst);
+    let next = previous + 1;
+    state
+        .refinement_last_change_ms
+        .store(crate::util::now_ms(), Ordering::SeqCst);
+    emit_refinement_activity(app_handle, next, "started");
+
+    if previous == 0 {
+        let generation = state
+            .refinement_watchdog_generation
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
+        let enabled = state
+            .settings
+            .lock()
+            .map(|settings| settings.overlay_refining_indicator_enabled)
+            .unwrap_or(true);
+        if enabled {
+            let _ = update_overlay_refining_indicator(app_handle, true);
+        } else {
+            let _ = update_overlay_refining_indicator(app_handle, false);
+        }
+        schedule_refinement_watchdog(app_handle.clone(), generation);
+    }
+}
+
+fn end_refinement_activity(app_handle: &AppHandle) {
+    let state = app_handle.state::<AppState>();
+    loop {
+        let current = state.refinement_active_count.load(Ordering::SeqCst);
+        if current == 0 {
+            state
+                .refinement_last_change_ms
+                .store(crate::util::now_ms(), Ordering::SeqCst);
+            emit_refinement_activity(app_handle, 0, "finished");
+            let _ = update_overlay_refining_indicator(app_handle, false);
+            return;
+        }
+        if state
+            .refinement_active_count
+            .compare_exchange(current, current - 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            let next = current - 1;
+            state
+                .refinement_last_change_ms
+                .store(crate::util::now_ms(), Ordering::SeqCst);
+            emit_refinement_activity(app_handle, next, "finished");
+            if next == 0 {
+                state.refinement_watchdog_generation.fetch_add(1, Ordering::SeqCst);
+                let _ = update_overlay_refining_indicator(app_handle, false);
+            }
+            return;
+        }
+    }
+}
+
 fn flush_mic_audio_to_session(buffer: &mut Vec<i16>) {
     if buffer.is_empty() {
         return;
@@ -871,6 +1473,15 @@ fn process_toggle_segment(
         return;
     }
 
+    // Read the latest persisted settings per segment so model/AI option changes
+    // apply immediately to the next transcription/refinement job.
+    let effective_settings = app_handle
+        .state::<AppState>()
+        .settings
+        .lock()
+        .map(|settings| settings.clone())
+        .unwrap_or_else(|_| runtime_settings.clone());
+
     let _ = app_handle.emit("capture:state", "transcribing");
     let _ = update_overlay_state(app_handle, OverlayState::Transcribing);
 
@@ -878,7 +1489,7 @@ fn process_toggle_segment(
         recorder.transcribing = true;
     }
 
-    let result = transcribe_audio(app_handle, runtime_settings, &chunk);
+    let result = transcribe_audio(app_handle, &effective_settings, &chunk);
 
     if let Ok(mut recorder) = app_handle.state::<AppState>().recorder.lock() {
         recorder.transcribing = false;
@@ -886,44 +1497,14 @@ fn process_toggle_segment(
 
     match result {
         Ok((text, source)) => {
-            if !text.trim().is_empty()
-                && !should_drop_transcript(&text, segment_rms, duration_ms, false)
-                && !crate::transcription::should_drop_by_activation_words(
-                    &text,
-                    &runtime_settings.activation_words,
-                    runtime_settings.activation_words_enabled,
-                )
-            {
-                let processed_text = if runtime_settings.postproc_enabled {
-                    match process_transcript(&text, runtime_settings, app_handle) {
-                        Ok(processed) => processed,
-                        Err(err) => {
-                            error!("Post-processing failed: {}", err);
-                            text.clone()
-                        }
-                    }
-                } else {
-                    text.clone()
-                };
-
-                let state = app_handle.state::<AppState>();
-                if let Ok(updated) = push_history_entry_inner(
-                    app_handle,
-                    &state.history,
-                    processed_text.clone(),
-                    source.clone(),
-                ) {
-                    let _ = app_handle.emit("history:updated", updated);
-                }
-
-                let _ = app_handle.emit(
-                    "transcription:result",
-                    TranscriptionResult {
-                        text: processed_text.clone(),
-                        source: source.clone(),
-                    },
-                );
-
+            if let Some(text_len) = handle_transcription_ok(
+                app_handle,
+                &text,
+                &source,
+                &effective_settings,
+                segment_rms,
+                duration_ms,
+            ) {
                 let _ = app_handle.emit(
                     "continuous-dump:segment",
                     ContinuousDumpEvent {
@@ -931,13 +1512,9 @@ fn process_toggle_segment(
                         reason,
                         duration_ms,
                         rms: segment_rms,
-                        text_len: processed_text.len(),
+                        text_len,
                     },
                 );
-
-                if let Err(err) = crate::paste_text(&processed_text) {
-                    let _ = app_handle.emit("transcription:error", err);
-                }
             }
         }
         Err(err) => {
@@ -1134,6 +1711,7 @@ pub(crate) fn stop_toggle_recording_async(app: AppHandle, state: &State<'_, AppS
             recorder.active = false;
             recorder.transcribing = false;
             recorder.continuous_toggle_mode = false;
+            recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
             (
                 recorder.stop_tx.take(),
                 recorder.join_handle.take(),
@@ -1197,19 +1775,36 @@ pub(crate) fn start_vad_monitor(
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
     let (vad_tx, vad_rx) = std::sync::mpsc::channel::<VadEvent>();
+    let pre_roll_ms = settings
+        .continuous_pre_roll_ms
+        .clamp(VAD_PRE_ROLL_MS_MIN, VAD_PRE_ROLL_MS_MAX);
+    let pre_roll_samples = ((TARGET_SAMPLE_RATE as u64 * pre_roll_ms) / 1000) as usize;
+    let pre_roll_min_samples = ((TARGET_SAMPLE_RATE as u64 * VAD_PRE_ROLL_MIN_MS) / 1000) as usize;
+    let pre_roll_buffer = Arc::new(Mutex::new(CaptureBuffer::default()));
 
-    let flush_on_silence = settings.mode == "vad";
+    let ptt_threshold_gate = settings.mode == "ptt" && settings.ptt_use_vad;
+    let flush_on_silence = settings.mode == "vad" && !ptt_threshold_gate;
+    let silence_ms = if ptt_threshold_gate {
+        // In PTT+VAD we only gate capture start by threshold while key is held.
+        // No silence-based auto-finalize should happen before key release.
+        u64::MAX / 2
+    } else {
+        settings.vad_silence_ms
+    };
     let vad_runtime = Arc::new(VadRuntime::new(
         settings.audio_cues,
         settings.vad_threshold_start,
         settings.vad_threshold_sustain,
-        settings.vad_silence_ms,
+        silence_ms,
         flush_on_silence,
     ));
     let vad_handle = VadHandle {
         runtime: vad_runtime.clone(),
         tx: vad_tx.clone(),
         app: app.clone(),
+        pre_roll_buffer,
+        pre_roll_samples,
+        pre_roll_min_samples,
     };
 
     let app_handle = app.clone();
@@ -1430,46 +2025,7 @@ fn process_vad_segment(
     match result {
         Ok((text, source)) => {
             let settings = state.settings.lock().unwrap().clone();
-            if !text.trim().is_empty()
-                && !should_drop_transcript(&text, level, duration_ms, false)
-                && !crate::transcription::should_drop_by_activation_words(
-                    &text,
-                    &settings.activation_words,
-                    settings.activation_words_enabled,
-                )
-            {
-                // Apply post-processing if enabled
-                let processed_text = if settings.postproc_enabled {
-                    match process_transcript(&text, &settings, &app_handle) {
-                        Ok(processed) => processed,
-                        Err(e) => {
-                            error!("Post-processing failed: {}", e);
-                            text.clone() // Fallback to original
-                        }
-                    }
-                } else {
-                    text.clone()
-                };
-
-                if let Ok(updated) = push_history_entry_inner(
-                    &app_handle,
-                    &state.history,
-                    processed_text.clone(),
-                    source.clone(),
-                ) {
-                    let _ = app_handle.emit("history:updated", updated);
-                }
-                let _ = app_handle.emit(
-                    "transcription:result",
-                    TranscriptionResult {
-                        text: processed_text.clone(),
-                        source: source.clone(),
-                    },
-                );
-                if let Err(err) = crate::paste_text(&processed_text) {
-                    let _ = app_handle.emit("transcription:error", err);
-                }
-            }
+            handle_transcription_ok(&app_handle, &text, &source, &settings, level, duration_ms);
         }
         Err(err) => {
             let _ = app_handle.emit("transcription:error", err);
@@ -1493,6 +2049,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
             recorder.active = false;
             recorder.transcribing = true;
             recorder.continuous_toggle_mode = false;
+            recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
             let stop_tx = recorder.stop_tx.take();
             let join_handle = recorder.join_handle.take();
             let proc_stop_tx = recorder.continuous_processor_stop_tx.take();
@@ -1576,46 +2133,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         match result {
             Ok((text, source)) => {
                 let settings = state.settings.lock().unwrap().clone();
-                if !text.trim().is_empty()
-                    && !should_drop_transcript(&text, level, duration_ms, false)
-                    && !crate::transcription::should_drop_by_activation_words(
-                        &text,
-                        &settings.activation_words,
-                        settings.activation_words_enabled,
-                    )
-                {
-                    // Apply post-processing if enabled
-                    let processed_text = if settings.postproc_enabled {
-                        match process_transcript(&text, &settings, &app_handle) {
-                            Ok(processed) => processed,
-                            Err(e) => {
-                                error!("Post-processing failed: {}", e);
-                                text.clone() // Fallback to original
-                            }
-                        }
-                    } else {
-                        text.clone()
-                    };
-
-                    if let Ok(updated) = push_history_entry_inner(
-                        &app_handle,
-                        &state.history,
-                        processed_text.clone(),
-                        source.clone(),
-                    ) {
-                        let _ = app_handle.emit("history:updated", updated);
-                    }
-                    let _ = app_handle.emit(
-                        "transcription:result",
-                        TranscriptionResult {
-                            text: processed_text.clone(),
-                            source: source.clone(),
-                        },
-                    );
-                    if let Err(err) = crate::paste_text(&processed_text) {
-                        let _ = app_handle.emit("transcription:error", err);
-                    }
-                }
+                handle_transcription_ok(&app_handle, &text, &source, &settings, level, duration_ms);
             }
             Err(err) => {
                 let _ = app_handle.emit("transcription:error", err);

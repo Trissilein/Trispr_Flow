@@ -1,7 +1,7 @@
 {
   "name": "trispr-flow",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,8 +9,13 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
-    "test:docs": "node scripts/check-doc-governance.mjs",
-    "test:smoke": "npm run build && npm run test:docs && cargo test --manifest-path src-tauri/Cargo.toml"
+    "audit:rust": "node scripts/run-rust-audit.mjs",
+    "test:smoke": "npm run build && bash -lc \"cargo test --manifest-path src-tauri/Cargo.toml --no-default-features\" && bash -lc \"cargo build --manifest-path src-tauri/Cargo.toml\"",
+    "benchmark:latency": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1",
+    "benchmark:latency:live": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1 -Live",
+    "benchmark:latency:strict": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1 -FailOnSloMiss",
+    "benchmark:ollama-models": "node scripts/eval-ollama-models.mjs",
+    "qa:release": "node scripts/release-qa.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -19,8 +24,9 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "jsdom": "^28.1.0",
+    "rollup": "^4.59.0",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",
-    "vitest": "^1.6.0"
+    "vitest": "^4.0.18"
   }
 }

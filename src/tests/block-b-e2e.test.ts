@@ -1,11 +1,12 @@
 /**
  * Block B: End-to-End Integration Tests
- * Validates: Tab UI, naming cleanup, chapters, topic detection, live dump
+ * Validates: Tab UI, naming cleanup, topic detection, live dump
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   detectTopics,
+  detectTopicScores,
   getTopicKeywords,
   setTopicKeywords,
   DEFAULT_TOPICS,
@@ -80,35 +81,7 @@ describe("Block B: E2E Integration Tests", () => {
     });
   });
 
-  describe("B4-B5: Chapter Settings & Conditional Display", () => {
-    it("should support chapters_enabled setting", () => {
-      const settings = {
-        chapters_enabled: false,
-        chapters_show_in: "conversation" as const,
-        chapters_method: "hybrid" as const,
-      };
-
-      expect(settings.chapters_enabled).toBe(false);
-      expect(settings.chapters_show_in).toBe("conversation");
-      expect(settings.chapters_method).toBe("hybrid");
-    });
-
-    it("should conditionally show chapters based on settings", () => {
-      const enabled = true;
-      const showIn = "conversation";
-
-      // Mock shouldShowChapters logic
-      const shouldShow = enabled && showIn === "conversation";
-      expect(shouldShow).toBe(true);
-
-      // When disabled
-      const disabled = false;
-      const shouldNotShow = disabled && showIn === "conversation";
-      expect(shouldNotShow).toBe(false);
-    });
-  });
-
-  describe("B6: Topic Detection UI", () => {
+  describe("B4-B5: Topic Detection UI", () => {
     it("should detect topics in text", () => {
       setTopicKeywords(DEFAULT_TOPICS);
 
@@ -126,6 +99,15 @@ describe("Block B: E2E Integration Tests", () => {
         mockEntries[2].text // "todo reminder for personal follow-up"
       );
       expect(personalTopics).toContain("personal");
+    });
+
+    it("should rank overlaps with score percentages", () => {
+      setTopicKeywords(DEFAULT_TOPICS);
+      const overlap = "debug error api query database meeting agenda";
+      const scores = detectTopicScores(overlap);
+      expect(scores.length).toBeGreaterThan(1);
+      expect(scores[0].topic).toBe("technical");
+      expect(scores[0].share).toBeGreaterThan(scores[1].share);
     });
 
     it("should support custom topic keywords", () => {
@@ -229,13 +211,7 @@ describe("Block B: E2E Integration Tests", () => {
       const systemLabel = systemEntry!.source === "output" ? "System audio" : "Input";
       expect(systemLabel).toBe("System audio");
 
-      // 6. Chapters: Would be conditionally displayed
-      const chaptersEnabled = true;
-      const chaptersShowIn = "conversation";
-      const shouldShowChapters = chaptersEnabled && chaptersShowIn === "conversation";
-      expect(shouldShowChapters).toBe(true);
-
-      // 7. Dump: Data is ready for crash recovery
+      // 6. Dump: Data is ready for crash recovery
       const dumpData = JSON.stringify({
         export_date: new Date().toISOString(),
         format_version: "1.0",

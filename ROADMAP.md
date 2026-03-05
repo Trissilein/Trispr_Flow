@@ -1,45 +1,34 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-02-24 (Block K added)
+Last updated: 2026-03-04 (v0.7.1 stabilization + v0.8.0 module platform in execution)
 
 This file is the canonical source for priorities and execution order.
 
-## Documentation Baseline (2026-02-20)
-
-- Repo-root docs were reduced to a minimal set (`README`, `ROADMAP`, `CHANGELOG`, `CONTRIBUTING`, `CLAUDE`, `THIRD_PARTY_NOTICES`).
-- Legacy root planning/context docs were moved to `docs/archive/`.
-- `STATUS.md` and `SCOPE.md` are now archived files; this roadmap is the canonical planning and status snapshot.
-- Canonical documentation ownership map lives in `docs/README.md`.
-
 ## Canonical Current State
 
-- Released: `v0.6.0`
-- Current phase: `v0.7.0` execution
-- Foundation complete: Blocks F + G
-- Active execution block: Offline-first AI fallback (Ollama)
+- Released: `v0.7.0`
+- Current phase: `v0.7.1` stabilization execution
+- Foundation complete: Blocks F + G + H
+- Active execution blocks: UX/UI consistency (Block E) + Module Platform (Block L)
 
-## Scope Evolution Summary (from archived `docs/archive/SCOPE.md`)
-
-- Original intent (2025-08): simple Windows dictation app (PTT + Whisper + auto-paste).
-- Actual product (v0.6.0): expanded to meeting transcription workflows (system audio, post-processing, export, diarization, quality controls).
-- Scope growth was driven by real usage (meeting capture, readability needs, storage constraints), not speculative feature creep.
-- Contributor guidance: keep optional features optional and log major tradeoffs in `docs/DECISIONS.md`.
- 
 ## Analysis De-Scope Decision
 
 - Analysis functionality is removed from Trispr Flow mainline.
 - `Analyse` remains as a placeholder button in UI.
 - Dedicated analysis development moved to `analysis-module-branch`.
 - Mainline installer strategy is now CUDA + Vulkan only.
+
 ## Active Work Blocks
 
 | Block | Focus | Complexity | Depends on | Status |
 | --- | --- | --- | --- | --- |
-| D | v0.7.2 Offline-first AI fallback (Ollama provider + pipeline + UX) | High | F, G | In progress |
+| D | v0.7.2 Offline-first AI fallback (Ollama provider + pipeline + UX) | High | F, G | Complete ✅ |
 | E | UX/UI consistency and settings IA cleanup | Medium | D | Planned |
 | F | Reliability hardening and release QA | High | D, E | Planned |
 | G | Cloud provider rollout (OpenAI/Claude/Gemini) | High | D, F | Deferred to v0.7.3 |
+| J | Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary) | Medium | D | Planned |
 | K | Expert Mode UX Overhaul (standard/expert toggle, hide technical settings) | Medium | E | Planned |
+| L | Module Platform + GDD Automation + Confluence Cloud publishing | Extra High | E, F, K | In progress |
 
 ## v0.7 Task Ledger
 
@@ -48,31 +37,44 @@ This file is the canonical source for priorities and execution order.
 | 31 | Multi-provider architecture | Done |
 | 36 | Settings migration + data model | Done |
 | 37 | Provider config UI scaffolding | Done |
-| 32 | Ollama provider integration (backend) | Open |
-| 33 | Activate AI refinement pipeline stage for local provider | Open |
-| 34 | Ollama-only UI (endpoint, model refresh, connection test) | Open |
-| 35 | Prompt strategy polish for local models (DE/EN) | Open |
-| 38 | Offline E2E + fail-safe regression tests | Open |
+| 32 | Ollama provider integration (backend) | Done |
+| 33 | Activate AI refinement pipeline stage for local provider | Done |
+| 34 | Ollama-only UI (endpoint, model refresh, connection test) | Done |
+| 35 | Prompt strategy polish for local models (DE/EN) | Done |
+| 38 | Offline E2E + fail-safe regression tests | Done |
+| 43 | GPU VRAM detection (Tauri backend) | Planned |
+| 43a | VRAM requirement display in AI Fallback UI | Planned |
+| 44 | Word-diff extraction from refinement events | Planned |
+| 44a | Persistence and threshold logic for learned vocabulary | Planned |
+| 44b | Learned vocabulary settings UI | Planned |
+| 44c | Adaptive vocabulary regression tests | Planned |
+| 45 | Refinement quantization profiles + quality/speed recommendation matrix | Deferred (future iteration) |
 
 ## AI Direction (Decision Snapshot)
 
 - Primary fallback mode is now offline-first via locally running Ollama.
 - Runtime assumption: external Ollama install, local endpoint, model once downloaded then offline-capable.
-- Recommended baseline model track: `qwen3:14b` primary, `qwen3:8b` fast fallback, optional `mistral-small3.1:24b` quality profile.
+- Recommended baseline model track: `qwen3.5:4b` primary, `qwen3.5:2b` fast fallback, `qwen3.5:9b` quality profile.
 - Cloud provider UX/activation is intentionally postponed to v0.7.3.
+- GDD automation is designed as a standalone managed module (not part of AI refinement).
 
 ## Immediate Next Actions
 
-1. Implement Task 32 (Ollama backend provider and model discovery).
-2. Implement Task 33 (real pipeline activation with safe fallback behavior).
-3. Implement Task 34 (Ollama-only settings UX and connection flow).
-4. Complete Task 35 and Task 38 for local-model quality and reliability.
-5. Continue UX consistency passes for Capture/System settings panels.
-6. Block K (after Block E): Expert Mode UX Overhaul.
+1. Finalize latency benchmark baseline (`benchmark:latency`) and record p50/p95 trend.
+2. Validate runtime-start background behavior on Windows (no permanent "Starting runtime..." state).
+3. Complete reliability hardening and release QA for v0.7.1.
+4. Continue Block E: UX/UI consistency and settings IA cleanup.
+5. Keep Block J and Block G (v0.7.3) out of stabilization scope.
+6. Keep quantization configurability (Task 45) deferred until a dedicated benchmark iteration.
+7. Complete Block L hardening: module/GDD regression coverage and publish conflict handling.
+8. Add preset-clone derivation workflow from imported templates (PDF/DOCX/Confluence).
+9. Add one-click publish policy gates (confidence threshold fallback to confirm).
 
 ## References
 
 - `docs/TASK_SCHEDULE.md`
 - `docs/DECISIONS.md`
+- `docs/ARCHITECTURE_REVIEW_0.7.md`
 - `docs/V0.7.0_ARCHITECTURE.md`
 - `docs/INSTALLER_VARIANTS.md`
+- `docs/GDD_MODULE_WORKFLOW.md`

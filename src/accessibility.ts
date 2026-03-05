@@ -2,6 +2,8 @@
 
 import type { RecordingState } from "./types";
 
+type RefinementState = "disabled" | "idle" | "refining";
+
 /**
  * Updates the aria-valuenow attribute for a range slider to support screen readers.
  * @param elementId - The ID of the range input element
@@ -26,7 +28,7 @@ export function updateRecordingStatus(state: RecordingState): void {
 
   const announcement = document.getElementById("recording-announcement");
   if (announcement) {
-    const announcements = {
+    const announcements: Record<RecordingState, string> = {
       disabled: "Recording disabled.",
       idle: "Recording stopped. Ready to record.",
       recording: "Recording started. Speaking now.",
@@ -44,11 +46,28 @@ export function updateTranscribeStatus(state: RecordingState): void {
 
   const announcement = document.getElementById("transcribe-announcement");
   if (announcement) {
-    const announcements = {
+    const announcements: Record<RecordingState, string> = {
       disabled: "Transcription disabled.",
       idle: "Transcription idle.",
       recording: "Output monitoring active.",
       transcribing: "Transcription in progress."
+    };
+    announcement.textContent = announcements[state];
+  }
+}
+
+export function updateRefiningStatus(state: RefinementState): void {
+  const statusDot = document.getElementById("refining-dot");
+  if (statusDot) {
+    statusDot.setAttribute("aria-label", `Refining status: ${state}`);
+  }
+
+  const announcement = document.getElementById("refining-announcement");
+  if (announcement) {
+    const announcements: Record<RefinementState, string> = {
+      disabled: "AI refinement disabled.",
+      idle: "AI refinement idle.",
+      refining: "AI refinement in progress."
     };
     announcement.textContent = announcements[state];
   }

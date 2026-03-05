@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/styles-modern.css" />
     <link
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
@@ -22,6 +23,10 @@
          aria-live="assertive"
          aria-atomic="true"></div>
     <div id="transcribe-announcement" class="sr-only"
+         role="status"
+         aria-live="polite"
+         aria-atomic="true"></div>
+    <div id="refining-announcement" class="sr-only"
          role="status"
          aria-live="polite"
          aria-atomic="true"></div>
@@ -47,20 +52,30 @@
                     aria-label="Transcribing status: idle"></span>
               <span id="transcribe-label" class="status-label">Transcribing: Idle</span>
             </div>
+            <div class="status-item">
+              <span id="refining-pill" class="status-pill status-pill--disabled">Refining</span>
+              <span class="status-dot" id="refining-dot" data-state="idle"
+                    aria-label="Refining status: idle"></span>
+              <span id="refining-label" class="status-label">Refining: Idle</span>
+            </div>
+            <div class="status-item">
+              <span id="gpu-pill" class="status-pill status-pill--disabled">GPU</span>
+              <span class="status-dot" id="gpu-dot" data-state="idle"
+                    aria-label="GPU status: idle"></span>
+              <span id="gpu-label" class="status-label">GPU: Idle</span>
+            </div>
             <span id="status-message" class="status-message" role="alert"></span>
           </div>
         </div>
         <div class="panel hero-card">
           <div class="hero-item">
-            <span class="hero-label">AI fallback <span id="cloud-check" class="hero-check">
+            <span class="hero-label">AI refinement <span id="cloud-check" class="hero-check">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" style="width: 12px; height: 12px; display: inline-block; vertical-align: middle;">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
               </svg>
             </span></span>
-            <label class="hero-checkbox">
-              <input id="cloud-toggle" type="checkbox" title="Enable cloud AI (Replicate) for transcription" />
-              <span id="cloud-state">AI Off</span>
-            </label>
+            <span id="cloud-state" class="hero-value">No</span>
+            <span id="cloud-detail" class="hero-value truncate-two">Offline • No model selected</span>
           </div>
           <div class="hero-item">
             <span class="hero-label">Input Transcription</span>
@@ -79,7 +94,10 @@
             <span class="hero-label">Model</span>
             <span id="model-state" class="hero-value truncate-two">—</span>
           </div>
-          <div class="hero-item hero-item-empty"></div>
+          <div class="hero-item">
+            <span class="hero-label">AI Model</span>
+            <span id="ai-model-state" class="hero-value truncate-two">—</span>
+          </div>
         </div>
       </header>
 
@@ -90,6 +108,12 @@
         </button>
         <button id="tab-btn-settings" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-settings">
           Settings
+        </button>
+        <button id="tab-btn-ai-refinement" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-ai-refinement">
+          AI Refinement
+        </button>
+        <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules">
+          Modules
         </button>
       </div>
 
@@ -150,15 +174,19 @@
                   </label>
                 </div>
                 <button id="history-copy-conversation" class="ghost-btn" title="Copy the full conversation to clipboard">Copy</button>
+                <button
+                  id="history-delete-conversation"
+                  class="ghost-btn history-delete-btn"
+                  title="Delete the full transcript from history"
+                  aria-label="Delete full transcript from history"
+                >
+                  &#128465;
+                </button>
                 <button id="analyse-button" class="ghost-btn" title="Analyse module coming soon">
                   Analyse
                 </button>
                 <div class="export-controls">
-                  <select id="export-format" class="export-format" title="Select export format">
-                    <option value="txt">TXT</option>
-                    <option value="md">Markdown</option>
-                    <option value="json">JSON</option>
-                  </select>
+                  <button id="archive-browse-btn" class="ghost-btn" title="Browse archived months">Archive</button>
                   <button id="history-export" class="ghost-btn" title="Export transcript">Export</button>
                 </div>
                 <div id="conversation-font-controls" class="font-controls" title="Adjust transcript font size for the active tab">
@@ -179,27 +207,52 @@
                      title="Filter transcripts by keyword" />
               <button id="history-search-clear" class="history-search-clear" title="Clear search">×</button>
             </div>
-            <div id="chapters-container" class="chapters-container" style="display: none;">
-              <div class="chapters-header">
-                <span class="chapters-title">📑 Chapters</span>
-                <div class="chapters-controls">
-                  <select id="chapter-method" class="chapter-method-select" title="Chapter generation method">
-                    <option value="silence">Silence-based</option>
-                    <option value="time">Time-based (5min)</option>
-                    <option value="hybrid">Hybrid</option>
-                  </select>
-                  <button id="chapters-toggle" class="ghost-btn" title="Hide chapters">Hide</button>
+            <div id="history-list" class="history-list"></div>
+            <details id="refinement-inspector" class="expander refinement-inspector" open>
+              <summary>Refinement Inspector (Latest)</summary>
+              <div class="expander-body">
+                <div id="refinement-inspector-empty" class="field-hint">
+                  No refinement data yet. Start speaking to compare raw vs refined text.
+                </div>
+                <div id="refinement-inspector-content" class="refinement-inspector-content" style="display: none;">
+                  <div class="refinement-inspector-header">
+                    <span id="refinement-inspector-status" class="model-status model-status--available">Idle</span>
+                    <span id="refinement-inspector-meta" class="field-hint">—</span>
+                  </div>
+                  <div class="refinement-inspector-grid">
+                    <div class="refinement-inspector-card">
+                      <h4>Raw Transcript</h4>
+                      <div id="refinement-inspector-raw" class="refinement-inspector-text"></div>
+                    </div>
+                    <div class="refinement-inspector-card">
+                      <h4>Refined Transcript</h4>
+                      <div id="refinement-inspector-refined" class="refinement-inspector-text"></div>
+                    </div>
+                  </div>
+                  <div class="refinement-inspector-card">
+                    <h4>Word Diff</h4>
+                    <div id="refinement-inspector-diff" class="refinement-inspector-diff"></div>
+                  </div>
+                  <div id="refinement-inspector-error" class="refinement-inspector-error" style="display: none;"></div>
                 </div>
               </div>
-              <div id="chapters-list" class="chapters-list"></div>
-            </div>
-            <div id="history-list" class="history-list"></div>
+            </details>
           </div>
         </section>
         </div>
 
         <!-- Settings Tab -->
         <div id="tab-settings" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-settings">
+        <div class="expert-mode-bar">
+          <label class="toggle-row" for="expert-mode-toggle">
+            <span class="field-label">Expert Mode</span>
+            <input id="expert-mode-toggle" type="checkbox" title="Show advanced settings controls" />
+            <span class="toggle-track">
+              <span class="toggle-thumb"></span>
+            </span>
+          </label>
+          <span id="expert-mode-label" class="toggle-hint">Standard mode active.</span>
+        </div>
         <section class="panel capture-panel" data-panel="capture" data-default-collapsed="true" data-panel-group="input-source" style="--delay: 0.16s">
           <div class="panel-header">
             <div class="panel-title">
@@ -242,37 +295,6 @@
                 <option value="vad">Voice Activation</option>
               </select>
             </label>
-            <label class="field">
-              <span class="field-label">Language</span>
-              <select id="language-select" title="Transcription language (or Auto-detect)">
-                <option value="auto">Auto-detect</option>
-                <option value="en">English</option>
-                <option value="de">Deutsch (German)</option>
-                <option value="fr">Français (French)</option>
-                <option value="es">Español (Spanish)</option>
-                <option value="it">Italiano (Italian)</option>
-                <option value="pt">Português (Portuguese)</option>
-                <option value="nl">Nederlands (Dutch)</option>
-                <option value="pl">Polski (Polish)</option>
-                <option value="ru">Русский (Russian)</option>
-                <option value="ja">日本語 (Japanese)</option>
-                <option value="ko">한국어 (Korean)</option>
-                <option value="zh">中文 (Chinese)</option>
-                <option value="ar">العربية (Arabic)</option>
-                <option value="tr">Türkçe (Turkish)</option>
-                <option value="hi">हिन्दी (Hindi)</option>
-              </select>
-            </label>
-            <label class="field toggle">
-              <div class="toggle-row">
-                <span class="field-label">Pin language</span>
-                <input id="language-pinned-toggle" type="checkbox" title="Lock to selected language instead of auto-detecting" />
-                <span class="toggle-track">
-                  <span class="toggle-thumb"></span>
-                </span>
-              </div>
-              <span class="toggle-hint">Force selected language instead of auto-detection</span>
-            </label>
             <div id="hotkeys-block" class="field-group">
               <div class="field hotkey-field">
                 <span class="field-label">PTT hotkey (hold)</span>
@@ -289,7 +311,7 @@
                       role="status"
                       aria-live="polite"></span>
               </div>
-              <div class="field hotkey-field">
+              <div class="field hotkey-field" data-expert-only="true">
                 <span class="field-label">Toggle hotkey (click)</span>
                 <div class="hotkey-input-group">
                   <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" readonly title="Current toggle hotkey — click Record to change" />
@@ -304,11 +326,14 @@
                       role="status"
                       aria-live="polite"></span>
               </div>
-              <label class="field toggle">
-                <span class="field-label">Use Voice Activation in PTT</span>
-                <input id="ptt-use-vad-toggle" type="checkbox" title="Detect speech automatically while holding the PTT key" />
+              <div class="field toggle-with-hint" data-expert-only="true">
+                <label class="toggle-row" for="ptt-use-vad-toggle">
+                  <span class="field-label">Use Voice Activation in PTT</span>
+                  <input id="ptt-use-vad-toggle" type="checkbox" title="Detect speech automatically while holding the PTT key" />
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
                 <span class="toggle-hint">Only record when audio exceeds threshold, even while holding PTT key</span>
-              </label>
+              </div>
             </div>
             <div id="vad-block" class="field-group hidden">
               <label class="field range">
@@ -324,7 +349,7 @@
                   <span id="vad-threshold-value" class="range-value" aria-live="polite">-34 dB</span>
                 </div>
               </label>
-              <label class="field range">
+              <label class="field range" data-expert-only="true">
                 <span class="field-label">Silence grace</span>
                 <div class="range-row">
                   <input id="vad-silence" type="range" min="200" max="4000" step="50"
@@ -337,38 +362,41 @@
                   <span id="vad-silence-value" class="range-value" aria-live="polite">700 ms</span>
                 </div>
               </label>
-              <div class="field">
-                <span class="field-label">Input level <span id="vad-level-dbm" class="dbm-value">-∞ dB</span></span>
-                <div class="vad-meter-container">
-                  <div id="vad-meter" class="vad-meter">
-                    <div id="vad-meter-fill" class="vad-meter-fill"></div>
-                    <div id="vad-marker-start" class="vad-marker vad-marker-start" title="Start threshold"></div>
-                    <div id="vad-marker-sustain" class="vad-marker vad-marker-sustain" title="Sustain threshold (dynamic)"></div>
-                  </div>
-                  <div class="vad-meter-scale">
-                    <span data-db="-60">-60</span>
-                    <span data-db="-40">-40</span>
-                    <span data-db="-20">-20</span>
-                    <span data-db="0">0 dB</span>
-                  </div>
+            </div>
+            <div class="field span-2">
+              <span class="field-label">Input level <span id="vad-level-dbm" class="dbm-value">-∞ dB</span></span>
+              <div class="vad-meter-container">
+                <div id="vad-meter" class="vad-meter">
+                  <div id="vad-meter-fill" class="vad-meter-fill"></div>
+                  <div id="vad-marker-start" class="vad-marker vad-marker-start" title="Start threshold"></div>
+                  <div id="vad-marker-sustain" class="vad-marker vad-marker-sustain" title="Sustain threshold (dynamic)"></div>
+                </div>
+                <div class="vad-meter-scale">
+                  <span data-db="-60">-60</span>
+                  <span data-db="-40">-40</span>
+                  <span data-db="-20">-20</span>
+                  <span data-db="0">0 dB</span>
                 </div>
               </div>
-              <label class="field range span-2">
-                <span class="field-label">Mic input gain</span>
-                <div class="range-row">
-                  <input id="mic-gain" type="range" min="-30" max="30" step="1"
-                         title="Boost or reduce microphone input level (dB)"
-                         aria-valuemin="-30"
-                         aria-valuemax="30"
-                         aria-valuenow="0"
-                       aria-label="Input gain"
-                         aria-describedby="mic-gain-value" />
-                  <span id="mic-gain-value" class="range-value" aria-live="polite">+0 dB</span>
-                </div>
-              </label>
             </div>
-            <details class="expander span-2">
-              <summary>Dumping</summary>
+            <label class="field range span-2">
+              <span class="field-label">Mic input gain</span>
+              <div class="range-row">
+                <input id="mic-gain" type="range" min="-30" max="30" step="1"
+                       title="Boost or reduce microphone input level (dB)"
+                       aria-valuemin="-30"
+                       aria-valuemax="30"
+                       aria-valuenow="0"
+                     aria-label="Input gain"
+                       aria-describedby="mic-gain-value" />
+                <span id="mic-gain-value" class="range-value" aria-live="polite">+0 dB</span>
+              </div>
+            </label>
+            <details class="expander span-2" data-expert-only="true">
+              <summary>
+                <span>Audio Dumping</span>
+                <span class="expert-pill" aria-hidden="true">Expert</span>
+              </summary>
               <div class="expander-content">
                 <div class="field toggle">
                   <label class="toggle-row">
@@ -378,7 +406,7 @@
                   </label>
                   <span class="toggle-hint">Save mic Toggle/VAD sessions as OPUS.</span>
                 </div>
-                <div class="field toggle span-2">
+                <div class="field toggle span-2" data-expert-only="true">
                   <label class="toggle-row">
                     <span class="field-label">Mic continuous override</span>
                     <input id="continuous-mic-override-toggle" type="checkbox" title="Use custom timing settings for mic instead of global defaults" />
@@ -386,7 +414,7 @@
                   </label>
                   <span class="toggle-hint">Use source-specific dump timings for mic Toggle/VAD.</span>
                 </div>
-                <label class="field range span-2">
+                <label class="field range span-2" data-expert-only="true">
                   <span class="field-label">Mic soft flush</span>
                   <div class="range-row">
                     <input id="continuous-mic-soft-flush" type="range" min="4000" max="30000" step="500"
@@ -399,7 +427,7 @@
                     <span id="continuous-mic-soft-flush-value" class="range-value" aria-live="polite">10s</span>
                   </div>
                 </label>
-                <label class="field range span-2">
+                <label class="field range span-2" data-expert-only="true">
                   <span class="field-label">Mic silence flush</span>
                   <div class="range-row">
                     <input id="continuous-mic-silence-flush" type="range" min="300" max="5000" step="100"
@@ -412,7 +440,7 @@
                     <span id="continuous-mic-silence-flush-value" class="range-value" aria-live="polite">1.2s</span>
                   </div>
                 </label>
-                <label class="field range span-2">
+                <label class="field range span-2" data-expert-only="true">
                   <span class="field-label">Mic hard cut</span>
                   <div class="range-row">
                     <input id="continuous-mic-hard-cut" type="range" min="15000" max="120000" step="1000"
@@ -427,8 +455,11 @@
                 </label>
               </div>
             </details>
-            <details class="expander span-2">
-              <summary>Advanced</summary>
+            <details class="expander span-2" data-expert-only="true">
+              <summary>
+                <span>Advanced</span>
+                <span class="expert-pill" aria-hidden="true">Expert</span>
+              </summary>
               <div class="expander-content">
                 <div class="field toggle span-2">
                   <div class="toggle-row">
@@ -541,14 +572,14 @@
                 <span class="toggle-thumb"></span>
               </span>
             </label>
-            <label class="field toggle">
+            <label class="field toggle" data-expert-only="true">
               <span class="field-label">Intelligent auto-dumping</span>
               <input id="continuous-dump-enabled-toggle" type="checkbox" title="Automatically split and flush long system audio recordings" />
               <span class="toggle-track">
                 <span class="toggle-thumb"></span>
               </span>
             </label>
-            <label class="field span-2">
+            <label class="field span-2" data-expert-only="true">
               <span class="field-label">Auto-dump profile</span>
               <select id="continuous-dump-profile" title="Pre-set timing profile for continuous audio splitting">
                 <option value="balanced">Balanced (recommended)</option>
@@ -570,7 +601,7 @@
                 <span id="transcribe-vad-threshold-value" class="range-value" aria-live="polite">-28 dB</span>
               </div>
             </label>
-            <label class="field range" id="transcribe-vad-silence-field">
+            <label class="field range" id="transcribe-vad-silence-field" data-expert-only="true">
               <span class="field-label">Silence grace</span>
               <div class="range-row">
                 <input id="transcribe-vad-silence" type="range" min="200" max="5000" step="100"
@@ -617,7 +648,7 @@
                 <span id="transcribe-gain-value" class="range-value" aria-live="polite">+0 dB</span>
               </div>
             </label>
-            <label class="field range" id="transcribe-batch-field">
+            <label class="field range" id="transcribe-batch-field" data-expert-only="true">
               <span class="field-label">Soft flush target</span>
               <span class="field-hint">Preferred interval for adaptive flush when no clear silence cut appears.</span>
               <div class="range-row">
@@ -631,7 +662,7 @@
                 <span id="transcribe-batch-value" class="range-value" aria-live="polite">8s</span>
               </div>
             </label>
-            <label class="field range" id="transcribe-overlap-field">
+            <label class="field range" id="transcribe-overlap-field" data-expert-only="true">
               <span class="field-label">Context pre-roll</span>
               <span class="field-hint">Leading context kept for adaptive segment starts.</span>
               <div class="range-row">
@@ -645,8 +676,11 @@
                 <span id="transcribe-overlap-value" class="range-value" aria-live="polite">1s</span>
               </div>
             </label>
-            <details class="expander span-2">
-              <summary>Advanced</summary>
+            <details class="expander span-2" data-expert-only="true">
+              <summary>
+                <span>Advanced</span>
+                <span class="expert-pill" aria-hidden="true">Expert</span>
+              </summary>
               <div class="expander-content">
                 <div class="field toggle">
                   <label class="toggle-row">
@@ -792,217 +826,10 @@
           </div>
         </section>
 
-        <section class="panel" data-panel="postprocessing" data-default-collapsed="true" style="--delay: 0.19s">
-          <div class="panel-header">
-            <div class="panel-title">
-              <h2>Post-Processing</h2>
-              <p>Enhance transcription quality with intelligent text refinement</p>
-            </div>
-            <div class="panel-actions">
-              <button class="panel-collapse-btn"
-                      data-panel-collapse="postprocessing"
-                      title="Collapse"
-                      aria-expanded="true"
-                      aria-controls="postprocessing-panel-body"
-                      aria-label="Collapse post-processing panel">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          <div class="panel-body" id="postprocessing-panel-body">
-            <div class="panel-grid">
-
-              <!-- Master toggle -->
-              <div class="field toggle span-2">
-                <label class="toggle-row">
-                  <span class="field-label">Enable post-processing</span>
-                  <input id="postproc-enabled" type="checkbox" title="Run post-processing rules on every transcript" />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                </label>
-                <span class="toggle-hint">Apply intelligent text enhancements to transcriptions</span>
-              </div>
-
-              <div id="postproc-settings" class="span-2" style="display: none;">
-
-                <!-- Language -->
-                <label class="field">
-                  <span class="field-label">Processing language</span>
-                  <select id="postproc-language" title="Language used for post-processing rules">
-                    <option value="en">English</option>
-                    <option value="de">Deutsch (German)</option>
-                    <option value="multi">Multilingual (EN/DE)</option>
-                  </select>
-                  <span class="field-hint">Multilingual mode applies both English and German rules simultaneously</span>
-                </label>
-
-                <!-- Rule-based toggles -->
-                <div class="field toggle">
-                  <label class="toggle-row">
-                    <span class="field-label">Punctuation</span>
-                    <input id="postproc-punctuation" type="checkbox" title="Automatically add punctuation (periods, commas, question marks)" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-hint">Add periods, commas, question marks</span>
-                </div>
-
-                <div class="field toggle">
-                  <label class="toggle-row">
-                    <span class="field-label">Capitalization</span>
-                    <input id="postproc-capitalization" type="checkbox" title="Capitalize the first letter of sentences and proper nouns" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-hint">Capitalize sentences and proper words</span>
-                </div>
-
-                <div class="field toggle">
-                  <label class="toggle-row">
-                    <span class="field-label">Number normalization</span>
-                    <input id="postproc-numbers" type="checkbox" title="Convert written-out numbers to digits (e.g. &quot;three&quot; → &quot;3&quot;)" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-hint">Convert number words to digits (e.g., "three" → "3")</span>
-                </div>
-
-                <!-- Custom Vocabulary -->
-                <details class="expander span-2">
-                  <summary>Custom Vocabulary</summary>
-                  <div class="expander-content">
-                    <div class="field toggle">
-                      <label class="toggle-row">
-                        <span class="field-label">Enable custom vocabulary</span>
-                        <input id="postproc-custom-vocab-enabled" type="checkbox" title="Apply custom find-and-replace rules to every transcript" />
-                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                      </label>
-                      <span class="toggle-hint">Replace specific words or phrases</span>
-                    </div>
-                    <div id="postproc-custom-vocab-config" style="display: none;">
-                      <p class="field-hint" style="margin-bottom: 10px;">
-                        Define word replacements with word boundary matching.
-                        <span style="opacity: 0.7;">Example: <code style="font-size: 11px; padding: 2px 5px; background: rgba(255,255,255,0.05); border-radius: 3px;">api</code> → <code style="font-size: 11px; padding: 2px 5px; background: rgba(255,255,255,0.05); border-radius: 3px;">API</code></span>
-                      </p>
-                      <div class="custom-vocab-table">
-                        <div class="vocab-header">
-                          <span>Match Word</span>
-                          <span>Replace With</span>
-                          <span aria-label="Actions"></span>
-                        </div>
-                        <div id="postproc-vocab-rows">
-                          <!-- Dynamically populated -->
-                        </div>
-                      </div>
-                      <button id="postproc-vocab-add" class="btn-secondary" title="Add a new find-and-replace entry" style="margin-top: 10px; font-size: 13px; font-weight: 600;">
-                        <span style="font-size: 16px; margin-right: 4px; line-height: 1;">+</span> Add Entry
-                      </button>
-                    </div>
-                  </div>
-                </details>
-
-                <details class="expander span-2">
-                  <summary>AI Fallback (Cloud Refinement)</summary>
-                  <div class="expander-content">
-                    <div class="field toggle">
-                      <label class="toggle-row">
-                        <span class="field-label">Enable AI fallback</span>
-                        <input id="ai-fallback-enabled" type="checkbox" title="Send transcripts to an AI provider for refinement and correction" />
-                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                      </label>
-                      <span class="toggle-hint">Apply provider-based refinement after local post-processing rules</span>
-                    </div>
-
-                    <div id="ai-fallback-settings" class="panel-grid" style="display: none;">
-                      <label class="field">
-                        <span class="field-label">Provider</span>
-                        <select id="ai-fallback-provider" title="AI service to use for transcript refinement">
-                          <option value="ollama">Ollama (Local)</option>
-                          <option value="claude">Claude (Anthropic)</option>
-                          <option value="openai">OpenAI</option>
-                          <option value="gemini">Gemini (Google)</option>
-                        </select>
-                      </label>
-
-                      <label class="field">
-                        <span class="field-label">Model</span>
-                        <select id="ai-fallback-model" title="Model to use for refinement (loaded from selected provider)"></select>
-                      </label>
-
-                      <!-- Ollama-specific: endpoint + connection controls (shown only for Ollama) -->
-                      <div id="ai-fallback-ollama-section" class="field span-2" style="display: none;">
-                        <span class="field-label">Ollama endpoint</span>
-                        <div class="hotkey-input-group">
-                          <input id="ai-fallback-ollama-endpoint" type="text" placeholder="http://localhost:11434" title="Ollama server URL (default: http://localhost:11434)" />
-                          <button id="ai-fallback-save-endpoint" class="hotkey-record-btn" type="button" title="Save the Ollama endpoint URL">Save</button>
-                          <button id="ai-fallback-refresh-models" class="hotkey-record-btn" type="button" title="Fetch the list of available models from Ollama">Refresh</button>
-                          <button id="ai-fallback-test-ollama" class="hotkey-record-btn" type="button" title="Check if Ollama is reachable at the configured endpoint">Test</button>
-                        </div>
-                        <span id="ai-fallback-ollama-status" class="field-hint">Enter your Ollama endpoint and click Refresh to load models.</span>
-                      </div>
-
-                      <!-- Cloud provider: API key controls (shown only for cloud providers) -->
-                      <div id="ai-fallback-api-key-section" class="field span-2">
-                        <span class="field-label">API key</span>
-                        <div class="hotkey-input-group">
-                          <input id="ai-fallback-api-key-input" type="password" placeholder="Paste provider API key" title="API key for the selected cloud provider" />
-                          <button id="ai-fallback-save-key" class="hotkey-record-btn" type="button" title="Save the API key for the selected provider">Save</button>
-                          <button id="ai-fallback-clear-key" class="hotkey-record-btn" type="button" title="Delete the stored API key">Clear</button>
-                          <button id="ai-fallback-test-key" class="hotkey-record-btn" type="button" title="Test whether the saved API key is valid">Test</button>
-                        </div>
-                        <span id="ai-fallback-key-status" class="field-hint">No API key stored.</span>
-                      </div>
-
-                      <label class="field range">
-                        <span class="field-label">Temperature</span>
-                        <div class="range-row">
-                          <input id="ai-fallback-temperature" type="range" min="0" max="1" step="0.05"
-                                 title="AI creativity level — lower = more literal, higher = more creative"
-                                 aria-valuemin="0"
-                                 aria-valuemax="1"
-                                 aria-valuenow="0.3"
-                                 aria-label="AI fallback temperature"
-                                 aria-describedby="ai-fallback-temperature-value" />
-                          <span id="ai-fallback-temperature-value" class="range-value" aria-live="polite">0.30</span>
-                        </div>
-                      </label>
-
-                      <label class="field">
-                        <span class="field-label">Max tokens</span>
-                        <select id="ai-fallback-max-tokens" title="Maximum number of tokens the AI can output per refinement">
-                          <option value="512">512</option>
-                          <option value="1024">1024</option>
-                          <option value="2048">2048</option>
-                          <option value="4000">4000</option>
-                          <option value="8192">8192</option>
-                        </select>
-                      </label>
-
-                      <div class="field toggle span-2">
-                        <label class="toggle-row">
-                          <span class="field-label">Use custom prompt</span>
-                          <input id="ai-fallback-custom-prompt-enabled" type="checkbox" title="Replace the built-in refinement prompt with a custom one" />
-                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                        </label>
-                        <span class="toggle-hint">Override default refinement prompt for this profile</span>
-                      </div>
-
-                      <div id="ai-fallback-custom-prompt-field" class="field span-2" style="display: none;">
-                        <span class="field-label">Custom prompt</span>
-                        <textarea id="ai-fallback-custom-prompt" rows="4" placeholder="Refine this transcript ..."
-                                  title="Custom prompt sent to the AI before each transcript"></textarea>
-                      </div>
-                    </div>
-                  </div>
-                </details>
-
-              </div>
-            </div>
-          </div>
-        </section>
-
         <section class="panel transcription-panel" data-panel="model" data-default-collapsed="true" style="--delay: 0.18s">
           <div class="panel-header">
             <div class="panel-title">
-              <h2>Model Manager</h2>
+              <h2>Whisper Model Manager</h2>
               <p>Download and manage local whisper.cpp models.</p>
             </div>
             <div class="panel-actions">
@@ -1028,7 +855,7 @@
                   <option value="custom">Custom URL</option>
                 </select>
               </label>
-              <label class="field span-2" id="model-custom-url-field">
+              <label class="field span-2" id="model-custom-url-field" data-expert-only="true">
                 <span class="field-label">Custom model URL</span>
                 <div class="hotkey-input-group">
                   <input
@@ -1042,7 +869,7 @@
                 <span class="field-hint">Supports JSON index or direct model file URL.</span>
               </label>
             </div>
-            <div class="panel-grid model-storage-grid">
+            <div class="panel-grid model-storage-grid" data-expert-only="true">
               <label class="field span-2">
                 <span class="field-label">Model storage</span>
                 <div class="hotkey-input-group">
@@ -1070,7 +897,7 @@
         <section class="panel interface-panel" data-panel="interface" data-default-collapsed="true" style="--delay: 0.22s">
           <div class="panel-header">
             <div class="panel-title">
-              <h2>UX / UI-Adjustments</h2>
+              <h2>Interface</h2>
               <p>Overlay, layout, and visual feedback settings.</p>
             </div>
             <div class="panel-actions">
@@ -1088,6 +915,15 @@
           </div>
           <div class="panel-body" id="interface-panel-body">
           <div class="panel-grid">
+            <label class="field">
+              <span class="field-label">Accent color</span>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <input id="accent-color" type="color" title="UI accent color (applies immediately)" />
+                <button id="accent-color-reset" class="hotkey-record-btn" type="button" title="Reset accent color to default teal (#4be0d4)">
+                  Reset
+                </button>
+              </div>
+            </label>
             <div class="field hotkey-field span-2">
               <span class="field-label">Toggle activation words</span>
               <div class="hotkey-input-group">
@@ -1136,10 +972,10 @@
               <label class="field range">
                 <span class="field-label">Max radius (px)</span>
                 <div class="range-row">
-                  <input id="overlay-max-radius" type="range" min="8" max="64" step="1"
+                  <input id="overlay-max-radius" type="range" min="8" max="1080" step="1"
                          title="Largest dot size on the recording overlay"
                          aria-valuemin="8"
-                         aria-valuemax="64"
+                         aria-valuemax="1080"
                          aria-valuenow="24"
                          aria-label="Overlay dot maximum radius"
                          aria-describedby="overlay-max-radius-value" />
@@ -1165,10 +1001,10 @@
               <label class="field range">
                 <span class="field-label">Max width (px)</span>
                 <div class="range-row">
-                  <input id="overlay-kitt-max-width" type="range" min="50" max="800" step="10"
+                  <input id="overlay-kitt-max-width" type="range" min="50" max="3840" step="10"
                          title="Maximum bar width for the KITT overlay style"
                          aria-valuemin="50"
-                         aria-valuemax="800"
+                         aria-valuemax="3840"
                          aria-valuenow="200"
                          aria-label="Overlay KITT bar maximum width"
                          aria-describedby="overlay-kitt-max-width-value" />
@@ -1194,10 +1030,10 @@
               <label class="field range">
                 <span class="field-label">Rise smoothing (ms)</span>
                 <div class="range-row">
-                  <input id="overlay-rise" type="range" min="20" max="600" step="10"
+                  <input id="overlay-rise" type="range" min="20" max="200" step="10"
                          title="How fast the overlay reacts to rising audio (ms)"
                          aria-valuemin="20"
-                         aria-valuemax="600"
+                         aria-valuemax="200"
                          aria-valuenow="80"
                          aria-label="Overlay animation rise smoothing"
                          aria-describedby="overlay-rise-value" />
@@ -1207,10 +1043,10 @@
               <label class="field range">
                 <span class="field-label">Fall smoothing (ms)</span>
                 <div class="range-row">
-                  <input id="overlay-fall" type="range" min="20" max="800" step="10"
+                  <input id="overlay-fall" type="range" min="20" max="200" step="10"
                          title="How fast the overlay fades after audio drops (ms)"
                          aria-valuemin="20"
-                         aria-valuemax="800"
+                         aria-valuemax="200"
                          aria-valuenow="160"
                          aria-label="Overlay animation fall smoothing"
                          aria-describedby="overlay-fall-value" />
@@ -1256,58 +1092,722 @@
                          title="Vertical overlay position (0 = top, 100 = bottom)" />
                 </label>
               </div>
+              <div id="overlay-refinement-settings-section" class="overlay-refinement-settings" data-expert-only="true">
+                <div class="overlay-refinement-settings-header">
+                  <span class="field-label">AI Refinement Overlay</span>
+                  <span class="field-hint">Separate settings for refinement animation only</span>
+                </div>
+                <div class="settings-grid-2col">
+                  <label class="field toggle span-2">
+                    <span class="field-label">Show refining indicator</span>
+                    <input id="overlay-refining-indicator-enabled" type="checkbox" title="Show an extra overlay effect while AI refinement is running" />
+                    <span class="toggle-track">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Refining effect intensity</span>
+                    <select id="overlay-refining-indicator-preset" title="Visual intensity of the overlay effect during AI refinement">
+                      <option value="subtle">Subtle</option>
+                      <option value="standard">Standard</option>
+                      <option value="intense">Intense</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Refining effect color</span>
+                    <input id="overlay-refining-indicator-color" type="color" title="Accent color for the AI refinement overlay animation" />
+                  </label>
+                  <label class="field range">
+                    <span class="field-label">Refining speed (ms)</span>
+                    <div class="range-row">
+                      <input id="overlay-refining-indicator-speed" type="range" min="450" max="3000" step="50"
+                             title="Animation speed for the AI refinement indicator"
+                             aria-valuemin="450"
+                             aria-valuemax="3000"
+                             aria-valuenow="1150"
+                             aria-label="Refining animation speed"
+                             aria-describedby="overlay-refining-indicator-speed-value" />
+                      <span id="overlay-refining-indicator-speed-value" class="range-value" aria-live="polite">1150 ms</span>
+                    </div>
+                  </label>
+                  <label class="field range">
+                    <span class="field-label">Refining range (%)</span>
+                    <div class="range-row">
+                      <input id="overlay-refining-indicator-range" type="range" min="60" max="180" step="5"
+                             title="How far the refinement pulse expands"
+                             aria-valuemin="60"
+                             aria-valuemax="180"
+                             aria-valuenow="100"
+                             aria-label="Refining pulse range"
+                             aria-describedby="overlay-refining-indicator-range-value" />
+                      <span id="overlay-refining-indicator-range-value" class="range-value" aria-live="polite">100%</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
               <button id="apply-overlay-btn" class="button primary" title="Apply overlay position and style settings" style="margin-top: 12px; width: 100%;">Apply Overlay Settings</button>
-            </div>
-          </details>
-          <details class="expander">
-            <summary>Chapters</summary>
-            <div class="expander-body">
-              <div class="field toggle">
-                <label class="toggle-row">
-                  <span class="field-label">Enable chapters</span>
-                  <input id="chapters-enabled" type="checkbox" title="Automatically add chapter markers to long transcripts" />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                </label>
-                <span class="toggle-hint">Show chapter markers in long transcripts</span>
-              </div>
-              <div id="chapters-settings" style="display: none;">
-                <label class="field">
-                  <span class="field-label">Show chapters in</span>
-                  <select id="chapters-show-in" title="Panel where chapter markers are displayed">
-                    <option value="conversation">Conversation tab only</option>
-                    <option value="all">All tabs</option>
-                  </select>
-                  <span class="field-hint">Conversation mode recommended for meetings and lectures</span>
-                </label>
-                <label class="field">
-                  <span class="field-label">Chapter generation method</span>
-                  <select id="chapters-method" title="Algorithm used to detect chapter boundaries">
-                    <option value="silence">Silence-based</option>
-                    <option value="time">Time-based (5min)</option>
-                    <option value="hybrid">Hybrid (recommended)</option>
-                  </select>
-                  <span class="field-hint">Hybrid combines silence detection with time-based fallback</span>
-                </label>
-              </div>
-            </div>
-          </details>
-          <details class="expander">
-            <summary>Topic Keywords</summary>
-            <div class="expander-body">
-              <div id="topic-keywords-list"></div>
-              <button id="topic-keywords-reset" class="btn-secondary" title="Reset topic keywords to built-in defaults" style="width: 100%; margin-top: 8px;">
-                Reset to Defaults
-              </button>
-              <span class="field-hint" style="display: block; margin-top: 8px;">
-                Customize keywords for automatic topic detection. Topics are shown as badges on conversation entries.
-              </span>
             </div>
           </details>
           </div>
         </section>
         </div>
 
+        <!-- AI Refinement Tab -->
+        <div id="tab-ai-refinement" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-ai-refinement">
+          <section class="panel ai-refine-panel" data-panel="ai-refinement" style="--delay: 0.12s">
+            <div class="panel-header">
+              <div class="panel-title">
+                <h2>AI Refinement</h2>
+                <p>AI-powered transcript improvement, topic detection, and adaptive vocabulary</p>
+              </div>
+            </div>
+            <div class="panel-body" id="ai-refinement-panel-body">
+
+              <!-- Refinement Pipeline -->
+              <div class="ai-refine-section">
+                <details id="ai-refinement-rules-expander" class="expander ai-refine-expander" open>
+                  <summary>
+                    <h3 class="ai-refine-section-title">Refinement Pipeline</h3>
+                  </summary>
+                  <div class="expander-body">
+                    <div class="panel-grid">
+
+                      <div class="field span-2">
+                        <span class="field-label">Primary + fallback</span>
+                        <span id="refinement-pipeline-note" class="field-hint">
+                          Primary output: Rule-based refiner only (non-AI, zero token/API cost).
+                        </span>
+                      </div>
+
+                      <div id="refinement-pipeline-graph" class="refinement-pipeline-graph span-2" role="group" aria-label="Refinement pipeline visual graph">
+                        <div class="pipeline-machine-scroll">
+                          <div class="pipeline-machine-board">
+                            <svg class="pipeline-machine-wires" viewBox="0 0 900 340" preserveAspectRatio="none" aria-hidden="true">
+                              <path id="pipeline-edge-transcribe-rules" class="pipeline-wire" data-state="idle" d="M215 98 C222 98 228 98 235 98"></path>
+                              <path id="pipeline-edge-transcribe-ai" class="pipeline-wire" data-state="idle" d="M215 88 C285 28 375 28 445 88"></path>
+                              <path id="pipeline-edge-transcribe-raw" class="pipeline-wire" data-state="idle" d="M120 150 C145 220 205 250 300 255"></path>
+                              <path id="pipeline-edge-rules-ai" class="pipeline-wire" data-state="idle" d="M425 98 C432 98 438 98 445 98"></path>
+                              <path id="pipeline-edge-ai-gate" class="pipeline-wire" data-state="idle" d="M635 98 C642 98 648 98 655 98"></path>
+                              <path id="pipeline-edge-gate-refined" class="pipeline-wire" data-state="idle" d="M845 130 C820 215 745 252 628 252"></path>
+                              <path id="pipeline-edge-gate-raw" class="pipeline-wire" data-state="idle" d="M750 150 C730 210 650 248 515 255"></path>
+                              <path id="pipeline-edge-rules-raw" class="pipeline-wire" data-state="idle" d="M328 150 C340 225 355 256 408 256"></path>
+                            </svg>
+
+                            <article id="pipeline-node-transcribe" class="pipeline-node machine-node machine-node--transcribe" data-state="idle">
+                              <span class="pipeline-node-step">1</span>
+                              <h4>Transcribe</h4>
+                              <p>Whisper decodes audio to raw text.</p>
+                            </article>
+
+                            <article id="pipeline-node-rules" class="pipeline-node machine-node machine-node--rules" data-state="idle">
+                              <span class="pipeline-node-step">2</span>
+                              <h4>Rule-Based Refiner</h4>
+                              <p>Rule-based cleanup only. No AI inference, no token/API cost.</p>
+                              <label class="pipeline-node-toggle toggle-row">
+                                <span class="pipeline-node-toggle-label">Enable rule-based</span>
+                                <input id="postproc-enabled" type="checkbox" title="Run local punctuation/capitalization/normalization rules on every transcript" />
+                                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                              </label>
+                            </article>
+
+                            <article id="pipeline-node-ai" class="pipeline-node machine-node machine-node--ai" data-state="idle">
+                              <span class="pipeline-node-step">3</span>
+                              <h4>AI Refiner</h4>
+                              <p>Ollama local refinement for final wording.</p>
+                              <label class="pipeline-node-toggle toggle-row">
+                                <span class="pipeline-node-toggle-label">Enable AI refinement</span>
+                                <input id="ai-fallback-enabled" type="checkbox" title="Send transcripts to an AI provider for refinement and correction" />
+                                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                              </label>
+                            </article>
+
+                            <article id="pipeline-node-gate" class="pipeline-node machine-node machine-node--gate" data-state="idle">
+                              <span class="pipeline-node-step">4</span>
+                              <h4>Deferred Insert Gate</h4>
+                              <p>Waits for refined result. Falls back after timeout.</p>
+                            </article>
+
+                            <article id="pipeline-node-output-refined" class="pipeline-node pipeline-node-output machine-node machine-node--refined" data-state="idle">
+                              <h4>Output: Refined</h4>
+                              <p>Preferred final paste target.</p>
+                            </article>
+
+                            <article id="pipeline-node-output-raw" class="pipeline-node pipeline-node-output machine-node machine-node--raw" data-state="idle">
+                              <h4>Output: Raw Fallback</h4>
+                              <p>Used on AI fail or timeout.</p>
+                            </article>
+                          </div>
+                        </div>
+
+                        <div id="refinement-pipeline-live" class="field-hint refinement-pipeline-live" aria-live="polite">
+                          Awaiting next transcription job.
+                        </div>
+                      </div>
+
+                      <details class="expander span-2 refinement-pipeline-advanced">
+                        <summary>Rule-Based Details</summary>
+                        <div class="expander-content">
+                          <div id="postproc-settings" class="span-2" style="display: none;">
+
+                        <div class="field">
+                          <span class="field-label">Processing language</span>
+                          <span id="postproc-language-derived" class="field-hint">
+                            Automatically derived from transcription language hint.
+                          </span>
+                        </div>
+
+                        <!-- Rule-based toggles -->
+                        <div class="field toggle">
+                          <label class="toggle-row">
+                            <span class="field-label">Punctuation</span>
+                            <input id="postproc-punctuation" type="checkbox" title="Automatically add punctuation (periods, commas, question marks)" />
+                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                          </label>
+                          <span class="toggle-hint">Add periods, commas, and question marks</span>
+                        </div>
+
+                        <div class="field toggle">
+                          <label class="toggle-row">
+                            <span class="field-label">Capitalization</span>
+                            <input id="postproc-capitalization" type="checkbox" title="Capitalize the first letter of sentences and proper nouns" />
+                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                          </label>
+                          <span class="toggle-hint">Capitalize sentences and proper words</span>
+                        </div>
+
+                        <div class="field toggle">
+                          <label class="toggle-row">
+                            <span class="field-label">Number normalization</span>
+                            <input id="postproc-numbers" type="checkbox" title="Convert written-out numbers to digits (e.g. &quot;three&quot; → &quot;3&quot;)" />
+                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                          </label>
+                          <span class="toggle-hint">Convert number words to digits (e.g., "three" → "3")</span>
+                        </div>
+
+                        <!-- Custom Vocabulary -->
+                        <details class="expander span-2">
+                          <summary>Custom Vocabulary</summary>
+                          <div class="expander-content">
+                            <div class="field toggle">
+                              <label class="toggle-row">
+                                <span class="field-label">Enable custom vocabulary</span>
+                                <input id="postproc-custom-vocab-enabled" type="checkbox" title="Apply custom find-and-replace rules to every transcript" />
+                                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                              </label>
+                              <span class="toggle-hint">Replace specific words or phrases</span>
+                            </div>
+                            <div id="postproc-custom-vocab-config" style="display: none;">
+                              <p class="field-hint" style="margin-bottom: 10px;">
+                                Define word replacements with word boundary matching.
+                                <span style="opacity: 0.7;">Example: <code style="font-size: 11px; padding: 2px 5px; background: rgba(255,255,255,0.05); border-radius: 3px;">api</code> → <code style="font-size: 11px; padding: 2px 5px; background: rgba(255,255,255,0.05); border-radius: 3px;">API</code></span>
+                              </p>
+                              <div class="custom-vocab-table">
+                                <div class="vocab-header">
+                                  <span>Match Word</span>
+                                  <span>Replace With</span>
+                                  <span aria-label="Actions"></span>
+                                </div>
+                                <div id="postproc-vocab-rows">
+                                  <!-- Dynamically populated -->
+                                </div>
+                              </div>
+                              <button id="postproc-vocab-add" class="btn-secondary" title="Add a new find-and-replace entry" style="margin-top: 10px; font-size: 13px; font-weight: 600;">
+                                <span style="font-size: 16px; margin-right: 4px; line-height: 1;">+</span> Add Entry
+                              </button>
+                            </div>
+                          </div>
+                        </details>
+
+                          </div>
+                        </div>
+                      </details>
+                    </div>
+                  </div>
+                </details>
+              </div>
+
+              <!-- Runtime & Provider Setup -->
+              <div class="ai-refine-section">
+                <details id="ai-refinement-runtime-expander" class="expander ai-refine-expander" open>
+                  <summary>
+                    <h3 id="ai-refinement-provider-model-title" class="ai-refine-section-title">Runtime &amp; Provider</h3>
+                  </summary>
+                  <div class="expander-body">
+                    <div id="ai-fallback-settings" class="panel-grid span-2">
+
+                      <div id="ai-fallback-provider-lanes" class="ai-provider-lanes span-2">
+                        <div id="ai-fallback-local-lane" data-lane="local" class="ai-provider-lane ai-provider-lane--local" role="button" tabindex="0" aria-pressed="true">
+                          <div class="ai-provider-lane-header">
+                            <span id="ai-fallback-local-lane-title" class="field-label">Primary Runtime</span>
+                            <span class="badge">Offline • Private</span>
+                          </div>
+                          <div class="ai-provider-lane-title">Ollama (Local)</div>
+                          <span id="ai-fallback-local-primary-status" class="field-hint">
+                            Checking local runtime status...
+                          </span>
+                          <div class="ai-provider-lane-actions">
+                            <button id="ai-fallback-local-primary-action" class="hotkey-record-btn is-recommended" type="button" title="Install or start local Ollama runtime">
+                              Install local runtime
+                            </button>
+                            <button id="ai-fallback-local-import-action" class="hotkey-record-btn" type="button" title="Import a local GGUF or Modelfile into Ollama">
+                              Import model
+                            </button>
+                          </div>
+                          <details id="ai-fallback-local-advanced" class="ai-provider-advanced" data-expert-only="true">
+                            <summary>
+                              <span>Advanced runtime tools</span>
+                              <span class="expert-pill" aria-hidden="true">Expert</span>
+                            </summary>
+                            <div class="ai-provider-advanced-actions">
+                              <button id="ai-fallback-local-detect-action" class="hotkey-record-btn" type="button" title="Scan for local/runtime PATH installation">
+                                Detect
+                              </button>
+                              <button id="ai-fallback-local-use-system-action" class="hotkey-record-btn" type="button" title="Use Ollama from system PATH">
+                                Use system
+                              </button>
+                              <button id="ai-fallback-local-verify-action" class="hotkey-record-btn" type="button" title="Verify local runtime health and models">
+                                Verify
+                              </button>
+                              <button id="ai-fallback-local-refresh-action" class="hotkey-record-btn" type="button" title="Refresh runtime and model status">
+                                Refresh
+                              </button>
+                            </div>
+                          </details>
+                          <span id="ai-fallback-local-runtime-note" class="field-hint">
+                            Local mode keeps transcript data on this device.
+                          </span>
+                        </div>
+
+                        <div id="ai-fallback-online-lane" data-lane="online" class="ai-provider-lane ai-provider-lane--online is-roadmap-disabled" role="button" tabindex="0" aria-pressed="false" aria-disabled="true">
+                          <div class="ai-provider-lane-header">
+                            <span id="ai-fallback-online-lane-title" class="field-label">Online Fallback (Roadmap)</span>
+                            <span id="ai-fallback-online-status-badge" class="badge badge--online is-locked">Roadmap • Not active</span>
+                          </div>
+                          <div class="field">
+                            <span class="field-label">Cloud providers</span>
+                            <div id="ai-fallback-cloud-provider-list" class="cloud-provider-list"></div>
+                          </div>
+                          <span id="ai-fallback-fallback-status" class="field-hint">
+                            Not active in production. Planned roadmap item and may change.
+                          </span>
+                        </div>
+                      </div>
+
+                      <label id="ai-fallback-model-field" class="field">
+                        <span class="field-label">Online model</span>
+                        <select id="ai-fallback-model" title="Model to use for refinement (loaded from selected provider)"></select>
+                      </label>
+
+                      <div id="ai-fallback-ollama-managed-note" class="field-hint span-2" style="display:none;">
+                        Ollama model selection is managed in the model cards below.
+                      </div>
+
+                    </div>
+                  </div>
+                </details>
+              </div>
+
+              <!-- Refinement Quality — collapsed by default -->
+              <div class="ai-refine-section">
+                <details class="expander ai-refine-expander">
+                  <summary>
+                    <h3 class="ai-refine-section-title">Refinement Quality</h3>
+                  </summary>
+                  <div class="expander-body">
+                    <div class="panel-grid">
+
+                      <label class="field range">
+                        <span class="field-label">Temperature</span>
+                        <div class="range-row">
+                          <input id="ai-fallback-temperature" type="range" min="0" max="1" step="0.05"
+                                 title="0.1 keeps edits literal and minimal. 1.0 allows aggressive reformulation and stronger wording changes."
+                                 aria-valuemin="0"
+                                 aria-valuemax="1"
+                                 aria-valuenow="0.3"
+                                 aria-label="AI fallback temperature"
+                                 aria-describedby="ai-fallback-temperature-value" />
+                          <span id="ai-fallback-temperature-value" class="range-value" aria-live="polite">0.30</span>
+                        </div>
+                        <span class="field-hint">0.1 = very literal/minimal rewrites; 1.0 = aggressive reformulation.</span>
+                      </label>
+
+                      <label id="asr-language-field" class="field">
+                        <span class="field-label">Transcription language hint</span>
+                        <select id="language-select" title="Language hint passed to ASR. Keep Auto-detect unless you need a fixed language.">
+                          <option value="auto">Auto-detect</option>
+                          <option value="en">English</option>
+                          <option value="de">Deutsch (German)</option>
+                          <option value="fr">Français (French)</option>
+                          <option value="es">Español (Spanish)</option>
+                          <option value="it">Italiano (Italian)</option>
+                          <option value="pt">Português (Portuguese)</option>
+                          <option value="nl">Nederlands (Dutch)</option>
+                          <option value="pl">Polski (Polish)</option>
+                          <option value="ru">Русский (Russian)</option>
+                          <option value="ja">日本語 (Japanese)</option>
+                          <option value="ko">한국어 (Korean)</option>
+                          <option value="zh">中文 (Chinese)</option>
+                          <option value="ar">العربية (Arabic)</option>
+                          <option value="tr">Türkçe (Turkish)</option>
+                          <option value="hi">हिन्दी (Hindi)</option>
+                        </select>
+                        <span id="asr-language-hint-note" class="field-hint">Auto-detect is active until language pinning is enabled.</span>
+                      </label>
+
+                      <label class="field toggle">
+                        <div class="toggle-row">
+                          <span class="field-label">Pin ASR language</span>
+                          <input id="language-pinned-toggle" type="checkbox" title="Lock ASR to the selected language instead of auto-detecting." />
+                          <span class="toggle-track">
+                            <span class="toggle-thumb"></span>
+                          </span>
+                        </div>
+                        <span class="toggle-hint">When off, ASR uses auto-detect and rule-based processing runs multilingual rules.</span>
+                      </label>
+
+                      <div class="field toggle span-2" data-expert-only="true">
+                        <label class="toggle-row">
+                          <span class="field-label">Preserve source language</span>
+                          <input id="ai-fallback-preserve-language" type="checkbox" title="Keep refinement output in the same language as input. Default: enabled." />
+                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span id="ai-fallback-preserve-language-note" class="toggle-hint">
+                          Prevents unintended language switches for built-in presets. Custom prompts are not modified.
+                        </span>
+                      </div>
+
+                      <div class="field toggle span-2">
+                        <label class="toggle-row">
+                          <span class="field-label">Speed Mode (Low Latency)</span>
+                          <input id="ai-fallback-low-latency-mode" type="checkbox" title="Faster refinement by reducing generation/context budget. ON clamps max_tokens to &lt;= 512 and temperature to &lt;= 0.2 (currently forced to 0.15 when above)." />
+                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span id="ai-fallback-low-latency-note" class="toggle-hint">
+                          Targets faster turnaround by reducing generation/context budget (max_tokens &lt;= 512, temperature &lt;= 0.2).
+                        </span>
+                      </div>
+
+                      <label class="field">
+                        <span class="field-label">Max tokens</span>
+                        <select id="ai-fallback-max-tokens" title="Upper bound for refinement output. Around 2000 tokens is usually a few pages of text, not a full book.">
+                          <option value="256">256</option>
+                          <option value="512">512</option>
+                          <option value="1024">1024</option>
+                          <option value="1536">1536</option>
+                          <option value="2048">2048</option>
+                          <option value="4000">4000</option>
+                          <option value="8192">8192</option>
+                        </select>
+                        <span class="field-hint">~2000 tokens is roughly a few pages of text, not a full book.</span>
+                      </label>
+
+                      <label class="field">
+                        <span class="field-label">Prompt preset</span>
+                        <select id="ai-fallback-prompt-preset" title="Select the active refinement prompt profile">
+                          <option value="wording">Wording (Recommended)</option>
+                          <option value="summary">Summary</option>
+                          <option value="technical_specs">Technical Specs</option>
+                          <option value="action_items">Action Items</option>
+                          <option value="custom">Custom Prompt</option>
+                        </select>
+                      </label>
+
+                      <div id="ai-fallback-prompt-preview-field" class="field span-2">
+                        <span id="ai-fallback-prompt-preview-label" class="field-label">Prompt preview</span>
+                        <textarea id="ai-fallback-custom-prompt" rows="6" placeholder="Define your custom refinement prompt..."
+                                  title="Prompt sent to the AI before each refinement"></textarea>
+                        <span id="ai-fallback-prompt-preview-hint" class="field-hint">
+                          Presets are shown read-only so users can learn prompt structure. Custom prompt is sent as-is.
+                        </span>
+                      </div>
+
+                    </div>
+                  </div>
+                </details>
+              </div>
+
+              <!-- Models -->
+              <div class="ai-refine-section">
+                <details id="ai-refinement-models-expander" class="expander ai-refine-expander" open>
+                  <summary>
+                    <h3 id="ai-refinement-models-title" class="ai-refine-section-title">Models</h3>
+                  </summary>
+                  <div class="expander-body">
+                    <div id="ollama-model-manager" style="display:none">
+                      <!-- Dynamically populated by renderOllamaModelManager() -->
+                    </div>
+                  </div>
+                </details>
+              </div>
+
+              <!-- Topic Detection -->
+              <div class="ai-refine-section">
+                <details id="ai-refinement-topic-expander" class="expander ai-refine-topic-expander">
+                  <summary>
+                    <span id="ai-refinement-topic-title" class="ai-refine-section-title">Topic Detection</span>
+                  </summary>
+                  <div class="expander-body">
+                    <div id="topic-keywords-list"></div>
+                    <button id="topic-keywords-reset" class="btn-secondary" title="Reset topic keywords to built-in defaults" style="width: 100%; margin-top: 8px;">
+                      Reset to Defaults
+                    </button>
+                    <span class="field-hint" style="display: block; margin-top: 8px;">
+                      Customize keywords for automatic topic detection. Topics are shown as badges on conversation entries.
+                    </span>
+                  </div>
+                </details>
+              </div>
+
+            </div>
+          </section>
+        </div>
+
+        <!-- Modules Tab -->
+        <div id="tab-modules" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-modules">
+          <section class="panel modules-panel" style="--delay: 0.12s">
+            <div class="panel-header">
+              <div class="panel-title">
+                <h2>Modules</h2>
+                <p>Managed modules with explicit permissions, lifecycle state, and health checks.</p>
+              </div>
+              <div class="panel-actions">
+                <span id="modules-status" class="field-hint">Loading…</span>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div id="modules-list" class="modules-list"></div>
+            </div>
+          </section>
+        </div>
+
       </div>
     </main>
+
+    <div id="ai-auth-modal" class="auth-modal" hidden>
+      <div id="ai-auth-modal-backdrop" class="auth-modal-backdrop"></div>
+      <div class="auth-modal-card" role="dialog" aria-modal="true" aria-labelledby="ai-auth-modal-title">
+        <div class="auth-modal-header">
+          <h3 id="ai-auth-modal-title" class="ai-refine-section-title">Authenticate Provider</h3>
+          <button id="ai-auth-modal-close" type="button" class="hotkey-record-btn">Close</button>
+        </div>
+        <p id="ai-auth-provider-name" class="field-hint">Provider</p>
+        <label class="field">
+          <span class="field-label">Authentication method</span>
+          <select id="ai-auth-method" title="Select cloud authentication method">
+            <option value="api_key">API key</option>
+            <option value="oauth" disabled>OAuth (coming soon)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">API key</span>
+          <input id="ai-auth-api-key-input" type="password" placeholder="Paste provider API key" title="API key for the selected cloud provider" />
+        </label>
+        <div class="auth-modal-actions">
+          <button id="ai-auth-save-key" class="hotkey-record-btn" type="button">Save key</button>
+          <button id="ai-auth-clear-key" class="hotkey-record-btn" type="button">Clear key</button>
+          <button id="ai-auth-verify-key" class="hotkey-record-btn" type="button">Verify</button>
+        </div>
+        <span id="ai-auth-status" class="field-hint">No API key stored.</span>
+      </div>
+    </div>
+
+    <div id="export-dialog" class="auth-modal" hidden>
+      <div id="export-dialog-backdrop" class="auth-modal-backdrop"></div>
+      <div class="auth-modal-card export-modal-card" role="dialog" aria-modal="true" aria-labelledby="export-dialog-title">
+        <div class="auth-modal-header">
+          <h3 id="export-dialog-title" class="ai-refine-section-title">Export Transcript</h3>
+          <button id="export-dialog-close" type="button" class="hotkey-record-btn">Close</button>
+        </div>
+
+        <div class="export-range-grid" role="group" aria-label="Export range">
+          <button type="button" class="ghost-btn export-range-btn is-active" data-export-range="session" aria-pressed="true">Session</button>
+          <button type="button" class="ghost-btn export-range-btn" data-export-range="today" aria-pressed="false">Today</button>
+          <button type="button" class="ghost-btn export-range-btn" data-export-range="yesterday" aria-pressed="false">Yesterday</button>
+          <button type="button" class="ghost-btn export-range-btn" data-export-range="week" aria-pressed="false">Week</button>
+          <button type="button" class="ghost-btn export-range-btn" data-export-range="month" aria-pressed="false">Month</button>
+          <button type="button" class="ghost-btn export-range-btn" data-export-range="custom" aria-pressed="false">Custom</button>
+        </div>
+
+        <div id="export-custom-range" class="export-custom-range" hidden>
+          <label class="field">
+            <span class="field-label">From</span>
+            <input id="export-custom-from" type="datetime-local" />
+          </label>
+          <label class="field">
+            <span class="field-label">To</span>
+            <input id="export-custom-to" type="datetime-local" />
+          </label>
+        </div>
+
+        <div class="export-dialog-row">
+          <label class="field toggle">
+            <div class="toggle-row">
+              <span class="field-label">Include Input</span>
+              <input id="export-include-mic" type="checkbox" checked />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </div>
+          </label>
+          <label class="field toggle">
+            <div class="toggle-row">
+              <span class="field-label">Include System Audio</span>
+              <input id="export-include-system" type="checkbox" checked />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </div>
+          </label>
+        </div>
+
+        <div class="export-dialog-row">
+          <label class="field">
+            <span class="field-label">Format</span>
+            <select id="export-dialog-format">
+              <option value="txt">TXT</option>
+              <option value="md">Markdown</option>
+              <option value="json">JSON</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="export-preview">
+          <span id="export-preview-count" class="export-preview-count">0 entries</span>
+          <span id="export-preview-span" class="export-preview-span">Current runtime session</span>
+        </div>
+
+        <div class="auth-modal-actions">
+          <button id="export-dialog-run" class="hotkey-record-btn" type="button">Export</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="archive-browser" class="auth-modal" hidden>
+      <div id="archive-browser-backdrop" class="auth-modal-backdrop"></div>
+      <div class="auth-modal-card archive-modal-card" role="dialog" aria-modal="true" aria-labelledby="archive-browser-title">
+        <div class="auth-modal-header">
+          <h3 id="archive-browser-title" class="ai-refine-section-title">History Archive</h3>
+          <button id="archive-browser-close" type="button" class="hotkey-record-btn">Close</button>
+        </div>
+
+        <div class="archive-grid">
+          <section class="archive-column">
+            <h4 class="archive-heading">Input</h4>
+            <div id="archive-mic-partitions" class="archive-partition-list"></div>
+            <h4 class="archive-heading">System Audio</h4>
+            <div id="archive-system-partitions" class="archive-partition-list"></div>
+          </section>
+
+          <section class="archive-column archive-column-entries">
+            <div class="archive-head-row">
+              <span id="archive-selection-meta" class="field-hint">No partition selected.</span>
+              <div class="archive-export-controls">
+                <select id="archive-export-format">
+                  <option value="txt">TXT</option>
+                  <option value="md">Markdown</option>
+                  <option value="json">JSON</option>
+                </select>
+                <button id="archive-export-btn" class="hotkey-record-btn" type="button">Export Loaded</button>
+              </div>
+            </div>
+            <div id="archive-entries" class="archive-entries"></div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <div id="gdd-flow-modal" class="auth-modal" hidden>
+      <div id="gdd-flow-backdrop" class="auth-modal-backdrop"></div>
+      <div class="auth-modal-card gdd-flow-modal-card" role="dialog" aria-modal="true" aria-labelledby="gdd-flow-title-label">
+        <div class="auth-modal-header">
+          <h3 id="gdd-flow-title-label" class="ai-refine-section-title">GDD Draft Generator</h3>
+          <button id="gdd-flow-close" type="button" class="hotkey-record-btn">Close</button>
+        </div>
+
+        <div class="gdd-flow-grid">
+          <label class="field">
+            <span class="field-label">Preset</span>
+            <select id="gdd-flow-preset"></select>
+          </label>
+          <div class="field">
+            <span class="field-label">Preset Recognition</span>
+            <button id="gdd-flow-detect-preset" type="button" class="hotkey-record-btn">Auto-detect Preset</button>
+          </div>
+
+          <label class="field">
+            <span class="field-label">Draft title</span>
+            <input id="gdd-flow-title" type="text" placeholder="Game Design Document" />
+          </label>
+        </div>
+
+        <label class="field">
+          <span class="field-label">Chunk size</span>
+          <select id="gdd-flow-max-chunk">
+            <option value="2200">2200 chars</option>
+            <option value="3500" selected>3500 chars (recommended)</option>
+            <option value="5000">5000 chars</option>
+            <option value="7000">7000 chars</option>
+          </select>
+        </label>
+
+        <div class="gdd-template-box">
+          <label class="field">
+            <span class="field-label">Template source (optional)</span>
+            <select id="gdd-flow-template-source">
+              <option value="none">No external template</option>
+              <option value="confluence">Confluence page URL</option>
+              <option value="file">PDF/DOCX/TXT file</option>
+            </select>
+          </label>
+
+          <div id="gdd-flow-template-confluence-group" class="gdd-template-group" hidden>
+            <label class="field">
+              <span class="field-label">Confluence page URL</span>
+              <input id="gdd-flow-template-confluence-url" type="url" placeholder="https://your-site.atlassian.net/wiki/.../pages/12345/..." />
+            </label>
+            <button id="gdd-flow-template-confluence-load" type="button" class="hotkey-record-btn">Load from Confluence</button>
+          </div>
+
+          <div id="gdd-flow-template-file-group" class="gdd-template-group" hidden>
+            <label class="field">
+              <span class="field-label">Template file</span>
+              <input id="gdd-flow-template-file-path" type="text" placeholder="No file selected" readonly />
+            </label>
+            <div class="gdd-template-file-actions">
+              <button id="gdd-flow-template-file-pick" type="button" class="hotkey-record-btn">Choose file</button>
+              <button id="gdd-flow-template-file-load" type="button" class="hotkey-record-btn">Load file</button>
+            </div>
+          </div>
+
+          <span id="gdd-flow-template-meta" class="field-hint">No template loaded.</span>
+          <textarea id="gdd-flow-template-preview" class="gdd-template-preview" rows="8" placeholder="Template preview appears here..." readonly></textarea>
+        </div>
+
+        <div class="auth-modal-actions">
+          <button id="gdd-flow-generate" type="button" class="hotkey-record-btn">Generate Draft</button>
+          <button id="gdd-flow-validate" type="button" class="hotkey-record-btn">Validate</button>
+        </div>
+
+        <span id="gdd-flow-status" class="field-hint">Uses the current conversation transcript as input.</span>
+        <div class="gdd-publish-box">
+          <div class="gdd-flow-grid">
+            <label class="field">
+              <span class="field-label">Confluence space key</span>
+              <input id="gdd-flow-space-key" type="text" placeholder="GAME" />
+            </label>
+            <label class="field">
+              <span class="field-label">Parent page id (optional)</span>
+              <input id="gdd-flow-parent-page-id" type="text" placeholder="123456789" />
+            </label>
+          </div>
+          <label class="field">
+            <span class="field-label">Target page id (optional)</span>
+            <input id="gdd-flow-target-page-id" type="text" placeholder="Leave empty to auto-create or title-match" />
+          </label>
+          <div class="auth-modal-actions">
+            <button id="gdd-flow-suggest-target" type="button" class="hotkey-record-btn">Suggest Target</button>
+            <button id="gdd-flow-publish" type="button" class="hotkey-record-btn">Publish to Confluence</button>
+          </div>
+          <a id="gdd-flow-publish-link" class="field-hint gdd-publish-link" href="#" target="_blank" rel="noopener" hidden>Open published page</a>
+        </div>
+        <textarea id="gdd-flow-output" class="gdd-output-preview" rows="12" placeholder="Draft output appears here..." readonly></textarea>
+      </div>
+    </div>
   </body>
 </html>

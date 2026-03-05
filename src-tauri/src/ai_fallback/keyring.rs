@@ -14,12 +14,9 @@ struct FileKeyStore {
 }
 
 fn normalize_provider(provider: &str) -> Result<String, String> {
-    let normalized = provider.trim().to_lowercase();
-    if matches!(normalized.as_str(), "claude" | "openai" | "gemini") {
-        Ok(normalized)
-    } else {
-        Err(format!("Unknown AI provider: {}", provider))
-    }
+    super::models::normalize_cloud_provider_id(provider)
+        .map(str::to_string)
+        .ok_or_else(|| format!("Unknown AI provider: {}", provider))
 }
 
 fn fallback_file_path(app: &AppHandle) -> std::path::PathBuf {

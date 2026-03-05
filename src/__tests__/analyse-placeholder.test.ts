@@ -10,21 +10,24 @@ describe("analyse placeholder", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows placeholder toast when analyse button is clicked", async () => {
-    const showToast = vi.fn();
-    vi.doMock("../toast", () => ({ showToast }));
-
-    document.body.innerHTML = '<button id="analyse-button">Analyse</button>';
+  it("routes to modules tab when analyse button is clicked", async () => {
+    localStorage.removeItem("trispr-active-tab");
+    document.body.innerHTML = `
+      <button id="analyse-button">Analyse</button>
+      <button id="tab-btn-transcription"></button>
+      <button id="tab-btn-settings"></button>
+      <button id="tab-btn-ai-refinement"></button>
+      <button id="tab-btn-modules"></button>
+      <div id="tab-transcription"></div>
+      <div id="tab-settings"></div>
+      <div id="tab-ai-refinement"></div>
+      <div id="tab-modules"></div>
+    `;
     const { wireEvents } = await import("../event-listeners");
 
     wireEvents();
     document.getElementById("analyse-button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
-    expect(showToast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "info",
-        title: "Analyse module",
-      }),
-    );
+    expect(localStorage.getItem("trispr-active-tab")).toBe("modules");
   });
 });

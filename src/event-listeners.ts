@@ -3,30 +3,159 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AIFallbackProvider,
+  CloudAIFallbackProvider,
+  AIExecutionMode,
+  AIProviderAuthStatus,
   Settings,
 } from "./types";
-import { settings, currentHistoryTab } from "./state";
+import {
+  CLOUD_PROVIDER_IDS,
+  CLOUD_PROVIDER_LABELS,
+  normalizeCloudProvider,
+  normalizeExecutionMode,
+  normalizeAuthMethodPreference,
+  isVerifiedAuthStatus,
+  normalizeAIFallbackProvider,
+} from "./ai-provider-utils";
+import { settings, currentHistoryTab, history, transcribeHistory } from "./state";
 import * as dom from "./dom-refs";
-import { persistSettings, updateOverlayStyleVisibility, applyOverlaySharedUi, updateTranscribeVadVisibility, updateTranscribeThreshold, renderAIFallbackSettingsUi, renderTopicKeywords } from "./settings";
+import {
+  persistSettings,
+  updateOverlayStyleVisibility,
+  applyOverlaySharedUi,
+  updateTranscribeVadVisibility,
+  updateTranscribeThreshold,
+  renderAIFallbackSettingsUi,
+  renderTopicKeywords,
+  ensureContinuousDumpDefaults,
+  resolveEffectiveAsrLanguageHint,
+  derivePostprocLanguageFromAsr,
+  syncCaptureModeVisibility,
+  syncDerivedLanguageSettings,
+} from "./settings";
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
 import { refreshModels, refreshModelsDir } from "./models";
-import { setHistoryTab, buildConversationHistory, buildConversationText, buildExportText, setSearchQuery, setTopicKeywords, DEFAULT_TOPICS, renderHistory, syncHistoryToolbarState } from "./history";
-import { setHistoryAlias, setHistoryFontSize } from "./history-preferences";
+import { setHistoryTab, buildConversationHistory, buildConversationText, setSearchQuery, setTopicKeywords, DEFAULT_TOPICS, scheduleHistoryRender, syncHistoryToolbarState } from "./history";
+import { setHistoryAlias, setHistoryFontSize, syncHistoryAliasesIntoSettings } from "./history-preferences";
 import { isPanelId, togglePanel } from "./panels";
 import { setupHotkeyRecorder } from "./hotkeys";
 import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
-import { updateChaptersVisibility } from "./chapters";
+import { applyAccentColor, DEFAULT_ACCENT_COLOR } from "./utils";
+import {
+  DEFAULT_REFINEMENT_PROMPT_PRESET,
+  normalizeRefinementPromptPreset,
+  resolveEffectiveRefinementPrompt,
+} from "./refinement-prompts";
+import {
+  autoStartLocalRuntimeIfNeeded,
+  detectOllamaRuntime,
+  ensureLocalRuntimeReady,
+  getOllamaRuntimeCardState,
+  importOllamaModelFromLocalFile,
+  refreshOllamaInstalledModels,
+  refreshOllamaRuntimeAndModels,
+  refreshOllamaRuntimeState,
+  renderOllamaModelManager,
+  startOllamaRuntime,
+  useSystemOllamaRuntime,
+  verifyOllamaRuntime,
+} from "./ollama-models";
+import { openExportDialog } from "./export-dialog";
+import { openArchiveBrowser } from "./archive-browser";
 
-const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini", "ollama"];
+// Cleanup registry for window-level listeners added by wireEvents()
+const _windowCleanups: Array<() => void> = [];
+export function cleanupWindowListeners(): void {
+  _windowCleanups.forEach((fn) => fn());
+  _windowCleanups.length = 0;
+}
 
-function normalizeAIFallbackProvider(provider?: string): AIFallbackProvider {
-  if (provider && AI_FALLBACK_PROVIDER_IDS.includes(provider as AIFallbackProvider)) {
-    return provider as AIFallbackProvider;
+// RAF guard: ensures renderSettings() is called at most once per animation frame
+// even when multiple settings toggles fire synchronously in one tick.
+let _settingsRenderFrame: number | null = null;
+
+export function scheduleSettingsRender(): void {
+  if (_settingsRenderFrame !== null) return;
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    _settingsRenderFrame = window.requestAnimationFrame(() => {
+      _settingsRenderFrame = null;
+      renderSettings();
+    });
+  } else {
+    _settingsRenderFrame = window.setTimeout(() => {
+      _settingsRenderFrame = null;
+      renderSettings();
+    }, 16) as unknown as number;
   }
-  return "ollama";
+}
+
+let authModalProvider: CloudAIFallbackProvider | null = null;
+
+// Renders the three UI sections that always need to be refreshed together after
+// a local/online runtime change or model-import action.
+function refreshAIUi(): void {
+  renderAIFallbackSettingsUi();
+  renderOllamaModelManager();
+  renderHero();
+}
+
+function getCredentialTargetProvider(): CloudAIFallbackProvider | null {
+  if (authModalProvider) {
+    return authModalProvider;
+  }
+  return normalizeCloudProvider(settings?.ai_fallback?.fallback_provider ?? null);
+}
+
+function getFallbackProvider(): CloudAIFallbackProvider | null {
+  return normalizeCloudProvider(settings?.ai_fallback?.fallback_provider ?? null);
+}
+
+function isProviderVerified(provider: CloudAIFallbackProvider | null): boolean {
+  if (!provider || !settings) return false;
+  const providerSettings = getAIFallbackProviderSettings(provider);
+  if (!providerSettings) return false;
+  return isVerifiedAuthStatus(providerSettings.auth_status);
+}
+
+function applyExecutionModeInSettings(mode: AIExecutionMode): void {
+  if (!settings) return;
+  settings.ai_fallback.execution_mode = "local_primary";
+  settings.ai_fallback.provider = "ollama";
+  settings.postproc_llm_provider = "ollama";
+  if (mode === "online_fallback") {
+    settings.ai_fallback.execution_mode = "local_primary";
+  }
+}
+
+function ensureOnlineModeConstraints(notify: boolean): boolean {
+  if (!settings) return false;
+  const fallbackProvider = getFallbackProvider();
+  if (
+    settings.ai_fallback.execution_mode === "online_fallback" &&
+    (!fallbackProvider || !isProviderVerified(fallbackProvider))
+  ) {
+    applyExecutionModeInSettings("local_primary");
+    if (notify) {
+      showToast({
+        type: "warning",
+        title: "Fallback switched to local",
+        message: "Fallback provider is locked/unverified. Switched back to local Ollama.",
+        duration: 3800,
+      });
+    }
+    return true;
+  }
+  return false;
+}
+
+function isLaneControlTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(
+    target.closest("button,select,input,textarea,summary,details,label,a")
+  );
 }
 
 function getAIFallbackProviderSettings(provider: AIFallbackProvider) {
@@ -38,11 +167,38 @@ function getAIFallbackProviderSettings(provider: AIFallbackProvider) {
   return null;
 }
 
-function applyOllamaVisibility(isOllama: boolean) {
-  if (dom.aiFallbackOllamaSection)
-    dom.aiFallbackOllamaSection.style.display = isOllama ? "block" : "none";
-  if (dom.aiFallbackApiKeySection)
-    dom.aiFallbackApiKeySection.style.display = isOllama ? "none" : "block";
+function cloneDefaultTopicKeywords(): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  Object.entries(DEFAULT_TOPICS).forEach(([topic, words]) => {
+    out[topic] = [...words];
+  });
+  return out;
+}
+
+function normalizeTopicKeywordsInput(
+  input: Record<string, unknown> | null | undefined
+): Record<string, string[]> {
+  const fallback = cloneDefaultTopicKeywords();
+  if (!input || typeof input !== "object") return fallback;
+
+  const normalized: Record<string, string[]> = {};
+  Object.entries(input).forEach(([topic, words]) => {
+    const key = topic.trim().toLowerCase();
+    if (!key || !Array.isArray(words)) return;
+    const cleaned = words
+      .map((word) => String(word).trim().toLowerCase())
+      .filter((word) => word.length > 0);
+    if (cleaned.length === 0) return;
+    normalized[key] = Array.from(new Set(cleaned));
+  });
+
+  if (Object.keys(normalized).length === 0) return fallback;
+  Object.entries(DEFAULT_TOPICS).forEach(([topic, defaults]) => {
+    if (!normalized[topic] || normalized[topic].length === 0) {
+      normalized[topic] = [...defaults];
+    }
+  });
+  return normalized;
 }
 
 function ensureAIFallbackSettingsDefaults() {
@@ -51,9 +207,15 @@ function ensureAIFallbackSettingsDefaults() {
     settings.ai_fallback = {
       enabled: false,
       provider: "ollama",
+      fallback_provider: null,
+      execution_mode: "local_primary",
+      strict_local_mode: true,
+      preserve_source_language: true,
       model: "",
       temperature: 0.3,
       max_tokens: 4000,
+      low_latency_mode: false,
+      prompt_profile: DEFAULT_REFINEMENT_PROMPT_PRESET,
       custom_prompt_enabled: false,
       custom_prompt:
         "Fix this transcribed text: correct punctuation, capitalization, and obvious errors. Keep the meaning unchanged. Return only the corrected text.",
@@ -64,16 +226,25 @@ function ensureAIFallbackSettingsDefaults() {
     settings.providers = {
       claude: {
         api_key_stored: false,
+        auth_method_preference: "api_key",
+        auth_status: "locked",
+        auth_verified_at: null,
         available_models: ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
         preferred_model: "claude-3-5-sonnet-20241022",
       },
       openai: {
         api_key_stored: false,
+        auth_method_preference: "api_key",
+        auth_status: "locked",
+        auth_verified_at: null,
         available_models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
         preferred_model: "gpt-4o-mini",
       },
       gemini: {
         api_key_stored: false,
+        auth_method_preference: "api_key",
+        auth_status: "locked",
+        auth_verified_at: null,
         available_models: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
         preferred_model: "gemini-2.0-flash",
       },
@@ -81,6 +252,10 @@ function ensureAIFallbackSettingsDefaults() {
         endpoint: "http://localhost:11434",
         available_models: [],
         preferred_model: "",
+        runtime_source: "manual",
+        runtime_path: "",
+        runtime_version: "",
+        last_health_check: null,
       },
     };
   }
@@ -89,31 +264,113 @@ function ensureAIFallbackSettingsDefaults() {
       endpoint: "http://localhost:11434",
       available_models: [],
       preferred_model: "",
+      runtime_source: "manual",
+      runtime_path: "",
+      runtime_version: "",
+      last_health_check: null,
     };
   }
+  settings.ai_fallback.strict_local_mode ??= true;
+  settings.ai_fallback.preserve_source_language ??= true;
+  settings.ai_fallback.prompt_profile = normalizeRefinementPromptPreset(
+    settings.ai_fallback.prompt_profile
+  );
+  settings.ai_fallback.low_latency_mode ??= false;
+  settings.ai_fallback.custom_prompt_enabled = settings.ai_fallback.prompt_profile === "custom";
+  settings.ai_fallback.use_default_prompt = false;
+  settings.ai_fallback.fallback_provider = normalizeCloudProvider(
+    settings.ai_fallback.fallback_provider ?? null
+  );
+  settings.ai_fallback.execution_mode = normalizeExecutionMode(settings.ai_fallback.execution_mode);
+  if (!settings.ai_fallback.fallback_provider && settings.ai_fallback.provider !== "ollama") {
+    settings.ai_fallback.fallback_provider = normalizeCloudProvider(settings.ai_fallback.provider);
+  }
+  // Online fallback lane is intentionally roadmap-only for now.
+  settings.ai_fallback.execution_mode = "local_primary";
+  settings.ai_fallback.provider = "ollama";
+  settings.postproc_llm_provider = "ollama";
+  settings.postproc_language = derivePostprocLanguageFromAsr(
+    settings.language_mode,
+    settings.language_pinned
+  );
+  const effectiveLanguageHint = resolveEffectiveAsrLanguageHint(
+    settings.language_mode,
+    settings.language_pinned
+  );
+  settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+    settings.ai_fallback.prompt_profile,
+    effectiveLanguageHint,
+    settings.ai_fallback.custom_prompt,
+    settings.ai_fallback.preserve_source_language
+  );
+  settings.topic_keywords = normalizeTopicKeywordsInput(settings.topic_keywords);
+  setTopicKeywords(settings.topic_keywords);
+  settings.providers.ollama.runtime_source ??= "manual";
+  settings.providers.ollama.runtime_path ??= "";
+  settings.providers.ollama.runtime_version ??= "";
+  settings.providers.ollama.last_health_check ??= null;
+  CLOUD_PROVIDER_IDS.forEach((provider) => {
+    const providerSettings = getAIFallbackProviderSettings(provider);
+    if (!providerSettings) return;
+    providerSettings.auth_method_preference = normalizeAuthMethodPreference(
+      providerSettings.auth_method_preference
+    );
+    providerSettings.auth_status = isVerifiedAuthStatus(providerSettings.auth_status)
+      ? (providerSettings.auth_status as AIProviderAuthStatus)
+      : "locked";
+    providerSettings.auth_verified_at ??= null;
+    if (!providerSettings.api_key_stored && providerSettings.auth_status !== "verified_oauth") {
+      providerSettings.auth_status = "locked";
+      providerSettings.auth_verified_at = null;
+    }
+  });
+  settings.setup ??= {
+    local_ai_wizard_completed: false,
+    local_ai_wizard_pending: true,
+    ollama_remote_expert_opt_in: false,
+  };
+  settings.setup.ollama_remote_expert_opt_in ??= false;
+  settings.module_settings ??= {
+    enabled_modules: [],
+    consented_permissions: {},
+    module_overrides: {},
+  };
+  settings.module_settings.enabled_modules ??= [];
+  settings.module_settings.consented_permissions ??= {};
+  settings.module_settings.module_overrides ??= {};
+  settings.gdd_module_settings ??= {
+    enabled: false,
+    default_preset_id: "universal_strict",
+    detect_preset_automatically: true,
+    prefer_one_click_publish: false,
+    preset_clones: [],
+  };
+  settings.gdd_module_settings.default_preset_id ??= "universal_strict";
+  settings.gdd_module_settings.detect_preset_automatically ??= true;
+  settings.gdd_module_settings.prefer_one_click_publish ??= false;
+  settings.gdd_module_settings.preset_clones ??= [];
+  settings.confluence_settings ??= {
+    enabled: false,
+    site_base_url: "",
+    oauth_cloud_id: "",
+    default_space_key: "",
+    api_user_email: "",
+    default_parent_page_id: "",
+    auth_mode: "oauth",
+    routing_memory: {},
+  };
+  settings.confluence_settings.enabled ??= false;
+  settings.confluence_settings.site_base_url ??= "";
+  settings.confluence_settings.oauth_cloud_id ??= "";
+  settings.confluence_settings.default_space_key ??= "";
+  settings.confluence_settings.api_user_email ??= "";
+  settings.confluence_settings.default_parent_page_id ??= "";
+  settings.confluence_settings.auth_mode =
+    settings.confluence_settings.auth_mode === "api_token" ? "api_token" : "oauth";
+  settings.confluence_settings.routing_memory ??= {};
+  syncDerivedLanguageSettings();
 }
 
-function ensureContinuousDumpDefaults() {
-  if (!settings) return;
-  settings.auto_save_mic_audio ??= false;
-  settings.continuous_dump_enabled ??= true;
-  settings.continuous_dump_profile ??= "balanced";
-  settings.continuous_soft_flush_ms ??= 10000;
-  settings.continuous_silence_flush_ms ??= 1200;
-  settings.continuous_hard_cut_ms ??= 45000;
-  settings.continuous_min_chunk_ms ??= 1000;
-  settings.continuous_pre_roll_ms ??= 300;
-  settings.continuous_post_roll_ms ??= 200;
-  settings.continuous_idle_keepalive_ms ??= 60000;
-  settings.continuous_mic_override_enabled ??= false;
-  settings.continuous_mic_soft_flush_ms ??= settings.continuous_soft_flush_ms;
-  settings.continuous_mic_silence_flush_ms ??= settings.continuous_silence_flush_ms;
-  settings.continuous_mic_hard_cut_ms ??= settings.continuous_hard_cut_ms;
-  settings.continuous_system_override_enabled ??= false;
-  settings.continuous_system_soft_flush_ms ??= settings.continuous_soft_flush_ms;
-  settings.continuous_system_silence_flush_ms ??= settings.continuous_silence_flush_ms;
-  settings.continuous_system_hard_cut_ms ??= settings.continuous_hard_cut_ms;
-}
 
 function applyContinuousProfile(profile: "balanced" | "low_latency" | "high_quality") {
   if (!settings) return;
@@ -193,12 +450,155 @@ async function refreshAIFallbackModels(provider: AIFallbackProvider) {
   if (!providerSettings.preferred_model || !models.includes(providerSettings.preferred_model)) {
     providerSettings.preferred_model = models[0] ?? "";
   }
-  if (settings.ai_fallback.provider === provider) {
+  const mode = normalizeExecutionMode(settings.ai_fallback.execution_mode);
+  const fallbackProvider = getFallbackProvider();
+  if (
+    settings.ai_fallback.provider === provider ||
+    (mode === "online_fallback" && fallbackProvider === provider)
+  ) {
     if (!models.includes(settings.ai_fallback.model)) {
       settings.ai_fallback.model = providerSettings.preferred_model || models[0] || "";
     }
   }
 }
+
+function setAuthModalOpen(open: boolean): void {
+  if (!dom.aiAuthModal) return;
+  dom.aiAuthModal.hidden = !open;
+  dom.aiAuthModal.classList.toggle("is-open", open);
+}
+
+function refreshAuthModalContent(): void {
+  const provider = authModalProvider;
+  if (!provider) return;
+  const providerSettings = getAIFallbackProviderSettings(provider);
+  if (!providerSettings) return;
+
+  const providerLabel = CLOUD_PROVIDER_LABELS[provider];
+  if (dom.aiAuthProviderName) {
+    dom.aiAuthProviderName.textContent = `${providerLabel} credentials`;
+  }
+  if (dom.aiAuthMethod) {
+    dom.aiAuthMethod.value = normalizeAuthMethodPreference(providerSettings.auth_method_preference);
+  }
+  if (dom.aiAuthVerifyKey) {
+    dom.aiAuthVerifyKey.disabled =
+      normalizeAuthMethodPreference(providerSettings.auth_method_preference) === "oauth";
+  }
+  if (dom.aiAuthStatus) {
+    if (normalizeAuthMethodPreference(providerSettings.auth_method_preference) === "oauth") {
+      dom.aiAuthStatus.textContent =
+        `OAuth for ${providerLabel} is coming soon. Use API key verification for now.`;
+    } else {
+      dom.aiAuthStatus.textContent = providerSettings.api_key_stored
+        ? `${providerLabel} key stored. Verify to unlock online usage.`
+        : `No API key stored for ${providerLabel} yet.`;
+    }
+  }
+}
+
+function closeAuthModal(): void {
+  setAuthModalOpen(false);
+  authModalProvider = null;
+  if (dom.aiAuthApiKeyInput) {
+    dom.aiAuthApiKeyInput.value = "";
+  }
+}
+
+async function saveProviderApiKey(provider: CloudAIFallbackProvider, apiKey: string): Promise<void> {
+  if (!settings) return;
+  await invoke("save_provider_api_key", { provider, apiKey });
+  const providerSettings = getAIFallbackProviderSettings(provider);
+  if (providerSettings) {
+    providerSettings.api_key_stored = true;
+    providerSettings.auth_status = "locked";
+    providerSettings.auth_verified_at = null;
+  }
+  ensureOnlineModeConstraints(true);
+  await persistSettings();
+  renderAIFallbackSettingsUi();
+  refreshAuthModalContent();
+}
+
+async function clearProviderApiKey(provider: CloudAIFallbackProvider): Promise<void> {
+  if (!settings) return;
+  await invoke("clear_provider_api_key", { provider });
+  const providerSettings = getAIFallbackProviderSettings(provider);
+  if (providerSettings) {
+    providerSettings.api_key_stored = false;
+    providerSettings.auth_status = "locked";
+    providerSettings.auth_verified_at = null;
+  }
+  ensureOnlineModeConstraints(true);
+  await persistSettings();
+  renderAIFallbackSettingsUi();
+  refreshAuthModalContent();
+}
+
+async function verifyProviderCredentials(provider: CloudAIFallbackProvider): Promise<void> {
+  if (!settings) return;
+  const providerSettings = getAIFallbackProviderSettings(provider);
+  const authMethod = normalizeAuthMethodPreference(providerSettings?.auth_method_preference);
+  if (authMethod === "oauth") {
+    showToast({
+      type: "info",
+      title: "OAuth coming soon",
+      message: "OAuth verification is not available yet. Use API key verification for now.",
+      duration: 4200,
+    });
+    return;
+  }
+  if (!providerSettings?.api_key_stored) {
+    showToast({
+      type: "warning",
+      title: "Missing API key",
+      message: "Save an API key first, then click Verify.",
+      duration: 3000,
+    });
+    return;
+  }
+
+  try {
+    const result = await invoke<{ message?: string; method?: string; verified_at?: string }>(
+      "verify_provider_auth",
+      { provider, method: authMethod }
+    );
+    if (providerSettings) {
+      providerSettings.auth_status =
+        (result?.method as "verified_api_key" | "verified_oauth") || "verified_api_key";
+      providerSettings.auth_verified_at = result?.verified_at ?? new Date().toISOString();
+    }
+    if (!settings.ai_fallback.fallback_provider) {
+      settings.ai_fallback.fallback_provider = provider;
+    }
+    await refreshAIFallbackModels(provider);
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+    refreshAuthModalContent();
+    showToast({
+      type: "success",
+      title: "Provider verified",
+      message: result?.message ?? `${provider} is unlocked for online fallback.`,
+      duration: 3500,
+    });
+  } catch (error) {
+    if (providerSettings) {
+      providerSettings.auth_status = "locked";
+      providerSettings.auth_verified_at = null;
+    }
+    ensureOnlineModeConstraints(true);
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+    refreshAuthModalContent();
+    showToast({
+      type: "error",
+      title: "Verification failed",
+      message: String(error),
+      duration: 5000,
+    });
+  }
+}
+
 // Custom vocabulary helper functions
 function addVocabRow(original: string, replacement: string) {
   if (!dom.postprocVocabRows) return;
@@ -257,17 +657,53 @@ function addVocabRow(original: string, replacement: string) {
 }
 
 // Main tab switching
-type MainTab = "transcription" | "settings";
+type MainTab = "transcription" | "settings" | "ai-refinement" | "modules";
+let aiRefinementTabRefreshInFlight: Promise<void> | null = null;
+
+async function refreshAiRefinementTabState(): Promise<void> {
+  if (aiRefinementTabRefreshInFlight) {
+    await aiRefinementTabRefreshInFlight;
+    return;
+  }
+
+  const refreshTask = (async () => {
+    await refreshOllamaRuntimeState({ force: true });
+    if (getOllamaRuntimeCardState().healthy) {
+      await refreshOllamaInstalledModels();
+    }
+    renderAIFallbackSettingsUi();
+    renderOllamaModelManager();
+  })();
+
+  aiRefinementTabRefreshInFlight = refreshTask;
+  try {
+    await refreshTask;
+  } finally {
+    if (aiRefinementTabRefreshInFlight === refreshTask) {
+      aiRefinementTabRefreshInFlight = null;
+    }
+  }
+}
+
+export function openMainTab(tab: MainTab) {
+  switchMainTab(tab);
+}
 
 function switchMainTab(tab: MainTab) {
-  // Update button states
   const isTranscription = tab === "transcription";
+  const isSettings = tab === "settings";
+  const isAiRefinement = tab === "ai-refinement";
+  const isModules = tab === "modules";
 
   dom.tabBtnTranscription?.classList.toggle("active", isTranscription);
-  dom.tabBtnSettings?.classList.toggle("active", !isTranscription);
+  dom.tabBtnSettings?.classList.toggle("active", isSettings);
+  dom.tabBtnAiRefinement?.classList.toggle("active", isAiRefinement);
+  dom.tabBtnModules?.classList.toggle("active", isModules);
 
   dom.tabBtnTranscription?.setAttribute("aria-selected", isTranscription.toString());
-  dom.tabBtnSettings?.setAttribute("aria-selected", (!isTranscription).toString());
+  dom.tabBtnSettings?.setAttribute("aria-selected", isSettings.toString());
+  dom.tabBtnAiRefinement?.setAttribute("aria-selected", isAiRefinement.toString());
+  dom.tabBtnModules?.setAttribute("aria-selected", isModules.toString());
 
   // Update tab content visibility — clear any inline display styles first
   if (dom.tabTranscription) {
@@ -276,7 +712,15 @@ function switchMainTab(tab: MainTab) {
   }
   if (dom.tabSettings) {
     dom.tabSettings.style.removeProperty("display");
-    dom.tabSettings.classList.toggle("active", !isTranscription);
+    dom.tabSettings.classList.toggle("active", isSettings);
+  }
+  if (dom.tabAiRefinement) {
+    dom.tabAiRefinement.style.removeProperty("display");
+    dom.tabAiRefinement.classList.toggle("active", isAiRefinement);
+  }
+  if (dom.tabModules) {
+    dom.tabModules.style.removeProperty("display");
+    dom.tabModules.classList.toggle("active", isModules);
   }
 
   // Persist to localStorage
@@ -285,13 +729,28 @@ function switchMainTab(tab: MainTab) {
   } catch (error) {
     console.error("Failed to persist active tab", error);
   }
+
+  if (isAiRefinement) {
+    void (async () => {
+      try {
+        await refreshAiRefinementTabState();
+      } catch (error) {
+        console.warn("Failed to refresh Ollama runtime on tab switch:", error);
+      }
+    })();
+  }
 }
 
 // Initialize tab state from localStorage
 export function initMainTab() {
   try {
     const savedTab = localStorage.getItem("trispr-active-tab") as MainTab | null;
-    if (savedTab === "settings" || savedTab === "transcription") {
+    if (
+      savedTab === "settings" ||
+      savedTab === "transcription" ||
+      savedTab === "ai-refinement" ||
+      savedTab === "modules"
+    ) {
       switchMainTab(savedTab);
     } else {
       // Default to transcription tab
@@ -330,9 +789,22 @@ export function renderVocabulary() {
   }
 }
 
+// Registers a "change" event listener that only saves settings.
+// Use for sliders / toggles whose value was already written to the settings
+// object by the companion "input" listener; this just persists the final value.
+function onChangePersist(el: Element | null | undefined): void {
+  el?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+}
+
 export function wireEvents() {
   ensureAIFallbackSettingsDefaults();
   ensureContinuousDumpDefaults();
+  if (syncHistoryAliasesIntoSettings()) {
+    void persistSettings();
+  }
 
   // Main tab switching
   dom.tabBtnTranscription?.addEventListener("click", () => {
@@ -341,6 +813,13 @@ export function wireEvents() {
 
   dom.tabBtnSettings?.addEventListener("click", () => {
     switchMainTab("settings");
+  });
+
+  dom.tabBtnAiRefinement?.addEventListener("click", () => {
+    switchMainTab("ai-refinement");
+  });
+  dom.tabBtnModules?.addEventListener("click", () => {
+    switchMainTab("modules");
   });
 
   dom.captureEnabledToggle?.addEventListener("change", async () => {
@@ -360,6 +839,8 @@ export function wireEvents() {
   dom.modeSelect?.addEventListener("change", async () => {
     if (!settings) return;
     settings.mode = dom.modeSelect!.value as Settings["mode"];
+    syncCaptureModeVisibility(settings.mode, settings.ptt_use_vad);
+    renderSettings();
     await persistSettings();
     renderHero();
   });
@@ -368,7 +849,7 @@ export function wireEvents() {
     if (!settings || !dom.modelSourceSelect) return;
     settings.model_source = dom.modelSourceSelect.value as Settings["model_source"];
     await persistSettings();
-    renderSettings();
+    scheduleSettingsRender();
     await refreshModels();
   });
 
@@ -453,61 +934,59 @@ export function wireEvents() {
     const entries = buildConversationHistory();
     if (!entries.length) return;
     const transcript = buildConversationText(entries);
-    await navigator.clipboard.writeText(transcript);
+    try {
+      await navigator.clipboard.writeText(transcript);
+    } catch {
+      showToast({ type: "error", title: "Kopieren fehlgeschlagen", message: "Clipboard-Zugriff verweigert." });
+    }
   });
 
-  dom.analyseButton?.addEventListener("click", () => {
-    showToast({
-      type: "info",
-      title: "Analyse module",
-      message: "Analyse module coming soon.",
-      duration: 2800,
-    });
-  });
-
-  dom.historyExport?.addEventListener("click", async () => {
-    const entries = buildConversationHistory();
-    if (!entries.length) {
+  dom.historyDeleteConversation?.addEventListener("click", async () => {
+    const totalEntries = history.length + transcribeHistory.length;
+    if (totalEntries === 0) {
       showToast({
-        type: "warning",
-        title: "Nothing to export",
-        message: "No transcript entries available",
-        duration: 3000,
+        type: "info",
+        title: "Nichts zu löschen",
+        message: "Der aktuelle Verlauf ist bereits leer.",
       });
       return;
     }
 
-    const format = (dom.exportFormat?.value as "txt" | "md" | "json") || "txt";
-    const exportContent = buildExportText(entries, format);
-
-    // Determine file extension
-    const ext = format === "md" ? "md" : format;
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const filename = `transcript-${timestamp}.${ext}`;
+    const confirmed = window.confirm(
+      "Gesamtes Transkript (Input + System) aus dem aktuellen Verlauf löschen?\n\nDiese Aktion kann nicht rückgängig gemacht werden."
+    );
+    if (!confirmed) return;
 
     try {
-      // Save file using Tauri
-      await invoke("save_transcript", {
-        filename,
-        content: exportContent,
-        format,
-      });
-
+      const deletedCount = await invoke<number>("clear_active_transcript_history");
       showToast({
         type: "success",
-        title: "Export successful",
-        message: `Transcript saved as ${filename}`,
-        duration: 4000,
+        title: "Transkript gelöscht",
+        message: `${deletedCount} Einträge wurden dauerhaft entfernt.`,
       });
     } catch (error) {
-      console.error("Export failed:", error);
       showToast({
         type: "error",
-        title: "Export failed",
+        title: "Löschen fehlgeschlagen",
         message: String(error),
-        duration: 5000,
       });
     }
+  });
+
+  dom.analyseButton?.addEventListener("click", () => {
+    switchMainTab("modules");
+    window.dispatchEvent(new CustomEvent("modules:focus", { detail: "analysis" }));
+  });
+  dom.openModulesBtn?.addEventListener("click", () => {
+    switchMainTab("modules");
+  });
+
+  dom.historyExport?.addEventListener("click", () => {
+    void openExportDialog();
+  });
+
+  dom.archiveBrowseBtn?.addEventListener("click", () => {
+    void openArchiveBrowser();
   });
 
   dom.historySearch?.addEventListener("input", () => {
@@ -531,13 +1010,15 @@ export function wireEvents() {
       dom.conversationFontSizeValue.textContent = `${size}px`;
     }
     updateRangeAria("conversation-font-size", size);
+    scheduleHistoryRender();
   });
 
   const commitAlias = (key: "mic" | "system", input: HTMLInputElement | null): void => {
     if (!input) return;
     input.value = setHistoryAlias(key, input.value);
     syncHistoryToolbarState();
-    renderHistory();
+    scheduleHistoryRender();
+    void persistSettings();
   };
 
   dom.historyAliasMicInput?.addEventListener("change", () =>
@@ -558,7 +1039,9 @@ export function wireEvents() {
   setupHotkeyRecorder("transcribe", dom.transcribeHotkey, dom.transcribeHotkeyRecord, dom.transcribeHotkeyStatus);
   setupHotkeyRecorder("toggleActivationWords", dom.toggleActivationWordsHotkey, dom.toggleActivationWordsHotkeyRecord, dom.toggleActivationWordsHotkeyStatus);
 
-  window.addEventListener("resize", () => updateDeviceLineClamp());
+  const _onResize = () => updateDeviceLineClamp();
+  window.addEventListener("resize", _onResize);
+  _windowCleanups.push(() => window.removeEventListener("resize", _onResize));
 
   dom.deviceSelect?.addEventListener("change", async () => {
     if (!settings) return;
@@ -612,10 +1095,7 @@ export function wireEvents() {
     updateTranscribeThreshold(settings.transcribe_vad_threshold);
   });
 
-  dom.transcribeVadThreshold?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.transcribeVadThreshold);
 
   dom.transcribeVadSilence?.addEventListener("input", () => {
     if (!settings || !dom.transcribeVadSilence) return;
@@ -631,10 +1111,7 @@ export function wireEvents() {
     updateRangeAria("transcribe-vad-silence", value);
   });
 
-  dom.transcribeVadSilence?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.transcribeVadSilence);
 
   dom.transcribeBatchInterval?.addEventListener("input", () => {
     if (!settings || !dom.transcribeBatchInterval) return;
@@ -650,10 +1127,7 @@ export function wireEvents() {
     updateRangeAria("transcribe-batch-interval", value);
   });
 
-  dom.transcribeBatchInterval?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.transcribeBatchInterval);
 
   dom.transcribeChunkOverlap?.addEventListener("input", () => {
     if (!settings || !dom.transcribeChunkOverlap) return;
@@ -671,10 +1145,7 @@ export function wireEvents() {
     updateRangeAria("transcribe-chunk-overlap", settings.transcribe_chunk_overlap_ms);
   });
 
-  dom.transcribeChunkOverlap?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.transcribeChunkOverlap);
 
   dom.transcribeGain?.addEventListener("input", () => {
     if (!settings || !dom.transcribeGain) return;
@@ -687,33 +1158,43 @@ export function wireEvents() {
     updateRangeAria("transcribe-gain", value);
   });
 
-  dom.transcribeGain?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.transcribeGain);
 
   dom.languageSelect?.addEventListener("change", async () => {
     if (!settings) return;
     settings.language_mode = dom.languageSelect!.value as Settings["language_mode"];
+    settings.postproc_language = derivePostprocLanguageFromAsr(
+      settings.language_mode,
+      settings.language_pinned
+    );
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      normalizeRefinementPromptPreset(settings.ai_fallback.prompt_profile),
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
     await persistSettings();
+    renderSettings();
   });
 
   dom.languagePinnedToggle?.addEventListener("change", async () => {
     if (!settings) return;
     settings.language_pinned = dom.languagePinnedToggle!.checked;
+    settings.postproc_language = derivePostprocLanguageFromAsr(
+      settings.language_mode,
+      settings.language_pinned
+    );
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      normalizeRefinementPromptPreset(settings.ai_fallback.prompt_profile),
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
     await persistSettings();
+    renderSettings();
   });
 
-  dom.cloudToggle?.addEventListener("change", async () => {
-    if (!settings) return;
-    ensureAIFallbackSettingsDefaults();
-    settings.ai_fallback.enabled = dom.cloudToggle!.checked;
-    settings.cloud_fallback = settings.ai_fallback.enabled;
-    settings.postproc_llm_enabled = settings.ai_fallback.enabled;
-    await persistSettings();
-    renderAIFallbackSettingsUi();
-    renderHero();
-  });
+
 
   dom.audioCuesToggle?.addEventListener("change", async () => {
     if (!settings) return;
@@ -724,6 +1205,7 @@ export function wireEvents() {
   dom.pttUseVadToggle?.addEventListener("change", async () => {
     if (!settings) return;
     settings.ptt_use_vad = dom.pttUseVadToggle!.checked;
+    syncCaptureModeVisibility(settings.mode, settings.ptt_use_vad);
     await persistSettings();
   });
 
@@ -737,10 +1219,7 @@ export function wireEvents() {
     updateRangeAria("audio-cues-volume", value);
   });
 
-  dom.audioCuesVolume?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.audioCuesVolume);
 
   dom.hallucinationFilterToggle?.addEventListener("change", async () => {
     if (!settings) return;
@@ -752,7 +1231,7 @@ export function wireEvents() {
     if (!settings) return;
     settings.activation_words_enabled = dom.activationWordsToggle!.checked;
     await persistSettings();
-    renderSettings();
+    scheduleSettingsRender();
   });
 
   dom.activationWordsList?.addEventListener("change", async () => {
@@ -800,7 +1279,7 @@ export function wireEvents() {
     if (!settings || !dom.continuousDumpProfile) return;
     settings.continuous_dump_profile = dom.continuousDumpProfile.value as "balanced" | "low_latency" | "high_quality";
     applyContinuousProfile(settings.continuous_dump_profile);
-    renderSettings();
+    scheduleSettingsRender();
     await persistSettings();
   });
 
@@ -813,7 +1292,7 @@ export function wireEvents() {
     if (dom.continuousHardCutValue) dom.continuousHardCutValue.textContent = `${Math.round(value / 1000)}s`;
     updateRangeAria("continuous-hard-cut", value);
   });
-  dom.continuousHardCut?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousHardCut);
 
   dom.continuousMinChunk?.addEventListener("input", () => {
     if (!settings || !dom.continuousMinChunk) return;
@@ -822,7 +1301,7 @@ export function wireEvents() {
     if (dom.continuousMinChunkValue) dom.continuousMinChunkValue.textContent = `${(value / 1000).toFixed(1)}s`;
     updateRangeAria("continuous-min-chunk", value);
   });
-  dom.continuousMinChunk?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousMinChunk);
 
   dom.continuousPreRoll?.addEventListener("input", () => {
     if (!settings || !dom.continuousPreRoll) return;
@@ -834,7 +1313,7 @@ export function wireEvents() {
     if (dom.transcribeOverlapValue) dom.transcribeOverlapValue.textContent = `${(settings.transcribe_chunk_overlap_ms / 1000).toFixed(1)}s`;
     updateRangeAria("continuous-pre-roll", value);
   });
-  dom.continuousPreRoll?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousPreRoll);
 
   dom.continuousPostRoll?.addEventListener("input", () => {
     if (!settings || !dom.continuousPostRoll) return;
@@ -843,7 +1322,7 @@ export function wireEvents() {
     if (dom.continuousPostRollValue) dom.continuousPostRollValue.textContent = `${(value / 1000).toFixed(2)}s`;
     updateRangeAria("continuous-post-roll", value);
   });
-  dom.continuousPostRoll?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousPostRoll);
 
   dom.continuousKeepalive?.addEventListener("input", () => {
     if (!settings || !dom.continuousKeepalive) return;
@@ -852,7 +1331,7 @@ export function wireEvents() {
     if (dom.continuousKeepaliveValue) dom.continuousKeepaliveValue.textContent = `${Math.round(value / 1000)}s`;
     updateRangeAria("continuous-keepalive", value);
   });
-  dom.continuousKeepalive?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousKeepalive);
 
   dom.continuousSystemOverrideToggle?.addEventListener("change", async () => {
     if (!settings) return;
@@ -862,7 +1341,7 @@ export function wireEvents() {
       settings.continuous_system_silence_flush_ms = settings.continuous_silence_flush_ms!;
       settings.continuous_system_hard_cut_ms = settings.continuous_hard_cut_ms!;
     }
-    renderSettings();
+    scheduleSettingsRender();
     await persistSettings();
   });
 
@@ -876,7 +1355,7 @@ export function wireEvents() {
     if (dom.transcribeBatchValue) dom.transcribeBatchValue.textContent = `${Math.round(settings.transcribe_batch_interval_ms / 1000)}s`;
     updateRangeAria("continuous-system-soft-flush", value);
   });
-  dom.continuousSystemSoftFlush?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousSystemSoftFlush);
 
   dom.continuousSystemSilenceFlush?.addEventListener("input", () => {
     if (!settings || !dom.continuousSystemSilenceFlush) return;
@@ -888,7 +1367,7 @@ export function wireEvents() {
     if (dom.transcribeVadSilenceValue) dom.transcribeVadSilenceValue.textContent = `${Math.round(settings.transcribe_vad_silence_ms / 100) / 10}s`;
     updateRangeAria("continuous-system-silence-flush", value);
   });
-  dom.continuousSystemSilenceFlush?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousSystemSilenceFlush);
 
   dom.continuousSystemHardCut?.addEventListener("input", () => {
     if (!settings || !dom.continuousSystemHardCut) return;
@@ -897,7 +1376,7 @@ export function wireEvents() {
     if (dom.continuousSystemHardCutValue) dom.continuousSystemHardCutValue.textContent = `${Math.round(value / 1000)}s`;
     updateRangeAria("continuous-system-hard-cut", value);
   });
-  dom.continuousSystemHardCut?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousSystemHardCut);
 
   dom.continuousMicOverrideToggle?.addEventListener("change", async () => {
     if (!settings) return;
@@ -907,7 +1386,7 @@ export function wireEvents() {
       settings.continuous_mic_silence_flush_ms = settings.continuous_silence_flush_ms!;
       settings.continuous_mic_hard_cut_ms = settings.continuous_hard_cut_ms!;
     }
-    renderSettings();
+    scheduleSettingsRender();
     await persistSettings();
   });
 
@@ -918,7 +1397,7 @@ export function wireEvents() {
     if (dom.continuousMicSoftFlushValue) dom.continuousMicSoftFlushValue.textContent = `${Math.round(value / 1000)}s`;
     updateRangeAria("continuous-mic-soft-flush", value);
   });
-  dom.continuousMicSoftFlush?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousMicSoftFlush);
 
   dom.continuousMicSilenceFlush?.addEventListener("input", () => {
     if (!settings || !dom.continuousMicSilenceFlush) return;
@@ -927,7 +1406,7 @@ export function wireEvents() {
     if (dom.continuousMicSilenceFlushValue) dom.continuousMicSilenceFlushValue.textContent = `${(value / 1000).toFixed(1)}s`;
     updateRangeAria("continuous-mic-silence-flush", value);
   });
-  dom.continuousMicSilenceFlush?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousMicSilenceFlush);
 
   dom.continuousMicHardCut?.addEventListener("input", () => {
     if (!settings || !dom.continuousMicHardCut) return;
@@ -936,20 +1415,14 @@ export function wireEvents() {
     if (dom.continuousMicHardCutValue) dom.continuousMicHardCutValue.textContent = `${Math.round(value / 1000)}s`;
     updateRangeAria("continuous-mic-hard-cut", value);
   });
-  dom.continuousMicHardCut?.addEventListener("change", async () => { if (settings) await persistSettings(); });
+  onChangePersist(dom.continuousMicHardCut);
 
   // Post-processing event listeners
   dom.postprocEnabled?.addEventListener("change", async () => {
     if (!settings) return;
     settings.postproc_enabled = dom.postprocEnabled!.checked;
     await persistSettings();
-    renderSettings();
-  });
-
-  dom.postprocLanguage?.addEventListener("change", async () => {
-    if (!settings || !dom.postprocLanguage) return;
-    settings.postproc_language = dom.postprocLanguage.value;
-    await persistSettings();
+    scheduleSettingsRender();
   });
 
   dom.postprocPunctuation?.addEventListener("change", async () => {
@@ -974,7 +1447,7 @@ export function wireEvents() {
     if (!settings) return;
     settings.postproc_custom_vocab_enabled = dom.postprocCustomVocabEnabled!.checked;
     await persistSettings();
-    renderSettings();
+    scheduleSettingsRender();
   });
 
   dom.postprocVocabAdd?.addEventListener("click", () => {
@@ -986,53 +1459,132 @@ export function wireEvents() {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
     settings.ai_fallback.enabled = dom.aiFallbackEnabled!.checked;
-    settings.cloud_fallback = settings.ai_fallback.enabled;
     settings.postproc_llm_enabled = settings.ai_fallback.enabled;
     await persistSettings();
     renderAIFallbackSettingsUi();
     renderHero();
+    if (settings.ai_fallback.enabled) {
+      void autoStartLocalRuntimeIfNeeded("enable_toggle").finally(() => {
+        renderAIFallbackSettingsUi();
+        renderOllamaModelManager();
+      });
+    }
   });
 
-  dom.aiFallbackProvider?.addEventListener("change", async () => {
-    if (!settings || !dom.aiFallbackProvider) return;
-    ensureAIFallbackSettingsDefaults();
-    const provider = normalizeAIFallbackProvider(dom.aiFallbackProvider.value);
-    settings.ai_fallback.provider = provider;
-    settings.postproc_llm_provider = provider;
-    applyOllamaVisibility(provider === "ollama");
+  dom.aiFallbackCloudProviderList?.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement | null;
+    const actionBtn = target?.closest<HTMLButtonElement>("[data-ai-provider-action]");
+    if (!actionBtn) return;
+    event.preventDefault();
+    showToast({
+      type: "info",
+      title: "Roadmap-only",
+      message: "Online fallback controls are visible for roadmap transparency and are currently read-only.",
+      duration: 3200,
+    });
+  });
 
-    if (provider === "ollama") {
-      // For Ollama, use already-cached models (user can click Refresh explicitly)
-      const ollamaModels = settings.providers.ollama.available_models;
-      if (ollamaModels.length > 0) {
-        settings.ai_fallback.model = settings.providers.ollama.preferred_model || ollamaModels[0];
-      } else {
-        settings.ai_fallback.model = "";
-      }
-    } else {
-      try {
-        await refreshAIFallbackModels(provider);
-      } catch (error) {
-        console.warn(`Failed to refresh models for ${provider}:`, error);
-      }
-      const providerSettings = getAIFallbackProviderSettings(provider);
-      if (providerSettings) {
-        if (!providerSettings.preferred_model) {
-          providerSettings.preferred_model = providerSettings.available_models[0] ?? "";
-        }
-        settings.ai_fallback.model = providerSettings.preferred_model;
-        settings.postproc_llm_model = settings.ai_fallback.model;
-      }
+  dom.aiAuthModalClose?.addEventListener("click", () => {
+    closeAuthModal();
+  });
+  dom.aiAuthModalBackdrop?.addEventListener("click", () => {
+    closeAuthModal();
+  });
+  const _onKeydown = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && dom.aiAuthModal && !dom.aiAuthModal.hidden) {
+      closeAuthModal();
     }
+  };
+  window.addEventListener("keydown", _onKeydown);
+  _windowCleanups.push(() => window.removeEventListener("keydown", _onKeydown));
+  dom.aiAuthMethod?.addEventListener("change", async () => {
+    if (!settings || !dom.aiAuthMethod || !authModalProvider) return;
+    ensureAIFallbackSettingsDefaults();
+    const providerSettings = getAIFallbackProviderSettings(authModalProvider);
+    if (!providerSettings) return;
+    providerSettings.auth_method_preference = normalizeAuthMethodPreference(
+      dom.aiAuthMethod.value
+    );
     await persistSettings();
     renderAIFallbackSettingsUi();
+    refreshAuthModalContent();
+    if (providerSettings.auth_method_preference === "oauth") {
+      showToast({
+        type: "info",
+        title: "OAuth coming soon",
+        message: "OAuth verification is not available yet. Use API key for now.",
+        duration: 3600,
+      });
+    }
+  });
+
+  const activateLocalLane = async (notify = false) => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    const switched =
+      settings.ai_fallback.execution_mode !== "local_primary" ||
+      settings.ai_fallback.provider !== "ollama";
+    applyExecutionModeInSettings("local_primary");
+    await refreshOllamaRuntimeState({ force: true });
+    if (getOllamaRuntimeCardState().healthy) {
+      await refreshOllamaInstalledModels();
+    }
+    await persistSettings();
+    refreshAIUi();
+    if (notify && switched) {
+      showToast({
+        type: "success",
+        title: "Local runtime active",
+        message: "Using local Ollama as primary runtime.",
+        duration: 2600,
+      });
+    }
+  };
+
+  const activateOnlineLane = async () => {
+    applyExecutionModeInSettings("local_primary");
+    renderAIFallbackSettingsUi();
+    renderOllamaModelManager();
     renderHero();
+    showToast({
+      type: "info",
+      title: "Roadmap-only",
+      message: "Online fallback is currently read-only and not active in production.",
+      duration: 3600,
+    });
+  };
+
+  dom.aiFallbackLocalLane?.addEventListener("click", (event) => {
+    if (isLaneControlTarget(event.target)) return;
+    void activateLocalLane(false);
+  });
+  dom.aiFallbackLocalLane?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (isLaneControlTarget(event.target)) return;
+    event.preventDefault();
+    void activateLocalLane(false);
+  });
+
+  dom.aiFallbackOnlineLane?.addEventListener("click", (event) => {
+    if (isLaneControlTarget(event.target)) return;
+    void activateOnlineLane();
+  });
+  dom.aiFallbackOnlineLane?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (isLaneControlTarget(event.target)) return;
+    event.preventDefault();
+    void activateOnlineLane();
   });
 
   dom.aiFallbackModel?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackModel) return;
     ensureAIFallbackSettingsDefaults();
+    const mode = normalizeExecutionMode(settings.ai_fallback.execution_mode);
     const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
+    if (provider === "ollama" || mode !== "online_fallback") {
+      // Ollama model selection is handled only in the Local AI Runtime manager.
+      return;
+    }
     settings.ai_fallback.model = dom.aiFallbackModel.value;
     settings.postproc_llm_model = settings.ai_fallback.model;
     const providerSettings = getAIFallbackProviderSettings(provider);
@@ -1042,109 +1594,86 @@ export function wireEvents() {
     await persistSettings();
   });
 
-  // Ollama-specific button handlers
-  dom.aiFallbackSaveEndpointBtn?.addEventListener("click", async () => {
+  // Local runtime action handlers in Local Primary card
+  dom.aiFallbackLocalPrimaryAction?.addEventListener("click", async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
-    const endpoint = dom.aiFallbackOllamaEndpoint?.value?.trim() || "http://localhost:11434";
-    try {
-      await invoke("save_ollama_endpoint", { endpoint });
-      settings.providers.ollama.endpoint = endpoint;
-      await persistSettings();
-      showToast({
-        type: "success",
-        title: "Endpoint saved",
-        message: `Ollama endpoint set to ${endpoint}`,
-        duration: 2500,
-      });
-    } catch (error) {
-      showToast({
-        type: "error",
-        title: "Save failed",
-        message: String(error),
-        duration: 5000,
-      });
-    }
-  });
-
-  dom.aiFallbackRefreshModelsBtn?.addEventListener("click", async () => {
-    if (!settings) return;
-    ensureAIFallbackSettingsDefaults();
-    if (dom.aiFallbackOllamaStatus) {
-      dom.aiFallbackOllamaStatus.textContent = "Refreshing models…";
-    }
-    try {
-      await refreshAIFallbackModels("ollama");
-      await persistSettings();
+    applyExecutionModeInSettings("local_primary");
+    await persistSettings();
+    const action = dom.aiFallbackLocalPrimaryAction?.dataset.runtimeAction ?? "install";
+    if (action === "ready") {
       renderAIFallbackSettingsUi();
-      const count = settings.providers.ollama.available_models.length;
-      if (dom.aiFallbackOllamaStatus) {
-        dom.aiFallbackOllamaStatus.textContent = count > 0 ? `${count} model(s) found` : "No models found";
-      }
-      showToast({
-        type: count > 0 ? "success" : "warning",
-        title: count > 0 ? "Models loaded" : "No models found",
-        message: count > 0
-          ? `Found ${count} Ollama model(s).`
-          : "Ollama is running but has no models. Run: ollama pull <model>",
-        duration: 3500,
-      });
-    } catch (error) {
-      if (dom.aiFallbackOllamaStatus) {
-        dom.aiFallbackOllamaStatus.textContent = "Refresh failed";
-      }
-      showToast({
-        type: "error",
-        title: "Refresh failed",
-        message: String(error),
-        duration: 5000,
-      });
+      return;
     }
-  });
-
-  dom.aiFallbackTestOllamaBtn?.addEventListener("click", async () => {
-    if (!settings) return;
-    ensureAIFallbackSettingsDefaults();
-    if (dom.aiFallbackOllamaStatus) {
-      dom.aiFallbackOllamaStatus.textContent = "Testing connection…";
-    }
-    try {
-      const result = await invoke<{ message?: string }>("test_provider_connection", {
-        provider: "ollama",
-        apiKey: "",
-      });
-      await refreshAIFallbackModels("ollama");
-      await persistSettings();
+    if (action === "start") {
+      const startPromise = startOllamaRuntime();
       renderAIFallbackSettingsUi();
-      const msg = result?.message ?? "Ollama is reachable.";
-      if (dom.aiFallbackOllamaStatus) {
-        dom.aiFallbackOllamaStatus.textContent = msg;
-      }
-      showToast({
-        type: "success",
-        title: "Ollama connected",
-        message: msg,
-        duration: 3500,
-      });
-    } catch (error) {
-      const msg = String(error);
-      if (dom.aiFallbackOllamaStatus) {
-        dom.aiFallbackOllamaStatus.textContent = "Not reachable";
-      }
-      showToast({
-        type: "error",
-        title: "Ollama not reachable",
-        message: msg,
-        duration: 5000,
-      });
+      await startPromise;
+    } else {
+      const ensurePromise = ensureLocalRuntimeReady();
+      renderAIFallbackSettingsUi();
+      await ensurePromise;
     }
+    refreshAIUi();
   });
 
-  dom.aiFallbackSaveKeyBtn?.addEventListener("click", async () => {
+  dom.aiFallbackLocalImportAction?.addEventListener("click", async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
-    const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
-    const apiKey = dom.aiFallbackApiKeyInput?.value?.trim() ?? "";
+    applyExecutionModeInSettings("local_primary");
+    await persistSettings();
+    const importPromise = importOllamaModelFromLocalFile();
+    renderAIFallbackSettingsUi();
+    await importPromise;
+    refreshAIUi();
+  });
+
+  dom.aiFallbackLocalDetectAction?.addEventListener("click", async () => {
+    const detectPromise = detectOllamaRuntime();
+    renderAIFallbackSettingsUi();
+    await detectPromise;
+    renderAIFallbackSettingsUi();
+  });
+
+  dom.aiFallbackLocalUseSystemAction?.addEventListener("click", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    applyExecutionModeInSettings("local_primary");
+    await persistSettings();
+    const systemPromise = useSystemOllamaRuntime();
+    renderAIFallbackSettingsUi();
+    await systemPromise;
+    refreshAIUi();
+  });
+
+  dom.aiFallbackLocalVerifyAction?.addEventListener("click", async () => {
+    const verifyPromise = verifyOllamaRuntime();
+    renderAIFallbackSettingsUi();
+    await verifyPromise;
+    renderAIFallbackSettingsUi();
+  });
+
+  dom.aiFallbackLocalRefreshAction?.addEventListener("click", async () => {
+    const refreshPromise = refreshOllamaRuntimeAndModels();
+    renderAIFallbackSettingsUi();
+    await refreshPromise;
+    renderAIFallbackSettingsUi();
+  });
+
+  const handleSaveCredentialsClick = async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    const provider = getCredentialTargetProvider();
+    if (!provider) {
+      showToast({
+        type: "warning",
+        title: "Select provider",
+        message: "Choose a cloud provider before saving credentials.",
+        duration: 3000,
+      });
+      return;
+    }
+    const apiKey = (dom.aiAuthApiKeyInput?.value ?? "").trim();
     if (!apiKey) {
       showToast({
         type: "warning",
@@ -1155,15 +1684,8 @@ export function wireEvents() {
       return;
     }
     try {
-      await invoke("save_provider_api_key", { provider, apiKey });
-      const providerSettings = getAIFallbackProviderSettings(provider);
-      if (providerSettings) {
-        providerSettings.api_key_stored = true;
-      }
-      if (dom.aiFallbackApiKeyInput) {
-        dom.aiFallbackApiKeyInput.value = "";
-      }
-      renderAIFallbackSettingsUi();
+      await saveProviderApiKey(provider, apiKey);
+      if (dom.aiAuthApiKeyInput) dom.aiAuthApiKeyInput.value = "";
       showToast({
         type: "success",
         title: "API key saved",
@@ -1178,19 +1700,23 @@ export function wireEvents() {
         duration: 5000,
       });
     }
-  });
+  };
 
-  dom.aiFallbackClearKeyBtn?.addEventListener("click", async () => {
+  const handleClearCredentialsClick = async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
-    const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
+    const provider = getCredentialTargetProvider();
+    if (!provider) {
+      showToast({
+        type: "warning",
+        title: "Select provider",
+        message: "Choose a cloud provider before clearing credentials.",
+        duration: 3000,
+      });
+      return;
+    }
     try {
-      await invoke("clear_provider_api_key", { provider });
-      const providerSettings = getAIFallbackProviderSettings(provider);
-      if (providerSettings) {
-        providerSettings.api_key_stored = false;
-      }
-      renderAIFallbackSettingsUi();
+      await clearProviderApiKey(provider);
       showToast({
         type: "info",
         title: "API key removed",
@@ -1205,40 +1731,32 @@ export function wireEvents() {
         duration: 5000,
       });
     }
-  });
+  };
 
-  dom.aiFallbackTestKeyBtn?.addEventListener("click", async () => {
+  const handleVerifyCredentialsClick = async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
-    const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
-    const apiKey = dom.aiFallbackApiKeyInput?.value?.trim() ?? "";
-    if (!apiKey) {
+    const provider = getCredentialTargetProvider();
+    if (!provider) {
       showToast({
         type: "warning",
-        title: "Missing API key",
-        message: "Paste an API key in the field to test the connection.",
+        title: "Select provider",
+        message: "Choose a cloud provider before verification.",
         duration: 3000,
       });
       return;
     }
-    try {
-      const result = await invoke<{ message?: string }>("test_provider_connection", { provider, apiKey });
-      await refreshAIFallbackModels(provider);
-      renderAIFallbackSettingsUi();
-      showToast({
-        type: "success",
-        title: "Connection test passed",
-        message: result?.message ?? `Provider ${provider} accepted the key format.`,
-        duration: 3500,
-      });
-    } catch (error) {
-      showToast({
-        type: "error",
-        title: "Connection test failed",
-        message: String(error),
-        duration: 5000,
-      });
-    }
+    await verifyProviderCredentials(provider);
+  };
+
+  dom.aiAuthSaveKey?.addEventListener("click", () => {
+    void handleSaveCredentialsClick();
+  });
+  dom.aiAuthClearKey?.addEventListener("click", () => {
+    void handleClearCredentialsClick();
+  });
+  dom.aiAuthVerifyKey?.addEventListener("click", () => {
+    void handleVerifyCredentialsClick();
   });
 
   dom.aiFallbackTemperature?.addEventListener("input", () => {
@@ -1252,9 +1770,39 @@ export function wireEvents() {
     updateRangeAria("ai-fallback-temperature", Math.round(value * 100));
   });
 
-  dom.aiFallbackTemperature?.addEventListener("change", async () => {
-    if (!settings) return;
+  onChangePersist(dom.aiFallbackTemperature);
+
+  dom.aiFallbackPreserveLanguage?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackPreserveLanguage) return;
+    ensureAIFallbackSettingsDefaults();
+    settings.ai_fallback.preserve_source_language = dom.aiFallbackPreserveLanguage.checked;
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      normalizeRefinementPromptPreset(settings.ai_fallback.prompt_profile),
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
     await persistSettings();
+    renderAIFallbackSettingsUi();
+  });
+
+  dom.aiFallbackLowLatencyMode?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackLowLatencyMode) return;
+    ensureAIFallbackSettingsDefaults();
+    const enabled = dom.aiFallbackLowLatencyMode.checked;
+    settings.ai_fallback.low_latency_mode = enabled;
+
+    if (enabled) {
+      if (settings.ai_fallback.max_tokens > 512) {
+        settings.ai_fallback.max_tokens = 512;
+      }
+      if (settings.ai_fallback.temperature > 0.2) {
+        settings.ai_fallback.temperature = 0.15;
+      }
+    }
+
+    await persistSettings();
+    renderAIFallbackSettingsUi();
   });
 
   dom.aiFallbackMaxTokens?.addEventListener("change", async () => {
@@ -1264,26 +1812,54 @@ export function wireEvents() {
     await persistSettings();
   });
 
-  dom.aiFallbackCustomPromptEnabled?.addEventListener("change", async () => {
-    if (!settings) return;
+  dom.aiFallbackPromptPreset?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackPromptPreset) return;
     ensureAIFallbackSettingsDefaults();
-    settings.ai_fallback.custom_prompt_enabled = dom.aiFallbackCustomPromptEnabled!.checked;
-    settings.ai_fallback.use_default_prompt = !settings.ai_fallback.custom_prompt_enabled;
-    if (settings.ai_fallback.custom_prompt_enabled && settings.ai_fallback.custom_prompt.trim().length > 0) {
-      settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt;
-    }
+    const profile = normalizeRefinementPromptPreset(dom.aiFallbackPromptPreset.value);
+    settings.ai_fallback.prompt_profile = profile;
+    settings.ai_fallback.custom_prompt_enabled = profile === "custom";
+    settings.ai_fallback.use_default_prompt = false;
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      profile,
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
     await persistSettings();
     renderAIFallbackSettingsUi();
+  });
+
+  dom.aiFallbackCustomPrompt?.addEventListener("input", () => {
+    if (!settings || !dom.aiFallbackCustomPrompt) return;
+    ensureAIFallbackSettingsDefaults();
+    if (settings.ai_fallback.prompt_profile !== "custom") return;
+    settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value;
+    settings.ai_fallback.custom_prompt_enabled = true;
+    settings.ai_fallback.use_default_prompt = false;
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      "custom",
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
   });
 
   dom.aiFallbackCustomPrompt?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackCustomPrompt) return;
     ensureAIFallbackSettingsDefaults();
-    settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value.trim();
-    settings.ai_fallback.use_default_prompt = settings.ai_fallback.custom_prompt.length === 0;
-    if (settings.ai_fallback.custom_prompt.length > 0) {
-      settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt;
+    if (settings.ai_fallback.prompt_profile !== "custom") {
+      renderAIFallbackSettingsUi();
+      return;
     }
+    settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value.trim();
+    settings.ai_fallback.custom_prompt_enabled = true;
+    settings.ai_fallback.use_default_prompt = false;
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      "custom",
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
     await persistSettings();
   });
 
@@ -1298,10 +1874,7 @@ export function wireEvents() {
     updateRangeAria("mic-gain", value);
   });
 
-  dom.micGain?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.micGain);
 
   dom.vadThreshold?.addEventListener("input", () => {
     if (!settings || !dom.vadThreshold) return;
@@ -1323,10 +1896,7 @@ export function wireEvents() {
     updateThresholdMarkers();
   });
 
-  dom.vadThreshold?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.vadThreshold);
 
   dom.vadSilence?.addEventListener("input", () => {
     if (!settings || !dom.vadSilence) return;
@@ -1338,10 +1908,7 @@ export function wireEvents() {
     updateRangeAria("vad-silence", value);
   });
 
-  dom.vadSilence?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.vadSilence);
 
   dom.overlayColor?.addEventListener("input", () => {
     if (!settings || !dom.overlayColor) return;
@@ -1352,10 +1919,7 @@ export function wireEvents() {
     }
   });
 
-  dom.overlayColor?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayColor);
 
   dom.overlayMinRadius?.addEventListener("input", () => {
     if (!settings || !dom.overlayMinRadius || !dom.overlayMaxRadius) return;
@@ -1373,10 +1937,7 @@ export function wireEvents() {
     updateRangeAria("overlay-min-radius", settings.overlay_min_radius);
   });
 
-  dom.overlayMinRadius?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayMinRadius);
 
   dom.overlayMaxRadius?.addEventListener("input", () => {
     if (!settings || !dom.overlayMaxRadius || !dom.overlayMinRadius) return;
@@ -1394,10 +1955,7 @@ export function wireEvents() {
     updateRangeAria("overlay-max-radius", settings.overlay_max_radius);
   });
 
-  dom.overlayMaxRadius?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayMaxRadius);
 
   dom.overlayRise?.addEventListener("input", () => {
     if (!settings || !dom.overlayRise) return;
@@ -1411,10 +1969,7 @@ export function wireEvents() {
     updateRangeAria("overlay-rise", value);
   });
 
-  dom.overlayRise?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayRise);
 
   dom.overlayFall?.addEventListener("input", () => {
     if (!settings || !dom.overlayFall) return;
@@ -1428,10 +1983,7 @@ export function wireEvents() {
     updateRangeAria("overlay-fall", value);
   });
 
-  dom.overlayFall?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayFall);
 
   dom.overlayOpacityInactive?.addEventListener("input", () => {
     if (!settings || !dom.overlayOpacityInactive || !dom.overlayOpacityActive) return;
@@ -1464,10 +2016,7 @@ export function wireEvents() {
     updateRangeAria("overlay-opacity-inactive", Number(dom.overlayOpacityInactive.value));
   });
 
-  dom.overlayOpacityInactive?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayOpacityInactive);
 
   dom.overlayOpacityActive?.addEventListener("input", () => {
     if (!settings || !dom.overlayOpacityActive || !dom.overlayOpacityInactive) return;
@@ -1493,10 +2042,7 @@ export function wireEvents() {
     updateRangeAria("overlay-opacity-active", Number(dom.overlayOpacityActive.value));
   });
 
-  dom.overlayOpacityActive?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
+  onChangePersist(dom.overlayOpacityActive);
 
   dom.overlayPosX?.addEventListener("change", async () => {
     if (!settings || !dom.overlayPosX) return;
@@ -1523,6 +2069,79 @@ export function wireEvents() {
     settings.overlay_style = dom.overlayStyle.value;
     updateOverlayStyleVisibility(dom.overlayStyle.value);
     applyOverlaySharedUi(dom.overlayStyle.value);
+    await persistSettings();
+  });
+
+  dom.overlayRefiningIndicatorEnabled?.addEventListener("change", async () => {
+    if (!settings || !dom.overlayRefiningIndicatorEnabled) return;
+    settings.overlay_refining_indicator_enabled = dom.overlayRefiningIndicatorEnabled.checked;
+    await persistSettings();
+  });
+
+  dom.overlayRefiningIndicatorPreset?.addEventListener("change", async () => {
+    if (!settings || !dom.overlayRefiningIndicatorPreset) return;
+    const value = dom.overlayRefiningIndicatorPreset.value;
+    settings.overlay_refining_indicator_preset =
+      value === "subtle" || value === "intense" ? value : "standard";
+    await persistSettings();
+  });
+
+  dom.overlayRefiningIndicatorColor?.addEventListener("input", () => {
+    if (!settings || !dom.overlayRefiningIndicatorColor) return;
+    settings.overlay_refining_indicator_color = dom.overlayRefiningIndicatorColor.value;
+  });
+
+  onChangePersist(dom.overlayRefiningIndicatorColor);
+
+  // Accent color picker — live preview while dragging
+  dom.accentColor?.addEventListener("input", () => {
+    if (!settings || !dom.accentColor) return;
+    settings.accent_color = dom.accentColor.value;
+    applyAccentColor(dom.accentColor.value);
+  });
+
+  // Accent color picker — persist when picker closes
+  dom.accentColor?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  // Reset accent color to default teal
+  dom.accentColorReset?.addEventListener("click", async () => {
+    if (!settings) return;
+    settings.accent_color = DEFAULT_ACCENT_COLOR;
+    if (dom.accentColor) dom.accentColor.value = DEFAULT_ACCENT_COLOR;
+    applyAccentColor(DEFAULT_ACCENT_COLOR);
+    await persistSettings();
+  });
+
+  dom.overlayRefiningIndicatorSpeed?.addEventListener("input", () => {
+    if (!settings || !dom.overlayRefiningIndicatorSpeed) return;
+    const value = Math.max(450, Math.min(3000, Number(dom.overlayRefiningIndicatorSpeed.value)));
+    settings.overlay_refining_indicator_speed_ms = value;
+    if (dom.overlayRefiningIndicatorSpeedValue) {
+      dom.overlayRefiningIndicatorSpeedValue.textContent = `${value} ms`;
+    }
+    updateRangeAria("overlay-refining-indicator-speed", value);
+  });
+
+  dom.overlayRefiningIndicatorSpeed?.addEventListener("change", async () => {
+    if (!settings) return;
+    await persistSettings();
+  });
+
+  dom.overlayRefiningIndicatorRange?.addEventListener("input", () => {
+    if (!settings || !dom.overlayRefiningIndicatorRange) return;
+    const value = Math.max(60, Math.min(180, Number(dom.overlayRefiningIndicatorRange.value)));
+    settings.overlay_refining_indicator_range = value;
+    if (dom.overlayRefiningIndicatorRangeValue) {
+      dom.overlayRefiningIndicatorRangeValue.textContent = `${value}%`;
+    }
+    updateRangeAria("overlay-refining-indicator-range", value);
+  });
+
+  dom.overlayRefiningIndicatorRange?.addEventListener("change", async () => {
+    if (!settings) return;
     await persistSettings();
   });
 
@@ -1563,45 +2182,17 @@ export function wireEvents() {
   });
 
   // Apply Overlay Settings button
-  const applyOverlayBtn = document.getElementById("apply-overlay-btn");
-  applyOverlayBtn?.addEventListener("click", async () => {
+  dom.applyOverlayBtn?.addEventListener("click", async () => {
     if (!settings) return;
     await persistSettings();
     showToast({ title: "Applied", message: "Overlay settings applied", type: "success" });
   });
 
-  // Chapter settings
-  dom.chaptersEnabled?.addEventListener("change", async () => {
-    if (!settings || !dom.chaptersEnabled) return;
-    settings.chapters_enabled = dom.chaptersEnabled.checked;
-
-    // Toggle visibility of chapter settings
-    if (dom.chaptersSettings) {
-      dom.chaptersSettings.style.display = dom.chaptersEnabled.checked ? "block" : "none";
-    }
-
-    await persistSettings();
-    renderSettings();
-    updateChaptersVisibility();
-  });
-
-  dom.chaptersShowIn?.addEventListener("change", async () => {
-    if (!settings || !dom.chaptersShowIn) return;
-    settings.chapters_show_in = dom.chaptersShowIn.value as "conversation" | "all";
-    await persistSettings();
-    updateChaptersVisibility();
-  });
-
-  dom.chaptersMethod?.addEventListener("change", async () => {
-    if (!settings || !dom.chaptersMethod) return;
-    settings.chapters_method = dom.chaptersMethod.value as "silence" | "time" | "hybrid";
-    await persistSettings();
-    updateChaptersVisibility();
-  });
-
   // Topic keywords reset
   dom.topicKeywordsReset?.addEventListener("click", async () => {
-    setTopicKeywords(DEFAULT_TOPICS);
+    if (!settings) return;
+    settings.topic_keywords = cloneDefaultTopicKeywords();
+    setTopicKeywords(settings.topic_keywords);
     await renderTopicKeywords();
     await persistSettings();
   });

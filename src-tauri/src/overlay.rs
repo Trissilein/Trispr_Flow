@@ -1,6 +1,5 @@
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WindowEvent};
 use serde::{Deserialize, Serialize};
-use std::thread;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +23,11 @@ pub struct OverlaySettings {
     pub pos_x: f64,
     pub pos_y: f64,
     pub style: String,
+    pub refining_indicator_enabled: bool,
+    pub refining_indicator_preset: String,
+    pub refining_indicator_color: String,
+    pub refining_indicator_speed_ms: u64,
+    pub refining_indicator_range: f64,
     pub kitt_min_width: f64,
     pub kitt_max_width: f64,
     pub kitt_height: f64,
@@ -31,7 +35,10 @@ pub struct OverlaySettings {
 
 /// Called when the overlay webview signals readiness.
 /// Settings are applied via the overlay:ready listener in lib.rs.
-pub fn mark_overlay_ready() {}
+pub fn mark_overlay_ready() {
+    // Intentional no-op: actual settings application is handled by the
+    // overlay:ready event listener registered in lib.rs setup().
+}
 
 /// Creates and configures the overlay window for recording status
 pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
@@ -100,17 +107,44 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
         OverlayState::Recording => "recording",
         OverlayState::Transcribing => "transcribing",
     };
-    let js = format!("if(window.setOverlayState){{window.setOverlayState('{}');}}", state_str);
+    let js = if matches!(state, OverlayState::Recording) {
+        format!("if(window.setOverlayState){{window.setOverlayState('{}');}}", state_str)
+    } else {
+        format!(
+            "if(window.setOverlayState){{window.setOverlayState('{}');}}if(window.setOverlayLevel){{window.setOverlayLevel(0);}}",
+            state_str
+        )
+    };
     let _ = window.eval(&js);
 
-    // Re-emit after a short delay to ensure the overlay webview is ready
+    // Re-emit after a short delay to ensure the overlay webview is ready.
+    // Uses the managed tokio blocking-thread pool instead of spawning a
+    // dedicated OS thread for a trivial 120 ms sleep.
     let app_handle = app.clone();
     let state_clone = state.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(120));
+    tauri::async_runtime::spawn_blocking(move || {
+        std::thread::sleep(Duration::from_millis(120));
         let _ = app_handle.emit("overlay:state", &state_clone);
     });
 
+    Ok(())
+}
+
+pub fn update_overlay_refining_indicator(app: &AppHandle, active: bool) -> Result<(), String> {
+    let window = match app.get_webview_window("overlay") {
+        Some(w) => w,
+        None => create_overlay_window(app)?,
+    };
+
+    let _ = window.emit("overlay:refining", active);
+    let _ = app.emit("overlay:refining", active);
+
+    let active_str = if active { "true" } else { "false" };
+    let js = format!(
+        "if(window.setOverlayRefining){{window.setOverlayRefining({});}}",
+        active_str
+    );
+    let _ = window.eval(&js);
     Ok(())
 }
 
@@ -146,6 +180,56 @@ fn resolve_overlay_position(window: &WebviewWindow, settings: &OverlaySettings, 
     }
 }
 
+fn current_monitor_logical_size(window: &WebviewWindow) -> Option<(f64, f64)> {
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())?;
+    let scale = monitor.scale_factor();
+    let size_px = monitor.size();
+    Some((size_px.width as f64 / scale, size_px.height as f64 / scale))
+}
+
+fn resolve_effective_dimensions(
+    window: &WebviewWindow,
+    settings: &OverlaySettings,
+) -> (f64, f64, f64, f64, f64) {
+    // Hard cap: overlays may consume at most 50% of the display.
+    let (monitor_width, monitor_height) =
+        current_monitor_logical_size(window).unwrap_or((1920.0, 1080.0));
+    let kitt_width_cap = (monitor_width * 0.5).max(50.0);
+    let dot_radius_cap = (monitor_width.min(monitor_height) * 0.25).max(8.0); // 50% diameter
+
+    let mut kitt_min_width = settings.kitt_min_width.max(4.0);
+    let mut kitt_max_width = settings.kitt_max_width.max(50.0).min(kitt_width_cap);
+    if kitt_max_width < 50.0 {
+        kitt_max_width = 50.0;
+    }
+    if kitt_min_width > kitt_max_width {
+        kitt_min_width = kitt_max_width;
+    }
+
+    let mut min_radius = settings.min_radius.max(4.0);
+    let mut max_radius = settings.max_radius.max(8.0).min(dot_radius_cap);
+    if max_radius < 8.0 {
+        max_radius = 8.0;
+    }
+    if min_radius > max_radius {
+        min_radius = max_radius;
+    }
+
+    let kitt_height = settings.kitt_height.max(8.0).min(400.0);
+
+    (
+        min_radius,
+        max_radius,
+        kitt_min_width,
+        kitt_max_width,
+        kitt_height,
+    )
+}
+
 /// Applies overlay settings by resizing/repositioning the window and updating
 /// the frontend via window.eval(). This is the primary settings application path.
 pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Result<(), String> {
@@ -154,14 +238,22 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
         None => create_overlay_window(app)?,
     };
 
+    let (
+        effective_min_radius,
+        effective_max_radius,
+        effective_kitt_min_width,
+        effective_kitt_max_width,
+        effective_kitt_height,
+    ) = resolve_effective_dimensions(&window, settings);
+
     // Calculate window size based on style
     // Add extra height for transcribe indicator positioned above the main element
     let (width, height) = if settings.style == "kitt" {
-        let w = settings.kitt_max_width.max(settings.kitt_min_width).max(50.0) + 32.0;
-        let h = settings.kitt_height.max(8.0) + 32.0 + 18.0;  // +18px for transcribe indicator
+        let w = effective_kitt_max_width.max(effective_kitt_min_width).max(50.0) + 32.0;
+        let h = effective_kitt_height.max(8.0) + 32.0 + 18.0;  // +18px for transcribe indicator
         (w, h)
     } else {
-        let max_radius = settings.max_radius.max(settings.min_radius).max(4.0);
+        let max_radius = effective_max_radius.max(effective_min_radius).max(4.0);
         let size = (max_radius * 2.0 + 96.0 + 20.0).max(64.0);  // +20px for transcribe indicator
         (size, size)
     };
@@ -178,16 +270,21 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
 
     // Update overlay via JS functions
     let js = format!(
-        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}if(window.setKittDimensions){{window.setKittDimensions({},{},{});}}if(window.setDotDimensions){{window.setDotDimensions({},{});}}",
+        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}if(window.setOverlayOpacity){{window.setOverlayOpacity({},{});}}if(window.setOverlayStyle){{window.setOverlayStyle('{}');}}if(window.setOverlayRefiningEnabled){{window.setOverlayRefiningEnabled({});}}if(window.setOverlayRefiningPreset){{window.setOverlayRefiningPreset('{}');}}if(window.setOverlayRefiningAppearance){{window.setOverlayRefiningAppearance('{}',{},{});}}if(window.setKittDimensions){{window.setKittDimensions({},{},{});}}if(window.setDotDimensions){{window.setDotDimensions({},{});}}",
         settings.color,
         settings.opacity_active,
         settings.opacity_inactive,
         settings.style,
-        settings.kitt_min_width,
-        settings.kitt_max_width,
-        settings.kitt_height,
-        settings.min_radius,
-        settings.max_radius
+        if settings.refining_indicator_enabled { "true" } else { "false" },
+        settings.refining_indicator_preset,
+        settings.refining_indicator_color,
+        settings.refining_indicator_speed_ms,
+        settings.refining_indicator_range,
+        effective_kitt_min_width,
+        effective_kitt_max_width,
+        effective_kitt_height,
+        effective_min_radius,
+        effective_max_radius
     );
     let _ = window.eval(&js);
 

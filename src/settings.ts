@@ -3,11 +3,34 @@ import { invoke } from "@tauri-apps/api/core";
 import { settings } from "./state";
 import * as dom from "./dom-refs";
 import { thresholdToDb, VAD_DB_FLOOR } from "./ui-helpers";
+import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "./utils";
 import { renderVocabulary } from "./event-listeners";
-import { getTopicKeywords, setTopicKeywords } from "./history";
-import type { AIProviderSettings, AIFallbackProvider, OllamaSettings } from "./types";
+import { DEFAULT_TOPICS, setTopicKeywords, type TopicKeywords } from "./history";
+import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
+import { getOllamaRuntimeCardState } from "./ollama-models";
+import { syncRefinementPipelineGraphFromSettings } from "./refinement-pipeline-graph";
+import {
+  normalizeRefinementPromptPreset,
+  resolveEffectiveRefinementPrompt,
+} from "./refinement-prompts";
+import type {
+  AIProviderSettings,
+  AIFallbackProvider,
+  CloudAIFallbackProvider,
+  AIExecutionMode,
+  AIProviderAuthMethodPreference,
+  OverlayRefiningIndicatorPreset,
+} from "./types";
+import {
+  CLOUD_PROVIDER_IDS,
+  CLOUD_PROVIDER_LABELS,
+  normalizeCloudProvider,
+  normalizeExecutionMode,
+  normalizeAuthMethodPreference,
+  isVerifiedAuthStatus,
+} from "./ai-provider-utils";
 
-function ensureContinuousDumpDefaults() {
+export function ensureContinuousDumpDefaults() {
   if (!settings) return;
   settings.auto_save_mic_audio ??= false;
   settings.continuous_dump_enabled ??= true;
@@ -36,6 +59,51 @@ export async function persistSettings() {
   } catch (error) {
     console.error("save_settings failed", error);
   }
+}
+
+function detectOverlayViewport(): { width: number; height: number } {
+  const screenWidth = Number(
+    (typeof window !== "undefined"
+      ? window.screen?.availWidth ?? window.screen?.width
+      : 0) ?? 0
+  );
+  const screenHeight = Number(
+    (typeof window !== "undefined"
+      ? window.screen?.availHeight ?? window.screen?.height
+      : 0) ?? 0
+  );
+  const width = Number.isFinite(screenWidth) && screenWidth > 0 ? screenWidth : 1920;
+  const height = Number.isFinite(screenHeight) && screenHeight > 0 ? screenHeight : 1080;
+  return { width, height };
+}
+
+function applyOverlayDimensionSliderBounds() {
+  const { width, height } = detectOverlayViewport();
+  const kittMaxWidthCap = Math.max(50, Math.round(width * 0.5));
+  const dotMaxRadiusCap = Math.max(8, Math.round(Math.min(width, height) * 0.25)); // 50% diameter
+
+  if (dom.overlayKittMaxWidth) {
+    dom.overlayKittMaxWidth.max = String(kittMaxWidthCap);
+    dom.overlayKittMaxWidth.setAttribute("aria-valuemax", String(kittMaxWidthCap));
+  }
+  if (dom.overlayMaxRadius) {
+    dom.overlayMaxRadius.max = String(dotMaxRadiusCap);
+    dom.overlayMaxRadius.setAttribute("aria-valuemax", String(dotMaxRadiusCap));
+  }
+  if (dom.overlayMinRadius) {
+    const minRadiusCap = Math.max(4, dotMaxRadiusCap);
+    dom.overlayMinRadius.max = String(minRadiusCap);
+    dom.overlayMinRadius.setAttribute("aria-valuemax", String(minRadiusCap));
+  }
+}
+
+function clampToSliderBounds(input: HTMLInputElement, value: number): number {
+  const parsedMin = Number(input.min);
+  const parsedMax = Number(input.max);
+  let out = value;
+  if (Number.isFinite(parsedMin)) out = Math.max(parsedMin, out);
+  if (Number.isFinite(parsedMax)) out = Math.min(parsedMax, out);
+  return out;
 }
 
 export function updateOverlayStyleVisibility(style: string) {
@@ -70,10 +138,26 @@ export function applyOverlaySharedUi(style: string) {
   if (!shared) return;
 
   if (dom.overlayColor) dom.overlayColor.value = shared.color;
+  let effectiveRise = shared.rise_ms;
   if (dom.overlayRise) dom.overlayRise.value = shared.rise_ms.toString();
-  if (dom.overlayRiseValue) dom.overlayRiseValue.textContent = `${shared.rise_ms}`;
+  if (dom.overlayRise) {
+    const maxRise = Number(dom.overlayRise.max || "200");
+    if (Number.isFinite(maxRise) && maxRise > 0 && shared.rise_ms > maxRise) {
+      dom.overlayRise.value = String(maxRise);
+      effectiveRise = maxRise;
+    }
+  }
+  if (dom.overlayRiseValue) dom.overlayRiseValue.textContent = `${effectiveRise}`;
+  let effectiveFall = shared.fall_ms;
   if (dom.overlayFall) dom.overlayFall.value = shared.fall_ms.toString();
-  if (dom.overlayFallValue) dom.overlayFallValue.textContent = `${shared.fall_ms}`;
+  if (dom.overlayFall) {
+    const maxFall = Number(dom.overlayFall.max || "200");
+    if (Number.isFinite(maxFall) && maxFall > 0 && shared.fall_ms > maxFall) {
+      dom.overlayFall.value = String(maxFall);
+      effectiveFall = maxFall;
+    }
+  }
+  if (dom.overlayFallValue) dom.overlayFallValue.textContent = `${effectiveFall}`;
   if (dom.overlayOpacityInactive) {
     dom.overlayOpacityInactive.value = Math.round(shared.opacity_inactive * 100).toString();
   }
@@ -118,13 +202,110 @@ export function updateTranscribeThreshold(threshold: number) {
   }
 }
 
-const AI_FALLBACK_PROVIDER_IDS: AIFallbackProvider[] = ["claude", "openai", "gemini", "ollama"];
+function normalizeLanguageModeValue(languageMode: string | null | undefined): string {
+  const normalized = (languageMode || "auto").trim().toLowerCase();
+  if (!normalized) return "auto";
+  return normalized;
+}
 
-function normalizeAIFallbackProvider(provider: string | undefined): AIFallbackProvider {
-  if (provider && AI_FALLBACK_PROVIDER_IDS.includes(provider as AIFallbackProvider)) {
-    return provider as AIFallbackProvider;
+export function resolveEffectiveAsrLanguageHint(
+  languageMode: string | null | undefined,
+  languagePinned: boolean | null | undefined
+): string {
+  const normalized = normalizeLanguageModeValue(languageMode);
+  return languagePinned ? normalized : "auto";
+}
+
+export function derivePostprocLanguageFromAsr(
+  languageMode: string | null | undefined,
+  languagePinned: boolean | null | undefined
+): "en" | "de" | "multi" {
+  if (!languagePinned) return "multi";
+  const normalized = normalizeLanguageModeValue(languageMode);
+  if (normalized === "en") return "en";
+  if (normalized === "de") return "de";
+  return "multi";
+}
+
+function derivedPostprocLanguageLabel(postprocLanguage: "en" | "de" | "multi"): string {
+  if (postprocLanguage === "en") {
+    return "Derived: English rules (ASR language pinned to English).";
   }
-  return "ollama";
+  if (postprocLanguage === "de") {
+    return "Derived: German rules (ASR language pinned to German).";
+  }
+  return "Derived: Multilingual rules (ASR auto-detect or non EN/DE language).";
+}
+
+export function syncCaptureModeVisibility(mode: string, pttUseVad = false): void {
+  const hotkeysEnabled = mode === "ptt";
+  const vadEnabled = mode === "vad" || (mode === "ptt" && pttUseVad);
+  if (dom.hotkeysBlock) dom.hotkeysBlock.classList.toggle("hidden", !hotkeysEnabled);
+  if (dom.vadBlock) dom.vadBlock.classList.toggle("hidden", !vadEnabled);
+  // In PTT+VAD mode we only use threshold gating while the key is held.
+  // Silence grace is VAD-mode specific and should not appear for PTT.
+  const vadSilenceField = dom.vadSilence?.closest(".field");
+  if (vadSilenceField) {
+    vadSilenceField.classList.toggle("hidden", mode === "ptt");
+  }
+}
+
+export function syncDerivedLanguageSettings(): void {
+  if (!settings) return;
+  settings.postproc_language = derivePostprocLanguageFromAsr(
+    settings.language_mode,
+    settings.language_pinned
+  );
+}
+
+function syncAsrLanguageHintUi(): void {
+  if (!settings) return;
+  const pinned = Boolean(settings.language_pinned);
+  if (dom.languageSelect) {
+    dom.languageSelect.disabled = !pinned;
+    dom.languageSelect.setAttribute("aria-disabled", String(!pinned));
+  }
+  if (dom.asrLanguageField) {
+    dom.asrLanguageField.classList.toggle("is-disabled", !pinned);
+  }
+  if (dom.asrLanguageHintNote) {
+    dom.asrLanguageHintNote.textContent = pinned
+      ? "Pinned: ASR is locked to the selected language."
+      : "Auto-detect is active. Enable pinning to lock a specific ASR language.";
+  }
+}
+
+function normalizeRefiningIndicatorColor(value: string | undefined): string {
+  return normalizeColorHex(value, "#6ec8ff");
+}
+
+function normalizeRefiningIndicatorSpeedMs(value: number | undefined): number {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return 1150;
+  return Math.max(450, Math.min(3000, Math.round(numberValue)));
+}
+
+function normalizeRefiningIndicatorRange(value: number | undefined): number {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return 100;
+  return Math.max(60, Math.min(180, Math.round(numberValue)));
+}
+
+function authStatusLabel(status?: string | null): string {
+  if (status === "verified_api_key") return "Verified";
+  if (status === "verified_oauth") return "Verified (OAuth)";
+  return "Locked";
+}
+
+function authMethodLabel(method?: AIProviderAuthMethodPreference | null): string {
+  return method === "oauth" ? "OAuth (coming soon)" : "API key";
+}
+
+function normalizeOverlayRefiningPreset(
+  preset?: string | null
+): OverlayRefiningIndicatorPreset {
+  if (preset === "subtle" || preset === "intense") return preset;
+  return "standard";
 }
 
 function getProviderSettings(provider: AIFallbackProvider): AIProviderSettings | null {
@@ -136,23 +317,209 @@ function getProviderSettings(provider: AIFallbackProvider): AIProviderSettings |
   return null;
 }
 
-function getOllamaSettings(): OllamaSettings | null {
-  return settings?.providers?.ollama ?? null;
+function ensureSetupDefaults() {
+  if (!settings) return;
+  settings.setup ??= {
+    local_ai_wizard_completed: false,
+    local_ai_wizard_pending: true,
+    ollama_remote_expert_opt_in: false,
+  };
+  settings.setup.ollama_remote_expert_opt_in ??= false;
 }
 
-function applyOllamaProviderVisibility(isOllama: boolean) {
-  if (dom.aiFallbackOllamaSection)
-    dom.aiFallbackOllamaSection.style.display = isOllama ? "block" : "none";
-  if (dom.aiFallbackApiKeySection)
-    dom.aiFallbackApiKeySection.style.display = isOllama ? "none" : "block";
+function cloneTopicKeywords(input: TopicKeywords): TopicKeywords {
+  const out: TopicKeywords = {};
+  Object.entries(input).forEach(([topic, words]) => {
+    out[topic] = [...words];
+  });
+  return out;
+}
+
+function normalizeTopicKeywords(
+  input: Record<string, unknown> | null | undefined
+): TopicKeywords {
+  const fallback = cloneTopicKeywords(DEFAULT_TOPICS);
+  if (!input || typeof input !== "object") return fallback;
+
+  const normalized: TopicKeywords = {};
+  Object.entries(input).forEach(([topic, words]) => {
+    const key = topic.trim().toLowerCase();
+    if (!key) return;
+    if (!Array.isArray(words)) return;
+    const cleaned = words
+      .map((word) => String(word).trim().toLowerCase())
+      .filter((word) => word.length > 0);
+    if (cleaned.length === 0) return;
+    normalized[key] = Array.from(new Set(cleaned));
+  });
+
+  if (Object.keys(normalized).length === 0) return fallback;
+
+  Object.entries(DEFAULT_TOPICS).forEach(([topic, defaults]) => {
+    if (!normalized[topic] || normalized[topic].length === 0) {
+      normalized[topic] = [...defaults];
+    }
+  });
+
+  return normalized;
+}
+
+function ensureTopicKeywordDefaults() {
+  if (!settings) return;
+  settings.topic_keywords = normalizeTopicKeywords(settings.topic_keywords);
+  setTopicKeywords(settings.topic_keywords);
+}
+
+const AI_REFINEMENT_EXPANDER_STATE_KEY = "ai_refinement_expanders_v1";
+const AI_REFINEMENT_EXPANDER_DEFAULTS: Record<string, boolean> = {
+  "ai-refinement-runtime-expander": true,
+  "ai-refinement-models-expander": true,
+  "ai-refinement-topic-expander": true,
+};
+
+// In-memory cache: populated once from localStorage, then kept in sync via toggle listeners.
+// null means "not yet loaded".
+let _expanderStateCache: Record<string, boolean> | null = null;
+
+function readAIRefinementExpanderState(): Record<string, boolean> {
+  if (_expanderStateCache !== null) return _expanderStateCache;
+  if (typeof window === "undefined") {
+    _expanderStateCache = { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+    return _expanderStateCache;
+  }
+  try {
+    const raw = window.localStorage.getItem(AI_REFINEMENT_EXPANDER_STATE_KEY);
+    if (!raw) {
+      _expanderStateCache = { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+      return _expanderStateCache;
+    }
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const merged = { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+    Object.keys(merged).forEach((key) => {
+      if (typeof parsed?.[key] === "boolean") {
+        merged[key] = parsed[key] as boolean;
+      }
+    });
+    _expanderStateCache = merged;
+    return _expanderStateCache;
+  } catch {
+    _expanderStateCache = { ...AI_REFINEMENT_EXPANDER_DEFAULTS };
+    return _expanderStateCache;
+  }
+}
+
+function writeAIRefinementExpanderState(next: Record<string, boolean>): void {
+  _expanderStateCache = next;
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(AI_REFINEMENT_EXPANDER_STATE_KEY, JSON.stringify(next));
+  } catch {
+    // no-op
+  }
+}
+
+function syncAIRefinementExpanders(): void {
+  if (typeof document === "undefined") return;
+  const state = readAIRefinementExpanderState();
+  Object.keys(AI_REFINEMENT_EXPANDER_DEFAULTS).forEach((id) => {
+    const expander = document.getElementById(id) as HTMLDetailsElement | null;
+    if (!expander) return;
+    expander.open = state[id] ?? AI_REFINEMENT_EXPANDER_DEFAULTS[id];
+    if (expander.dataset.expanderBound === "true") return;
+    expander.addEventListener("toggle", () => {
+      const current = readAIRefinementExpanderState();
+      current[id] = expander.open;
+      writeAIRefinementExpanderState(current);
+    });
+    expander.dataset.expanderBound = "true";
+  });
+}
+
+function applyProviderLaneVisibility(isOnlineMode: boolean) {
+  if (dom.aiFallbackModelField)
+    dom.aiFallbackModelField.style.display = isOnlineMode ? "block" : "none";
+  if (dom.aiFallbackOllamaManagedNote)
+    dom.aiFallbackOllamaManagedNote.style.display = isOnlineMode ? "none" : "block";
+  if (dom.aiFallbackProviderLanes) {
+    dom.aiFallbackProviderLanes.style.display = "grid";
+  }
+}
+
+function renderCloudProviderList(fallbackProvider: CloudAIFallbackProvider | null) {
+  if (!dom.aiFallbackCloudProviderList) return;
+
+  dom.aiFallbackCloudProviderList.innerHTML = "";
+
+  CLOUD_PROVIDER_IDS.forEach((providerId) => {
+    const providerConfig = getProviderSettings(providerId);
+    const verified = isVerifiedAuthStatus(providerConfig?.auth_status);
+    const selectedFallback = fallbackProvider === providerId;
+    const row = document.createElement("div");
+    row.className = `cloud-provider-row is-disabled${selectedFallback ? " is-selected" : ""}`;
+    row.setAttribute("aria-disabled", "true");
+
+    const left = document.createElement("div");
+    left.className = "cloud-provider-main";
+
+    const label = document.createElement("div");
+    label.className = "cloud-provider-title";
+    label.textContent = CLOUD_PROVIDER_LABELS[providerId];
+    left.appendChild(label);
+
+    const meta = document.createElement("div");
+    meta.className = "cloud-provider-meta";
+    const authStatus = authStatusLabel(providerConfig?.auth_status);
+    const method = authMethodLabel(providerConfig?.auth_method_preference);
+    meta.textContent = `${authStatus} • ${method}`;
+    left.appendChild(meta);
+
+    const actions = document.createElement("div");
+    actions.className = "cloud-provider-actions";
+
+    const selectBtn = document.createElement("button");
+    selectBtn.className = "hotkey-record-btn";
+    selectBtn.type = "button";
+    selectBtn.dataset.aiProviderAction = "select-fallback";
+    selectBtn.dataset.provider = providerId;
+    if (selectedFallback) {
+      selectBtn.textContent = verified ? "Saved fallback" : "Saved (locked)";
+    } else {
+      selectBtn.textContent = "Roadmap";
+    }
+    selectBtn.disabled = true;
+    actions.appendChild(selectBtn);
+
+    const authBtn = document.createElement("button");
+    authBtn.className = "hotkey-record-btn";
+    authBtn.type = "button";
+    authBtn.dataset.aiProviderAction = "authenticate";
+    authBtn.dataset.provider = providerId;
+    authBtn.textContent = "Read-only";
+    authBtn.disabled = true;
+    actions.appendChild(authBtn);
+
+    row.appendChild(left);
+    row.appendChild(actions);
+    dom.aiFallbackCloudProviderList?.appendChild(row);
+  });
 }
 
 function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedModel: string) {
   if (!dom.aiFallbackModel) return;
 
-  const models = provider === "ollama"
-    ? (getOllamaSettings()?.available_models ?? [])
-    : (getProviderSettings(provider)?.available_models ?? []);
+  if (provider === "ollama") {
+    dom.aiFallbackModel.disabled = true;
+    dom.aiFallbackModel.innerHTML = "";
+    const option = document.createElement("option");
+    option.value = selectedModel || "";
+    option.textContent = selectedModel || "Managed in Local AI Runtime section";
+    dom.aiFallbackModel.appendChild(option);
+    dom.aiFallbackModel.value = option.value;
+    return;
+  }
+
+  dom.aiFallbackModel.disabled = false;
+  const models = getProviderSettings(provider)?.available_models ?? [];
 
   dom.aiFallbackModel.innerHTML = "";
   for (const modelId of models) {
@@ -164,7 +531,7 @@ function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedMode
   if (models.length > 0) {
     dom.aiFallbackModel.value = models.includes(selectedModel) ? selectedModel : models[0];
   } else {
-    const placeholder = provider === "ollama" ? "Click Refresh to load models" : "No models available";
+    const placeholder = "No models available";
     const option = document.createElement("option");
     option.value = selectedModel || "";
     option.textContent = selectedModel || placeholder;
@@ -173,38 +540,142 @@ function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedMode
   }
 }
 
+function renderRefinementPipelineNote() {
+  if (!settings || !dom.refinementPipelineNote) return;
+  const aiEnabled = Boolean(settings.ai_fallback?.enabled);
+  const rulesEnabled = Boolean(settings.postproc_enabled);
+
+  let note = "No refinement active: raw transcription output is used.";
+  if (aiEnabled && rulesEnabled) {
+    note =
+      "Primary output: AI refinement. Rule-based refiner remains active as non-AI fallback (no token/API cost).";
+  } else if (aiEnabled) {
+    note = "Primary output: AI refinement only. Rule-based non-AI fallback is disabled.";
+  } else if (rulesEnabled) {
+    note = "Primary output: Rule-based refiner only (non-AI, zero token/API cost).";
+  }
+
+  dom.refinementPipelineNote.textContent = note;
+  dom.refinementPipelineNote.classList.toggle("is-warning", !rulesEnabled);
+}
+
 export function renderAIFallbackSettingsUi() {
   if (!settings) return;
+  ensureSetupDefaults();
+  syncDerivedLanguageSettings();
+  CLOUD_PROVIDER_IDS.forEach((providerId) => {
+    const providerSettings = getProviderSettings(providerId);
+    if (!providerSettings) return;
+    providerSettings.auth_method_preference = normalizeAuthMethodPreference(
+      providerSettings.auth_method_preference
+    );
+  });
   const ai = settings.ai_fallback;
-  const provider = normalizeAIFallbackProvider(ai?.provider);
-  const providerConfig = getProviderSettings(provider);
-  const ollamaConfig = getOllamaSettings();
-  const isOllama = provider === "ollama";
+  ai.prompt_profile = normalizeRefinementPromptPreset(ai.prompt_profile);
+  ai.custom_prompt_enabled = ai.prompt_profile === "custom";
+  ai.use_default_prompt = false;
+  ai.preserve_source_language ??= true;
+  ai.fallback_provider = normalizeCloudProvider(ai?.fallback_provider ?? null);
+  ai.execution_mode = normalizeExecutionMode(ai?.execution_mode);
+  if (!ai.fallback_provider && ai.provider !== "ollama") {
+    ai.fallback_provider = normalizeCloudProvider(ai.provider);
+  }
+
+  const fallbackProvider = normalizeCloudProvider(ai?.fallback_provider ?? null);
+  const fallbackConfig = fallbackProvider ? getProviderSettings(fallbackProvider) : null;
+  const executionMode: AIExecutionMode = "local_primary";
+  const provider: AIFallbackProvider = "ollama";
+  ai.execution_mode = executionMode;
+  ai.provider = provider;
+  settings.postproc_llm_provider = "ollama";
+
+  const runtimeCardState = getOllamaRuntimeCardState();
 
   if (dom.aiFallbackEnabled) {
     dom.aiFallbackEnabled.checked = Boolean(ai?.enabled);
   }
+  renderRefinementPipelineNote();
+  syncRefinementPipelineGraphFromSettings();
   if (dom.aiFallbackSettings) {
-    dom.aiFallbackSettings.style.display = ai?.enabled ? "block" : "none";
+    dom.aiFallbackSettings.style.display = "block";
+    dom.aiFallbackSettings.classList.toggle("is-disabled", !ai?.enabled);
   }
-  if (dom.aiFallbackProvider) {
-    dom.aiFallbackProvider.value = provider;
+  renderCloudProviderList(fallbackProvider);
+
+  if (dom.aiFallbackFallbackStatus) {
+    const providerStatus = fallbackProvider
+      ? `${CLOUD_PROVIDER_LABELS[fallbackProvider]} stored (${authStatusLabel(fallbackConfig?.auth_status)})`
+      : "No provider selected.";
+    dom.aiFallbackFallbackStatus.textContent =
+      `${providerStatus} Online fallback is roadmap-only and not active in production.`;
   }
 
-  applyOllamaProviderVisibility(isOllama);
+  if (dom.aiFallbackLocalLane) {
+    dom.aiFallbackLocalLane.classList.toggle("is-active", true);
+    dom.aiFallbackLocalLane.classList.toggle("is-runtime-busy", runtimeCardState.busy);
+    dom.aiFallbackLocalLane.setAttribute("aria-pressed", "true");
+  }
+  if (dom.aiFallbackOnlineLane) {
+    dom.aiFallbackOnlineLane.classList.remove("is-active");
+    dom.aiFallbackOnlineLane.classList.add("is-roadmap-disabled");
+    dom.aiFallbackOnlineLane.setAttribute("aria-pressed", "false");
+    dom.aiFallbackOnlineLane.setAttribute("aria-disabled", "true");
+  }
+
+  if (dom.aiFallbackOnlineStatusBadge) {
+    dom.aiFallbackOnlineStatusBadge.textContent = "Roadmap • Not active";
+    dom.aiFallbackOnlineStatusBadge.classList.add("is-locked");
+    dom.aiFallbackOnlineStatusBadge.classList.remove("is-verified");
+    dom.aiFallbackOnlineStatusBadge.classList.remove("is-active");
+  }
+  if (dom.aiFallbackLocalPrimaryStatus) {
+    const healthText = runtimeCardState.healthy
+      ? "running"
+      : runtimeCardState.detected
+        ? "detected, not running"
+        : "not detected";
+    dom.aiFallbackLocalPrimaryStatus.textContent = `Runtime ${healthText} • Source: ${runtimeCardState.source} • Version: ${runtimeCardState.version}`;
+  }
+  if (dom.aiFallbackLocalRuntimeNote) {
+    dom.aiFallbackLocalRuntimeNote.textContent = runtimeCardState.busy
+      ? `${runtimeCardState.detail} Running in background.`
+      : runtimeCardState.backgroundStarting
+        ? "Starting runtime in background. Controls remain available."
+        : runtimeCardState.detail;
+    dom.aiFallbackLocalRuntimeNote.classList.toggle(
+      "ai-runtime-busy-note",
+      runtimeCardState.busy || runtimeCardState.backgroundStarting
+    );
+    dom.aiFallbackLocalRuntimeNote.setAttribute("aria-live", "polite");
+  }
+  if (dom.aiFallbackLocalPrimaryAction) {
+    dom.aiFallbackLocalPrimaryAction.textContent = runtimeCardState.primaryLabel;
+    dom.aiFallbackLocalPrimaryAction.disabled = runtimeCardState.primaryDisabled;
+    dom.aiFallbackLocalPrimaryAction.dataset.runtimeAction = runtimeCardState.primaryAction;
+    dom.aiFallbackLocalPrimaryAction.classList.toggle("is-busy", runtimeCardState.busy);
+    dom.aiFallbackLocalPrimaryAction.setAttribute(
+      "aria-busy",
+      runtimeCardState.busy ? "true" : "false"
+    );
+  }
+  if (dom.aiFallbackLocalImportAction) {
+    dom.aiFallbackLocalImportAction.disabled = runtimeCardState.busy;
+  }
+  if (dom.aiFallbackLocalDetectAction) {
+    dom.aiFallbackLocalDetectAction.disabled = runtimeCardState.busy;
+  }
+  if (dom.aiFallbackLocalUseSystemAction) {
+    dom.aiFallbackLocalUseSystemAction.disabled = runtimeCardState.busy;
+  }
+  if (dom.aiFallbackLocalVerifyAction) {
+    dom.aiFallbackLocalVerifyAction.disabled = runtimeCardState.busy || !runtimeCardState.detected;
+  }
+  if (dom.aiFallbackLocalRefreshAction) {
+    dom.aiFallbackLocalRefreshAction.disabled = runtimeCardState.busy;
+  }
+
+  applyProviderLaneVisibility(false);
   renderAIFallbackModelOptions(provider, ai?.model || "");
-
-  // Ollama: show endpoint
-  if (dom.aiFallbackOllamaEndpoint && ollamaConfig) {
-    dom.aiFallbackOllamaEndpoint.value = ollamaConfig.endpoint || "http://localhost:11434";
-  }
-
-  // Cloud: show API key status
-  if (dom.aiFallbackKeyStatus) {
-    dom.aiFallbackKeyStatus.textContent = providerConfig?.api_key_stored
-      ? "API key stored in secure system keyring (fallback: local encrypted file)."
-      : "No API key stored for this provider yet.";
-  }
 
   if (dom.aiFallbackTemperature) {
     const temp = Math.max(0, Math.min(1, Number(ai?.temperature ?? 0.3)));
@@ -214,34 +685,71 @@ export function renderAIFallbackSettingsUi() {
     const temp = Math.max(0, Math.min(1, Number(ai?.temperature ?? 0.3)));
     dom.aiFallbackTemperatureValue.textContent = temp.toFixed(2);
   }
+  if (dom.aiFallbackPreserveLanguage) {
+    dom.aiFallbackPreserveLanguage.checked = Boolean(ai?.preserve_source_language ?? true);
+  }
+  if (dom.aiFallbackPreserveLanguageNote) {
+    dom.aiFallbackPreserveLanguageNote.textContent = ai?.preserve_source_language
+      ? "Language lock is active for built-in presets. Custom prompts are sent unchanged."
+      : "Language lock is off for built-in presets. Refinement may switch language when model confidence drifts.";
+  }
+  if (dom.aiFallbackLowLatencyMode) {
+    dom.aiFallbackLowLatencyMode.checked = Boolean(ai?.low_latency_mode);
+  }
+  if (dom.aiFallbackLowLatencyNote) {
+    dom.aiFallbackLowLatencyNote.textContent = ai?.low_latency_mode
+      ? "Low latency active: max_tokens is capped to <= 512 and temperature to <= 0.2 (currently forced to 0.15 if higher)."
+      : "Standard latency: larger generation/context budgets, potentially slower refinement.";
+  }
   if (dom.aiFallbackMaxTokens) {
     dom.aiFallbackMaxTokens.value = String(ai?.max_tokens ?? 4000);
   }
-  if (dom.aiFallbackCustomPromptEnabled) {
-    dom.aiFallbackCustomPromptEnabled.checked = Boolean(ai?.custom_prompt_enabled);
+  const promptProfile = normalizeRefinementPromptPreset(ai?.prompt_profile);
+  const effectiveLanguageHint = resolveEffectiveAsrLanguageHint(
+    settings.language_mode,
+    settings.language_pinned
+  );
+  const promptPreview = resolveEffectiveRefinementPrompt(
+    promptProfile,
+    effectiveLanguageHint,
+    ai?.custom_prompt,
+    Boolean(ai?.preserve_source_language ?? true)
+  );
+  if (dom.aiFallbackPromptPreset) {
+    dom.aiFallbackPromptPreset.value = promptProfile;
   }
-  if (dom.aiFallbackCustomPromptField) {
-    dom.aiFallbackCustomPromptField.style.display = ai?.custom_prompt_enabled ? "block" : "none";
+  const isCustomPrompt = promptProfile === "custom";
+  if (dom.aiFallbackPromptPreviewLabel) {
+    dom.aiFallbackPromptPreviewLabel.textContent = isCustomPrompt ? "Custom prompt" : "Prompt preview";
+  }
+  if (dom.aiFallbackPromptPreviewHint) {
+    dom.aiFallbackPromptPreviewHint.textContent = isCustomPrompt
+      ? "Custom prompt is editable and sent as-is. Language lock does not modify custom prompts."
+      : "Preset prompt is shown read-only so users can understand prompt structure.";
   }
   if (dom.aiFallbackCustomPrompt) {
-    dom.aiFallbackCustomPrompt.value = ai?.custom_prompt || "";
+    dom.aiFallbackCustomPrompt.value = isCustomPrompt ? ai?.custom_prompt || "" : promptPreview;
+    dom.aiFallbackCustomPrompt.readOnly = !isCustomPrompt;
+    dom.aiFallbackCustomPrompt.classList.toggle("is-readonly", !isCustomPrompt);
   }
 }
 
 export function renderSettings() {
   if (!settings) return;
   ensureContinuousDumpDefaults();
+  ensureSetupDefaults();
+  syncDerivedLanguageSettings();
+  applyOverlayDimensionSliderBounds();
   if (dom.captureEnabledToggle) dom.captureEnabledToggle.checked = settings.capture_enabled;
   if (dom.transcribeEnabledToggle) dom.transcribeEnabledToggle.checked = settings.transcribe_enabled;
   if (dom.modeSelect) dom.modeSelect.value = settings.mode;
   if (dom.pttHotkey) dom.pttHotkey.value = settings.hotkey_ptt;
   if (dom.toggleHotkey) dom.toggleHotkey.value = settings.hotkey_toggle;
-  const hotkeysEnabled = settings.mode === "ptt";
-  if (dom.hotkeysBlock) dom.hotkeysBlock.classList.toggle("hidden", !hotkeysEnabled);
-  if (dom.vadBlock) dom.vadBlock.classList.toggle("hidden", hotkeysEnabled);
+  syncCaptureModeVisibility(settings.mode, settings.ptt_use_vad);
   if (dom.deviceSelect) dom.deviceSelect.value = settings.input_device;
   if (dom.languageSelect) dom.languageSelect.value = settings.language_mode;
   if (dom.languagePinnedToggle) dom.languagePinnedToggle.checked = settings.language_pinned;
+  syncAsrLanguageHintUi();
   if (dom.modelSourceSelect) dom.modelSourceSelect.value = settings.model_source;
   if (dom.modelCustomUrl) dom.modelCustomUrl.value = settings.model_custom_url ?? "";
   if (dom.modelStoragePath && settings.model_storage_dir) {
@@ -250,7 +758,6 @@ export function renderSettings() {
   if (dom.modelCustomUrlField) {
     dom.modelCustomUrlField.classList.toggle("hidden", settings.model_source !== "custom");
   }
-  if (dom.cloudToggle) dom.cloudToggle.checked = settings.ai_fallback?.enabled ?? settings.cloud_fallback;
   if (dom.audioCuesToggle) dom.audioCuesToggle.checked = settings.audio_cues;
   if (dom.pttUseVadToggle) dom.pttUseVadToggle.checked = settings.ptt_use_vad;
   if (dom.audioCuesVolume) dom.audioCuesVolume.value = Math.round(settings.audio_cues_volume * 100).toString();
@@ -346,12 +853,64 @@ export function renderSettings() {
     dom.transcribeVadSilenceField.classList.toggle("is-disabled", disabled);
     dom.transcribeVadSilence?.toggleAttribute("disabled", disabled);
   }
-  if (dom.overlayMinRadius) dom.overlayMinRadius.value = Math.round(settings.overlay_min_radius).toString();
+  if (dom.overlayMinRadius) {
+    const clamped = clampToSliderBounds(
+      dom.overlayMinRadius,
+      Math.round(settings.overlay_min_radius)
+    );
+    dom.overlayMinRadius.value = clamped.toString();
+    settings.overlay_min_radius = clamped;
+  }
   if (dom.overlayMinRadiusValue) dom.overlayMinRadiusValue.textContent = `${Math.round(settings.overlay_min_radius)}`;
-  if (dom.overlayMaxRadius) dom.overlayMaxRadius.value = Math.round(settings.overlay_max_radius).toString();
+  if (dom.overlayMaxRadius) {
+    const clamped = clampToSliderBounds(
+      dom.overlayMaxRadius,
+      Math.round(settings.overlay_max_radius)
+    );
+    dom.overlayMaxRadius.value = clamped.toString();
+    settings.overlay_max_radius = clamped;
+  }
   if (dom.overlayMaxRadiusValue) dom.overlayMaxRadiusValue.textContent = `${Math.round(settings.overlay_max_radius)}`;
   const overlayStyleValue = settings.overlay_style || "dot";
   if (dom.overlayStyle) dom.overlayStyle.value = overlayStyleValue;
+  if (dom.overlayRefiningIndicatorEnabled) {
+    dom.overlayRefiningIndicatorEnabled.checked = settings.overlay_refining_indicator_enabled ?? true;
+  }
+  settings.overlay_refining_indicator_preset = normalizeOverlayRefiningPreset(
+    settings.overlay_refining_indicator_preset
+  );
+  if (dom.overlayRefiningIndicatorPreset) {
+    dom.overlayRefiningIndicatorPreset.value = settings.overlay_refining_indicator_preset;
+  }
+  // Apply accent color
+  settings.accent_color = normalizeColorHex(settings.accent_color, DEFAULT_ACCENT_COLOR);
+  if (dom.accentColor) dom.accentColor.value = settings.accent_color;
+  applyAccentColor(settings.accent_color);
+
+  settings.overlay_refining_indicator_color = normalizeRefiningIndicatorColor(
+    settings.overlay_refining_indicator_color
+  );
+  settings.overlay_refining_indicator_speed_ms = normalizeRefiningIndicatorSpeedMs(
+    settings.overlay_refining_indicator_speed_ms
+  );
+  settings.overlay_refining_indicator_range = normalizeRefiningIndicatorRange(
+    settings.overlay_refining_indicator_range
+  );
+  if (dom.overlayRefiningIndicatorColor) {
+    dom.overlayRefiningIndicatorColor.value = settings.overlay_refining_indicator_color;
+  }
+  if (dom.overlayRefiningIndicatorSpeed) {
+    dom.overlayRefiningIndicatorSpeed.value = String(settings.overlay_refining_indicator_speed_ms);
+  }
+  if (dom.overlayRefiningIndicatorSpeedValue) {
+    dom.overlayRefiningIndicatorSpeedValue.textContent = `${settings.overlay_refining_indicator_speed_ms} ms`;
+  }
+  if (dom.overlayRefiningIndicatorRange) {
+    dom.overlayRefiningIndicatorRange.value = String(settings.overlay_refining_indicator_range);
+  }
+  if (dom.overlayRefiningIndicatorRangeValue) {
+    dom.overlayRefiningIndicatorRangeValue.textContent = `${settings.overlay_refining_indicator_range}%`;
+  }
   updateOverlayStyleVisibility(overlayStyleValue);
   applyOverlaySharedUi(overlayStyleValue);
   if (dom.overlayPosX) {
@@ -366,7 +925,14 @@ export function renderSettings() {
   }
   if (dom.overlayKittMinWidth) dom.overlayKittMinWidth.value = Math.round(settings.overlay_kitt_min_width).toString();
   if (dom.overlayKittMinWidthValue) dom.overlayKittMinWidthValue.textContent = `${Math.round(settings.overlay_kitt_min_width)}`;
-  if (dom.overlayKittMaxWidth) dom.overlayKittMaxWidth.value = Math.round(settings.overlay_kitt_max_width).toString();
+  if (dom.overlayKittMaxWidth) {
+    const clamped = clampToSliderBounds(
+      dom.overlayKittMaxWidth,
+      Math.round(settings.overlay_kitt_max_width)
+    );
+    dom.overlayKittMaxWidth.value = clamped.toString();
+    settings.overlay_kitt_max_width = clamped;
+  }
   if (dom.overlayKittMaxWidthValue) dom.overlayKittMaxWidthValue.textContent = `${Math.round(settings.overlay_kitt_max_width)}`;
   if (dom.overlayKittHeight) dom.overlayKittHeight.value = Math.round(settings.overlay_kitt_height).toString();
   if (dom.overlayKittHeightValue) dom.overlayKittHeightValue.textContent = `${Math.round(settings.overlay_kitt_height)}`;
@@ -470,8 +1036,10 @@ export function renderSettings() {
   if (dom.postprocSettings) {
     dom.postprocSettings.style.display = settings.postproc_enabled ? "grid" : "none";
   }
-  if (dom.postprocLanguage) {
-    dom.postprocLanguage.value = settings.postproc_language;
+  if (dom.postprocLanguageDerived) {
+    dom.postprocLanguageDerived.textContent = derivedPostprocLanguageLabel(
+      settings.postproc_language as "en" | "de" | "multi"
+    );
   }
   if (dom.postprocPunctuation) {
     dom.postprocPunctuation.checked = settings.postproc_punctuation_enabled;
@@ -489,31 +1057,32 @@ export function renderSettings() {
     dom.postprocCustomVocabConfig.style.display = settings.postproc_custom_vocab_enabled ? "block" : "none";
   }
   renderVocabulary();
+
+  renderAIRefinementTab();
+}
+
+/**
+ * Render the AI Refinement tab content.
+ * Covers provider/model setup (AI Fallback) and topic keyword editor.
+ * Called from renderSettings() and can be called independently after
+ * provider-specific changes.
+ */
+export function renderAIRefinementTab(): void {
+  ensureTopicKeywordDefaults();
+  syncAIRefinementExpanders();
   renderAIFallbackSettingsUi();
-
-  // Chapter settings
-  if (dom.chaptersEnabled) {
-    dom.chaptersEnabled.checked = settings.chapters_enabled ?? false;
-  }
-  if (dom.chaptersSettings) {
-    dom.chaptersSettings.style.display = (settings.chapters_enabled ?? false) ? "block" : "none";
-  }
-  if (dom.chaptersShowIn) {
-    dom.chaptersShowIn.value = settings.chapters_show_in ?? "conversation";
-  }
-  if (dom.chaptersMethod) {
-    dom.chaptersMethod.value = settings.chapters_method ?? "hybrid";
-  }
-
   renderTopicKeywords();
+  renderAIRefinementStaticHelp();
 }
 
 /**
  * Render topic keyword editor in settings
  */
 export async function renderTopicKeywords(): Promise<void> {
-  if (!dom.topicKeywordsList) return;
-  const keywords = getTopicKeywords();
+  if (!dom.topicKeywordsList || !settings) return;
+  const currentSettings = settings;
+  ensureTopicKeywordDefaults();
+  const keywords = cloneTopicKeywords(currentSettings.topic_keywords);
 
   dom.topicKeywordsList.innerHTML = "";
 
@@ -532,12 +1101,13 @@ export async function renderTopicKeywords(): Promise<void> {
     input.placeholder = "Separate keywords with commas";
     input.title = `Comma-separated keywords for the "${topic}" topic`;
     input.addEventListener("change", async () => {
-      const updated = { ...keywords };
+      const updated = cloneTopicKeywords(currentSettings.topic_keywords);
       updated[topic] = input.value
         .split(",")
-        .map((w) => w.trim())
+        .map((w) => w.trim().toLowerCase())
         .filter((w) => w.length > 0);
-      setTopicKeywords(updated);
+      currentSettings.topic_keywords = normalizeTopicKeywords(updated);
+      setTopicKeywords(currentSettings.topic_keywords);
       await persistSettings();
     });
 

@@ -1,18 +1,234 @@
 use crate::ai_fallback::models::{AIFallbackSettings, AIProvidersSettings};
+use crate::ai_fallback::provider::{is_local_ollama_endpoint, prompt_for_profile};
 use crate::audio::Recorder;
 use crate::constants::{
     HALLUCINATION_MAX_CHARS, HALLUCINATION_MAX_DURATION_MS, HALLUCINATION_MAX_WORDS,
     HALLUCINATION_RMS_THRESHOLD, VAD_SILENCE_MS_DEFAULT, VAD_THRESHOLD_START_DEFAULT,
     VAD_THRESHOLD_SUSTAIN_DEFAULT,
 };
-use crate::paths::{resolve_config_path, resolve_data_path};
+use crate::history_partition::PartitionedHistory;
+use crate::modules::{
+    normalize_confluence_settings, normalize_gdd_module_settings, normalize_module_settings,
+    ConfluenceSettings, GddModuleSettings, ModuleSettings,
+};
+use crate::paths::resolve_config_path;
 use crate::transcription::TranscribeRecorder;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter};
+use std::time::Instant;
+use tauri::{AppHandle, Emitter, Manager};
+use tracing::warn;
+
+const HISTORY_LOCK_WARN_MS: u128 = 20;
+
+/// Debounce flags for asynchronous history persistence.  When set, a background
+/// thread is already scheduled to flush the corresponding history to disk within
+/// 200 ms — additional writes during that window are coalesced.
+static HISTORY_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
+static TRANSCRIBE_HISTORY_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct SetupSettings {
+    pub(crate) local_ai_wizard_completed: bool,
+    pub(crate) local_ai_wizard_pending: bool,
+    pub(crate) ollama_remote_expert_opt_in: bool,
+}
+
+impl Default for SetupSettings {
+    fn default() -> Self {
+        Self {
+            local_ai_wizard_completed: false,
+            local_ai_wizard_pending: true,
+            ollama_remote_expert_opt_in: false,
+        }
+    }
+}
+
+fn default_accent_color() -> String {
+    "#4be0d4".to_string()
+}
+
+fn default_overlay_refining_indicator_enabled() -> bool {
+    true
+}
+
+fn default_overlay_refining_indicator_preset() -> String {
+    "standard".to_string()
+}
+
+fn default_overlay_refining_indicator_color() -> String {
+    "#6ec8ff".to_string()
+}
+
+fn default_overlay_refining_indicator_speed_ms() -> u64 {
+    1_150
+}
+
+fn default_overlay_refining_indicator_range() -> f32 {
+    100.0
+}
+
+fn default_history_alias_mic() -> String {
+    "Input".to_string()
+}
+
+fn default_history_alias_system() -> String {
+    "System audio".to_string()
+}
+
+fn default_topic_keywords() -> HashMap<String, Vec<String>> {
+    let mut topics: HashMap<String, Vec<String>> = HashMap::new();
+    topics.insert(
+        "technical".to_string(),
+        vec![
+            "code",
+            "coding",
+            "debug",
+            "debugging",
+            "bug",
+            "error",
+            "stacktrace",
+            "exception",
+            "function",
+            "variable",
+            "api",
+            "endpoint",
+            "database",
+            "sql",
+            "query",
+            "schema",
+            "deploy",
+            "deployment",
+            "build",
+            "compile",
+            "performance",
+            "latency",
+            "memory",
+            "thread",
+            "integration",
+            "schnittstelle",
+            "fehler",
+            "datenbank",
+            "abfrage",
+            "bereitstellung",
+            "leistung",
+            "speicher",
+            "konfiguration",
+            "version",
+            "docker",
+            "kubernetes",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    );
+    topics.insert(
+        "meeting".to_string(),
+        vec![
+            "meeting",
+            "agenda",
+            "minutes",
+            "action",
+            "action item",
+            "deadline",
+            "owner",
+            "follow-up",
+            "stakeholder",
+            "alignment",
+            "decision",
+            "next step",
+            "roadmap",
+            "priority",
+            "milestone",
+            "planning",
+            "sync",
+            "standup",
+            "retrospective",
+            "workshop",
+            "besprechung",
+            "termin",
+            "protokoll",
+            "entscheidung",
+            "naechster schritt",
+            "prioritaet",
+            "meilenstein",
+            "planung",
+            "abstimmung",
+            "aufgabe",
+            "verantwortlich",
+            "rueckmeldung",
+            "review",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    );
+    topics.insert(
+        "personal".to_string(),
+        vec![
+            "personal",
+            "note",
+            "reminder",
+            "todo",
+            "to-do",
+            "follow-up",
+            "errand",
+            "appointment",
+            "family",
+            "health",
+            "habit",
+            "journal",
+            "private",
+            "vacation",
+            "shopping",
+            "budget",
+            "finance",
+            "bank",
+            "insurance",
+            "medicine",
+            "persoenlich",
+            "erinnerung",
+            "notiz",
+            "einkauf",
+            "urlaub",
+            "arzt",
+            "haushalt",
+            "konto",
+            "rechnung",
+            "gesundheit",
+            "routine",
+            "privat",
+            "aufraeumen",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    );
+    topics
+}
+
+fn derive_postproc_language_from_asr(language_mode: &str, language_pinned: bool) -> String {
+    if !language_pinned {
+        return "multi".to_string();
+    }
+    match language_mode.trim().to_lowercase().as_str() {
+        "en" => "en".to_string(),
+        "de" => "de".to_string(),
+        _ => "multi".to_string(),
+    }
+}
+
+fn effective_asr_language_hint(language_mode: &str, language_pinned: bool) -> String {
+    if language_pinned {
+        language_mode.trim().to_lowercase()
+    } else {
+        "auto".to_string()
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -24,11 +240,17 @@ pub(crate) struct Settings {
     pub(crate) language_mode: String,
     pub(crate) language_pinned: bool,
     pub(crate) model: String,
-    // Legacy toggle kept for backward compatibility. Mirrors ai_fallback.enabled.
+    // Legacy toggle kept for backward compatibility with old cloud transcription paths.
     pub(crate) cloud_fallback: bool,
     // v0.7.0 AI Fallback settings
     pub(crate) ai_fallback: AIFallbackSettings,
     pub(crate) providers: AIProvidersSettings,
+    // First-run setup flags
+    pub(crate) setup: SetupSettings,
+    // Managed module platform settings
+    pub(crate) module_settings: ModuleSettings,
+    pub(crate) gdd_module_settings: GddModuleSettings,
+    pub(crate) confluence_settings: ConfluenceSettings,
     pub(crate) audio_cues: bool,
     pub(crate) audio_cues_volume: f32,
     pub(crate) ptt_use_vad: bool, // Enable VAD threshold check even in PTT mode
@@ -47,6 +269,10 @@ pub(crate) struct Settings {
     pub(crate) transcribe_chunk_overlap_ms: u64,
     pub(crate) transcribe_input_gain_db: f32,
     pub(crate) mic_input_gain_db: f32,
+    #[serde(default = "default_history_alias_mic")]
+    pub(crate) history_alias_mic: String,
+    #[serde(default = "default_history_alias_system")]
+    pub(crate) history_alias_system: String,
     pub(crate) capture_enabled: bool,
     pub(crate) model_source: String,
     pub(crate) model_custom_url: String,
@@ -69,6 +295,18 @@ pub(crate) struct Settings {
     pub(crate) overlay_kitt_pos_x: f64,
     pub(crate) overlay_kitt_pos_y: f64,
     pub(crate) overlay_style: String, // "dot" | "kitt"
+    #[serde(default = "default_accent_color")]
+    pub(crate) accent_color: String,
+    #[serde(default = "default_overlay_refining_indicator_enabled")]
+    pub(crate) overlay_refining_indicator_enabled: bool,
+    #[serde(default = "default_overlay_refining_indicator_preset")]
+    pub(crate) overlay_refining_indicator_preset: String, // "subtle" | "standard" | "intense"
+    #[serde(default = "default_overlay_refining_indicator_color")]
+    pub(crate) overlay_refining_indicator_color: String,
+    #[serde(default = "default_overlay_refining_indicator_speed_ms")]
+    pub(crate) overlay_refining_indicator_speed_ms: u64,
+    #[serde(default = "default_overlay_refining_indicator_range")]
+    pub(crate) overlay_refining_indicator_range: f32,
     pub(crate) overlay_kitt_min_width: f32,
     pub(crate) overlay_kitt_max_width: f32,
     pub(crate) overlay_kitt_height: f32,
@@ -79,6 +317,8 @@ pub(crate) struct Settings {
     pub(crate) hallucination_max_chars: u32,
     pub(crate) activation_words_enabled: bool,
     pub(crate) activation_words: Vec<String>,
+    #[serde(default = "default_topic_keywords")]
+    pub(crate) topic_keywords: HashMap<String, Vec<String>>,
     // Post-processing settings
     pub(crate) postproc_enabled: bool,
     pub(crate) postproc_language: String,
@@ -89,16 +329,10 @@ pub(crate) struct Settings {
     pub(crate) postproc_custom_vocab: HashMap<String, String>,
     pub(crate) postproc_llm_enabled: bool,
     pub(crate) postproc_llm_provider: String,
+    #[serde(skip_serializing)]
     pub(crate) postproc_llm_api_key: String,
     pub(crate) postproc_llm_model: String,
     pub(crate) postproc_llm_prompt: String,
-    // Chapter settings (v0.5.0)
-    pub(crate) chapters_enabled: bool,
-    pub(crate) chapters_show_in: String, // "conversation" | "all"
-    pub(crate) chapters_method: String,  // "silence" | "time" | "hybrid"
-    // Legacy chapter detection settings
-    pub(crate) chapter_silence_enabled: bool,
-    pub(crate) chapter_silence_threshold_ms: u64,
     // Analysis launcher settings (external tool)
     pub(crate) opus_enabled: bool,
     pub(crate) opus_bitrate_kbps: u32,
@@ -150,6 +384,10 @@ impl Default for Settings {
       cloud_fallback: false,
       ai_fallback: AIFallbackSettings::default(),
       providers: AIProvidersSettings::default(),
+      setup: SetupSettings::default(),
+      module_settings: ModuleSettings::default(),
+      gdd_module_settings: GddModuleSettings::default(),
+      confluence_settings: ConfluenceSettings::default(),
       audio_cues: true,
       audio_cues_volume: 0.3,
       ptt_use_vad: false,
@@ -168,6 +406,8 @@ impl Default for Settings {
       transcribe_chunk_overlap_ms: 1000,
       transcribe_input_gain_db: 0.0,
       mic_input_gain_db: 0.0,
+      history_alias_mic: default_history_alias_mic(),
+      history_alias_system: default_history_alias_system(),
       capture_enabled: false,
       model_source: "default".to_string(),
       model_custom_url: "".to_string(),
@@ -176,13 +416,13 @@ impl Default for Settings {
       overlay_color: "#ff3d2e".to_string(),
       overlay_min_radius: 16.0,
       overlay_max_radius: 64.0,
-      overlay_rise_ms: 20,
-      overlay_fall_ms: 400,
+      overlay_rise_ms: 60,
+      overlay_fall_ms: 140,
       overlay_opacity_inactive: 0.1,
       overlay_opacity_active: 0.97,
       overlay_kitt_color: "#ff3d2e".to_string(),
-      overlay_kitt_rise_ms: 20,
-      overlay_kitt_fall_ms: 800,
+      overlay_kitt_rise_ms: 60,
+      overlay_kitt_fall_ms: 140,
       overlay_kitt_opacity_inactive: 0.1,
       overlay_kitt_opacity_active: 1.0,
       overlay_pos_x: 50.0,          // 50% = horizontal center
@@ -190,6 +430,12 @@ impl Default for Settings {
       overlay_kitt_pos_x: 50.0,     // 50% = horizontal center
       overlay_kitt_pos_y: 90.0,     // 90% = bottom area
       overlay_style: "dot".to_string(),
+      accent_color: "#4be0d4".to_string(),
+      overlay_refining_indicator_enabled: true,
+      overlay_refining_indicator_preset: "standard".to_string(),
+      overlay_refining_indicator_color: "#6ec8ff".to_string(),
+      overlay_refining_indicator_speed_ms: 1_150,
+      overlay_refining_indicator_range: 100.0,
       overlay_kitt_min_width: 20.0,
       overlay_kitt_max_width: 700.0,
       overlay_kitt_height: 13.0,
@@ -200,25 +446,19 @@ impl Default for Settings {
       hallucination_max_chars: HALLUCINATION_MAX_CHARS as u32,
       activation_words_enabled: false,
       activation_words: vec!["computer".to_string(), "hey assistant".to_string()],
+      topic_keywords: default_topic_keywords(),
       postproc_enabled: false,
-      postproc_language: "en".to_string(),
+      postproc_language: "multi".to_string(),
       postproc_punctuation_enabled: true,
       postproc_capitalization_enabled: true,
       postproc_numbers_enabled: true,
       postproc_custom_vocab_enabled: false,
       postproc_custom_vocab: HashMap::new(),
       postproc_llm_enabled: false,
-      postproc_llm_provider: "claude".to_string(),
+      postproc_llm_provider: "ollama".to_string(),
       postproc_llm_api_key: String::new(),
-      postproc_llm_model: "claude-3-5-sonnet-20241022".to_string(),
+      postproc_llm_model: String::new(),
       postproc_llm_prompt: "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
-      // Chapter settings (v0.5.0) - disabled by default per DEC-018
-      chapters_enabled: false,
-      chapters_show_in: "conversation".to_string(),
-      chapters_method: "hybrid".to_string(),
-      // Legacy chapter settings
-      chapter_silence_enabled: false,
-      chapter_silence_threshold_ms: 10000, // 10 seconds
       opus_enabled: true,
       opus_bitrate_kbps: 64,
       auto_save_system_audio: false,
@@ -255,34 +495,143 @@ impl Default for Settings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct HistoryRefinement {
+    pub(crate) job_id: String,
+    pub(crate) raw: String,
+    pub(crate) refined: String,
+    pub(crate) status: String, // "idle" | "refining" | "refined" | "error"
+    pub(crate) model: String,
+    pub(crate) execution_time_ms: Option<u64>,
+    pub(crate) error: String,
+}
+
+impl Default for HistoryRefinement {
+    fn default() -> Self {
+        Self {
+            job_id: String::new(),
+            raw: String::new(),
+            refined: String::new(),
+            status: "idle".to_string(),
+            model: String::new(),
+            execution_time_ms: None,
+            error: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct HistoryEntry {
     pub(crate) id: String,
     pub(crate) text: String,
     pub(crate) timestamp_ms: u64,
     pub(crate) source: String,
+    #[serde(default)]
+    pub(crate) speaker_name: Option<String>,
+    #[serde(default)]
+    pub(crate) refinement: Option<HistoryRefinement>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Chapter {
-    pub(crate) id: String,
-    pub(crate) label: String,
-    pub(crate) timestamp_ms: u64,
-    pub(crate) entry_count: u32,
+#[cfg(target_os = "windows")]
+pub(crate) struct SystemClusterBuffer {
+    pub(crate) entries: Vec<(String, String, u64)>, // (entry_id, text, timestamp_ms)
+    pub(crate) last_chunk_ms: u64,
+}
+
+#[cfg(target_os = "windows")]
+impl Default for SystemClusterBuffer {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            last_chunk_ms: 0,
+        }
+    }
 }
 
 pub(crate) struct AppState {
     pub(crate) settings: Mutex<Settings>,
-    pub(crate) history: Mutex<Vec<HistoryEntry>>,
-    pub(crate) history_transcribe: Mutex<Vec<HistoryEntry>>,
-    pub(crate) chapters: Mutex<Vec<Chapter>>,
+    pub(crate) history: Mutex<PartitionedHistory>,
+    pub(crate) history_transcribe: Mutex<PartitionedHistory>,
     pub(crate) recorder: Mutex<Recorder>,
     pub(crate) transcribe: Mutex<TranscribeRecorder>,
     pub(crate) downloads: Mutex<HashSet<String>>,
+    pub(crate) ollama_pulls: Mutex<HashSet<String>>,
     pub(crate) transcribe_active: AtomicBool,
+    pub(crate) refinement_active_count: AtomicUsize,
+    pub(crate) refinement_watchdog_generation: AtomicU64,
+    pub(crate) refinement_last_change_ms: AtomicU64,
+    pub(crate) runtime_start_attempts: AtomicU64,
+    pub(crate) runtime_start_failures: AtomicU64,
+    pub(crate) refinement_timeouts: AtomicU64,
+    pub(crate) refinement_fallback_failed: AtomicU64,
+    pub(crate) refinement_fallback_timed_out: AtomicU64,
     /// Last recorded OPUS file path for mic input.
     pub(crate) last_mic_recording_path: Mutex<Option<String>>,
     /// Last recorded OPUS file path for system audio.
     pub(crate) last_system_recording_path: Mutex<Option<String>>,
+    /// Handle to the managed Ollama child process for cleanup on app exit.
+    pub(crate) managed_ollama_child: Mutex<Option<std::process::Child>>,
+    #[cfg(target_os = "windows")]
+    pub(crate) system_cluster_buffer: Mutex<SystemClusterBuffer>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RuntimeMetricsSnapshot {
+    pub(crate) runtime_start_attempts: u64,
+    pub(crate) runtime_start_failures: u64,
+    pub(crate) refinement_timeouts: u64,
+    pub(crate) refinement_fallback_failed: u64,
+    pub(crate) refinement_fallback_timed_out: u64,
+}
+
+pub(crate) fn record_runtime_start_attempt(state: &AppState) {
+    state
+        .runtime_start_attempts
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn record_runtime_start_failure(state: &AppState) {
+    state
+        .runtime_start_failures
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn record_refinement_timeout(state: &AppState) {
+    state
+        .refinement_timeouts
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn record_refinement_fallback_failed(state: &AppState) {
+    state
+        .refinement_fallback_failed
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn record_refinement_fallback_timed_out(state: &AppState) {
+    state
+        .refinement_fallback_timed_out
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn get_runtime_metrics_snapshot(state: &AppState) -> RuntimeMetricsSnapshot {
+    RuntimeMetricsSnapshot {
+        runtime_start_attempts: state
+            .runtime_start_attempts
+            .load(std::sync::atomic::Ordering::Relaxed),
+        runtime_start_failures: state
+            .runtime_start_failures
+            .load(std::sync::atomic::Ordering::Relaxed),
+        refinement_timeouts: state
+            .refinement_timeouts
+            .load(std::sync::atomic::Ordering::Relaxed),
+        refinement_fallback_failed: state
+            .refinement_fallback_failed
+            .load(std::sync::atomic::Ordering::Relaxed),
+        refinement_fallback_timed_out: state
+            .refinement_fallback_timed_out
+            .load(std::sync::atomic::Ordering::Relaxed),
+    }
 }
 
 pub(crate) fn load_settings(app: &AppHandle) -> Settings {
@@ -342,6 +691,7 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
                 settings.transcribe_vad_silence_ms = 5000;
             }
             normalize_continuous_dump_fields(&mut settings);
+            normalize_history_alias_fields(&mut settings);
             if settings.transcribe_backend.trim().is_empty() {
                 settings.transcribe_backend = "whisper_cpp".to_string();
             }
@@ -356,6 +706,10 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if !valid_languages.contains(&settings.language_mode.as_str()) {
                 settings.language_mode = "auto".to_string();
             }
+            settings.postproc_language = derive_postproc_language_from_asr(
+                &settings.language_mode,
+                settings.language_pinned,
+            );
             if settings.model_source.trim().is_empty() {
                 settings.model_source = "default".to_string();
             }
@@ -376,20 +730,30 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             {
                 settings.transcribe_output_device = "default".to_string();
             }
-            if settings.overlay_min_radius < 4.0 {
-                settings.overlay_min_radius = 4.0;
+            if !settings.overlay_min_radius.is_finite() {
+                settings.overlay_min_radius = 16.0;
             }
-            if settings.overlay_max_radius < settings.overlay_min_radius {
-                settings.overlay_max_radius = settings.overlay_min_radius + 4.0;
-            }
-            if settings.overlay_max_radius > 64.0 {
+            if !settings.overlay_max_radius.is_finite() {
                 settings.overlay_max_radius = 64.0;
+            }
+            // Keep dot dimensions in sane bounds; monitor-relative 50% cap is
+            // applied at runtime in overlay.rs.
+            settings.overlay_min_radius = settings.overlay_min_radius.clamp(4.0, 5_000.0);
+            settings.overlay_max_radius = settings.overlay_max_radius.clamp(8.0, 10_000.0);
+            if settings.overlay_max_radius < settings.overlay_min_radius {
+                settings.overlay_max_radius = settings.overlay_min_radius;
             }
             if settings.overlay_rise_ms < 20 {
                 settings.overlay_rise_ms = 20;
             }
+            if settings.overlay_rise_ms > 200 {
+                settings.overlay_rise_ms = 200;
+            }
             if settings.overlay_fall_ms < 20 {
                 settings.overlay_fall_ms = 20;
+            }
+            if settings.overlay_fall_ms > 200 {
+                settings.overlay_fall_ms = 200;
             }
             if !(0.0..=1.0).contains(&settings.overlay_opacity_inactive) {
                 settings.overlay_opacity_inactive = 0.2;
@@ -468,26 +832,60 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if settings.overlay_kitt_color.trim().is_empty() {
                 settings.overlay_kitt_color = "#ff3d2e".to_string();
             }
-            if settings.overlay_kitt_min_width < 4.0 {
-                settings.overlay_kitt_min_width = 4.0;
+            if !settings.overlay_kitt_min_width.is_finite() {
+                settings.overlay_kitt_min_width = 20.0;
             }
+            if !settings.overlay_kitt_max_width.is_finite() {
+                settings.overlay_kitt_max_width = 700.0;
+            }
+            if !settings.overlay_kitt_height.is_finite() {
+                settings.overlay_kitt_height = 13.0;
+            }
+
+            // Keep KITT dimensions in sane bounds; monitor-relative 50% cap is
+            // applied at runtime in overlay.rs.
+            settings.overlay_kitt_min_width = settings.overlay_kitt_min_width.clamp(4.0, 10_000.0);
+            settings.overlay_kitt_max_width = settings.overlay_kitt_max_width.clamp(50.0, 20_000.0);
             if settings.overlay_kitt_max_width < settings.overlay_kitt_min_width {
-                settings.overlay_kitt_max_width = settings.overlay_kitt_min_width;
+                settings.overlay_kitt_max_width = settings.overlay_kitt_min_width.max(50.0);
             }
-            if settings.overlay_kitt_max_width > 800.0 {
-                settings.overlay_kitt_max_width = 800.0;
-            }
-            if settings.overlay_kitt_height < 8.0 {
-                settings.overlay_kitt_height = 8.0;
-            }
-            if settings.overlay_kitt_height > 40.0 {
-                settings.overlay_kitt_height = 40.0;
-            }
+            settings.overlay_kitt_height = settings.overlay_kitt_height.clamp(8.0, 400.0);
             if settings.overlay_kitt_rise_ms < 20 {
                 settings.overlay_kitt_rise_ms = 20;
             }
+            if settings.overlay_kitt_rise_ms > 200 {
+                settings.overlay_kitt_rise_ms = 200;
+            }
             if settings.overlay_kitt_fall_ms < 20 {
                 settings.overlay_kitt_fall_ms = 20;
+            }
+            if settings.overlay_kitt_fall_ms > 200 {
+                settings.overlay_kitt_fall_ms = 200;
+            }
+            if !["subtle", "standard", "intense"]
+                .contains(&settings.overlay_refining_indicator_preset.as_str())
+            {
+                settings.overlay_refining_indicator_preset = "standard".to_string();
+            }
+            if !settings.overlay_refining_indicator_color.starts_with('#')
+                || settings.overlay_refining_indicator_color.len() != 7
+            {
+                settings.overlay_refining_indicator_color = "#6ec8ff".to_string();
+            }
+            if !settings.accent_color.starts_with('#') || settings.accent_color.len() != 7 {
+                settings.accent_color = "#4be0d4".to_string();
+            }
+            if settings.overlay_refining_indicator_speed_ms < 450 {
+                settings.overlay_refining_indicator_speed_ms = 450;
+            }
+            if settings.overlay_refining_indicator_speed_ms > 3_000 {
+                settings.overlay_refining_indicator_speed_ms = 3_000;
+            }
+            if settings.overlay_refining_indicator_range < 60.0 {
+                settings.overlay_refining_indicator_range = 60.0;
+            }
+            if settings.overlay_refining_indicator_range > 180.0 {
+                settings.overlay_refining_indicator_range = 180.0;
             }
             if !(0.0..=1.0).contains(&settings.overlay_kitt_opacity_inactive) {
                 settings.overlay_kitt_opacity_inactive = 0.2;
@@ -509,8 +907,15 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             {
                 settings.main_window_start_state = "normal".to_string();
             }
+            normalize_topic_keywords_fields(&mut settings);
             // Normalize v0.7 AI fallback settings and legacy compatibility fields.
             normalize_ai_fallback_fields(&mut settings);
+            normalize_module_settings(&mut settings.module_settings);
+            normalize_gdd_module_settings(&mut settings.gdd_module_settings);
+            normalize_confluence_settings(&mut settings.confluence_settings);
+            if settings.setup.local_ai_wizard_completed {
+                settings.setup.local_ai_wizard_pending = false;
+            }
 
             // Transcribe enablement is session-only; always start disabled.
             settings.transcribe_enabled = false;
@@ -520,11 +925,55 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
     }
 }
 
-pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
-    // Migrate legacy cloud-fallback toggle to ai_fallback enabled state.
-    if settings.cloud_fallback && !settings.ai_fallback.enabled {
-        settings.ai_fallback.enabled = true;
+pub(crate) fn normalize_topic_keywords_fields(settings: &mut Settings) {
+    let defaults = default_topic_keywords();
+    if settings.topic_keywords.is_empty() {
+        settings.topic_keywords = defaults;
+        return;
     }
+
+    let mut normalized: HashMap<String, Vec<String>> = HashMap::new();
+    for (topic, words) in settings.topic_keywords.iter() {
+        let key = topic.trim().to_lowercase();
+        if key.is_empty() {
+            continue;
+        }
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut cleaned: Vec<String> = Vec::new();
+        for word in words {
+            let normalized_word = word.trim().to_lowercase();
+            if normalized_word.is_empty() {
+                continue;
+            }
+            if seen.insert(normalized_word.clone()) {
+                cleaned.push(normalized_word);
+            }
+        }
+        if !cleaned.is_empty() {
+            normalized.insert(key, cleaned);
+        }
+    }
+
+    if normalized.is_empty() {
+        settings.topic_keywords = defaults;
+        return;
+    }
+
+    for (topic, words) in defaults {
+        normalized.entry(topic).or_insert(words);
+    }
+    settings.topic_keywords = normalized;
+}
+
+pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
+    fn normalize_cloud_provider(provider: &str) -> Option<String> {
+        crate::ai_fallback::models::normalize_cloud_provider_id(provider).map(str::to_string)
+    }
+
+    fn is_verified_auth_status(status: &str) -> bool {
+        matches!(status.trim(), "verified_api_key" | "verified_oauth")
+    }
+
     // Migrate legacy postproc_llm toggle and values if still used.
     if settings.postproc_llm_enabled && !settings.ai_fallback.enabled {
         settings.ai_fallback.enabled = true;
@@ -546,25 +995,120 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
         settings.ai_fallback.custom_prompt_enabled = true;
         settings.ai_fallback.use_default_prompt = false;
     }
+    if settings.ai_fallback.prompt_profile.trim().is_empty() {
+        settings.ai_fallback.prompt_profile = if settings.ai_fallback.custom_prompt_enabled
+            && !settings.ai_fallback.use_default_prompt
+        {
+            "custom".to_string()
+        } else {
+            "wording".to_string()
+        };
+    }
+
+    // Preserve legacy cloud provider selection as optional fallback candidate.
+    if settings.ai_fallback.fallback_provider.is_none() && settings.ai_fallback.provider != "ollama"
+    {
+        settings.ai_fallback.fallback_provider =
+            normalize_cloud_provider(&settings.ai_fallback.provider);
+    }
 
     settings.ai_fallback.normalize();
+    settings.ai_fallback.custom_prompt_enabled = settings.ai_fallback.prompt_profile == "custom";
+    settings.ai_fallback.use_default_prompt = false;
     settings.providers.normalize();
+
+    // Migration rule: cloud providers remain locked until explicit verify succeeds.
+    for provider in ["claude", "openai", "gemini"] {
+        if let Some(config) = settings.providers.get_mut(provider) {
+            if !is_verified_auth_status(&config.auth_status) {
+                config.auth_status = "locked".to_string();
+                config.auth_verified_at = None;
+            }
+            if !config.api_key_stored && config.auth_status != "verified_oauth" {
+                config.auth_status = "locked".to_string();
+                config.auth_verified_at = None;
+            }
+        }
+    }
+
+    settings.ai_fallback.execution_mode =
+        if settings.ai_fallback.execution_mode == "online_fallback" {
+            "online_fallback".to_string()
+        } else {
+            "local_primary".to_string()
+        };
+
+    settings.ai_fallback.fallback_provider = settings
+        .ai_fallback
+        .fallback_provider
+        .as_ref()
+        .and_then(|provider| normalize_cloud_provider(provider));
+
+    if settings.ai_fallback.execution_mode == "online_fallback" {
+        let verified = settings
+            .ai_fallback
+            .fallback_provider
+            .as_ref()
+            .map(|provider| settings.providers.is_verified(provider))
+            .unwrap_or(false);
+
+        if verified {
+            if let Some(provider) = settings.ai_fallback.fallback_provider.clone() {
+                settings.ai_fallback.provider = provider;
+            } else {
+                settings.ai_fallback.execution_mode = "local_primary".to_string();
+                settings.ai_fallback.provider = "ollama".to_string();
+            }
+        } else {
+            settings.ai_fallback.execution_mode = "local_primary".to_string();
+            settings.ai_fallback.provider = "ollama".to_string();
+        }
+    } else {
+        settings.ai_fallback.provider = "ollama".to_string();
+    }
+
+    if settings.ai_fallback.provider == "ollama"
+        && settings.ai_fallback.strict_local_mode
+        && !is_local_ollama_endpoint(&settings.providers.ollama.endpoint)
+    {
+        settings.providers.ollama.endpoint = "http://localhost:11434".to_string();
+    }
     settings
         .providers
         .sync_from_ai_fallback(&settings.ai_fallback);
 
-    // Keep legacy fields synchronized for compatibility with older code paths.
-    settings.cloud_fallback = settings.ai_fallback.enabled;
+    // Keep legacy post-processing fields synchronized for compatibility with older code paths.
     settings.postproc_llm_enabled = settings.ai_fallback.enabled;
     settings.postproc_llm_provider = settings.ai_fallback.provider.clone();
     settings.postproc_llm_model = settings.ai_fallback.model.clone();
-    if settings.ai_fallback.custom_prompt_enabled {
-        settings.postproc_llm_prompt = settings.ai_fallback.custom_prompt.clone();
+    settings.postproc_language =
+        derive_postproc_language_from_asr(&settings.language_mode, settings.language_pinned);
+    let effective_language =
+        effective_asr_language_hint(&settings.language_mode, settings.language_pinned);
+    if let Some(prompt) = prompt_for_profile(
+        &settings.ai_fallback.prompt_profile,
+        &effective_language,
+        Some(settings.ai_fallback.custom_prompt.as_str()),
+        settings.ai_fallback.preserve_source_language,
+    ) {
+        settings.postproc_llm_prompt = prompt;
+    }
+    if settings.setup.local_ai_wizard_completed {
+        settings.setup.local_ai_wizard_pending = false;
     }
 }
 
 pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
-    let defaults = Settings::default();
+    // Default values for legacy migration comparisons — avoids constructing a full
+    // Settings::default() on every call.
+    const DEFAULT_CONTINUOUS_SOFT_FLUSH_MS: u64 = 10_000;
+    const DEFAULT_CONTINUOUS_SYSTEM_SOFT_FLUSH_MS: u64 = 10_000;
+    const DEFAULT_CONTINUOUS_SILENCE_FLUSH_MS: u64 = 1_200;
+    const DEFAULT_CONTINUOUS_SYSTEM_SILENCE_FLUSH_MS: u64 = 1_200;
+    const DEFAULT_CONTINUOUS_PRE_ROLL_MS: u64 = 300;
+    const DEFAULT_TRANSCRIBE_BATCH_INTERVAL_MS: u64 = 8_000;
+    const DEFAULT_TRANSCRIBE_VAD_SILENCE_MS: u64 = 900;
+    const DEFAULT_TRANSCRIBE_CHUNK_OVERLAP_MS: u64 = 1_000;
 
     if settings.continuous_dump_profile != "balanced"
         && settings.continuous_dump_profile != "low_latency"
@@ -574,28 +1118,28 @@ pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
     }
 
     // Legacy migration from interval/overlap system-audio settings.
-    if settings.continuous_soft_flush_ms == defaults.continuous_soft_flush_ms
-        && settings.transcribe_batch_interval_ms != defaults.transcribe_batch_interval_ms
+    if settings.continuous_soft_flush_ms == DEFAULT_CONTINUOUS_SOFT_FLUSH_MS
+        && settings.transcribe_batch_interval_ms != DEFAULT_TRANSCRIBE_BATCH_INTERVAL_MS
     {
         settings.continuous_soft_flush_ms = settings.transcribe_batch_interval_ms;
     }
-    if settings.continuous_system_soft_flush_ms == defaults.continuous_system_soft_flush_ms
-        && settings.transcribe_batch_interval_ms != defaults.transcribe_batch_interval_ms
+    if settings.continuous_system_soft_flush_ms == DEFAULT_CONTINUOUS_SYSTEM_SOFT_FLUSH_MS
+        && settings.transcribe_batch_interval_ms != DEFAULT_TRANSCRIBE_BATCH_INTERVAL_MS
     {
         settings.continuous_system_soft_flush_ms = settings.transcribe_batch_interval_ms;
     }
-    if settings.continuous_silence_flush_ms == defaults.continuous_silence_flush_ms
-        && settings.transcribe_vad_silence_ms != defaults.transcribe_vad_silence_ms
+    if settings.continuous_silence_flush_ms == DEFAULT_CONTINUOUS_SILENCE_FLUSH_MS
+        && settings.transcribe_vad_silence_ms != DEFAULT_TRANSCRIBE_VAD_SILENCE_MS
     {
         settings.continuous_silence_flush_ms = settings.transcribe_vad_silence_ms;
     }
-    if settings.continuous_system_silence_flush_ms == defaults.continuous_system_silence_flush_ms
-        && settings.transcribe_vad_silence_ms != defaults.transcribe_vad_silence_ms
+    if settings.continuous_system_silence_flush_ms == DEFAULT_CONTINUOUS_SYSTEM_SILENCE_FLUSH_MS
+        && settings.transcribe_vad_silence_ms != DEFAULT_TRANSCRIBE_VAD_SILENCE_MS
     {
         settings.continuous_system_silence_flush_ms = settings.transcribe_vad_silence_ms;
     }
-    if settings.continuous_pre_roll_ms == defaults.continuous_pre_roll_ms
-        && settings.transcribe_chunk_overlap_ms != defaults.transcribe_chunk_overlap_ms
+    if settings.continuous_pre_roll_ms == DEFAULT_CONTINUOUS_PRE_ROLL_MS
+        && settings.transcribe_chunk_overlap_ms != DEFAULT_TRANSCRIBE_CHUNK_OVERLAP_MS
     {
         settings.continuous_pre_roll_ms = settings.transcribe_chunk_overlap_ms;
     }
@@ -645,13 +1189,46 @@ pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
     }
 }
 
+fn normalize_history_alias_value(value: &str, fallback: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.chars().take(32).collect()
+    }
+}
+
+pub(crate) fn normalize_history_alias_fields(settings: &mut Settings) {
+    settings.history_alias_mic =
+        normalize_history_alias_value(&settings.history_alias_mic, &default_history_alias_mic());
+    settings.history_alias_system = normalize_history_alias_value(
+        &settings.history_alias_system,
+        &default_history_alias_system(),
+    );
+}
+
+pub(crate) fn speaker_name_for_source(settings: &Settings, source: &str) -> String {
+    match source {
+        "mic" => settings.history_alias_mic.clone(),
+        "output" | "system" => settings.history_alias_system.clone(),
+        _ => source.to_string(),
+    }
+}
+
 pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     let path = resolve_config_path(app, "settings.json");
     let mut persisted = settings.clone();
     // Do not persist session-only transcribe enablement.
     persisted.transcribe_enabled = false;
+    normalize_history_alias_fields(&mut persisted);
+    normalize_module_settings(&mut persisted.module_settings);
+    normalize_gdd_module_settings(&mut persisted.gdd_module_settings);
+    normalize_confluence_settings(&mut persisted.confluence_settings);
     let raw = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
-    fs::write(path, raw).map_err(|e| e.to_string())?;
+    // Atomic write: write to .tmp then rename to avoid partial/corrupted JSON on crash.
+    let tmp_path = path.with_extension("json.tmp");
+    fs::write(&tmp_path, &raw).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_path, &path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -664,49 +1241,21 @@ pub(crate) fn sync_model_dir_env(settings: &Settings) {
     }
 }
 
-pub(crate) fn load_history(app: &AppHandle) -> Vec<HistoryEntry> {
-    let path = resolve_data_path(app, "history.json");
+#[cfg(test)]
+pub(crate) fn load_history_from_path(
+    path: &std::path::Path,
+) -> std::collections::VecDeque<HistoryEntry> {
     match fs::read_to_string(path) {
         Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(_) => Vec::new(),
+        Err(_) => std::collections::VecDeque::new(),
     }
 }
 
-pub(crate) fn save_history_file(app: &AppHandle, history: &[HistoryEntry]) -> Result<(), String> {
-    let path = resolve_data_path(app, "history.json");
-    let raw = serde_json::to_string_pretty(history).map_err(|e| e.to_string())?;
-    fs::write(path, raw).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-pub(crate) fn load_chapters(app: &AppHandle) -> Vec<Chapter> {
-    let path = resolve_data_path(app, "chapters.json");
-    match fs::read_to_string(path) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    }
-}
-
-pub(crate) fn save_chapters_file(app: &AppHandle, chapters: &[Chapter]) -> Result<(), String> {
-    let path = resolve_data_path(app, "chapters.json");
-    let raw = serde_json::to_string_pretty(chapters).map_err(|e| e.to_string())?;
-    fs::write(path, raw).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-pub(crate) fn load_transcribe_history(app: &AppHandle) -> Vec<HistoryEntry> {
-    let path = resolve_data_path(app, "history_transcribe.json");
-    match fs::read_to_string(path) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    }
-}
-
-pub(crate) fn save_transcribe_history_file(
-    app: &AppHandle,
+#[cfg(test)]
+pub(crate) fn save_history_to_path(
+    path: &std::path::Path,
     history: &[HistoryEntry],
 ) -> Result<(), String> {
-    let path = resolve_data_path(app, "history_transcribe.json");
     let raw = serde_json::to_string_pretty(history).map_err(|e| e.to_string())?;
     fs::write(path, raw).map_err(|e| e.to_string())?;
     Ok(())
@@ -714,36 +1263,307 @@ pub(crate) fn save_transcribe_history_file(
 
 pub(crate) fn push_history_entry_inner(
     app: &AppHandle,
-    history: &Mutex<Vec<HistoryEntry>>,
+    history: &Mutex<PartitionedHistory>,
     text: String,
     source: String,
 ) -> Result<Vec<HistoryEntry>, String> {
-    let mut history = history.lock().unwrap();
+    let speaker_name = {
+        let state = app.state::<AppState>();
+        let settings = state.settings.lock().unwrap();
+        Some(speaker_name_for_source(&settings, &source))
+    };
+    let lock_started = Instant::now();
+    let mut ph = history.lock().unwrap();
     let entry = HistoryEntry {
         id: format!("h_{}", crate::util::now_ms()),
         text,
         timestamp_ms: crate::util::now_ms(),
         source,
+        speaker_name,
+        refinement: None,
     };
-    history.insert(0, entry);
-    save_history_file(app, &history)?;
-    Ok(history.clone())
+    ph.push_entry(entry);
+    let updated: Vec<HistoryEntry> = ph.active.iter().cloned().collect();
+    let lock_elapsed_ms = lock_started.elapsed().as_millis();
+    drop(ph);
+    if lock_elapsed_ms > HISTORY_LOCK_WARN_MS {
+        warn!(
+            "History lock hold exceeded threshold in push_history_entry_inner: {}ms",
+            lock_elapsed_ms
+        );
+    }
+
+    // Debounced persist: only schedule a disk write if none is already pending.
+    if !HISTORY_SAVE_PENDING.swap(true, Ordering::AcqRel) {
+        let app_clone = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            HISTORY_SAVE_PENDING.store(false, Ordering::Release);
+            let state = app_clone.state::<AppState>();
+            let ph = state.history.lock().unwrap();
+            if let Err(e) = ph.flush_to_disk() {
+                warn!("Debounced history save failed: {}", e);
+            }
+        });
+    }
+
+    Ok(updated)
 }
 
 pub(crate) fn push_transcribe_entry_inner(
     app: &AppHandle,
-    history: &Mutex<Vec<HistoryEntry>>,
+    history: &Mutex<PartitionedHistory>,
     text: String,
 ) -> Result<Vec<HistoryEntry>, String> {
-    let mut history = history.lock().unwrap();
+    let speaker_name = {
+        let state = app.state::<AppState>();
+        let settings = state.settings.lock().unwrap();
+        Some(speaker_name_for_source(&settings, "output"))
+    };
+    let lock_started = Instant::now();
+    let mut ph = history.lock().unwrap();
     let entry = HistoryEntry {
         id: format!("o_{}", crate::util::now_ms()),
         text,
         timestamp_ms: crate::util::now_ms(),
         source: "output".to_string(),
+        speaker_name,
+        refinement: None,
     };
-    history.insert(0, entry);
-    save_transcribe_history_file(app, &history)?;
-    let _ = app.emit("transcribe:history-updated", history.clone());
-    Ok(history.clone())
+    ph.push_entry(entry);
+    let updated: Vec<HistoryEntry> = ph.active.iter().cloned().collect();
+    let lock_elapsed_ms = lock_started.elapsed().as_millis();
+    drop(ph);
+    if lock_elapsed_ms > HISTORY_LOCK_WARN_MS {
+        warn!(
+            "History lock hold exceeded threshold in push_transcribe_entry_inner: {}ms",
+            lock_elapsed_ms
+        );
+    }
+
+    // Debounced persist: only schedule a disk write if none is already pending.
+    if !TRANSCRIBE_HISTORY_SAVE_PENDING.swap(true, Ordering::AcqRel) {
+        let app_clone = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            TRANSCRIBE_HISTORY_SAVE_PENDING.store(false, Ordering::Release);
+            let state = app_clone.state::<AppState>();
+            let ph = state.history_transcribe.lock().unwrap();
+            if let Err(e) = ph.flush_to_disk() {
+                warn!("Debounced transcribe history save failed: {}", e);
+            }
+        });
+    }
+
+    // Event emission remains synchronous — UI always gets the update immediately.
+    let _ = app.emit("transcribe:history-updated", updated.clone());
+    Ok(updated)
+}
+
+fn emit_updated_history(app: &AppHandle, event_name: &str, updated: Vec<HistoryEntry>) {
+    let _ = app.emit(event_name, updated);
+}
+
+fn update_history_entry_in_store<F>(
+    app: &AppHandle,
+    store: &Mutex<PartitionedHistory>,
+    event_name: &str,
+    entry_id: &str,
+    apply: &mut F,
+) -> Result<bool, String>
+where
+    F: FnMut(&mut HistoryEntry),
+{
+    let lock_started = Instant::now();
+    let mut ph = store.lock().unwrap();
+    let Some(entry) = ph.active.iter_mut().find(|entry| entry.id == entry_id) else {
+        return Ok(false);
+    };
+    apply(entry);
+    let updated: Vec<HistoryEntry> = ph.active.iter().cloned().collect();
+    ph.flush_to_disk().ok();
+    let lock_elapsed_ms = lock_started.elapsed().as_millis();
+    drop(ph);
+    if lock_elapsed_ms > HISTORY_LOCK_WARN_MS {
+        warn!(
+            "History lock hold exceeded threshold in update_history_entry_in_store ({}): {}ms",
+            event_name, lock_elapsed_ms
+        );
+    }
+    emit_updated_history(app, event_name, updated);
+    Ok(true)
+}
+
+fn update_history_entry_refinement<F>(
+    app: &AppHandle,
+    entry_id: &str,
+    mut apply: F,
+) -> Result<(), String>
+where
+    F: FnMut(&mut HistoryEntry),
+{
+    if entry_id.trim().is_empty() {
+        return Ok(());
+    }
+    let state = app.state::<AppState>();
+    if update_history_entry_in_store(app, &state.history, "history:updated", entry_id, &mut apply)?
+    {
+        return Ok(());
+    }
+    let _ = update_history_entry_in_store(
+        app,
+        &state.history_transcribe,
+        "transcribe:history-updated",
+        entry_id,
+        &mut apply,
+    )?;
+    Ok(())
+}
+
+fn ensure_history_refinement(entry: &mut HistoryEntry) -> &mut HistoryRefinement {
+    if entry.refinement.is_none() {
+        entry.refinement = Some(HistoryRefinement::default());
+    }
+    entry
+        .refinement
+        .as_mut()
+        .expect("refinement just initialized")
+}
+
+pub(crate) fn mark_entry_refinement_started(
+    app: &AppHandle,
+    entry_id: &str,
+    job_id: &str,
+    raw_text: &str,
+) -> Result<(), String> {
+    update_history_entry_refinement(app, entry_id, |entry| {
+        let fallback_raw = entry.text.clone();
+        let refinement = ensure_history_refinement(entry);
+        if !job_id.trim().is_empty() {
+            refinement.job_id = job_id.to_string();
+        }
+        if !raw_text.trim().is_empty() {
+            refinement.raw = raw_text.to_string();
+        } else if refinement.raw.trim().is_empty() {
+            refinement.raw = fallback_raw;
+        }
+        refinement.status = "refining".to_string();
+        refinement.error.clear();
+    })
+}
+
+pub(crate) fn mark_entry_refinement_success(
+    app: &AppHandle,
+    entry_id: &str,
+    job_id: &str,
+    raw_text: &str,
+    refined_text: &str,
+    model: &str,
+    execution_time_ms: u64,
+) -> Result<(), String> {
+    update_history_entry_refinement(app, entry_id, |entry| {
+        let fallback_raw = entry.text.clone();
+        let refinement = ensure_history_refinement(entry);
+        if !job_id.trim().is_empty() {
+            refinement.job_id = job_id.to_string();
+        }
+        if !raw_text.trim().is_empty() {
+            refinement.raw = raw_text.to_string();
+        } else if refinement.raw.trim().is_empty() {
+            refinement.raw = fallback_raw;
+        }
+        refinement.refined = refined_text.to_string();
+        refinement.status = "refined".to_string();
+        refinement.model = model.to_string();
+        refinement.execution_time_ms = Some(execution_time_ms);
+        refinement.error.clear();
+    })
+}
+
+pub(crate) fn mark_entry_refinement_failed(
+    app: &AppHandle,
+    entry_id: &str,
+    job_id: &str,
+    raw_text: &str,
+    error_text: &str,
+) -> Result<(), String> {
+    update_history_entry_refinement(app, entry_id, |entry| {
+        let fallback_raw = entry.text.clone();
+        let refinement = ensure_history_refinement(entry);
+        if !job_id.trim().is_empty() {
+            refinement.job_id = job_id.to_string();
+        }
+        if !raw_text.trim().is_empty() {
+            refinement.raw = raw_text.to_string();
+        } else if refinement.raw.trim().is_empty() {
+            refinement.raw = fallback_raw;
+        }
+        refinement.status = "error".to_string();
+        refinement.error = error_text.to_string();
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_history_entry(id: &str, status: &str, refined: &str, error: &str) -> HistoryEntry {
+        HistoryEntry {
+            id: id.to_string(),
+            text: "raw transcript".to_string(),
+            timestamp_ms: 1_772_101_100_000,
+            source: "local".to_string(),
+            speaker_name: Some("local".to_string()),
+            refinement: Some(HistoryRefinement {
+                job_id: format!("job-{id}"),
+                raw: "raw transcript".to_string(),
+                refined: refined.to_string(),
+                status: status.to_string(),
+                model: "qwen3:14b".to_string(),
+                execution_time_ms: Some(1234),
+                error: error.to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn history_roundtrip_persists_refinement_states() {
+        let temp_path = std::env::temp_dir().join(format!(
+            "trispr_history_roundtrip_{}_{}.json",
+            std::process::id(),
+            crate::util::now_ms()
+        ));
+
+        let original = vec![
+            sample_history_entry("a", "refined", "refined transcript", ""),
+            sample_history_entry("b", "error", "", "network timeout"),
+            sample_history_entry("c", "refining", "", ""),
+        ];
+
+        save_history_to_path(&temp_path, &original).expect("save history");
+        let restored = load_history_from_path(&temp_path);
+        let _ = fs::remove_file(&temp_path);
+
+        assert_eq!(restored.len(), original.len());
+        assert_eq!(
+            restored[0].refinement.as_ref().map(|r| r.status.as_str()),
+            Some("refined")
+        );
+        assert_eq!(
+            restored[0].refinement.as_ref().map(|r| r.refined.as_str()),
+            Some("refined transcript")
+        );
+        assert_eq!(
+            restored[1].refinement.as_ref().map(|r| r.status.as_str()),
+            Some("error")
+        );
+        assert_eq!(
+            restored[1].refinement.as_ref().map(|r| r.error.as_str()),
+            Some("network timeout")
+        );
+        assert_eq!(
+            restored[2].refinement.as_ref().map(|r| r.status.as_str()),
+            Some("refining")
+        );
+    }
 }

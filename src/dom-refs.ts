@@ -9,8 +9,14 @@ const $ = <T extends HTMLElement>(id: string) => {
 // Main tabs
 export const tabBtnTranscription = $("tab-btn-transcription") as HTMLButtonElement | null;
 export const tabBtnSettings = $("tab-btn-settings") as HTMLButtonElement | null;
+export const tabBtnAiRefinement = $("tab-btn-ai-refinement") as HTMLButtonElement | null;
+export const tabBtnModules = $("tab-btn-modules") as HTMLButtonElement | null;
 export const tabTranscription = $("tab-transcription") as HTMLDivElement | null;
 export const tabSettings = $("tab-settings") as HTMLDivElement | null;
+export const tabAiRefinement = $("tab-ai-refinement") as HTMLDivElement | null;
+export const tabModules = $("tab-modules") as HTMLDivElement | null;
+export const expertModeToggle = $("expert-mode-toggle") as HTMLInputElement | null;
+export const expertModeLabel = $("expert-mode-label") as HTMLSpanElement | null;
 
 // Status and hero elements
 export const statusLabel = $("status-label");
@@ -19,9 +25,17 @@ export const recordingPill = $("recording-pill");
 export const transcribeStatusDot = $("transcribe-dot") as HTMLSpanElement | null;
 export const transcribeStatusLabel = $("transcribe-label");
 export const transcribePill = $("transcribe-pill");
+export const refiningStatusDot = $("refining-dot") as HTMLSpanElement | null;
+export const refiningStatusLabel = $("refining-label");
+export const refiningPill = $("refining-pill");
+export const gpuStatusDot = $("gpu-dot") as HTMLSpanElement | null;
+export const gpuStatusLabel = $("gpu-label");
+export const gpuPill = $("gpu-pill");
 export const statusMessage = $("status-message");
 export const cloudState = $("cloud-state");
+export const cloudDetail = $("cloud-detail");
 export const cloudCheck = $("cloud-check");
+export const aiModelState = $("ai-model-state");
 export const dictationBadge = $("dictation-badge");
 export const modeState = $("mode-state");
 export const deviceState = $("device-state");
@@ -38,9 +52,10 @@ export const toggleHotkey = $("toggle-hotkey") as HTMLInputElement | null;
 export const toggleHotkeyRecord = $("toggle-hotkey-record") as HTMLButtonElement | null;
 export const toggleHotkeyStatus = $("toggle-hotkey-status") as HTMLSpanElement | null;
 export const deviceSelect = $("device-select") as HTMLSelectElement | null;
+export const asrLanguageField = $("asr-language-field") as HTMLLabelElement | null;
 export const languageSelect = $("language-select") as HTMLSelectElement | null;
+export const asrLanguageHintNote = $("asr-language-hint-note") as HTMLSpanElement | null;
 export const languagePinnedToggle = $("language-pinned-toggle") as HTMLInputElement | null;
-export const cloudToggle = $("cloud-toggle") as HTMLInputElement | null;
 export const audioCuesToggle = $("audio-cues-toggle") as HTMLInputElement | null;
 export const audioCuesVolume = $("audio-cues-volume") as HTMLInputElement | null;
 export const pttUseVadToggle = $("ptt-use-vad-toggle") as HTMLInputElement | null;
@@ -66,8 +81,11 @@ export const activationWordsList = $("activation-words-list") as HTMLTextAreaEle
 
 // Post-processing controls
 export const postprocEnabled = $("postproc-enabled") as HTMLInputElement | null;
+export const refinementPipelineNote = $("refinement-pipeline-note") as HTMLSpanElement | null;
+export const refinementPipelineGraph = $("refinement-pipeline-graph") as HTMLDivElement | null;
+export const refinementPipelineLive = $("refinement-pipeline-live") as HTMLDivElement | null;
 export const postprocSettings = $("postproc-settings") as HTMLDivElement | null;
-export const postprocLanguage = $("postproc-language") as HTMLSelectElement | null;
+export const postprocLanguageDerived = $("postproc-language-derived") as HTMLSpanElement | null;
 export const postprocPunctuation = $("postproc-punctuation") as HTMLInputElement | null;
 export const postprocCapitalization = $("postproc-capitalization") as HTMLInputElement | null;
 export const postprocNumbers = $("postproc-numbers") as HTMLInputElement | null;
@@ -77,26 +95,48 @@ export const postprocVocabRows = $("postproc-vocab-rows") as HTMLDivElement | nu
 export const postprocVocabAdd = $("postproc-vocab-add") as HTMLButtonElement | null;
 export const aiFallbackEnabled = $("ai-fallback-enabled") as HTMLInputElement | null;
 export const aiFallbackSettings = $("ai-fallback-settings") as HTMLDivElement | null;
-export const aiFallbackProvider = $("ai-fallback-provider") as HTMLSelectElement | null;
+export const aiFallbackProviderLanes = $("ai-fallback-provider-lanes") as HTMLDivElement | null;
+export const aiFallbackLocalLane = $("ai-fallback-local-lane") as HTMLDivElement | null;
+export const aiFallbackOnlineLane = $("ai-fallback-online-lane") as HTMLDivElement | null;
+export const aiFallbackLocalPrimaryStatus = $("ai-fallback-local-primary-status") as HTMLSpanElement | null;
+export const aiFallbackLocalPrimaryAction = $("ai-fallback-local-primary-action") as HTMLButtonElement | null;
+export const aiFallbackLocalImportAction = $("ai-fallback-local-import-action") as HTMLButtonElement | null;
+export const aiFallbackLocalAdvanced = $("ai-fallback-local-advanced") as HTMLDetailsElement | null;
+export const aiFallbackLocalDetectAction = $("ai-fallback-local-detect-action") as HTMLButtonElement | null;
+export const aiFallbackLocalUseSystemAction = $("ai-fallback-local-use-system-action") as HTMLButtonElement | null;
+export const aiFallbackLocalVerifyAction = $("ai-fallback-local-verify-action") as HTMLButtonElement | null;
+export const aiFallbackLocalRefreshAction = $("ai-fallback-local-refresh-action") as HTMLButtonElement | null;
+export const aiFallbackLocalRuntimeNote = $("ai-fallback-local-runtime-note") as HTMLSpanElement | null;
+export const aiFallbackOnlineStatusBadge = $("ai-fallback-online-status-badge") as HTMLSpanElement | null;
+export const aiFallbackCloudProviderList = $("ai-fallback-cloud-provider-list") as HTMLDivElement | null;
+export const aiFallbackFallbackStatus = $("ai-fallback-fallback-status") as HTMLSpanElement | null;
+export const aiFallbackModelField = $("ai-fallback-model-field") as HTMLLabelElement | null;
 export const aiFallbackModel = $("ai-fallback-model") as HTMLSelectElement | null;
-export const aiFallbackApiKeySection = $("ai-fallback-api-key-section") as HTMLDivElement | null;
-export const aiFallbackApiKeyInput = $("ai-fallback-api-key-input") as HTMLInputElement | null;
-export const aiFallbackSaveKeyBtn = $("ai-fallback-save-key") as HTMLButtonElement | null;
-export const aiFallbackClearKeyBtn = $("ai-fallback-clear-key") as HTMLButtonElement | null;
-export const aiFallbackTestKeyBtn = $("ai-fallback-test-key") as HTMLButtonElement | null;
-export const aiFallbackKeyStatus = $("ai-fallback-key-status") as HTMLSpanElement | null;
-export const aiFallbackOllamaSection = $("ai-fallback-ollama-section") as HTMLDivElement | null;
-export const aiFallbackOllamaEndpoint = $("ai-fallback-ollama-endpoint") as HTMLInputElement | null;
-export const aiFallbackSaveEndpointBtn = $("ai-fallback-save-endpoint") as HTMLButtonElement | null;
-export const aiFallbackRefreshModelsBtn = $("ai-fallback-refresh-models") as HTMLButtonElement | null;
-export const aiFallbackTestOllamaBtn = $("ai-fallback-test-ollama") as HTMLButtonElement | null;
-export const aiFallbackOllamaStatus = $("ai-fallback-ollama-status") as HTMLSpanElement | null;
+export const aiFallbackOllamaManagedNote = $("ai-fallback-ollama-managed-note") as HTMLDivElement | null;
 export const aiFallbackTemperature = $("ai-fallback-temperature") as HTMLInputElement | null;
 export const aiFallbackTemperatureValue = $("ai-fallback-temperature-value") as HTMLSpanElement | null;
+export const aiFallbackPreserveLanguage = $("ai-fallback-preserve-language") as HTMLInputElement | null;
+export const aiFallbackPreserveLanguageNote = $("ai-fallback-preserve-language-note") as HTMLSpanElement | null;
+export const aiFallbackLowLatencyMode = $("ai-fallback-low-latency-mode") as HTMLInputElement | null;
+export const aiFallbackLowLatencyNote = $("ai-fallback-low-latency-note") as HTMLSpanElement | null;
 export const aiFallbackMaxTokens = $("ai-fallback-max-tokens") as HTMLSelectElement | null;
+export const aiFallbackPromptPreset = $("ai-fallback-prompt-preset") as HTMLSelectElement | null;
+export const aiFallbackPromptPreviewField = $("ai-fallback-prompt-preview-field") as HTMLDivElement | null;
+export const aiFallbackPromptPreviewLabel = $("ai-fallback-prompt-preview-label") as HTMLSpanElement | null;
+export const aiFallbackPromptPreviewHint = $("ai-fallback-prompt-preview-hint") as HTMLSpanElement | null;
 export const aiFallbackCustomPromptEnabled = $("ai-fallback-custom-prompt-enabled") as HTMLInputElement | null;
 export const aiFallbackCustomPromptField = $("ai-fallback-custom-prompt-field") as HTMLDivElement | null;
 export const aiFallbackCustomPrompt = $("ai-fallback-custom-prompt") as HTMLTextAreaElement | null;
+export const aiAuthModal = $("ai-auth-modal") as HTMLDivElement | null;
+export const aiAuthModalBackdrop = $("ai-auth-modal-backdrop") as HTMLDivElement | null;
+export const aiAuthModalClose = $("ai-auth-modal-close") as HTMLButtonElement | null;
+export const aiAuthProviderName = $("ai-auth-provider-name") as HTMLParagraphElement | null;
+export const aiAuthMethod = $("ai-auth-method") as HTMLSelectElement | null;
+export const aiAuthApiKeyInput = $("ai-auth-api-key-input") as HTMLInputElement | null;
+export const aiAuthSaveKey = $("ai-auth-save-key") as HTMLButtonElement | null;
+export const aiAuthClearKey = $("ai-auth-clear-key") as HTMLButtonElement | null;
+export const aiAuthVerifyKey = $("ai-auth-verify-key") as HTMLButtonElement | null;
+export const aiAuthStatus = $("ai-auth-status") as HTMLSpanElement | null;
 
 // Output / transcribe controls
 export const transcribeEnabledToggle = $("transcribe-enabled-toggle") as HTMLInputElement | null;
@@ -170,6 +210,15 @@ export const overlayOpacityActiveValue = $("overlay-opacity-active-value");
 export const overlayPosX = $("overlay-pos-x") as HTMLInputElement | null;
 export const overlayPosY = $("overlay-pos-y") as HTMLInputElement | null;
 export const overlayStyle = $("overlay-style") as HTMLSelectElement | null;
+export const accentColor = $("accent-color") as HTMLInputElement | null;
+export const accentColorReset = $("accent-color-reset") as HTMLButtonElement | null;
+export const overlayRefiningIndicatorEnabled = $("overlay-refining-indicator-enabled") as HTMLInputElement | null;
+export const overlayRefiningIndicatorPreset = $("overlay-refining-indicator-preset") as HTMLSelectElement | null;
+export const overlayRefiningIndicatorColor = $("overlay-refining-indicator-color") as HTMLInputElement | null;
+export const overlayRefiningIndicatorSpeed = $("overlay-refining-indicator-speed") as HTMLInputElement | null;
+export const overlayRefiningIndicatorSpeedValue = $("overlay-refining-indicator-speed-value");
+export const overlayRefiningIndicatorRange = $("overlay-refining-indicator-range") as HTMLInputElement | null;
+export const overlayRefiningIndicatorRangeValue = $("overlay-refining-indicator-range-value");
 export const overlayDotSettings = $("overlay-dot-settings") as HTMLDivElement | null;
 export const overlayKittSettings = $("overlay-kitt-settings") as HTMLDivElement | null;
 export const overlayKittMinWidth = $("overlay-kitt-min-width") as HTMLInputElement | null;
@@ -185,9 +234,11 @@ export const historyTabMic = $("history-tab-mic");
 export const historyTabSystem = $("history-tab-system");
 export const historyTabConversation = $("history-tab-conversation");
 export const historyCopyConversation = $("history-copy-conversation") as HTMLButtonElement | null;
+export const historyDeleteConversation = $("history-delete-conversation") as HTMLButtonElement | null;
 export const analyseButton = $("analyse-button") as HTMLButtonElement | null;
 export const historyExport = $("history-export") as HTMLButtonElement | null;
-export const exportFormat = $("export-format") as HTMLSelectElement | null;
+export const archiveBrowseBtn = $("archive-browse-btn") as HTMLButtonElement | null;
+export const openModulesBtn = $("open-modules-btn") as HTMLButtonElement | null;
 export const historySearch = $("history-search") as HTMLInputElement | null;
 export const historySearchClear = $("history-search-clear") as HTMLButtonElement | null;
 export const conversationFontControls = $("conversation-font-controls");
@@ -196,18 +247,73 @@ export const conversationFontSizeValue = $("conversation-font-size-value");
 export const historyAliasControls = $("history-alias-controls") as HTMLDivElement | null;
 export const historyAliasMicInput = $("history-alias-mic-input") as HTMLInputElement | null;
 export const historyAliasSystemInput = $("history-alias-system-input") as HTMLInputElement | null;
+export const refinementInspector = $("refinement-inspector") as HTMLDetailsElement | null;
+export const refinementInspectorEmpty = $("refinement-inspector-empty") as HTMLDivElement | null;
+export const refinementInspectorContent = $("refinement-inspector-content") as HTMLDivElement | null;
+export const refinementInspectorStatus = $("refinement-inspector-status") as HTMLSpanElement | null;
+export const refinementInspectorMeta = $("refinement-inspector-meta") as HTMLSpanElement | null;
+export const refinementInspectorRaw = $("refinement-inspector-raw") as HTMLDivElement | null;
+export const refinementInspectorRefined = $("refinement-inspector-refined") as HTMLDivElement | null;
+export const refinementInspectorDiff = $("refinement-inspector-diff") as HTMLDivElement | null;
+export const refinementInspectorError = $("refinement-inspector-error") as HTMLDivElement | null;
 
-// Chapter controls (Transcription tab)
-export const chaptersContainer = $("chapters-container") as HTMLDivElement | null;
-export const chaptersList = $("chapters-list") as HTMLDivElement | null;
-export const chapterMethodSelect = $("chapter-method") as HTMLSelectElement | null;
-export const chaptersToggle = $("chapters-toggle") as HTMLButtonElement | null;
+// Modules tab
+export const modulesList = $("modules-list") as HTMLDivElement | null;
+export const modulesStatus = $("modules-status") as HTMLSpanElement | null;
 
-// Chapter settings (Settings tab)
-export const chaptersEnabled = $("chapters-enabled") as HTMLInputElement | null;
-export const chaptersSettings = $("chapters-settings") as HTMLDivElement | null;
-export const chaptersShowIn = $("chapters-show-in") as HTMLSelectElement | null;
-export const chaptersMethod = $("chapters-method") as HTMLSelectElement | null;
+// GDD flow modal
+export const gddFlowModal = $("gdd-flow-modal") as HTMLDivElement | null;
+export const gddFlowBackdrop = $("gdd-flow-backdrop") as HTMLDivElement | null;
+export const gddFlowClose = $("gdd-flow-close") as HTMLButtonElement | null;
+export const gddFlowPreset = $("gdd-flow-preset") as HTMLSelectElement | null;
+export const gddFlowDetectPreset = $("gdd-flow-detect-preset") as HTMLButtonElement | null;
+export const gddFlowTitle = $("gdd-flow-title") as HTMLInputElement | null;
+export const gddFlowMaxChunk = $("gdd-flow-max-chunk") as HTMLSelectElement | null;
+export const gddFlowTemplateSource = $("gdd-flow-template-source") as HTMLSelectElement | null;
+export const gddFlowTemplateConfluenceGroup = $("gdd-flow-template-confluence-group") as HTMLDivElement | null;
+export const gddFlowTemplateConfluenceUrl = $("gdd-flow-template-confluence-url") as HTMLInputElement | null;
+export const gddFlowTemplateConfluenceLoad = $("gdd-flow-template-confluence-load") as HTMLButtonElement | null;
+export const gddFlowTemplateFileGroup = $("gdd-flow-template-file-group") as HTMLDivElement | null;
+export const gddFlowTemplateFilePath = $("gdd-flow-template-file-path") as HTMLInputElement | null;
+export const gddFlowTemplateFilePick = $("gdd-flow-template-file-pick") as HTMLButtonElement | null;
+export const gddFlowTemplateFileLoad = $("gdd-flow-template-file-load") as HTMLButtonElement | null;
+export const gddFlowTemplateMeta = $("gdd-flow-template-meta") as HTMLSpanElement | null;
+export const gddFlowTemplatePreview = $("gdd-flow-template-preview") as HTMLTextAreaElement | null;
+export const gddFlowGenerate = $("gdd-flow-generate") as HTMLButtonElement | null;
+export const gddFlowValidate = $("gdd-flow-validate") as HTMLButtonElement | null;
+export const gddFlowStatus = $("gdd-flow-status") as HTMLSpanElement | null;
+export const gddFlowSpaceKey = $("gdd-flow-space-key") as HTMLInputElement | null;
+export const gddFlowParentPageId = $("gdd-flow-parent-page-id") as HTMLInputElement | null;
+export const gddFlowTargetPageId = $("gdd-flow-target-page-id") as HTMLInputElement | null;
+export const gddFlowSuggestTarget = $("gdd-flow-suggest-target") as HTMLButtonElement | null;
+export const gddFlowPublish = $("gdd-flow-publish") as HTMLButtonElement | null;
+export const gddFlowPublishLink = $("gdd-flow-publish-link") as HTMLAnchorElement | null;
+export const gddFlowOutput = $("gdd-flow-output") as HTMLTextAreaElement | null;
+
+// Export dialog
+export const exportDialog = $("export-dialog") as HTMLDivElement | null;
+export const exportDialogBackdrop = $("export-dialog-backdrop") as HTMLDivElement | null;
+export const exportDialogClose = $("export-dialog-close") as HTMLButtonElement | null;
+export const exportCustomRange = $("export-custom-range") as HTMLDivElement | null;
+export const exportCustomFrom = $("export-custom-from") as HTMLInputElement | null;
+export const exportCustomTo = $("export-custom-to") as HTMLInputElement | null;
+export const exportIncludeMic = $("export-include-mic") as HTMLInputElement | null;
+export const exportIncludeSystem = $("export-include-system") as HTMLInputElement | null;
+export const exportDialogFormat = $("export-dialog-format") as HTMLSelectElement | null;
+export const exportPreviewCount = $("export-preview-count") as HTMLSpanElement | null;
+export const exportPreviewSpan = $("export-preview-span") as HTMLSpanElement | null;
+export const exportDialogRun = $("export-dialog-run") as HTMLButtonElement | null;
+
+// Archive browser
+export const archiveBrowser = $("archive-browser") as HTMLDivElement | null;
+export const archiveBrowserBackdrop = $("archive-browser-backdrop") as HTMLDivElement | null;
+export const archiveBrowserClose = $("archive-browser-close") as HTMLButtonElement | null;
+export const archiveMicPartitions = $("archive-mic-partitions") as HTMLDivElement | null;
+export const archiveSystemPartitions = $("archive-system-partitions") as HTMLDivElement | null;
+export const archiveSelectionMeta = $("archive-selection-meta") as HTMLSpanElement | null;
+export const archiveEntries = $("archive-entries") as HTMLDivElement | null;
+export const archiveExportFormat = $("archive-export-format") as HTMLSelectElement | null;
+export const archiveExportBtn = $("archive-export-btn") as HTMLButtonElement | null;
 
 // Extra hotkeys controls
 export const toggleActivationWordsHotkey = $("toggle-activation-words-hotkey") as HTMLInputElement | null;
@@ -233,3 +339,12 @@ export const modelStoragePath = $("model-storage-path") as HTMLInputElement | nu
 export const modelStorageBrowse = $("model-storage-browse") as HTMLButtonElement | null;
 export const modelStorageReset = $("model-storage-reset") as HTMLButtonElement | null;
 export const modelList = $("model-list");
+
+// Overlay controls (button not reachable via id helper above)
+export const applyOverlayBtn = $("apply-overlay-btn") as HTMLButtonElement | null;
+
+// Model panel (queried by data attribute, not id)
+export const modelPanel =
+  typeof document !== "undefined"
+    ? (document.querySelector('[data-panel="model"]') as HTMLElement | null)
+    : null;

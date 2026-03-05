@@ -1,6 +1,6 @@
 # Task Schedule - Trispr Flow
 
-Last updated: 2026-02-19
+Last updated: 2026-03-04
 
 ## Overview
 
@@ -170,6 +170,7 @@ Instead of context-switching between models for each task, tasks are organized i
 | 39c | V0.7.0 Planning document | DONE | ✅ V0.7.0_PLAN.md with full architecture overview |
 
 **Deliverables**:
+
 - V0.7.0_PLAN.md: 280 lines, full planning doc with provider architecture, settings schema, UI mockups
 - DECISIONS.md: 3 new decisions (DEC-023, DEC-024, DEC-025)
 - Design decisions documented: terminology, settings layout, execution flow
@@ -184,17 +185,17 @@ Instead of context-switching between models for each task, tasks are organized i
 | 36 | Implement provider data model and settings migration | High | Task 31 | DONE | Update settings.json schema. Migration from old `cloud_fallback` to new structure. |
 | 37 | Implement provider config UI (API keys, model selection) | High | Task 31 | DONE | Create Settings panel for provider/model/key management. |
 
-### Block H: Offline-First Ollama Sprint --- OPEN
+### Block H: Offline-First Ollama Sprint --- COMPLETE ✅
 
-**Duration**: 2 weeks | **Status**: Open / next execution packet
+**Duration**: 2 weeks | **Model**: Claude Sonnet | **Status**: All 5 tasks complete
 
 | Task | Name | Complexity | Dependencies | Status | Description |
 | --- | --- | --- | --- | --- | --- |
-| 32 | Implement Ollama provider integration (backend) | High | Task 31 | OPEN | Add local Ollama client (`/api/chat`, `/api/tags`) with robust error handling. |
-| 33 | Activate AI refinement pipeline stage (local provider) | High | Task 32 | OPEN | Wire stage 3 to real local refinement with non-blocking fallback on failures. |
-| 34 | Implement Ollama-only provider UX | Medium | Tasks 32, 33 | OPEN | Endpoint input, model refresh/test-connection, remove active API-key flow in MVP path. |
-| 35 | Implement local-model prompt strategy polish | Medium | Task 33 | OPEN | Tune prompts for DE/EN refinement quality on local models (qwen3 track). |
-| 38 | End-to-end test: offline refinement reliability | High | Tasks 32, 33, 34, 35 | OPEN | Validate offline flow, timeout behavior, and no transcript loss under provider failures. |
+| 32 | Implement Ollama provider integration (backend) | High | Task 31 | DONE | `OllamaProvider` hardened: `keep_alive: "-1"`, 60s read timeout, 5s connect timeout, `list_ollama_models_with_size` + `fetch_ollama_models_with_size` Tauri command. |
+| 33 | Activate AI refinement pipeline stage (local provider) | High | Task 32 | DONE | `maybe_spawn_ai_refinement` helper in audio.rs; wired at all 3 transcription:result emit sites; emits `transcription:refined` / `transcription:refinement-failed`; frontend listeners in main.ts. |
+| 34 | Implement Ollama-only provider UX | Medium | Tasks 32, 33 | DONE | UI already complete from Block G: endpoint input, Refresh/Test/Save buttons, ollama-specific section, API-key section hidden for Ollama. |
+| 35 | Implement local-model prompt strategy polish | Medium | Task 33 | DONE | EN/DE prompts updated: no-translate guard, output-only instruction, proper-noun preservation, German register (Du/Sie) preservation. |
+| 38 | End-to-end test: offline refinement reliability | High | Tasks 32, 33, 34, 35 | DONE | 24 TypeScript tests (block-h-ollama.test.ts: H-S1–H-S5); 8 new Rust unit tests for prompt guards, connection refused → OllamaNotRunning, size-list consistency. |
 
 ### Block I: Cloud Provider Rollout --- DEFERRED
 
@@ -205,6 +206,59 @@ Instead of context-switching between models for each task, tasks are organized i
 | 40 | OpenAI provider integration | High | Task 31, Block H | DEFERRED | Add OpenAI API client after local path is release-stable. |
 | 41 | Anthropic (Claude) provider integration | High | Task 31, Block H | DEFERRED | Claude API client and model mapping after offline release. |
 | 42 | Gemini provider integration | High | Task 31, Block H | DEFERRED | Gemini API client after offline-first milestone. |
+
+### Block J: Adaptive AI Refinement Intelligence --- PLANNED
+
+**Duration**: 2-3 weeks | **Model**: Claude Sonnet | **Status**: Planned (after Block E)
+
+Two features that make the AI refinement pipeline more transparent and self-improving over time.
+
+#### J1 — Hardware Requirements Indicator
+
+When a user enables AI Fallback or selects a model, the UI should display VRAM requirements for the chosen model and warn if the GPU is likely insufficient.
+
+**User-facing behaviour:**
+
+- AI Fallback settings show estimated VRAM per model next to the model name (e.g., `qwen3:8b · ~5.9 GB VRAM`)
+- If detected VRAM < model requirement → amber warning banner: *"This model may run on CPU (~1–5 tok/s, 30–120 s per chunk). Consider `qwen3:8b` for faster processing."*
+- If no GPU detected → red warning: *"No GPU detected. AI refinement will use CPU and may be slow."*
+
+**Implementation notes:**
+
+- Tauri command `get_gpu_info` → Rust: try `nvml-wrapper` (NVIDIA), fall back to `wgpu` adapter query, fall back to `{ vram_mb: null }`.
+- Model VRAM table embedded in frontend (static lookup by quantization tier from `list_ollama_models_with_size` output).
+- Warning renders below the model selector in the AI Fallback settings panel.
+- No Ollama API call required — size info already available from Block H's `fetch_ollama_models_with_size`.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| 43 | GPU VRAM detection (Tauri backend) | Medium | Block H | PLANNED | Rust command `get_gpu_info` returning `{vram_mb: Option<u64>, gpu_name: Option<String>}` via nvml-wrapper → wgpu fallback. |
+| 43a | VRAM requirement display in AI Fallback UI | Low | Task 43 | PLANNED | Model selector shows size badge; warning banner renders when VRAM < model threshold. |
+
+#### J2 — Adaptive Vocabulary (Self-Learning from AI Refinement)
+
+When AI refinement consistently replaces the same word or phrase across multiple transcripts, the system should automatically propose (or auto-add) that substitution as a vocabulary rule — so Whisper learns the user's domain vocabulary over time.
+
+**User-facing behaviour:**
+
+- After a correction fires ≥ 3 times (configurable), the system auto-adds it to the custom vocabulary as a substitution rule: `original_word → corrected_word`.
+- Optional: surface a *"Learned X new vocabulary rules this session"* toast after a session ends.
+- Settings panel: toggle `Auto-learn vocabulary from AI refinement` (default: enabled). Sub-section shows learned rules with ability to accept/reject individually.
+
+**Implementation notes:**
+
+- Frontend (TypeScript): listen to `transcription:refined` events → compute word-level diff between `original` and `refined` (`diffWords` or a simple tokenised comparison).
+- Maintain a `Map<string, Map<string, number>>` (`original → refined → count`) in session memory and persisted as `learned_vocabulary` in settings JSON.
+- Threshold reached → call `update_settings` to append the rule to the existing vocabulary list.
+- Learned rules are indistinguishable at runtime from manually entered ones — same pipeline, same Rust processing.
+- Vocabulary rules are applied at Stage 1 (local rule processing), before AI fallback. The self-learning loop therefore improves the base transcript so the AI has less to fix over time.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| 44 | Word-diff extraction from refinement events | Medium | Block H | PLANNED | TypeScript: compare `original` vs `refined` payload from `transcription:refined`; extract word-level substitutions; accumulate in session map. |
+| 44a | Persistence and threshold logic | Medium | Task 44 | PLANNED | Persist `learned_vocabulary` map to settings JSON. Auto-promote substitution → vocabulary rule after N occurrences (default 3). |
+| 44b | Learned vocabulary settings UI | Medium | Task 44a | PLANNED | Settings sub-panel: toggle auto-learn, list of learned rules with accept/reject, session toast notification. |
+| 44c | Adaptive vocabulary regression tests | Medium | Tasks 44, 44a | PLANNED | Unit tests: diff extraction correctness, threshold promotion, persistence round-trip, rule deduplication. |
 
 ### Block K: Expert Mode UX Overhaul --- PLANNED
 
@@ -219,11 +273,40 @@ Implementation uses `data-expert-only` attributes on DOM elements — CSS hides 
 
 | Task | Name | Complexity | Dependencies | Status | Description |
 | --- | --- | --- | --- | --- | --- |
-| K1 | Expert-mode toggle (header/settings, localStorage persistence) | Low | Block E | PLANNED | Small toggle button; persists via localStorage `trispr-expert-mode`. |
+| K1 | Expert-mode toggle (header/settings, localStorage persistence) | Low | Block E | DONE | Toggle implemented in Settings tab, persisted via localStorage `trispr-expert-mode`, adds `expert-mode`/`standard-mode` root classes for follow-up K3. |
 | K2 | Audit & classify all settings (agent-assisted) | Medium | Block E | PLANNED | Agent reviews every settings field; outputs two lists: standard vs expert. Decision document added to DECISIONS.md. |
 | K3 | Apply `data-expert-only` attributes + CSS hide/show | Medium | K1, K2 | PLANNED | Add attribute to expert-only elements; CSS rule `.expert-mode [data-expert-only]` toggles visibility. |
 | K4 | Settings re-ordering within panels (expert items sink to bottom) | Medium | K3 | PLANNED | Visual grouping: essential controls at top, expert controls below a subtle divider. |
 | K5 | Regression tests (mode toggle shows correct subsets) | Low | K3, K4 | PLANNED | Unit tests verify standard mode hides expert elements; expert mode shows all. |
+
+---
+
+### Block L: Module Platform + GDD Automation --- IN PROGRESS
+
+**Duration**: 4-6 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: v0.7.1 stabilization (Blocks E/F) | **Status**: In progress
+
+Goal: Introduce a managed module platform and deliver a production-ready first module that turns transcripts into strict GDD drafts and publishes to Confluence Cloud.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| L1 | Module registry + lifecycle core (Rust) | High | E, F | DONE | Managed module states, dependency checks, lifecycle orchestration and command surface are implemented. |
+| L2 | Settings schema migration for modules | High | L1 | DONE | `module_settings`, `gdd_module_settings`, `confluence_settings` with safe normalization/migration are live. |
+| L3 | Module health/update commands | Medium | L1 | DONE | `get_module_health` and `check_module_updates` implemented and emitted to UI. |
+| L4 | Modules tab UI shell | Medium | L1 | DONE | Modules tab with cards, status badges, dependencies and actions implemented. |
+| L5 | Permission consent UX | Medium | L4 | DONE | Consent gating before first enable is implemented and persisted. |
+| L6 | Analyse button -> module launcher migration | Low | L4 | DONE | Analyse now routes to Modules tab and focuses module launcher path. |
+| L7 | Universal strict GDD preset schema | High | L2 | DONE | Universal strict preset and section schema implemented. |
+| L8 | Clone-preset persistence and editor API | Medium | L7 | DONE | Clone preset list/save API implemented with validation. |
+| L9 | Preset recognition engine | Medium | L7, L8 | DONE | Heuristic scoring with confidence/candidates/reasoning implemented. |
+| L10 | Token-safe extraction pipeline | High | L7 | DONE | Chunked extraction + synthesis pipeline implemented. |
+| L11 | GDD synthesis + validation | High | L10 | DONE | Strict draft generation with `TBD` fallback + validation command implemented. |
+| L12 | Draft rendering (Markdown + Confluence storage) | Medium | L11 | DONE | Markdown and Confluence storage rendering implemented and wired. |
+| L13 | Confluence auth and secret handling | High | L2 | DONE | OAuth exchange/refresh + API-token mode + keyring/file fallback implemented. |
+| L14 | Confluence discovery and routing suggestion | High | L13 | DONE | Space listing + target suggestion implemented and integrated in GDD flow. |
+| L15 | Confluence publish create/update lifecycle | High | L14, L12 | DONE | Create/update publish lifecycle implemented with version bump handling. |
+| L16 | Review flow + one-click mode policy | Medium | L11, L15 | PARTIAL | Draft/review/publish UI implemented; one-click policy gate remains pending. |
+| L17 | E2E + resilience tests | High | L1-L16 | PARTIAL | Build/test/check green; dedicated publish conflict/retry suites pending. |
+| L18 | Documentation and rollout packet | Medium | L17 | IN PROGRESS | Core planning docs updated; hardening checklist continues. |
 
 ---
 

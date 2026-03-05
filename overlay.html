@@ -23,24 +23,29 @@
       }
 
       #dot {
+        position: relative;
+        z-index: 2;
         width: 16px;
         height: 16px;
         border-radius: 50%;
         background: #ff3d2e;
-        transition: opacity 0.12s ease-out, width 0.05s ease-out, height 0.05s ease-out;
+        transition: opacity 0.12s ease-out, width 0.04s linear, height 0.04s linear;
       }
 
       #kitt {
         display: none;
+        position: relative;
+        z-index: 2;
         width: 20px;
         height: 20px;
         border-radius: 4px;
         background: #ff3d2e;
-        transition: opacity 0.12s ease-out, width 0.05s ease-out;
+        transition: opacity 0.12s ease-out, width 0.04s linear;
       }
 
       #transcribe-indicator {
         position: absolute;
+        z-index: 3;
         width: 10px;
         height: 10px;
         border-radius: 50%;
@@ -71,6 +76,150 @@
         transform: scale(1);
       }
 
+      #refine-indicator {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        display: grid;
+        place-items: center;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.2s ease-out;
+        --refine-inner-size: 38px;
+        --refine-outer-size: 56px;
+        --refine-inner-border: 2px;
+        --refine-outer-border: 2px;
+        --refine-pulse-duration: 1150ms;
+        --refine-duration-factor: 1;
+        --refine-range-scale: 1;
+        --refine-rgb: 110, 200, 255;
+        --refine-ring-opacity-a: 0.8;
+        --refine-ring-opacity-b: 0.55;
+        --refine-shadow-a: 14px;
+        --refine-shadow-b: 20px;
+      }
+
+      #refine-indicator::before,
+      #refine-indicator::after {
+        content: "";
+        position: absolute;
+        border-radius: 999px;
+        border-style: solid;
+      }
+
+      #refine-indicator::before {
+        width: calc(var(--refine-inner-size) * var(--refine-range-scale));
+        height: calc(var(--refine-inner-size) * var(--refine-range-scale));
+        border-width: var(--refine-inner-border);
+        border-color: rgba(var(--refine-rgb), var(--refine-ring-opacity-a));
+        box-shadow: 0 0 var(--refine-shadow-a) rgba(var(--refine-rgb), 0.5);
+        animation: refinePulseA calc(var(--refine-pulse-duration) * var(--refine-duration-factor)) ease-out infinite;
+      }
+
+      #refine-indicator::after {
+        width: calc(var(--refine-outer-size) * var(--refine-range-scale));
+        height: calc(var(--refine-outer-size) * var(--refine-range-scale));
+        border-width: var(--refine-outer-border);
+        border-color: rgba(var(--refine-rgb), var(--refine-ring-opacity-b));
+        box-shadow: 0 0 var(--refine-shadow-b) rgba(var(--refine-rgb), 0.35);
+        animation: refinePulseB calc(var(--refine-pulse-duration) * var(--refine-duration-factor)) ease-out infinite;
+      }
+
+      #container[data-refining-preset="subtle"] #refine-indicator {
+        --refine-inner-size: 30px;
+        --refine-outer-size: 44px;
+        --refine-inner-border: 1.5px;
+        --refine-outer-border: 1.5px;
+        --refine-duration-factor: 1.15;
+        --refine-ring-opacity-a: 0.56;
+        --refine-ring-opacity-b: 0.4;
+        --refine-shadow-a: 10px;
+        --refine-shadow-b: 14px;
+      }
+
+      #container[data-refining-preset="standard"] #refine-indicator {
+        --refine-inner-size: 38px;
+        --refine-outer-size: 56px;
+        --refine-inner-border: 2px;
+        --refine-outer-border: 2px;
+        --refine-duration-factor: 1;
+        --refine-ring-opacity-a: 0.8;
+        --refine-ring-opacity-b: 0.55;
+        --refine-shadow-a: 14px;
+        --refine-shadow-b: 20px;
+      }
+
+      #container[data-refining-preset="intense"] #refine-indicator {
+        --refine-inner-size: 48px;
+        --refine-outer-size: 72px;
+        --refine-inner-border: 2.5px;
+        --refine-outer-border: 2.5px;
+        --refine-duration-factor: 0.82;
+        --refine-ring-opacity-a: 1;
+        --refine-ring-opacity-b: 0.82;
+        --refine-shadow-a: 20px;
+        --refine-shadow-b: 28px;
+      }
+
+      #container[data-style="kitt"] #refine-indicator {
+        --refine-inner-size: 96px;
+        --refine-outer-size: 132px;
+      }
+
+      #container[data-style="kitt"] #refine-indicator::before {
+        height: 22px;
+        border-radius: 12px;
+      }
+
+      #container[data-style="kitt"] #refine-indicator::after {
+        height: 30px;
+        border-radius: 16px;
+      }
+
+      #container[data-style="kitt"][data-refining-preset="subtle"] #refine-indicator {
+        --refine-inner-size: 82px;
+        --refine-outer-size: 114px;
+      }
+
+      #container[data-style="kitt"][data-refining-preset="intense"] #refine-indicator {
+        --refine-inner-size: 112px;
+        --refine-outer-size: 148px;
+      }
+
+      #container[data-refining="on"][data-refining-enabled="true"] #refine-indicator {
+        opacity: 1;
+      }
+
+      @keyframes refinePulseA {
+        0% {
+          transform: scale(0.78);
+          opacity: 0.9;
+        }
+        70% {
+          transform: scale(1.12);
+          opacity: 0.12;
+        }
+        100% {
+          transform: scale(1.2);
+          opacity: 0;
+        }
+      }
+
+      @keyframes refinePulseB {
+        0% {
+          transform: scale(0.62);
+          opacity: 0.7;
+        }
+        60% {
+          transform: scale(1.02);
+          opacity: 0.15;
+        }
+        100% {
+          transform: scale(1.14);
+          opacity: 0;
+        }
+      }
+
       /* Dot mode (default): show dot, hide kitt */
       #container[data-style="dot"] #dot { display: block; }
       #container[data-style="dot"] #kitt { display: none; }
@@ -85,202 +234,9 @@
       <div id="dot"></div>
       <div id="kitt"></div>
       <div id="transcribe-indicator"></div>
+      <div id="refine-indicator"></div>
     </div>
 
-    <script>
-      // Overlay controlled by Rust backend via window.eval() and Tauri events.
-      // Settings flow:
-      //   1. Rust calls window.eval() with set* functions (primary path)
-      //   2. Tauri "settings-changed" event as backup (from save_settings)
-      //   3. Initial settings loaded via invoke("get_settings") on page load
-
-      const container = document.getElementById("container");
-      const dot = document.getElementById("dot");
-      const kitt = document.getElementById("kitt");
-
-      // State
-      let isActive = false;
-      let opacityActive = 1.0;
-      let opacityInactive = 0.25;
-      let baseColor = "#ff3d2e";
-      let currentStyle = "dot";
-
-      // KITT settings
-      let kittMinWidth = 20;
-      let kittMaxWidth = 200;
-      let kittHeight = 20;
-
-      // Dot settings
-      let dotMinRadius = 8;
-      let dotMaxRadius = 24;
-
-      function updateOpacity() {
-        const opacity = isActive ? opacityActive : opacityInactive;
-        dot.style.opacity = opacity;
-        kitt.style.opacity = opacity;
-      }
-
-      function hexToRgb(hex) {
-        const value = hex.replace("#", "");
-        if (value.length === 3) {
-          const r = parseInt(value[0] + value[0], 16);
-          const g = parseInt(value[1] + value[1], 16);
-          const b = parseInt(value[2] + value[2], 16);
-          return { r, g, b };
-        }
-        if (value.length !== 6) return null;
-        const r = parseInt(value.slice(0, 2), 16);
-        const g = parseInt(value.slice(2, 4), 16);
-        const b = parseInt(value.slice(4, 6), 16);
-        return { r, g, b };
-      }
-
-      function updateDotGradient() {
-        const rgb = hexToRgb(baseColor);
-        if (!rgb) return;
-        dot.style.background = `radial-gradient(circle, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1) 0%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.2) 60%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0) 100%)`;
-      }
-
-      function updateKittGradient() {
-        const rgb = hexToRgb(baseColor);
-        if (!rgb) return;
-        const active = Math.max(0.05, Math.min(1, opacityActive));
-        const inactive = Math.max(0.05, Math.min(1, opacityInactive));
-        kitt.style.background = `linear-gradient(90deg, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${inactive}) 0%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${active}) 50%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${inactive}) 100%)`;
-      }
-
-      // --- Public API called from Rust via window.eval() ---
-
-      window.setOverlayState = function(state) {
-        isActive = (state === "recording" || state === "transcribing");
-        container.dataset.state = state;
-        updateOpacity();
-      };
-
-      window.setOverlayColor = function(color) {
-        baseColor = color;
-        updateDotGradient();
-        updateKittGradient();
-      };
-
-      window.setOverlayOpacity = function(active, inactive) {
-        opacityActive = Math.max(0.1, Math.min(1, active));
-        opacityInactive = Math.max(0.05, Math.min(1, inactive));
-        updateOpacity();
-        updateDotGradient();
-        updateKittGradient();
-      };
-
-      window.setOverlayStyle = function(style) {
-        currentStyle = style;
-        container.dataset.style = style;
-      };
-
-      window.setKittDimensions = function(minWidth, maxWidth, height) {
-        kittMinWidth = Math.max(4, Math.min(40, minWidth));
-        kittMaxWidth = Math.max(50, Math.min(800, maxWidth));
-        kittHeight = Math.max(8, Math.min(40, height));
-        kitt.style.height = kittHeight + "px";
-        kitt.style.width = kittMinWidth + "px";
-      };
-
-      window.setDotDimensions = function(minRadius, maxRadius) {
-        dotMinRadius = Math.max(4, Math.min(64, minRadius));
-        dotMaxRadius = Math.max(8, Math.min(96, maxRadius));
-        if (dotMaxRadius < dotMinRadius) {
-          dotMaxRadius = dotMinRadius;
-        }
-        const size = dotMinRadius * 2;
-        dot.style.width = size + "px";
-        dot.style.height = size + "px";
-      };
-
-      window.setOverlayLevel = function(level) {
-        const clamped = Math.max(0, Math.min(1, level));
-        if (currentStyle === "kitt") {
-          const width = kittMinWidth + (kittMaxWidth - kittMinWidth) * clamped;
-          kitt.style.width = width + "px";
-        } else {
-          const radius = dotMinRadius + (dotMaxRadius - dotMinRadius) * clamped;
-          const size = Math.max(2, radius * 2);
-          dot.style.width = size + "px";
-          dot.style.height = size + "px";
-        }
-      };
-
-      // --- Initialization ---
-
-      updateOpacity();
-      updateDotGradient();
-      updateKittGradient();
-
-      // Signal readiness to Rust backend
-      if (window.__TAURI__?.event?.emit) {
-        window.__TAURI__.event.emit("overlay:ready").catch(() => {});
-      }
-
-      // Apply full settings payload from app settings object
-      function applySettingsPayload(payload) {
-        if (!payload) return;
-        const style = payload.overlay_style === "kitt" ? "kitt" : "dot";
-        const isKitt = style === "kitt";
-        const color = isKitt ? (payload.overlay_kitt_color || payload.overlay_color) : payload.overlay_color;
-        const activeOpacity = isKitt
-          ? (payload.overlay_kitt_opacity_active ?? payload.overlay_opacity_active)
-          : payload.overlay_opacity_active;
-        const inactiveOpacity = isKitt
-          ? (payload.overlay_kitt_opacity_inactive ?? payload.overlay_opacity_inactive)
-          : payload.overlay_opacity_inactive;
-        const minWidth = payload.overlay_kitt_min_width ?? kittMinWidth;
-        const maxWidth = payload.overlay_kitt_max_width ?? kittMaxWidth;
-        const height = payload.overlay_kitt_height ?? kittHeight;
-        const minRadius = payload.overlay_min_radius ?? dotMinRadius;
-        const maxRadius = payload.overlay_max_radius ?? dotMaxRadius;
-        if (color) {
-          window.setOverlayColor(color);
-        }
-        if (typeof activeOpacity === "number" && typeof inactiveOpacity === "number") {
-          window.setOverlayOpacity(activeOpacity, inactiveOpacity);
-        }
-        window.setOverlayStyle(style);
-        window.setKittDimensions(minWidth, maxWidth, height);
-        window.setDotDimensions(minRadius, maxRadius);
-        // Position is handled by Rust via window.set_position() - no JS positioning needed
-      }
-
-      // Load initial settings from backend
-      const invoke = window.__TAURI__?.core?.invoke;
-      if (invoke) {
-        invoke("get_settings")
-          .then(applySettingsPayload)
-          .catch(() => {});
-      }
-
-      // Listen for settings changes (backup path - primary is window.eval from Rust)
-      const listen = window.__TAURI__?.event?.listen;
-      if (listen) {
-        listen("overlay:settings", (event) => {
-          const payload = event?.payload;
-          if (!payload) return;
-          if (payload.style === "kitt" || payload.style === "dot") {
-            applySettingsPayload({
-              overlay_style: payload.style,
-              overlay_color: payload.color,
-              overlay_min_radius: payload.min_radius,
-              overlay_max_radius: payload.max_radius,
-              overlay_opacity_inactive: payload.opacity_inactive,
-              overlay_opacity_active: payload.opacity_active,
-              overlay_kitt_min_width: payload.kitt_min_width,
-              overlay_kitt_max_width: payload.kitt_max_width,
-              overlay_kitt_height: payload.kitt_height,
-            });
-          }
-        }).catch(() => {});
-
-        listen("settings-changed", (event) => {
-          applySettingsPayload(event?.payload);
-        }).catch(() => {});
-      }
-    </script>
+    <script type="module" src="/overlay.js"></script>
   </body>
 </html>

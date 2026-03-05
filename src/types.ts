@@ -1,13 +1,165 @@
 // Type definitions for Trispr Flow application
 
 export type AIFallbackProvider = "claude" | "openai" | "gemini" | "ollama";
+export type CloudAIFallbackProvider = Exclude<AIFallbackProvider, "ollama">;
+export type AIExecutionMode = "local_primary" | "online_fallback";
+export type AIProviderAuthStatus = "locked" | "verified_api_key" | "verified_oauth";
+export type AIProviderAuthMethodPreference = "api_key" | "oauth";
+export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
+export type ModuleId = "gdd" | "analysis" | "integrations_confluence";
+export type ModuleState = "not_installed" | "installed" | "enabled" | "active" | "error";
+export type ModulePermission =
+  | "network_confluence"
+  | "filesystem_history"
+  | "filesystem_exports"
+  | "keyring_access";
+export type RefinementPromptPreset =
+  | "wording"
+  | "summary"
+  | "technical_specs"
+  | "action_items"
+  | "custom";
+
+export interface ModuleDescriptor {
+  id: ModuleId | string;
+  name: string;
+  version: string;
+  state: ModuleState;
+  dependencies: string[];
+  permissions: ModulePermission[];
+  restart_required: boolean;
+  last_error?: string | null;
+  bundled: boolean;
+}
+
+export interface ModuleSettings {
+  enabled_modules: string[];
+  consented_permissions: Record<string, string[]>;
+  module_overrides: Record<string, unknown>;
+}
+
+export interface GddPresetSection {
+  id: string;
+  title: string;
+  required: boolean;
+}
+
+export interface GddPreset {
+  id: string;
+  name: string;
+  description: string;
+  is_clone: boolean;
+  base_preset_id?: string | null;
+  detail_level: string;
+  tone: string;
+  keywords: string[];
+  sections: GddPresetSection[];
+}
+
+export interface GddPresetClone {
+  id: string;
+  name: string;
+  detail_level: string;
+  tone: string;
+  keywords: string[];
+  section_order: string[];
+  required_sections: string[];
+}
+
+export interface GddRecognitionCandidate {
+  preset_id: string;
+  label: string;
+  score: number;
+}
+
+export interface GddRecognitionResult {
+  suggested_preset_id: string;
+  confidence: number;
+  candidates: GddRecognitionCandidate[];
+  reasoning_snippets: string[];
+}
+
+export interface GddSectionDraft {
+  id: string;
+  title: string;
+  content: string;
+  evidence_gap: boolean;
+}
+
+export interface GddDraft {
+  preset_id: string;
+  title: string;
+  summary: string;
+  sections: GddSectionDraft[];
+  chunk_count: number;
+  generated_at_iso: string;
+}
+
+export interface GddTemplateSourceResult {
+  source_kind: "confluence" | "file" | string;
+  source_label: string;
+  source_ref: string;
+  text: string;
+  original_chars: number;
+  truncated: boolean;
+}
+
+export interface GenerateGddDraftRequest {
+  transcript: string;
+  preset_id?: string | null;
+  title?: string | null;
+  max_chunk_chars?: number | null;
+  template_hint?: string | null;
+  template_label?: string | null;
+}
+
+export interface GddPublishRequest {
+  title: string;
+  storage_body: string;
+  space_key: string;
+  parent_page_id?: string | null;
+  target_page_id?: string | null;
+}
+
+export interface GddPublishResult {
+  page_id: string;
+  page_url: string;
+  created: boolean;
+  version: number;
+  message: string;
+}
+
+export interface GddModuleSettings {
+  enabled: boolean;
+  default_preset_id: string;
+  detect_preset_automatically: boolean;
+  prefer_one_click_publish: boolean;
+  preset_clones: GddPresetClone[];
+}
+
+export interface ConfluenceSettings {
+  enabled: boolean;
+  site_base_url: string;
+  oauth_cloud_id: string;
+  default_space_key: string;
+  api_user_email: string;
+  default_parent_page_id: string;
+  auth_mode: "oauth" | "api_token";
+  routing_memory: Record<string, string>;
+}
 
 export interface AIFallbackSettings {
   enabled: boolean;
   provider: AIFallbackProvider;
+  fallback_provider: CloudAIFallbackProvider | null;
+  execution_mode: AIExecutionMode;
+  strict_local_mode: boolean;
+  preserve_source_language: boolean;
   model: string;
   temperature: number;
   max_tokens: number;
+  low_latency_mode: boolean;
+  prompt_profile: RefinementPromptPreset;
   custom_prompt_enabled: boolean;
   custom_prompt: string;
   use_default_prompt: boolean;
@@ -15,6 +167,9 @@ export interface AIFallbackSettings {
 
 export interface AIProviderSettings {
   api_key_stored: boolean;
+  auth_method_preference: AIProviderAuthMethodPreference;
+  auth_status: AIProviderAuthStatus;
+  auth_verified_at: string | null;
   available_models: string[];
   preferred_model: string;
 }
@@ -23,6 +178,10 @@ export interface OllamaSettings {
   endpoint: string;
   available_models: string[];
   preferred_model: string;
+  runtime_source: "system" | "per_user_zip" | "manual";
+  runtime_path: string;
+  runtime_version: string;
+  last_health_check: string | null;
 }
 
 export interface AIProvidersSettings {
@@ -30,6 +189,12 @@ export interface AIProvidersSettings {
   openai: AIProviderSettings;
   gemini: AIProviderSettings;
   ollama: OllamaSettings;
+}
+
+export interface SetupSettings {
+  local_ai_wizard_completed: boolean;
+  local_ai_wizard_pending: boolean;
+  ollama_remote_expert_opt_in: boolean;
 }
 
 export interface Settings {
@@ -40,10 +205,14 @@ export interface Settings {
   language_mode: "auto" | "en" | "de" | "fr" | "es" | "it" | "pt" | "nl" | "pl" | "ru" | "ja" | "ko" | "zh" | "ar" | "tr" | "hi";
   language_pinned: boolean;
   model: string;
-  // Legacy compatibility toggle; mirrors ai_fallback.enabled.
+  // Legacy compatibility toggle for optional old cloud transcription path.
   cloud_fallback: boolean;
   ai_fallback: AIFallbackSettings;
   providers: AIProvidersSettings;
+  setup: SetupSettings;
+  module_settings?: ModuleSettings;
+  gdd_module_settings?: GddModuleSettings;
+  confluence_settings?: ConfluenceSettings;
   audio_cues: boolean;
   audio_cues_volume: number;
   ptt_use_vad: boolean;
@@ -62,6 +231,8 @@ export interface Settings {
   transcribe_chunk_overlap_ms: number;
   transcribe_input_gain_db: number;
   mic_input_gain_db: number;
+  history_alias_mic: string;
+  history_alias_system: string;
   capture_enabled: boolean;
   model_source: "default" | "custom";
   model_custom_url: string;
@@ -84,12 +255,18 @@ export interface Settings {
   overlay_kitt_pos_x: number;
   overlay_kitt_pos_y: number;
   overlay_style: string;
+  overlay_refining_indicator_enabled: boolean;
+  overlay_refining_indicator_preset: OverlayRefiningIndicatorPreset;
+  overlay_refining_indicator_color: string;
+  overlay_refining_indicator_speed_ms: number;
+  overlay_refining_indicator_range: number;
   overlay_kitt_min_width: number;
   overlay_kitt_max_width: number;
   overlay_kitt_height: number;
   hallucination_filter_enabled: boolean;
   activation_words_enabled: boolean;
   activation_words: string[];
+  topic_keywords: Record<string, string[]>;
   // Post-processing settings
   postproc_enabled: boolean;
   postproc_language: string;
@@ -103,10 +280,6 @@ export interface Settings {
   postproc_llm_api_key: string;
   postproc_llm_model: string;
   postproc_llm_prompt: string;
-  // Chapter settings
-  chapters_enabled?: boolean;
-  chapters_show_in?: "conversation" | "all";
-  chapters_method?: "silence" | "time" | "hybrid";
   // Recording export settings
   opus_enabled?: boolean;
   opus_bitrate_kbps?: number;
@@ -143,6 +316,8 @@ export interface Settings {
   conv_window_monitor?: string | null;
   conv_window_always_on_top?: boolean;
   main_window_start_state?: "normal" | "minimized" | "tray";
+  // UI theming
+  accent_color: string;
 }
 
 export interface HistoryEntry {
@@ -150,6 +325,24 @@ export interface HistoryEntry {
   text: string;
   timestamp_ms: number;
   source: string;
+  speaker_name?: string | null;
+  refinement?: HistoryRefinement | null;
+}
+
+export interface HistoryRefinement {
+  job_id: string;
+  raw: string;
+  refined: string;
+  status: "idle" | "refining" | "refined" | "error";
+  model: string;
+  execution_time_ms?: number | null;
+  error: string;
+}
+
+export interface TopicScore {
+  topic: string;
+  hits: number;
+  share: number; // Percentage of total keyword hits (0..100)
 }
 
 export interface AudioDevice {
@@ -185,6 +378,14 @@ export interface DownloadComplete {
 export interface DownloadError {
   id: string;
   error: string;
+}
+
+export interface QuantizeProgress {
+  file_name: string;
+  quant: string;
+  phase: "starting" | "running" | "finalizing" | "done";
+  percent?: number;
+  message?: string;
 }
 
 export interface ValidationResult {
@@ -225,5 +426,168 @@ export interface TranscribeBacklogStatus {
   suggested_capacity_chunks: number;
 }
 
+export interface TranscriptionResultEvent {
+  text: string;
+  source: string;
+  job_id: string;
+  paste_deferred?: boolean;
+  paste_timeout_ms?: number;
+  entry_id?: string;
+}
+
+export interface TranscriptionRefinementStartedEvent {
+  job_id: string;
+  entry_id?: string;
+  source: string;
+  original: string;
+}
+
+export interface TranscriptionRefinedEvent {
+  job_id: string;
+  entry_id?: string;
+  original: string;
+  refined: string;
+  source: string;
+  model: string;
+  execution_time_ms: number;
+}
+
+export interface TranscriptionRefinementFailedEvent {
+  job_id: string;
+  entry_id?: string;
+  source: string;
+  original?: string;
+  error: string;
+}
+
+export interface TranscriptionRefinementActivityEvent {
+  active_count: number;
+  state: "idle" | "active";
+  reason: "started" | "finished" | "watchdog_reset" | "forced_reset";
+}
+
+export interface TranscriptionGpuActivityEvent {
+  state: "idle" | "active" | "cpu" | "error";
+  accelerator: "gpu" | "cpu";
+  backend: string;
+  source: "whisper";
+  message?: string;
+}
+
 export type RecordingState = "disabled" | "idle" | "recording" | "transcribing";
 export type HistoryTab = "mic" | "system" | "conversation";
+
+// Ollama model pull events
+export interface OllamaPullProgress {
+  model: string;
+  status: string;
+  digest?: string;
+  total?: number;
+  completed?: number;
+}
+
+export interface OllamaPullComplete {
+  model: string;
+}
+
+export interface OllamaPullError {
+  model: string;
+  error: string;
+}
+
+export interface OllamaRuntimeDetectResult {
+  found: boolean;
+  is_serving: boolean;
+  source: "system" | "per_user_zip" | "manual";
+  path: string;
+  version: string;
+}
+
+export interface OllamaRuntimeDownloadResult {
+  archive_path: string;
+  sha256_ok: boolean;
+  version: string;
+}
+
+export interface OllamaRuntimeInstallResult {
+  runtime_path: string;
+  version: string;
+}
+
+export interface OllamaRuntimeStartResult {
+  pid: number | null;
+  endpoint: string;
+  source: "system" | "per_user_zip" | "manual";
+  already_running: boolean;
+  pending_start: boolean;
+  startup_wait_ms: number;
+}
+
+export interface OllamaRuntimeVerifyResult {
+  ok: boolean;
+  endpoint: string;
+  models_count: number;
+}
+
+export interface OllamaImportResult {
+  model_name: string;
+}
+
+export interface OllamaRuntimeInstallProgress {
+  stage: string;
+  message: string;
+  downloaded?: number;
+  total?: number;
+  version?: string;
+}
+
+export interface OllamaRuntimeInstallComplete {
+  version: string;
+  runtime_path: string;
+}
+
+export interface OllamaRuntimeInstallError {
+  stage: string;
+  error: string;
+}
+
+export interface OllamaRuntimeHealth {
+  ok: boolean;
+  endpoint: string;
+  models_count: number;
+}
+
+export interface PartitionInfo {
+  key: string;
+  label: string;
+  entry_count: number;
+  size_bytes: number;
+  is_active: boolean;
+}
+
+export interface ModuleHealthStatus {
+  module_id: string;
+  state: "ok" | "degraded" | "error";
+  detail: string;
+}
+
+export interface ModuleUpdateInfo {
+  module_id: string;
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+}
+
+export interface ConfluenceSpace {
+  id: string;
+  key: string;
+  name: string;
+}
+
+export interface ConfluenceTargetSuggestion {
+  space_key: string;
+  parent_page_id?: string | null;
+  existing_page_id?: string | null;
+  confidence: number;
+  reasoning: string;
+}

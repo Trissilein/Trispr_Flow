@@ -6,12 +6,17 @@ mod audio;
 mod constants;
 mod continuous_dump;
 mod errors;
+mod gdd;
+mod history_partition;
 mod hotkeys;
 mod models;
+mod modules;
+mod ollama_runtime;
 mod opus;
 mod overlay;
 mod paths;
 mod postprocessing;
+mod confluence;
 mod session_manager;
 mod state;
 mod transcription;
@@ -24,11 +29,11 @@ use overlay::{update_overlay_state, OverlayState};
 use state::{AppState, HistoryEntry, Settings};
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::{CheckMenuItem, MenuItem};
 use tauri::Wry;
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
@@ -38,21 +43,33 @@ use tracing::{error, info, warn};
 use crate::ai_fallback::keyring as ai_fallback_keyring;
 use crate::ai_fallback::models::RefinementOptions;
 use crate::ai_fallback::provider::{
-    default_models_for_provider, list_ollama_models, ping_ollama, ProviderFactory,
+    default_models_for_provider, is_local_ollama_endpoint, is_ssrf_target, list_ollama_models,
+    list_ollama_models_with_size, ping_ollama, ping_ollama_quick, prompt_for_profile,
+    resolve_effective_local_model, AIProvider, ProviderFactory,
 };
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
+use crate::history_partition::PartitionedHistory;
 use crate::models::{
     check_model_available, clear_hidden_external_models, download_model, get_models_dir,
     hide_external_model, list_models, pick_model_dir, quantize_model, remove_model,
 };
+use crate::ollama_runtime::{
+    detect_ollama_runtime, download_ollama_runtime, import_ollama_model_from_file,
+    install_ollama_runtime, set_strict_local_mode, start_ollama_runtime, verify_ollama_runtime,
+};
+use crate::modules::{
+    health as module_health, lifecycle as module_lifecycle, normalize_confluence_settings,
+    normalize_gdd_module_settings, normalize_module_settings, registry as module_registry,
+};
 use crate::state::{
-    load_history, load_settings, load_transcribe_history, normalize_ai_fallback_fields,
-    normalize_continuous_dump_fields, push_history_entry_inner, push_transcribe_entry_inner,
-    save_settings_file, sync_model_dir_env,
+    get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
+    normalize_ai_fallback_fields, normalize_continuous_dump_fields, normalize_history_alias_fields,
+    push_history_entry_inner, push_transcribe_entry_inner, record_refinement_fallback_timed_out,
+    record_refinement_timeout, save_settings_file, sync_model_dir_env,
 };
 use crate::transcription::{
-    expand_transcribe_backlog as expand_transcribe_backlog_inner, start_transcribe_monitor,
-    stop_transcribe_monitor, toggle_transcribe_state,
+    expand_transcribe_backlog as expand_transcribe_backlog_inner, last_transcription_accelerator,
+    start_transcribe_monitor, stop_transcribe_monitor, toggle_transcribe_state, transcribe_audio,
 };
 
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
@@ -73,6 +90,150 @@ static BACKLOG_PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
 static MAIN_WINDOW_RESTORED: AtomicBool = AtomicBool::new(false);
 static CLIPBOARD_PASTE_GENERATION: AtomicU64 = AtomicU64::new(0);
+static LAST_GEOMETRY_SAVE_MS: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+/// Guard that rejects requests when strict-local-mode is active and the
+/// configured Ollama endpoint is not a local address.
+/// Lock settings, apply a mutation, persist to disk, and emit a change event.
+///
+/// The closure receives `&mut Settings` and may return `Err` to abort.  On
+/// success the updated settings are saved and broadcast.
+fn update_and_persist_settings<F>(app: &AppHandle, state: &AppState, f: F) -> Result<(), String>
+where
+    F: FnOnce(&mut Settings) -> Result<(), String>,
+{
+    let snapshot = {
+        let mut settings = state.settings.lock().map_err(|e| e.to_string())?;
+        f(&mut settings)?;
+        settings.clone()
+    };
+    save_settings_file(app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot);
+    Ok(())
+}
+
+pub(crate) fn check_strict_local_mode(settings: &Settings) -> Result<(), String> {
+    if settings.ai_fallback.strict_local_mode
+        && !is_local_ollama_endpoint(&settings.providers.ollama.endpoint)
+    {
+        return Err(
+            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Common result of preparing a refinement call: provider client, API key,
+/// resolved model name, whether the model resolution repaired a stale setting,
+/// and the `RefinementOptions` to pass to the provider.
+pub(crate) struct RefinementSetup {
+    pub provider: Box<dyn AIProvider>,
+    pub api_key: String,
+    pub model: String,
+    pub repaired: bool,
+    pub options: RefinementOptions,
+}
+
+/// Shared refinement-context preparation used by the Tauri command, the
+/// benchmark helper, and the auto-refinement worker.  Validates settings,
+/// creates the provider client, resolves the model, and builds options.
+///
+/// Does **not** persist model-repair changes — callers decide if/how to do that.
+pub(crate) fn prepare_refinement(
+    app: &AppHandle,
+    settings: &Settings,
+) -> Result<RefinementSetup, String> {
+    let ai = &settings.ai_fallback;
+    if !ai.enabled {
+        return Err("AI Fallback is disabled.".to_string());
+    }
+
+    let is_ollama = ai.provider == "ollama";
+
+    let provider = if is_ollama {
+        check_strict_local_mode(settings)?;
+        ProviderFactory::create_ollama(settings.providers.ollama.endpoint.clone())
+    } else {
+        ProviderFactory::create(&ai.provider).map_err(|e| e.to_string())?
+    };
+
+    let api_key = if is_ollama {
+        String::new()
+    } else {
+        ai_fallback_keyring::read_api_key(app, &ai.provider)?
+            .ok_or_else(|| format!("No API key stored for provider '{}'.", ai.provider))?
+    };
+
+    if !is_ollama {
+        provider
+            .validate_api_key(&api_key)
+            .map_err(|e| e.to_string())?;
+    }
+
+    let mut model = ai.model.trim().to_string();
+    let mut repaired = false;
+    if is_ollama {
+        let endpoint = settings.providers.ollama.endpoint.clone();
+        let preferred = settings.providers.ollama.preferred_model.clone();
+        let resolved = resolve_effective_local_model(&model, &preferred, &endpoint)
+            .map_err(|e| e.to_string())?;
+        repaired = resolved.repaired
+            || settings.ai_fallback.model.trim() != resolved.model
+            || settings.providers.ollama.preferred_model.trim() != resolved.model
+            || settings.postproc_llm_model.trim() != resolved.model;
+        model = resolved.model;
+    } else if model.is_empty() {
+        model = match ai.provider.as_str() {
+            "claude" => settings.providers.claude.preferred_model.trim().to_string(),
+            "openai" => settings.providers.openai.preferred_model.trim().to_string(),
+            "gemini" => settings.providers.gemini.preferred_model.trim().to_string(),
+            _ => String::new(),
+        };
+    }
+
+    if model.is_empty() {
+        return Err(if is_ollama {
+            "No local Ollama model configured. Download a model and set it active first."
+                .to_string()
+        } else {
+            "No cloud model configured for the selected provider.".to_string()
+        });
+    }
+
+    let effective_language = if settings.language_pinned {
+        settings.language_mode.clone()
+    } else {
+        "auto".to_string()
+    };
+    let enforce_language_guard = ai.preserve_source_language && ai.prompt_profile != "custom";
+
+    let options = RefinementOptions {
+        temperature: ai.temperature,
+        max_tokens: ai.max_tokens,
+        low_latency_mode: ai.low_latency_mode,
+        language: Some(effective_language.clone()),
+        custom_prompt: prompt_for_profile(
+            &ai.prompt_profile,
+            &effective_language,
+            Some(ai.custom_prompt.as_str()),
+            ai.preserve_source_language,
+        ),
+        enforce_language_guard,
+    };
+
+    Ok(RefinementSetup {
+        provider,
+        api_key,
+        model,
+        repaired,
+        options,
+    })
+}
 
 fn cancel_backlog_auto_expand(app: &AppHandle) {
     BACKLOG_PROMPT_CANCELLED.store(true, Ordering::Release);
@@ -332,11 +493,13 @@ fn fetch_available_models(
     if provider_id == "ollama" {
         let endpoint = {
             let settings = state.settings.lock().unwrap();
+            check_strict_local_mode(&settings)?;
             settings.providers.ollama.endpoint.clone()
         };
         let models = list_ollama_models(&endpoint);
         if models.is_empty() {
-            return Err("Ollama is not running or has no models installed.".to_string());
+            // Distinguish "Ollama not reachable" from "reachable but no models installed".
+            ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
         }
         return Ok(models);
     }
@@ -362,6 +525,27 @@ fn fetch_available_models(
 }
 
 #[tauri::command]
+fn fetch_ollama_models_with_size(
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let endpoint = {
+        let settings = state.settings.lock().unwrap();
+        check_strict_local_mode(&settings)?;
+        settings.providers.ollama.endpoint.clone()
+    };
+    let models = list_ollama_models_with_size(&endpoint);
+    if models.is_empty() {
+        // Distinguish "Ollama not reachable" from "reachable but no models installed".
+        // Use quick ping (300ms) to avoid blocking the command thread for seconds.
+        ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
+    }
+    Ok(models
+        .into_iter()
+        .map(|(name, size_bytes)| serde_json::json!({ "name": name, "size_bytes": size_bytes }))
+        .collect())
+}
+
+#[tauri::command]
 fn test_provider_connection(
     state: State<'_, AppState>,
     provider: String,
@@ -373,6 +557,7 @@ fn test_provider_connection(
     if provider_id == "ollama" {
         let endpoint = {
             let settings = state.settings.lock().unwrap();
+            check_strict_local_mode(&settings)?;
             settings.providers.ollama.endpoint.clone()
         };
         ping_ollama(&endpoint).map_err(|e| e.to_string())?;
@@ -411,19 +596,17 @@ fn save_provider_api_key(
         .map_err(|e| e.to_string())?;
     ai_fallback_keyring::store_api_key(&app, &provider_id, api_key.trim())?;
 
-    let snapshot = {
-        let mut settings = state.settings.lock().unwrap();
-        settings.providers.set_api_key_stored(&provider_id, true)?;
-        normalize_ai_fallback_fields(&mut settings);
-        settings.clone()
-    };
-    save_settings_file(&app, &snapshot)?;
-    let _ = app.emit("settings-changed", snapshot.clone());
+    update_and_persist_settings(&app, state.inner(), |s| {
+        s.providers.set_api_key_stored(&provider_id, true)?;
+        normalize_ai_fallback_fields(s);
+        Ok(())
+    })?;
 
     Ok(serde_json::json!({
       "status": "success",
       "provider": provider_id,
       "stored": true,
+      "auth_status": "locked",
     }))
 }
 
@@ -436,19 +619,94 @@ fn clear_provider_api_key(
     let provider_id = provider.trim().to_lowercase();
     ai_fallback_keyring::clear_api_key(&app, &provider_id)?;
 
-    let snapshot = {
-        let mut settings = state.settings.lock().unwrap();
-        settings.providers.set_api_key_stored(&provider_id, false)?;
-        normalize_ai_fallback_fields(&mut settings);
-        settings.clone()
-    };
-    save_settings_file(&app, &snapshot)?;
-    let _ = app.emit("settings-changed", snapshot.clone());
+    update_and_persist_settings(&app, state.inner(), |s| {
+        s.providers.set_api_key_stored(&provider_id, false)?;
+        normalize_ai_fallback_fields(s);
+        Ok(())
+    })?;
 
     Ok(serde_json::json!({
       "status": "success",
       "provider": provider_id,
       "stored": false,
+      "auth_status": "locked",
+    }))
+}
+
+#[tauri::command]
+fn verify_provider_auth(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: String,
+    method: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let provider_id = provider.trim().to_lowercase();
+    let method_id = method.as_deref().unwrap_or("api_key").trim().to_lowercase();
+
+    if provider_id == "ollama" {
+        return Err("Ollama does not require cloud credential verification.".to_string());
+    }
+    if !matches!(provider_id.as_str(), "claude" | "openai" | "gemini") {
+        return Err(format!("Unknown AI provider: {}", provider));
+    }
+    if method_id != "api_key" && method_id != "oauth" {
+        return Err(format!(
+            "Unsupported auth verification method '{}'.",
+            method_id
+        ));
+    }
+
+    if method_id == "oauth" {
+        update_and_persist_settings(&app, state.inner(), |s| {
+            s.providers.lock_auth(&provider_id)?;
+            normalize_ai_fallback_fields(s);
+            Ok(())
+        })?;
+        return Err(
+            "OAuth verification is not supported yet. Use API key verification.".to_string(),
+        );
+    }
+
+    let stored_key = ai_fallback_keyring::read_api_key(&app, &provider_id)?;
+    let Some(api_key) = stored_key else {
+        update_and_persist_settings(&app, state.inner(), |s| {
+            s.providers.lock_auth(&provider_id)?;
+            normalize_ai_fallback_fields(s);
+            Ok(())
+        })?;
+        return Err(format!(
+            "No stored API key found for provider '{}'.",
+            provider_id
+        ));
+    };
+
+    let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
+    if let Err(error) = provider_client.validate_api_key(api_key.trim()) {
+        update_and_persist_settings(&app, state.inner(), |s| {
+            s.providers.lock_auth(&provider_id)?;
+            normalize_ai_fallback_fields(s);
+            Ok(())
+        })?;
+        return Err(error.to_string());
+    }
+
+    let verified_at = now_iso();
+    update_and_persist_settings(&app, state.inner(), |s| {
+        s.providers.set_auth_verified(
+            &provider_id,
+            "verified_api_key",
+            Some(verified_at.clone()),
+        )?;
+        normalize_ai_fallback_fields(s);
+        Ok(())
+    })?;
+
+    Ok(serde_json::json!({
+      "ok": true,
+      "provider": provider_id,
+      "method": "verified_api_key",
+      "verified_at": verified_at,
+      "message": "Provider credentials verified successfully.",
     }))
 }
 
@@ -462,13 +720,23 @@ fn save_ollama_endpoint(
     if trimmed.is_empty() {
         return Err("Endpoint cannot be empty.".to_string());
     }
-    let snapshot = {
-        let mut settings = state.settings.lock().unwrap();
-        settings.providers.ollama.endpoint = trimmed.clone();
-        settings.clone()
-    };
-    save_settings_file(&app, &snapshot)?;
-    let _ = app.emit("settings-changed", snapshot.clone());
+    // Block SSRF-sensitive targets (cloud metadata, link-local)
+    if is_ssrf_target(&trimmed) {
+        return Err("This endpoint address is not allowed (SSRF protection).".to_string());
+    }
+    {
+        let settings = state.settings.lock().unwrap();
+        if settings.ai_fallback.strict_local_mode && !is_local_ollama_endpoint(&trimmed) {
+            return Err(
+                "Strict local mode is enabled. Only localhost/127.0.0.1:11434 is allowed."
+                    .to_string(),
+            );
+        }
+    }
+    update_and_persist_settings(&app, state.inner(), |s| {
+        s.providers.ollama.endpoint = trimmed.clone();
+        Ok(())
+    })?;
     Ok(serde_json::json!({
         "status": "success",
         "endpoint": trimmed,
@@ -482,50 +750,380 @@ fn refine_transcript(
     transcript: String,
 ) -> Result<serde_json::Value, String> {
     let settings_snapshot = state.settings.lock().unwrap().clone();
-    let ai_settings = settings_snapshot.ai_fallback.clone();
 
-    if !ai_settings.enabled {
-        return Err("AI Fallback is disabled.".to_string());
+    let setup = prepare_refinement(&app, &settings_snapshot)?;
+
+    if setup.repaired {
+        let model = setup.model.clone();
+        update_and_persist_settings(&app, state.inner(), |s| {
+            s.ai_fallback.model = model.clone();
+            s.providers.ollama.preferred_model = model.clone();
+            s.postproc_llm_model = model;
+            normalize_ai_fallback_fields(s);
+            Ok(())
+        })?;
     }
 
-    let is_ollama = ai_settings.provider == "ollama";
-
-    let provider_client = if is_ollama {
-        let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
-        ProviderFactory::create_ollama(endpoint)
-    } else {
-        ProviderFactory::create(&ai_settings.provider).map_err(|e| e.to_string())?
-    };
-
-    let api_key = if is_ollama {
-        String::new()
-    } else {
-        ai_fallback_keyring::read_api_key(&app, &ai_settings.provider)?
-            .ok_or_else(|| format!("No API key stored for provider '{}'.", ai_settings.provider))?
-    };
-
-    if !is_ollama {
-        provider_client
-            .validate_api_key(&api_key)
-            .map_err(|e| e.to_string())?;
-    }
-
-    let options = RefinementOptions {
-        temperature: ai_settings.temperature,
-        max_tokens: ai_settings.max_tokens,
-        language: Some(settings_snapshot.language_mode.clone()),
-        custom_prompt: if ai_settings.custom_prompt_enabled {
-            Some(ai_settings.custom_prompt.clone())
-        } else {
-            None
-        },
-    };
-
-    let result = provider_client
-        .refine_transcript(&transcript, &ai_settings.model, &options, &api_key)
+    let result = setup
+        .provider
+        .refine_transcript(&transcript, &setup.model, &setup.options, &setup.api_key)
         .map_err(|e| e.to_string())?;
 
     serde_json::to_value(&result).map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default)]
+struct LatencyBenchmarkRequest {
+    fixture_paths: Vec<String>,
+    warmup_runs: u32,
+    measure_runs: u32,
+    include_refinement: bool,
+    refinement_model: Option<String>,
+}
+
+impl Default for LatencyBenchmarkRequest {
+    fn default() -> Self {
+        Self {
+            fixture_paths: Vec::new(),
+            warmup_runs: 3,
+            measure_runs: 30,
+            include_refinement: true,
+            refinement_model: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct LatencyBenchmarkSample {
+    fixture: String,
+    whisper_ms: u64,
+    refine_ms: u64,
+    total_ms: u64,
+    mode: String,
+    accelerator: String,
+    refinement_model: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct LatencyBenchmarkResult {
+    warmup_runs: u32,
+    measure_runs: u32,
+    p50_ms: u64,
+    p95_ms: u64,
+    slo_p50_ms: u64,
+    slo_p95_ms: u64,
+    slo_pass: bool,
+    samples: Vec<LatencyBenchmarkSample>,
+    warnings: Vec<String>,
+}
+
+fn run_latency_benchmark_inner(
+    app: &AppHandle,
+    state: &AppState,
+    request: &LatencyBenchmarkRequest,
+) -> Result<LatencyBenchmarkResult, String> {
+    let warmup_runs = request.warmup_runs.min(10);
+    let measure_runs = request.measure_runs.clamp(1, 200);
+    let include_refinement = request.include_refinement;
+
+    let fixture_paths: Vec<PathBuf> = if request.fixture_paths.is_empty() {
+        default_latency_fixture_paths()
+    } else {
+        // Validate user-provided paths against app data directory
+        let allowed_root = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+        let mut validated = Vec::new();
+        for path_str in &request.fixture_paths {
+            validated.push(validate_path_within(path_str, &allowed_root)?);
+        }
+        validated
+    };
+
+    if fixture_paths.is_empty() {
+        return Err(
+            "No benchmark fixtures found. Add WAV files under bench/fixtures/short/.".to_string(),
+        );
+    }
+
+    let mut fixtures: Vec<(String, Vec<i16>)> = Vec::new();
+    for path in fixture_paths {
+        let samples = read_wav_for_latency_benchmark(&path)?;
+        let label = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        fixtures.push((label, samples));
+    }
+
+    let mut settings_snapshot = state.settings.lock().unwrap().clone();
+    if include_refinement {
+        if let Some(model) = request
+            .refinement_model
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            let model = model.to_string();
+            settings_snapshot.ai_fallback.enabled = true;
+            settings_snapshot.ai_fallback.provider = "ollama".to_string();
+            settings_snapshot.ai_fallback.execution_mode = "local_primary".to_string();
+            settings_snapshot.ai_fallback.model = model.clone();
+            settings_snapshot.postproc_llm_model = model.clone();
+            settings_snapshot.providers.ollama.preferred_model = model;
+        }
+    }
+    let active_refinement_model = if include_refinement && settings_snapshot.ai_fallback.enabled {
+        Some(settings_snapshot.ai_fallback.model.clone())
+    } else {
+        None
+    };
+    let mut samples: Vec<LatencyBenchmarkSample> = Vec::with_capacity(measure_runs as usize);
+    let mut warnings: Vec<String> = Vec::new();
+    let total_runs = warmup_runs + measure_runs;
+
+    for run_idx in 0..total_runs {
+        let fixture_idx = run_idx as usize % fixtures.len();
+        let (fixture_name, fixture_samples) = (&fixtures[fixture_idx].0, &fixtures[fixture_idx].1);
+
+        let whisper_started = Instant::now();
+        let (raw_text, _source) = transcribe_audio(app, &settings_snapshot, fixture_samples)?;
+        let whisper_ms = whisper_started.elapsed().as_millis() as u64;
+
+        let mut refine_ms = 0u64;
+        let mut mode = "raw".to_string();
+        let mut refinement_model_used = active_refinement_model.clone();
+        if include_refinement && settings_snapshot.ai_fallback.enabled {
+            let refine_started = Instant::now();
+            match refine_transcript_for_benchmark(app, &settings_snapshot, &raw_text) {
+                Ok(result) => {
+                    refine_ms = refine_started.elapsed().as_millis() as u64;
+                    mode = "refined".to_string();
+                    refinement_model_used = Some(result.model);
+                }
+                Err(error) => {
+                    refine_ms = refine_started.elapsed().as_millis() as u64;
+                    mode = if error.to_lowercase().contains("timed out") {
+                        "fallback_timeout".to_string()
+                    } else {
+                        "fallback_error".to_string()
+                    };
+                    warnings.push(format!("{}: {}", fixture_name, error));
+                }
+            }
+        }
+
+        if run_idx < warmup_runs {
+            continue;
+        }
+
+        let total_ms = whisper_ms.saturating_add(refine_ms);
+        samples.push(LatencyBenchmarkSample {
+            fixture: fixture_name.clone(),
+            whisper_ms,
+            refine_ms,
+            total_ms,
+            mode,
+            accelerator: last_transcription_accelerator().to_string(),
+            refinement_model: refinement_model_used,
+        });
+    }
+
+    let mut totals: Vec<u64> = samples.iter().map(|sample| sample.total_ms).collect();
+    totals.sort_unstable();
+    let p50_ms = percentile(&totals, 0.50);
+    let p95_ms = percentile(&totals, 0.95);
+    let slo_p50_ms = 2_500;
+    let slo_p95_ms = 4_000;
+    let slo_pass = p50_ms <= slo_p50_ms && p95_ms <= slo_p95_ms;
+
+    Ok(LatencyBenchmarkResult {
+        warmup_runs,
+        measure_runs,
+        p50_ms,
+        p95_ms,
+        slo_p50_ms,
+        slo_p95_ms,
+        slo_pass,
+        samples,
+        warnings,
+    })
+}
+
+fn write_latency_benchmark_report(result: &LatencyBenchmarkResult) -> Result<PathBuf, String> {
+    let root = resolve_benchmark_root_dir();
+    let out_dir = root.join("bench").join("results");
+    std::fs::create_dir_all(&out_dir).map_err(|e| {
+        format!(
+            "Failed creating benchmark output dir '{}': {}",
+            out_dir.display(),
+            e
+        )
+    })?;
+    let out_path = out_dir.join("latest.json");
+    let serialized = serde_json::to_string_pretty(result).map_err(|e| e.to_string())?;
+    std::fs::write(&out_path, serialized).map_err(|e| {
+        format!(
+            "Failed writing benchmark report '{}': {}",
+            out_path.display(),
+            e
+        )
+    })?;
+    Ok(out_path)
+}
+
+fn default_latency_fixture_paths() -> Vec<PathBuf> {
+    let root = resolve_benchmark_root_dir();
+    let fixture_dir = root.join("bench").join("fixtures").join("short");
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&fixture_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_wav = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("wav"))
+                .unwrap_or(false);
+            if is_wav {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+fn resolve_benchmark_root_dir() -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if cwd.join("bench").is_dir() {
+        return cwd;
+    }
+
+    let mut candidate = cwd.clone();
+    for _ in 0..4 {
+        if let Some(parent) = candidate.parent() {
+            if parent.join("bench").is_dir() {
+                return parent.to_path_buf();
+            }
+            candidate = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+
+    cwd
+}
+
+fn read_wav_for_latency_benchmark(path: &Path) -> Result<Vec<i16>, String> {
+    let mut reader = hound::WavReader::open(path)
+        .map_err(|e| format!("Failed to open WAV fixture '{}': {}", path.display(), e))?;
+    let spec = reader.spec();
+    if spec.sample_rate != crate::constants::TARGET_SAMPLE_RATE {
+        return Err(format!(
+            "Fixture '{}' uses unsupported sample rate {} (expected {}).",
+            path.display(),
+            spec.sample_rate,
+            crate::constants::TARGET_SAMPLE_RATE
+        ));
+    }
+
+    let channels = spec.channels.max(1) as usize;
+    let mut mono = Vec::<i16>::new();
+
+    match spec.sample_format {
+        hound::SampleFormat::Int => {
+            if spec.bits_per_sample != 16 {
+                return Err(format!(
+                    "Fixture '{}' must be 16-bit PCM for benchmark (got {} bits).",
+                    path.display(),
+                    spec.bits_per_sample
+                ));
+            }
+            let samples: Vec<i16> = reader
+                .samples::<i16>()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("Failed reading fixture '{}': {}", path.display(), e))?;
+            for frame in samples.chunks(channels) {
+                if let Some(first) = frame.first() {
+                    mono.push(*first);
+                }
+            }
+        }
+        hound::SampleFormat::Float => {
+            let samples: Vec<f32> = reader
+                .samples::<f32>()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("Failed reading float fixture '{}': {}", path.display(), e))?;
+            for frame in samples.chunks(channels) {
+                if let Some(first) = frame.first() {
+                    let clamped = first.clamp(-1.0, 1.0);
+                    mono.push((clamped * i16::MAX as f32) as i16);
+                }
+            }
+        }
+    }
+
+    if mono.is_empty() {
+        return Err(format!(
+            "Fixture '{}' has no audio samples.",
+            path.display()
+        ));
+    }
+    Ok(mono)
+}
+
+fn percentile(sorted_values: &[u64], quantile: f64) -> u64 {
+    if sorted_values.is_empty() {
+        return 0;
+    }
+    let q = quantile.clamp(0.0, 1.0);
+    let idx = ((sorted_values.len() - 1) as f64 * q).round() as usize;
+    sorted_values[idx]
+}
+
+fn refine_transcript_for_benchmark(
+    app: &AppHandle,
+    settings_snapshot: &Settings,
+    transcript: &str,
+) -> Result<crate::ai_fallback::models::RefinementResult, String> {
+    let setup = prepare_refinement(app, settings_snapshot)?;
+
+    setup
+        .provider
+        .refine_transcript(transcript, &setup.model, &setup.options, &setup.api_key)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn run_latency_benchmark(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: Option<LatencyBenchmarkRequest>,
+) -> Result<LatencyBenchmarkResult, String> {
+    let request = request.unwrap_or_default();
+    run_latency_benchmark_inner(&app, state.inner(), &request)
+}
+
+#[tauri::command]
+fn get_runtime_metrics_snapshot(
+    state: State<'_, AppState>,
+) -> crate::state::RuntimeMetricsSnapshot {
+    runtime_metrics_snapshot(state.inner())
+}
+
+#[tauri::command]
+fn record_runtime_metric(state: State<'_, AppState>, metric: String) -> Result<(), String> {
+    match metric.trim() {
+        "refinement_timeout" | "refinement_fallback_timed_out" => {
+            record_refinement_timeout(state.inner());
+            record_refinement_fallback_timed_out(state.inner());
+            Ok(())
+        }
+        other => Err(format!("Unknown runtime metric '{}'", other)),
+    }
 }
 
 fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
@@ -560,12 +1158,169 @@ fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> 
 }
 
 #[tauri::command]
+fn pull_ollama_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    model: String,
+) -> Result<(), String> {
+    use crate::ai_fallback::provider::{pull_ollama_model_inner, validate_ollama_model_name};
+
+    validate_ollama_model_name(&model)?;
+
+    // Prevent duplicate pulls for the same model
+    {
+        let mut pulls = state.ollama_pulls.lock().unwrap();
+        if pulls.contains(&model) {
+            return Err(format!("Pull already in progress for '{}'", model));
+        }
+        pulls.insert(model.clone());
+    }
+
+    let endpoint = {
+        let settings = state.settings.lock().unwrap();
+        if let Err(e) = check_strict_local_mode(&settings) {
+            let mut pulls = state.ollama_pulls.lock().unwrap();
+            pulls.remove(&model);
+            return Err(e);
+        }
+        settings.providers.ollama.endpoint.clone()
+    };
+
+    // Drop-Guard ensures the model is removed from ollama_pulls even if the
+    // thread panics (e.g. due to a bug in pull_ollama_model_inner).
+    struct PullGuard {
+        app: AppHandle,
+        model: String,
+    }
+    impl Drop for PullGuard {
+        fn drop(&mut self) {
+            if let Ok(mut pulls) = self.app.state::<AppState>().ollama_pulls.lock() {
+                pulls.remove(&self.model);
+            }
+        }
+    }
+
+    let app_handle = app.clone();
+    let model_clone = model.clone();
+    std::thread::spawn(move || {
+        let _guard = PullGuard {
+            app: app_handle.clone(),
+            model: model_clone.clone(),
+        };
+        pull_ollama_model_inner(app_handle, model_clone, endpoint);
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_ollama_model(state: State<'_, AppState>, model: String) -> Result<(), String> {
+    use crate::ai_fallback::provider::{ollama_endpoint_candidates, validate_ollama_model_name};
+
+    validate_ollama_model_name(&model)?;
+
+    let endpoint = {
+        let settings = state.settings.lock().unwrap();
+        check_strict_local_mode(&settings)?;
+        settings.providers.ollama.endpoint.clone()
+    };
+
+    let body = serde_json::json!({ "model": model });
+
+    let agent = ureq::builder()
+        .timeout_connect(std::time::Duration::from_secs(5))
+        .timeout_read(std::time::Duration::from_secs(30))
+        .build();
+
+    let mut last_transport_error: Option<String> = None;
+    for candidate in ollama_endpoint_candidates(&endpoint) {
+        let url = format!("{}/api/delete", candidate);
+        let request = agent
+            .request("DELETE", &url)
+            .set("Content-Type", "application/json");
+
+        match request.send_json(body.clone()) {
+            Ok(_) => return Ok(()),
+            Err(ureq::Error::Status(404, _)) => {
+                return Err(format!("Model '{}' not found in Ollama", model));
+            }
+            Err(ureq::Error::Transport(t)) => {
+                last_transport_error = Some(t.to_string());
+                continue;
+            }
+            Err(e) => return Err(format!("Failed to delete model: {}", e)),
+        }
+    }
+
+    Err(format!(
+        "Failed to delete model: {}",
+        last_transport_error.unwrap_or_else(|| "unable to reach Ollama endpoint".to_string())
+    ))
+}
+
+#[tauri::command]
+fn get_ollama_model_info(
+    state: State<'_, AppState>,
+    model: String,
+) -> Result<serde_json::Value, String> {
+    use crate::ai_fallback::provider::{ollama_endpoint_candidates, validate_ollama_model_name};
+
+    validate_ollama_model_name(&model)?;
+
+    let endpoint = {
+        let settings = state.settings.lock().unwrap();
+        check_strict_local_mode(&settings)?;
+        settings.providers.ollama.endpoint.clone()
+    };
+
+    let body = serde_json::json!({ "model": model });
+
+    let agent = ureq::builder()
+        .timeout_connect(std::time::Duration::from_secs(5))
+        .timeout_read(std::time::Duration::from_secs(10))
+        .build();
+
+    let mut last_transport_error: Option<String> = None;
+    for candidate in ollama_endpoint_candidates(&endpoint) {
+        let url = format!("{}/api/show", candidate);
+        let response = match agent
+            .post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(body.clone())
+        {
+            Ok(r) => r,
+            Err(ureq::Error::Transport(t)) => {
+                last_transport_error = Some(t.to_string());
+                continue;
+            }
+            Err(e) => return Err(format!("Failed to get model info: {}", e)),
+        };
+
+        return response
+            .into_json::<serde_json::Value>()
+            .map_err(|e| format!("Failed to parse response: {}", e));
+    }
+
+    Err(format!(
+        "Failed to get model info: {}",
+        last_transport_error.unwrap_or_else(|| "unable to reach Ollama endpoint".to_string())
+    ))
+}
+
+#[tauri::command]
 fn save_settings(
     app: AppHandle,
     state: State<'_, AppState>,
     mut settings: Settings,
 ) -> Result<(), String> {
-    let (prev_mode, prev_device, prev_capture_enabled, prev_transcribe_enabled, prev_transcribe_output_device) = {
+    let (
+        prev_mode,
+        prev_device,
+        prev_capture_enabled,
+        prev_transcribe_enabled,
+        prev_transcribe_output_device,
+        prev_ai_refinement_enabled,
+    ) = {
         let current = state.settings.lock().unwrap();
         (
             current.mode.clone(),
@@ -573,10 +1328,15 @@ fn save_settings(
             current.capture_enabled,
             current.transcribe_enabled,
             current.transcribe_output_device.clone(),
+            current.ai_fallback.enabled,
         )
     };
     normalize_ai_fallback_fields(&mut settings);
     normalize_continuous_dump_fields(&mut settings);
+    normalize_history_alias_fields(&mut settings);
+    normalize_module_settings(&mut settings.module_settings);
+    normalize_gdd_module_settings(&mut settings.gdd_module_settings);
+    normalize_confluence_settings(&mut settings.confluence_settings);
 
     {
         let mut current = state.settings.lock().unwrap();
@@ -621,9 +1381,11 @@ fn save_settings(
             let _ = crate::audio::start_vad_monitor(&app, &state, &settings);
         }
     }
+    crate::audio::sync_ptt_hot_standby(&app, &state, &settings);
 
     let transcribe_enabled_changed = prev_transcribe_enabled != settings.transcribe_enabled;
-    let transcribe_device_changed = prev_transcribe_output_device != settings.transcribe_output_device;
+    let transcribe_device_changed =
+        prev_transcribe_output_device != settings.transcribe_output_device;
     if transcribe_enabled_changed {
         if !settings.transcribe_enabled {
             stop_transcribe_monitor(&app, &state);
@@ -638,6 +1400,10 @@ fn save_settings(
     let overlay_settings = build_overlay_settings(&settings);
     let _ = overlay::apply_overlay_settings(&app, &overlay_settings);
 
+    if prev_ai_refinement_enabled && !settings.ai_fallback.enabled {
+        crate::audio::force_reset_refinement_activity(&app, "forced_reset");
+    }
+
     let recorder = state.recorder.lock().unwrap();
     if !recorder.active {
         let _ = update_overlay_state(&app, OverlayState::Idle);
@@ -648,6 +1414,393 @@ fn save_settings(
     let _ = app.emit("menu:update-mic", settings.capture_enabled);
     let _ = app.emit("menu:update-transcribe", settings.transcribe_enabled);
     Ok(())
+}
+
+#[tauri::command]
+fn list_modules(state: State<'_, AppState>) -> Vec<crate::modules::ModuleDescriptor> {
+    let settings = state.settings.lock().unwrap();
+    module_registry::modules_as_descriptors(&settings.module_settings)
+}
+
+#[tauri::command]
+fn enable_module(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    module_id: String,
+    grant_permissions: Option<Vec<String>>,
+) -> Result<serde_json::Value, String> {
+    let module_id = module_id.trim().to_string();
+    if module_id.is_empty() {
+        return Err("Module id cannot be empty.".to_string());
+    }
+
+    let grants = grant_permissions.unwrap_or_default();
+    let (result, snapshot, descriptors) = {
+        let mut settings = state.settings.lock().unwrap();
+        let result = module_lifecycle::enable_module(&mut settings.module_settings, &module_id, &grants);
+        if result.is_ok() {
+            if module_id == "gdd" {
+                settings.gdd_module_settings.enabled = true;
+            }
+            if module_id == "integrations_confluence" {
+                settings.confluence_settings.enabled = true;
+            }
+        }
+        normalize_module_settings(&mut settings.module_settings);
+        normalize_gdd_module_settings(&mut settings.gdd_module_settings);
+        normalize_confluence_settings(&mut settings.confluence_settings);
+        let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
+        (result, settings.clone(), descriptors)
+    };
+
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot);
+    let _ = app.emit("module:state-changed", descriptors);
+
+    match result {
+        Ok(lifecycle) => Ok(serde_json::json!(lifecycle)),
+        Err(error) => {
+            let _ = app.emit(
+                "module:error",
+                serde_json::json!({ "module_id": module_id, "error": error }),
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn disable_module(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    module_id: String,
+) -> Result<serde_json::Value, String> {
+    let module_id = module_id.trim().to_string();
+    if module_id.is_empty() {
+        return Err("Module id cannot be empty.".to_string());
+    }
+
+    let (result, snapshot, descriptors) = {
+        let mut settings = state.settings.lock().unwrap();
+        let result = module_lifecycle::disable_module(&mut settings.module_settings, &module_id);
+        if result.is_ok() {
+            if module_id == "gdd" {
+                settings.gdd_module_settings.enabled = false;
+            }
+            if module_id == "integrations_confluence" {
+                settings.confluence_settings.enabled = false;
+            }
+        }
+        normalize_module_settings(&mut settings.module_settings);
+        normalize_gdd_module_settings(&mut settings.gdd_module_settings);
+        normalize_confluence_settings(&mut settings.confluence_settings);
+        let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
+        (result, settings.clone(), descriptors)
+    };
+
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot);
+    let _ = app.emit("module:state-changed", descriptors);
+
+    match result {
+        Ok(lifecycle) => Ok(serde_json::json!(lifecycle)),
+        Err(error) => {
+            let _ = app.emit(
+                "module:error",
+                serde_json::json!({ "module_id": module_id, "error": error }),
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn get_module_health(
+    state: State<'_, AppState>,
+    module_id: Option<String>,
+) -> Vec<crate::modules::ModuleHealthStatus> {
+    let settings = state.settings.lock().unwrap();
+    module_health::get_health(&settings.module_settings, module_id.as_deref())
+}
+
+#[tauri::command]
+fn check_module_updates(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    module_id: Option<String>,
+) -> Vec<crate::modules::ModuleUpdateInfo> {
+    let settings = state.settings.lock().unwrap();
+    let updates = module_health::check_updates(&settings.module_settings, module_id.as_deref());
+    for update in &updates {
+        let _ = app.emit("module:update-available", update);
+    }
+    updates
+}
+
+#[tauri::command]
+fn list_gdd_presets(state: State<'_, AppState>) -> Vec<crate::gdd::GddPreset> {
+    let settings = state.settings.lock().unwrap();
+    crate::gdd::list_presets(&settings.gdd_module_settings.preset_clones)
+}
+
+#[tauri::command]
+fn save_gdd_preset_clone(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mut preset: crate::gdd::GddPresetClone,
+) -> Result<Vec<crate::gdd::GddPreset>, String> {
+    preset.id = preset.id.trim().to_lowercase();
+    if preset.id.is_empty() {
+        return Err("Preset clone id cannot be empty.".to_string());
+    }
+    if preset.section_order.is_empty() {
+        return Err("Preset clone requires at least one section.".to_string());
+    }
+    if preset.name.trim().is_empty() {
+        return Err("Preset clone name cannot be empty.".to_string());
+    }
+
+    let snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        if let Some(existing) = settings
+            .gdd_module_settings
+            .preset_clones
+            .iter_mut()
+            .find(|candidate| candidate.id == preset.id)
+        {
+            *existing = preset;
+        } else {
+            settings.gdd_module_settings.preset_clones.push(preset);
+        }
+        normalize_gdd_module_settings(&mut settings.gdd_module_settings);
+        settings.clone()
+    };
+
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot.clone());
+
+    Ok(crate::gdd::list_presets(
+        &snapshot.gdd_module_settings.preset_clones,
+    ))
+}
+
+#[tauri::command]
+fn detect_gdd_preset(
+    state: State<'_, AppState>,
+    request: crate::gdd::DetectGddPresetRequest,
+) -> crate::gdd::GddRecognitionResult {
+    let settings = state.settings.lock().unwrap();
+    let presets = crate::gdd::list_presets(&settings.gdd_module_settings.preset_clones);
+    crate::gdd::detect_preset(&request.transcript, &presets)
+}
+
+#[tauri::command]
+fn generate_gdd_draft(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::gdd::GenerateGddDraftRequest,
+) -> Result<crate::gdd::GddDraft, String> {
+    let module_enabled = {
+        let settings = state.settings.lock().unwrap();
+        settings.module_settings.enabled_modules.contains("gdd")
+    };
+    if !module_enabled {
+        return Err("GDD module is disabled. Enable module 'gdd' first.".to_string());
+    }
+
+    let _ = app.emit("gdd:generation-started", serde_json::json!({ "preset": request.preset_id }));
+    let draft = {
+        let settings = state.settings.lock().unwrap();
+        crate::gdd::generate_draft(&request, &settings.gdd_module_settings.preset_clones)
+    };
+    let markdown_preview = crate::gdd::render_storage::render_markdown(&draft);
+    let confluence_storage = crate::gdd::render_storage::render_confluence_storage(&draft);
+    let _ = app.emit(
+        "gdd:generation-progress",
+        serde_json::json!({
+            "stage": "synthesized",
+            "chunk_count": draft.chunk_count,
+            "markdown_chars": markdown_preview.len(),
+            "storage_chars": confluence_storage.len(),
+        }),
+    );
+    let _ = app.emit("gdd:generation-finished", &draft);
+    Ok(draft)
+}
+
+#[tauri::command]
+fn validate_gdd_draft(draft: crate::gdd::GddDraft) -> crate::gdd::ValidateGddDraftResult {
+    crate::gdd::validate_draft(&draft)
+}
+
+#[tauri::command]
+fn render_gdd_for_confluence(draft: crate::gdd::GddDraft) -> String {
+    crate::gdd::render_storage::render_confluence_storage(&draft)
+}
+
+#[tauri::command]
+fn test_confluence_connection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::gdd::confluence::ConfluenceConnectionResult, String> {
+    let settings = state.settings.lock().unwrap();
+    crate::gdd::confluence::test_connection(&app, &settings.confluence_settings)
+}
+
+#[tauri::command]
+fn confluence_oauth_start() -> Result<crate::gdd::confluence::ConfluenceOauthStartResult, String> {
+    crate::gdd::confluence::oauth_start()
+}
+
+#[tauri::command]
+fn confluence_oauth_exchange(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    code: String,
+) -> Result<serde_json::Value, String> {
+    let exchange_result = {
+        let settings = state.settings.lock().unwrap();
+        crate::gdd::confluence::oauth_exchange(&app, &settings.confluence_settings, &code)?
+    };
+
+    let snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.confluence_settings.enabled = true;
+        settings.confluence_settings.auth_mode = "oauth".to_string();
+        settings.confluence_settings.site_base_url = exchange_result.selected_site_url.clone();
+        settings.confluence_settings.oauth_cloud_id = exchange_result.selected_cloud_id.clone();
+        normalize_confluence_settings(&mut settings.confluence_settings);
+        settings.clone()
+    };
+
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot);
+
+    serde_json::to_value(exchange_result).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn confluence_list_spaces(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::gdd::confluence::ConfluenceSpace>, String> {
+    let settings = state.settings.lock().unwrap();
+    crate::gdd::confluence::list_spaces(&app, &settings.confluence_settings)
+}
+
+#[tauri::command]
+fn load_gdd_template_from_file(
+    file_path: String,
+) -> Result<crate::gdd::GddTemplateSourceResult, String> {
+    crate::gdd::load_template_from_file(&file_path)
+}
+
+#[tauri::command]
+fn load_gdd_template_from_confluence(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source_url: String,
+) -> Result<crate::gdd::GddTemplateSourceResult, String> {
+    let settings = state.settings.lock().unwrap();
+    let page = crate::gdd::confluence::load_page_template_from_url(
+        &app,
+        &settings.confluence_settings,
+        &source_url,
+    )?;
+    Ok(crate::gdd::template_sources::from_confluence_page(
+        page.source_url,
+        page.page_title,
+        page.text,
+    ))
+}
+
+#[tauri::command]
+fn suggest_confluence_target(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::gdd::confluence::ConfluenceTargetSuggestionRequest,
+) -> Result<crate::gdd::confluence::ConfluenceTargetSuggestion, String> {
+    let settings = state.settings.lock().unwrap();
+    crate::gdd::confluence::suggest_target(&app, &settings.confluence_settings, &request)
+}
+
+#[tauri::command]
+fn publish_gdd_to_confluence(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::gdd::confluence::ConfluencePublishRequest,
+) -> Result<crate::gdd::confluence::ConfluencePublishResult, String> {
+    let _ = app.emit("gdd:publish-started", serde_json::json!({ "title": request.title }));
+
+    let settings_snapshot = state.settings.lock().unwrap().clone();
+    let result =
+        crate::gdd::confluence::publish(&app, &settings_snapshot.confluence_settings, &request);
+
+    match result {
+        Ok(publish) => {
+            {
+                let mut settings = state.settings.lock().unwrap();
+                let route_key = format!(
+                    "{}::{}",
+                    request.space_key.to_lowercase(),
+                    request.title.to_lowercase()
+                );
+                settings
+                    .confluence_settings
+                    .routing_memory
+                    .insert(route_key, publish.page_id.clone());
+                normalize_confluence_settings(&mut settings.confluence_settings);
+                let _ = save_settings_file(&app, &settings);
+                let _ = app.emit("settings-changed", settings.clone());
+            }
+            let _ = app.emit("gdd:publish-finished", &publish);
+            Ok(publish)
+        }
+        Err(error) => {
+            let _ = app.emit(
+                "gdd:publish-failed",
+                serde_json::json!({ "title": request.title, "error": error }),
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn save_confluence_secret(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    secret_id: String,
+    secret_value: String,
+) -> Result<serde_json::Value, String> {
+    let secret_id = secret_id.trim().to_lowercase();
+    confluence::keyring::store_secret(&app, &secret_id, &secret_value)?;
+
+    let snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.confluence_settings.enabled = true;
+        settings.clone()
+    };
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot);
+
+    Ok(serde_json::json!({
+        "status": "success",
+        "secret_id": secret_id
+    }))
+}
+
+#[tauri::command]
+fn clear_confluence_secret(
+    app: AppHandle,
+    secret_id: String,
+) -> Result<serde_json::Value, String> {
+    let secret_id = secret_id.trim().to_lowercase();
+    confluence::keyring::clear_secret(&app, &secret_id)?;
+    Ok(serde_json::json!({
+        "status": "success",
+        "secret_id": secret_id
+    }))
 }
 
 #[tauri::command]
@@ -705,21 +1858,148 @@ fn save_window_state(
         _ => return Err("Unknown window label".to_string()),
     }
 
+    // Debounce: skip disk write if less than 500ms since last geometry save.
+    // The in-memory settings are always updated above so the latest geometry is
+    // available for other code paths even when the disk write is skipped.
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let last = LAST_GEOMETRY_SAVE_MS.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < 500 {
+        return Ok(());
+    }
+    LAST_GEOMETRY_SAVE_MS.store(now, Ordering::Relaxed);
+
     let settings = current.clone();
     drop(current);
 
-    save_settings_file(&app, &settings)?;
+    let _ = save_settings_file(&app, &settings);
     Ok(())
 }
 
 #[tauri::command]
 fn get_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
-    state.history.lock().unwrap().clone()
+    state
+        .history
+        .lock()
+        .unwrap()
+        .active
+        .iter()
+        .cloned()
+        .collect()
 }
 
 #[tauri::command]
 fn get_transcribe_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
-    state.history_transcribe.lock().unwrap().clone()
+    state
+        .history_transcribe
+        .lock()
+        .unwrap()
+        .active
+        .iter()
+        .cloned()
+        .collect()
+}
+
+#[tauri::command]
+fn clear_active_transcript_history(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<u64, String> {
+    let mic_deleted = {
+        let mut history = state.history.lock().unwrap();
+        let deleted = history.active.len() as u64;
+        history.active.clear();
+        history.flush_to_disk()?;
+        let updated: Vec<_> = history.active.iter().cloned().collect();
+        drop(history);
+        let _ = app.emit("history:updated", updated);
+        deleted
+    };
+
+    let system_deleted = {
+        let mut history = state.history_transcribe.lock().unwrap();
+        let deleted = history.active.len() as u64;
+        history.active.clear();
+        history.flush_to_disk()?;
+        let updated: Vec<_> = history.active.iter().cloned().collect();
+        drop(history);
+        let _ = app.emit("transcribe:history-updated", updated);
+        deleted
+    };
+
+    Ok(mic_deleted + system_deleted)
+}
+
+#[tauri::command]
+fn delete_active_transcript_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entry_id: String,
+) -> Result<u64, String> {
+    let entry_id = entry_id.trim();
+    if entry_id.is_empty() {
+        return Ok(0);
+    }
+
+    let mic_deleted = {
+        let mut history = state.history.lock().unwrap();
+        let before = history.active.len();
+        history.active.retain(|entry| entry.id != entry_id);
+        let deleted = before.saturating_sub(history.active.len()) as u64;
+        if deleted > 0 {
+            history.flush_to_disk()?;
+            let updated: Vec<_> = history.active.iter().cloned().collect();
+            drop(history);
+            let _ = app.emit("history:updated", updated);
+        }
+        deleted
+    };
+
+    let system_deleted = {
+        let mut history = state.history_transcribe.lock().unwrap();
+        let before = history.active.len();
+        history.active.retain(|entry| entry.id != entry_id);
+        let deleted = before.saturating_sub(history.active.len()) as u64;
+        if deleted > 0 {
+            history.flush_to_disk()?;
+            let updated: Vec<_> = history.active.iter().cloned().collect();
+            drop(history);
+            let _ = app.emit("transcribe:history-updated", updated);
+        }
+        deleted
+    };
+
+    Ok(mic_deleted + system_deleted)
+}
+
+#[tauri::command]
+fn list_history_partitions(
+    app: AppHandle,
+    kind: String,
+) -> Result<Vec<crate::history_partition::PartitionInfo>, String> {
+    let state = app.state::<AppState>();
+    match kind.as_str() {
+        "mic" => Ok(state.history.lock().unwrap().list_partitions()),
+        "system" => Ok(state.history_transcribe.lock().unwrap().list_partitions()),
+        _ => Err(format!("Unknown history kind: {}", kind)),
+    }
+}
+
+#[tauri::command]
+fn load_history_partition(
+    app: AppHandle,
+    kind: String,
+    key: String,
+) -> Result<Vec<HistoryEntry>, String> {
+    let state = app.state::<AppState>();
+    let pk = crate::history_partition::PartitionKey::parse(&key)?;
+    match kind.as_str() {
+        "mic" => Ok(state.history.lock().unwrap().load_partition(&pk)),
+        "system" => Ok(state.history_transcribe.lock().unwrap().load_partition(&pk)),
+        _ => Err(format!("Unknown history kind: {}", kind)),
+    }
 }
 
 #[tauri::command]
@@ -743,71 +2023,6 @@ fn add_transcribe_entry(
 }
 
 #[tauri::command]
-fn get_chapters(state: State<'_, AppState>) -> Vec<state::Chapter> {
-    state.chapters.lock().unwrap().clone()
-}
-
-#[tauri::command]
-fn add_chapter(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-    label: String,
-    timestamp_ms: u64,
-    entry_count: u32,
-) -> Result<Vec<state::Chapter>, String> {
-    let new_chapter = state::Chapter {
-        id,
-        label,
-        timestamp_ms,
-        entry_count,
-    };
-
-    let mut chapters = state.chapters.lock().unwrap();
-    chapters.push(new_chapter);
-    let updated = chapters.clone();
-    drop(chapters);
-
-    state::save_chapters_file(&app, &updated)?;
-    Ok(updated)
-}
-
-#[tauri::command]
-fn update_chapter(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-    label: String,
-) -> Result<Vec<state::Chapter>, String> {
-    let mut chapters = state.chapters.lock().unwrap();
-
-    if let Some(chapter) = chapters.iter_mut().find(|c| c.id == id) {
-        chapter.label = label;
-    }
-
-    let updated = chapters.clone();
-    drop(chapters);
-
-    state::save_chapters_file(&app, &updated)?;
-    Ok(updated)
-}
-
-#[tauri::command]
-fn delete_chapter(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<Vec<state::Chapter>, String> {
-    let mut chapters = state.chapters.lock().unwrap();
-    chapters.retain(|c| c.id != id);
-    let updated = chapters.clone();
-    drop(chapters);
-
-    state::save_chapters_file(&app, &updated)?;
-    Ok(updated)
-}
-
-#[tauri::command]
 fn toggle_transcribe(app: AppHandle) -> Result<(), String> {
     toggle_transcribe_state(&app);
     Ok(())
@@ -819,6 +2034,11 @@ fn expand_transcribe_backlog(
 ) -> Result<transcription::TranscribeBacklogStatus, String> {
     cancel_backlog_auto_expand(&app);
     expand_transcribe_backlog_inner(&app)
+}
+
+#[tauri::command]
+fn paste_transcript_text(text: String) -> Result<(), String> {
+    paste_text(&text)
 }
 
 #[tauri::command]
@@ -896,66 +2116,113 @@ fn save_transcript(filename: String, content: String, format: String) -> Result<
 }
 
 #[tauri::command]
-fn save_crash_recovery(content: String) -> Result<(), String> {
-    use std::env;
-    use std::fs;
+fn save_crash_recovery(app: AppHandle, content: String) -> Result<(), String> {
+    // Write to app data dir (user-private) instead of world-readable %TEMP%
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let _ = std::fs::create_dir_all(&data_dir);
 
-    // Use %TEMP% or /tmp for crash recovery file
-    let temp_dir = if cfg!(windows) {
-        env::var("TEMP").unwrap_or_else(|_| "C:\\Users\\AppData\\Local\\Temp".to_string())
-    } else {
-        env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
-    };
-
-    let crash_recovery_file = PathBuf::from(&temp_dir).join("trispr_crash_recovery.json");
-
-    // Write JSON content to crash recovery file
-    fs::write(&crash_recovery_file, content)
+    let crash_file = data_dir.join(".crash_recovery.json");
+    std::fs::write(&crash_file, content)
         .map_err(|e| format!("Failed to save crash recovery: {}", e))?;
 
     Ok(())
 }
 
 #[tauri::command]
-fn clear_crash_recovery() -> Result<(), String> {
-    use std::env;
-    use std::fs;
+fn clear_crash_recovery(app: AppHandle) -> Result<(), String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
 
-    // Use %TEMP% or /tmp for crash recovery file
-    let temp_dir = if cfg!(windows) {
-        env::var("TEMP").unwrap_or_else(|_| "C:\\Users\\AppData\\Local\\Temp".to_string())
-    } else {
-        env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
-    };
-
-    let crash_recovery_file = PathBuf::from(&temp_dir).join("trispr_crash_recovery.json");
-
-    // Delete crash recovery file if it exists
-    if crash_recovery_file.exists() {
-        fs::remove_file(&crash_recovery_file)
+    let crash_file = data_dir.join(".crash_recovery.json");
+    if crash_file.exists() {
+        std::fs::remove_file(&crash_file)
             .map_err(|e| format!("Failed to clear crash recovery: {}", e))?;
+    }
+
+    // Also clean up legacy TEMP file if it exists
+    let legacy_temp = if cfg!(windows) {
+        std::env::var("TEMP").ok()
+    } else {
+        std::env::var("TMPDIR").ok().or(Some("/tmp".to_string()))
+    };
+    if let Some(temp_dir) = legacy_temp {
+        let legacy_file = PathBuf::from(&temp_dir).join("trispr_crash_recovery.json");
+        let _ = std::fs::remove_file(&legacy_file); // best-effort cleanup
     }
 
     Ok(())
 }
 
+/// Validate that a path resolves within the allowed root directory.
+/// For existing files: canonicalize the full path.
+/// For new files (output): canonicalize the parent directory.
+fn validate_path_within(
+    path_str: &str,
+    allowed_root: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    // Reject UNC paths (\\server\share) before canonicalize — they trigger an SMB
+    // round-trip which can leak NTLM credentials even if starts_with() later rejects them.
+    if path_str.starts_with("\\\\") || path_str.starts_with("//") {
+        return Err(format!("UNC paths are not allowed: '{}'", path_str));
+    }
+    let path = std::path::PathBuf::from(path_str);
+
+    // For existing files, canonicalize directly
+    if path.exists() {
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve path '{}': {}", path_str, e))?;
+        if !canonical.starts_with(allowed_root) {
+            return Err(format!("Path '{}' is outside allowed directory", path_str));
+        }
+        return Ok(canonical);
+    }
+
+    // For non-existing files (e.g. output), canonicalize the parent
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Path '{}' has no parent directory", path_str))?;
+    if !parent.exists() {
+        return Err(format!("Parent directory of '{}' does not exist", path_str));
+    }
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve parent of '{}': {}", path_str, e))?;
+    if !canonical_parent.starts_with(allowed_root) {
+        return Err(format!("Path '{}' is outside allowed directory", path_str));
+    }
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("Path '{}' has no file name", path_str))?;
+    Ok(canonical_parent.join(file_name))
+}
+
 #[tauri::command]
 fn encode_to_opus(
+    app: tauri::AppHandle,
     input_path: String,
     output_path: String,
     bitrate_kbps: Option<u32>,
 ) -> Result<opus::OpusEncodeResult, String> {
-    use std::path::Path;
+    let allowed_root = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
 
-    let input = Path::new(&input_path);
-    let output = Path::new(&output_path);
+    let input = validate_path_within(&input_path, &allowed_root)?;
+    let output = validate_path_within(&output_path, &allowed_root)?;
 
     if let Some(bitrate) = bitrate_kbps {
         let mut config = opus::OpusEncoderConfig::default();
         config.bitrate_kbps = bitrate;
-        opus::encode_wav_to_opus(input, output, &config)
+        opus::encode_wav_to_opus(&input, &output, &config)
     } else {
-        opus::encode_wav_to_opus_default(input, output)
+        opus::encode_wav_to_opus_default(&input, &output)
     }
 }
 
@@ -1174,6 +2441,11 @@ fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
         pos_x,
         pos_y,
         style: settings.overlay_style.clone(),
+        refining_indicator_enabled: settings.overlay_refining_indicator_enabled,
+        refining_indicator_preset: settings.overlay_refining_indicator_preset.clone(),
+        refining_indicator_color: settings.overlay_refining_indicator_color.clone(),
+        refining_indicator_speed_ms: settings.overlay_refining_indicator_speed_ms,
+        refining_indicator_range: settings.overlay_refining_indicator_range as f64,
         kitt_min_width: settings.overlay_kitt_min_width as f64,
         kitt_max_width: settings.overlay_kitt_max_width as f64,
         kitt_height: settings.overlay_kitt_height as f64,
@@ -1246,6 +2518,56 @@ fn load_local_env() {
             }
         }
     }
+}
+
+fn env_flag(name: &str) -> bool {
+    matches!(
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    )
+}
+
+fn latency_benchmark_request_from_env() -> LatencyBenchmarkRequest {
+    let mut request = LatencyBenchmarkRequest::default();
+
+    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_WARMUP_RUNS") {
+        if let Ok(parsed) = value.trim().parse::<u32>() {
+            request.warmup_runs = parsed;
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_MEASURE_RUNS") {
+        if let Ok(parsed) = value.trim().parse::<u32>() {
+            request.measure_runs = parsed;
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_INCLUDE_REFINEMENT") {
+        request.include_refinement = matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
+    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_FIXTURES") {
+        let fixtures = value
+            .split(';')
+            .map(|part| part.trim())
+            .filter(|part| !part.is_empty())
+            .map(|part| part.to_string())
+            .collect::<Vec<_>>();
+        if !fixtures.is_empty() {
+            request.fixture_paths = fixtures;
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_REFINE_MODEL") {
+        let model = value.trim();
+        if !model.is_empty() {
+            request.refinement_model = Some(model.to_string());
+        }
+    }
+
+    request
 }
 
 /// Snapshot of clipboard content before we overwrite it.
@@ -1664,54 +2986,55 @@ fn is_valid_window_state(x: i32, y: i32, width: u32, height: u32) -> bool {
     true
 }
 
+/// Restore saved window geometry (position + size), falling back to centering on
+/// the primary monitor when the saved state is invalid or the target monitor has
+/// been disconnected.
+fn restore_window_geometry(window: &tauri::WebviewWindow, settings: &Settings) {
+    if let (Some(x), Some(y), Some(w), Some(h)) = (
+        settings.main_window_x,
+        settings.main_window_y,
+        settings.main_window_width,
+        settings.main_window_height,
+    ) {
+        let state_valid = is_valid_window_state(x, y, w, h);
+
+        let monitor_valid = window
+            .available_monitors()
+            .ok()
+            .map(|monitors| {
+                if let Some(monitor_name) = &settings.main_window_monitor {
+                    monitors.iter().any(|m| {
+                        m.name().as_ref().map(|n| n.as_str()) == Some(monitor_name.as_str())
+                    })
+                } else {
+                    true // No specific monitor was saved, so any monitor is valid
+                }
+            })
+            .unwrap_or(false);
+
+        if state_valid && monitor_valid {
+            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+            let _ = window.set_size(tauri::PhysicalSize::new(w, h));
+        } else {
+            if let Ok(Some(primary)) = window.primary_monitor() {
+                let primary_size = primary.size();
+                let window_w = w.max(980);
+                let window_h = h.max(640);
+                let center_x = (primary_size.width as i32 - window_w as i32) / 2;
+                let center_y = (primary_size.height as i32 - window_h as i32) / 2;
+                let _ = window.set_position(tauri::PhysicalPosition::new(center_x, center_y));
+                let _ = window.set_size(tauri::PhysicalSize::new(window_w, window_h));
+            }
+        }
+    }
+}
+
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         // Restore window geometry on first show
         if !MAIN_WINDOW_RESTORED.swap(true, Ordering::AcqRel) {
             let settings = load_settings(app);
-
-            if let (Some(x), Some(y), Some(w), Some(h)) = (
-                settings.main_window_x,
-                settings.main_window_y,
-                settings.main_window_width,
-                settings.main_window_height,
-            ) {
-                // Validate window state (reject minimized positions and invalid sizes)
-                let state_valid = is_valid_window_state(x, y, w, h);
-
-                // Validate monitor still exists
-                let monitor_valid = window
-                    .available_monitors()
-                    .ok()
-                    .map(|monitors| {
-                        if let Some(monitor_name) = &settings.main_window_monitor {
-                            monitors.iter().any(|m| {
-                                m.name().as_ref().map(|n| n.as_str()) == Some(monitor_name.as_str())
-                            })
-                        } else {
-                            true // No specific monitor was saved, so any monitor is valid
-                        }
-                    })
-                    .unwrap_or(false);
-
-                if state_valid && monitor_valid {
-                    // Restore saved geometry
-                    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
-                    let _ = window.set_size(tauri::PhysicalSize::new(w, h));
-                } else {
-                    // Fallback: center on primary monitor
-                    if let Ok(Some(primary)) = window.primary_monitor() {
-                        let primary_size = primary.size();
-                        let window_w = w.max(980);
-                        let window_h = h.max(640);
-                        let center_x = (primary_size.width as i32 - window_w as i32) / 2;
-                        let center_y = (primary_size.height as i32 - window_h as i32) / 2;
-                        let _ =
-                            window.set_position(tauri::PhysicalPosition::new(center_x, center_y));
-                        let _ = window.set_size(tauri::PhysicalSize::new(window_w, window_h));
-                    }
-                }
-            }
+            restore_window_geometry(&window, &settings);
         }
 
         let _ = window.show();
@@ -1806,22 +3129,91 @@ pub fn run() {
     with_dialog_plugin(builder)
         .setup(|app| {
             let settings = load_settings(app.handle());
-            let history = load_history(app.handle());
-            let history_transcribe = load_transcribe_history(app.handle());
-            let chapters = state::load_chapters(app.handle());
+
+            // Compute partition base directories and legacy paths for migration.
+            let app_data_dir = app.path().app_data_dir().unwrap_or_else(|_| {
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            });
+            let mic_history_dir = app_data_dir.join("history").join("mic");
+            let system_history_dir = app_data_dir.join("history").join("system");
+            let legacy_mic_path = app_data_dir.join("history.json");
+            let legacy_system_path = app_data_dir.join("history_transcribe.json");
+
+            let history = PartitionedHistory::load_or_migrate(
+                mic_history_dir,
+                Some(&legacy_mic_path),
+            );
+            let history_transcribe = PartitionedHistory::load_or_migrate(
+                system_history_dir,
+                Some(&legacy_system_path),
+            );
 
             app.manage(AppState {
                 settings: Mutex::new(settings.clone()),
                 history: Mutex::new(history),
                 history_transcribe: Mutex::new(history_transcribe),
-                chapters: Mutex::new(chapters),
                 recorder: Mutex::new(crate::audio::Recorder::new()),
                 transcribe: Mutex::new(crate::transcription::TranscribeRecorder::new()),
                 downloads: Mutex::new(HashSet::new()),
+                ollama_pulls: Mutex::new(HashSet::new()),
                 transcribe_active: AtomicBool::new(false),
+                refinement_active_count: AtomicUsize::new(0),
+                refinement_watchdog_generation: AtomicU64::new(0),
+                refinement_last_change_ms: AtomicU64::new(0),
+                runtime_start_attempts: AtomicU64::new(0),
+                runtime_start_failures: AtomicU64::new(0),
+                refinement_timeouts: AtomicU64::new(0),
+                refinement_fallback_failed: AtomicU64::new(0),
+                refinement_fallback_timed_out: AtomicU64::new(0),
                 last_mic_recording_path: Mutex::new(None),
                 last_system_recording_path: Mutex::new(None),
+                managed_ollama_child: Mutex::new(None),
+                #[cfg(target_os = "windows")]
+                system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
             });
+
+            if env_flag("TRISPR_RUN_LATENCY_BENCHMARK") {
+                let app_handle = app.handle().clone();
+                thread::spawn(move || {
+                    let request = latency_benchmark_request_from_env();
+                    let result = {
+                        let state = app_handle.state::<AppState>();
+                        run_latency_benchmark_inner(&app_handle, state.inner(), &request)
+                    };
+
+                    match result {
+                        Ok(report) => match write_latency_benchmark_report(&report) {
+                            Ok(path) => {
+                                info!(
+                                    "Latency benchmark complete: p50={}ms p95={}ms (report: {})",
+                                    report.p50_ms,
+                                    report.p95_ms,
+                                    path.display()
+                                );
+                                if !report.slo_pass {
+                                    warn!(
+                                        "Latency benchmark SLO warning: p50={}ms (target {}), p95={}ms (target {})",
+                                        report.p50_ms,
+                                        report.slo_p50_ms,
+                                        report.p95_ms,
+                                        report.slo_p95_ms
+                                    );
+                                }
+                            }
+                            Err(err) => {
+                                error!("Failed to write latency benchmark report: {}", err);
+                            }
+                        },
+                        Err(err) => {
+                            error!("Latency benchmark failed: {}", err);
+                        }
+                    }
+
+                    if env_flag("TRISPR_RUN_LATENCY_BENCHMARK_EXIT") {
+                        app_handle.exit(0);
+                    }
+                });
+            }
 
             let _ = app.emit("transcribe:state", "idle");
 
@@ -1861,6 +3253,7 @@ pub fn run() {
                     }
                 });
             }
+            crate::audio::sync_ptt_hot_standby(app.handle(), &app.state::<AppState>(), &settings);
 
             let overlay_app = app.handle().clone();
             app.listen("overlay:ready", move |_| {
@@ -2053,48 +3446,7 @@ pub fn run() {
             // Restore main window geometry and visibility state
             if let Some(window) = app.get_webview_window("main") {
                 let window_settings = load_settings(app.handle());
-
-                if let (Some(x), Some(y), Some(w), Some(h)) = (
-                    window_settings.main_window_x,
-                    window_settings.main_window_y,
-                    window_settings.main_window_width,
-                    window_settings.main_window_height,
-                ) {
-                    // Validate window state (reject minimized positions and invalid sizes)
-                    let state_valid = is_valid_window_state(x, y, w, h);
-
-                    // Validate monitor still exists
-                    let monitor_valid = window
-                        .available_monitors()
-                        .ok()
-                        .map(|monitors| {
-                            if let Some(monitor_name) = &window_settings.main_window_monitor {
-                                monitors.iter().any(|m| {
-                                    m.name().as_ref().map(|n| n.as_str())
-                                        == Some(monitor_name.as_str())
-                                })
-                            } else {
-                                true
-                            }
-                        })
-                        .unwrap_or(false);
-
-                    if state_valid && monitor_valid {
-                        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
-                        let _ = window.set_size(tauri::PhysicalSize::new(w, h));
-                    } else {
-                        if let Ok(Some(primary)) = window.primary_monitor() {
-                            let primary_size = primary.size();
-                            let window_w = w.max(980);
-                            let window_h = h.max(640);
-                            let center_x = (primary_size.width as i32 - window_w as i32) / 2;
-                            let center_y = (primary_size.height as i32 - window_h as i32) / 2;
-                            let _ = window
-                                .set_position(tauri::PhysicalPosition::new(center_x, center_y));
-                            let _ = window.set_size(tauri::PhysicalSize::new(window_w, window_h));
-                        }
-                    }
-                }
+                restore_window_geometry(&window, &window_settings);
 
                 // Restore window visibility state from last session
                 match window_settings.main_window_start_state.as_str() {
@@ -2132,6 +3484,27 @@ pub fn run() {
             save_settings,
             save_window_state,
             save_window_visibility_state,
+            list_modules,
+            enable_module,
+            disable_module,
+            get_module_health,
+            check_module_updates,
+            list_gdd_presets,
+            save_gdd_preset_clone,
+            detect_gdd_preset,
+            generate_gdd_draft,
+            validate_gdd_draft,
+            render_gdd_for_confluence,
+            test_confluence_connection,
+            confluence_oauth_start,
+            confluence_oauth_exchange,
+            confluence_list_spaces,
+            load_gdd_template_from_file,
+            load_gdd_template_from_confluence,
+            suggest_confluence_target,
+            publish_gdd_to_confluence,
+            save_confluence_secret,
+            clear_confluence_secret,
             save_transcript,
             list_audio_devices,
             list_output_devices,
@@ -2146,16 +3519,17 @@ pub fn run() {
             get_models_dir,
             get_history,
             get_transcribe_history,
+            clear_active_transcript_history,
+            delete_active_transcript_entry,
+            list_history_partitions,
+            load_history_partition,
             add_history_entry,
             add_transcribe_entry,
-            get_chapters,
-            add_chapter,
-            update_chapter,
-            delete_chapter,
             start_recording,
             stop_recording,
             toggle_transcribe,
             expand_transcribe_backlog,
+            paste_transcript_text,
             apply_model,
             validate_hotkey,
             test_hotkey,
@@ -2169,12 +3543,43 @@ pub fn run() {
             get_recordings_directory,
             open_recordings_directory,
             fetch_available_models,
+            fetch_ollama_models_with_size,
             test_provider_connection,
             save_provider_api_key,
             clear_provider_api_key,
+            verify_provider_auth,
             save_ollama_endpoint,
+            detect_ollama_runtime,
+            download_ollama_runtime,
+            install_ollama_runtime,
+            start_ollama_runtime,
+            verify_ollama_runtime,
+            import_ollama_model_from_file,
+            set_strict_local_mode,
             refine_transcript,
+            run_latency_benchmark,
+            get_runtime_metrics_snapshot,
+            record_runtime_metric,
+            pull_ollama_model,
+            delete_ollama_model,
+            get_ollama_model_info,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Kill managed Ollama child process on app exit.
+                // Use if-let to gracefully handle a poisoned mutex (e.g. from a prior panic).
+                if let Ok(mut guard) = app_handle
+                    .state::<AppState>()
+                    .managed_ollama_child
+                    .lock()
+                {
+                    if let Some(mut child) = guard.take() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                }
+            }
+        });
 }

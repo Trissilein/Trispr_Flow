@@ -1,11 +1,44 @@
 use super::error::AIError;
 use super::models::{RefinementOptions, RefinementResult, TokenUsage};
+use std::collections::HashSet;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+use tauri::Emitter;
+use tracing::warn;
+use url::Url;
 
-// Prompt templates optimized for local models (Ollama: qwen, mistral)
-pub const OLLAMA_PROMPT_EN: &str = "Fix this transcribed text: correct punctuation, capitalization, and obvious errors. Keep the meaning unchanged. Return only the corrected text.";
+/// Shared ureq agent for general Ollama HTTP calls (list models, ping, inference).
+/// Defaults: connect 5 s, read 60 s — generous enough for inference, snappy enough
+/// for metadata queries.  `ping_ollama_quick` and `pull_ollama_model_inner` have
+/// fundamentally different timeout budgets and keep their own agents.
+static UREQ_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
 
-pub const OLLAMA_PROMPT_DE: &str = "Korrigiere diesen transkribierten Text: verbessere Zeichensetzung, Großschreibung und offensichtliche Fehler. Behalte die Bedeutung bei. Gib nur den korrigierten Text zurück.";
+fn shared_agent() -> &'static ureq::Agent {
+    UREQ_AGENT.get_or_init(|| {
+        ureq::builder()
+            .timeout_connect(Duration::from_secs(5))
+            .timeout_read(Duration::from_secs(60))
+            .build()
+    })
+}
+
+// Prompt templates optimized for local models (Ollama: qwen3, mistral-small).
+// Guidelines: no translation, no explanations, preserve register and proper nouns.
+pub const OLLAMA_PROMPT_EN: &str = "You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors in the text below. Rules: do NOT translate; do NOT add explanations or commentary; preserve all proper nouns and technical terms exactly; preserve the original register (formal/informal). Output ONLY the corrected text with no preamble.";
+
+pub const OLLAMA_PROMPT_DE: &str = "Du bist ein Transkript-Editor. Korrigiere Zeichensetzung, Groß-/Kleinschreibung und offensichtliche Sprache-zu-Text-Fehler im Text unten. Regeln: NICHT übersetzen; KEINE Erklärungen oder Kommentare hinzufügen; alle Eigennamen und Fachbegriffe exakt beibehalten; Anredeform (Du/Sie) aus dem Original beibehalten. Gib NUR den korrigierten Text aus, ohne Einleitung.";
+
+const OLLAMA_PROMPT_SUMMARY_EN: &str = "Summarize this transcript into 3 to 6 concise bullet points. Preserve key facts, numbers, names, and decisions. Do not invent information. If something is uncertain, state it cautiously. Return only the bullet list.";
+
+const OLLAMA_PROMPT_SUMMARY_DE: &str = "Fasse dieses Transkript in 3 bis 6 praegnanten Stichpunkten zusammen. Behalte wichtige Fakten, Zahlen, Namen und Entscheidungen bei. Keine Informationen erfinden. Unsichere Inhalte vorsichtig formulieren. Gib nur die Stichpunktliste zurueck.";
+
+const OLLAMA_PROMPT_TECHNICAL_EN: &str = "Rewrite this transcript in technical specification style. Keep exact numbers, units, versions, APIs, constraints, and file paths. Structure output with short sections: Goal, Inputs, Outputs, Constraints, Open Questions. Do not invent missing values. Return only the structured result.";
+
+const OLLAMA_PROMPT_TECHNICAL_DE: &str = "Formuliere dieses Transkript als technische Spezifikation um. Behalte exakte Zahlen, Einheiten, Versionen, APIs, Rahmenbedingungen und Dateipfade. Strukturiere die Ausgabe mit kurzen Abschnitten: Ziel, Eingaben, Ausgaben, Constraints, Offene Fragen. Keine fehlenden Werte erfinden. Gib nur das strukturierte Ergebnis zurueck.";
+
+const OLLAMA_PROMPT_ACTION_ITEMS_EN: &str = "Convert this transcript into actionable tasks. Use bullets with format: [Action] [Owner?] [Due?] [Notes]. Preserve technical wording and constraints. If owner or due date is missing, mark it as unknown. Return only the action list.";
+
+const OLLAMA_PROMPT_ACTION_ITEMS_DE: &str = "Wandle dieses Transkript in konkrete Aufgaben um. Nutze Stichpunkte im Format: [Aktion] [Owner?] [Faellig?] [Hinweise]. Behalte technische Begriffe und Rahmenbedingungen bei. Wenn Owner oder Datum fehlen, mit unknown markieren. Gib nur die Aufgabenliste zurueck.";
 
 pub trait AIProvider: Send + Sync {
     fn id(&self) -> &'static str;
@@ -38,45 +71,247 @@ impl ProviderFactory {
     }
 }
 
+fn normalize_ollama_endpoint(endpoint: &str) -> String {
+    let trimmed = endpoint.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        "http://localhost:11434".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+pub fn is_local_ollama_endpoint(endpoint: &str) -> bool {
+    let normalized = normalize_ollama_endpoint(endpoint);
+    let parsed = match Url::parse(&normalized) {
+        Ok(url) => url,
+        Err(_) => return false,
+    };
+    if parsed.scheme() != "http" {
+        return false;
+    }
+    let host = parsed
+        .host_str()
+        .map(|h| h.to_ascii_lowercase())
+        .unwrap_or_default();
+    if host != "localhost" && host != "127.0.0.1" {
+        return false;
+    }
+    if parsed.port_or_known_default().unwrap_or(0) != 11434 {
+        return false;
+    }
+    if parsed.path() != "/" && !parsed.path().is_empty() {
+        return false;
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return false;
+    }
+    true
+}
+
+/// Check if an endpoint targets a known SSRF-sensitive address
+/// (cloud metadata services, link-local ranges).
+pub fn is_ssrf_target(endpoint: &str) -> bool {
+    let normalized = normalize_ollama_endpoint(endpoint);
+    let parsed = match Url::parse(&normalized) {
+        Ok(url) => url,
+        Err(_) => return true, // Fail-closed: unparseable URLs treated as SSRF targets
+    };
+    let host = parsed
+        .host_str()
+        .map(|h| h.to_ascii_lowercase())
+        .unwrap_or_default();
+    // Block cloud metadata endpoint (AWS/GCP/Azure)
+    if host == "169.254.169.254" || host == "metadata.google.internal" {
+        return true;
+    }
+    // Block IPv4 link-local range (169.254.x.x) entirely
+    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+        if ip.octets()[0] == 169 && ip.octets()[1] == 254 {
+            return true;
+        }
+    }
+    // Block IPv6 link-local (fe80::/10) and IPv4-mapped link-local (::ffff:169.254.x.x).
+    // host_str() already strips brackets from IPv6 literals like [fe80::1].
+    if let Ok(ip) = host.parse::<std::net::Ipv6Addr>() {
+        // fe80::/10 — first 10 bits are 1111111010
+        if (ip.segments()[0] & 0xffc0) == 0xfe80 {
+            return true;
+        }
+        // ::ffff:169.254.x.x — IPv4-mapped link-local
+        if let Some(ipv4) = ip.to_ipv4_mapped() {
+            if ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Return preferred endpoint plus a localhost/127.0.0.1 fallback variant.
+pub fn ollama_endpoint_candidates(endpoint: &str) -> Vec<String> {
+    let primary = normalize_ollama_endpoint(endpoint);
+    let mut candidates = Vec::with_capacity(2);
+    let mut push_unique = |value: String| {
+        if !candidates.iter().any(|existing| existing == &value) {
+            candidates.push(value);
+        }
+    };
+
+    if let Ok(parsed) = Url::parse(&primary) {
+        let host = parsed.host_str().map(|h| h.to_ascii_lowercase());
+        if matches!(host.as_deref(), Some("localhost") | Some("127.0.0.1")) {
+            // Prefer numeric loopback first. On some Windows setups, localhost
+            // resolution for /api/tags can add ~2s per call.
+            let mut ipv4 = parsed.clone();
+            if ipv4.set_host(Some("127.0.0.1")).is_ok() {
+                push_unique(ipv4.to_string().trim_end_matches('/').to_string());
+            }
+
+            let mut localhost = parsed.clone();
+            if localhost.set_host(Some("localhost")).is_ok() {
+                push_unique(localhost.to_string().trim_end_matches('/').to_string());
+            }
+
+            push_unique(primary);
+            return candidates;
+        }
+    }
+
+    push_unique(primary);
+    candidates
+}
+
 /// Fetch model list from a running Ollama instance via GET /api/tags.
 /// Returns an empty Vec on any error (Ollama not running, network issue, etc.).
 pub fn list_ollama_models(endpoint: &str) -> Vec<String> {
-    let url = format!("{}/api/tags", endpoint.trim_end_matches('/'));
-    let agent = ureq::builder()
-        .timeout_connect(Duration::from_secs(2))
-        .timeout_read(Duration::from_secs(5))
-        .build();
-    let resp = match agent.get(&url).call() {
-        Ok(r) => r,
-        Err(_) => return vec![],
-    };
-    let json: serde_json::Value = match resp.into_json() {
-        Ok(j) => j,
-        Err(_) => return vec![],
-    };
-    json["models"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default()
+    list_ollama_models_with_size(endpoint)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalModelResolution {
+    pub model: String,
+    pub repaired: bool,
+}
+
+fn normalize_model_tag(name: &str) -> String {
+    name.trim().to_ascii_lowercase()
+}
+
+fn resolve_installed_model_tag(installed: &[String], candidate: &str) -> Option<String> {
+    let target = normalize_model_tag(candidate);
+    if target.is_empty() {
+        return None;
+    }
+    installed
+        .iter()
+        .find(|name| normalize_model_tag(name) == target)
+        .cloned()
+}
+
+pub fn resolve_effective_local_model(
+    configured_model: &str,
+    preferred_model: &str,
+    endpoint: &str,
+) -> Result<LocalModelResolution, AIError> {
+    let installed = list_ollama_models(endpoint);
+    if installed.is_empty() {
+        if ping_ollama(endpoint).is_err() {
+            return Err(AIError::OllamaNotRunning);
+        }
+        return Err(AIError::NetworkError(
+            "No local Ollama model configured. Download or import a model first.".to_string(),
+        ));
+    }
+
+    let configured = configured_model.trim();
+    if let Some(found) = resolve_installed_model_tag(&installed, configured) {
+        let repaired = !configured.eq_ignore_ascii_case(&found);
+        return Ok(LocalModelResolution {
+            model: found,
+            repaired,
+        });
+    }
+
+    let preferred = preferred_model.trim();
+    if let Some(found) = resolve_installed_model_tag(&installed, preferred) {
+        return Ok(LocalModelResolution {
+            model: found,
+            repaired: true,
+        });
+    }
+
+    Ok(LocalModelResolution {
+        model: installed[0].clone(),
+        repaired: true,
+    })
+}
+
+/// Fetch model list with size information from a running Ollama instance.
+/// Each entry is (model_name, size_bytes). Returns empty Vec on any error.
+pub fn list_ollama_models_with_size(endpoint: &str) -> Vec<(String, u64)> {
+    let agent = shared_agent();
+
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/tags", candidate);
+        let resp = match agent.get(&url).call() {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let json: serde_json::Value = match resp.into_json() {
+            Ok(j) => j,
+            Err(_) => continue,
+        };
+        return json["models"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| {
+                        let name = m["name"].as_str()?.to_string();
+                        let size = m["size"].as_u64().unwrap_or(0);
+                        Some((name, size))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+
+    vec![]
 }
 
 /// Test whether Ollama is reachable at the given endpoint.
 /// Returns Ok(()) if the server responds, Err(AIError::OllamaNotRunning) otherwise.
 pub fn ping_ollama(endpoint: &str) -> Result<(), AIError> {
-    let url = format!("{}/api/tags", endpoint.trim_end_matches('/'));
-    let agent = ureq::builder()
-        .timeout_connect(Duration::from_secs(3))
-        .timeout_read(Duration::from_secs(5))
-        .build();
-    match agent.get(&url).call() {
-        Ok(_) => Ok(()),
-        Err(ureq::Error::Transport(_)) => Err(AIError::OllamaNotRunning),
-        Err(ureq::Error::Status(_, _)) => Err(AIError::OllamaNotRunning),
+    let agent = shared_agent();
+
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/tags", candidate);
+        if agent.get(&url).call().is_ok() {
+            return Ok(());
+        }
     }
+
+    Err(AIError::OllamaNotRunning)
+}
+
+/// Quick reachability check for use in UI detection paths (e.g. detect_ollama_runtime).
+/// Uses a 300 ms timeout — enough for localhost, never blocks the UI thread noticeably.
+pub fn ping_ollama_quick(endpoint: &str) -> Result<(), AIError> {
+    let agent = ureq::builder()
+        .timeout_connect(Duration::from_millis(300))
+        .timeout_read(Duration::from_millis(300))
+        .build();
+
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/tags", candidate);
+        if agent.get(&url).call().is_ok() {
+            return Ok(());
+        }
+    }
+
+    Err(AIError::OllamaNotRunning)
 }
 
 pub fn default_models_for_provider(provider: &str) -> Vec<String> {
@@ -108,13 +343,89 @@ pub fn default_prompt_for_language(language: &str) -> &'static str {
     }
 }
 
+fn language_lock_suffix(language: &str) -> &'static str {
+    match language.trim().to_lowercase().as_str() {
+        "auto" => {
+            "Detect the input language and keep it unchanged. Do not translate. If the input is mixed-language, preserve each segment in its original language."
+        }
+        "de" | "german" => {
+            "Behalte die Ausgabe in derselben Sprache wie die Eingabe. Nicht uebersetzen."
+        }
+        _ => "Keep the output in the same language as the input. Do not translate.",
+    }
+}
+
+fn with_language_lock(prompt: &str, language: &str, preserve_source_language: bool) -> String {
+    let normalized = prompt.trim();
+    if normalized.is_empty() {
+        return String::new();
+    }
+    if !preserve_source_language {
+        return normalized.to_string();
+    }
+    format!("{}\n\n{}", normalized, language_lock_suffix(language))
+}
+
+pub fn normalize_prompt_profile(profile: &str) -> &'static str {
+    let id = crate::ai_fallback::models::normalize_prompt_profile_id(profile);
+    if id.is_empty() {
+        "wording"
+    } else {
+        id
+    }
+}
+
+pub fn prompt_for_profile(
+    profile: &str,
+    language: &str,
+    custom_prompt: Option<&str>,
+    preserve_source_language: bool,
+) -> Option<String> {
+    if normalize_prompt_profile(profile) == "custom" {
+        let normalized = custom_prompt.unwrap_or("").trim();
+        if normalized.is_empty() {
+            return Some(default_prompt_for_language(language).to_string());
+        }
+        return Some(normalized.to_string());
+    }
+
+    let base = match normalize_prompt_profile(profile) {
+        "summary" => match language.trim().to_lowercase().as_str() {
+            "de" | "german" => OLLAMA_PROMPT_SUMMARY_DE,
+            _ => OLLAMA_PROMPT_SUMMARY_EN,
+        }
+        .to_string(),
+        "technical_specs" => match language.trim().to_lowercase().as_str() {
+            "de" | "german" => OLLAMA_PROMPT_TECHNICAL_DE,
+            _ => OLLAMA_PROMPT_TECHNICAL_EN,
+        }
+        .to_string(),
+        "action_items" => match language.trim().to_lowercase().as_str() {
+            "de" | "german" => OLLAMA_PROMPT_ACTION_ITEMS_DE,
+            _ => OLLAMA_PROMPT_ACTION_ITEMS_EN,
+        }
+        .to_string(),
+        _ => default_prompt_for_language(language).to_string(),
+    };
+
+    let effective = with_language_lock(&base, language, preserve_source_language);
+    if effective.is_empty() {
+        None
+    } else {
+        Some(effective)
+    }
+}
+
 fn normalize_provider(provider: &str) -> &str {
-    match provider.trim().to_lowercase().as_str() {
-        "claude" => "claude",
-        "openai" => "openai",
-        "gemini" => "gemini",
-        "ollama" => "ollama",
-        _ => "unknown",
+    // Delegates to the canonical normalize_provider_id in models.rs.
+    // The only difference: unrecognized providers yield "unknown" here (not "ollama")
+    // so callers like ProviderFactory::create can surface a proper error.
+    let canonical = super::models::normalize_provider_id(provider);
+    let trimmed = provider.trim();
+    if canonical == "ollama" && !trimmed.eq_ignore_ascii_case("ollama") {
+        "unknown"
+    } else {
+        canonical
     }
 }
 
@@ -157,6 +468,438 @@ fn passthrough_refinement(
         model: model.to_string(),
         execution_time_ms: 0,
     }
+}
+
+fn extract_ollama_error_message(response: ureq::Response) -> String {
+    let body = response.into_string().unwrap_or_default();
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(message) = json["error"].as_str() {
+            return message.to_string();
+        }
+        if let Some(message) = json["message"].as_str() {
+            return message.to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn is_ollama_model_not_found(detail: &str) -> bool {
+    let detail_lc = detail.to_ascii_lowercase();
+    detail_lc.contains("model") && detail_lc.contains("not found")
+}
+
+fn is_missing_chat_route(code: u16, detail: &str) -> bool {
+    if code == 404 {
+        return true;
+    }
+    let detail_lc = detail.to_ascii_lowercase();
+    detail_lc.contains("/api/chat")
+        || detail_lc.contains("unknown route")
+        || detail_lc.contains("not found")
+        || detail_lc.contains("messages not supported")
+}
+
+fn parse_ollama_refined_text(json: &serde_json::Value) -> Option<String> {
+    json["message"]["content"]
+        .as_str()
+        .or_else(|| json["response"].as_str())
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+fn parse_ollama_usage(json: &serde_json::Value) -> (usize, usize) {
+    (
+        json["prompt_eval_count"].as_u64().unwrap_or(0) as usize,
+        json["eval_count"].as_u64().unwrap_or(0) as usize,
+    )
+}
+
+fn parse_env_usize(name: &str) -> Option<usize> {
+    std::env::var(name).ok().and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        trimmed.parse::<usize>().ok()
+    })
+}
+
+fn default_ollama_num_thread() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    // Keep headroom for UI/audio threads.
+    (cores / 2).max(2).clamp(2, 8)
+}
+
+fn adaptive_num_predict(input_text: &str, configured_max: u32, low_latency_mode: bool) -> u32 {
+    let configured = configured_max.clamp(128, 8192);
+    let input_tokens = rough_token_estimate(input_text);
+    let heuristic = if low_latency_mode {
+        ((input_tokens * 2) + 24).clamp(64, 384) as u32
+    } else {
+        ((input_tokens * 3) + 48).clamp(96, 1024) as u32
+    };
+    configured.min(heuristic.max(64))
+}
+
+fn adaptive_num_ctx(input_text: &str, system_prompt: &str, low_latency_mode: bool) -> usize {
+    let tokens = rough_token_estimate(input_text) + rough_token_estimate(system_prompt);
+    let max_ctx = if low_latency_mode { 2048 } else { 4096 };
+    let target = (tokens * 2).clamp(1024, max_ctx);
+    if target <= 1024 {
+        1024
+    } else if target <= 2048 {
+        2048
+    } else if !low_latency_mode && target <= 3072 {
+        3072
+    } else {
+        max_ctx
+    }
+}
+
+fn build_ollama_options_payload(
+    options: &RefinementOptions,
+    input_text: &str,
+    system_prompt: &str,
+) -> serde_json::Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "temperature".to_string(),
+        serde_json::json!(options.temperature),
+    );
+    let num_predict =
+        adaptive_num_predict(input_text, options.max_tokens, options.low_latency_mode);
+    payload.insert("num_predict".to_string(), serde_json::json!(num_predict));
+    let num_ctx = parse_env_usize("TRISPR_OLLAMA_NUM_CTX")
+        .map(|n| n.clamp(1024, 8192))
+        .unwrap_or_else(|| adaptive_num_ctx(input_text, system_prompt, options.low_latency_mode));
+    payload.insert("num_ctx".to_string(), serde_json::json!(num_ctx));
+
+    let num_thread =
+        parse_env_usize("TRISPR_OLLAMA_NUM_THREAD").unwrap_or_else(default_ollama_num_thread);
+    payload.insert("num_thread".to_string(), serde_json::json!(num_thread));
+
+    // Optional advanced override. Example: TRISPR_OLLAMA_NUM_GPU=999
+    // to request aggressive GPU offload if supported by local runtime.
+    if let Some(num_gpu) = parse_env_usize("TRISPR_OLLAMA_NUM_GPU") {
+        payload.insert("num_gpu".to_string(), serde_json::json!(num_gpu));
+    }
+
+    serde_json::Value::Object(payload)
+}
+
+fn collapse_excessive_blank_lines(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut newline_streak = 0usize;
+
+    for ch in text.chars() {
+        if ch == '\n' {
+            newline_streak += 1;
+            if newline_streak <= 2 {
+                out.push(ch);
+            }
+        } else {
+            newline_streak = 0;
+            out.push(ch);
+        }
+    }
+
+    out
+}
+
+fn extract_word_set(text: &str) -> HashSet<String> {
+    text.split_whitespace()
+        .filter_map(|raw| {
+            let normalized = raw
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_ascii_lowercase();
+            if normalized.len() < 2 {
+                None
+            } else {
+                Some(normalized)
+            }
+        })
+        .collect()
+}
+
+fn shared_word_ratio(original: &str, refined: &str) -> f64 {
+    let original_words = extract_word_set(original);
+    if original_words.is_empty() {
+        return 1.0;
+    }
+    let refined_words = extract_word_set(refined);
+    let shared = original_words
+        .iter()
+        .filter(|word| refined_words.contains(*word))
+        .count();
+    shared as f64 / original_words.len() as f64
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScriptFamily {
+    Latin,
+    Cyrillic,
+    Cjk,
+    Arabic,
+}
+
+fn classify_script_family(ch: char) -> Option<ScriptFamily> {
+    let code = ch as u32;
+    if (0x0041..=0x024F).contains(&code) || (0x1E00..=0x1EFF).contains(&code) {
+        return Some(ScriptFamily::Latin);
+    }
+    if (0x0400..=0x052F).contains(&code)
+        || (0x2DE0..=0x2DFF).contains(&code)
+        || (0xA640..=0xA69F).contains(&code)
+    {
+        return Some(ScriptFamily::Cyrillic);
+    }
+    if (0x3040..=0x30FF).contains(&code)
+        || (0x31F0..=0x31FF).contains(&code)
+        || (0x3400..=0x4DBF).contains(&code)
+        || (0x4E00..=0x9FFF).contains(&code)
+        || (0xAC00..=0xD7AF).contains(&code)
+    {
+        return Some(ScriptFamily::Cjk);
+    }
+    if (0x0600..=0x06FF).contains(&code)
+        || (0x0750..=0x077F).contains(&code)
+        || (0x08A0..=0x08FF).contains(&code)
+        || (0xFB50..=0xFDFF).contains(&code)
+        || (0xFE70..=0xFEFF).contains(&code)
+    {
+        return Some(ScriptFamily::Arabic);
+    }
+    None
+}
+
+fn script_family_name(family: ScriptFamily) -> &'static str {
+    match family {
+        ScriptFamily::Latin => "latin",
+        ScriptFamily::Cyrillic => "cyrillic",
+        ScriptFamily::Cjk => "cjk",
+        ScriptFamily::Arabic => "arabic",
+    }
+}
+
+fn dominant_script_family(text: &str) -> Option<ScriptFamily> {
+    let mut latin = 0usize;
+    let mut cyrillic = 0usize;
+    let mut cjk = 0usize;
+    let mut arabic = 0usize;
+
+    for ch in text.chars() {
+        match classify_script_family(ch) {
+            Some(ScriptFamily::Latin) => latin += 1,
+            Some(ScriptFamily::Cyrillic) => cyrillic += 1,
+            Some(ScriptFamily::Cjk) => cjk += 1,
+            Some(ScriptFamily::Arabic) => arabic += 1,
+            None => {}
+        }
+    }
+
+    let total = latin + cyrillic + cjk + arabic;
+    if total < 12 {
+        return None;
+    }
+
+    let counts = [
+        (ScriptFamily::Latin, latin),
+        (ScriptFamily::Cyrillic, cyrillic),
+        (ScriptFamily::Cjk, cjk),
+        (ScriptFamily::Arabic, arabic),
+    ];
+    let (family, max_count) = counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .unwrap_or((ScriptFamily::Latin, 0));
+
+    if max_count * 100 >= total * 70 {
+        Some(family)
+    } else {
+        None
+    }
+}
+
+fn tokenize_language_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphabetic())
+        .filter_map(|token| {
+            let trimmed = token.trim();
+            if trimmed.len() < 2 {
+                None
+            } else {
+                Some(trimmed.to_lowercase())
+            }
+        })
+        .collect()
+}
+
+fn stopword_hits(words: &[String], stopwords: &[&str]) -> usize {
+    words
+        .iter()
+        .filter(|word| stopwords.contains(&word.as_str()))
+        .count()
+}
+
+fn detect_en_de_language_hint(text: &str) -> Option<&'static str> {
+    const EN_STOPWORDS: &[&str] = &[
+        "the", "and", "is", "are", "to", "of", "in", "for", "with", "that", "this", "it", "on",
+        "we", "you", "can", "will", "not",
+    ];
+    const DE_STOPWORDS: &[&str] = &[
+        "der", "die", "das", "und", "ist", "sind", "nicht", "mit", "ein", "eine", "ich", "du",
+        "wir", "sie", "auf", "im", "den", "zu", "fuer",
+    ];
+
+    let words = tokenize_language_words(text);
+    if words.len() < 8 {
+        return None;
+    }
+
+    let en_hits = stopword_hits(&words, EN_STOPWORDS);
+    let de_hits = stopword_hits(&words, DE_STOPWORDS);
+
+    if en_hits >= 3 && en_hits >= de_hits + 2 {
+        Some("en")
+    } else if de_hits >= 3 && de_hits >= en_hits + 2 {
+        Some("de")
+    } else {
+        None
+    }
+}
+
+fn likely_mixed_en_de(text: &str) -> bool {
+    const EN_STOPWORDS: &[&str] = &[
+        "the", "and", "is", "are", "to", "of", "in", "for", "with", "that", "this", "it", "on",
+        "we", "you", "can", "will", "not",
+    ];
+    const DE_STOPWORDS: &[&str] = &[
+        "der", "die", "das", "und", "ist", "sind", "nicht", "mit", "ein", "eine", "ich", "du",
+        "wir", "sie", "auf", "im", "den", "zu", "fuer",
+    ];
+
+    let words = tokenize_language_words(text);
+    if words.len() < 8 {
+        return false;
+    }
+    let en_hits = stopword_hits(&words, EN_STOPWORDS);
+    let de_hits = stopword_hits(&words, DE_STOPWORDS);
+    en_hits >= 2 && de_hits >= 2
+}
+
+fn detect_language_drift_reason(original: &str, refined: &str) -> Option<String> {
+    if likely_mixed_en_de(original) {
+        return None;
+    }
+
+    let original_script = dominant_script_family(original);
+    let refined_script = dominant_script_family(refined);
+    if let (Some(orig), Some(new)) = (original_script, refined_script) {
+        if orig != new && !likely_mixed_en_de(refined) {
+            return Some(format!(
+                "script-family mismatch ({} -> {})",
+                script_family_name(orig),
+                script_family_name(new)
+            ));
+        }
+    }
+
+    let original_lang = detect_en_de_language_hint(original);
+    let refined_lang = detect_en_de_language_hint(refined);
+    if let (Some(orig), Some(new)) = (original_lang, refined_lang) {
+        if orig != new && !likely_mixed_en_de(refined) {
+            let overlap = shared_word_ratio(original, refined);
+            if overlap < 0.65 {
+                return Some(format!(
+                    "stopword-language mismatch ({} -> {}, overlap={:.2})",
+                    orig, new, overlap
+                ));
+            }
+        }
+    }
+
+    None
+}
+
+fn suspicious_refinement_shape(original: &str, refined: &str) -> bool {
+    let original_trimmed = original.trim();
+    let refined_trimmed = refined.trim();
+    if refined_trimmed.is_empty() {
+        return true;
+    }
+    if original_trimmed.is_empty() {
+        return false;
+    }
+
+    let original_chars = original_trimmed
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .count();
+    let refined_chars = refined_trimmed
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .count();
+
+    let original_blank_lines = original_trimmed
+        .lines()
+        .filter(|line| line.trim().is_empty())
+        .count();
+    let refined_blank_lines = refined_trimmed
+        .lines()
+        .filter(|line| line.trim().is_empty())
+        .count();
+
+    let severe_shrink = original_chars >= 80 && refined_chars * 100 < original_chars * 45;
+    let blank_line_spike =
+        refined_blank_lines >= original_blank_lines + 4 && refined_blank_lines >= 6;
+    let overlap_ratio = shared_word_ratio(original_trimmed, refined_trimmed);
+    let low_overlap = original_trimmed.split_whitespace().count() >= 20 && overlap_ratio < 0.40;
+
+    (severe_shrink && low_overlap) || (blank_line_spike && severe_shrink)
+}
+
+fn sanitize_ollama_refinement_output(
+    original: &str,
+    refined: &str,
+    options: &RefinementOptions,
+) -> String {
+    let normalized = refined.replace("\r\n", "\n").replace('\r', "\n");
+    let collapsed = collapse_excessive_blank_lines(normalized.trim());
+    if suspicious_refinement_shape(original, &collapsed) {
+        warn!(
+            "Ignoring suspicious Ollama refinement output and keeping original transcript (orig_len={}, refined_len={})",
+            original.len(),
+            collapsed.len()
+        );
+        return original.to_string();
+    }
+    if options.enforce_language_guard {
+        if let Some(reason) = detect_language_drift_reason(original, &collapsed) {
+            warn!(
+                "Discarding refinement due to language drift guard (reason={}, orig_len={}, refined_len={})",
+                reason,
+                original.len(),
+                collapsed.len()
+            );
+            return original.to_string();
+        }
+    }
+    if collapsed.is_empty() {
+        return original.to_string();
+    }
+    collapsed
+}
+
+fn map_ollama_http_error(code: u16, detail: &str) -> AIError {
+    if detail.is_empty() {
+        return AIError::NetworkError(format!("Ollama returned HTTP {}", code));
+    }
+    AIError::NetworkError(format!("Ollama returned HTTP {}: {}", code, detail))
 }
 
 struct ClaudeProvider;
@@ -282,7 +1025,13 @@ impl AIProvider for OllamaProvider {
         _api_key: &str,
     ) -> Result<RefinementResult, AIError> {
         let start = Instant::now();
-        let url = format!("{}/api/chat", self.endpoint.trim_end_matches('/'));
+        let model = model.trim();
+        if model.is_empty() {
+            return Err(AIError::NetworkError(
+                "No Ollama model selected. Set an active model in AI Refinement > Models."
+                    .to_string(),
+            ));
+        }
 
         let system_prompt = options
             .custom_prompt
@@ -293,76 +1042,346 @@ impl AIProvider for OllamaProvider {
                 default_prompt_for_language(lang)
             });
 
-        let body = serde_json::json!({
+        // "think": false disables extended chain-of-thought mode on reasoning models
+        // (e.g. qwen3, deepseek-r1). Without this, thinking models generate internal
+        // reasoning tokens indefinitely before producing any output, causing apparent hangs.
+        let ollama_options = build_ollama_options_payload(options, text, system_prompt);
+        let keep_alive = std::env::var("TRISPR_OLLAMA_KEEP_ALIVE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "20m".to_string());
+
+        let chat_body = serde_json::json!({
             "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text}
-            ],
             "stream": false,
-            "options": {
-                "temperature": options.temperature,
-                "num_predict": options.max_tokens
-            }
+            "think": false,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": text }
+            ],
+            "options": ollama_options.clone(),
+            "keep_alive": keep_alive.clone()
         });
 
-        let agent = ureq::builder()
-            .timeout_connect(Duration::from_secs(3))
-            .timeout_read(Duration::from_secs(30))
-            .build();
+        let generate_body = serde_json::json!({
+            "model": model,
+            "prompt": format!("{}\n\n{}", system_prompt, text),
+            "stream": false,
+            "think": false,
+            "options": ollama_options,
+            "keep_alive": keep_alive
+        });
 
-        let resp = agent
+        // Shared agent has a 60 s read timeout — generous enough for both normal
+        // (≤45 s) and low-latency (≤20 s) inference on 8B models.
+        let agent = shared_agent();
+
+        let mut last_transport_error: Option<AIError> = None;
+
+        for candidate in ollama_endpoint_candidates(&self.endpoint) {
+            let chat_url = format!("{}/api/chat", candidate);
+            let chat_response = match agent
+                .post(&chat_url)
+                .set("Content-Type", "application/json")
+                .send_json(chat_body.clone())
+            {
+                Ok(resp) => Some(resp),
+                Err(ureq::Error::Status(code, response)) => {
+                    let detail = extract_ollama_error_message(response);
+                    if is_ollama_model_not_found(&detail) {
+                        return Err(AIError::NetworkError(format!(
+                            "Model '{}' not found in Ollama. Pull it first with: ollama pull {}",
+                            model, model
+                        )));
+                    }
+                    if !is_missing_chat_route(code, &detail) {
+                        return Err(map_ollama_http_error(code, &detail));
+                    }
+                    None
+                }
+                Err(ureq::Error::Transport(t)) => {
+                    let msg = t.to_string().to_lowercase();
+                    last_transport_error =
+                        Some(if msg.contains("timed out") || msg.contains("timeout") {
+                            AIError::Timeout
+                        } else {
+                            AIError::OllamaNotRunning
+                        });
+                    continue;
+                }
+            };
+
+            if let Some(resp) = chat_response {
+                let json: serde_json::Value = resp.into_json().map_err(|e| {
+                    AIError::NetworkError(format!("Failed to parse Ollama response: {}", e))
+                })?;
+                let refined_text = parse_ollama_refined_text(&json).ok_or_else(|| {
+                    AIError::NetworkError(
+                        "Unexpected Ollama response format: missing message.content/response"
+                            .to_string(),
+                    )
+                })?;
+                let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
+                let (input_tokens, output_tokens) = parse_ollama_usage(&json);
+                let elapsed_ms = start.elapsed().as_millis() as u64;
+                return Ok(RefinementResult {
+                    text: refined_text,
+                    usage: TokenUsage {
+                        input_tokens,
+                        output_tokens,
+                        total_cost_usd: 0.0,
+                    },
+                    provider: self.id().to_string(),
+                    model: model.to_string(),
+                    execution_time_ms: elapsed_ms,
+                });
+            }
+
+            let generate_url = format!("{}/api/generate", candidate);
+            let generate_response = match agent
+                .post(&generate_url)
+                .set("Content-Type", "application/json")
+                .send_json(generate_body.clone())
+            {
+                Ok(resp) => resp,
+                Err(ureq::Error::Status(code, response)) => {
+                    let detail = extract_ollama_error_message(response);
+                    if is_ollama_model_not_found(&detail) {
+                        return Err(AIError::NetworkError(format!(
+                            "Model '{}' not found in Ollama. Pull it first with: ollama pull {}",
+                            model, model
+                        )));
+                    }
+                    if code == 404 {
+                        return Err(AIError::NetworkError(
+                            "Ollama route not found: neither /api/chat nor /api/generate is available."
+                                .to_string(),
+                        ));
+                    }
+                    return Err(map_ollama_http_error(code, &detail));
+                }
+                Err(ureq::Error::Transport(t)) => {
+                    let msg = t.to_string().to_lowercase();
+                    last_transport_error =
+                        Some(if msg.contains("timed out") || msg.contains("timeout") {
+                            AIError::Timeout
+                        } else {
+                            AIError::OllamaNotRunning
+                        });
+                    continue;
+                }
+            };
+
+            let json: serde_json::Value = generate_response.into_json().map_err(|e| {
+                AIError::NetworkError(format!("Failed to parse Ollama response: {}", e))
+            })?;
+            let refined_text = parse_ollama_refined_text(&json).ok_or_else(|| {
+                AIError::NetworkError(
+                    "Unexpected Ollama response format: missing message.content/response"
+                        .to_string(),
+                )
+            })?;
+            let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
+            let (input_tokens, output_tokens) = parse_ollama_usage(&json);
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+
+            return Ok(RefinementResult {
+                text: refined_text,
+                usage: TokenUsage {
+                    input_tokens,
+                    output_tokens,
+                    total_cost_usd: 0.0,
+                },
+                provider: self.id().to_string(),
+                model: model.to_string(),
+                execution_time_ms: elapsed_ms,
+            });
+        }
+
+        Err(last_transport_error.unwrap_or(AIError::OllamaNotRunning))
+    }
+}
+
+// ============================================================================
+// Ollama Pull API — Structs and streaming handler
+// ============================================================================
+
+use serde::Serialize;
+use tauri::AppHandle;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OllamaPullProgress {
+    pub model: String,
+    pub status: String,
+    pub digest: Option<String>,
+    pub total: Option<u64>,
+    pub completed: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OllamaPullComplete {
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OllamaPullError {
+    pub model: String,
+    pub error: String,
+}
+
+/// Validate an Ollama model name against known safe characters.
+/// Allowed: alphanumeric, ':' (for tags), '.' (for versions), '-', '_'
+pub fn validate_ollama_model_name(name: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("Model name cannot be empty".to_string());
+    }
+    if !name.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c == ':' || c == '.' || c == '-' || c == '_' || c == '/'
+    }) {
+        return Err("Invalid characters in model name".to_string());
+    }
+    if name.len() > 200 {
+        return Err("Model name too long (max 200 chars)".to_string());
+    }
+    Ok(())
+}
+
+/// Pull an Ollama model and stream progress via Tauri events.
+/// Spawned in a background thread.
+///
+/// Events emitted:
+/// - "ollama:pull-progress": OllamaPullProgress (every ~250ms during download)
+/// - "ollama:pull-complete": OllamaPullComplete (on success)
+/// - "ollama:pull-error": OllamaPullError (on failure)
+pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) {
+    use std::io::BufRead;
+
+    let body = serde_json::json!({ "model": model, "stream": true });
+
+    let agent = ureq::builder()
+        .timeout_connect(Duration::from_secs(5))
+        .timeout_read(Duration::from_secs(3600)) // 1 hour for large models
+        .build();
+
+    let mut last_connect_error: Option<String> = None;
+
+    for candidate in ollama_endpoint_candidates(&endpoint) {
+        let url = format!("{}/api/pull", candidate);
+        let response = match agent
             .post(&url)
             .set("Content-Type", "application/json")
-            .send_json(body)
-            .map_err(|e| match e {
-                ureq::Error::Status(404, _) => {
-                    AIError::NetworkError(format!("Model '{}' not found in Ollama. Pull it first with: ollama pull {}", model, model))
-                }
-                ureq::Error::Status(code, _) => {
-                    AIError::NetworkError(format!("Ollama returned HTTP {}", code))
-                }
-                ureq::Error::Transport(t) => {
-                    let msg = t.to_string();
-                    if msg.contains("timed out") || msg.contains("timeout") {
-                        AIError::Timeout
-                    } else {
-                        AIError::OllamaNotRunning
-                    }
-                }
-            })?;
+            .send_json(body.clone())
+        {
+            Ok(r) => r,
+            Err(ureq::Error::Transport(t)) => {
+                last_connect_error = Some(t.to_string());
+                continue;
+            }
+            Err(e) => {
+                let _ = app.emit(
+                    "ollama:pull-error",
+                    OllamaPullError {
+                        model: model.clone(),
+                        error: format!("Connection failed: {}", e),
+                    },
+                );
+                return;
+            }
+        };
 
-        let json: serde_json::Value = resp
-            .into_json()
-            .map_err(|e| AIError::NetworkError(format!("Failed to parse Ollama response: {}", e)))?;
+        let reader = response.into_reader();
+        let buffered = std::io::BufReader::new(reader);
+        let mut last_emit = Instant::now();
 
-        let refined_text = json["message"]["content"]
-            .as_str()
-            .ok_or_else(|| AIError::NetworkError("Unexpected Ollama response format: missing message.content".to_string()))?
-            .trim()
-            .to_string();
+        for line_result in buffered.lines() {
+            let line = match line_result {
+                Ok(l) if !l.trim().is_empty() => l,
+                _ => continue,
+            };
 
-        let input_tokens = json["prompt_eval_count"].as_u64().unwrap_or(0) as usize;
-        let output_tokens = json["eval_count"].as_u64().unwrap_or(0) as usize;
-        let elapsed_ms = start.elapsed().as_millis() as u64;
+            let json: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(j) => j,
+                Err(_) => continue,
+            };
 
-        Ok(RefinementResult {
-            text: refined_text,
-            usage: TokenUsage {
-                input_tokens,
-                output_tokens,
-                total_cost_usd: 0.0,
+            let status = json["status"].as_str().unwrap_or("").to_string();
+
+            // Check for success
+            if status == "success" {
+                let _ = app.emit(
+                    "ollama:pull-complete",
+                    OllamaPullComplete {
+                        model: model.clone(),
+                    },
+                );
+                return;
+            }
+
+            // Emit progress every 250ms
+            if last_emit.elapsed() >= Duration::from_millis(250) {
+                let _ = app.emit(
+                    "ollama:pull-progress",
+                    OllamaPullProgress {
+                        model: model.clone(),
+                        status: status.clone(),
+                        digest: json["digest"].as_str().map(|s| s.to_string()),
+                        total: json["total"].as_u64(),
+                        completed: json["completed"].as_u64(),
+                    },
+                );
+                last_emit = Instant::now();
+            }
+
+            // Check for error in response
+            if let Some(err) = json["error"].as_str() {
+                let _ = app.emit(
+                    "ollama:pull-error",
+                    OllamaPullError {
+                        model: model.clone(),
+                        error: err.to_string(),
+                    },
+                );
+                return;
+            }
+        }
+
+        // Stream ended without "success" status.
+        let _ = app.emit(
+            "ollama:pull-error",
+            OllamaPullError {
+                model: model.clone(),
+                error: "Stream ended unexpectedly without success status".to_string(),
             },
-            provider: self.id().to_string(),
-            model: model.to_string(),
-            execution_time_ms: elapsed_ms,
-        })
+        );
+        return;
     }
+
+    let _ = app.emit(
+        "ollama:pull-error",
+        OllamaPullError {
+            model: model.clone(),
+            error: format!(
+                "Connection failed: {}",
+                last_connect_error.unwrap_or_else(|| "unable to reach Ollama endpoint".to_string())
+            ),
+        },
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_options(enforce_language_guard: bool) -> RefinementOptions {
+        RefinementOptions {
+            temperature: 0.3,
+            max_tokens: 512,
+            low_latency_mode: false,
+            language: Some("en".to_string()),
+            custom_prompt: None,
+            enforce_language_guard,
+        }
+    }
 
     #[test]
     fn factory_creates_known_providers() {
@@ -378,11 +1397,44 @@ mod tests {
         assert!(matches!(err, Some(AIError::UnknownProvider(_))));
     }
 
+    #[test]
+    fn endpoint_candidates_include_ipv4_fallback_for_localhost() {
+        let candidates = ollama_endpoint_candidates("http://localhost:11434");
+        assert_eq!(candidates[0], "http://127.0.0.1:11434");
+        assert!(candidates.iter().any(|c| c == "http://127.0.0.1:11434"));
+        assert!(candidates.iter().any(|c| c == "http://localhost:11434"));
+    }
+
+    #[test]
+    fn endpoint_candidates_include_localhost_fallback_for_ipv4() {
+        let candidates = ollama_endpoint_candidates("http://127.0.0.1:11434");
+        assert_eq!(candidates[0], "http://127.0.0.1:11434");
+        assert!(candidates.iter().any(|c| c == "http://localhost:11434"));
+    }
+
+    #[test]
+    fn strict_local_endpoint_accepts_localhost_and_loopback() {
+        assert!(is_local_ollama_endpoint("http://localhost:11434"));
+        assert!(is_local_ollama_endpoint("http://127.0.0.1:11434"));
+        assert!(is_local_ollama_endpoint("http://localhost:11434/"));
+    }
+
+    #[test]
+    fn strict_local_endpoint_rejects_remote_or_wrong_port() {
+        assert!(!is_local_ollama_endpoint("http://192.168.1.20:11434"));
+        assert!(!is_local_ollama_endpoint("http://localhost:8080"));
+        assert!(!is_local_ollama_endpoint("https://localhost:11434"));
+        assert!(!is_local_ollama_endpoint("http://localhost:11434/api"));
+    }
+
     // --- Ollama: unreachable endpoint returns empty model list (no panic) ---
     #[test]
     fn list_ollama_models_returns_empty_on_bad_endpoint() {
         let models = list_ollama_models("http://127.0.0.1:19999");
-        assert!(models.is_empty(), "expected empty list for unreachable endpoint");
+        assert!(
+            models.is_empty(),
+            "expected empty list for unreachable endpoint"
+        );
     }
 
     // --- Ollama: unreachable endpoint returns OllamaNotRunning (no panic) ---
@@ -409,6 +1461,20 @@ mod tests {
         assert_eq!(default_prompt_for_language("de"), OLLAMA_PROMPT_DE);
         assert_eq!(default_prompt_for_language("german"), OLLAMA_PROMPT_DE);
         assert_eq!(default_prompt_for_language("DE"), OLLAMA_PROMPT_DE);
+    }
+
+    #[test]
+    fn custom_profile_prompt_is_not_modified_by_language_lock() {
+        let prompt =
+            prompt_for_profile("custom", "en", Some("Custom prompt stays unchanged."), true);
+        assert_eq!(prompt.as_deref(), Some("Custom prompt stays unchanged."));
+    }
+
+    #[test]
+    fn auto_language_lock_suffix_mentions_mixed_language_preservation() {
+        let prompt = prompt_for_profile("wording", "auto", None, true).unwrap_or_default();
+        assert!(prompt.contains("Detect the input language and keep it unchanged."));
+        assert!(prompt.contains("mixed-language"));
     }
 
     // --- OllamaProvider: validate_api_key is always Ok (no key needed) ---
@@ -459,5 +1525,161 @@ mod tests {
     #[test]
     fn token_estimate_is_at_least_one_for_empty_text() {
         assert!(rough_token_estimate("") >= 1);
+    }
+
+    // --- Task 32: list_ollama_models_with_size returns empty on bad endpoint ---
+    #[test]
+    fn list_ollama_models_with_size_returns_empty_on_bad_endpoint() {
+        let models = list_ollama_models_with_size("http://127.0.0.1:19999");
+        assert!(
+            models.is_empty(),
+            "expected empty list for unreachable endpoint"
+        );
+    }
+
+    // --- Task 32: list_ollama_models delegates to list_ollama_models_with_size ---
+    #[test]
+    fn list_ollama_models_consistent_with_with_size() {
+        let names = list_ollama_models("http://127.0.0.1:19999");
+        let with_size = list_ollama_models_with_size("http://127.0.0.1:19999");
+        assert_eq!(names.len(), with_size.len());
+    }
+
+    // --- Task 32: OllamaProvider refine_transcript maps connection refused to OllamaNotRunning ---
+    #[test]
+    fn ollama_provider_connection_refused_returns_not_running() {
+        let provider = OllamaProvider::with_endpoint("http://127.0.0.1:19999".to_string());
+        let options = test_options(false);
+        let result = provider.refine_transcript("hello world", "qwen3:14b", &options, "");
+        assert!(
+            matches!(result, Err(AIError::OllamaNotRunning)),
+            "connection refused should map to OllamaNotRunning, got: {:?}",
+            result
+        );
+    }
+
+    // --- Task 35: English prompt contains key guard instructions ---
+    #[test]
+    fn prompt_en_contains_no_translate_guard() {
+        assert!(
+            OLLAMA_PROMPT_EN.contains("do NOT translate"),
+            "EN prompt must explicitly forbid translation"
+        );
+    }
+
+    #[test]
+    fn prompt_en_contains_output_only_instruction() {
+        assert!(
+            OLLAMA_PROMPT_EN.contains("ONLY"),
+            "EN prompt must tell the model to output only the corrected text"
+        );
+    }
+
+    #[test]
+    fn prompt_en_mentions_proper_nouns() {
+        assert!(
+            OLLAMA_PROMPT_EN.contains("proper nouns"),
+            "EN prompt must mention preserving proper nouns"
+        );
+    }
+
+    // --- Task 35: German prompt contains key guard instructions ---
+    #[test]
+    fn prompt_de_contains_no_translate_guard() {
+        assert!(
+            OLLAMA_PROMPT_DE.contains("NICHT übersetzen"),
+            "DE prompt must explicitly forbid translation"
+        );
+    }
+
+    #[test]
+    fn prompt_de_contains_output_only_instruction() {
+        assert!(
+            OLLAMA_PROMPT_DE.contains("NUR"),
+            "DE prompt must tell the model to output only the corrected text"
+        );
+    }
+
+    #[test]
+    fn prompt_de_contains_register_preservation() {
+        assert!(
+            OLLAMA_PROMPT_DE.contains("Anredeform"),
+            "DE prompt must mention preserving formal/informal register (Du/Sie)"
+        );
+    }
+
+    #[test]
+    fn parse_chat_response_content() {
+        let payload = serde_json::json!({
+            "message": {
+                "role": "assistant",
+                "content": "Refined text from chat endpoint."
+            }
+        });
+        let parsed = parse_ollama_refined_text(&payload);
+        assert_eq!(parsed.as_deref(), Some("Refined text from chat endpoint."));
+    }
+
+    #[test]
+    fn parse_generate_response_content() {
+        let payload = serde_json::json!({
+            "response": "Refined text from generate endpoint."
+        });
+        let parsed = parse_ollama_refined_text(&payload);
+        assert_eq!(
+            parsed.as_deref(),
+            Some("Refined text from generate endpoint.")
+        );
+    }
+
+    #[test]
+    fn chat_route_detection_handles_missing_route_patterns() {
+        assert!(is_missing_chat_route(404, "not found"));
+        assert!(is_missing_chat_route(
+            400,
+            "unknown route /api/chat on this server"
+        ));
+        assert!(!is_missing_chat_route(500, "internal server error"));
+    }
+
+    #[test]
+    fn suspicious_refinement_falls_back_to_original_text() {
+        let original = "This is a fairly long transcript sentence with multiple technical terms and enough context to detect aggressive truncation in refinement output.";
+        let refined = "summary only";
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(false));
+        assert_eq!(sanitized, original);
+    }
+
+    #[test]
+    fn refinement_output_collapses_excessive_blank_lines() {
+        let original = "First line\nSecond line\nThird line";
+        let refined = "First line\n\n\n\nSecond line\n\n\nThird line";
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(false));
+        assert_eq!(sanitized, "First line\n\nSecond line\n\nThird line");
+    }
+
+    #[test]
+    fn language_guard_rejects_high_confidence_de_to_en_drift() {
+        let original = "das ist ein test und wir sind im meeting und die aufgabe ist nicht offen";
+        let refined = "this is a test and we are in the meeting and the task is not open";
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(true));
+        assert_eq!(sanitized, original);
+    }
+
+    #[test]
+    fn language_guard_allows_drift_when_guard_disabled() {
+        let original = "das ist ein test und wir sind im meeting und die aufgabe ist nicht offen";
+        let refined = "this is a test and we are in the meeting and the task is not open";
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(false));
+        assert_eq!(sanitized, refined);
+    }
+
+    #[test]
+    fn language_guard_does_not_trip_on_mixed_language_input() {
+        let original =
+            "wir deployen den service and we monitor the logs im dashboard und in production";
+        let refined = "we deploy the service and monitor the logs in the dashboard and production";
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(true));
+        assert_eq!(sanitized, refined);
     }
 }

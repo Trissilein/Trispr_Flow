@@ -1,5 +1,5 @@
 ; Trispr Flow NSIS Installer Hooks
-; Adds custom pages for install/uninstall selection, overlay style, GPU backend, and capture mode.
+; Adds custom pages for install/uninstall selection, overlay style, and capture mode.
 ; This file is included at the top level of the installer script by Tauri.
 
 !include "nsDialogs.nsh"
@@ -19,13 +19,6 @@ Var OverlayRadioHal
 Var OverlayRadioKitt
 Var OverlayStyleChoice
 
-; Variables for the GPU backend page
-Var GpuDialog
-Var GpuLabel
-Var GpuRadioCuda
-Var GpuRadioVulkan
-Var GpuBackendChoice
-
 ; Variables for the capture mode page
 Var CaptureModeDialog
 Var CaptureModeLabel
@@ -36,7 +29,6 @@ Var CaptureModeChoice
 ; --- Custom page declarations (top-level, included before MUI pages) ---
 Page custom InstallModePage InstallModePageLeave
 Page custom OverlayStylePage OverlayStylePageLeave
-Page custom GpuBackendPage GpuBackendPageLeave
 Page custom CaptureModePage CaptureModePageLeave
 
 ; =====================================================================
@@ -118,40 +110,7 @@ Function OverlayStylePageLeave
 FunctionEnd
 
 ; =====================================================================
-; Page 3: GPU Backend Selection
-; =====================================================================
-
-Function GpuBackendPage
-  nsDialogs::Create 1018
-  Pop $GpuDialog
-  ${If} $GpuDialog == error
-    Abort
-  ${EndIf}
-
-  ${NSD_CreateLabel} 0 0 100% 48u "Choose the GPU backend for speech recognition.$\r$\n$\r$\nCUDA is fastest on NVIDIA GPUs.$\r$\nVulkan works on both AMD and NVIDIA GPUs."
-  Pop $GpuLabel
-
-  ${NSD_CreateRadioButton} 10u 58u 100% 14u "NVIDIA CUDA (recommended for NVIDIA GPUs)"
-  Pop $GpuRadioCuda
-  ${NSD_SetState} $GpuRadioCuda ${BST_CHECKED}
-
-  ${NSD_CreateRadioButton} 10u 76u 100% 14u "Vulkan (AMD, Intel, or NVIDIA GPUs)"
-  Pop $GpuRadioVulkan
-
-  nsDialogs::Show
-FunctionEnd
-
-Function GpuBackendPageLeave
-  ${NSD_GetState} $GpuRadioCuda $0
-  ${If} $0 == ${BST_CHECKED}
-    StrCpy $GpuBackendChoice "cuda"
-  ${Else}
-    StrCpy $GpuBackendChoice "vulkan"
-  ${EndIf}
-FunctionEnd
-
-; =====================================================================
-; Page 4: Capture Mode Selection
+; Page 3: Capture Mode Selection
 ; =====================================================================
 
 Function CaptureModePage
@@ -184,7 +143,7 @@ Function CaptureModePageLeave
 FunctionEnd
 
 ; =====================================================================
-; Post-install: write settings + clean up unused GPU backend
+; Post-install: write settings
 ; =====================================================================
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -206,8 +165,11 @@ FunctionEnd
   FileWrite $0 '"hotkey_toggle":"CommandOrControl+Shift+M",'
   FileWrite $0 '"input_device":"default",'
   FileWrite $0 '"language_mode":"auto",'
+  FileWrite $0 '"topic_keywords":{"technical":["code","coding","debug","debugging","bug","error","stacktrace","exception","function","variable","api","endpoint","database","sql","query","schema","deploy","deployment","build","compile","performance","latency","memory","thread","integration","schnittstelle","fehler","datenbank","abfrage","bereitstellung","leistung","speicher","konfiguration","version","docker","kubernetes"],"meeting":["meeting","agenda","minutes","action","action item","deadline","owner","follow-up","stakeholder","alignment","decision","next step","roadmap","priority","milestone","planning","sync","standup","retrospective","workshop","besprechung","termin","protokoll","entscheidung","naechster schritt","prioritaet","meilenstein","planung","abstimmung","aufgabe","verantwortlich","rueckmeldung","review"],"personal":["personal","note","reminder","todo","to-do","follow-up","errand","appointment","family","health","habit","journal","private","vacation","shopping","budget","finance","bank","insurance","medicine","persoenlich","erinnerung","notiz","einkauf","urlaub","arzt","haushalt","konto","rechnung","gesundheit","routine","privat","aufraeumen"]},'
   FileWrite $0 '"model":"whisper-large-v3-turbo",'
   FileWrite $0 '"cloud_fallback":false,'
+  FileWrite $0 '"ai_fallback":{"enabled":false,"provider":"ollama","fallback_provider":null,"execution_mode":"local_primary","strict_local_mode":true,"preserve_source_language":true,"model":"","temperature":0.3,"max_tokens":4000,"custom_prompt_enabled":false,"custom_prompt":"Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.","use_default_prompt":true},'
+  FileWrite $0 '"setup":{"local_ai_wizard_completed":false,"local_ai_wizard_pending":true,"ollama_remote_expert_opt_in":false},'
   FileWrite $0 '"audio_cues":true,'
   FileWrite $0 '"audio_cues_volume":0.3,'
   FileWrite $0 '"ptt_use_vad":false,'
@@ -246,6 +208,8 @@ FunctionEnd
   FileWrite $0 '"overlay_kitt_pos_x":50.0,'
   FileWrite $0 '"overlay_kitt_pos_y":90.0,'
   FileWrite $0 '"overlay_style":"$OverlayStyleChoice",'
+  FileWrite $0 '"overlay_refining_indicator_enabled":true,'
+  FileWrite $0 '"overlay_refining_indicator_preset":"standard",'
   FileWrite $0 '"overlay_kitt_min_width":20.0,'
   FileWrite $0 '"overlay_kitt_max_width":700.0,'
   FileWrite $0 '"overlay_kitt_height":13.0,'
@@ -256,16 +220,6 @@ FunctionEnd
   FileWrite $0 '"hallucination_max_chars":50'
   FileWrite $0 '}'
   FileClose $0
-
-  ; Remove the GPU backend that was NOT chosen to save disk space.
-  ; Both backends are bundled in the installer, but only the selected one stays.
-  ${If} $GpuBackendChoice == "cuda"
-    ; Keep cuda, remove vulkan
-    RMDir /r "$INSTDIR\bin\vulkan"
-  ${Else}
-    ; Keep vulkan, remove cuda
-    RMDir /r "$INSTDIR\bin\cuda"
-  ${EndIf}
 
   ; Create models directory for future use (app will download model on first start)
   CreateDirectory "$APPDATA\com.trispr.flow\models"

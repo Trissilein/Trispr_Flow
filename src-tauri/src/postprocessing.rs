@@ -3,24 +3,19 @@
 // This module provides text quality improvements through a multi-stage pipeline:
 // 1. Rule-based enhancements (punctuation, capitalization, number normalization)
 // 2. Custom vocabulary replacements
-// 3. Optional LLM refinement via Ollama (local, sync, with fallback to original text)
-
-use crate::ai_fallback::models::RefinementOptions;
-use crate::ai_fallback::provider::ProviderFactory;
+// 3. LLM refinement is handled asynchronously in the audio/transcription pipeline.
 use crate::state::Settings;
 use std::collections::HashMap;
 use tauri::AppHandle;
-use tracing::{info, warn};
 
 /// Main entry point for post-processing transcripts
 ///
 /// Applies enhancements in sequence:
 /// - Rule-based fixes (punctuation, capitalization, numbers)
 /// - Custom vocabulary replacements
-/// - Optional LLM refinement
+/// - No synchronous LLM call (keeps transcription path non-blocking)
 ///
-/// Returns the processed text, or an error message if LLM refinement fails.
-/// On error, the caller should fallback to the original text.
+/// Returns the processed text.
 pub(crate) fn process_transcript(
     text: &str,
     settings: &Settings,
@@ -44,58 +39,8 @@ pub(crate) fn process_transcript(
         result = apply_custom_vocabulary(&result, &settings.postproc_custom_vocab);
     }
 
-    // Stage 3: Optional AI refinement (sync, 1-30s depending on model and hardware)
-    // Only runs when ai_fallback is enabled and provider is configured.
-    // On any failure: logs a warning and falls back to the stage 1+2 result — no transcript loss.
-    if settings.ai_fallback.enabled && !settings.ai_fallback.provider.is_empty() {
-        let provider_id = settings.ai_fallback.provider.as_str();
-        let is_ollama = provider_id == "ollama";
-
-        let provider = if is_ollama {
-            let endpoint = settings.providers.ollama.endpoint.clone();
-            Ok(ProviderFactory::create_ollama(endpoint))
-        } else {
-            ProviderFactory::create(provider_id).map_err(|e| e.to_string())
-        };
-
-        match provider {
-            Ok(client) => {
-                let options = RefinementOptions {
-                    temperature: settings.ai_fallback.temperature,
-                    max_tokens: settings.ai_fallback.max_tokens,
-                    language: Some(settings.postproc_language.clone()),
-                    custom_prompt: if settings.ai_fallback.custom_prompt_enabled {
-                        Some(settings.ai_fallback.custom_prompt.clone())
-                    } else {
-                        None
-                    },
-                };
-                // Ollama has no API key; cloud providers would need keyring (not supported here yet)
-                let api_key = if is_ollama { "" } else { "" };
-                let model = settings.ai_fallback.model.as_str();
-
-                match client.refine_transcript(&result, model, &options, api_key) {
-                    Ok(refined) => {
-                        info!(
-                            "AI refinement done: provider={} model={} tokens_in={} tokens_out={} ms={}",
-                            refined.provider,
-                            refined.model,
-                            refined.usage.input_tokens,
-                            refined.usage.output_tokens,
-                            refined.execution_time_ms
-                        );
-                        result = refined.text;
-                    }
-                    Err(e) => {
-                        warn!("AI refinement failed (keeping stage 1+2 result): {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("AI provider unavailable (keeping stage 1+2 result): {}", e);
-            }
-        }
-    }
+    // Stage 3 is intentionally skipped here to avoid blocking transcription.
+    // AI refinement runs async via dedicated pipeline events.
 
     Ok(result)
 }
@@ -113,6 +58,55 @@ pub(crate) fn process_transcript(
 /// Multilingual mode ("multi"):
 /// - Applies both English AND German rules simultaneously
 /// - Ideal for code-switching and bilingual users
+/// Check if text starts with an English question word (case-insensitive).
+/// Expects `lower_text` to already be lowercased.
+fn is_english_question(lower_text: &str) -> bool {
+    lower_text.starts_with("what ")
+        || lower_text.starts_with("how ")
+        || lower_text.starts_with("why ")
+        || lower_text.starts_with("when ")
+        || lower_text.starts_with("where ")
+        || lower_text.starts_with("who ")
+        || lower_text.starts_with("which ")
+        || lower_text.starts_with("whose ")
+        || lower_text.starts_with("can ")
+        || lower_text.starts_with("could ")
+        || lower_text.starts_with("would ")
+        || lower_text.starts_with("should ")
+        || lower_text.starts_with("is ")
+        || lower_text.starts_with("are ")
+        || lower_text.starts_with("do ")
+        || lower_text.starts_with("does ")
+        || lower_text.starts_with("did ")
+}
+
+/// Check if text starts with a German question word (case-insensitive).
+/// Expects `lower_text` to already be lowercased.
+fn is_german_question(lower_text: &str) -> bool {
+    lower_text.starts_with("was ")
+        || lower_text.starts_with("wie ")
+        || lower_text.starts_with("warum ")
+        || lower_text.starts_with("wann ")
+        || lower_text.starts_with("wo ")
+        || lower_text.starts_with("wer ")
+        || lower_text.starts_with("welch")
+}
+
+/// Apply end-of-sentence punctuation based on whether the text is a question.
+/// Adds '?' for questions, '.' otherwise, or replaces trailing '.' with '?' for questions.
+fn apply_end_punctuation(result: &mut String, is_question: bool) {
+    if !result.ends_with('.') && !result.ends_with('!') && !result.ends_with('?') {
+        if is_question {
+            result.push('?');
+        } else {
+            result.push('.');
+        }
+    } else if is_question && result.ends_with('.') {
+        result.pop();
+        result.push('?');
+    }
+}
+
 fn apply_punctuation(text: &str, lang: &str) -> String {
     if text.is_empty() {
         return text.to_string();
@@ -133,38 +127,10 @@ fn apply_punctuation(text: &str, lang: &str) -> String {
         result = result.replace(", or ", " or ");
         result = result.replace(" or ", ", or ");
 
-        // English question detection (case-insensitive)
-        let lower_text = result.to_lowercase();
-        let is_en_question = lower_text.starts_with("what ")
-            || lower_text.starts_with("how ")
-            || lower_text.starts_with("why ")
-            || lower_text.starts_with("when ")
-            || lower_text.starts_with("where ")
-            || lower_text.starts_with("who ")
-            || lower_text.starts_with("which ")
-            || lower_text.starts_with("whose ")
-            || lower_text.starts_with("can ")
-            || lower_text.starts_with("could ")
-            || lower_text.starts_with("would ")
-            || lower_text.starts_with("should ")
-            || lower_text.starts_with("is ")
-            || lower_text.starts_with("are ")
-            || lower_text.starts_with("do ")
-            || lower_text.starts_with("does ")
-            || lower_text.starts_with("did ");
-
         // For single-language mode, apply punctuation now
         if lang == "en" {
-            if !result.ends_with('.') && !result.ends_with('!') && !result.ends_with('?') {
-                if is_en_question {
-                    result.push('?');
-                } else {
-                    result.push('.');
-                }
-            } else if is_en_question && result.ends_with('.') {
-                result.pop();
-                result.push('?');
-            }
+            let lower_text = result.to_lowercase();
+            apply_end_punctuation(&mut result, is_english_question(&lower_text));
         }
     }
 
@@ -180,74 +146,18 @@ fn apply_punctuation(text: &str, lang: &str) -> String {
         result = result.replace(", oder ", " oder ");
         result = result.replace(" oder ", ", oder ");
 
-        // German question detection (case-insensitive)
-        let lower_text = result.to_lowercase();
-        let is_de_question = lower_text.starts_with("was ")
-            || lower_text.starts_with("wie ")
-            || lower_text.starts_with("warum ")
-            || lower_text.starts_with("wann ")
-            || lower_text.starts_with("wo ")
-            || lower_text.starts_with("wer ")
-            || lower_text.starts_with("welch");
-
         // For single-language mode, apply punctuation now
         if lang == "de" {
-            if !result.ends_with('.') && !result.ends_with('!') && !result.ends_with('?') {
-                if is_de_question {
-                    result.push('?');
-                } else {
-                    result.push('.');
-                }
-            } else if is_de_question && result.ends_with('.') {
-                result.pop();
-                result.push('?');
-            }
+            let lower_text = result.to_lowercase();
+            apply_end_punctuation(&mut result, is_german_question(&lower_text));
         }
     }
 
     // Multi-language mode: Apply combined question detection
     if lang == "multi" {
         let lower_text = result.to_lowercase();
-
-        // Check both English and German question patterns
-        let is_en_question = lower_text.starts_with("what ")
-            || lower_text.starts_with("how ")
-            || lower_text.starts_with("why ")
-            || lower_text.starts_with("when ")
-            || lower_text.starts_with("where ")
-            || lower_text.starts_with("who ")
-            || lower_text.starts_with("which ")
-            || lower_text.starts_with("whose ")
-            || lower_text.starts_with("can ")
-            || lower_text.starts_with("could ")
-            || lower_text.starts_with("would ")
-            || lower_text.starts_with("should ")
-            || lower_text.starts_with("is ")
-            || lower_text.starts_with("are ")
-            || lower_text.starts_with("do ")
-            || lower_text.starts_with("does ")
-            || lower_text.starts_with("did ");
-
-        let is_de_question = lower_text.starts_with("was ")
-            || lower_text.starts_with("wie ")
-            || lower_text.starts_with("warum ")
-            || lower_text.starts_with("wann ")
-            || lower_text.starts_with("wo ")
-            || lower_text.starts_with("wer ")
-            || lower_text.starts_with("welch");
-
-        let is_question = is_en_question || is_de_question;
-
-        if !result.ends_with('.') && !result.ends_with('!') && !result.ends_with('?') {
-            if is_question {
-                result.push('?');
-            } else {
-                result.push('.');
-            }
-        } else if is_question && result.ends_with('.') {
-            result.pop();
-            result.push('?');
-        }
+        let is_question = is_english_question(&lower_text) || is_german_question(&lower_text);
+        apply_end_punctuation(&mut result, is_question);
     }
 
     result
@@ -431,10 +341,15 @@ fn normalize_numbers(text: &str, lang: &str) -> String {
 /// Word boundary matching prevents partial replacements
 /// (e.g., "api" → "API" but "apikey" stays "apikey")
 fn apply_custom_vocabulary(text: &str, vocab: &HashMap<String, String>) -> String {
+    use std::sync::{Mutex, OnceLock};
+
+    static REGEX_CACHE: OnceLock<Mutex<HashMap<String, regex::Regex>>> = OnceLock::new();
+
     if text.is_empty() || vocab.is_empty() {
         return text.to_string();
     }
 
+    let cache = REGEX_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut result = text.to_string();
 
     // Apply each vocabulary replacement with word boundary matching
@@ -443,20 +358,31 @@ fn apply_custom_vocabulary(text: &str, vocab: &HashMap<String, String>) -> Strin
         // Use regex::escape to safely handle special regex characters in user input
         let pattern = format!(r"\b{}\b", regex::escape(original));
 
-        // Compile regex (in production, we might want to cache these)
-        match regex::Regex::new(&pattern) {
-            Ok(re) => {
-                result = re.replace_all(&result, replacement.as_str()).to_string();
-            }
-            Err(e) => {
-                // If regex compilation fails (shouldn't happen with escaped input),
-                // log error and skip this replacement
-                use tracing::warn;
-                warn!(
-                    "Failed to compile regex for custom vocabulary '{}': {}",
-                    original, e
-                );
-            }
+        // Look up or compile and cache the regex
+        let re_opt = if let Ok(mut guard) = cache.lock() {
+            Some(
+                guard
+                    .entry(pattern.clone())
+                    .or_insert_with(|| match regex::Regex::new(&pattern) {
+                        Ok(re) => re,
+                        Err(e) => {
+                            use tracing::warn;
+                            warn!(
+                                "Failed to compile regex for custom vocabulary '{}': {}",
+                                original, e
+                            );
+                            // Fallback: a regex that never matches
+                            regex::Regex::new(r"(?!x)x").unwrap()
+                        }
+                    })
+                    .clone(),
+            )
+        } else {
+            None
+        };
+
+        if let Some(re) = re_opt {
+            result = re.replace_all(&result, replacement.as_str()).to_string();
         }
     }
 
@@ -472,21 +398,6 @@ fn apply_custom_vocabulary(text: &str, vocab: &HashMap<String, String>) -> Strin
 /// - HTTP errors (401, 429, 500)
 ///
 /// Returns error on failure - caller should fallback to original text.
-#[allow(dead_code)]
-async fn refine_with_llm(
-    text: &str,
-    settings: &Settings,
-    _app: &AppHandle,
-) -> Result<String, String> {
-    // TODO: Implement in Phase 5
-    // For now, check API key and return error if empty
-    if settings.postproc_llm_api_key.is_empty() {
-        return Err("LLM API key not configured".to_string());
-    }
-
-    // Placeholder - will implement Claude API client in Phase 5
-    Ok(text.to_string())
-}
 
 #[cfg(test)]
 mod tests {

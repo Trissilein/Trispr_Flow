@@ -19,7 +19,7 @@ echo Trispr Flow - Dual Installer Builder
 echo ========================================
 echo.
 
-echo [1/9] Detecting version...
+echo [1/10] Detecting version...
 for /f "tokens=2 delims=:, " %%a in ('findstr /C:"\"version\"" package.json') do (
     set VERSION_RAW=%%a
 )
@@ -31,14 +31,27 @@ echo Found version: %VERSION%
 echo Build stamp: %BUILDSTAMP%
 echo.
 
-echo [2/9] Verifying config version consistency...
+echo [2/10] Verifying config version consistency...
 call :verify_version "src-tauri\tauri.conf.json"
 if not "!ERRORLEVEL!"=="0" goto :fail
 call :verify_version "src-tauri\tauri.conf.vulkan.json"
 if not "!ERRORLEVEL!"=="0" goto :fail
 echo.
 
-echo [3/9] Verifying CUDA runtime libraries...
+echo [3/10] Verifying installer consistency hints...
+call :verify_hook_consistency "src-tauri\nsis\hooks.nsh"
+if not "!ERRORLEVEL!"=="0" goto :fail
+call :verify_hook_consistency "src-tauri\nsis\hooks.vulkan.nsh"
+if not "!ERRORLEVEL!"=="0" goto :fail
+call :verify_ollama_runtime_manifest
+if not "!ERRORLEVEL!"=="0" goto :fail
+call :verify_variant_resource_scope "src-tauri\tauri.conf.json" "bin/cuda/" "bin/vulkan/" "CUDA"
+if not "!ERRORLEVEL!"=="0" goto :fail
+call :verify_variant_resource_scope "src-tauri\tauri.conf.vulkan.json" "bin/vulkan/" "bin/cuda/" "VULKAN"
+if not "!ERRORLEVEL!"=="0" goto :fail
+echo.
+
+echo [4/10] Verifying CUDA runtime libraries...
 set DLL_MISSING=0
 if not exist "src-tauri\bin\cuda\cublas64_13.dll" (
     echo   ERROR: cublas64_13.dll not found!
@@ -48,15 +61,20 @@ if not exist "src-tauri\bin\cuda\cudart64_13.dll" (
     echo   ERROR: cudart64_13.dll not found!
     set DLL_MISSING=1
 )
+if exist "src-tauri\bin\cuda\cublasLt64_13.dll" (
+    echo   ERROR: redundant cublasLt64_13.dll found in CUDA bundle.
+    echo          Remove it to keep installer lean ^(whisper.cpp does not require it^).
+    set DLL_MISSING=1
+)
 if "!DLL_MISSING!"=="1" (
     echo.
-    echo CRITICAL ERROR: CUDA runtime DLLs are missing.
+    echo CRITICAL ERROR: CUDA runtime DLL set is invalid ^(missing or redundant files^).
     goto :fail
 )
 echo   OK: CUDA DLLs found
 echo.
 
-echo [4/9] Preparing output directories...
+echo [5/10] Preparing output directories...
 if not exist "installers" mkdir "installers"
 if exist "src-tauri\target\release\bundle\nsis" (
     rmdir /s /q "src-tauri\target\release\bundle\nsis" 2>nul
@@ -64,30 +82,30 @@ if exist "src-tauri\target\release\bundle\nsis" (
 echo   OK: Output directories ready
 echo.
 
-echo [5/9] Building frontend...
+echo [6/10] Building frontend...
 call npm run build
 if not "!ERRORLEVEL!"=="0" goto :fail
 echo   OK: Frontend build successful
 echo.
 
-echo [6/9] Building CUDA installer...
+echo [7/10] Building CUDA installer...
 call :build_variant "CUDA" "src-tauri/tauri.conf.json" "CUDA"
 if not "!ERRORLEVEL!"=="0" goto :fail
 set "CUDA_TARGET=!LAST_TARGET!"
 echo.
 
-echo [7/9] Building Vulkan installer...
+echo [8/10] Building Vulkan installer...
 call :build_variant "VULKAN" "src-tauri/tauri.conf.vulkan.json" "VULKAN"
 if not "!ERRORLEVEL!"=="0" goto :fail
 set "VULKAN_TARGET=!LAST_TARGET!"
 echo.
 
-echo [8/9] Build summary...
+echo [9/10] Build summary...
 call :print_file_info "CUDA" "!CUDA_TARGET!"
 call :print_file_info "VULKAN" "!VULKAN_TARGET!"
 echo.
 
-echo [9/9] Done.
+echo [10/10] Done.
 echo ========================================
 echo Build Complete
 echo ========================================
@@ -113,6 +131,81 @@ if /I not "%CFG_VERSION%"=="%VERSION%" (
     exit /b 1
 )
 echo   OK: %CFG% = %CFG_VERSION%
+exit /b 0
+
+:verify_hook_consistency
+set "HOOK=%~1"
+findstr /C:"GpuBackendPage" "%HOOK%" >nul
+if not errorlevel 1 (
+    echo ERROR: %HOOK% still contains GPU backend selector logic ^(GpuBackendPage^).
+    exit /b 1
+)
+findstr /C:"RMDir /r \"$INSTDIR\bin\cuda\"" "%HOOK%" >nul
+if not errorlevel 1 (
+    echo ERROR: %HOOK% still contains runtime cleanup for cuda.
+    exit /b 1
+)
+findstr /C:"RMDir /r \"$INSTDIR\bin\vulkan\"" "%HOOK%" >nul
+if not errorlevel 1 (
+    echo ERROR: %HOOK% still contains runtime cleanup for vulkan.
+    exit /b 1
+)
+echo   OK: %HOOK% has no GPU selector or backend cleanup.
+exit /b 0
+
+:verify_variant_resource_scope
+set "CFG=%~1"
+set "REQUIRED=%~2"
+set "FORBIDDEN=%~3"
+set "LABEL=%~4"
+findstr /C:"%REQUIRED%" "%CFG%" >nul
+if errorlevel 1 (
+    echo ERROR: %LABEL% config is missing expected resource path '%REQUIRED%' in %CFG%.
+    exit /b 1
+)
+findstr /C:"%FORBIDDEN%" "%CFG%" >nul
+if not errorlevel 1 (
+    echo ERROR: %LABEL% config contains forbidden resource path '%FORBIDDEN%' in %CFG%.
+    exit /b 1
+)
+echo   OK: %LABEL% config resource scope verified.
+exit /b 0
+
+:verify_ollama_runtime_manifest
+set "FRONTEND_RUNTIME_VER="
+set "BACKEND_RUNTIME_VER="
+
+for /f "tokens=2 delims==" %%a in ('findstr /C:"const DEFAULT_RUNTIME_VERSION =" "src\\ollama-models.ts"') do set "FRONTEND_RUNTIME_VER=%%a"
+for /f "tokens=2 delims==" %%a in ('findstr /C:"const DEFAULT_RUNTIME_VERSION: &str =" "src-tauri\\src\\ollama_runtime.rs"') do set "BACKEND_RUNTIME_VER=%%a"
+
+set "FRONTEND_RUNTIME_VER=%FRONTEND_RUNTIME_VER: =%"
+set "FRONTEND_RUNTIME_VER=%FRONTEND_RUNTIME_VER:\"=%"
+set "FRONTEND_RUNTIME_VER=%FRONTEND_RUNTIME_VER:;=%"
+set "BACKEND_RUNTIME_VER=%BACKEND_RUNTIME_VER: =%"
+set "BACKEND_RUNTIME_VER=%BACKEND_RUNTIME_VER:\"=%"
+set "BACKEND_RUNTIME_VER=%BACKEND_RUNTIME_VER:;=%"
+
+if "%FRONTEND_RUNTIME_VER%"=="" (
+    echo ERROR: Failed to read frontend DEFAULT_RUNTIME_VERSION from src/ollama-models.ts
+    exit /b 1
+)
+if "%BACKEND_RUNTIME_VER%"=="" (
+    echo ERROR: Failed to read backend DEFAULT_RUNTIME_VERSION from src-tauri/src/ollama_runtime.rs
+    exit /b 1
+)
+if /I not "%FRONTEND_RUNTIME_VER%"=="%BACKEND_RUNTIME_VER%" (
+    echo ERROR: Ollama runtime version mismatch:
+    echo   frontend: %FRONTEND_RUNTIME_VER%
+    echo   backend:  %BACKEND_RUNTIME_VER%
+    exit /b 1
+)
+
+findstr /C:"releases/download/v%BACKEND_RUNTIME_VER%/ollama-windows-amd64.zip" "src-tauri\src\ollama_runtime.rs" >nul
+if errorlevel 1 (
+    echo ERROR: Ollama runtime manifest URL does not match DEFAULT_RUNTIME_VERSION v%BACKEND_RUNTIME_VER%.
+    exit /b 1
+)
+echo   OK: Ollama runtime manifest pinned to v%BACKEND_RUNTIME_VER% and frontend/backend are in sync.
 exit /b 0
 
 :build_variant

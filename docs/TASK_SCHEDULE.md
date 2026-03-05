@@ -1,6 +1,6 @@
 # Task Schedule - Trispr Flow
 
-Last updated: 2026-03-04
+Last updated: 2026-03-05
 
 ## Overview
 
@@ -307,6 +307,54 @@ Goal: Introduce a managed module platform and deliver a production-ready first m
 | L16 | Review flow + one-click mode policy | Medium | L11, L15 | PARTIAL | Draft/review/publish UI implemented; one-click policy gate remains pending. |
 | L17 | E2E + resilience tests | High | L1-L16 | PARTIAL | Build/test/check green; dedicated publish conflict/retry suites pending. |
 | L18 | Documentation and rollout packet | Medium | L17 | IN PROGRESS | Core planning docs updated; hardening checklist continues. |
+
+---
+
+### Block M: Workflow-Agent Voice Automation --- IN PROGRESS
+
+**Duration**: 5-6 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block L hardening + Block F | **Status**: In progress
+
+Goal: Ship an optional `workflow_agent` module that converts wakeword-triggered transcript commands into safe plan+confirm GDD execution.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| M1 | Core/module semantics cleanup (GDD core always-on) | High | L1, L2 | DONE | Module descriptor now supports `core` + `toggleable`; `gdd` and `integrations_confluence` are core-always-on. |
+| M2 | Workflow-agent settings schema + migration | High | M1 | DONE | Added `workflow_agent` settings defaults/normalization in Rust + frontend types. |
+| M3 | Raw command channel | High | M1 | DONE | New backend event `transcription:raw-result` emitted before activation-word drop filters. |
+| M4 | Agent parse + session search commands | High | M2, M3 | DONE | Added `agent_parse_command` and `search_transcript_sessions` with gap-based session grouping and scoring. |
+| M5 | Plan builder + execute commands | High | M4 | DONE | Added `agent_build_execution_plan` and `agent_execute_gdd_plan` (draft + publish/queue path). |
+| M6 | Agent event bus wiring | Medium | M5 | DONE | Added `agent:*` progress/finish/fail events and frontend listeners. |
+| M7 | Agent Console UI (Modules tab) | Medium | M4, M6 | DONE | Added Workflow Agent Console with parse, candidate select, language target, plan, and execute controls. |
+| M8 | Wakeword runtime hookup | Medium | M3, M7 | DONE | Frontend listens to `transcription:raw-result`, detects wakeword, and triggers parser pipeline. |
+| M9 | Candidate confirm hardening | Medium | M7 | PLANNED | Add stronger disambiguation affordances and false-positive suppression polish. |
+| M10 | Language target enforcement UX | Medium | M7 | PLANNED | Keep “always ask target language” mandatory before execute, including stricter validation copy. |
+| M11 | Workflow-agent regression tests | High | M8, M9, M10 | PLANNED | Add parser/session scorer/unit tests + integration tests for confirm-before-execute path. |
+| M12 | v0.8.1 release hardening | High | M11 | PLANNED | Final QA pass, telemetry review, and rollout checklist for workflow-agent release. |
+
+---
+
+### Block N: Multimodal I/O Modules --- PLANNED
+
+**Duration**: 5-6 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block M + Block L | **Status**: Planned
+
+Goal: Add optional capability modules `input_vision` and `output_voice_tts` and bridge them to `workflow_agent`.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| N1 | Multimodal settings schema + migration | High | M2 | DONE | Added `vision_input_settings` + `voice_output_settings` defaults/normalization. |
+| N2 | Module registry + permissions for Vision/TTS | Medium | N1 | DONE | Added `input_vision` and `output_voice_tts` manifests and permissions (`screen_capture`, `audio_output`). |
+| N3 | Vision command surface | High | N2 | DONE | Added `list_screen_sources`, `start_vision_stream`, `stop_vision_stream`, `get_vision_stream_health`, `capture_vision_snapshot`. |
+| N4 | TTS command surface | High | N2 | DONE | Added `list_tts_providers`, `list_tts_voices`, `speak_tts`, `stop_tts`, `test_tts_provider`. |
+| N5 | Vision runtime hardening | High | N3 | PLANNED | Replace metadata-only stream with production screen-frame pipeline and bounded RAM ring buffer policy enforcement. |
+| N6 | Local custom TTS backend hardening | High | N4 | PLANNED | Replace placeholder route with real local custom engine implementation. |
+| N7 | Agent capability bridge | Medium | M8, N3, N4 | PLANNED | Route vision and TTS usage through workflow-agent only when corresponding module is active. |
+| N8 | Voice output policy enforcement | Medium | N4 | PLANNED | Enforce `agent replies only` default plus optional policy modes in UX. |
+| N9 | Privacy + consent UX hardening | Medium | N5 | PLANNED | Improve consent and in-app status messaging for screen capture and voice output. |
+| N10 | TTS provider fallback matrix | Medium | N6 | PLANNED | Deterministic provider fallback policy and error reporting matrix. |
+| N11 | Benchmark track (>=3 runs/provider/scenario) | Medium | N6, N10 | PLANNED | Record latency/quality/resource metrics and choose default provider with evidence. |
+| N12 | Vision/TTS integration tests | High | N7, N8 | PLANNED | Add command-level and UI integration tests for multimodal path. |
+| N13 | E2E agent automation with multimodal IO | High | N11, N12 | PLANNED | Validate end-to-end voice command -> resolve -> confirm -> publish/queue -> spoken response. |
+| N14 | v0.8.2 release hardening | High | N13 | PLANNED | Final QA packet and rollout notes for multimodal milestone. |
 
 ---
 

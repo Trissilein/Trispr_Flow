@@ -10,6 +10,7 @@ mod gdd;
 mod history_partition;
 mod hotkeys;
 mod models;
+mod multimodal_io;
 mod modules;
 mod ollama_runtime;
 mod opus;
@@ -21,6 +22,7 @@ mod session_manager;
 mod state;
 mod transcription;
 mod util;
+mod workflow_agent;
 
 use arboard::{Clipboard, ImageData};
 use enigo::{Enigo, Key, KeyboardControllable};
@@ -59,7 +61,9 @@ use crate::ollama_runtime::{
 };
 use crate::modules::{
     health as module_health, lifecycle as module_lifecycle, normalize_confluence_settings,
-    normalize_gdd_module_settings, normalize_module_settings, registry as module_registry,
+    normalize_gdd_module_settings, normalize_module_settings, normalize_voice_output_settings,
+    normalize_vision_input_settings, normalize_workflow_agent_settings,
+    registry as module_registry,
 };
 use crate::state::{
     get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
@@ -1337,6 +1341,9 @@ fn save_settings(
     normalize_module_settings(&mut settings.module_settings);
     normalize_gdd_module_settings(&mut settings.gdd_module_settings);
     normalize_confluence_settings(&mut settings.confluence_settings);
+    normalize_workflow_agent_settings(&mut settings.workflow_agent);
+    normalize_vision_input_settings(&mut settings.vision_input_settings);
+    normalize_voice_output_settings(&mut settings.voice_output_settings);
 
     {
         let mut current = state.settings.lock().unwrap();
@@ -1439,16 +1446,22 @@ fn enable_module(
         let mut settings = state.settings.lock().unwrap();
         let result = module_lifecycle::enable_module(&mut settings.module_settings, &module_id, &grants);
         if result.is_ok() {
-            if module_id == "gdd" {
-                settings.gdd_module_settings.enabled = true;
+            if module_id == "workflow_agent" {
+                settings.workflow_agent.enabled = true;
             }
-            if module_id == "integrations_confluence" {
-                settings.confluence_settings.enabled = true;
+            if module_id == "input_vision" {
+                settings.vision_input_settings.enabled = true;
+            }
+            if module_id == "output_voice_tts" {
+                settings.voice_output_settings.enabled = true;
             }
         }
         normalize_module_settings(&mut settings.module_settings);
         normalize_gdd_module_settings(&mut settings.gdd_module_settings);
         normalize_confluence_settings(&mut settings.confluence_settings);
+        normalize_workflow_agent_settings(&mut settings.workflow_agent);
+        normalize_vision_input_settings(&mut settings.vision_input_settings);
+        normalize_voice_output_settings(&mut settings.voice_output_settings);
         let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
         (result, settings.clone(), descriptors)
     };
@@ -1484,16 +1497,22 @@ fn disable_module(
         let mut settings = state.settings.lock().unwrap();
         let result = module_lifecycle::disable_module(&mut settings.module_settings, &module_id);
         if result.is_ok() {
-            if module_id == "gdd" {
-                settings.gdd_module_settings.enabled = false;
+            if module_id == "workflow_agent" {
+                settings.workflow_agent.enabled = false;
             }
-            if module_id == "integrations_confluence" {
-                settings.confluence_settings.enabled = false;
+            if module_id == "input_vision" {
+                settings.vision_input_settings.enabled = false;
+            }
+            if module_id == "output_voice_tts" {
+                settings.voice_output_settings.enabled = false;
             }
         }
         normalize_module_settings(&mut settings.module_settings);
         normalize_gdd_module_settings(&mut settings.gdd_module_settings);
         normalize_confluence_settings(&mut settings.confluence_settings);
+        normalize_workflow_agent_settings(&mut settings.workflow_agent);
+        normalize_vision_input_settings(&mut settings.vision_input_settings);
+        normalize_voice_output_settings(&mut settings.voice_output_settings);
         let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
         (result, settings.clone(), descriptors)
     };
@@ -1535,6 +1554,639 @@ fn check_module_updates(
         let _ = app.emit("module:update-available", update);
     }
     updates
+}
+
+fn collect_partitioned_entries(history: &PartitionedHistory) -> Vec<HistoryEntry> {
+    let mut out = Vec::new();
+    for partition in history.list_partitions() {
+        if let Ok(key) = crate::history_partition::PartitionKey::parse(&partition.key) {
+            out.extend(history.load_partition(&key));
+        }
+    }
+    out
+}
+
+fn collect_all_transcript_entries(state: &AppState) -> Vec<HistoryEntry> {
+    let mut entries = Vec::new();
+    {
+        let history = state.history.lock().unwrap();
+        entries.extend(collect_partitioned_entries(&history));
+    }
+    {
+        let history = state.history_transcribe.lock().unwrap();
+        entries.extend(collect_partitioned_entries(&history));
+    }
+    entries.sort_by_key(|entry| entry.timestamp_ms);
+    entries
+}
+
+#[tauri::command]
+fn agent_list_supported_actions() -> Vec<String> {
+    vec!["gdd_generate_publish".to_string()]
+}
+
+#[tauri::command]
+fn agent_parse_command(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::workflow_agent::AgentParseCommandRequest,
+) -> Result<crate::workflow_agent::AgentCommandParseResult, String> {
+    let workflow_settings = {
+        let settings = state.settings.lock().unwrap();
+        settings.workflow_agent.clone()
+    };
+    let intent_keywords = workflow_settings
+        .intent_keywords
+        .get("gdd_generate_publish")
+        .cloned()
+        .unwrap_or_default();
+    let parsed = crate::workflow_agent::parse_command(
+        &request,
+        &workflow_settings.wakewords,
+        &intent_keywords,
+    );
+    if parsed.detected {
+        let _ = app.emit("agent:command-detected", &parsed);
+    }
+    Ok(parsed)
+}
+
+#[tauri::command]
+fn search_transcript_sessions(
+    state: State<'_, AppState>,
+    mut request: crate::workflow_agent::SearchTranscriptSessionsRequest,
+) -> Result<Vec<crate::workflow_agent::TranscriptSessionCandidate>, String> {
+    let defaults = {
+        let settings = state.settings.lock().unwrap();
+        (
+            settings.workflow_agent.session_gap_minutes,
+            settings.workflow_agent.max_candidates,
+        )
+    };
+    if request.session_gap_minutes.unwrap_or(0) == 0 {
+        request.session_gap_minutes = Some(defaults.0);
+    }
+    if request.max_candidates.unwrap_or(0) == 0 {
+        request.max_candidates = Some(defaults.1);
+    }
+
+    let entries = collect_all_transcript_entries(&state);
+    let sessions = crate::workflow_agent::build_sessions(
+        &entries,
+        request.session_gap_minutes.unwrap_or(defaults.0),
+    );
+    Ok(crate::workflow_agent::score_sessions(&sessions, &request))
+}
+
+#[tauri::command]
+fn agent_build_execution_plan(
+    app: AppHandle,
+    request: crate::workflow_agent::AgentBuildExecutionPlanRequest,
+) -> Result<crate::workflow_agent::AgentExecutionPlan, String> {
+    if request.intent.trim().is_empty() {
+        return Err("Intent is required.".to_string());
+    }
+    if request.session_id.trim().is_empty() {
+        return Err("Session id is required.".to_string());
+    }
+    let plan = crate::workflow_agent::default_execution_plan(&request);
+    let _ = app.emit("agent:plan-ready", &plan);
+    Ok(plan)
+}
+
+#[tauri::command]
+fn agent_execute_gdd_plan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::workflow_agent::AgentExecuteGddPlanRequest,
+) -> Result<crate::workflow_agent::AgentExecutionResult, String> {
+    let plan = request.plan.clone();
+    if plan.intent != "gdd_generate_publish" {
+        return Ok(crate::workflow_agent::AgentExecutionResult {
+            status: "failed".to_string(),
+            message: "Unsupported agent intent.".to_string(),
+            draft: None,
+            publish_result: None,
+            queued_job: None,
+            error: Some(format!("Unsupported intent '{}'.", plan.intent)),
+        });
+    }
+
+    let _ = app.emit(
+        "agent:execution-progress",
+        serde_json::json!({
+            "session_id": plan.session_id,
+            "stage": "load_session",
+        }),
+    );
+
+    let (
+        workflow_gap_minutes,
+        preset_clones,
+        confluence_settings,
+        one_click_threshold,
+    ) = {
+        let settings = state.settings.lock().unwrap();
+        (
+            settings.workflow_agent.session_gap_minutes,
+            settings.gdd_module_settings.preset_clones.clone(),
+            settings.confluence_settings.clone(),
+            settings.gdd_module_settings.one_click_confidence_threshold,
+        )
+    };
+    let entries = collect_all_transcript_entries(&state);
+    let sessions = crate::workflow_agent::build_sessions(&entries, workflow_gap_minutes);
+    let session = sessions
+        .iter()
+        .find(|candidate| candidate.id == plan.session_id)
+        .cloned()
+        .ok_or_else(|| format!("Session '{}' not found.", plan.session_id))?;
+
+    let transcript = session
+        .entries
+        .iter()
+        .map(|entry| entry.text.trim())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if transcript.trim().is_empty() {
+        return Ok(crate::workflow_agent::AgentExecutionResult {
+            status: "failed".to_string(),
+            message: "Session has no transcript content.".to_string(),
+            draft: None,
+            publish_result: None,
+            queued_job: None,
+            error: Some("Session content was empty.".to_string()),
+        });
+    }
+
+    let title = request
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("GDD Session {}", session.start_ms));
+    let target_language = plan.target_language.trim().to_string();
+    let template_hint = if target_language.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "Target output language preference: {}. Keep source facts unchanged and avoid invention.",
+            target_language
+        ))
+    };
+
+    let _ = app.emit(
+        "agent:execution-progress",
+        serde_json::json!({
+            "session_id": plan.session_id,
+            "stage": "generate_draft",
+            "target_language": target_language,
+        }),
+    );
+
+    let draft_request = crate::gdd::GenerateGddDraftRequest {
+        transcript,
+        preset_id: request.preset_id.clone(),
+        title: Some(title.clone()),
+        max_chunk_chars: request.max_chunk_chars,
+        template_hint,
+        template_label: Some("workflow_agent".to_string()),
+    };
+    let draft = crate::gdd::generate_draft(&draft_request, &preset_clones);
+
+    if !plan.publish {
+        let result = crate::workflow_agent::AgentExecutionResult {
+            status: "completed".to_string(),
+            message: "Draft generated. Publish skipped by plan.".to_string(),
+            draft: Some(draft.clone()),
+            publish_result: None,
+            queued_job: None,
+            error: None,
+        };
+        let _ = app.emit("agent:execution-finished", &result);
+        return Ok(result);
+    }
+
+    let space_key = request
+        .space_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            let fallback = confluence_settings.default_space_key.trim();
+            if fallback.is_empty() {
+                None
+            } else {
+                Some(fallback.to_string())
+            }
+        })
+        .ok_or_else(|| "No Confluence space key provided for publish.".to_string())?;
+    let parent_page_id = request
+        .parent_page_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            let fallback = confluence_settings.default_parent_page_id.trim();
+            if fallback.is_empty() {
+                None
+            } else {
+                Some(fallback.to_string())
+            }
+        });
+    let target_page_id = request
+        .target_page_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let _ = app.emit(
+        "agent:execution-progress",
+        serde_json::json!({
+            "session_id": plan.session_id,
+            "stage": "publish_or_queue",
+            "space_key": space_key,
+        }),
+    );
+
+    let storage_body = crate::gdd::render_storage::render_confluence_storage(&draft);
+    let publish_request = crate::gdd::confluence::ConfluencePublishRequest {
+        title,
+        storage_body,
+        space_key: space_key.clone(),
+        parent_page_id,
+        target_page_id,
+    };
+
+    let publish_result =
+        crate::gdd::confluence::publish(&app, &confluence_settings, &publish_request);
+    match publish_result {
+        Ok(publish) => {
+            {
+                let mut settings = state.settings.lock().unwrap();
+                let route_key =
+                    crate::gdd::confluence::routing_key_for(&space_key, &publish_request.title);
+                settings
+                    .confluence_settings
+                    .routing_memory
+                    .insert(route_key, publish.page_id.clone());
+                normalize_confluence_settings(&mut settings.confluence_settings);
+                let _ = save_settings_file(&app, &settings);
+                let _ = app.emit("settings-changed", settings.clone());
+            }
+            let result = crate::workflow_agent::AgentExecutionResult {
+                status: "completed".to_string(),
+                message: "Draft generated and published to Confluence.".to_string(),
+                draft: Some(draft),
+                publish_result: Some(publish),
+                queued_job: None,
+                error: None,
+            };
+            let _ = app.emit("agent:execution-finished", &result);
+            Ok(result)
+        }
+        Err(error) => {
+            if crate::gdd::publish_queue::is_queueable_publish_error(&error) {
+                let queue_request = crate::gdd::publish_queue::GddPublishOrQueueRequest {
+                    draft: draft.clone(),
+                    publish_request,
+                    routing_confidence: Some(one_click_threshold),
+                    routing_reasoning: Some("workflow_agent execution".to_string()),
+                };
+                let queued_job =
+                    crate::gdd::publish_queue::queue_publish_request(&app, &queue_request, &error)?;
+                let result = crate::workflow_agent::AgentExecutionResult {
+                    status: "queued".to_string(),
+                    message: "Confluence unavailable. Publish request queued locally.".to_string(),
+                    draft: Some(draft),
+                    publish_result: None,
+                    queued_job: Some(queued_job),
+                    error: Some(error),
+                };
+                let _ = app.emit("agent:execution-finished", &result);
+                Ok(result)
+            } else {
+                let result = crate::workflow_agent::AgentExecutionResult {
+                    status: "failed".to_string(),
+                    message: "Publish failed with non-queueable error.".to_string(),
+                    draft: Some(draft),
+                    publish_result: None,
+                    queued_job: None,
+                    error: Some(error.clone()),
+                };
+                let _ = app.emit("agent:execution-failed", &result);
+                Ok(result)
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn list_screen_sources(app: AppHandle) -> Result<Vec<crate::multimodal_io::VisionSourceInfo>, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found.".to_string())?;
+    let monitors = window
+        .available_monitors()
+        .map_err(|error| format!("Failed to list monitors: {}", error))?;
+
+    let mut sources = Vec::new();
+    for (index, monitor) in monitors.iter().enumerate() {
+        let size = monitor.size();
+        let label = monitor
+            .name()
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| format!("Monitor {}", index + 1));
+        sources.push(crate::multimodal_io::VisionSourceInfo {
+            id: format!("monitor_{}", index + 1),
+            label,
+            width: size.width,
+            height: size.height,
+        });
+    }
+    if sources.is_empty() {
+        if let Some(current) = window.current_monitor().map_err(|e| e.to_string())? {
+            let size = current.size();
+            sources.push(crate::multimodal_io::VisionSourceInfo {
+                id: "monitor_1".to_string(),
+                label: current
+                    .name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| "Primary monitor".to_string()),
+                width: size.width,
+                height: size.height,
+            });
+        }
+    }
+    Ok(sources)
+}
+
+#[tauri::command]
+fn start_vision_stream(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::multimodal_io::VisionStreamHealth, String> {
+    let (enabled, fps, source_scope) = {
+        let settings = state.settings.lock().unwrap();
+        (
+            settings.vision_input_settings.enabled,
+            settings.vision_input_settings.fps,
+            settings.vision_input_settings.source_scope.clone(),
+        )
+    };
+    if !enabled {
+        return Err("Vision input is disabled. Enable module 'input_vision' first.".to_string());
+    }
+
+    let already_running = state.vision_stream_running.swap(true, Ordering::AcqRel);
+    if !already_running {
+        state
+            .vision_stream_started_ms
+            .store(crate::util::now_ms(), Ordering::Release);
+        let source_scope_for_thread = source_scope.clone();
+        let app_c = app.clone();
+        std::thread::spawn(move || {
+            loop {
+                let state = app_c.state::<AppState>();
+                if !state.vision_stream_running.load(Ordering::Acquire) {
+                    break;
+                }
+                let frame_seq = state.vision_stream_frame_seq.fetch_add(1, Ordering::AcqRel) + 1;
+                let _ = app_c.emit(
+                    "vision:frame-meta",
+                    serde_json::json!({
+                        "seq": frame_seq,
+                        "timestamp_ms": crate::util::now_ms(),
+                        "source_scope": source_scope_for_thread,
+                    }),
+                );
+                let frame_sleep_ms = (1000u64 / (fps.max(1) as u64)).clamp(50, 1000);
+                std::thread::sleep(Duration::from_millis(frame_sleep_ms));
+            }
+        });
+        let _ = app.emit(
+            "vision:stream-started",
+            serde_json::json!({
+                "timestamp_ms": crate::util::now_ms(),
+                "fps": fps,
+            }),
+        );
+    }
+
+    Ok(crate::multimodal_io::VisionStreamHealth {
+        running: true,
+        fps,
+        source_scope,
+        started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
+        frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
+    })
+}
+
+#[tauri::command]
+fn stop_vision_stream(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::multimodal_io::VisionStreamHealth, String> {
+    state.vision_stream_running.store(false, Ordering::Release);
+    let (fps, source_scope) = {
+        let settings = state.settings.lock().unwrap();
+        (
+            settings.vision_input_settings.fps,
+            settings.vision_input_settings.source_scope.clone(),
+        )
+    };
+    let health = crate::multimodal_io::VisionStreamHealth {
+        running: false,
+        fps,
+        source_scope,
+        started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
+        frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
+    };
+    let _ = app.emit("vision:stream-stopped", &health);
+    Ok(health)
+}
+
+#[tauri::command]
+fn get_vision_stream_health(
+    state: State<'_, AppState>,
+) -> crate::multimodal_io::VisionStreamHealth {
+    let (fps, source_scope) = {
+        let settings = state.settings.lock().unwrap();
+        (
+            settings.vision_input_settings.fps,
+            settings.vision_input_settings.source_scope.clone(),
+        )
+    };
+    crate::multimodal_io::VisionStreamHealth {
+        running: state.vision_stream_running.load(Ordering::Acquire),
+        fps,
+        source_scope,
+        started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
+        frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
+    }
+}
+
+#[tauri::command]
+fn capture_vision_snapshot(
+    app: AppHandle,
+) -> Result<crate::multimodal_io::VisionSnapshotResult, String> {
+    let sources = list_screen_sources(app.clone())?;
+    let snapshot = crate::multimodal_io::VisionSnapshotResult {
+        captured: !sources.is_empty(),
+        timestamp_ms: crate::util::now_ms(),
+        source_count: sources.len(),
+        note: if sources.is_empty() {
+            "No screen sources were available.".to_string()
+        } else {
+            "Snapshot metadata captured (image persistence disabled by policy).".to_string()
+        },
+    };
+    let _ = app.emit("vision:frame-meta", &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn list_tts_providers() -> Vec<crate::multimodal_io::TtsProviderInfo> {
+    crate::multimodal_io::list_tts_providers()
+}
+
+#[tauri::command]
+fn list_tts_voices(provider: Option<String>) -> Vec<crate::multimodal_io::TtsVoiceInfo> {
+    crate::multimodal_io::list_tts_voices(provider.as_deref().unwrap_or("windows_native"))
+}
+
+#[tauri::command]
+fn speak_tts(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::multimodal_io::TtsSpeakRequest,
+) -> Result<crate::multimodal_io::TtsSpeakResult, String> {
+    let text = request.text.trim().to_string();
+    if text.is_empty() {
+        return Err("TTS text cannot be empty.".to_string());
+    }
+
+    let voice_settings = {
+        let settings = state.settings.lock().unwrap();
+        if !settings.voice_output_settings.enabled {
+            return Err("Voice output is disabled. Enable module 'output_voice_tts' first.".to_string());
+        }
+        settings.voice_output_settings.clone()
+    };
+
+    let preferred_provider = if request.provider.trim().is_empty() {
+        voice_settings.default_provider.clone()
+    } else {
+        request.provider.trim().to_string()
+    };
+    let fallback_provider = voice_settings.fallback_provider.clone();
+    let rate = request.rate.unwrap_or(voice_settings.rate).clamp(0.5, 2.0);
+    let volume = request.volume.unwrap_or(voice_settings.volume).clamp(0.0, 1.0);
+
+    state.tts_speaking.store(true, Ordering::Release);
+    let _ = app.emit(
+        "tts:speech-started",
+        serde_json::json!({
+            "provider": preferred_provider,
+            "text_len": text.len(),
+        }),
+    );
+
+    let preferred_provider_for_thread = preferred_provider.clone();
+    let fallback_provider_for_thread = fallback_provider.clone();
+    let app_c = app.clone();
+    std::thread::spawn(move || {
+        let attempt = |provider: &str| -> Result<(), String> {
+            match provider {
+                "windows_native" => crate::multimodal_io::speak_windows_native(&text, rate, volume),
+                "local_custom" => {
+                    // Placeholder local path: keep dual-provider API active while
+                    // we benchmark and wire custom runtime in Block N.
+                    crate::multimodal_io::speak_windows_native(&text, rate, volume)
+                }
+                _ => Err(format!("Unknown TTS provider '{}'.", provider)),
+            }
+        };
+
+        let result = attempt(&preferred_provider_for_thread).or_else(|primary_error| {
+            if preferred_provider_for_thread == fallback_provider_for_thread {
+                Err(primary_error)
+            } else {
+                attempt(&fallback_provider_for_thread).map_err(|fallback_error| {
+                    format!(
+                        "Primary provider '{}' failed: {} | Fallback '{}' failed: {}",
+                        preferred_provider_for_thread, primary_error, fallback_provider_for_thread, fallback_error
+                    )
+                })
+            }
+        });
+
+        let state = app_c.state::<AppState>();
+        state.tts_speaking.store(false, Ordering::Release);
+        match result {
+            Ok(()) => {
+                let _ = app_c.emit(
+                    "tts:speech-finished",
+                    serde_json::json!({
+                        "provider_used": preferred_provider_for_thread,
+                        "timestamp_ms": crate::util::now_ms(),
+                    }),
+                );
+            }
+            Err(error) => {
+                let _ = app_c.emit(
+                    "tts:speech-error",
+                    serde_json::json!({
+                        "provider": preferred_provider_for_thread,
+                        "error": error,
+                    }),
+                );
+            }
+        }
+    });
+
+    Ok(crate::multimodal_io::TtsSpeakResult {
+        provider_used: preferred_provider,
+        accepted: true,
+        message: "TTS request accepted.".to_string(),
+    })
+}
+
+#[tauri::command]
+fn stop_tts(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    let was_speaking = state.tts_speaking.swap(false, Ordering::AcqRel);
+    let _ = app.emit(
+        "tts:speech-finished",
+        serde_json::json!({
+            "stopped": was_speaking,
+            "timestamp_ms": crate::util::now_ms(),
+        }),
+    );
+    Ok(was_speaking)
+}
+
+#[tauri::command]
+fn test_tts_provider(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: Option<String>,
+) -> Result<crate::multimodal_io::TtsSpeakResult, String> {
+    let provider = provider.unwrap_or_else(|| "windows_native".to_string());
+    speak_tts(
+        app,
+        state,
+        crate::multimodal_io::TtsSpeakRequest {
+            provider,
+            text: "Trisper Flow voice output test.".to_string(),
+            rate: None,
+            volume: None,
+        },
+    )
 }
 
 #[tauri::command]
@@ -1600,14 +2252,6 @@ fn generate_gdd_draft(
     state: State<'_, AppState>,
     request: crate::gdd::GenerateGddDraftRequest,
 ) -> Result<crate::gdd::GddDraft, String> {
-    let module_enabled = {
-        let settings = state.settings.lock().unwrap();
-        settings.module_settings.enabled_modules.contains("gdd")
-    };
-    if !module_enabled {
-        return Err("GDD module is disabled. Enable module 'gdd' first.".to_string());
-    }
-
     let _ = app.emit("gdd:generation-started", serde_json::json!({ "preset": request.preset_id }));
     let draft = {
         let settings = state.settings.lock().unwrap();
@@ -1636,6 +2280,11 @@ fn validate_gdd_draft(draft: crate::gdd::GddDraft) -> crate::gdd::ValidateGddDra
 #[tauri::command]
 fn render_gdd_for_confluence(draft: crate::gdd::GddDraft) -> String {
     crate::gdd::render_storage::render_confluence_storage(&draft)
+}
+
+#[tauri::command]
+fn render_gdd_markdown(draft: crate::gdd::GddDraft) -> String {
+    crate::gdd::render_storage::render_markdown(&draft)
 }
 
 #[tauri::command]
@@ -1740,11 +2389,8 @@ fn publish_gdd_to_confluence(
         Ok(publish) => {
             {
                 let mut settings = state.settings.lock().unwrap();
-                let route_key = format!(
-                    "{}::{}",
-                    request.space_key.to_lowercase(),
-                    request.title.to_lowercase()
-                );
+                let route_key =
+                    crate::gdd::confluence::routing_key_for(&request.space_key, &request.title);
                 settings
                     .confluence_settings
                     .routing_memory
@@ -1764,6 +2410,175 @@ fn publish_gdd_to_confluence(
             Err(error)
         }
     }
+}
+
+#[tauri::command]
+fn publish_or_queue_gdd_to_confluence(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::gdd::publish_queue::GddPublishOrQueueRequest,
+) -> Result<crate::gdd::publish_queue::GddPublishAttemptResult, String> {
+    let _ = app.emit(
+        "gdd:publish-started",
+        serde_json::json!({ "title": request.publish_request.title }),
+    );
+
+    let settings_snapshot = state.settings.lock().unwrap().clone();
+    let publish_result = crate::gdd::confluence::publish(
+        &app,
+        &settings_snapshot.confluence_settings,
+        &request.publish_request,
+    );
+
+    match publish_result {
+        Ok(publish) => {
+            {
+                let mut settings = state.settings.lock().unwrap();
+                let route_key = crate::gdd::confluence::routing_key_for(
+                    &request.publish_request.space_key,
+                    &request.publish_request.title,
+                );
+                settings
+                    .confluence_settings
+                    .routing_memory
+                    .insert(route_key, publish.page_id.clone());
+                normalize_confluence_settings(&mut settings.confluence_settings);
+                let _ = save_settings_file(&app, &settings);
+                let _ = app.emit("settings-changed", settings.clone());
+            }
+
+            let _ = app.emit("gdd:publish-finished", &publish);
+            Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
+                status: "published".to_string(),
+                publish_result: Some(publish),
+                queued_job: None,
+                error: None,
+            })
+        }
+        Err(error) => {
+            if crate::gdd::publish_queue::is_queueable_publish_error(&error) {
+                let queued_job =
+                    crate::gdd::publish_queue::queue_publish_request(&app, &request, &error)?;
+                let _ = app.emit(
+                    "gdd:publish-queued",
+                    serde_json::json!({
+                        "job_id": queued_job.job_id,
+                        "title": queued_job.title,
+                        "error": error,
+                    }),
+                );
+                return Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
+                    status: "queued".to_string(),
+                    publish_result: None,
+                    queued_job: Some(queued_job),
+                    error: Some(error),
+                });
+            }
+
+            let _ = app.emit(
+                "gdd:publish-failed",
+                serde_json::json!({
+                    "title": request.publish_request.title,
+                    "error": error,
+                }),
+            );
+            Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
+                status: "failed".to_string(),
+                publish_result: None,
+                queued_job: None,
+                error: Some(error),
+            })
+        }
+    }
+}
+
+#[tauri::command]
+fn list_pending_gdd_publishes(
+    app: AppHandle,
+) -> Result<Vec<crate::gdd::publish_queue::GddPendingPublishJob>, String> {
+    crate::gdd::publish_queue::list_pending_jobs(&app)
+}
+
+#[tauri::command]
+fn retry_pending_gdd_publish(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    job_id: String,
+) -> Result<crate::gdd::publish_queue::GddPublishAttemptResult, String> {
+    let job_id = job_id.trim().to_string();
+    if job_id.is_empty() {
+        return Err("job_id is required.".to_string());
+    }
+    let mut job = crate::gdd::publish_queue::load_pending_job(&app, &job_id)?
+        .ok_or_else(|| format!("Pending publish job '{}' not found.", job_id))?;
+    let publish_request = crate::gdd::publish_queue::load_publish_request_for_job(&job)?;
+
+    let _ = app.emit(
+        "gdd:publish-started",
+        serde_json::json!({ "title": publish_request.title, "job_id": job.job_id }),
+    );
+
+    let settings_snapshot = state.settings.lock().unwrap().clone();
+    let publish_result =
+        crate::gdd::confluence::publish(&app, &settings_snapshot.confluence_settings, &publish_request);
+
+    match publish_result {
+        Ok(publish) => {
+            let _ = crate::gdd::publish_queue::consume_pending_job(&app, &job.job_id)?;
+            {
+                let mut settings = state.settings.lock().unwrap();
+                let route_key = crate::gdd::confluence::routing_key_for(
+                    &publish_request.space_key,
+                    &publish_request.title,
+                );
+                settings
+                    .confluence_settings
+                    .routing_memory
+                    .insert(route_key, publish.page_id.clone());
+                normalize_confluence_settings(&mut settings.confluence_settings);
+                let _ = save_settings_file(&app, &settings);
+                let _ = app.emit("settings-changed", settings.clone());
+            }
+            let _ = app.emit("gdd:publish-finished", &publish);
+            Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
+                status: "published".to_string(),
+                publish_result: Some(publish),
+                queued_job: None,
+                error: None,
+            })
+        }
+        Err(error) => {
+            crate::gdd::publish_queue::mark_retry_failure(&mut job, &error);
+            crate::gdd::publish_queue::persist_pending_job(&app, &job)?;
+            let _ = app.emit(
+                "gdd:publish-failed",
+                serde_json::json!({
+                    "title": publish_request.title,
+                    "error": error,
+                    "job_id": job.job_id,
+                }),
+            );
+            Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
+                status: if crate::gdd::publish_queue::is_queueable_publish_error(&error) {
+                    "queued".to_string()
+                } else {
+                    "failed".to_string()
+                },
+                publish_result: None,
+                queued_job: Some(job),
+                error: Some(error),
+            })
+        }
+    }
+}
+
+#[tauri::command]
+fn delete_pending_gdd_publish(app: AppHandle, job_id: String) -> Result<bool, String> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err("job_id is required.".to_string());
+    }
+    crate::gdd::publish_queue::delete_pending_job(&app, job_id)
 }
 
 #[tauri::command]
@@ -3168,6 +3983,10 @@ pub fn run() {
                 last_mic_recording_path: Mutex::new(None),
                 last_system_recording_path: Mutex::new(None),
                 managed_ollama_child: Mutex::new(None),
+                vision_stream_running: AtomicBool::new(false),
+                vision_stream_started_ms: AtomicU64::new(0),
+                vision_stream_frame_seq: AtomicU64::new(0),
+                tts_speaking: AtomicBool::new(false),
                 #[cfg(target_os = "windows")]
                 system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
             });
@@ -3489,12 +4308,28 @@ pub fn run() {
             disable_module,
             get_module_health,
             check_module_updates,
+            agent_list_supported_actions,
+            agent_parse_command,
+            search_transcript_sessions,
+            agent_build_execution_plan,
+            agent_execute_gdd_plan,
+            list_screen_sources,
+            start_vision_stream,
+            stop_vision_stream,
+            get_vision_stream_health,
+            capture_vision_snapshot,
+            list_tts_providers,
+            list_tts_voices,
+            speak_tts,
+            stop_tts,
+            test_tts_provider,
             list_gdd_presets,
             save_gdd_preset_clone,
             detect_gdd_preset,
             generate_gdd_draft,
             validate_gdd_draft,
             render_gdd_for_confluence,
+            render_gdd_markdown,
             test_confluence_connection,
             confluence_oauth_start,
             confluence_oauth_exchange,
@@ -3503,6 +4338,10 @@ pub fn run() {
             load_gdd_template_from_confluence,
             suggest_confluence_target,
             publish_gdd_to_confluence,
+            publish_or_queue_gdd_to_confluence,
+            list_pending_gdd_publishes,
+            retry_pending_gdd_publish,
+            delete_pending_gdd_publish,
             save_confluence_secret,
             clear_confluence_secret,
             save_transcript,

@@ -760,6 +760,14 @@ fn transcribe_worker(
 
         match result {
             Ok((text, _source)) => {
+                let _ = app.emit(
+                    "transcription:raw-result",
+                    crate::workflow_agent::RawTranscriptionEvent {
+                        text: text.clone(),
+                        source: "output".to_string(),
+                        timestamp_ms: crate::util::now_ms(),
+                    },
+                );
                 if !text.trim().is_empty()
                     && !should_drop_transcript(&text, level, duration_ms, true)
                     && !should_drop_by_activation_words(

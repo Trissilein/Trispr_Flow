@@ -216,7 +216,10 @@ FunctionEnd
   FileWrite $0 '"hallucination_rms_threshold":0.3,'
   FileWrite $0 '"hallucination_max_duration_ms":2000,'
   FileWrite $0 '"hallucination_max_words":5,'
-  FileWrite $0 '"hallucination_max_chars":50'
+  FileWrite $0 '"hallucination_max_chars":50,'
+  FileWrite $0 '"workflow_agent":{"enabled":false,"wakewords":["trispr","hey trispr","trispr agent"],"intent_keywords":{"gdd_generate_publish":["gdd","game design document","design document","designdokument","publish","confluence","draft","generate","create gdd","erstelle gdd","erstellen","veroeffentlichen","posten","session","meeting","interview","minutes","zusammenfassung","dokument","doc","spec","gameplay","feature"]},"model":"qwen3:4b","temperature":0.2,"max_tokens":512,"session_gap_minutes":20,"max_candidates":3},'
+  FileWrite $0 '"vision_input_settings":{"enabled":false,"fps":2,"source_scope":"all_monitors","max_width":1280,"jpeg_quality":75,"ram_buffer_seconds":30,"all_monitors_default":true},'
+  FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_native","fallback_provider":"local_custom","voice_id_windows":"","voice_id_local":"","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only"}'
   FileWrite $0 '}'
   FileClose $0
 

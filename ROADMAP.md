@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-04 (v0.7.1 stabilization + v0.8.0 module platform in execution)
+Last updated: 2026-03-05 (v0.8.0 hardening + v0.8.1/0.8.2 agent and multimodal track)
 
 This file is the canonical source for priorities and execution order.
 
@@ -9,7 +9,7 @@ This file is the canonical source for priorities and execution order.
 - Released: `v0.7.0`
 - Current phase: `v0.7.1` stabilization execution
 - Foundation complete: Blocks F + G + H
-- Active execution blocks: UX/UI consistency (Block E) + Module Platform (Block L)
+- Active execution blocks: Module Platform hardening (Block L) + Workflow-Agent (Block M foundation)
 
 ## Analysis De-Scope Decision
 
@@ -29,6 +29,8 @@ This file is the canonical source for priorities and execution order.
 | J | Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary) | Medium | D | Planned |
 | K | Expert Mode UX Overhaul (standard/expert toggle, hide technical settings) | Medium | E | Planned |
 | L | Module Platform + GDD Automation + Confluence Cloud publishing | Extra High | E, F, K | In progress |
+| M | Workflow-Agent voice automation for GDD (wakeword -> confirm -> execute) | Extra High | L, F | In progress |
+| N | Multimodal I/O modules (screen vision input + TTS voice output) | Extra High | M, L | Planned |
 
 ## v0.7 Task Ledger
 
@@ -56,19 +58,18 @@ This file is the canonical source for priorities and execution order.
 - Runtime assumption: external Ollama install, local endpoint, model once downloaded then offline-capable.
 - Recommended baseline model track: `qwen3.5:4b` primary, `qwen3.5:2b` fast fallback, `qwen3.5:9b` quality profile.
 - Cloud provider UX/activation is intentionally postponed to v0.7.3.
-- GDD automation is designed as a standalone managed module (not part of AI refinement).
+- GDD generation is now treated as core workflow capability; autonomous orchestration is handled by `workflow_agent`.
+- Multimodal modules (`input_vision`, `output_voice_tts`) are capability modules consumed by `workflow_agent` when enabled.
 
 ## Immediate Next Actions
 
-1. Finalize latency benchmark baseline (`benchmark:latency`) and record p50/p95 trend.
-2. Validate runtime-start background behavior on Windows (no permanent "Starting runtime..." state).
-3. Complete reliability hardening and release QA for v0.7.1.
-4. Continue Block E: UX/UI consistency and settings IA cleanup.
-5. Keep Block J and Block G (v0.7.3) out of stabilization scope.
-6. Keep quantization configurability (Task 45) deferred until a dedicated benchmark iteration.
-7. Complete Block L hardening: module/GDD regression coverage and publish conflict handling.
-8. Add preset-clone derivation workflow from imported templates (PDF/DOCX/Confluence).
-9. Add one-click publish policy gates (confidence threshold fallback to confirm).
+1. Close Block L hardening gate: one-click policy gate + publish conflict/retry coverage + rollout docs.
+2. Complete Block M phase M1-M4: core/module semantic split, workflow-agent settings migration, raw command channel, parser/session search.
+3. Complete Block M phase M5-M12: plan/confirm/execute, agent console, release hardening for v0.8.1.
+4. Start Block N after M execution stability gate (N1-N4): screen vision module + TTS module + agent capability bridge.
+5. Run N5 benchmark track (>=3 runs/provider/scenario) and select default TTS provider based on data.
+6. Keep Block J and Block G as lower-priority backlog until M/N delivery gates are met.
+7. Keep quantization configurability (Task 45) deferred until dedicated benchmark iteration.
 
 ## References
 
@@ -78,3 +79,5 @@ This file is the canonical source for priorities and execution order.
 - `docs/V0.7.0_ARCHITECTURE.md`
 - `docs/INSTALLER_VARIANTS.md`
 - `docs/GDD_MODULE_WORKFLOW.md`
+- `docs/V0.8.1_WORKFLOW_AGENT_PLAN.md`
+- `docs/V0.8.2_MULTIMODAL_IO_PLAN.md`

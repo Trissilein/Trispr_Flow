@@ -1576,6 +1576,47 @@
             </div>
             <div class="panel-body">
               <div id="modules-list" class="modules-list"></div>
+              <section id="workflow-agent-console" class="module-agent-console" hidden>
+                <div class="module-agent-console-header">
+                  <h3>Workflow Agent Console</h3>
+                  <span id="workflow-agent-status" class="field-hint">Agent disabled.</span>
+                </div>
+                <label class="field">
+                  <span class="field-label">Test command</span>
+                  <textarea
+                    id="workflow-agent-command-input"
+                    rows="3"
+                    placeholder="Hey Trispr, create a GDD from yesterday's meeting about combat and publish to Confluence."
+                  ></textarea>
+                </label>
+                <div class="auth-modal-actions">
+                  <button id="workflow-agent-parse-btn" type="button" class="hotkey-record-btn">Parse Command</button>
+                  <button id="workflow-agent-refresh-candidates-btn" type="button" class="hotkey-record-btn">Find Sessions</button>
+                </div>
+                <div id="workflow-agent-candidates" class="module-agent-candidates"></div>
+                <label class="field">
+                  <span class="field-label">Target language (always ask)</span>
+                  <select id="workflow-agent-target-language">
+                    <option value="source">Source language</option>
+                    <option value="en">English</option>
+                    <option value="de">Deutsch</option>
+                    <option value="fr">Français</option>
+                    <option value="es">Español</option>
+                  </select>
+                </label>
+                <div class="auth-modal-actions">
+                  <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn">Build Plan</button>
+                  <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn">Confirm & Execute</button>
+                </div>
+                <label class="field">
+                  <span class="field-label">Plan preview</span>
+                  <textarea id="workflow-agent-plan-preview" rows="5" readonly placeholder="Execution plan appears here..."></textarea>
+                </label>
+                <label class="field">
+                  <span class="field-label">Execution log</span>
+                  <textarea id="workflow-agent-execution-log" rows="6" readonly placeholder="Agent events and execution output appear here..."></textarea>
+                </label>
+              </section>
             </div>
           </section>
         </div>
@@ -1714,99 +1755,140 @@
 
     <div id="gdd-flow-modal" class="auth-modal" hidden>
       <div id="gdd-flow-backdrop" class="auth-modal-backdrop"></div>
-      <div class="auth-modal-card gdd-flow-modal-card" role="dialog" aria-modal="true" aria-labelledby="gdd-flow-title-label">
+      <div class="auth-modal-card gdd-flow-modal-card gdd-mode-standard" role="dialog" aria-modal="true" aria-labelledby="gdd-flow-title-label">
         <div class="auth-modal-header">
           <h3 id="gdd-flow-title-label" class="ai-refine-section-title">GDD Draft Generator</h3>
           <button id="gdd-flow-close" type="button" class="hotkey-record-btn">Close</button>
         </div>
 
-        <div class="gdd-flow-grid">
-          <label class="field">
-            <span class="field-label">Preset</span>
-            <select id="gdd-flow-preset"></select>
-          </label>
-          <div class="field">
-            <span class="field-label">Preset Recognition</span>
-            <button id="gdd-flow-detect-preset" type="button" class="hotkey-record-btn">Auto-detect Preset</button>
-          </div>
-
-          <label class="field">
-            <span class="field-label">Draft title</span>
-            <input id="gdd-flow-title" type="text" placeholder="Game Design Document" />
-          </label>
+        <div class="gdd-mode-switch" role="group" aria-label="GDD workflow mode">
+          <button id="gdd-flow-mode-standard" type="button" class="hotkey-record-btn is-active">Standard</button>
+          <button id="gdd-flow-mode-advanced" type="button" class="hotkey-record-btn">Advanced</button>
         </div>
 
-        <label class="field">
-          <span class="field-label">Chunk size</span>
-          <select id="gdd-flow-max-chunk">
-            <option value="2200">2200 chars</option>
-            <option value="3500" selected>3500 chars (recommended)</option>
-            <option value="5000">5000 chars</option>
-            <option value="7000">7000 chars</option>
-          </select>
-        </label>
+        <details id="gdd-flow-step-input" class="expander gdd-step" open>
+          <summary>1. Input</summary>
+          <div class="expander-body">
+            <span id="gdd-flow-runtime-summary" class="field-hint">Current runtime session is used as default input.</span>
 
-        <div class="gdd-template-box">
-          <label class="field">
-            <span class="field-label">Template source (optional)</span>
-            <select id="gdd-flow-template-source">
-              <option value="none">No external template</option>
-              <option value="confluence">Confluence page URL</option>
-              <option value="file">PDF/DOCX/TXT file</option>
-            </select>
-          </label>
-
-          <div id="gdd-flow-template-confluence-group" class="gdd-template-group" hidden>
             <label class="field">
-              <span class="field-label">Confluence page URL</span>
-              <input id="gdd-flow-template-confluence-url" type="url" placeholder="https://your-site.atlassian.net/wiki/.../pages/12345/..." />
+              <span class="field-label">Draft title</span>
+              <input id="gdd-flow-title" type="text" placeholder="Game Design Document" />
             </label>
-            <button id="gdd-flow-template-confluence-load" type="button" class="hotkey-record-btn">Load from Confluence</button>
-          </div>
 
-          <div id="gdd-flow-template-file-group" class="gdd-template-group" hidden>
-            <label class="field">
-              <span class="field-label">Template file</span>
-              <input id="gdd-flow-template-file-path" type="text" placeholder="No file selected" readonly />
-            </label>
-            <div class="gdd-template-file-actions">
-              <button id="gdd-flow-template-file-pick" type="button" class="hotkey-record-btn">Choose file</button>
-              <button id="gdd-flow-template-file-load" type="button" class="hotkey-record-btn">Load file</button>
+            <div class="gdd-template-box gdd-advanced-only">
+              <label class="field">
+                <span class="field-label">Template source (optional)</span>
+                <select id="gdd-flow-template-source">
+                  <option value="none">No external template</option>
+                  <option value="confluence">Confluence page URL</option>
+                  <option value="file">PDF/DOCX/TXT file</option>
+                </select>
+              </label>
+
+              <div id="gdd-flow-template-confluence-group" class="gdd-template-group" hidden>
+                <label class="field">
+                  <span class="field-label">Confluence page URL</span>
+                  <input id="gdd-flow-template-confluence-url" type="url" placeholder="https://your-site.atlassian.net/wiki/.../pages/12345/..." />
+                </label>
+                <button id="gdd-flow-template-confluence-load" type="button" class="hotkey-record-btn">Load from Confluence</button>
+              </div>
+
+              <div id="gdd-flow-template-file-group" class="gdd-template-group" hidden>
+                <label class="field">
+                  <span class="field-label">Template file</span>
+                  <input id="gdd-flow-template-file-path" type="text" placeholder="No file selected" readonly />
+                </label>
+                <div class="gdd-template-file-actions">
+                  <button id="gdd-flow-template-file-pick" type="button" class="hotkey-record-btn">Choose file</button>
+                  <button id="gdd-flow-template-file-load" type="button" class="hotkey-record-btn">Load file</button>
+                </div>
+              </div>
+
+              <span id="gdd-flow-template-meta" class="field-hint">No template loaded.</span>
+              <textarea id="gdd-flow-template-preview" class="gdd-template-preview" rows="8" placeholder="Template preview appears here..." readonly></textarea>
             </div>
           </div>
+        </details>
 
-          <span id="gdd-flow-template-meta" class="field-hint">No template loaded.</span>
-          <textarea id="gdd-flow-template-preview" class="gdd-template-preview" rows="8" placeholder="Template preview appears here..." readonly></textarea>
-        </div>
+        <details id="gdd-flow-step-drafting" class="expander gdd-step" open>
+          <summary>2. Drafting</summary>
+          <div class="expander-body">
+            <div class="gdd-flow-grid gdd-advanced-only">
+              <label class="field">
+                <span class="field-label">Preset</span>
+                <select id="gdd-flow-preset"></select>
+              </label>
+              <div class="field">
+                <span class="field-label">Preset recognition</span>
+                <button id="gdd-flow-detect-preset" type="button" class="hotkey-record-btn">Auto-detect Preset</button>
+              </div>
+            </div>
 
-        <div class="auth-modal-actions">
-          <button id="gdd-flow-generate" type="button" class="hotkey-record-btn">Generate Draft</button>
-          <button id="gdd-flow-validate" type="button" class="hotkey-record-btn">Validate</button>
-        </div>
-
-        <span id="gdd-flow-status" class="field-hint">Uses the current conversation transcript as input.</span>
-        <div class="gdd-publish-box">
-          <div class="gdd-flow-grid">
-            <label class="field">
-              <span class="field-label">Confluence space key</span>
-              <input id="gdd-flow-space-key" type="text" placeholder="GAME" />
+            <label class="field gdd-advanced-only">
+              <span class="field-label">Chunk size</span>
+              <select id="gdd-flow-max-chunk">
+                <option value="2200">2200 chars</option>
+                <option value="3500" selected>3500 chars (recommended)</option>
+                <option value="5000">5000 chars</option>
+                <option value="7000">7000 chars</option>
+              </select>
             </label>
-            <label class="field">
-              <span class="field-label">Parent page id (optional)</span>
-              <input id="gdd-flow-parent-page-id" type="text" placeholder="123456789" />
+
+            <div class="auth-modal-actions">
+              <button id="gdd-flow-generate" type="button" class="hotkey-record-btn">Generate Draft</button>
+              <button id="gdd-flow-validate" type="button" class="hotkey-record-btn gdd-advanced-only">Validate</button>
+            </div>
+          </div>
+        </details>
+
+        <details id="gdd-flow-step-routing" class="expander gdd-step" open>
+          <summary>3. Target Routing</summary>
+          <div class="expander-body">
+            <div class="gdd-flow-grid">
+              <label class="field">
+                <span class="field-label">Confluence space key</span>
+                <input id="gdd-flow-space-key" type="text" placeholder="GAME" />
+              </label>
+              <label class="field gdd-advanced-only">
+                <span class="field-label">Parent page id (optional)</span>
+                <input id="gdd-flow-parent-page-id" type="text" placeholder="123456789" />
+              </label>
+            </div>
+            <label class="field gdd-advanced-only">
+              <span class="field-label">Target page id (optional)</span>
+              <input id="gdd-flow-target-page-id" type="text" placeholder="Leave empty to auto-create or title-match" />
             </label>
+            <div class="auth-modal-actions gdd-advanced-only">
+              <button id="gdd-flow-suggest-target" type="button" class="hotkey-record-btn">Suggest Target</button>
+            </div>
           </div>
-          <label class="field">
-            <span class="field-label">Target page id (optional)</span>
-            <input id="gdd-flow-target-page-id" type="text" placeholder="Leave empty to auto-create or title-match" />
-          </label>
-          <div class="auth-modal-actions">
-            <button id="gdd-flow-suggest-target" type="button" class="hotkey-record-btn">Suggest Target</button>
-            <button id="gdd-flow-publish" type="button" class="hotkey-record-btn">Publish to Confluence</button>
+        </details>
+
+        <details id="gdd-flow-step-publish" class="expander gdd-step" open>
+          <summary>4. Publish &amp; Output</summary>
+          <div class="expander-body">
+            <span id="gdd-flow-status" class="field-hint">Uses the current runtime session as input.</span>
+            <div class="auth-modal-actions">
+              <button id="gdd-flow-one-click-publish" type="button" class="hotkey-record-btn">One-click Publish</button>
+              <button id="gdd-flow-publish" type="button" class="hotkey-record-btn gdd-advanced-only">Publish to Confluence</button>
+            </div>
+            <span class="field-hint">One-click uses route suggestion and asks for confirmation on low confidence.</span>
+            <a id="gdd-flow-publish-link" class="field-hint gdd-publish-link" href="#" target="_blank" rel="noopener" hidden>Open published page</a>
+
+            <textarea id="gdd-flow-output" class="gdd-output-preview" rows="12" placeholder="Draft output appears here..." readonly></textarea>
+
+            <div class="gdd-publish-box gdd-advanced-only">
+              <div class="gdd-queue-header">
+                <span class="field-label">Pending publish queue</span>
+                <button id="gdd-flow-queue-refresh" type="button" class="hotkey-record-btn">Refresh queue</button>
+              </div>
+              <div id="gdd-flow-queue-list" class="gdd-queue-list">
+                <div class="archive-empty">No pending publishes.</div>
+              </div>
+            </div>
           </div>
-          <a id="gdd-flow-publish-link" class="field-hint gdd-publish-link" href="#" target="_blank" rel="noopener" hidden>Open published page</a>
-        </div>
-        <textarea id="gdd-flow-output" class="gdd-output-preview" rows="12" placeholder="Draft output appears here..." readonly></textarea>
+        </details>
       </div>
     </div>
   </body>

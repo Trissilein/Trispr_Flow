@@ -1,0 +1,285 @@
+import { invoke } from "@tauri-apps/api/core";
+import * as dom from "./dom-refs";
+import { settings } from "./state";
+import { showToast } from "./toast";
+import type {
+  AgentBuildExecutionPlanRequest,
+  AgentCommandParseResult,
+  AgentExecutionPlan,
+  AgentExecutionResult,
+  TranscriptionRawResultEvent,
+  TranscriptSessionCandidate,
+} from "./types";
+
+let initialized = false;
+let lastParse: AgentCommandParseResult | null = null;
+let lastCandidates: TranscriptSessionCandidate[] = [];
+let selectedSessionId = "";
+let currentPlan: AgentExecutionPlan | null = null;
+
+function ensureWorkflowAgentDefaults(): void {
+  if (!settings) return;
+  settings.workflow_agent ??= {
+    enabled: false,
+    wakewords: ["trispr", "hey trispr", "trispr agent"],
+    intent_keywords: {
+      gdd_generate_publish: [
+        "gdd",
+        "game design document",
+        "designdokument",
+        "publish",
+        "confluence",
+        "generate",
+        "draft",
+      ],
+    },
+    model: "qwen3:4b",
+    temperature: 0.2,
+    max_tokens: 512,
+    session_gap_minutes: 20,
+    max_candidates: 3,
+  };
+}
+
+function isWorkflowAgentEnabled(): boolean {
+  ensureWorkflowAgentDefaults();
+  return Boolean(settings?.workflow_agent?.enabled);
+}
+
+function appendLog(line: string): void {
+  if (!dom.workflowAgentExecutionLog) return;
+  const now = new Date().toLocaleTimeString();
+  const next = `[${now}] ${line}`;
+  const current = dom.workflowAgentExecutionLog.value.trim();
+  dom.workflowAgentExecutionLog.value = current ? `${current}\n${next}` : next;
+  dom.workflowAgentExecutionLog.scrollTop = dom.workflowAgentExecutionLog.scrollHeight;
+}
+
+function renderStatus(): void {
+  if (!dom.workflowAgentConsole) return;
+  const enabled = isWorkflowAgentEnabled();
+  dom.workflowAgentConsole.hidden = !enabled;
+  if (!dom.workflowAgentStatus) return;
+  dom.workflowAgentStatus.textContent = enabled
+    ? "Wakeword + Confirm is active."
+    : "Agent disabled.";
+}
+
+function renderCandidates(): void {
+  if (!dom.workflowAgentCandidates) return;
+  if (!lastCandidates.length) {
+    dom.workflowAgentCandidates.innerHTML = `<div class="field-hint">No session candidates yet.</div>`;
+    return;
+  }
+  dom.workflowAgentCandidates.innerHTML = lastCandidates
+    .map((candidate) => {
+      const selected = candidate.session_id === selectedSessionId;
+      return `<button type="button" class="ghost-btn workflow-agent-candidate${
+        selected ? " is-active" : ""
+      }" data-session-id="${candidate.session_id}">
+        <strong>${new Date(candidate.start_ms).toLocaleString()}</strong>
+        <span>${candidate.entry_count} entries · score ${(candidate.score * 100).toFixed(0)}%</span>
+        <span>${candidate.preview || "No preview"}</span>
+      </button>`;
+    })
+    .join("");
+}
+
+function renderPlanPreview(): void {
+  if (!dom.workflowAgentPlanPreview) return;
+  if (!currentPlan) {
+    dom.workflowAgentPlanPreview.value = "";
+    return;
+  }
+  const steps = currentPlan.steps.map((step) => `- ${step.title}`).join("\n");
+  dom.workflowAgentPlanPreview.value = [
+    `Intent: ${currentPlan.intent}`,
+    `Session: ${currentPlan.session_id}`,
+    `Target language: ${currentPlan.target_language}`,
+    `Publish: ${currentPlan.publish ? "yes" : "no"}`,
+    "",
+    "Steps:",
+    steps,
+  ].join("\n");
+}
+
+function matchesWakeword(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  const wakewords = settings?.workflow_agent?.wakewords ?? [];
+  return wakewords.some((wakeword) => {
+    const needle = wakeword.trim().toLowerCase();
+    return Boolean(needle) && normalized.includes(needle);
+  });
+}
+
+async function parseCommand(commandText: string): Promise<void> {
+  if (!commandText.trim()) {
+    showToast({
+      type: "warning",
+      title: "No command",
+      message: "Enter or speak a command first.",
+      duration: 3000,
+    });
+    return;
+  }
+  const parsed = await invoke<AgentCommandParseResult>("agent_parse_command", {
+    request: {
+      command_text: commandText,
+      source: "ui_console",
+    },
+  });
+  lastParse = parsed;
+  appendLog(
+    `Parsed command -> intent=${parsed.intent}, confidence=${(parsed.confidence * 100).toFixed(0)}%, publish=${parsed.publish_requested}`
+  );
+  if (!parsed.detected) {
+    showToast({
+      type: "info",
+      title: "No actionable intent",
+      message: "Wakeword or intent keywords were missing.",
+      duration: 3200,
+    });
+    return;
+  }
+  await refreshCandidates();
+}
+
+async function refreshCandidates(): Promise<void> {
+  if (!lastParse) {
+    showToast({
+      type: "info",
+      title: "Parse first",
+      message: "Parse a command before searching sessions.",
+      duration: 3000,
+    });
+    return;
+  }
+  const candidates = await invoke<TranscriptSessionCandidate[]>("search_transcript_sessions", {
+    request: {
+      temporal_hint: lastParse.temporal_hint ?? null,
+      topic_hint: lastParse.topic_hint ?? null,
+      session_gap_minutes: settings?.workflow_agent?.session_gap_minutes ?? 20,
+      max_candidates: settings?.workflow_agent?.max_candidates ?? 3,
+    },
+  });
+  lastCandidates = candidates;
+  selectedSessionId = candidates[0]?.session_id ?? "";
+  currentPlan = null;
+  renderCandidates();
+  renderPlanPreview();
+  appendLog(`Session search -> ${candidates.length} candidates.`);
+}
+
+async function buildPlan(): Promise<void> {
+  if (!lastParse?.detected || !selectedSessionId) {
+    showToast({
+      type: "warning",
+      title: "Missing selection",
+      message: "Parse command and select a session candidate first.",
+      duration: 3200,
+    });
+    return;
+  }
+  const targetLanguage = dom.workflowAgentTargetLanguage?.value || "source";
+  const req: AgentBuildExecutionPlanRequest = {
+    intent: lastParse.intent,
+    session_id: selectedSessionId,
+    target_language: targetLanguage,
+    publish: Boolean(lastParse.publish_requested),
+  };
+  currentPlan = await invoke<AgentExecutionPlan>("agent_build_execution_plan", { request: req });
+  renderPlanPreview();
+  appendLog("Execution plan ready.");
+}
+
+async function executePlan(): Promise<void> {
+  if (!currentPlan) {
+    showToast({
+      type: "warning",
+      title: "No plan",
+      message: "Build a plan before execution.",
+      duration: 3000,
+    });
+    return;
+  }
+  appendLog("Executing plan...");
+  const result = await invoke<AgentExecutionResult>("agent_execute_gdd_plan", {
+    request: {
+      plan: currentPlan,
+      title: null,
+      preset_id: null,
+      max_chunk_chars: null,
+      space_key: settings?.confluence_settings?.default_space_key || null,
+      parent_page_id: settings?.confluence_settings?.default_parent_page_id || null,
+      target_page_id: null,
+    },
+  });
+  appendLog(`Execution result -> ${result.status}: ${result.message}`);
+  showToast({
+    type: result.status === "failed" ? "error" : result.status === "queued" ? "warning" : "success",
+    title: "Workflow Agent",
+    message: result.message,
+    duration: 4200,
+  });
+}
+
+function bindUi(): void {
+  dom.workflowAgentParseBtn?.addEventListener("click", () => {
+    void parseCommand(dom.workflowAgentCommandInput?.value || "");
+  });
+  dom.workflowAgentRefreshCandidatesBtn?.addEventListener("click", () => {
+    void refreshCandidates();
+  });
+  dom.workflowAgentBuildPlanBtn?.addEventListener("click", () => {
+    void buildPlan();
+  });
+  dom.workflowAgentExecuteBtn?.addEventListener("click", () => {
+    void executePlan();
+  });
+  dom.workflowAgentCandidates?.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>("[data-session-id]");
+    if (!button) return;
+    selectedSessionId = button.dataset.sessionId || "";
+    renderCandidates();
+    appendLog(`Selected session ${selectedSessionId}`);
+  });
+}
+
+export function focusWorkflowAgentConsole(): void {
+  renderStatus();
+  dom.workflowAgentConsole?.scrollIntoView({ behavior: "smooth", block: "start" });
+  dom.workflowAgentCommandInput?.focus();
+}
+
+export function initWorkflowAgentConsole(): void {
+  if (initialized) return;
+  initialized = true;
+  bindUi();
+  renderStatus();
+  renderCandidates();
+  renderPlanPreview();
+}
+
+export function syncWorkflowAgentConsoleState(): void {
+  renderStatus();
+}
+
+export async function handleWorkflowAgentRawResult(
+  payload: TranscriptionRawResultEvent
+): Promise<void> {
+  if (!isWorkflowAgentEnabled()) return;
+  if (!payload?.text?.trim()) return;
+  if (!matchesWakeword(payload.text)) return;
+
+  appendLog(`Wakeword detected from ${payload.source}.`);
+  if (dom.workflowAgentCommandInput) {
+    dom.workflowAgentCommandInput.value = payload.text;
+  }
+  await parseCommand(payload.text);
+}
+
+export function appendWorkflowAgentLog(line: string): void {
+  appendLog(line);
+}

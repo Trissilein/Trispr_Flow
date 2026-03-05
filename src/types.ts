@@ -6,13 +6,39 @@ export type AIExecutionMode = "local_primary" | "online_fallback";
 export type AIProviderAuthStatus = "locked" | "verified_api_key" | "verified_oauth";
 export type AIProviderAuthMethodPreference = "api_key" | "oauth";
 export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
-export type ModuleId = "gdd" | "analysis" | "integrations_confluence";
+export type ModuleId =
+  | "gdd"
+  | "analysis"
+  | "integrations_confluence"
+  | "workflow_agent"
+  | "input_vision"
+  | "output_voice_tts";
 export type ModuleState = "not_installed" | "installed" | "enabled" | "active" | "error";
 export type ModulePermission =
   | "network_confluence"
   | "filesystem_history"
   | "filesystem_exports"
-  | "keyring_access";
+  | "keyring_access"
+  | "screen_capture"
+  | "audio_output";
+export type AgentIntent = "gdd_generate_publish" | "unknown";
+export type AgentTargetLanguage =
+  | "source"
+  | "en"
+  | "de"
+  | "fr"
+  | "es"
+  | "it"
+  | "pt"
+  | "nl"
+  | "pl"
+  | "ru"
+  | "ja"
+  | "ko"
+  | "zh"
+  | "ar"
+  | "tr"
+  | "hi";
 export type RefinementPromptPreset =
   | "wording"
   | "summary"
@@ -30,6 +56,8 @@ export interface ModuleDescriptor {
   restart_required: boolean;
   last_error?: string | null;
   bundled: boolean;
+  core: boolean;
+  toggleable: boolean;
 }
 
 export interface ModuleSettings {
@@ -129,11 +157,46 @@ export interface GddPublishResult {
   message: string;
 }
 
+export interface GddPublishFallbackBundle {
+  bundle_dir: string;
+  draft_json_path: string;
+  markdown_path: string;
+  confluence_html_path: string;
+  publish_request_path: string;
+  manifest_path: string;
+}
+
+export interface GddPendingPublishJob {
+  job_id: string;
+  title: string;
+  space_key: string;
+  parent_page_id?: string | null;
+  target_page_id?: string | null;
+  created_at_iso: string;
+  updated_at_iso: string;
+  retry_count: number;
+  last_error: string;
+  bundle_dir: string;
+  routing_confidence?: number | null;
+  routing_reasoning?: string | null;
+}
+
+export interface GddPublishAttemptResult {
+  status: "published" | "queued" | "failed";
+  publish_result?: GddPublishResult;
+  queued_job?: GddPendingPublishJob;
+  error?: string;
+}
+
 export interface GddModuleSettings {
   enabled: boolean;
   default_preset_id: string;
   detect_preset_automatically: boolean;
   prefer_one_click_publish: boolean;
+  workflow_mode_default: "standard" | "advanced";
+  transcript_source_default: "runtime_session";
+  target_routing_strategy: "hybrid_memory" | "fixed" | "fresh_suggest";
+  one_click_confidence_threshold: number;
   preset_clones: GddPresetClone[];
 }
 
@@ -146,6 +209,128 @@ export interface ConfluenceSettings {
   default_parent_page_id: string;
   auth_mode: "oauth" | "api_token";
   routing_memory: Record<string, string>;
+}
+
+export interface WorkflowAgentSettings {
+  enabled: boolean;
+  wakewords: string[];
+  intent_keywords: Record<string, string[]>;
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  session_gap_minutes: number;
+  max_candidates: number;
+}
+
+export interface VisionInputSettings {
+  enabled: boolean;
+  fps: number;
+  source_scope: "all_monitors" | "active_monitor" | "active_window";
+  max_width: number;
+  jpeg_quality: number;
+  ram_buffer_seconds: number;
+  all_monitors_default: boolean;
+}
+
+export interface VoiceOutputSettings {
+  enabled: boolean;
+  default_provider: "windows_native" | "local_custom";
+  fallback_provider: "windows_native" | "local_custom";
+  voice_id_windows: string;
+  voice_id_local: string;
+  rate: number;
+  volume: number;
+  output_policy: "agent_replies_only" | "replies_and_events" | "explicit_only";
+}
+
+export interface AgentCommandParseResult {
+  detected: boolean;
+  intent: AgentIntent;
+  confidence: number;
+  publish_requested: boolean;
+  wakeword_matched: boolean;
+  temporal_hint?: string | null;
+  topic_hint?: string | null;
+  reasoning: string;
+  command_text: string;
+}
+
+export interface TranscriptSessionCandidate {
+  session_id: string;
+  start_ms: number;
+  end_ms: number;
+  entry_count: number;
+  source_mix: string[];
+  preview: string;
+  score: number;
+  reasoning: string;
+}
+
+export interface AgentExecutionStep {
+  id: string;
+  title: string;
+  status: "pending" | "running" | "done" | "failed";
+  detail?: string;
+}
+
+export interface AgentExecutionPlan {
+  intent: AgentIntent;
+  session_id: string;
+  session_title: string;
+  target_language: AgentTargetLanguage;
+  publish: boolean;
+  steps: AgentExecutionStep[];
+  summary: string;
+}
+
+export interface AgentBuildExecutionPlanRequest {
+  intent: AgentIntent | string;
+  session_id: string;
+  target_language: AgentTargetLanguage | string;
+  publish: boolean;
+}
+
+export interface AgentExecutionResult {
+  status: "completed" | "queued" | "failed" | "cancelled";
+  message: string;
+  draft?: GddDraft;
+  publish_result?: GddPublishResult;
+  queued_job?: GddPendingPublishJob;
+  error?: string;
+}
+
+export interface VisionSourceInfo {
+  id: string;
+  label: string;
+  width: number;
+  height: number;
+}
+
+export interface VisionStreamHealth {
+  running: boolean;
+  fps: number;
+  source_scope: string;
+  started_at_ms?: number | null;
+  frame_seq: number;
+}
+
+export interface VisionSnapshotResult {
+  captured: boolean;
+  timestamp_ms: number;
+  source_count: number;
+  note: string;
+}
+
+export interface TtsProviderInfo {
+  id: "windows_native" | "local_custom";
+  label: string;
+  available: boolean;
+}
+
+export interface TtsVoiceInfo {
+  id: string;
+  label: string;
+  provider: "windows_native" | "local_custom";
 }
 
 export interface AIFallbackSettings {
@@ -213,6 +398,9 @@ export interface Settings {
   module_settings?: ModuleSettings;
   gdd_module_settings?: GddModuleSettings;
   confluence_settings?: ConfluenceSettings;
+  workflow_agent?: WorkflowAgentSettings;
+  vision_input_settings?: VisionInputSettings;
+  voice_output_settings?: VoiceOutputSettings;
   audio_cues: boolean;
   audio_cues_volume: number;
   ptt_use_vad: boolean;
@@ -433,6 +621,12 @@ export interface TranscriptionResultEvent {
   paste_deferred?: boolean;
   paste_timeout_ms?: number;
   entry_id?: string;
+}
+
+export interface TranscriptionRawResultEvent {
+  text: string;
+  source: string;
+  timestamp_ms: number;
 }
 
 export interface TranscriptionRefinementStartedEvent {

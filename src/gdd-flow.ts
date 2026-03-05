@@ -1,31 +1,78 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import * as dom from "./dom-refs";
+import {
+  ONE_CLICK_ROUTE_CONFIDENCE_THRESHOLD,
+  requiresOneClickPublishConfirmation,
+} from "./gdd-policy";
 import { buildConversationHistory, buildConversationText } from "./history";
 import { focusFirstElement, trapFocusInModal } from "./modal-focus";
-import { settings } from "./state";
+import { appRuntimeStartedMs, settings } from "./state";
+import { persistSettings } from "./settings";
 import { showToast } from "./toast";
 import type {
   ConfluenceTargetSuggestion,
   GddDraft,
+  GddPendingPublishJob,
   GddPreset,
+  GddPublishAttemptResult,
   GddPublishResult,
   GddRecognitionResult,
   GddTemplateSourceResult,
   GenerateGddDraftRequest,
+  HistoryEntry,
 } from "./types";
 
 let initialized = false;
 let loadedTemplate: GddTemplateSourceResult | null = null;
 let lastDraft: GddDraft | null = null;
+let lastTargetSuggestion: ConfluenceTargetSuggestion | null = null;
 let lastFocusedBeforeOpen: HTMLElement | null = null;
 
+function htmlEscape(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function effectiveDraftTitle(): string {
-  return (
-    dom.gddFlowTitle?.value?.trim() ||
-    lastDraft?.title?.trim() ||
-    "Game Design Document"
-  );
+  return dom.gddFlowTitle?.value?.trim() || lastDraft?.title?.trim() || "Game Design Document";
+}
+
+function modeFromSettings(): "standard" | "advanced" {
+  return settings?.gdd_module_settings?.workflow_mode_default === "advanced"
+    ? "advanced"
+    : "standard";
+}
+
+function setWorkflowMode(mode: "standard" | "advanced", persist = false): void {
+  const card = dom.gddFlowModal?.querySelector<HTMLElement>(".gdd-flow-modal-card");
+  if (card) {
+    card.classList.toggle("gdd-mode-standard", mode === "standard");
+    card.classList.toggle("gdd-mode-advanced", mode === "advanced");
+  }
+  dom.gddFlowModeStandard?.classList.toggle("is-active", mode === "standard");
+  dom.gddFlowModeAdvanced?.classList.toggle("is-active", mode === "advanced");
+
+  if (persist && settings?.gdd_module_settings) {
+    settings.gdd_module_settings.workflow_mode_default = mode;
+    void persistSettings();
+  }
+}
+
+function isOneClickPublishPreferred(): boolean {
+  return Boolean(settings?.gdd_module_settings?.prefer_one_click_publish);
+}
+
+function oneClickConfidenceThreshold(): number {
+  const configured = Number(settings?.gdd_module_settings?.one_click_confidence_threshold);
+  if (!Number.isFinite(configured) || configured < 0 || configured > 1) {
+    return ONE_CLICK_ROUTE_CONFIDENCE_THRESHOLD;
+  }
+  return configured;
 }
 
 function resetPublishLink(): void {
@@ -60,6 +107,37 @@ function setStatus(message: string): void {
   }
 }
 
+function runtimeTranscriptEntries(): HistoryEntry[] {
+  const now = Date.now();
+  return buildConversationHistory()
+    .filter((entry) => entry.timestamp_ms >= appRuntimeStartedMs && entry.timestamp_ms <= now)
+    .sort((a, b) => a.timestamp_ms - b.timestamp_ms);
+}
+
+function formatClock(timestampMs: number): string {
+  return new Date(timestampMs).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function updateRuntimeSummary(): void {
+  const entries = runtimeTranscriptEntries();
+  if (!dom.gddFlowRuntimeSummary) return;
+
+  if (entries.length === 0) {
+    dom.gddFlowRuntimeSummary.textContent =
+      "Current runtime session: no transcript entries yet. Generate is disabled.";
+    return;
+  }
+
+  const first = entries[0].timestamp_ms;
+  const last = entries[entries.length - 1].timestamp_ms;
+  dom.gddFlowRuntimeSummary.textContent =
+    `Current runtime session: ${entries.length} entries, ${formatClock(first)} - ${formatClock(last)}.`;
+}
+
 function setTemplateResult(result: GddTemplateSourceResult | null): void {
   loadedTemplate = result;
   if (!result) {
@@ -70,7 +148,7 @@ function setTemplateResult(result: GddTemplateSourceResult | null): void {
 
   const truncation = result.truncated ? " (truncated for safety)" : "";
   if (dom.gddFlowTemplateMeta) {
-    dom.gddFlowTemplateMeta.textContent = `${result.source_label} • ${result.original_chars} chars${truncation}`;
+    dom.gddFlowTemplateMeta.textContent = `${result.source_label} - ${result.original_chars} chars${truncation}`;
   }
   if (dom.gddFlowTemplatePreview) {
     dom.gddFlowTemplatePreview.value = result.text;
@@ -100,8 +178,12 @@ async function refreshPresetOptions(): Promise<void> {
       return `<option value="${preset.id}">${label}</option>`;
     })
     .join("");
+
+  const defaultPreset = settings?.gdd_module_settings?.default_preset_id;
   if (previous && presets.some((preset) => preset.id === previous)) {
     dom.gddFlowPreset.value = previous;
+  } else if (defaultPreset && presets.some((preset) => preset.id === defaultPreset)) {
+    dom.gddFlowPreset.value = defaultPreset;
   }
 }
 
@@ -130,7 +212,10 @@ async function detectPreset(): Promise<void> {
     }
 
     const confidencePct = Math.round(result.confidence * 100);
-    const top = result.candidates.slice(0, 3).map((candidate) => candidate.label).join(", ");
+    const top = result.candidates
+      .slice(0, 3)
+      .map((candidate) => candidate.label)
+      .join(", ");
     setStatus(`Preset detected: ${result.suggested_preset_id} (${confidencePct}%). Top: ${top}`);
     showToast({
       type: "info",
@@ -150,7 +235,7 @@ async function detectPreset(): Promise<void> {
 }
 
 function currentTranscriptText(): string {
-  const entries = [...buildConversationHistory()].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
+  const entries = runtimeTranscriptEntries();
   return buildConversationText(entries).trim();
 }
 
@@ -176,7 +261,7 @@ async function generateDraft(): Promise<void> {
     showToast({
       type: "warning",
       title: "No transcript",
-      message: "No conversation entries available for GDD generation.",
+      message: "No runtime session entries available for GDD generation.",
       duration: 3800,
     });
     return;
@@ -188,6 +273,7 @@ async function generateDraft(): Promise<void> {
   try {
     const draft = await invoke<GddDraft>("generate_gdd_draft", { request });
     lastDraft = draft;
+    lastTargetSuggestion = null;
     if (dom.gddFlowOutput) {
       dom.gddFlowOutput.value = toPreviewText(draft);
     }
@@ -211,32 +297,47 @@ async function generateDraft(): Promise<void> {
   }
 }
 
-async function suggestConfluenceTarget(): Promise<void> {
+function applyConfluenceTargetSuggestion(suggestion: ConfluenceTargetSuggestion): void {
+  lastTargetSuggestion = suggestion;
+  if (dom.gddFlowSpaceKey && suggestion.space_key) {
+    dom.gddFlowSpaceKey.value = suggestion.space_key;
+  }
+  if (dom.gddFlowParentPageId) {
+    dom.gddFlowParentPageId.value = suggestion.parent_page_id || "";
+  }
+  if (dom.gddFlowTargetPageId) {
+    dom.gddFlowTargetPageId.value = suggestion.existing_page_id || "";
+  }
+}
+
+async function requestConfluenceTargetSuggestion(): Promise<ConfluenceTargetSuggestion> {
   const title = effectiveDraftTitle();
   const spaceKey = dom.gddFlowSpaceKey?.value?.trim() || "";
   const parentPageId = dom.gddFlowParentPageId?.value?.trim() || "";
 
+  const suggestion = await invoke<ConfluenceTargetSuggestion>("suggest_confluence_target", {
+    request: {
+      title,
+      preset_id: dom.gddFlowPreset?.value || null,
+      space_key: spaceKey || null,
+      parent_page_id: parentPageId || null,
+    },
+  });
+  applyConfluenceTargetSuggestion(suggestion);
+  return suggestion;
+}
+
+function setPublishBusy(busy: boolean): void {
+  if (dom.gddFlowPublish) dom.gddFlowPublish.disabled = busy;
+  if (dom.gddFlowOneClickPublish) dom.gddFlowOneClickPublish.disabled = busy;
+  if (dom.gddFlowSuggestTarget) dom.gddFlowSuggestTarget.disabled = busy;
+  if (dom.gddFlowQueueRefresh) dom.gddFlowQueueRefresh.disabled = busy;
+}
+
+async function suggestConfluenceTarget(): Promise<void> {
   setStatus("Resolving Confluence target suggestion...");
   try {
-    const suggestion = await invoke<ConfluenceTargetSuggestion>("suggest_confluence_target", {
-      request: {
-        title,
-        preset_id: dom.gddFlowPreset?.value || null,
-        space_key: spaceKey || null,
-        parent_page_id: parentPageId || null,
-      },
-    });
-
-    if (dom.gddFlowSpaceKey && suggestion.space_key) {
-      dom.gddFlowSpaceKey.value = suggestion.space_key;
-    }
-    if (dom.gddFlowParentPageId) {
-      dom.gddFlowParentPageId.value = suggestion.parent_page_id || "";
-    }
-    if (dom.gddFlowTargetPageId) {
-      dom.gddFlowTargetPageId.value = suggestion.existing_page_id || "";
-    }
-
+    const suggestion = await requestConfluenceTargetSuggestion();
     setStatus(`Target suggestion ready (${Math.round(suggestion.confidence * 100)}% confidence).`);
     showToast({
       type: "info",
@@ -255,7 +356,78 @@ async function suggestConfluenceTarget(): Promise<void> {
   }
 }
 
-async function publishToConfluence(): Promise<void> {
+async function publishViaAttempt(
+  suggestion: ConfluenceTargetSuggestion | null
+): Promise<GddPublishAttemptResult> {
+  if (!lastDraft) {
+    return {
+      status: "failed",
+      error: "No draft available.",
+    };
+  }
+
+  const spaceKey = dom.gddFlowSpaceKey?.value?.trim() || "";
+  if (!spaceKey) {
+    return {
+      status: "failed",
+      error: "Confluence space key is required.",
+    };
+  }
+
+  const parentPageId = dom.gddFlowParentPageId?.value?.trim() || null;
+  const targetPageId = dom.gddFlowTargetPageId?.value?.trim() || null;
+  const title = effectiveDraftTitle();
+
+  const draft = { ...lastDraft, title };
+  const storageBody = await invoke<string>("render_gdd_for_confluence", { draft });
+
+  return invoke<GddPublishAttemptResult>("publish_or_queue_gdd_to_confluence", {
+    request: {
+      draft,
+      publish_request: {
+        title,
+        storage_body: storageBody,
+        space_key: spaceKey,
+        parent_page_id: parentPageId,
+        target_page_id: targetPageId,
+      },
+      routing_confidence: suggestion?.confidence ?? null,
+      routing_reasoning: suggestion?.reasoning ?? null,
+    },
+  });
+}
+
+function applyPublishSuccessUi(result: GddPublishResult): void {
+  if (dom.gddFlowPublishLink) {
+    dom.gddFlowPublishLink.href = result.page_url;
+    dom.gddFlowPublishLink.hidden = false;
+    dom.gddFlowPublishLink.textContent = `Open page (${result.page_id})`;
+  }
+  setStatus(result.created ? "Confluence page created." : "Confluence page updated.");
+  showToast({
+    type: "success",
+    title: result.created ? "Confluence page created" : "Confluence page updated",
+    message: result.page_url,
+    duration: 5200,
+  });
+}
+
+function applyPublishQueuedUi(job: GddPendingPublishJob, errorMessage: string | undefined): void {
+  setStatus("Confluence not reachable. Publish request queued locally.");
+  showToast({
+    type: "warning",
+    title: "Saved for later publish",
+    message: errorMessage
+      ? `Queued (${job.job_id}). ${errorMessage}`
+      : `Queued (${job.job_id}) at ${job.bundle_dir}`,
+    duration: 5600,
+  });
+}
+
+async function publishToConfluenceInternal(
+  suggestion: ConfluenceTargetSuggestion | null,
+  oneClick: boolean
+): Promise<void> {
   if (!lastDraft) {
     showToast({
       type: "warning",
@@ -266,56 +438,46 @@ async function publishToConfluence(): Promise<void> {
     return;
   }
 
-  const spaceKey = dom.gddFlowSpaceKey?.value?.trim() || "";
-  if (!spaceKey) {
-    showToast({
-      type: "warning",
-      title: "Space key missing",
-      message: "Set a Confluence space key before publishing.",
-      duration: 3800,
-    });
-    return;
+  if (oneClick && suggestion) {
+    const threshold = oneClickConfidenceThreshold();
+    const confidencePct = Math.round(suggestion.confidence * 100);
+    if (requiresOneClickPublishConfirmation(suggestion.confidence, threshold)) {
+      const confirmed = window.confirm(
+        `Routing confidence is ${confidencePct}% (threshold ${Math.round(
+          threshold * 100
+        )}%). ${suggestion.reasoning}\n\nContinue and publish anyway?`
+      );
+      if (!confirmed) {
+        setStatus("One-click publish cancelled (low-confidence route).");
+        showToast({
+          type: "info",
+          title: "Publish cancelled",
+          message: "Review or adjust target fields before publishing.",
+          duration: 3800,
+        });
+        return;
+      }
+    }
   }
 
-  const parentPageId = dom.gddFlowParentPageId?.value?.trim() || null;
-  const targetPageId = dom.gddFlowTargetPageId?.value?.trim() || null;
-  const title = effectiveDraftTitle();
-
-  if (dom.gddFlowPublish) dom.gddFlowPublish.disabled = true;
-  setStatus("Rendering Confluence payload...");
+  setStatus("Publishing to Confluence...");
   resetPublishLink();
+
   try {
-    const storageBody = await invoke<string>("render_gdd_for_confluence", {
-      draft: {
-        ...lastDraft,
-        title,
-      },
-    });
-
-    setStatus("Publishing to Confluence...");
-    const result = await invoke<GddPublishResult>("publish_gdd_to_confluence", {
-      request: {
-        title,
-        storage_body: storageBody,
-        space_key: spaceKey,
-        parent_page_id: parentPageId,
-        target_page_id: targetPageId,
-      },
-    });
-
-    if (dom.gddFlowPublishLink) {
-      dom.gddFlowPublishLink.href = result.page_url;
-      dom.gddFlowPublishLink.hidden = false;
-      dom.gddFlowPublishLink.textContent = `Open page (${result.page_id})`;
+    const result = await publishViaAttempt(suggestion);
+    if (result.status === "published" && result.publish_result) {
+      applyPublishSuccessUi(result.publish_result);
+    } else if (result.status === "queued" && result.queued_job) {
+      applyPublishQueuedUi(result.queued_job, result.error);
+    } else {
+      setStatus("Publish failed.");
+      showToast({
+        type: "error",
+        title: "Publish failed",
+        message: result.error || "Unknown error",
+        duration: 6000,
+      });
     }
-
-    setStatus(result.created ? "Confluence page created." : "Confluence page updated.");
-    showToast({
-      type: "success",
-      title: result.created ? "Confluence page created" : "Confluence page updated",
-      message: result.page_url,
-      duration: 5200,
-    });
   } catch (error) {
     setStatus("Publish failed.");
     showToast({
@@ -325,7 +487,50 @@ async function publishToConfluence(): Promise<void> {
       duration: 6000,
     });
   } finally {
-    if (dom.gddFlowPublish) dom.gddFlowPublish.disabled = false;
+    await refreshPendingQueue();
+  }
+}
+
+async function publishToConfluence(): Promise<void> {
+  setPublishBusy(true);
+  try {
+    await publishToConfluenceInternal(lastTargetSuggestion, false);
+  } finally {
+    setPublishBusy(false);
+  }
+}
+
+async function oneClickPublishToConfluence(): Promise<void> {
+  if (!lastDraft) {
+    showToast({
+      type: "warning",
+      title: "No draft yet",
+      message: "Generate a draft first.",
+      duration: 3200,
+    });
+    return;
+  }
+
+  setPublishBusy(true);
+  try {
+    let suggestion = lastTargetSuggestion;
+    if (!suggestion) {
+      setStatus("Resolving target for one-click publish...");
+      suggestion = await requestConfluenceTargetSuggestion();
+    } else {
+      setStatus("Using cached target suggestion for one-click publish...");
+    }
+    await publishToConfluenceInternal(suggestion, true);
+  } catch (error) {
+    setStatus("One-click target suggestion failed.");
+    showToast({
+      type: "error",
+      title: "One-click publish failed",
+      message: String(error),
+      duration: 5200,
+    });
+  } finally {
+    setPublishBusy(false);
   }
 }
 
@@ -376,9 +581,7 @@ async function pickTemplateFile(): Promise<void> {
   const selected = await open({
     multiple: false,
     directory: false,
-    filters: [
-      { name: "Template files", extensions: ["pdf", "docx", "txt", "md"] },
-    ],
+    filters: [{ name: "Template files", extensions: ["pdf", "docx", "txt", "md"] }],
   });
 
   if (!selected || Array.isArray(selected)) return;
@@ -459,6 +662,105 @@ async function loadTemplateFromConfluence(): Promise<void> {
   }
 }
 
+function renderPendingQueue(jobs: GddPendingPublishJob[]): void {
+  if (!dom.gddFlowQueueList) return;
+  if (jobs.length === 0) {
+    dom.gddFlowQueueList.innerHTML = '<div class="archive-empty">No pending publishes.</div>';
+    return;
+  }
+
+  dom.gddFlowQueueList.innerHTML = jobs
+    .map((job) => {
+      const confidence =
+        Number.isFinite(job.routing_confidence) && job.routing_confidence !== null
+          ? `${Math.round(Number(job.routing_confidence) * 100)}%`
+          : "n/a";
+      return `
+        <div class="gdd-queue-item" data-job-id="${htmlEscape(job.job_id)}">
+          <div class="gdd-queue-item-title">${htmlEscape(job.title)}</div>
+          <div class="gdd-queue-item-meta">Space: ${htmlEscape(job.space_key)} | Retries: ${job.retry_count} | Confidence: ${confidence}</div>
+          <div class="gdd-queue-item-meta">Updated: ${htmlEscape(job.updated_at_iso)}</div>
+          <div class="gdd-queue-item-meta">Last error: ${htmlEscape(job.last_error || "-")}</div>
+          <div class="gdd-queue-item-actions">
+            <button type="button" class="hotkey-record-btn" data-action="retry" data-job-id="${htmlEscape(job.job_id)}">Retry</button>
+            <button type="button" class="hotkey-record-btn" data-action="delete" data-job-id="${htmlEscape(job.job_id)}">Delete</button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function refreshPendingQueue(): Promise<void> {
+  try {
+    const jobs = await invoke<GddPendingPublishJob[]>("list_pending_gdd_publishes");
+    renderPendingQueue(jobs);
+  } catch (error) {
+    if (dom.gddFlowQueueList) {
+      dom.gddFlowQueueList.innerHTML = `<div class="archive-empty">Failed to load queue: ${htmlEscape(
+        String(error)
+      )}</div>`;
+    }
+  }
+}
+
+async function retryPendingJob(jobId: string): Promise<void> {
+  setPublishBusy(true);
+  try {
+    const result = await invoke<GddPublishAttemptResult>("retry_pending_gdd_publish", { jobId });
+    if (result.status === "published" && result.publish_result) {
+      applyPublishSuccessUi(result.publish_result);
+    } else if (result.status === "queued") {
+      setStatus("Retry failed transiently. Job remains queued.");
+      showToast({
+        type: "warning",
+        title: "Retry still queued",
+        message: result.error || "Confluence still unreachable.",
+        duration: 4200,
+      });
+    } else {
+      setStatus("Retry failed (non-queueable). Job kept for manual cleanup.");
+      showToast({
+        type: "error",
+        title: "Retry failed",
+        message: result.error || "Retry failed",
+        duration: 5200,
+      });
+    }
+  } catch (error) {
+    showToast({
+      type: "error",
+      title: "Retry failed",
+      message: String(error),
+      duration: 5200,
+    });
+  } finally {
+    await refreshPendingQueue();
+    setPublishBusy(false);
+  }
+}
+
+async function deletePendingJob(jobId: string): Promise<void> {
+  try {
+    await invoke<boolean>("delete_pending_gdd_publish", { jobId });
+    showToast({
+      type: "info",
+      title: "Queue item removed",
+      message: `Removed ${jobId}`,
+      duration: 3000,
+    });
+  } catch (error) {
+    showToast({
+      type: "error",
+      title: "Delete failed",
+      message: String(error),
+      duration: 4200,
+    });
+  } finally {
+    await refreshPendingQueue();
+  }
+}
+
 export function closeGddFlow(): void {
   if (!dom.gddFlowModal) return;
   dom.gddFlowModal.hidden = true;
@@ -472,15 +774,19 @@ export async function openGddFlow(): Promise<void> {
   if (!dom.gddFlowModal) return;
 
   lastFocusedBeforeOpen = document.activeElement as HTMLElement | null;
+  lastTargetSuggestion = null;
   dom.gddFlowModal.hidden = false;
+  setWorkflowMode(modeFromSettings(), false);
   updateTemplateModeVisibility();
   await refreshPresetOptions();
+  await refreshPendingQueue();
 
+  updateRuntimeSummary();
   const transcript = currentTranscriptText();
   setStatus(
     transcript
-      ? "Uses the current conversation transcript as input."
-      : "No transcript loaded yet. Generate is disabled until transcript exists."
+      ? "Uses the current runtime session transcript as input."
+      : "No runtime session transcript available yet."
   );
   if (dom.gddFlowGenerate) {
     dom.gddFlowGenerate.disabled = !transcript;
@@ -497,6 +803,7 @@ export async function openGddFlow(): Promise<void> {
   if (dom.gddFlowTargetPageId) {
     dom.gddFlowTargetPageId.value = "";
   }
+  setPublishBusy(false);
   resetPublishLink();
 
   const modalCard = dom.gddFlowModal.querySelector<HTMLElement>(".gdd-flow-modal-card");
@@ -508,6 +815,13 @@ export function initGddFlow(): void {
   initialized = true;
 
   if (!dom.gddFlowModal) return;
+
+  dom.gddFlowModeStandard?.addEventListener("click", () => {
+    setWorkflowMode("standard", true);
+  });
+  dom.gddFlowModeAdvanced?.addEventListener("click", () => {
+    setWorkflowMode("advanced", true);
+  });
 
   dom.gddFlowTemplateSource?.addEventListener("change", () => {
     updateTemplateModeVisibility();
@@ -533,8 +847,34 @@ export function initGddFlow(): void {
   dom.gddFlowSuggestTarget?.addEventListener("click", () => {
     void suggestConfluenceTarget();
   });
+  dom.gddFlowQueueRefresh?.addEventListener("click", () => {
+    void refreshPendingQueue();
+  });
+  dom.gddFlowOneClickPublish?.addEventListener("click", () => {
+    void oneClickPublishToConfluence();
+  });
   dom.gddFlowPublish?.addEventListener("click", () => {
+    if (isOneClickPublishPreferred()) {
+      void oneClickPublishToConfluence();
+      return;
+    }
     void publishToConfluence();
+  });
+
+  dom.gddFlowQueueList?.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>("button[data-action][data-job-id]");
+    if (!button) return;
+    const action = button.dataset.action;
+    const jobId = button.dataset.jobId;
+    if (!jobId) return;
+    if (action === "retry") {
+      void retryPendingJob(jobId);
+      return;
+    }
+    if (action === "delete") {
+      void deletePendingJob(jobId);
+    }
   });
 
   dom.gddFlowClose?.addEventListener("click", closeGddFlow);

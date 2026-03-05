@@ -343,11 +343,11 @@ export function renderModels() {
       if (model.path) {
         item.appendChild(pathLine);
       }
-      item.appendChild(actions);
       if (optimizeProgressElement) {
         item.appendChild(optimizeProgressElement);
       }
       item.appendChild(progress);
+      item.appendChild(actions);
 
       container.appendChild(item);
     });

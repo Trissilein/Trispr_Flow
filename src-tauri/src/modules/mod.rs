@@ -19,6 +19,8 @@ pub struct ModuleDescriptor {
     pub restart_required: bool,
     pub last_error: Option<String>,
     pub bundled: bool,
+    pub core: bool,
+    pub toggleable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +63,10 @@ pub struct GddModuleSettings {
     pub default_preset_id: String,
     pub detect_preset_automatically: bool,
     pub prefer_one_click_publish: bool,
+    pub workflow_mode_default: String,      // "standard" | "advanced"
+    pub transcript_source_default: String,  // "runtime_session"
+    pub target_routing_strategy: String,    // "hybrid_memory" | "fixed" | "fresh_suggest"
+    pub one_click_confidence_threshold: f32, // 0.0..1.0
     pub preset_clones: Vec<GddPresetClone>,
 }
 
@@ -71,6 +77,10 @@ impl Default for GddModuleSettings {
             default_preset_id: "universal_strict".to_string(),
             detect_preset_automatically: true,
             prefer_one_click_publish: false,
+            workflow_mode_default: "standard".to_string(),
+            transcript_source_default: "runtime_session".to_string(),
+            target_routing_strategy: "hybrid_memory".to_string(),
+            one_click_confidence_threshold: 0.75,
             preset_clones: Vec::new(),
         }
     }
@@ -104,6 +114,126 @@ impl Default for ConfluenceSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkflowAgentSettings {
+    pub enabled: bool,
+    pub wakewords: Vec<String>,
+    pub intent_keywords: HashMap<String, Vec<String>>,
+    pub model: String,
+    pub temperature: f32,
+    pub max_tokens: u32,
+    pub session_gap_minutes: u32,
+    pub max_candidates: u8,
+}
+
+impl Default for WorkflowAgentSettings {
+    fn default() -> Self {
+        let mut keywords = HashMap::new();
+        keywords.insert(
+            "gdd_generate_publish".to_string(),
+            vec![
+                "gdd",
+                "game design document",
+                "design document",
+                "designdokument",
+                "game design",
+                "publish",
+                "confluence",
+                "draft",
+                "generate",
+                "create gdd",
+                "erstelle gdd",
+                "erstellen",
+                "veroeffentlichen",
+                "posten",
+                "session",
+                "meeting",
+                "interview",
+                "minutes",
+                "zusammenfassung",
+                "dokument",
+                "doc",
+                "spec",
+                "gameplay",
+                "feature",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        );
+
+        Self {
+            enabled: false,
+            wakewords: vec![
+                "trispr".to_string(),
+                "hey trispr".to_string(),
+                "trispr agent".to_string(),
+            ],
+            intent_keywords: keywords,
+            model: "qwen3:4b".to_string(),
+            temperature: 0.2,
+            max_tokens: 512,
+            session_gap_minutes: 20,
+            max_candidates: 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VisionInputSettings {
+    pub enabled: bool,
+    pub fps: u8,
+    pub source_scope: String, // "all_monitors" | "active_monitor" | "active_window"
+    pub max_width: u16,
+    pub jpeg_quality: u8,
+    pub ram_buffer_seconds: u16,
+    pub all_monitors_default: bool,
+}
+
+impl Default for VisionInputSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            fps: 2,
+            source_scope: "all_monitors".to_string(),
+            max_width: 1280,
+            jpeg_quality: 75,
+            ram_buffer_seconds: 30,
+            all_monitors_default: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceOutputSettings {
+    pub enabled: bool,
+    pub default_provider: String,  // "windows_native" | "local_custom"
+    pub fallback_provider: String, // "windows_native" | "local_custom"
+    pub voice_id_windows: String,
+    pub voice_id_local: String,
+    pub rate: f32,   // 0.5..2.0
+    pub volume: f32, // 0.0..1.0
+    pub output_policy: String, // "agent_replies_only" | "replies_and_events" | "explicit_only"
+}
+
+impl Default for VoiceOutputSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_provider: "windows_native".to_string(),
+            fallback_provider: "local_custom".to_string(),
+            voice_id_windows: String::new(),
+            voice_id_local: String::new(),
+            rate: 1.0,
+            volume: 1.0,
+            output_policy: "agent_replies_only".to_string(),
+        }
+    }
+}
+
 pub fn normalize_module_settings(settings: &mut ModuleSettings) {
     let enabled = settings
         .enabled_modules
@@ -132,9 +262,26 @@ pub fn normalize_module_settings(settings: &mut ModuleSettings) {
 }
 
 pub fn normalize_gdd_module_settings(settings: &mut GddModuleSettings) {
+    // GDD is now a core capability and is always available.
+    settings.enabled = true;
     if settings.default_preset_id.trim().is_empty() {
         settings.default_preset_id = "universal_strict".to_string();
     }
+    settings.workflow_mode_default = match settings.workflow_mode_default.as_str() {
+        "advanced" => "advanced".to_string(),
+        _ => "standard".to_string(),
+    };
+    settings.transcript_source_default = "runtime_session".to_string();
+    settings.target_routing_strategy = match settings.target_routing_strategy.as_str() {
+        "fixed" => "fixed".to_string(),
+        "fresh_suggest" => "fresh_suggest".to_string(),
+        _ => "hybrid_memory".to_string(),
+    };
+    if !settings.one_click_confidence_threshold.is_finite() {
+        settings.one_click_confidence_threshold = 0.75;
+    }
+    settings.one_click_confidence_threshold =
+        settings.one_click_confidence_threshold.clamp(0.0, 1.0);
     settings.preset_clones.retain(|preset| !preset.id.trim().is_empty());
 }
 
@@ -151,4 +298,77 @@ pub fn normalize_confluence_settings(settings: &mut ConfluenceSettings) {
     settings
         .routing_memory
         .retain(|key, value| !key.trim().is_empty() && !value.trim().is_empty());
+}
+
+pub fn normalize_workflow_agent_settings(settings: &mut WorkflowAgentSettings) {
+    settings
+        .wakewords
+        .retain(|word| !word.trim().is_empty());
+    if settings.wakewords.is_empty() {
+        settings.wakewords = WorkflowAgentSettings::default().wakewords;
+    }
+    settings.model = settings.model.trim().to_string();
+    if settings.model.is_empty() {
+        settings.model = "qwen3:4b".to_string();
+    }
+    if !settings.temperature.is_finite() {
+        settings.temperature = 0.2;
+    }
+    settings.temperature = settings.temperature.clamp(0.0, 1.0);
+    settings.max_tokens = settings.max_tokens.clamp(128, 4096);
+    settings.session_gap_minutes = settings.session_gap_minutes.clamp(5, 240);
+    settings.max_candidates = settings.max_candidates.clamp(1, 5);
+
+    let defaults = WorkflowAgentSettings::default().intent_keywords;
+    if settings.intent_keywords.is_empty() {
+        settings.intent_keywords = defaults;
+        return;
+    }
+
+    settings.intent_keywords.retain(|intent, words| {
+        if intent.trim().is_empty() {
+            return false;
+        }
+        words.retain(|word| !word.trim().is_empty());
+        !words.is_empty()
+    });
+    for (intent, words) in defaults {
+        settings.intent_keywords.entry(intent).or_insert(words);
+    }
+}
+
+pub fn normalize_vision_input_settings(settings: &mut VisionInputSettings) {
+    settings.fps = settings.fps.clamp(1, 10);
+    settings.source_scope = match settings.source_scope.as_str() {
+        "active_monitor" => "active_monitor".to_string(),
+        "active_window" => "active_window".to_string(),
+        _ => "all_monitors".to_string(),
+    };
+    settings.max_width = settings.max_width.clamp(640, 3840);
+    settings.jpeg_quality = settings.jpeg_quality.clamp(40, 95);
+    settings.ram_buffer_seconds = settings.ram_buffer_seconds.clamp(5, 120);
+}
+
+pub fn normalize_voice_output_settings(settings: &mut VoiceOutputSettings) {
+    settings.default_provider = match settings.default_provider.as_str() {
+        "local_custom" => "local_custom".to_string(),
+        _ => "windows_native".to_string(),
+    };
+    settings.fallback_provider = match settings.fallback_provider.as_str() {
+        "local_custom" => "local_custom".to_string(),
+        _ => "windows_native".to_string(),
+    };
+    if !settings.rate.is_finite() {
+        settings.rate = 1.0;
+    }
+    settings.rate = settings.rate.clamp(0.5, 2.0);
+    if !settings.volume.is_finite() {
+        settings.volume = 1.0;
+    }
+    settings.volume = settings.volume.clamp(0.0, 1.0);
+    settings.output_policy = match settings.output_policy.as_str() {
+        "replies_and_events" => "replies_and_events".to_string(),
+        "explicit_only" => "explicit_only".to_string(),
+        _ => "agent_replies_only".to_string(),
+    };
 }

@@ -1,6 +1,6 @@
 # Decisions
 
-Last updated: 2026-02-18
+Last updated: 2026-03-05
 
 ## Implemented Decisions
 
@@ -254,6 +254,76 @@ Last updated: 2026-02-18
 - Decision: Use OAuth code exchange + refresh-token retry on 401 and persist selected cloud site context (`site_base_url`, `oauth_cloud_id`) in settings.
 - Context: Confluence Cloud 3LO tokens are short-lived and workspace selection is required for API gateway routes.
 - Why: Prevents brittle session failures and avoids repeated manual reconfiguration between restarts.
+
+### DEC-040 GDD as core capability (2026-03-05)
+
+- Status: `implemented`
+- Decision: Treat `gdd` and `integrations_confluence` as core-always-on modules in the module registry and lifecycle.
+- Context: Manual GDD flow should be always available; module toggles are reserved for autonomous orchestration capabilities.
+- Why: Removes misleading enablement friction and aligns module semantics with real product boundaries.
+
+### DEC-041 Workflow-agent as optional automation module (2026-03-05)
+
+- Status: `implemented`
+- Decision: Introduce `workflow_agent` as an optional managed module that orchestrates GDD generation/publish via speech commands.
+- Context: Users need automation without coupling orchestration to baseline transcription/GDD usage.
+- Why: Preserves core stability while enabling opt-in automation.
+
+### DEC-042 Wakeword + confirm command model (2026-03-05)
+
+- Status: `implemented`
+- Decision: Agent flow uses wakeword detection plus plan/confirm execution path.
+- Context: External side effects (Confluence publish) need explicit user control.
+- Why: Safety-first automation with lower accidental-execution risk.
+
+### DEC-043 Plan+confirm always for external actions (2026-03-05)
+
+- Status: `accepted`
+- Decision: Execute path keeps a strict confirm gate before publish-capable actions.
+- Context: Fully autonomous publish behavior is intentionally out-of-scope in this iteration.
+- Why: Limits risk while still reducing operator workload.
+
+### DEC-044 Separate agent command channel (2026-03-05)
+
+- Status: `implemented`
+- Decision: Add `transcription:raw-result` event channel before activation-word drop filtering; keep legacy activation words as transcript filter only.
+- Context: Existing activation words are not a command channel and would suppress valid agent intents.
+- Why: Clean separation of transcript filtering and command orchestration.
+
+### DEC-045 Session resolution by temporal/topic scoring (2026-03-05)
+
+- Status: `implemented`
+- Decision: Build candidate sessions via gap grouping and score by temporal hint, topic overlap, and recency.
+- Context: Natural references like “gestern/vorhin … über X” require probabilistic matching with disambiguation.
+- Why: Robust candidate shortlist with transparent reasoning and confirm-before-execute.
+
+### DEC-046 Always ask target language in agent flow (2026-03-05)
+
+- Status: `implemented`
+- Decision: Agent Console includes explicit target-language selection before plan build/execute.
+- Context: Output language can differ from source and must be user-directed.
+- Why: Prevents silent language assumptions and keeps intent explicit.
+
+### DEC-047 Vision module policy baseline (2026-03-05)
+
+- Status: `accepted`
+- Decision: Vision module defaults to low-fps, all-monitors scope, and no disk persistence.
+- Context: Screen context is useful for agent workflows but privacy and storage must remain bounded.
+- Why: Balances capability and privacy with strict retention constraints.
+
+### DEC-048 Dual TTS provider strategy (2026-03-05)
+
+- Status: `implemented`
+- Decision: Expose both `windows_native` and `local_custom` provider lanes with deterministic fallback behavior.
+- Context: We need immediate voice-output coverage while evaluating final provider defaults.
+- Why: Keeps product flexible and benchmark-driven without blocking delivery.
+
+### DEC-049 Windows-first multimodal rollout (2026-03-05)
+
+- Status: `accepted`
+- Decision: Deliver multimodal runtime first on Windows, while keeping command/settings interfaces provider-platform agnostic.
+- Context: Current deployment target and credentials/tooling are Windows-centric.
+- Why: Fastest path to production value with lower integration risk.
 
 ## Open Decisions
 

@@ -1101,6 +1101,15 @@ fn handle_transcription_ok(
     level: f32,
     duration_ms: u64,
 ) -> Option<usize> {
+    let _ = app_handle.emit(
+        "transcription:raw-result",
+        crate::workflow_agent::RawTranscriptionEvent {
+            text: text.to_string(),
+            source: source.to_string(),
+            timestamp_ms: crate::util::now_ms(),
+        },
+    );
+
     if text.trim().is_empty()
         || should_drop_transcript(text, level, duration_ms, false)
         || crate::transcription::should_drop_by_activation_words(

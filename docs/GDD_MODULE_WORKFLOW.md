@@ -6,13 +6,17 @@ This guide describes the current end-to-end workflow in Trisper Flow for generat
 
 ## Prerequisites
 
-1. Module `gdd` is enabled in the `Modules` tab.
+1. GDD flow is a core capability and always available from the `Modules` tab.
 2. If publishing to Confluence is needed:
    - Configure Confluence auth (`OAuth` or `API token`).
    - Ensure `site_base_url` and (for OAuth) `oauth_cloud_id` are set.
    - Set a default space key if possible.
+3. Optional automation path:
+   - Enable module `workflow_agent` for wakeword-driven command orchestration.
 
 ## Flow
+
+### Manual core flow
 
 1. Open `Modules` tab and click `Open GDD Flow`.
 2. Select a GDD preset (or run `Auto-detect Preset`).
@@ -25,11 +29,22 @@ This guide describes the current end-to-end workflow in Trisper Flow for generat
 7. Click `Publish to Confluence`.
 8. Use the generated link to open the published page.
 
+### Workflow-agent flow (optional module)
+
+1. Enable `workflow_agent` in `Modules`.
+2. Speak or type a wakeword command (e.g. “Hey Trispr, create and publish a GDD from yesterday”).
+3. Agent parses intent and returns candidate sessions (1-3).
+4. Confirm selected session.
+5. Select target language (always asked).
+6. Build execution plan and confirm.
+7. Execute -> draft generation -> publish or queue fallback.
+
 ## Notes
 
 1. Template ingestion is used as guidance context; it does not replace preset schema enforcement.
 2. `.doc` legacy Word format is not supported yet; use `.docx`.
 3. Long template text is truncated for safety before prompt usage.
+4. Agent execution uses a separate command channel (`transcription:raw-result`) and does not reuse the activation-word drop filter.
 
 ## Troubleshooting
 

@@ -18,6 +18,17 @@ pub fn enable_module(
     let manifest = registry::find_manifest(module_id)
         .ok_or_else(|| format!("Unknown module '{}'.", module_id))?;
 
+    if manifest.core_always_on {
+        return Ok(ModuleLifecycleResult {
+            module_id: module_id.to_string(),
+            state: "active".to_string(),
+            restart_required: false,
+            missing_dependencies: Vec::new(),
+            missing_permissions: Vec::new(),
+            message: "Core module is always active and cannot be toggled.".to_string(),
+        });
+    }
+
     if !registry::module_is_installed(settings, module_id) {
         registry::set_last_error(settings, module_id, "Module is not installed.");
         return Err(format!(
@@ -68,8 +79,19 @@ pub fn enable_module(
 }
 
 pub fn disable_module(settings: &mut ModuleSettings, module_id: &str) -> Result<ModuleLifecycleResult, String> {
-    if registry::find_manifest(module_id).is_none() {
+    let Some(manifest) = registry::find_manifest(module_id) else {
         return Err(format!("Unknown module '{}'.", module_id));
+    };
+
+    if manifest.core_always_on {
+        return Ok(ModuleLifecycleResult {
+            module_id: module_id.to_string(),
+            state: "active".to_string(),
+            restart_required: false,
+            missing_dependencies: Vec::new(),
+            missing_permissions: Vec::new(),
+            message: "Core module is always active and cannot be disabled.".to_string(),
+        });
     }
 
     settings.enabled_modules.remove(module_id);

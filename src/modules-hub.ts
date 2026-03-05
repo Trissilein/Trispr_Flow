@@ -3,10 +3,20 @@ import * as dom from "./dom-refs";
 import { settings } from "./state";
 import { showToast } from "./toast";
 import { openGddFlow } from "./gdd-flow";
+import { focusWorkflowAgentConsole, syncWorkflowAgentConsoleState } from "./workflow-agent-console";
 import type { ModuleDescriptor, ModuleHealthStatus, ModuleUpdateInfo } from "./types";
 
 let initialized = false;
 let moduleSnapshot: ModuleDescriptor[] = [];
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function moduleStateLabel(moduleState: ModuleDescriptor["state"]): string {
   if (moduleState === "active") return "Active";
@@ -23,14 +33,63 @@ function moduleStateClass(moduleState: ModuleDescriptor["state"]): string {
   return "is-error";
 }
 
+function moduleGuide(moduleId: string): { description: string; usage: string } {
+  if (moduleId === "gdd") {
+    return {
+      description: "Builds structured Game Design Documents from transcript sessions.",
+      usage: "Use: Open GDD Flow, pick a session/preset, then generate and publish.",
+    };
+  }
+  if (moduleId === "integrations_confluence") {
+    return {
+      description: "Handles Confluence Cloud auth, routing, and page create/update calls.",
+      usage: "Use: Configure Confluence connection in GDD Flow before publishing.",
+    };
+  }
+  if (moduleId === "workflow_agent") {
+    return {
+      description: "Parses wakeword voice commands into confirmable GDD execution plans.",
+      usage: "Use: Enable, open Agent Console, parse command, confirm and execute.",
+    };
+  }
+  if (moduleId === "analysis") {
+    return {
+      description: "Runs analysis workflows on transcript history and exportable data.",
+      usage: "Use: Enable module, then launch Analysis Flow from this page.",
+    };
+  }
+  if (moduleId === "input_vision") {
+    return {
+      description: "Adds low-FPS screen context capture for agent-driven workflows.",
+      usage: "Use: Enable and start the vision stream when screen context is needed.",
+    };
+  }
+  if (moduleId === "output_voice_tts") {
+    return {
+      description: "Adds spoken agent replies via Windows-native or local TTS output.",
+      usage: "Use: Enable, select provider/voice, then run a TTS test.",
+    };
+  }
+  return {
+    description: "Managed module with isolated lifecycle, health, and permissions.",
+    usage: "Use: Enable it, then launch the related flow from this modules page.",
+  };
+}
+
 function missingConsents(moduleInfo: ModuleDescriptor): string[] {
   const consented = settings?.module_settings?.consented_permissions?.[moduleInfo.id] || [];
   return moduleInfo.permissions.filter((permission) => !consented.includes(permission));
 }
 
 function cardActions(moduleInfo: ModuleDescriptor): string {
-  const canEnable = moduleInfo.state === "installed" || moduleInfo.state === "error";
-  const canDisable = moduleInfo.state === "active" || moduleInfo.state === "enabled";
+  if (moduleInfo.core) {
+    return `<button class="hotkey-record-btn" disabled>Core (always on)</button>
+    <button class="hotkey-record-btn" data-module-action="health" data-module-id="${moduleInfo.id}">Health</button>
+    <button class="hotkey-record-btn" data-module-action="updates" data-module-id="${moduleInfo.id}">Check updates</button>`;
+  }
+
+  const canEnable = moduleInfo.toggleable && (moduleInfo.state === "installed" || moduleInfo.state === "error");
+  const canDisable = moduleInfo.toggleable && (moduleInfo.state === "active" || moduleInfo.state === "enabled");
 
   const primary = canEnable
     ? `<button class="hotkey-record-btn" data-module-action="enable" data-module-id="${moduleInfo.id}">Enable</button>`
@@ -52,38 +111,45 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
 
   dom.modulesList.innerHTML = modules
     .map((moduleInfo) => {
-      const dependencies = moduleInfo.dependencies.length
-        ? moduleInfo.dependencies.map((dependency) => `<code>${dependency}</code>`).join(", ")
-        : "None";
-      const permissions = moduleInfo.permissions.length
-        ? moduleInfo.permissions.map((permission) => `<code>${permission}</code>`).join(", ")
-        : "None";
-      const warning = moduleInfo.last_error
-        ? `<div class="field-hint" style="color: #ff8a8a;">${moduleInfo.last_error}</div>`
-        : "";
+      const summary = `Deps ${moduleInfo.dependencies.length} · Perms ${moduleInfo.permissions.length}`;
+      const summaryTitle = escapeHtml(`Dependencies: ${moduleInfo.dependencies.join(", ") || "none"}\nPermissions: ${moduleInfo.permissions.join(", ") || "none"}`);
+      const guide = moduleGuide(moduleInfo.id);
       const missing = missingConsents(moduleInfo);
-      const consentNotice = missing.length
-        ? `<div class="field-hint">Consent required: ${missing.map((permission) => `<code>${permission}</code>`).join(", ")}</div>`
-        : "";
+      const feedbackParts: string[] = [];
+      if (missing.length) {
+        feedbackParts.push(`Consent required: ${missing.join(", ")}`);
+      }
+      if (moduleInfo.last_error) {
+        feedbackParts.push(moduleInfo.last_error);
+      }
+      const feedbackText = feedbackParts.length ? feedbackParts.join(" · ") : "Ready";
+      const feedbackTitle = escapeHtml(feedbackParts.join("\n"));
+      const feedbackClass = moduleInfo.last_error
+        ? "module-card-feedback is-error"
+        : missing.length
+          ? "module-card-feedback is-warning"
+          : "module-card-feedback is-ok";
       const launch = moduleInfo.id === "gdd"
         ? `<button class="ghost-btn" data-module-action="launch-gdd" data-module-id="gdd">Open GDD Flow</button>`
+        : moduleInfo.id === "workflow_agent"
+          ? `<button class="ghost-btn" data-module-action="launch-workflow-agent" data-module-id="workflow_agent">Open Agent Console</button>`
         : moduleInfo.id === "analysis"
           ? `<button class="ghost-btn" data-module-action="launch-analysis" data-module-id="analysis">Open Analysis Flow</button>`
           : "";
 
-      return `<article class="module-card" data-module-card="${moduleInfo.id}">
-        <div class="module-card-header">
+      return `<article class="module-card model-item" data-module-card="${moduleInfo.id}">
+        <div class="module-card-header model-header">
           <div>
-            <h3>${moduleInfo.name}</h3>
-            <div class="field-hint">ID: <code>${moduleInfo.id}</code> · v${moduleInfo.version}</div>
+            <div class="model-name">${moduleInfo.name}</div>
+            <div class="model-meta">ID: <code>${moduleInfo.id}</code> · v${moduleInfo.version}</div>
           </div>
-          <span class="model-status ${moduleStateClass(moduleInfo.state)}">${moduleStateLabel(moduleInfo.state)}</span>
+          <span class="model-status ${moduleStateClass(moduleInfo.state)}">${moduleInfo.core ? "Core" : moduleStateLabel(moduleInfo.state)}</span>
         </div>
-        <div class="field-hint">Dependencies: ${dependencies}</div>
-        <div class="field-hint">Permissions: ${permissions}</div>
-        ${consentNotice}
-        ${warning}
-        <div class="module-card-actions">${cardActions(moduleInfo)} ${launch}</div>
+        <div class="model-meta" title="${summaryTitle}">${summary}</div>
+        <div class="module-card-desc">${escapeHtml(guide.description)}</div>
+        <div class="module-card-usage">${escapeHtml(guide.usage)}</div>
+        <div class="${feedbackClass}" title="${feedbackTitle}">${feedbackText}</div>
+        <div class="module-card-actions model-actions">${cardActions(moduleInfo)} ${launch}</div>
       </article>`;
     })
     .join("\n");
@@ -93,6 +159,7 @@ async function refreshModuleState(): Promise<void> {
   const modules = await invoke<ModuleDescriptor[]>("list_modules");
   moduleSnapshot = modules;
   renderModulesList(modules);
+  syncWorkflowAgentConsoleState();
   if (dom.modulesStatus) {
     const active = modules.filter((moduleInfo) => moduleInfo.state === "active").length;
     dom.modulesStatus.textContent = `${active}/${modules.length} active`;
@@ -102,6 +169,15 @@ async function refreshModuleState(): Promise<void> {
 async function handleEnable(moduleId: string): Promise<void> {
   const moduleInfo = moduleSnapshot.find((candidate) => candidate.id === moduleId);
   if (!moduleInfo) return;
+  if (!moduleInfo.toggleable) {
+    showToast({
+      type: "info",
+      title: "Core module",
+      message: `${moduleInfo.name} is always active and cannot be toggled.`,
+      duration: 3200,
+    });
+    return;
+  }
 
   const missing = missingConsents(moduleInfo);
   const grants = [...missing];
@@ -144,6 +220,16 @@ async function handleEnable(moduleId: string): Promise<void> {
 }
 
 async function handleDisable(moduleId: string): Promise<void> {
+  const moduleInfo = moduleSnapshot.find((candidate) => candidate.id === moduleId);
+  if (moduleInfo && !moduleInfo.toggleable) {
+    showToast({
+      type: "info",
+      title: "Core module",
+      message: `${moduleInfo.name} is always active and cannot be toggled.`,
+      duration: 3200,
+    });
+    return;
+  }
   try {
     await invoke("disable_module", { moduleId });
     await refreshModuleState();
@@ -242,6 +328,10 @@ function bindModulesEvents(): void {
         message: "Analysis module launcher will be wired when analysis module is installed.",
         duration: 3200,
       });
+      return;
+    }
+    if (action === "launch-workflow-agent") {
+      focusWorkflowAgentConsole();
       return;
     }
   });

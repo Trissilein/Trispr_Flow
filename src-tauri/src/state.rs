@@ -9,7 +9,9 @@ use crate::constants::{
 use crate::history_partition::PartitionedHistory;
 use crate::modules::{
     normalize_confluence_settings, normalize_gdd_module_settings, normalize_module_settings,
-    ConfluenceSettings, GddModuleSettings, ModuleSettings,
+    normalize_voice_output_settings, normalize_vision_input_settings,
+    normalize_workflow_agent_settings, ConfluenceSettings, GddModuleSettings, ModuleSettings,
+    VoiceOutputSettings, VisionInputSettings, WorkflowAgentSettings,
 };
 use crate::paths::resolve_config_path;
 use crate::transcription::TranscribeRecorder;
@@ -251,6 +253,9 @@ pub(crate) struct Settings {
     pub(crate) module_settings: ModuleSettings,
     pub(crate) gdd_module_settings: GddModuleSettings,
     pub(crate) confluence_settings: ConfluenceSettings,
+    pub(crate) workflow_agent: WorkflowAgentSettings,
+    pub(crate) vision_input_settings: VisionInputSettings,
+    pub(crate) voice_output_settings: VoiceOutputSettings,
     pub(crate) audio_cues: bool,
     pub(crate) audio_cues_volume: f32,
     pub(crate) ptt_use_vad: bool, // Enable VAD threshold check even in PTT mode
@@ -388,6 +393,9 @@ impl Default for Settings {
       module_settings: ModuleSettings::default(),
       gdd_module_settings: GddModuleSettings::default(),
       confluence_settings: ConfluenceSettings::default(),
+      workflow_agent: WorkflowAgentSettings::default(),
+      vision_input_settings: VisionInputSettings::default(),
+      voice_output_settings: VoiceOutputSettings::default(),
       audio_cues: true,
       audio_cues_volume: 0.3,
       ptt_use_vad: false,
@@ -571,6 +579,10 @@ pub(crate) struct AppState {
     pub(crate) last_system_recording_path: Mutex<Option<String>>,
     /// Handle to the managed Ollama child process for cleanup on app exit.
     pub(crate) managed_ollama_child: Mutex<Option<std::process::Child>>,
+    pub(crate) vision_stream_running: AtomicBool,
+    pub(crate) vision_stream_started_ms: AtomicU64,
+    pub(crate) vision_stream_frame_seq: AtomicU64,
+    pub(crate) tts_speaking: AtomicBool,
     #[cfg(target_os = "windows")]
     pub(crate) system_cluster_buffer: Mutex<SystemClusterBuffer>,
 }
@@ -913,6 +925,9 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             normalize_module_settings(&mut settings.module_settings);
             normalize_gdd_module_settings(&mut settings.gdd_module_settings);
             normalize_confluence_settings(&mut settings.confluence_settings);
+            normalize_workflow_agent_settings(&mut settings.workflow_agent);
+            normalize_vision_input_settings(&mut settings.vision_input_settings);
+            normalize_voice_output_settings(&mut settings.voice_output_settings);
             if settings.setup.local_ai_wizard_completed {
                 settings.setup.local_ai_wizard_pending = false;
             }
@@ -1224,6 +1239,9 @@ pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result
     normalize_module_settings(&mut persisted.module_settings);
     normalize_gdd_module_settings(&mut persisted.gdd_module_settings);
     normalize_confluence_settings(&mut persisted.confluence_settings);
+    normalize_workflow_agent_settings(&mut persisted.workflow_agent);
+    normalize_vision_input_settings(&mut persisted.vision_input_settings);
+    normalize_voice_output_settings(&mut persisted.voice_output_settings);
     let raw = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
     // Atomic write: write to .tmp then rename to avoid partial/corrupted JSON on crash.
     let tmp_path = path.with_extension("json.tmp");

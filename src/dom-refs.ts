@@ -260,11 +260,25 @@ export const refinementInspectorError = $("refinement-inspector-error") as HTMLD
 // Modules tab
 export const modulesList = $("modules-list") as HTMLDivElement | null;
 export const modulesStatus = $("modules-status") as HTMLSpanElement | null;
+export const workflowAgentConsole = $("workflow-agent-console") as HTMLDivElement | null;
+export const workflowAgentStatus = $("workflow-agent-status") as HTMLSpanElement | null;
+export const workflowAgentCommandInput = $("workflow-agent-command-input") as HTMLTextAreaElement | null;
+export const workflowAgentParseBtn = $("workflow-agent-parse-btn") as HTMLButtonElement | null;
+export const workflowAgentRefreshCandidatesBtn = $("workflow-agent-refresh-candidates-btn") as HTMLButtonElement | null;
+export const workflowAgentCandidates = $("workflow-agent-candidates") as HTMLDivElement | null;
+export const workflowAgentTargetLanguage = $("workflow-agent-target-language") as HTMLSelectElement | null;
+export const workflowAgentBuildPlanBtn = $("workflow-agent-build-plan-btn") as HTMLButtonElement | null;
+export const workflowAgentExecuteBtn = $("workflow-agent-execute-btn") as HTMLButtonElement | null;
+export const workflowAgentPlanPreview = $("workflow-agent-plan-preview") as HTMLTextAreaElement | null;
+export const workflowAgentExecutionLog = $("workflow-agent-execution-log") as HTMLTextAreaElement | null;
 
 // GDD flow modal
 export const gddFlowModal = $("gdd-flow-modal") as HTMLDivElement | null;
 export const gddFlowBackdrop = $("gdd-flow-backdrop") as HTMLDivElement | null;
 export const gddFlowClose = $("gdd-flow-close") as HTMLButtonElement | null;
+export const gddFlowModeStandard = $("gdd-flow-mode-standard") as HTMLButtonElement | null;
+export const gddFlowModeAdvanced = $("gdd-flow-mode-advanced") as HTMLButtonElement | null;
+export const gddFlowRuntimeSummary = $("gdd-flow-runtime-summary") as HTMLSpanElement | null;
 export const gddFlowPreset = $("gdd-flow-preset") as HTMLSelectElement | null;
 export const gddFlowDetectPreset = $("gdd-flow-detect-preset") as HTMLButtonElement | null;
 export const gddFlowTitle = $("gdd-flow-title") as HTMLInputElement | null;
@@ -286,9 +300,12 @@ export const gddFlowSpaceKey = $("gdd-flow-space-key") as HTMLInputElement | nul
 export const gddFlowParentPageId = $("gdd-flow-parent-page-id") as HTMLInputElement | null;
 export const gddFlowTargetPageId = $("gdd-flow-target-page-id") as HTMLInputElement | null;
 export const gddFlowSuggestTarget = $("gdd-flow-suggest-target") as HTMLButtonElement | null;
+export const gddFlowOneClickPublish = $("gdd-flow-one-click-publish") as HTMLButtonElement | null;
 export const gddFlowPublish = $("gdd-flow-publish") as HTMLButtonElement | null;
 export const gddFlowPublishLink = $("gdd-flow-publish-link") as HTMLAnchorElement | null;
 export const gddFlowOutput = $("gdd-flow-output") as HTMLTextAreaElement | null;
+export const gddFlowQueueRefresh = $("gdd-flow-queue-refresh") as HTMLButtonElement | null;
+export const gddFlowQueueList = $("gdd-flow-queue-list") as HTMLDivElement | null;
 
 // Export dialog
 export const exportDialog = $("export-dialog") as HTMLDivElement | null;

@@ -1,5 +1,6 @@
 pub mod confluence;
 pub mod extraction;
+pub mod publish_queue;
 pub mod presets;
 pub mod recognition;
 pub mod render_storage;

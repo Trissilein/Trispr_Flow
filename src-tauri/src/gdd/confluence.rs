@@ -13,6 +13,7 @@ const CONFLUENCE_OAUTH_ACCESS_SECRET_ID: &str = "confluence_oauth_access_token";
 const CONFLUENCE_OAUTH_REFRESH_SECRET_ID: &str = "confluence_oauth_refresh_token";
 const ATLASSIAN_OAUTH_TOKEN_URL: &str = "https://auth.atlassian.com/oauth/token";
 const ATLASSIAN_OAUTH_RESOURCES_URL: &str = "https://api.atlassian.com/oauth/token/accessible-resources";
+const PUBLISH_UPDATE_MAX_ATTEMPTS: usize = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfluenceSpace {
@@ -116,6 +117,14 @@ fn normalize_api_path(path: &str) -> String {
     }
 }
 
+pub fn routing_key_for(space_key: &str, title: &str) -> String {
+    format!(
+        "{}::{}",
+        space_key.trim().to_lowercase(),
+        title.trim().to_lowercase()
+    )
+}
+
 fn oauth_client_config_from_env() -> Result<ConfluenceOauthClientConfig, String> {
     let client_id = std::env::var("TRISPR_CONFLUENCE_OAUTH_CLIENT_ID").unwrap_or_default();
     let client_secret = std::env::var("TRISPR_CONFLUENCE_OAUTH_CLIENT_SECRET").unwrap_or_default();
@@ -157,6 +166,31 @@ fn map_ureq_error(context: &str, error: ureq::Error) -> String {
         }
         ureq::Error::Transport(transport) => format!("{}: {}", context, transport),
     }
+}
+
+fn http_status_from_error(error: &str) -> Option<u16> {
+    let marker = "(HTTP ";
+    let start = error.find(marker)? + marker.len();
+    let digits = error[start..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<u16>().ok()
+}
+
+fn is_publish_update_conflict(error: &str) -> bool {
+    if matches!(http_status_from_error(error), Some(409)) {
+        return true;
+    }
+    let error_lc = error.to_ascii_lowercase();
+    error_lc.contains("conflict") && error_lc.contains("version")
+}
+
+fn should_retry_publish_update(attempt: usize, error: &str) -> bool {
+    attempt < PUBLISH_UPDATE_MAX_ATTEMPTS && is_publish_update_conflict(error)
 }
 
 fn parse_json_response(response: ureq::Response, context: &str) -> Result<serde_json::Value, String> {
@@ -542,6 +576,39 @@ pub fn suggest_target(
         })
         .ok_or_else(|| "No Confluence space key configured for target suggestion.".to_string())?;
 
+    let route_key = routing_key_for(&space_key, &request.title);
+    if let Some(memory_page_id) = settings
+        .routing_memory
+        .get(&route_key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    {
+        let parent_page_id = request
+            .parent_page_id
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                let parent = settings.default_parent_page_id.trim();
+                if parent.is_empty() {
+                    None
+                } else {
+                    Some(parent.to_string())
+                }
+            });
+
+        return Ok(ConfluenceTargetSuggestion {
+            space_key,
+            parent_page_id,
+            existing_page_id: Some(memory_page_id),
+            confidence: 0.93,
+            reasoning:
+                "Using saved routing memory for this space/title pair from a previous publish."
+                    .to_string(),
+        });
+    }
+
     let existing = search_existing_page(app, settings, &space_key, &request.title)?;
 
     let parent_page_id = request
@@ -627,39 +694,54 @@ pub fn publish(
     let base_url = normalize_base_url(&settings.site_base_url)?;
 
     if let Some(page_id) = target_page_id {
-        let current_version = fetch_page_version(app, settings, &page_id)?;
-        let body = json!({
-            "id": page_id,
-            "type": "page",
-            "title": title,
-            "version": { "number": current_version + 1 },
-            "body": {
-                "storage": {
-                    "value": request.storage_body,
-                    "representation": "storage"
-                }
-            }
-        });
         let path = format!("/wiki/rest/api/content/{}", page_id);
-        let response = put_json(app, settings, &path, body)?;
-        let final_id = response
-            .get("id")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string();
-        let final_version = response
-            .get("version")
-            .and_then(|value| value.get("number"))
-            .and_then(|value| value.as_u64())
-            .unwrap_or(current_version + 1);
+        let mut attempt = 0usize;
+        loop {
+            attempt += 1;
+            let current_version = fetch_page_version(app, settings, &page_id)?;
+            let body = json!({
+                "id": page_id,
+                "type": "page",
+                "title": title,
+                "version": { "number": current_version + 1 },
+                "body": {
+                    "storage": {
+                        "value": request.storage_body,
+                        "representation": "storage"
+                    }
+                }
+            });
+            match put_json(app, settings, &path, body) {
+                Ok(response) => {
+                    let final_id = response
+                        .get("id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let final_version = response
+                        .get("version")
+                        .and_then(|value| value.get("number"))
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or(current_version + 1);
 
-        return Ok(ConfluencePublishResult {
-            page_id: final_id.clone(),
-            page_url: format!("{}/wiki/pages/viewpage.action?pageId={}", base_url, final_id),
-            created: false,
-            version: final_version,
-            message: "Confluence page updated.".to_string(),
-        });
+                    return Ok(ConfluencePublishResult {
+                        page_id: final_id.clone(),
+                        page_url: format!("{}/wiki/pages/viewpage.action?pageId={}", base_url, final_id),
+                        created: false,
+                        version: final_version,
+                        message: "Confluence page updated.".to_string(),
+                    });
+                }
+                Err(error) if should_retry_publish_update(attempt, &error) => continue,
+                Err(error) if is_publish_update_conflict(&error) => {
+                    return Err(format!(
+                        "Confluence update conflict persisted after retry. {}",
+                        error
+                    ))
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     let ancestors = request
@@ -876,4 +958,43 @@ pub fn oauth_exchange(
         expires_in_seconds: expires_in,
         refresh_token_saved: refresh_token.is_some(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        http_status_from_error, is_publish_update_conflict, should_retry_publish_update,
+        PUBLISH_UPDATE_MAX_ATTEMPTS,
+    };
+
+    #[test]
+    fn extracts_http_status_from_error_text() {
+        let error = "Confluence request failed (HTTP 409): {\"message\":\"Conflict\"}";
+        assert_eq!(http_status_from_error(error), Some(409));
+    }
+
+    #[test]
+    fn detects_publish_conflict_from_http_409() {
+        let error = "Confluence request failed (HTTP 409): version conflict";
+        assert!(is_publish_update_conflict(error));
+    }
+
+    #[test]
+    fn detects_publish_conflict_from_text_hints() {
+        let error = "Confluence request failed: Version conflict while updating content";
+        assert!(is_publish_update_conflict(error));
+    }
+
+    #[test]
+    fn retries_only_once_for_conflict() {
+        let error = "Confluence request failed (HTTP 409): version conflict";
+        assert!(should_retry_publish_update(1, error));
+        assert!(!should_retry_publish_update(PUBLISH_UPDATE_MAX_ATTEMPTS, error));
+    }
+
+    #[test]
+    fn does_not_retry_for_non_conflict_errors() {
+        let error = "Confluence request failed (HTTP 500): internal error";
+        assert!(!should_retry_publish_update(1, error));
+    }
 }

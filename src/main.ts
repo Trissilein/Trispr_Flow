@@ -32,6 +32,7 @@ import type {
   TranscriptionRefinementActivityEvent,
   TranscriptionGpuActivityEvent,
   TranscriptionResultEvent,
+  TranscriptionRawResultEvent,
 } from "./types";
 import {
   settings,
@@ -74,6 +75,12 @@ import { initArchiveBrowser } from "./archive-browser";
 import { initExpertMode } from "./expert-mode";
 import { initModulesHub, refreshModulesHub } from "./modules-hub";
 import { initGddFlow } from "./gdd-flow";
+import {
+  appendWorkflowAgentLog,
+  handleWorkflowAgentRawResult,
+  initWorkflowAgentConsole,
+  syncWorkflowAgentConsoleState,
+} from "./workflow-agent-console";
 import {
   handleRefinementFailureForInspector,
   handleRefinementStartedForInspector,
@@ -285,6 +292,7 @@ async function bootstrap() {
   initExpertMode();
   initModulesHub();
   initGddFlow();
+  initWorkflowAgentConsole();
 
   // Phase 3: Render UI — failures here should not block interaction
   try {
@@ -333,6 +341,7 @@ async function bootstrap() {
     renderHero();
     renderModels();
     refreshModulesHub();
+    syncWorkflowAgentConsoleState();
     void refreshModelsDir().catch((e) => console.error("refreshModelsDir failed:", e));
     if (settings?.ai_fallback?.provider === "ollama") {
       if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshInstalledModels) {
@@ -433,6 +442,30 @@ async function bootstrap() {
       rawText: payload.text,
       timeoutHandle,
     });
+  }));
+
+  eventUnlisteners.push(await listen<TranscriptionRawResultEvent>("transcription:raw-result", (event) => {
+    void handleWorkflowAgentRawResult(event.payload);
+  }));
+
+  eventUnlisteners.push(await listen("agent:command-detected", (event) => {
+    appendWorkflowAgentLog(`Event agent:command-detected -> ${JSON.stringify(event.payload)}`);
+  }));
+
+  eventUnlisteners.push(await listen("agent:plan-ready", (event) => {
+    appendWorkflowAgentLog(`Event agent:plan-ready -> ${JSON.stringify(event.payload)}`);
+  }));
+
+  eventUnlisteners.push(await listen("agent:execution-progress", (event) => {
+    appendWorkflowAgentLog(`Event agent:execution-progress -> ${JSON.stringify(event.payload)}`);
+  }));
+
+  eventUnlisteners.push(await listen("agent:execution-finished", (event) => {
+    appendWorkflowAgentLog(`Event agent:execution-finished -> ${JSON.stringify(event.payload)}`);
+  }));
+
+  eventUnlisteners.push(await listen("agent:execution-failed", (event) => {
+    appendWorkflowAgentLog(`Event agent:execution-failed -> ${JSON.stringify(event.payload)}`);
   }));
 
   eventUnlisteners.push(

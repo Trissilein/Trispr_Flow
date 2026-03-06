@@ -381,7 +381,13 @@ mod tests {
         assert!(is_queueable_publish_error("Confluence request failed (HTTP 503)"));
         assert!(is_queueable_publish_error("Confluence request failed (HTTP 429): rate limited"));
         assert!(is_queueable_publish_error("Confluence request failed (HTTP 408)"));
+        assert!(is_queueable_publish_error("Confluence request failed (HTTP 500)"));
+        assert!(is_queueable_publish_error("Confluence request failed (HTTP 502): bad gateway"));
+        assert!(is_queueable_publish_error("Confluence request failed (HTTP 504): gateway timeout"));
         assert!(!is_queueable_publish_error("Confluence request failed (HTTP 401)"));
+        assert!(!is_queueable_publish_error("Confluence request failed (HTTP 403)"));
+        assert!(!is_queueable_publish_error("Confluence request failed (HTTP 404)"));
+        assert!(!is_queueable_publish_error("Confluence request failed (HTTP 422)"));
         assert!(!is_queueable_publish_error("Confluence request failed (HTTP 400)"));
     }
 
@@ -390,6 +396,7 @@ mod tests {
         assert!(is_queueable_publish_error("Confluence request failed: dns lookup failed"));
         assert!(is_queueable_publish_error("network timeout while connecting"));
         assert!(is_queueable_publish_error("connection refused by remote host"));
+        assert!(is_queueable_publish_error("Transport TEMPORARILY unavailable"));
     }
 
     #[test]

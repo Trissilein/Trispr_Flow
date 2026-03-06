@@ -1,6 +1,6 @@
 # GDD Module Workflow
 
-Last updated: 2026-03-04
+Last updated: 2026-03-06
 
 This guide describes the current end-to-end workflow in Trisper Flow for generating and publishing Game Design Documents.
 
@@ -29,6 +29,18 @@ This guide describes the current end-to-end workflow in Trisper Flow for generat
 7. Click `Publish to Confluence`.
 8. Use the generated link to open the published page.
 
+### One-click policy and queue fallback
+
+1. If one-click publish is preferred, routing confidence is validated against the configured threshold.
+2. Low-confidence routes require explicit confirmation before publish continues.
+3. If Confluence is transiently unreachable (network/timeout/429/5xx), publish is queued locally with a bundle:
+   - `draft.json`
+   - `draft.md`
+   - `draft.confluence.html`
+   - `publish-request.json`
+   - `manifest.json`
+4. Pending queue jobs can be retried or deleted directly from the GDD flow.
+
 ### Workflow-agent flow (optional module)
 
 1. Enable `workflow_agent` in `Modules`.
@@ -45,6 +57,7 @@ This guide describes the current end-to-end workflow in Trisper Flow for generat
 2. `.doc` legacy Word format is not supported yet; use `.docx`.
 3. Long template text is truncated for safety before prompt usage.
 4. Agent execution uses a separate command channel (`transcription:raw-result`) and does not reuse the activation-word drop filter.
+5. Queue fallback is for transient publish failures only; hard auth/validation failures are not auto-queued.
 
 ## Troubleshooting
 

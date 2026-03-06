@@ -1,6 +1,6 @@
 # Decisions
 
-Last updated: 2026-03-05
+Last updated: 2026-03-06
 
 ## Implemented Decisions
 
@@ -324,6 +324,13 @@ Last updated: 2026-03-05
 - Decision: Deliver multimodal runtime first on Windows, while keeping command/settings interfaces provider-platform agnostic.
 - Context: Current deployment target and credentials/tooling are Windows-centric.
 - Why: Fastest path to production value with lower integration risk.
+
+### DEC-050 Block L hardening gate closure policy (2026-03-06)
+
+- Status: `implemented`
+- Decision: Treat Block L as closed only when all three are true: one-click confidence gate with confirmation fallback is active, publish retry/queue resilience tests are green, and rollout packet docs are updated.
+- Context: Block L had functional delivery completed but hardening tasks remained partially tracked.
+- Why: Prevents premature milestone closure and keeps publish safety/recovery behavior auditable.
 
 ## Open Decisions
 

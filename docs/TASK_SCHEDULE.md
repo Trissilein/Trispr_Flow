@@ -281,9 +281,9 @@ Implementation uses `data-expert-only` attributes on DOM elements — CSS hides 
 
 ---
 
-### Block L: Module Platform + GDD Automation --- IN PROGRESS
+### Block L: Module Platform + GDD Automation --- COMPLETE
 
-**Duration**: 4-6 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: v0.7.1 stabilization (Blocks E/F) | **Status**: In progress
+**Duration**: 4-6 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: v0.7.1 stabilization (Blocks E/F) | **Status**: Complete
 
 Goal: Introduce a managed module platform and deliver a production-ready first module that turns transcripts into strict GDD drafts and publishes to Confluence Cloud.
 
@@ -304,9 +304,9 @@ Goal: Introduce a managed module platform and deliver a production-ready first m
 | L13 | Confluence auth and secret handling | High | L2 | DONE | OAuth exchange/refresh + API-token mode + keyring/file fallback implemented. |
 | L14 | Confluence discovery and routing suggestion | High | L13 | DONE | Space listing + target suggestion implemented and integrated in GDD flow. |
 | L15 | Confluence publish create/update lifecycle | High | L14, L12 | DONE | Create/update publish lifecycle implemented with version bump handling. |
-| L16 | Review flow + one-click mode policy | Medium | L11, L15 | PARTIAL | Draft/review/publish UI implemented; one-click policy gate remains pending. |
-| L17 | E2E + resilience tests | High | L1-L16 | PARTIAL | Build/test/check green; dedicated publish conflict/retry suites pending. |
-| L18 | Documentation and rollout packet | Medium | L17 | IN PROGRESS | Core planning docs updated; hardening checklist continues. |
+| L16 | Review flow + one-click mode policy | Medium | L11, L15 | DONE | One-click publish now enforces confidence threshold + explicit confirmation fallback; policy covered in `src/tests/gdd-policy.test.ts`. |
+| L17 | E2E + resilience tests | High | L1-L16 | DONE | Build/test/check gate is green, plus dedicated Rust queue/retry/conflict suites (`gdd::publish_queue`, `gdd::confluence`). |
+| L18 | Documentation and rollout packet | Medium | L17 | DONE | Workflow docs + rollout packet completed (`docs/V0.8.0_BLOCK_L_ROLLOUT_PACKET.md`) and roadmap pointers updated. |
 
 ---
 

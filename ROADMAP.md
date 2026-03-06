@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-05 (v0.8.0 hardening + v0.8.1/0.8.2 agent and multimodal track)
+Last updated: 2026-03-06 (Block L hardening closed, focus shifted to Block M/N delivery)
 
 This file is the canonical source for priorities and execution order.
 
@@ -9,7 +9,7 @@ This file is the canonical source for priorities and execution order.
 - Released: `v0.7.0`
 - Current phase: `v0.7.1` stabilization execution
 - Foundation complete: Blocks F + G + H
-- Active execution blocks: Module Platform hardening (Block L) + Workflow-Agent (Block M foundation)
+- Active execution blocks: Workflow-Agent execution hardening (Block M) + Multimodal planning runway (Block N)
 
 ## Analysis De-Scope Decision
 
@@ -28,7 +28,7 @@ This file is the canonical source for priorities and execution order.
 | G | Cloud provider rollout (OpenAI/Claude/Gemini) | High | D, F | Deferred to v0.7.3 |
 | J | Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary) | Medium | D | Planned |
 | K | Expert Mode UX Overhaul (standard/expert toggle, hide technical settings) | Medium | E | Planned |
-| L | Module Platform + GDD Automation + Confluence Cloud publishing | Extra High | E, F, K | In progress |
+| L | Module Platform + GDD Automation + Confluence Cloud publishing | Extra High | E, F, K | Complete ✅ |
 | M | Workflow-Agent voice automation for GDD (wakeword -> confirm -> execute) | Extra High | L, F | In progress |
 | N | Multimodal I/O modules (screen vision input + TTS voice output) | Extra High | M, L | Planned |
 
@@ -63,13 +63,12 @@ This file is the canonical source for priorities and execution order.
 
 ## Immediate Next Actions
 
-1. Close Block L hardening gate: one-click policy gate + publish conflict/retry coverage + rollout docs.
-2. Complete Block M phase M1-M4: core/module semantic split, workflow-agent settings migration, raw command channel, parser/session search.
-3. Complete Block M phase M5-M12: plan/confirm/execute, agent console, release hardening for v0.8.1.
-4. Start Block N after M execution stability gate (N1-N4): screen vision module + TTS module + agent capability bridge.
-5. Run N5 benchmark track (>=3 runs/provider/scenario) and select default TTS provider based on data.
-6. Keep Block J and Block G as lower-priority backlog until M/N delivery gates are met.
-7. Keep quantization configurability (Task 45) deferred until dedicated benchmark iteration.
+1. Complete Block M phase M9-M12: candidate-confirm hardening, stricter target-language UX, regression suites, release hardening for v0.8.1.
+2. Keep GDD Core + Confluence path stable while agent command-channel changes continue.
+3. Start Block N execution once Block M release gate is met (N1-N4 first, then N5-N14).
+4. Run N11 benchmark track (>=3 runs/provider/scenario) and set default TTS provider based on measured data.
+5. Keep Block J and Block G as lower-priority backlog until M/N delivery gates are met.
+6. Keep quantization configurability (Task 45) deferred until dedicated benchmark iteration.
 
 ## References
 
@@ -79,5 +78,6 @@ This file is the canonical source for priorities and execution order.
 - `docs/V0.7.0_ARCHITECTURE.md`
 - `docs/INSTALLER_VARIANTS.md`
 - `docs/GDD_MODULE_WORKFLOW.md`
+- `docs/V0.8.0_BLOCK_L_ROLLOUT_PACKET.md`
 - `docs/V0.8.1_WORKFLOW_AGENT_PLAN.md`
 - `docs/V0.8.2_MULTIMODAL_IO_PLAN.md`

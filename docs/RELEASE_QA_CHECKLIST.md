@@ -1,6 +1,6 @@
 # Release QA Checklist (Block F)
 
-Last updated: 2026-03-02
+Last updated: 2026-03-06
 
 ## 1. Build and Test Gate
 
@@ -56,6 +56,14 @@ Notes:
 - No console errors during normal operation.
 - No major layout regressions desktop/mobile widths.
 - Dialog open/close + Escape behavior remains correct.
+
+## 8. Modules and GDD Publish Resilience
+
+- GDD flow opens from Modules tab without module-enable gate.
+- One-click publish low-confidence route triggers explicit confirmation fallback.
+- Suggest target + manual publish path succeeds.
+- Confluence transient failure stores queued job and bundle.
+- Pending queue retry/delete works from the queue panel.
 
 ## Sign-off
 

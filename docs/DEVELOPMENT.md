@@ -11,6 +11,10 @@ npm install
 npm run tauri dev
 ```
 
+Notes:
+- `npm run dev` starts the desktop app (`tauri dev`) and reuses an already running Trispr Vite server on `http://localhost:1420`.
+- `npm run dev:web` starts only the Vite frontend dev server (web preview).
+
 ## Installer rebuild (Windows)
 Use the repo-root batch script to build the NSIS installer:
 

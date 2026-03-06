@@ -4,7 +4,9 @@
   "version": "0.7.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "tauri dev",
+    "dev:web": "vite",
+    "dev:tauri": "node scripts/tauri-before-dev.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",

@@ -57,7 +57,8 @@ use crate::models::{
 };
 use crate::ollama_runtime::{
     detect_ollama_runtime, download_ollama_runtime, import_ollama_model_from_file,
-    install_ollama_runtime, set_strict_local_mode, start_ollama_runtime, verify_ollama_runtime,
+    install_ollama_runtime, list_ollama_runtime_versions, set_strict_local_mode,
+    start_ollama_runtime, verify_ollama_runtime,
 };
 use crate::modules::{
     health as module_health, lifecycle as module_lifecycle, normalize_confluence_settings,
@@ -4644,6 +4645,7 @@ pub fn run() {
             verify_provider_auth,
             save_ollama_endpoint,
             detect_ollama_runtime,
+            list_ollama_runtime_versions,
             download_ollama_runtime,
             install_ollama_runtime,
             start_ollama_runtime,

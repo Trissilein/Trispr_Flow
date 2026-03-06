@@ -366,6 +366,7 @@ export interface OllamaSettings {
   runtime_source: "system" | "per_user_zip" | "manual";
   runtime_path: string;
   runtime_version: string;
+  runtime_target_version: string;
   last_health_check: string | null;
 }
 
@@ -713,6 +714,16 @@ export interface OllamaRuntimeDetectResult {
   source: "system" | "per_user_zip" | "manual";
   path: string;
   version: string;
+  managed_pid?: number | null;
+  managed_alive?: boolean;
+}
+
+export interface OllamaRuntimeVersionInfo {
+  version: string;
+  source: "pinned" | "online";
+  selected: boolean;
+  installed: boolean;
+  recommended: boolean;
 }
 
 export interface OllamaRuntimeDownloadResult {

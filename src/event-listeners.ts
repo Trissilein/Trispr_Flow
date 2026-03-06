@@ -56,10 +56,12 @@ import {
   getOllamaRuntimeCardState,
   importOllamaModelFromLocalFile,
   refreshOllamaInstalledModels,
+  refreshOllamaRuntimeVersionCatalog,
   refreshOllamaRuntimeAndModels,
   refreshOllamaRuntimeState,
   renderOllamaModelManager,
   startOllamaRuntime,
+  useManagedOllamaRuntime,
   useSystemOllamaRuntime,
   verifyOllamaRuntime,
 } from "./ollama-models";
@@ -255,6 +257,7 @@ function ensureAIFallbackSettingsDefaults() {
         runtime_source: "manual",
         runtime_path: "",
         runtime_version: "",
+        runtime_target_version: "0.17.5",
         last_health_check: null,
       },
     };
@@ -267,6 +270,7 @@ function ensureAIFallbackSettingsDefaults() {
       runtime_source: "manual",
       runtime_path: "",
       runtime_version: "",
+      runtime_target_version: "0.17.5",
       last_health_check: null,
     };
   }
@@ -308,6 +312,7 @@ function ensureAIFallbackSettingsDefaults() {
   settings.providers.ollama.runtime_source ??= "manual";
   settings.providers.ollama.runtime_path ??= "";
   settings.providers.ollama.runtime_version ??= "";
+  settings.providers.ollama.runtime_target_version ??= "0.17.5";
   settings.providers.ollama.last_health_check ??= null;
   CLOUD_PROVIDER_IDS.forEach((provider) => {
     const providerSettings = getAIFallbackProviderSettings(provider);
@@ -1666,6 +1671,17 @@ export function wireEvents() {
     refreshAIUi();
   });
 
+  dom.aiFallbackLocalUseManagedAction?.addEventListener("click", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    applyExecutionModeInSettings("local_primary");
+    await persistSettings();
+    const managedPromise = useManagedOllamaRuntime();
+    renderAIFallbackSettingsUi();
+    await managedPromise;
+    refreshAIUi();
+  });
+
   dom.aiFallbackLocalVerifyAction?.addEventListener("click", async () => {
     const verifyPromise = verifyOllamaRuntime();
     renderAIFallbackSettingsUi();
@@ -1677,6 +1693,20 @@ export function wireEvents() {
     const refreshPromise = refreshOllamaRuntimeAndModels();
     renderAIFallbackSettingsUi();
     await refreshPromise;
+    renderAIFallbackSettingsUi();
+  });
+
+  dom.aiFallbackLocalRuntimeVersion?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackLocalRuntimeVersion) return;
+    const selected = dom.aiFallbackLocalRuntimeVersion.value.trim();
+    if (!selected) return;
+    settings.providers.ollama.runtime_target_version = selected;
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+  });
+
+  dom.aiFallbackLocalRuntimeVersionRefresh?.addEventListener("click", async () => {
+    await refreshOllamaRuntimeVersionCatalog(true);
     renderAIFallbackSettingsUi();
   });
 

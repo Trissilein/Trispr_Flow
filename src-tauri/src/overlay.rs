@@ -61,7 +61,7 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     .focusable(false)
     .always_on_top(true)
     .skip_taskbar(true)
-    .visible(true)
+    .visible(false)
     .build()
     .map_err(|e| format!("Failed to create overlay window: {}", e))?;
 
@@ -97,9 +97,13 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
     let _ = window.emit("overlay:state", &state);
     let _ = app.emit("overlay:state", &state);
 
-    // Keep overlay visible; visual state is handled by CSS opacity
-    window.show().map_err(|e| format!("Failed to show overlay: {}", e))?;
-    let _ = window.set_always_on_top(true);
+    let should_show = !matches!(state, OverlayState::Idle | OverlayState::ToggleIdle);
+    if should_show {
+        window.show().map_err(|e| format!("Failed to show overlay: {}", e))?;
+        let _ = window.set_always_on_top(true);
+    } else {
+        let _ = window.hide();
+    }
 
     let state_str = match state {
         OverlayState::Idle => "idle",
@@ -135,6 +139,11 @@ pub fn update_overlay_refining_indicator(app: &AppHandle, active: bool) -> Resul
         Some(w) => w,
         None => create_overlay_window(app)?,
     };
+
+    if active {
+        let _ = window.show();
+        let _ = window.set_always_on_top(true);
+    }
 
     let _ = window.emit("overlay:refining", active);
     let _ = app.emit("overlay:refining", active);

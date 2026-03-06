@@ -14,11 +14,11 @@ function isAutoLanguage(language: string | null | undefined): boolean {
 
 function languageLockInstruction(language: string | null | undefined): string {
   if (isAutoLanguage(language)) {
-    return "Detect the input language and keep it unchanged. Do not translate. If the input is mixed-language, preserve each segment in its original language.";
+    return "Detect the input language and keep it unchanged. Do not translate unless explicitly asked to do so. If the input is mixed-language, preserve each segment in its original language.";
   }
   return isGermanLanguage(language)
     ? "Behalte die Ausgabe in derselben Sprache wie die Eingabe. Nicht uebersetzen."
-    : "Keep the output in the same language as the input. Do not translate.";
+    : "Keep the output in the same language as the input. Do not translate unless explicitly asked to do so.";
 }
 
 function withLanguageLockGuard(

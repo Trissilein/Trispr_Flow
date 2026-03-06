@@ -757,16 +757,16 @@ fn detect_en_de_language_hint(text: &str) -> Option<&'static str> {
     ];
 
     let words = tokenize_language_words(text);
-    if words.len() < 8 {
+    if words.len() < 4 {
         return None;
     }
 
     let en_hits = stopword_hits(&words, EN_STOPWORDS);
     let de_hits = stopword_hits(&words, DE_STOPWORDS);
 
-    if en_hits >= 3 && en_hits >= de_hits + 2 {
+    if en_hits >= 2 && en_hits >= de_hits + 1 {
         Some("en")
-    } else if de_hits >= 3 && de_hits >= en_hits + 2 {
+    } else if de_hits >= 2 && de_hits >= en_hits + 1 {
         Some("de")
     } else {
         None

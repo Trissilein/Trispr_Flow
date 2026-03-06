@@ -9,6 +9,7 @@ use crate::state::{
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -28,6 +29,7 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const DEFAULT_RUNTIME_VERSION: &str = "0.17.5";
+const GITHUB_RELEASES_API: &str = "https://api.github.com/repos/ollama/ollama/releases";
 const BACKGROUND_IO_THROTTLE_BYTES: u64 = 16 * 1024 * 1024;
 const BACKGROUND_IO_THROTTLE_SLEEP_MS: u64 = 2;
 const STARTUP_FOREGROUND_WAIT_MS: u64 = 12_000;
@@ -36,6 +38,13 @@ struct RuntimeManifest {
     version: &'static str,
     url: &'static str,
     sha256: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeManifestResolved {
+    version: String,
+    url: String,
+    sha256: String,
 }
 
 const WINDOWS_MANIFESTS: [RuntimeManifest; 1] = [RuntimeManifest {
@@ -51,6 +60,15 @@ pub struct OllamaRuntimeInstallProgress {
     pub downloaded: Option<u64>,
     pub total: Option<u64>,
     pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OllamaRuntimeVersionInfo {
+    pub version: String,
+    pub source: String, // "pinned" | "online"
+    pub selected: bool,
+    pub installed: bool,
+    pub recommended: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -79,6 +97,8 @@ pub struct OllamaRuntimeDetectResult {
     pub source: String,
     pub path: String,
     pub version: String,
+    pub managed_pid: Option<u32>,
+    pub managed_alive: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,30 +136,198 @@ pub struct OllamaImportResult {
     pub model_name: String,
 }
 
-fn resolve_manifest(version: Option<&str>) -> Result<&'static RuntimeManifest, String> {
+fn normalize_runtime_version(version: Option<&str>) -> String {
     let requested = version
         .map(|v| v.trim().trim_start_matches('v').to_string())
         .unwrap_or_else(|| DEFAULT_RUNTIME_VERSION.to_string());
     if requested.eq_ignore_ascii_case("latest") {
-        return WINDOWS_MANIFESTS
-            .iter()
-            .find(|m| m.version == DEFAULT_RUNTIME_VERSION)
-            .ok_or_else(|| "No default runtime manifest configured".to_string());
+        DEFAULT_RUNTIME_VERSION.to_string()
+    } else {
+        requested
     }
+}
+
+fn resolve_pinned_manifest(version: &str) -> Option<RuntimeManifestResolved> {
     WINDOWS_MANIFESTS
         .iter()
-        .find(|m| m.version == requested)
-        .ok_or_else(|| {
-            let supported = WINDOWS_MANIFESTS
-                .iter()
-                .map(|m| m.version)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "Unsupported Ollama runtime version '{}'. Supported: {}",
-                requested, supported
-            )
+        .find(|m| m.version == version)
+        .map(|m| RuntimeManifestResolved {
+            version: m.version.to_string(),
+            url: m.url.to_string(),
+            sha256: m.sha256.to_string(),
         })
+}
+
+fn parse_sha256_from_text(text: &str, file_name: &str) -> Option<String> {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let tokens = trimmed.split_whitespace().collect::<Vec<_>>();
+        if tokens.is_empty() {
+            continue;
+        }
+        if tokens.len() == 1 {
+            let only = tokens[0].trim().trim_start_matches('*');
+            if only.len() == 64 && only.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                return Some(only.to_ascii_lowercase());
+            }
+            continue;
+        }
+        if tokens[1..].iter().any(|token| token.trim_start_matches('*') == file_name) {
+            let hash = tokens[0].trim().trim_start_matches('*');
+            if hash.len() == 64 && hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                return Some(hash.to_ascii_lowercase());
+            }
+        }
+    }
+    None
+}
+
+fn fetch_online_manifest(version: &str) -> Result<RuntimeManifestResolved, String> {
+    let tag = format!("v{}", version);
+    let release_url = format!("{}/tags/{}", GITHUB_RELEASES_API, tag);
+    let agent = ureq::builder()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(Duration::from_secs(30))
+        .build();
+
+    let release_json = agent
+        .get(&release_url)
+        .set("User-Agent", "TrisprFlow/RuntimeInstaller")
+        .set("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|e| format!("Failed to fetch Ollama release '{}': {}", tag, e))?
+        .into_json::<serde_json::Value>()
+        .map_err(|e| format!("Failed to parse Ollama release '{}': {}", tag, e))?;
+
+    let assets = release_json
+        .get("assets")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| format!("Release '{}' does not expose assets.", tag))?;
+
+    let mut archive_url: Option<String> = None;
+    let mut checksum_urls: Vec<String> = Vec::new();
+
+    for asset in assets {
+        let Some(name) = asset.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(url) = asset
+            .get("browser_download_url")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+
+        if name.eq_ignore_ascii_case("ollama-windows-amd64.zip") {
+            archive_url = Some(url);
+            continue;
+        }
+
+        let lower = name.to_ascii_lowercase();
+        if lower.ends_with(".sha256")
+            || lower.contains("sha256sum")
+            || lower.contains("checksums")
+            || lower.contains("sha256")
+        {
+            checksum_urls.push(url);
+        }
+    }
+
+    let archive_url = archive_url
+        .ok_or_else(|| format!("Release '{}' has no ollama-windows-amd64.zip asset.", tag))?;
+
+    let mut checksum: Option<String> = None;
+    for checksum_url in checksum_urls {
+        let body = match agent
+            .get(&checksum_url)
+            .set("User-Agent", "TrisprFlow/RuntimeInstaller")
+            .call()
+        {
+            Ok(resp) => resp.into_string().unwrap_or_default(),
+            Err(_) => String::new(),
+        };
+        if body.trim().is_empty() {
+            continue;
+        }
+        if let Some(parsed) = parse_sha256_from_text(&body, "ollama-windows-amd64.zip") {
+            checksum = Some(parsed);
+            break;
+        }
+    }
+
+    let sha256 = checksum.ok_or_else(|| {
+        format!(
+            "Release '{}' is missing a parseable checksum for ollama-windows-amd64.zip.",
+            tag
+        )
+    })?;
+
+    Ok(RuntimeManifestResolved {
+        version: version.to_string(),
+        url: archive_url,
+        sha256,
+    })
+}
+
+fn resolve_manifest(version: Option<&str>) -> Result<RuntimeManifestResolved, String> {
+    let requested = normalize_runtime_version(version);
+    if let Some(manifest) = resolve_pinned_manifest(&requested) {
+        return Ok(manifest);
+    }
+
+    fetch_online_manifest(&requested).map_err(|e| {
+        let supported = WINDOWS_MANIFESTS
+            .iter()
+            .map(|m| m.version)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "Runtime version '{}' is not pinned and online lookup failed: {}. Pinned versions: {}",
+            requested, e, supported
+        )
+    })
+}
+
+fn list_online_release_versions(limit: usize) -> Result<Vec<String>, String> {
+    let url = format!("{}?per_page={}", GITHUB_RELEASES_API, limit.max(1));
+    let agent = ureq::builder()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(Duration::from_secs(20))
+        .build();
+    let releases = agent
+        .get(&url)
+        .set("User-Agent", "TrisprFlow/RuntimeInstaller")
+        .set("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|e| format!("Failed to fetch online runtime versions: {}", e))?
+        .into_json::<serde_json::Value>()
+        .map_err(|e| format!("Failed to parse online runtime versions: {}", e))?;
+    let mut versions = Vec::new();
+    let Some(items) = releases.as_array() else {
+        return Ok(versions);
+    };
+    for item in items {
+        if item
+            .get("draft")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let Some(tag_name) = item.get("tag_name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let normalized = tag_name.trim().trim_start_matches('v').to_string();
+        if normalized.is_empty() || versions.iter().any(|v| v == &normalized) {
+            continue;
+        }
+        versions.push(normalized);
+    }
+    Ok(versions)
 }
 
 /// Resolves the root directory for the managed Ollama runtime installation.
@@ -389,7 +577,83 @@ fn endpoint_host_port(endpoint: &str) -> Result<String, String> {
     Ok(format!("{}:{}", host, port))
 }
 
-fn select_runtime_binary(settings: &crate::state::Settings) -> Result<(PathBuf, String), String> {
+fn parse_runtime_version_tuple(version: &str) -> (u32, u32, u32) {
+    let mut parts = version
+        .trim()
+        .trim_start_matches('v')
+        .split('.')
+        .filter_map(|p| p.parse::<u32>().ok());
+    (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    )
+}
+
+fn compare_runtime_versions_desc(left: &str, right: &str) -> Ordering {
+    let l = parse_runtime_version_tuple(left);
+    let r = parse_runtime_version_tuple(right);
+    r.cmp(&l).then_with(|| right.cmp(left))
+}
+
+fn find_managed_runtime_binary(
+    app: &AppHandle,
+    settings: &crate::state::Settings,
+) -> Option<PathBuf> {
+    let runtime_root = resolve_runtime_root(app);
+    if !runtime_root.is_dir() {
+        return None;
+    }
+
+    let mut preferred_versions: Vec<String> = Vec::new();
+    let target = settings.providers.ollama.runtime_target_version.trim();
+    if !target.is_empty() {
+        preferred_versions.push(target.to_string());
+    }
+    let current = settings.providers.ollama.runtime_version.trim();
+    if !current.is_empty() && !preferred_versions.iter().any(|v| v == current) {
+        preferred_versions.push(current.to_string());
+    }
+
+    for version in preferred_versions {
+        let candidate_dir = runtime_root.join(version);
+        if !candidate_dir.is_dir() {
+            continue;
+        }
+        if let Some(path) = find_file_recursive(&candidate_dir, "ollama.exe") {
+            return Some(path);
+        }
+    }
+
+    let mut discovered: Vec<(String, PathBuf)> = Vec::new();
+    if let Ok(entries) = fs::read_dir(&runtime_root) {
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let name = dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string();
+            if name.starts_with(".staging-") {
+                continue;
+            }
+            if let Some(path) = find_file_recursive(&dir, "ollama.exe") {
+                discovered.push((name, path));
+            }
+        }
+    }
+
+    discovered.sort_by(|a, b| compare_runtime_versions_desc(&a.0, &b.0));
+    discovered.into_iter().map(|(_, path)| path).next()
+}
+
+fn select_runtime_binary(
+    app: &AppHandle,
+    settings: &crate::state::Settings,
+) -> Result<(PathBuf, String), String> {
     let configured_source = settings
         .providers
         .ollama
@@ -402,6 +666,35 @@ fn select_runtime_binary(settings: &crate::state::Settings) -> Result<(PathBuf, 
         if let Ok(system) = which("ollama") {
             return Ok((system, "system".to_string()));
         }
+        if !configured.is_empty() {
+            let path = PathBuf::from(configured);
+            if path.exists() {
+                return Ok((path, "system".to_string()));
+            }
+        }
+        if let Some(managed) = find_managed_runtime_binary(app, settings) {
+            return Ok((managed, "per_user_zip".to_string()));
+        }
+        return Err(
+            "System runtime was selected, but no Ollama was found in PATH. Use 'Use managed runtime' or install Ollama system-wide."
+                .to_string(),
+        );
+    }
+
+    if configured_source == "per_user_zip" {
+        if !configured.is_empty() {
+            let path = PathBuf::from(configured);
+            if path.exists() {
+                return Ok((path, "per_user_zip".to_string()));
+            }
+        }
+        if let Some(managed) = find_managed_runtime_binary(app, settings) {
+            return Ok((managed, "per_user_zip".to_string()));
+        }
+        return Err(
+            "Managed local runtime is selected, but no local Ollama runtime is installed yet. Use 'Install local runtime'."
+                .to_string(),
+        );
     }
 
     if !configured.is_empty() {
@@ -420,6 +713,9 @@ fn select_runtime_binary(settings: &crate::state::Settings) -> Result<(PathBuf, 
 
     if let Ok(system) = which("ollama") {
         return Ok((system, "system".to_string()));
+    }
+    if let Some(managed) = find_managed_runtime_binary(app, settings) {
+        return Ok((managed, "per_user_zip".to_string()));
     }
     Err("No Ollama runtime found. Install local runtime or install Ollama system-wide.".to_string())
 }
@@ -464,11 +760,82 @@ fn runtime_endpoint_reachable(endpoint: &str) -> bool {
     ping_ollama(endpoint).is_ok()
 }
 
+fn managed_child_status(state: &AppState) -> (Option<u32>, bool) {
+    let Ok(mut guard) = state.managed_ollama_child.lock() else {
+        return (None, false);
+    };
+
+    let Some(child) = guard.as_mut() else {
+        return (None, false);
+    };
+
+    let pid = Some(child.id());
+    match child.try_wait() {
+        Ok(Some(_)) => {
+            *guard = None;
+            (pid, false)
+        }
+        Ok(None) => (pid, true),
+        Err(_) => (pid, false),
+    }
+}
+
+#[tauri::command]
+pub fn list_ollama_runtime_versions(
+    state: State<'_, AppState>,
+) -> Result<Vec<OllamaRuntimeVersionInfo>, String> {
+    let snapshot = state.settings.lock().unwrap().clone();
+    let selected = snapshot.providers.ollama.runtime_target_version.clone();
+    let installed_version = snapshot.providers.ollama.runtime_version.clone();
+
+    let mut merged: Vec<String> = WINDOWS_MANIFESTS
+        .iter()
+        .map(|m| m.version.to_string())
+        .collect();
+    if let Ok(online) = list_online_release_versions(20) {
+        for version in online {
+            if !merged.iter().any(|v| v == &version) {
+                merged.push(version);
+            }
+        }
+    }
+    if !installed_version.trim().is_empty() && !merged.iter().any(|v| v == &installed_version) {
+        merged.push(installed_version.clone());
+    }
+
+    let mut out = merged
+        .into_iter()
+        .map(|version| OllamaRuntimeVersionInfo {
+            version: version.clone(),
+            source: if WINDOWS_MANIFESTS.iter().any(|m| m.version == version) {
+                "pinned".to_string()
+            } else {
+                "online".to_string()
+            },
+            selected: selected == version,
+            installed: !installed_version.is_empty() && installed_version == version,
+            recommended: version == DEFAULT_RUNTIME_VERSION,
+        })
+        .collect::<Vec<_>>();
+
+    out.sort_by(|a, b| {
+        b.selected
+            .cmp(&a.selected)
+            .then_with(|| b.installed.cmp(&a.installed))
+            .then_with(|| b.recommended.cmp(&a.recommended))
+            .then_with(|| b.version.cmp(&a.version))
+    });
+
+    Ok(out)
+}
+
 #[tauri::command]
 pub fn detect_ollama_runtime(
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<OllamaRuntimeDetectResult, String> {
     let settings = state.settings.lock().unwrap().clone();
+    let (managed_pid, managed_alive) = managed_child_status(state.inner());
     let endpoint = settings.providers.ollama.endpoint.clone();
     let source_hint = settings
         .providers
@@ -498,8 +865,19 @@ pub fn detect_ollama_runtime(
             None
         }
     };
-    let binary_info =
-        binary_info.or_else(|| which("ollama").ok().map(|p| ("system".to_string(), p)));
+    let binary_info = binary_info
+        .or_else(|| {
+            if source_hint == "per_user_zip" || source_hint == "system" {
+                find_managed_runtime_binary(&app, &settings)
+                    .map(|p| ("per_user_zip".to_string(), p))
+            } else {
+                None
+            }
+        })
+        .or_else(|| which("ollama").ok().map(|p| ("system".to_string(), p)))
+        .or_else(|| {
+            find_managed_runtime_binary(&app, &settings).map(|p| ("per_user_zip".to_string(), p))
+        });
 
     match binary_info {
         None => Ok(OllamaRuntimeDetectResult {
@@ -508,6 +886,8 @@ pub fn detect_ollama_runtime(
             source: "manual".to_string(),
             path: String::new(),
             version: String::new(),
+            managed_pid,
+            managed_alive,
         }),
         Some((source, path)) => {
             // Phase 2: single quick ping (≤ 300 ms) — never blocks the UI thread noticeably.
@@ -518,6 +898,8 @@ pub fn detect_ollama_runtime(
                 source,
                 version: parse_ollama_version(&path),
                 path: path.to_string_lossy().to_string(),
+                managed_pid,
+                managed_alive,
             })
         }
     }
@@ -545,7 +927,7 @@ fn download_ollama_runtime_impl(
 
     if archive_path.exists() {
         let current_hash = sha256_file(&archive_path)?;
-        if current_hash.eq_ignore_ascii_case(manifest.sha256) {
+        if current_hash.eq_ignore_ascii_case(&manifest.sha256) {
             emit_install_progress(
                 app,
                 "download_runtime",
@@ -577,7 +959,7 @@ fn download_ollama_runtime_impl(
         .timeout_read(Duration::from_secs(60 * 60 * 4))
         .build();
     let response = agent
-        .get(manifest.url)
+        .get(&manifest.url)
         .set("User-Agent", "TrisprFlow/RuntimeInstaller")
         .call()
         .map_err(|e| {
@@ -637,7 +1019,7 @@ fn download_ollama_runtime_impl(
     })?;
 
     let digest = sha256_file(&archive_path)?;
-    if !digest.eq_ignore_ascii_case(manifest.sha256) {
+    if !digest.eq_ignore_ascii_case(&manifest.sha256) {
         let _ = fs::remove_file(&archive_path);
         let msg = format!(
             "Runtime archive checksum mismatch. Expected {}, got {}",
@@ -705,7 +1087,7 @@ fn install_ollama_runtime_impl(
     );
 
     let runtime_root = resolve_runtime_root(app);
-    let target_dir = runtime_root.join(manifest.version);
+    let target_dir = runtime_root.join(&manifest.version);
     let staging_dir = runtime_root.join(format!(
         ".staging-{}-{}",
         manifest.version,
@@ -846,7 +1228,7 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
         );
     }
 
-    let (binary_path, source) = select_runtime_binary(&settings_snapshot).map_err(|err| {
+    let (binary_path, source) = select_runtime_binary(app, &settings_snapshot).map_err(|err| {
         record_runtime_start_failure(state.inner());
         err
     })?;
@@ -1026,7 +1408,7 @@ pub fn import_ollama_model_from_file(
         )
     })?;
 
-    let (binary_path, _) = select_runtime_binary(&settings_snapshot)?;
+    let (binary_path, _) = select_runtime_binary(&app, &settings_snapshot)?;
 
     let mode = mode.trim().to_lowercase();
     let mut temp_modelfile_path: Option<PathBuf> = None;

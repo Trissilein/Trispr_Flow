@@ -7,7 +7,7 @@ import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "./uti
 import { renderVocabulary } from "./event-listeners";
 import { DEFAULT_TOPICS, setTopicKeywords, type TopicKeywords } from "./history";
 import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
-import { getOllamaRuntimeCardState } from "./ollama-models";
+import { getOllamaRuntimeCardState, getOllamaRuntimeVersionCatalog } from "./ollama-models";
 import { syncRefinementPipelineGraphFromSettings } from "./refinement-pipeline-graph";
 import {
   normalizeRefinementPromptPreset,
@@ -571,6 +571,7 @@ export function renderAIFallbackSettingsUi() {
     );
   });
   const ai = settings.ai_fallback;
+  settings.providers.ollama.runtime_target_version ??= "0.17.5";
   ai.prompt_profile = normalizeRefinementPromptPreset(ai.prompt_profile);
   ai.custom_prompt_enabled = ai.prompt_profile === "custom";
   ai.use_default_prompt = false;
@@ -590,6 +591,8 @@ export function renderAIFallbackSettingsUi() {
   settings.postproc_llm_provider = "ollama";
 
   const runtimeCardState = getOllamaRuntimeCardState();
+  const runtimeVersionOptions = getOllamaRuntimeVersionCatalog();
+  let selectedRuntimeEntry: (typeof runtimeVersionOptions)[number] | null = null;
 
   if (dom.aiFallbackEnabled) {
     dom.aiFallbackEnabled.checked = Boolean(ai?.enabled);
@@ -634,14 +637,22 @@ export function renderAIFallbackSettingsUi() {
       : runtimeCardState.detected
         ? "detected, not running"
         : "not detected";
-    dom.aiFallbackLocalPrimaryStatus.textContent = `Runtime ${healthText} • Source: ${runtimeCardState.source} • Version: ${runtimeCardState.version}`;
+    const processText = runtimeCardState.managedAlive
+      ? `managed pid ${runtimeCardState.managedPid ?? "?"}`
+      : runtimeCardState.healthy
+        ? "running (external or unmanaged)"
+        : "no managed process";
+    dom.aiFallbackLocalPrimaryStatus.textContent = `Runtime ${healthText} • Source: ${runtimeCardState.source} • Version: ${runtimeCardState.version} • Process: ${processText}`;
   }
   if (dom.aiFallbackLocalRuntimeNote) {
-    dom.aiFallbackLocalRuntimeNote.textContent = runtimeCardState.busy
+    const baseNote = runtimeCardState.busy
       ? `${runtimeCardState.detail} Running in background.`
       : runtimeCardState.backgroundStarting
         ? "Starting runtime in background. Controls remain available."
         : runtimeCardState.detail;
+    dom.aiFallbackLocalRuntimeNote.textContent = runtimeCardState.compatibilityWarning
+      ? `${baseNote} ${runtimeCardState.compatibilityWarning}`
+      : baseNote;
     dom.aiFallbackLocalRuntimeNote.classList.toggle(
       "ai-runtime-busy-note",
       runtimeCardState.busy || runtimeCardState.backgroundStarting
@@ -667,11 +678,103 @@ export function renderAIFallbackSettingsUi() {
   if (dom.aiFallbackLocalUseSystemAction) {
     dom.aiFallbackLocalUseSystemAction.disabled = runtimeCardState.busy;
   }
+  if (dom.aiFallbackLocalUseManagedAction) {
+    dom.aiFallbackLocalUseManagedAction.disabled = runtimeCardState.busy;
+  }
   if (dom.aiFallbackLocalVerifyAction) {
     dom.aiFallbackLocalVerifyAction.disabled = runtimeCardState.busy || !runtimeCardState.detected;
   }
   if (dom.aiFallbackLocalRefreshAction) {
     dom.aiFallbackLocalRefreshAction.disabled = runtimeCardState.busy;
+  }
+  if (dom.aiFallbackLocalRuntimeVersion) {
+    const selectedVersion =
+      settings.providers.ollama.runtime_target_version?.trim() || runtimeCardState.version || "0.17.5";
+    const optionPool = [...runtimeVersionOptions];
+    const appendIfMissing = (version: string) => {
+      if (!version) return;
+      if (optionPool.some((entry) => entry.version === version)) return;
+      optionPool.push({
+        version,
+        source: "online",
+        selected: version === selectedVersion,
+        installed: version === runtimeCardState.version,
+        recommended: version === "0.17.5",
+      });
+    };
+    appendIfMissing(selectedVersion);
+    appendIfMissing(runtimeCardState.version);
+    const prioritized = optionPool
+      .sort((a, b) => {
+        const aScore = (a.selected ? 4 : 0) + (a.installed ? 2 : 0) + (a.recommended ? 1 : 0);
+        const bScore = (b.selected ? 4 : 0) + (b.installed ? 2 : 0) + (b.recommended ? 1 : 0);
+        return bScore - aScore || b.version.localeCompare(a.version, undefined, { numeric: true });
+      })
+      .filter((entry, idx, arr) => idx === arr.findIndex((e) => e.version === entry.version));
+    const limited = prioritized.slice(0, 3);
+    const selectedInLimited = limited.some((entry) => entry.version === selectedVersion);
+    if (!selectedInLimited) {
+      const selectedEntry = prioritized.find((entry) => entry.version === selectedVersion);
+      if (selectedEntry) {
+        limited[limited.length - 1] = selectedEntry;
+      }
+    }
+    const installedVersion = runtimeCardState.version?.trim() || "";
+    const installedInLimited = installedVersion
+      ? limited.some((entry) => entry.version === installedVersion)
+      : true;
+    if (!installedInLimited && installedVersion) {
+      const installedEntry = prioritized.find((entry) => entry.version === installedVersion);
+      if (installedEntry) {
+        const replaceIdx = limited.findIndex((entry) => !entry.selected);
+        limited[replaceIdx >= 0 ? replaceIdx : limited.length - 1] = installedEntry;
+      }
+    }
+
+    dom.aiFallbackLocalRuntimeVersion.innerHTML = "";
+    limited.forEach((entry) => {
+      const option = document.createElement("option");
+      option.value = entry.version;
+      option.textContent = entry.version;
+      dom.aiFallbackLocalRuntimeVersion?.appendChild(option);
+    });
+    dom.aiFallbackLocalRuntimeVersion.size = 1;
+    dom.aiFallbackLocalRuntimeVersion.classList.remove("is-scroll-list");
+    if (
+      selectedVersion &&
+      Array.from(dom.aiFallbackLocalRuntimeVersion.options).some((opt) => opt.value === selectedVersion)
+    ) {
+      dom.aiFallbackLocalRuntimeVersion.value = selectedVersion;
+    }
+    selectedRuntimeEntry =
+      limited.find((entry) => entry.version === dom.aiFallbackLocalRuntimeVersion?.value) ?? null;
+    dom.aiFallbackLocalRuntimeVersion.disabled = runtimeCardState.busy;
+  }
+  if (dom.aiFallbackLocalRuntimeVersionRefresh) {
+    dom.aiFallbackLocalRuntimeVersionRefresh.disabled = runtimeCardState.busy;
+  }
+  if (dom.aiFallbackLocalRuntimeVersionNote) {
+    const selected = settings.providers.ollama.runtime_target_version || "0.17.5";
+    dom.aiFallbackLocalRuntimeVersionNote.textContent = "";
+    const lead = document.createElement("span");
+    lead.textContent = `Selected target ${selected}. `;
+    dom.aiFallbackLocalRuntimeVersionNote.appendChild(lead);
+
+    const badges = document.createElement("span");
+    badges.className = "runtime-version-badges";
+    const addBadge = (label: string, cls: string) => {
+      const el = document.createElement("span");
+      el.className = `ollama-runtime-badge runtime-version-chip ${cls}`;
+      el.textContent = label;
+      badges.appendChild(el);
+    };
+
+    if (selectedRuntimeEntry?.selected) addBadge("Active", "runtime-version-chip--selected");
+    if (selectedRuntimeEntry?.installed) addBadge("Installed", "runtime-version-chip--installed");
+    if (selectedRuntimeEntry?.recommended) addBadge("Recommended", "runtime-version-chip--recommended");
+    addBadge(selectedRuntimeEntry?.source === "online" ? "Online" : "Pinned", "runtime-version-chip--source");
+
+    dom.aiFallbackLocalRuntimeVersionNote.appendChild(badges);
   }
 
   applyProviderLaneVisibility(false);

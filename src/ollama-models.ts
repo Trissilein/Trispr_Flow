@@ -14,6 +14,7 @@ import type {
   OllamaRuntimeInstallError,
   OllamaRuntimeInstallProgress,
   OllamaRuntimeInstallResult,
+  OllamaRuntimeVersionInfo,
   OllamaRuntimeStartResult,
   OllamaRuntimeVerifyResult,
 } from "./types";
@@ -98,22 +99,27 @@ let runtimeVerify: OllamaRuntimeVerifyResult | null = null;
 let runtimeInstallProgress: OllamaRuntimeInstallProgress | null = null;
 let runtimeInstallError: OllamaRuntimeInstallError | null = null;
 let runtimeHealth: OllamaRuntimeHealth | null = null;
+let runtimeVersionCatalog: OllamaRuntimeVersionInfo[] = [];
+let activeModelRequiredRuntime: string | null = null;
 let runtimeBusyAction: string | null = null;
 let runtimeBusyActionStartedMs = 0;
 let runtimeStateRefreshInFlight: Promise<void> | null = null;
 let runtimeStateLastRefreshMs = 0;
+let runtimeVersionCatalogLastRefreshMs = 0;
 let lastAutostartWarningMs = 0;
 let runtimeBackgroundStartUntilMs = 0;
 let runtimeBackgroundStartPollInFlight: Promise<void> | null = null;
 
 let renderFrame: number | null = null;
 const PASSIVE_RUNTIME_REFRESH_TTL_MS = 1500;
+const VERSION_CATALOG_REFRESH_TTL_MS = 5 * 60_000;
 
 const RUNTIME_ACTION_LABELS: Record<string, string> = {
   detect: "Detecting runtime...",
   install: "Installing local runtime...",
   "ensure-runtime": "Preparing local runtime...",
   "use-system": "Switching to system runtime...",
+  "use-managed": "Switching to managed runtime...",
   start: "Starting runtime...",
   verify: "Verifying runtime...",
   import: "Importing model...",
@@ -132,6 +138,8 @@ export type OllamaRuntimeCardState = {
   healthy: boolean;
   source: string;
   version: string;
+  managedPid: number | null;
+  managedAlive: boolean;
   endpoint: string;
   busy: boolean;
   backgroundStarting: boolean;
@@ -141,7 +149,26 @@ export type OllamaRuntimeCardState = {
   primaryLabel: string;
   primaryDisabled: boolean;
   detail: string;
+  compatibilityWarning: string | null;
 };
+
+function compareSemverLoose(left: string, right: string): number {
+  const l = left
+    .trim()
+    .split(".")
+    .map((v) => Number.parseInt(v, 10) || 0);
+  const r = right
+    .trim()
+    .split(".")
+    .map((v) => Number.parseInt(v, 10) || 0);
+  const len = Math.max(l.length, r.length);
+  for (let i = 0; i < len; i += 1) {
+    const a = l[i] ?? 0;
+    const b = r[i] ?? 0;
+    if (a !== b) return a > b ? 1 : -1;
+  }
+  return 0;
+}
 
 function isOllamaProvider(): boolean {
   return settings?.ai_fallback?.provider === "ollama";
@@ -433,12 +460,21 @@ export function getOllamaRuntimeCardState(): OllamaRuntimeCardState {
       : backgroundStarting
         ? "Starting runtime in background..."
         : stageHint(stage));
+  const compatibilityWarning =
+    activeModelRequiredRuntime &&
+    version &&
+    version !== "unknown" &&
+    compareSemverLoose(version, activeModelRequiredRuntime) < 0
+      ? `Active model requires Ollama >= ${activeModelRequiredRuntime}; current runtime is ${version}.`
+      : null;
 
   return {
     detected: Boolean(runtimeDetect?.found),
     healthy: runtimeIsHealthy(),
     source,
     version: version || "unknown",
+    managedPid: runtimeDetect?.managed_pid ?? null,
+    managedAlive: Boolean(runtimeDetect?.managed_alive),
     endpoint,
     busy: Boolean(busyAction),
     backgroundStarting,
@@ -448,7 +484,49 @@ export function getOllamaRuntimeCardState(): OllamaRuntimeCardState {
     primaryLabel: primary.label,
     primaryDisabled: primary.disabled,
     detail,
+    compatibilityWarning,
   };
+}
+
+export function getOllamaRuntimeVersionCatalog(): OllamaRuntimeVersionInfo[] {
+  if (runtimeVersionCatalog.length > 0) {
+    return runtimeVersionCatalog;
+  }
+  return [
+    {
+      version: settings?.providers?.ollama?.runtime_target_version || DEFAULT_RUNTIME_VERSION,
+      source: "pinned",
+      selected: true,
+      installed: false,
+      recommended: true,
+    },
+  ];
+}
+
+export async function refreshOllamaRuntimeVersionCatalog(force = false): Promise<void> {
+  const now = Date.now();
+  if (!force && now - runtimeVersionCatalogLastRefreshMs < VERSION_CATALOG_REFRESH_TTL_MS) {
+    return;
+  }
+
+  try {
+    const versions = await invoke<OllamaRuntimeVersionInfo[]>("list_ollama_runtime_versions");
+    runtimeVersionCatalog = versions;
+    runtimeVersionCatalogLastRefreshMs = now;
+  } catch (error) {
+    console.warn("Failed to refresh Ollama runtime version catalog:", error);
+    if (runtimeVersionCatalog.length === 0) {
+      runtimeVersionCatalog = [
+        {
+          version: settings?.providers?.ollama?.runtime_target_version || DEFAULT_RUNTIME_VERSION,
+          source: "pinned",
+          selected: true,
+          installed: false,
+          recommended: true,
+        },
+      ];
+    }
+  }
 }
 
 function isModelInstalled(name: string): boolean {
@@ -553,6 +631,8 @@ async function handleDetectRuntime(): Promise<void> {
 
 export async function ensureLocalRuntimeReady(): Promise<void> {
   if (runtimeBusyAction) return;
+  const targetVersion =
+    settings?.providers?.ollama?.runtime_target_version?.trim() || DEFAULT_RUNTIME_VERSION;
 
   setRuntimeBusyAction("ensure-runtime");
   runtimeInstallError = null;
@@ -569,16 +649,23 @@ export async function ensureLocalRuntimeReady(): Promise<void> {
     renderOllamaModelManager();
 
     runtimeDetect = await invoke<OllamaRuntimeDetectResult>("detect_ollama_runtime");
-    if (!runtimeDetect.found) {
+    const installedVersion = runtimeDetect.version?.trim() || "";
+    const preferManaged =
+      settings?.providers?.ollama?.runtime_source?.trim().toLowerCase() === "per_user_zip";
+    const shouldInstall =
+      !runtimeDetect.found ||
+      installedVersion !== targetVersion ||
+      (preferManaged && runtimeDetect.source !== "per_user_zip");
+    if (shouldInstall) {
       flowStage = "download_runtime";
       runtimeInstallProgress = {
         stage: "download_runtime",
-        message: "Downloading runtime archive...",
+        message: `Downloading runtime ${targetVersion}...`,
       };
       renderOllamaModelManager();
 
       const download = await invoke<OllamaRuntimeDownloadResult>("download_ollama_runtime", {
-        version: DEFAULT_RUNTIME_VERSION,
+        version: targetVersion,
       });
       if (!download.sha256_ok) {
         throw new Error("Runtime checksum verification failed.");
@@ -635,14 +722,14 @@ export async function ensureLocalRuntimeReady(): Promise<void> {
     await refreshOllamaRuntimeState();
     await maybePersistWizardState();
 
-    showToast({
-      type: "success",
-      title: installedThisRun ? "Local runtime installed" : "Local runtime ready",
-      message: installedThisRun
-        ? "Install and startup completed. Local Ollama is ready."
+      showToast({
+        type: "success",
+        title: installedThisRun ? "Local runtime installed" : "Local runtime ready",
+        message: installedThisRun
+        ? `Install and startup completed (v${targetVersion}). Local Ollama is ready.`
         : "Local Ollama runtime is running and verified.",
-      duration: 4000,
-    });
+        duration: 4000,
+      });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     runtimeInstallError = {
@@ -678,43 +765,117 @@ async function handleUseSystemRuntime(): Promise<void> {
       throw new Error("Settings are not loaded yet.");
     }
 
-    settings.providers.ollama.runtime_source = "system";
-    settings.providers.ollama.runtime_path = "";
-    await persistCurrentSettings();
+    const previousRuntime = {
+      runtime_source: settings.providers.ollama.runtime_source,
+      runtime_path: settings.providers.ollama.runtime_path,
+      runtime_version: settings.providers.ollama.runtime_version,
+      last_health_check: settings.providers.ollama.last_health_check ?? null,
+    };
 
-    const detect = await invoke<OllamaRuntimeDetectResult>("detect_ollama_runtime");
-    if (!detect.found || detect.source !== "system") {
-      throw new Error("No system Ollama found in PATH.");
-    }
+    try {
+      settings.providers.ollama.runtime_source = "system";
+      settings.providers.ollama.runtime_path = "";
+      await persistCurrentSettings();
 
-    const startResult = await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
-    if (startResult.pending_start) {
-      startRuntimeBackgroundPolling("manual");
+      const detect = await invoke<OllamaRuntimeDetectResult>("detect_ollama_runtime");
+      if (!detect.found || detect.source !== "system") {
+        throw new Error("No system Ollama found in PATH.");
+      }
+
+      const startResult = await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
+      if (startResult.pending_start) {
+        startRuntimeBackgroundPolling("manual");
+        await refreshOllamaRuntimeState({ force: true });
+        showToast({
+          type: "warning",
+          title: "Using system Ollama",
+          message: "System runtime detected and starting in background.",
+          duration: 4200,
+        });
+      } else {
+        runtimeVerify = await invoke<OllamaRuntimeVerifyResult>("verify_ollama_runtime");
+        await refreshOllamaInstalledModels();
+        await refreshOllamaRuntimeState();
+        await maybePersistWizardState();
+
+        showToast({
+          type: "success",
+          title: "Using system Ollama",
+          message: `Detected ${detect.version || "installed version"} from PATH.`,
+          duration: 3500,
+        });
+      }
+    } catch (error) {
+      settings.providers.ollama.runtime_source = previousRuntime.runtime_source;
+      settings.providers.ollama.runtime_path = previousRuntime.runtime_path;
+      settings.providers.ollama.runtime_version = previousRuntime.runtime_version;
+      settings.providers.ollama.last_health_check = previousRuntime.last_health_check;
+      await persistCurrentSettings();
       await refreshOllamaRuntimeState({ force: true });
-      showToast({
-        type: "warning",
-        title: "Using system Ollama",
-        message: "System runtime detected and starting in background.",
-        duration: 4200,
-      });
-    } else {
-      runtimeVerify = await invoke<OllamaRuntimeVerifyResult>("verify_ollama_runtime");
-      await refreshOllamaInstalledModels();
-      await refreshOllamaRuntimeState();
-      await maybePersistWizardState();
-
-      showToast({
-        type: "success",
-        title: "Using system Ollama",
-        message: `Detected ${detect.version || "installed version"} from PATH.`,
-        duration: 3500,
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`${message} Previous runtime selection was restored.`);
     }
   });
 }
 
 export async function useSystemOllamaRuntime(): Promise<void> {
   await handleUseSystemRuntime();
+}
+
+export async function useManagedOllamaRuntime(): Promise<void> {
+  if (runtimeBusyAction) return;
+  if (!settings) {
+    showToast({
+      type: "error",
+      title: "Settings unavailable",
+      message: "Settings are not loaded yet.",
+      duration: 5000,
+    });
+    return;
+  }
+
+  const previousRuntime = {
+    runtime_source: settings.providers.ollama.runtime_source,
+    runtime_path: settings.providers.ollama.runtime_path,
+    runtime_version: settings.providers.ollama.runtime_version,
+    last_health_check: settings.providers.ollama.last_health_check ?? null,
+  };
+
+  settings.providers.ollama.runtime_source = "per_user_zip";
+  settings.providers.ollama.runtime_path = "";
+  await persistCurrentSettings();
+
+  await ensureLocalRuntimeReady();
+  await refreshOllamaRuntimeState({ force: true });
+
+  const managedReady =
+    runtimeDetect?.found &&
+    runtimeDetect.source === "per_user_zip" &&
+    (runtimeVerify?.ok ?? runtimeDetect.is_serving);
+
+  if (!managedReady || runtimeInstallError) {
+    settings.providers.ollama.runtime_source = previousRuntime.runtime_source;
+    settings.providers.ollama.runtime_path = previousRuntime.runtime_path;
+    settings.providers.ollama.runtime_version = previousRuntime.runtime_version;
+    settings.providers.ollama.last_health_check = previousRuntime.last_health_check;
+    await persistCurrentSettings();
+    await refreshOllamaRuntimeState({ force: true });
+    showToast({
+      type: "error",
+      title: "Managed runtime restore failed",
+      message: "Could not switch to managed runtime. Previous runtime selection was restored.",
+      duration: 6500,
+    });
+    return;
+  }
+
+  const managedVersion = runtimeDetect?.version || "";
+  showToast({
+    type: "success",
+    title: "Managed runtime active",
+    message: `Using local managed Ollama ${managedVersion}`.trim(),
+    duration: 3200,
+  });
 }
 
 async function handleStartRuntime(): Promise<void> {
@@ -1023,6 +1184,8 @@ export async function refreshOllamaRuntimeState(
   }
 
   const refreshTask = (async () => {
+    await refreshOllamaRuntimeVersionCatalog(force);
+
     if (!skipDetect) {
       try {
         runtimeDetect = await invoke<OllamaRuntimeDetectResult>("detect_ollama_runtime");
@@ -1059,6 +1222,22 @@ export async function refreshOllamaRuntimeState(
         endpoint,
         models_count: installedOllamaModels.length,
       };
+    }
+
+    activeModelRequiredRuntime = null;
+    const activeModel = settings?.ai_fallback?.model?.trim();
+    if (activeModel) {
+      try {
+        const modelInfo = await invoke<Record<string, unknown>>("get_ollama_model_info", {
+          model: activeModel,
+        });
+        const requiresRaw = modelInfo?.requires;
+        if (typeof requiresRaw === "string" && requiresRaw.trim()) {
+          activeModelRequiredRuntime = requiresRaw.trim().replace(/^v/i, "");
+        }
+      } catch {
+        activeModelRequiredRuntime = null;
+      }
     }
 
     try {

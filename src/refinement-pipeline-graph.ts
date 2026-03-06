@@ -8,7 +8,7 @@ import { settings } from "./state";
 import { getOllamaRuntimeCardState } from "./ollama-models";
 import * as dom from "./dom-refs";
 
-type NodeState = "idle" | "active" | "success" | "bypassed" | "blocked" | "error" | "timeout";
+type NodeState = "idle" | "active" | "success" | "bypassed" | "blocked" | "error" | "timeout" | "warming";
 type EdgeState = "idle" | "active" | "muted";
 type PipelinePhase = "idle" | "raw_emitted" | "refining" | "refined" | "failed" | "timed_out";
 
@@ -78,7 +78,13 @@ function updateLiveSummary(
   if (!dom.refinementPipelineLive) return;
 
   if (!hasJob) {
-    dom.refinementPipelineLive.textContent = describeIdleState(aiEnabled, rulesEnabled);
+    const runtime = getOllamaRuntimeCardState();
+    const localAiPath = isLocalAiPathEnabled();
+    if (localAiPath && (runtime.busy || runtime.backgroundStarting)) {
+      dom.refinementPipelineLive.textContent = "Ollama runtime is starting. AI refiner will activate automatically when ready.";
+    } else {
+      dom.refinementPipelineLive.textContent = describeIdleState(aiEnabled, rulesEnabled);
+    }
     return;
   }
 
@@ -114,11 +120,12 @@ export function renderRefinementPipelineGraph(): void {
   const rulesEnabled = Boolean(settings?.postproc_enabled);
   const localAiPath = isLocalAiPathEnabled();
   const runtime = getOllamaRuntimeCardState();
+  const hasJob = pipelineJobState.phase !== "idle" && pipelineJobState.jobId.trim().length > 0;
   const aiBlocked = localAiPath
     && !runtime.healthy
     && !runtime.busy
     && !runtime.backgroundStarting;
-  const hasJob = pipelineJobState.phase !== "idle" && pipelineJobState.jobId.trim().length > 0;
+  const aiWarming = localAiPath && (runtime.busy || runtime.backgroundStarting) && !runtime.healthy && !hasJob;
 
   const transcribeState: NodeState = !hasJob
     ? "idle"
@@ -136,6 +143,8 @@ export function renderRefinementPipelineGraph(): void {
   let aiState: NodeState = "idle";
   if (!localAiPath) {
     aiState = "bypassed";
+  } else if (aiWarming) {
+    aiState = "warming";
   } else if (aiBlocked) {
     aiState = "blocked";
   } else if (!hasJob) {

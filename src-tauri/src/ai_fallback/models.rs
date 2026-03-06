@@ -193,6 +193,7 @@ pub struct OllamaSettings {
     pub runtime_source: String, // "system" | "per_user_zip" | "manual"
     pub runtime_path: String,
     pub runtime_version: String,
+    pub runtime_target_version: String,
     pub last_health_check: Option<String>,
 }
 
@@ -205,6 +206,7 @@ impl Default for OllamaSettings {
             runtime_source: "manual".to_string(),
             runtime_path: String::new(),
             runtime_version: String::new(),
+            runtime_target_version: "0.17.5".to_string(),
             last_health_check: None,
         }
     }
@@ -230,6 +232,9 @@ impl OllamaSettings {
             && self.runtime_source != "manual"
         {
             self.runtime_source = "manual".to_string();
+        }
+        if self.runtime_target_version.trim().is_empty() {
+            self.runtime_target_version = "0.17.5".to_string();
         }
     }
 }

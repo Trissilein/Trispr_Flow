@@ -791,7 +791,23 @@ async function checkDependencyPreflightOnStartup() {
     }
 
     if (report.warning_count > 0) {
-      const warning = report.items.find((item) => item.status === "warning");
+      const runtimeCard = getOllamaRuntimeCardState();
+      const warning = report.items.find((item) => {
+        if (item.status !== "warning") return false;
+        // Startup race: managed Ollama can still be warming up while preflight runs.
+        // Avoid noisy warning toasts in that short window.
+        if (
+          item.id === "ollama_runtime" &&
+          settings?.ai_fallback?.provider === "ollama" &&
+          (runtimeCard.busy || runtimeCard.backgroundStarting)
+        ) {
+          return false;
+        }
+        return true;
+      });
+      if (!warning) {
+        return;
+      }
       showToast({
         type: "warning",
         title: "Dependency Warnings",

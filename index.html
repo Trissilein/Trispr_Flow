@@ -1359,11 +1359,24 @@
                               <span class="expert-pill" aria-hidden="true">Expert</span>
                             </summary>
                             <div class="ai-provider-advanced-actions">
+                              <label class="field" style="grid-column: 1 / -1;">
+                                <span class="field-label">Install version</span>
+                                <div style="display:flex; gap:8px; align-items:flex-start;">
+                                  <select id="ai-fallback-local-runtime-version" title="Select Ollama runtime version to install or upgrade"></select>
+                                  <button id="ai-fallback-local-runtime-version-refresh" class="hotkey-record-btn" type="button" title="Refresh available online runtime versions">
+                                    Refresh versions
+                                  </button>
+                                </div>
+                                <span id="ai-fallback-local-runtime-version-note" class="field-hint">Version catalog is loaded from pinned + online releases.</span>
+                              </label>
                               <button id="ai-fallback-local-detect-action" class="hotkey-record-btn" type="button" title="Scan for local/runtime PATH installation">
                                 Detect
                               </button>
                               <button id="ai-fallback-local-use-system-action" class="hotkey-record-btn" type="button" title="Use Ollama from system PATH">
                                 Use system
+                              </button>
+                              <button id="ai-fallback-local-use-managed-action" class="hotkey-record-btn" type="button" title="Switch back to managed local Ollama runtime">
+                                Use managed
                               </button>
                               <button id="ai-fallback-local-verify-action" class="hotkey-record-btn" type="button" title="Verify local runtime health and models">
                                 Verify

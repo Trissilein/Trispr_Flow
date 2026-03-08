@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 #[cfg(target_os = "windows")]
 use std::process::Command;
 
@@ -121,20 +123,52 @@ fn list_windows_voices() -> Vec<TtsVoiceInfo> {
 pub fn list_tts_voices(provider: &str) -> Vec<TtsVoiceInfo> {
     match provider {
         "windows_native" => list_windows_voices(),
-        "local_custom" => vec![
-            TtsVoiceInfo {
-                id: "local_custom_default".to_string(),
-                label: "Local Custom Voice (default)".to_string(),
-                provider: "local_custom".to_string(),
-            },
-            TtsVoiceInfo {
-                id: "local_custom_neutral".to_string(),
-                label: "Local Custom Voice (neutral)".to_string(),
-                provider: "local_custom".to_string(),
-            },
-        ],
         _ => Vec::new(),
     }
+}
+
+/// Scan `model_dir` for Piper voice models (.onnx files) and return them as voice options.
+/// Falls back to checking `%LOCALAPPDATA%\trispr-flow\piper\voices\` when `model_dir` is empty.
+pub fn list_piper_voices(model_dir: &str) -> Vec<TtsVoiceInfo> {
+    let dir = if !model_dir.is_empty() {
+        std::path::PathBuf::from(model_dir)
+    } else if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        std::path::PathBuf::from(local_app_data)
+            .join("trispr-flow")
+            .join("piper")
+            .join("voices")
+    } else {
+        return Vec::new();
+    };
+
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+
+    let mut voices: Vec<TtsVoiceInfo> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map_or(false, |ext| ext.eq_ignore_ascii_case("onnx"))
+        })
+        .map(|e| {
+            let path = e.path();
+            let label = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            TtsVoiceInfo {
+                id: path.to_string_lossy().to_string(), // full path used as ID
+                label,
+                provider: "local_custom".to_string(),
+            }
+        })
+        .collect();
+
+    voices.sort_by(|a, b| a.label.cmp(&b.label));
+    voices
 }
 
 #[cfg(target_os = "windows")]
@@ -169,4 +203,191 @@ pub fn speak_windows_native(text: &str, rate: f32, volume: f32) -> Result<(), St
 #[cfg(not(target_os = "windows"))]
 pub fn speak_windows_native(_text: &str, _rate: f32, _volume: f32) -> Result<(), String> {
     Err("Windows native TTS is only available on Windows.".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Piper TTS — local neural voice engine
+// ---------------------------------------------------------------------------
+
+/// Resolve the piper binary path.
+/// Search order: configured path → PATH → %LOCALAPPDATA%\trispr-flow\piper\piper.exe
+fn resolve_piper_binary(configured: &str) -> Option<std::path::PathBuf> {
+    if !configured.is_empty() {
+        let p = std::path::PathBuf::from(configured);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    if let Ok(p) = which::which("piper") {
+        return Some(p);
+    }
+    if let Ok(p) = which::which("piper.exe") {
+        return Some(p);
+    }
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let p = std::path::PathBuf::from(local_app_data)
+            .join("trispr-flow")
+            .join("piper")
+            .join("piper.exe");
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Synthesise `text` with Piper and play the result synchronously.
+///
+/// `rate` controls speech speed (0.5 = half speed, 2.0 = double speed).
+/// Piper maps this to `--length_scale` (inverse: 1/rate).
+/// `volume` scales WAV samples before playback (0.0..1.0).
+pub fn speak_piper(
+    text: &str,
+    binary_path: &str,
+    model_path: &str,
+    rate: f32,
+    volume: f32,
+) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("TTS text is empty.".to_string());
+    }
+
+    let binary = resolve_piper_binary(binary_path).ok_or_else(|| {
+        "Piper TTS binary not found. Install piper or set piper_binary_path in Voice Output settings.".to_string()
+    })?;
+
+    if model_path.is_empty() {
+        return Err(
+            "No Piper voice model configured. Set piper_model_path in Voice Output settings."
+                .to_string(),
+        );
+    }
+    if !std::path::Path::new(model_path).is_file() {
+        return Err(format!("Piper model not found: {model_path}"));
+    }
+
+    // Unique temp file per call to avoid collisions when called concurrently.
+    let temp_path = std::env::temp_dir().join(format!(
+        "trispr_tts_{}.wav",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    ));
+
+    // Piper's --length_scale is the inverse of speed rate.
+    let length_scale = format!("{:.3}", (1.0_f32 / rate.clamp(0.25, 4.0)));
+
+    let mut child = Command::new(&binary)
+        .args([
+            "--model",
+            model_path,
+            "--output_file",
+            temp_path.to_str().unwrap_or(""),
+            "--length_scale",
+            &length_scale,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to start piper: {e}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(text.as_bytes());
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("Piper process error: {e}"))?;
+
+    if !status.success() {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("Piper exited with status {status}"));
+    }
+
+    if !temp_path.is_file() {
+        return Err("Piper produced no output file.".to_string());
+    }
+
+    let play_result = play_wav_blocking(&temp_path, volume);
+    let _ = std::fs::remove_file(&temp_path);
+    play_result
+}
+
+/// Read a WAV file and play it synchronously via cpal.
+///
+/// WASAPI shared mode performs internal SRC so no manual resampling is needed
+/// for common Piper output rates (16 000 / 22 050 Hz).
+fn play_wav_blocking(path: &std::path::Path, volume: f32) -> Result<(), String> {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+    let reader =
+        hound::WavReader::open(path).map_err(|e| format!("Cannot read WAV: {e}"))?;
+    let spec = reader.spec();
+
+    let vol = volume.clamp(0.0, 1.0);
+    let samples: Vec<f32> = reader
+        .into_samples::<i16>()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("WAV decode error: {e}"))?
+        .into_iter()
+        .map(|s| (s as f32 / i16::MAX as f32) * vol)
+        .collect();
+
+    if samples.is_empty() {
+        return Ok(());
+    }
+
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or_else(|| "No audio output device found".to_string())?;
+
+    let config = cpal::StreamConfig {
+        channels: spec.channels,
+        sample_rate: cpal::SampleRate(spec.sample_rate),
+        buffer_size: cpal::BufferSize::Default,
+    };
+
+    let total = samples.len();
+    let samples = Arc::new(samples);
+    let pos = Arc::new(AtomicUsize::new(0));
+    let (done_tx, done_rx) = std::sync::mpsc::sync_channel::<()>(1);
+
+    let samples_c = samples.clone();
+    let pos_c = pos.clone();
+    let mut notified = false;
+
+    let stream = device
+        .build_output_stream(
+            &config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                for out in data.iter_mut() {
+                    let p = pos_c.fetch_add(1, Ordering::Relaxed);
+                    *out = if p < total { samples_c[p] } else { 0.0 };
+                }
+                if !notified && pos_c.load(Ordering::Relaxed) >= total {
+                    notified = true;
+                    let _ = done_tx.try_send(());
+                }
+            },
+            |err| tracing::error!("Piper cpal playback error: {err}"),
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+
+    stream.play().map_err(|e| e.to_string())?;
+
+    // Timeout = audio duration + 2 s grace, minimum 5 s.
+    let duration_secs = total as u64 / spec.sample_rate as u64 / spec.channels as u64;
+    let timeout = std::time::Duration::from_secs(duration_secs.max(3) + 2);
+    let _ = done_rx.recv_timeout(timeout);
+
+    drop(stream);
+    Ok(())
 }

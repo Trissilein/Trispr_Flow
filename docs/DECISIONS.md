@@ -332,6 +332,19 @@ Last updated: 2026-03-06
 - Context: Block L had functional delivery completed but hardening tasks remained partially tracked.
 - Why: Prevents premature milestone closure and keeps publish safety/recovery behavior auditable.
 
+### DEC-051 TTS natural voice engine selection (2026-03-08)
+
+- Status: `accepted`
+- Decision: Use **Piper TTS** as the `local_custom` provider for the mainline app. Reserve **Kokoro TTS** for the separate `analysis-module-branch` / VibeVoice integration path.
+- Context: Evaluated four local neural TTS options (Piper, Kokoro, Coqui XTTS-v2, Edge TTS). The `local_custom` lane needs an offline, natural-sounding, low-latency engine. Kokoro has better audio quality but requires a Python sidecar and GPU. Piper is a standalone binary (~25 MB), supports German voices out of the box, achieves < 200 ms latency on CPU, and integrates as a Tauri sidecar/PATH binary with zero new runtime dependencies.
+- Why: Piper aligns with offline-first principle; no Python sidecar needed; ~1.5 days of integration work. Kokoro's quality advantage is better suited to the VibeVoice analysis workflow where Python is already present and GPU time is available.
+- Implementation notes:
+  - Piper binary resolved via `piper_binary_path` setting → PATH → `%LOCALAPPDATA%\trispr-flow\piper\piper.exe`
+  - Active model path stored in `piper_model_path` (`VoiceOutputSettings`)
+  - Voice model directory scanned for `.onnx` files stored in `piper_model_dir`
+  - Synthesis: `piper.exe --model <model.onnx> --output_file <tmp.wav>` then cpal WAV playback
+  - Fallback: `local_custom` → `windows_native` (existing chain)
+
 ## Open Decisions
 
 ### DEC-011 Optional backend scope

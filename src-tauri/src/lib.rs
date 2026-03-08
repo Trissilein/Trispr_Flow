@@ -2071,8 +2071,23 @@ fn list_tts_providers() -> Vec<crate::multimodal_io::TtsProviderInfo> {
 }
 
 #[tauri::command]
-fn list_tts_voices(provider: Option<String>) -> Vec<crate::multimodal_io::TtsVoiceInfo> {
-    crate::multimodal_io::list_tts_voices(provider.as_deref().unwrap_or("windows_native"))
+fn list_tts_voices(
+    state: State<'_, AppState>,
+    provider: Option<String>,
+) -> Vec<crate::multimodal_io::TtsVoiceInfo> {
+    let provider = provider.as_deref().unwrap_or("windows_native");
+    if provider == "local_custom" {
+        let model_dir = state
+            .settings
+            .lock()
+            .unwrap()
+            .voice_output_settings
+            .piper_model_dir
+            .clone();
+        crate::multimodal_io::list_piper_voices(&model_dir)
+    } else {
+        crate::multimodal_io::list_tts_voices(provider)
+    }
 }
 
 #[tauri::command]
@@ -2112,6 +2127,10 @@ fn speak_tts(
         }),
     );
 
+    // Capture piper settings before entering the thread.
+    let piper_binary_path = voice_settings.piper_binary_path.clone();
+    let piper_model_path = voice_settings.piper_model_path.clone();
+
     let preferred_provider_for_thread = preferred_provider.clone();
     let fallback_provider_for_thread = fallback_provider.clone();
     let app_c = app.clone();
@@ -2119,11 +2138,13 @@ fn speak_tts(
         let attempt = |provider: &str| -> Result<(), String> {
             match provider {
                 "windows_native" => crate::multimodal_io::speak_windows_native(&text, rate, volume),
-                "local_custom" => {
-                    // Placeholder local path: keep dual-provider API active while
-                    // we benchmark and wire custom runtime in Block N.
-                    crate::multimodal_io::speak_windows_native(&text, rate, volume)
-                }
+                "local_custom" => crate::multimodal_io::speak_piper(
+                    &text,
+                    &piper_binary_path,
+                    &piper_model_path,
+                    rate,
+                    volume,
+                ),
                 _ => Err(format!("Unknown TTS provider '{}'.", provider)),
             }
         };

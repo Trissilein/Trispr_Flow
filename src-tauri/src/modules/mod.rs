@@ -217,6 +217,12 @@ pub struct VoiceOutputSettings {
     pub rate: f32,   // 0.5..2.0
     pub volume: f32, // 0.0..1.0
     pub output_policy: String, // "agent_replies_only" | "replies_and_events" | "explicit_only"
+    /// Full path to piper.exe. Empty = auto-resolve via PATH or %LOCALAPPDATA%\trispr-flow\piper\
+    pub piper_binary_path: String,
+    /// Full path to the active Piper voice model (.onnx file).
+    pub piper_model_path: String,
+    /// Directory to scan for available Piper voice models (.onnx files).
+    pub piper_model_dir: String,
 }
 
 impl Default for VoiceOutputSettings {
@@ -230,6 +236,9 @@ impl Default for VoiceOutputSettings {
             rate: 1.0,
             volume: 1.0,
             output_policy: "agent_replies_only".to_string(),
+            piper_binary_path: String::new(),
+            piper_model_path: String::new(),
+            piper_model_dir: String::new(),
         }
     }
 }

@@ -310,9 +310,9 @@ Goal: Introduce a managed module platform and deliver a production-ready first m
 
 ---
 
-### Block M: Workflow-Agent Voice Automation --- IN PROGRESS
+### Block M: Workflow-Agent Voice Automation --- COMPLETE ✅
 
-**Duration**: 5-6 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block L hardening + Block F | **Status**: In progress
+**Duration**: 5-6 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block L hardening + Block F | **Status**: Complete ✅ (closed 2026-03-08)
 
 Goal: Ship an optional `workflow_agent` module that converts wakeword-triggered transcript commands into safe plan+confirm GDD execution.
 
@@ -326,10 +326,10 @@ Goal: Ship an optional `workflow_agent` module that converts wakeword-triggered 
 | M6 | Agent event bus wiring | Medium | M5 | DONE | Added `agent:*` progress/finish/fail events and frontend listeners. |
 | M7 | Agent Console UI (Modules tab) | Medium | M4, M6 | DONE | Added Workflow Agent Console with parse, candidate select, language target, plan, and execute controls. |
 | M8 | Wakeword runtime hookup | Medium | M3, M7 | DONE | Frontend listens to `transcription:raw-result`, detects wakeword, and triggers parser pipeline. |
-| M9 | Candidate confirm hardening | Medium | M7 | PLANNED | Add stronger disambiguation affordances and false-positive suppression polish. |
-| M10 | Language target enforcement UX | Medium | M7 | PLANNED | Keep “always ask target language” mandatory before execute, including stricter validation copy. |
-| M11 | Workflow-agent regression tests | High | M8, M9, M10 | PLANNED | Add parser/session scorer/unit tests + integration tests for confirm-before-execute path. |
-| M12 | v0.8.1 release hardening | High | M11 | PLANNED | Final QA pass, telemetry review, and rollout checklist for workflow-agent release. |
+| M9 | Candidate confirm hardening | Medium | M7 | DONE | Removed auto-select; disambiguation warning when top-2 score diff < 0.1; topic/temporal hint feedback in log. |
+| M10 | Language target enforcement UX | Medium | M7 | DONE | `languageExplicitlySet` flag resets per parse; backend validates `target_language` against ALLOWED_LANGUAGES. |
+| M11 | Workflow-agent regression tests | High | M8, M9, M10 | DONE | 16 Rust unit tests (parse_command/score_sessions/build_sessions) + 14 TS tests (WA-S1/S2/S3). All 154 tests green. |
+| M12 | v0.8.1 release hardening | High | M11 | DONE | ROADMAP + CHANGELOG + TASK_SCHEDULE updated; `.claude/ROADMAP.md` redirect stub created. |
 
 ---
 

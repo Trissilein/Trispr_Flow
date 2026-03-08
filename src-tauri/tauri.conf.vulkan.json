@@ -42,7 +42,15 @@
       "bin/vulkan/ggml-base.dll": "bin/vulkan/ggml-base.dll",
       "bin/vulkan/ggml-cpu.dll": "bin/vulkan/ggml-cpu.dll",
       "bin/vulkan/ggml-vulkan.dll": "bin/vulkan/ggml-vulkan.dll",
-      "bin/quantize.exe": "bin/quantize.exe"
+      "bin/quantize.exe": "bin/quantize.exe",
+      "bin/piper/piper.exe": "bin/piper/piper.exe",
+      "bin/piper/onnxruntime.dll": "bin/piper/onnxruntime.dll",
+      "bin/piper/onnxruntime_providers_shared.dll": "bin/piper/onnxruntime_providers_shared.dll",
+      "bin/piper/espeak-ng-data/**/*": "bin/piper/espeak-ng-data",
+      "bin/piper/voices/de_DE-thorsten-medium.onnx": "bin/piper/voices/de_DE-thorsten-medium.onnx",
+      "bin/piper/voices/de_DE-thorsten-medium.onnx.json": "bin/piper/voices/de_DE-thorsten-medium.onnx.json",
+      "bin/piper/voices/en_US-amy-medium.onnx": "bin/piper/voices/en_US-amy-medium.onnx",
+      "bin/piper/voices/en_US-amy-medium.onnx.json": "bin/piper/voices/en_US-amy-medium.onnx.json"
     },
     "windows": {
       "nsis": {

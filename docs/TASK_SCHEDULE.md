@@ -346,7 +346,7 @@ Goal: Add optional capability modules `input_vision` and `output_voice_tts` and 
 | N3 | Vision command surface | High | N2 | DONE | Added `list_screen_sources`, `start_vision_stream`, `stop_vision_stream`, `get_vision_stream_health`, `capture_vision_snapshot`. |
 | N4 | TTS command surface | High | N2 | DONE | Added `list_tts_providers`, `list_tts_voices`, `speak_tts`, `stop_tts`, `test_tts_provider`. |
 | N5 | Vision runtime hardening | High | N3 | PLANNED | Replace metadata-only stream with production screen-frame pipeline and bounded RAM ring buffer policy enforcement. |
-| N6 | Local custom TTS backend hardening | High | N4 | PLANNED | Replace placeholder route with real local custom engine implementation. |
+| N6 | Local custom TTS backend hardening | High | N4 | DONE | Piper TTS integrated: `speak_piper()` + `play_wav_blocking()` in `multimodal_io.rs`; 4-level binary/model auto-discovery; `VoiceOutputSettings` extended; NSIS installer bundles `piper.exe`, DLLs, `espeak-ng-data/`, `de_DE-thorsten-medium` + `en_US-amy-medium` models; `scripts/setup-piper.ps1` downloads assets. |
 | N7 | Agent capability bridge | Medium | M8, N3, N4 | PLANNED | Route vision and TTS usage through workflow-agent only when corresponding module is active. |
 | N8 | Voice output policy enforcement | Medium | N4 | PLANNED | Enforce `agent replies only` default plus optional policy modes in UX. |
 | N9 | Privacy + consent UX hardening | Medium | N5 | PLANNED | Improve consent and in-app status messaging for screen capture and voice output. |

@@ -67,8 +67,8 @@ pub fn list_tts_providers() -> Vec<TtsProviderInfo> {
         },
         TtsProviderInfo {
             id: "local_custom".to_string(),
-            label: "Local Custom TTS".to_string(),
-            available: true,
+            label: "Local Custom TTS (Piper)".to_string(),
+            available: resolve_piper_binary("").is_some(),
         },
     ]
 }
@@ -127,18 +127,13 @@ pub fn list_tts_voices(provider: &str) -> Vec<TtsVoiceInfo> {
     }
 }
 
-/// Scan `model_dir` for Piper voice models (.onnx files) and return them as voice options.
-/// Falls back to checking `%LOCALAPPDATA%\trispr-flow\piper\voices\` when `model_dir` is empty.
+/// Scan the resolved piper voice model directory for `.onnx` files.
+/// `model_dir` overrides auto-discovery when non-empty; otherwise the bundled
+/// installer path and %LOCALAPPDATA% fallback are tried automatically.
 pub fn list_piper_voices(model_dir: &str) -> Vec<TtsVoiceInfo> {
-    let dir = if !model_dir.is_empty() {
-        std::path::PathBuf::from(model_dir)
-    } else if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-        std::path::PathBuf::from(local_app_data)
-            .join("trispr-flow")
-            .join("piper")
-            .join("voices")
-    } else {
-        return Vec::new();
+    let dir = match resolve_piper_model_dir(model_dir) {
+        Some(d) => d,
+        None => return Vec::new(),
     };
 
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -210,7 +205,11 @@ pub fn speak_windows_native(_text: &str, _rate: f32, _volume: f32) -> Result<(),
 // ---------------------------------------------------------------------------
 
 /// Resolve the piper binary path.
-/// Search order: configured path → PATH → %LOCALAPPDATA%\trispr-flow\piper\piper.exe
+/// Search order:
+///   1. Configured path (settings.piper_binary_path)
+///   2. PATH
+///   3. Tauri resource dir: <exe_dir>/resources/bin/piper/piper.exe  (bundled with installer)
+///   4. %LOCALAPPDATA%\trispr-flow\piper\piper.exe                   (manual install)
 fn resolve_piper_binary(configured: &str) -> Option<std::path::PathBuf> {
     if !configured.is_empty() {
         let p = std::path::PathBuf::from(configured);
@@ -224,12 +223,61 @@ fn resolve_piper_binary(configured: &str) -> Option<std::path::PathBuf> {
     if let Ok(p) = which::which("piper.exe") {
         return Some(p);
     }
+    // Bundled with installer: <exe_dir>/resources/bin/piper/piper.exe
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bundled = exe_dir
+                .join("resources")
+                .join("bin")
+                .join("piper")
+                .join("piper.exe");
+            if bundled.is_file() {
+                return Some(bundled);
+            }
+        }
+    }
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
         let p = std::path::PathBuf::from(local_app_data)
             .join("trispr-flow")
             .join("piper")
             .join("piper.exe");
         if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Resolve the piper voice model directory.
+/// Search order:
+///   1. Configured path (settings.piper_model_dir)
+///   2. Tauri resource dir: <exe_dir>/resources/bin/piper/voices/  (bundled with installer)
+///   3. %LOCALAPPDATA%\trispr-flow\piper\voices\                    (manual install)
+fn resolve_piper_model_dir(configured: &str) -> Option<std::path::PathBuf> {
+    if !configured.is_empty() {
+        let p = std::path::PathBuf::from(configured);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bundled = exe_dir
+                .join("resources")
+                .join("bin")
+                .join("piper")
+                .join("voices");
+            if bundled.is_dir() {
+                return Some(bundled);
+            }
+        }
+    }
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let p = std::path::PathBuf::from(local_app_data)
+            .join("trispr-flow")
+            .join("piper")
+            .join("voices");
+        if p.is_dir() {
             return Some(p);
         }
     }
@@ -260,15 +308,24 @@ pub fn speak_piper(
         "Piper TTS binary not found. Install piper or set piper_binary_path in Voice Output settings.".to_string()
     })?;
 
-    if model_path.is_empty() {
-        return Err(
-            "No Piper voice model configured. Set piper_model_path in Voice Output settings."
-                .to_string(),
-        );
-    }
-    if !std::path::Path::new(model_path).is_file() {
-        return Err(format!("Piper model not found: {model_path}"));
-    }
+    // Resolve model path: use explicit setting, else auto-pick the first voice from the voices dir.
+    let resolved_model: String = if !model_path.is_empty() {
+        if !std::path::Path::new(model_path).is_file() {
+            return Err(format!("Piper model not found: {model_path}"));
+        }
+        model_path.to_string()
+    } else {
+        // Auto-discover: take the first .onnx in the bundled/configured voices dir.
+        let voices = list_piper_voices("");
+        voices
+            .into_iter()
+            .next()
+            .map(|v| v.id)
+            .ok_or_else(|| {
+                "No Piper voice model found. Run scripts/setup-piper.ps1 or set piper_model_path.".to_string()
+            })?
+    };
+    let model_path = resolved_model.as_str();
 
     // Unique temp file per call to avoid collisions when called concurrently.
     let temp_path = std::env::temp_dir().join(format!(

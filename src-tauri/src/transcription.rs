@@ -497,9 +497,20 @@ pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppStat
         let _ = tx.send(());
     }
     if let Some(handle) = join_handle {
+        // Join with a timeout so the WASAPI client is fully released before
+        // a new monitor can start. The loopback loop checks stop_rx every ~10 ms,
+        // so in the normal case this completes in < 50 ms.
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
         thread::spawn(move || {
             let _ = handle.join();
+            let _ = done_tx.send(());
         });
+        if done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .is_err()
+        {
+            warn!("Transcribe monitor thread did not exit within 2 s after stop signal");
+        }
     }
 }
 
@@ -1012,6 +1023,18 @@ fn decode_wasapi_mono(
     mono
 }
 
+/// Returns true when the WASAPI error is AUDCLNT_E_DEVICE_INVALIDATED (0x88890004),
+/// which Windows raises when the audio endpoint is unplugged, reset, or the default
+/// render device changes. The loopback monitor should reconnect automatically.
+#[cfg(target_os = "windows")]
+fn is_wasapi_device_invalidated(e: &wasapi::WasapiError) -> bool {
+    const AUDCLNT_E_DEVICE_INVALIDATED: i32 = 0x88890004u32 as i32;
+    matches!(
+        e,
+        wasapi::WasapiError::Windows(win_err) if win_err.code().0 == AUDCLNT_E_DEVICE_INVALIDATED
+    )
+}
+
 #[cfg(target_os = "windows")]
 fn run_transcribe_loopback(
     app: AppHandle,
@@ -1023,108 +1046,148 @@ fn run_transcribe_loopback(
     if hr.0 < 0 {
         return Err(format!("WASAPI init error: 0x{:X}", hr.0));
     }
-    let device = resolve_output_device(&settings.transcribe_output_device)
-        .ok_or_else(|| "Output device not found".to_string())?;
-    // Try to open the audio client, with one retry after a short delay.
-    // WASAPI can fail on the first call when the audio subsystem is not yet fully
-    // initialised at app start. Retrying avoids a silent fallback to the wrong device.
-    let mut audio_client = match device.get_iaudioclient() {
-        Ok(client) => client,
-        Err(first_err) => {
-            tracing::warn!(
-                "WASAPI: get_iaudioclient() failed for '{}': {first_err}. Retrying in 400 ms.",
-                settings.transcribe_output_device
-            );
-            std::thread::sleep(std::time::Duration::from_millis(400));
-            device.get_iaudioclient().map_err(|e| {
-                format!(
-                    "WASAPI: could not open audio client for '{}' after retry: {e}",
-                    settings.transcribe_output_device
-                )
-            })?
-        }
-    };
 
-    let format = audio_client
-        .get_mixformat()
-        .map_err(|e| format!("WASAPI format error: {e}"))?;
-
-    let channels = format.get_nchannels() as usize;
-    let sample_rate = format.get_samplespersec();
-    let bytes_per_sample = (format.get_bitspersample() as usize / 8).max(1);
-    let bytes_per_frame = format.get_blockalign() as usize;
-    let sample_format = format
-        .get_subformat()
-        .map_err(|e| format!("WASAPI sample type error: {e}"))?;
-
-    let stream_mode = wasapi::StreamMode::PollingShared {
-        autoconvert: true,
-        buffer_duration_hns: 200_000,
-    };
-    audio_client
-        .initialize_client(&format, &wasapi::Direction::Capture, &stream_mode)
-        .map_err(|e| format!("WASAPI init error: {e}"))?;
-
-    let capture_client = audio_client
-        .get_audiocaptureclient()
-        .map_err(|e| format!("WASAPI capture error: {e}"))?;
-
-    audio_client.start_stream().map_err(|e| e.to_string())?;
-
-    let mut segmenter = AdaptiveSegmenter::new(system_segmenter_config(&settings));
-    let mut last_backpressure_check = Instant::now();
-    let mut gain = (10.0f32).powf(settings.transcribe_input_gain_db / 20.0);
-    let mut vad_enabled = settings.transcribe_vad_mode;
-    let mut vad_threshold = settings.transcribe_vad_threshold;
-    let mut vad_silence_ms = settings.transcribe_vad_silence_ms;
-    let mut last_settings_check = Instant::now();
-    let mut vad_last_hit_ms = Instant::now();
-
-    let worker_app = app.clone();
-    let worker_settings = settings.clone();
-    let worker_queue = queue.clone();
+    // The worker thread lives for the entire monitor lifetime — it survives device
+    // reconnects because it only reads from the queue, which stays open until teardown.
     let transcribing = Arc::new(AtomicBool::new(false));
-    let worker_transcribing = transcribing.clone();
-    let worker_handle = thread::spawn(move || {
-        transcribe_worker(
-            worker_app,
-            worker_settings,
-            worker_queue,
-            worker_transcribing,
-        );
-    });
-
-    let mut buffer = CaptureBuffer::default();
-    let mut smooth_level = 0.0f32;
-    let mut last_emit = Instant::now();
-    let mut last_idle_emit = Instant::now();
-    let mut last_activity = Instant::now();
-    let mut has_activity = false;
-    let mut last_state = "idle";
-    let mut was_transcribing = false;
-    let mut monitor_threshold = if vad_enabled {
-        vad_threshold
-    } else {
-        VAD_THRESHOLD_SUSTAIN_DEFAULT
-    };
-    let mut idle_grace_ms = if vad_enabled {
-        vad_silence_ms
-    } else {
-        TRANSCRIBE_IDLE_METER_MS
+    let worker_handle = {
+        let app = app.clone();
+        let settings = settings.clone();
+        let queue = queue.clone();
+        let transcribing = transcribing.clone();
+        thread::spawn(move || transcribe_worker(app, settings, queue, transcribing))
     };
 
-    loop {
+    // Reconnect loop: re-initialises the WASAPI session on device invalidation.
+    // The worker thread and the queue remain untouched across iterations.
+    const MAX_RECONNECTS: u32 = 10;
+    let mut reconnect_count = 0u32;
+
+    'reconnect: loop {
+        // Check stop signal before each (re)connect attempt.
         match stop_rx.try_recv() {
             Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
 
-        let packet_frames = capture_client
-            .get_next_packet_size()
-            .map_err(|e| e.to_string())?;
-        let packet_frames = match packet_frames {
-            Some(value) => value,
-            None => {
+        let device = resolve_output_device(&settings.transcribe_output_device)
+            .ok_or_else(|| "Output device not found".to_string())?;
+        // Try to open the audio client, with one retry after a short delay.
+        // WASAPI can fail on the first call when the audio subsystem is not yet fully
+        // initialised at app start. Retrying avoids a silent fallback to the wrong device.
+        let mut audio_client = match device.get_iaudioclient() {
+            Ok(client) => client,
+            Err(first_err) => {
+                tracing::warn!(
+                    "WASAPI: get_iaudioclient() failed for '{}': {first_err}. Retrying in 400 ms.",
+                    settings.transcribe_output_device
+                );
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                device.get_iaudioclient().map_err(|e| {
+                    format!(
+                        "WASAPI: could not open audio client for '{}' after retry: {e}",
+                        settings.transcribe_output_device
+                    )
+                })?
+            }
+        };
+
+        let format = audio_client
+            .get_mixformat()
+            .map_err(|e| format!("WASAPI format error: {e}"))?;
+
+        let channels = format.get_nchannels() as usize;
+        let sample_rate = format.get_samplespersec();
+        let bytes_per_sample = (format.get_bitspersample() as usize / 8).max(1);
+        let bytes_per_frame = format.get_blockalign() as usize;
+        let sample_format = format
+            .get_subformat()
+            .map_err(|e| format!("WASAPI sample type error: {e}"))?;
+
+        let stream_mode = wasapi::StreamMode::PollingShared {
+            autoconvert: true,
+            buffer_duration_hns: 200_000,
+        };
+        audio_client
+            .initialize_client(&format, &wasapi::Direction::Capture, &stream_mode)
+            .map_err(|e| format!("WASAPI init error: {e}"))?;
+
+        let capture_client = audio_client
+            .get_audiocaptureclient()
+            .map_err(|e| format!("WASAPI capture error: {e}"))?;
+
+        audio_client.start_stream().map_err(|e| e.to_string())?;
+
+        // Per-session state — reset on every reconnect so stale data is discarded.
+        let mut segmenter = AdaptiveSegmenter::new(system_segmenter_config(&settings));
+        let mut last_backpressure_check = Instant::now();
+        let mut gain = (10.0f32).powf(settings.transcribe_input_gain_db / 20.0);
+        let mut vad_enabled = settings.transcribe_vad_mode;
+        let mut vad_threshold = settings.transcribe_vad_threshold;
+        let mut vad_silence_ms = settings.transcribe_vad_silence_ms;
+        let mut last_settings_check = Instant::now();
+        let mut vad_last_hit_ms = Instant::now();
+
+        let mut buffer = CaptureBuffer::default();
+        let mut smooth_level = 0.0f32;
+        let mut last_emit = Instant::now();
+        let mut last_idle_emit = Instant::now();
+        let mut last_activity = Instant::now();
+        let mut has_activity = false;
+        let mut last_state = "idle";
+        let mut was_transcribing = false;
+        let mut monitor_threshold = if vad_enabled {
+            vad_threshold
+        } else {
+            VAD_THRESHOLD_SUSTAIN_DEFAULT
+        };
+        let mut idle_grace_ms = if vad_enabled {
+            vad_silence_ms
+        } else {
+            TRANSCRIBE_IDLE_METER_MS
+        };
+
+        // `reconnect_requested` separates "device invalidated → retry" from normal stop,
+        // so the flush + cleanup code below always runs regardless of exit reason.
+        let mut reconnect_requested = false;
+
+        loop {
+            match stop_rx.try_recv() {
+                Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+
+            let packet_frames = match capture_client.get_next_packet_size() {
+                Ok(v) => v,
+                Err(e) => {
+                    if is_wasapi_device_invalidated(&e) && reconnect_count < MAX_RECONNECTS {
+                        reconnect_count += 1;
+                        warn!(
+                            "WASAPI device invalidated, reconnecting (attempt {}/{})",
+                            reconnect_count, MAX_RECONNECTS
+                        );
+                        let _ = app.emit("transcribe:state", "idle");
+                        let _ = app.emit("transcribe:level", 0.0f32);
+                        let _ = app.emit("transcribe:db", -60.0f32);
+                        reconnect_requested = true;
+                        break;
+                    }
+                    return Err(e.to_string());
+                }
+            };
+            let packet_frames = match packet_frames {
+                Some(value) => value,
+                None => {
+                    if last_idle_emit.elapsed() >= Duration::from_millis(TRANSCRIBE_IDLE_METER_MS) {
+                        let _ = app.emit("transcribe:level", 0.0f32);
+                        let _ = app.emit("transcribe:db", -60.0f32);
+                        last_idle_emit = Instant::now();
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+            };
+            if packet_frames == 0 {
                 if last_idle_emit.elapsed() >= Duration::from_millis(TRANSCRIBE_IDLE_METER_MS) {
                     let _ = app.emit("transcribe:level", 0.0f32);
                     let _ = app.emit("transcribe:db", -60.0f32);
@@ -1133,167 +1196,180 @@ fn run_transcribe_loopback(
                 thread::sleep(Duration::from_millis(10));
                 continue;
             }
-        };
-        if packet_frames == 0 {
-            if last_idle_emit.elapsed() >= Duration::from_millis(TRANSCRIBE_IDLE_METER_MS) {
-                let _ = app.emit("transcribe:level", 0.0f32);
-                let _ = app.emit("transcribe:db", -60.0f32);
-                last_idle_emit = Instant::now();
-            }
-            thread::sleep(Duration::from_millis(10));
-            continue;
-        }
 
-        let mut raw = vec![0u8; packet_frames as usize * bytes_per_frame];
-        let (frames_read, _) = capture_client
-            .read_from_device(&mut raw)
-            .map_err(|e| e.to_string())?;
-        if frames_read == 0 {
-            continue;
-        }
-
-        let valid_bytes = frames_read as usize * bytes_per_frame;
-        if last_settings_check.elapsed() >= Duration::from_millis(200) {
-            if let Ok(current) = app.state::<AppState>().settings.lock() {
-                gain = (10.0f32).powf(current.transcribe_input_gain_db / 20.0);
-                vad_enabled = current.transcribe_vad_mode;
-                vad_threshold = current.transcribe_vad_threshold;
-                vad_silence_ms = current.transcribe_vad_silence_ms;
-                segmenter.update_config(system_segmenter_config(&current));
-                monitor_threshold = if vad_enabled {
-                    vad_threshold
-                } else {
-                    VAD_THRESHOLD_SUSTAIN_DEFAULT
-                };
-                idle_grace_ms = if vad_enabled {
-                    vad_silence_ms
-                } else {
-                    TRANSCRIBE_IDLE_METER_MS
-                };
-            }
-            last_settings_check = Instant::now();
-        }
-
-        let mut mono = decode_wasapi_mono(
-            &raw[..valid_bytes],
-            channels,
-            bytes_per_sample,
-            sample_format,
-        );
-        if mono.is_empty() {
-            continue;
-        }
-
-        if gain != 1.0 {
-            for sample in mono.iter_mut() {
-                *sample = (*sample * gain).clamp(-1.0, 1.0);
-            }
-        }
-
-        let rms = rms_f32(&mono);
-        if vad_enabled && rms >= vad_threshold {
-            vad_last_hit_ms = Instant::now();
-        }
-        smooth_level = smooth_level * 0.8 + rms * 0.2;
-        if smooth_level >= monitor_threshold {
-            has_activity = true;
-            last_activity = Instant::now();
-        }
-        if last_emit.elapsed() >= Duration::from_millis(50) {
-            let db = if smooth_level <= 0.000_01 {
-                -60.0
-            } else {
-                (20.0 * smooth_level.log10()).max(-60.0).min(0.0)
+            let mut raw = vec![0u8; packet_frames as usize * bytes_per_frame];
+            let (frames_read, _) = match capture_client.read_from_device(&mut raw) {
+                Ok(v) => v,
+                Err(e) => {
+                    if is_wasapi_device_invalidated(&e) && reconnect_count < MAX_RECONNECTS {
+                        reconnect_count += 1;
+                        warn!(
+                            "WASAPI device invalidated on read, reconnecting (attempt {}/{})",
+                            reconnect_count, MAX_RECONNECTS
+                        );
+                        reconnect_requested = true;
+                        break;
+                    }
+                    return Err(e.to_string());
+                }
             };
-            let meter = (db + 60.0) / 60.0;
-            let _ = app.emit("transcribe:level", meter.clamp(0.0, 1.0));
-            let _ = app.emit("transcribe:db", db);
-            last_emit = Instant::now();
-            last_idle_emit = last_emit;
-        }
-        let now_transcribing = transcribing.load(Ordering::Relaxed);
-        if now_transcribing && !was_transcribing {
-            last_state = "transcribing";
-        }
-        was_transcribing = now_transcribing;
-        if !now_transcribing {
-            let active =
-                has_activity && last_activity.elapsed() <= Duration::from_millis(idle_grace_ms);
-            let next_state = if active { "recording" } else { "idle" };
-            if next_state != last_state {
-                let _ = app.emit("transcribe:state", next_state);
-                last_state = next_state;
+            if frames_read == 0 {
+                continue;
             }
-        }
 
-        buffer.push_samples(&mono, sample_rate);
-        let resampled = buffer.take_all_samples();
-        if !resampled.is_empty() {
-            let segments = segmenter.push_samples(&resampled, smooth_level.max(rms));
-            for mut segment in segments {
-                if segment.samples.is_empty() {
-                    continue;
+            let valid_bytes = frames_read as usize * bytes_per_frame;
+            if last_settings_check.elapsed() >= Duration::from_millis(200) {
+                if let Ok(current) = app.state::<AppState>().settings.lock() {
+                    gain = (10.0f32).powf(current.transcribe_input_gain_db / 20.0);
+                    vad_enabled = current.transcribe_vad_mode;
+                    vad_threshold = current.transcribe_vad_threshold;
+                    vad_silence_ms = current.transcribe_vad_silence_ms;
+                    segmenter.update_config(system_segmenter_config(&current));
+                    monitor_threshold = if vad_enabled {
+                        vad_threshold
+                    } else {
+                        VAD_THRESHOLD_SUSTAIN_DEFAULT
+                    };
+                    idle_grace_ms = if vad_enabled {
+                        vad_silence_ms
+                    } else {
+                        TRANSCRIBE_IDLE_METER_MS
+                    };
                 }
-                if vad_enabled
-                    && segment.rms < vad_threshold
-                    && vad_last_hit_ms.elapsed() > Duration::from_millis(vad_silence_ms)
-                {
-                    continue;
-                }
+                last_settings_check = Instant::now();
+            }
 
-                let reason = segment.reason;
-                let duration_ms = segment.duration_ms;
-                let rms_value = segment.rms;
-                let samples = std::mem::take(&mut segment.samples);
-                queue.push(samples);
+            let mut mono = decode_wasapi_mono(
+                &raw[..valid_bytes],
+                channels,
+                bytes_per_sample,
+                sample_format,
+            );
+            if mono.is_empty() {
+                continue;
+            }
+
+            if gain != 1.0 {
+                for sample in mono.iter_mut() {
+                    *sample = (*sample * gain).clamp(-1.0, 1.0);
+                }
+            }
+
+            let rms = rms_f32(&mono);
+            if vad_enabled && rms >= vad_threshold {
+                vad_last_hit_ms = Instant::now();
+            }
+            smooth_level = smooth_level * 0.8 + rms * 0.2;
+            if smooth_level >= monitor_threshold {
+                has_activity = true;
+                last_activity = Instant::now();
+            }
+            if last_emit.elapsed() >= Duration::from_millis(50) {
+                let db = if smooth_level <= 0.000_01 {
+                    -60.0
+                } else {
+                    (20.0 * smooth_level.log10()).max(-60.0).min(0.0)
+                };
+                let meter = (db + 60.0) / 60.0;
+                let _ = app.emit("transcribe:level", meter.clamp(0.0, 1.0));
+                let _ = app.emit("transcribe:db", db);
+                last_emit = Instant::now();
+                last_idle_emit = last_emit;
+            }
+            let now_transcribing = transcribing.load(Ordering::Relaxed);
+            if now_transcribing && !was_transcribing {
+                last_state = "transcribing";
+            }
+            was_transcribing = now_transcribing;
+            if !now_transcribing {
+                let active =
+                    has_activity && last_activity.elapsed() <= Duration::from_millis(idle_grace_ms);
+                let next_state = if active { "recording" } else { "idle" };
+                if next_state != last_state {
+                    let _ = app.emit("transcribe:state", next_state);
+                    last_state = next_state;
+                }
+            }
+
+            buffer.push_samples(&mono, sample_rate);
+            let resampled = buffer.take_all_samples();
+            if !resampled.is_empty() {
+                let segments = segmenter.push_samples(&resampled, smooth_level.max(rms));
+                for mut segment in segments {
+                    if segment.samples.is_empty() {
+                        continue;
+                    }
+                    if vad_enabled
+                        && segment.rms < vad_threshold
+                        && vad_last_hit_ms.elapsed() > Duration::from_millis(vad_silence_ms)
+                    {
+                        continue;
+                    }
+
+                    let reason = segment.reason;
+                    let duration_ms = segment.duration_ms;
+                    let rms_value = segment.rms;
+                    let samples = std::mem::take(&mut segment.samples);
+                    queue.push(samples);
+                    let _ = app.emit(
+                        "continuous-dump:segment",
+                        ContinuousDumpEvent {
+                            source: "system",
+                            reason,
+                            duration_ms,
+                            rms: rms_value,
+                            text_len: 0,
+                        },
+                    );
+                }
+            }
+
+            if last_backpressure_check.elapsed() >= Duration::from_millis(1_000) {
+                let status = queue.status();
+                segmenter.set_backpressure_percent(status.percent_used);
                 let _ = app.emit(
-                    "continuous-dump:segment",
-                    ContinuousDumpEvent {
+                    "continuous-dump:stats",
+                    ContinuousDumpStats {
                         source: "system",
-                        reason,
-                        duration_ms,
-                        rms: rms_value,
-                        text_len: 0,
+                        queued_chunks: status.queued_chunks,
+                        dropped_chunks: status.dropped_chunks,
+                        percent_used: status.percent_used,
                     },
                 );
+                last_backpressure_check = Instant::now();
             }
         }
 
-        if last_backpressure_check.elapsed() >= Duration::from_millis(1_000) {
-            let status = queue.status();
-            segmenter.set_backpressure_percent(status.percent_used);
-            let _ = app.emit(
-                "continuous-dump:stats",
-                ContinuousDumpStats {
-                    source: "system",
-                    queued_chunks: status.queued_chunks,
-                    dropped_chunks: status.dropped_chunks,
-                    percent_used: status.percent_used,
-                },
-            );
-            last_backpressure_check = Instant::now();
+        // Flush audio buffered in this session — runs on both normal stop and reconnect.
+        let leftover = buffer.take_all_samples();
+        if !leftover.is_empty() {
+            for mut segment in segmenter.push_samples(&leftover, 0.0) {
+                let samples = std::mem::take(&mut segment.samples);
+                if !samples.is_empty() {
+                    queue.push(samples);
+                }
+            }
         }
-    }
-
-    let leftover = buffer.take_all_samples();
-    if !leftover.is_empty() {
-        for mut segment in segmenter.push_samples(&leftover, 0.0) {
+        for mut segment in segmenter.finalize() {
             let samples = std::mem::take(&mut segment.samples);
             if !samples.is_empty() {
                 queue.push(samples);
             }
         }
-    }
-    for mut segment in segmenter.finalize() {
-        let samples = std::mem::take(&mut segment.samples);
-        if !samples.is_empty() {
-            queue.push(samples);
+        let _ = audio_client.stop_stream();
+        // Do NOT close the queue here — the worker thread keeps running across reconnects.
+
+        if reconnect_requested {
+            thread::sleep(Duration::from_millis(500));
+            continue 'reconnect;
+        } else {
+            break 'reconnect;
         }
     }
 
+    // Final teardown: drain the queue and wait for the worker to finish.
     queue.close();
     let _ = worker_handle.join();
-    let _ = audio_client.stop_stream();
     Ok(())
 }
 

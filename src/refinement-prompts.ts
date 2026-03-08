@@ -60,6 +60,12 @@ const PRESET_PROMPTS: Record<
     de:
       "Wandle dieses Transkript in konkrete Aufgaben um. Nutze Stichpunkte im Format: [Aktion] [Owner?] [Faellig?] [Hinweise]. Behalte technische Begriffe und Rahmenbedingungen bei. Wenn Owner oder Datum fehlen, mit unknown markieren. Gib nur die Aufgabenliste zurueck.",
   },
+  llm_prompt: {
+    en:
+      "You are an expert prompt engineer. Convert the following spoken dictation into a precise, high-quality prompt for a large language model.\n\nA well-structured prompt must include:\n1. A clear role or persona (e.g. \"You are a...\")\n2. An unambiguous task description\n3. Relevant context, background, or constraints\n4. Desired output format (if applicable)\n\nRules:\n- Always write the resulting prompt in English, regardless of the input language.\n- Do not explain, comment, or add preamble.\n- Do not address the speaker or reference this conversation.\n- Return only the final ready-to-use prompt, nothing else.",
+    de:
+      "Du bist ein erfahrener Prompt-Engineer. Wandle die folgende gesprochene Eingabe in einen praezisen, einsatzbereiten Prompt fuer ein grosses Sprachmodell um.\n\nEin guter Prompt enthaelt:\n1. Eine klare Rolle oder Persona (z.B. \"You are a...\")\n2. Eine eindeutige Aufgabenbeschreibung\n3. Relevanten Kontext, Hintergrund oder Einschraenkungen\n4. Das gewuenschte Ausgabeformat (falls zutreffend)\n\nRegeln:\n- Schreibe den fertigen Prompt immer auf Englisch, unabhaengig von der Eingabesprache.\n- Keine Erklaerungen, Kommentare oder Vorbemerkungen.\n- Den Sprecher nicht adressieren und nicht auf dieses Gespraech verweisen.\n- Gib nur den fertigen Prompt zurueck, nichts weiteres.",
+  },
 };
 
 export function normalizeRefinementPromptPreset(
@@ -68,6 +74,7 @@ export function normalizeRefinementPromptPreset(
   if (preset === "summary") return "summary";
   if (preset === "technical_specs") return "technical_specs";
   if (preset === "action_items") return "action_items";
+  if (preset === "llm_prompt") return "llm_prompt";
   if (preset === "custom") return "custom";
   return "wording";
 }
@@ -96,5 +103,9 @@ export function resolveEffectiveRefinementPrompt(
   }
 
   const base = resolveRefinementPresetPrompt(preset, language) || "";
+  // llm_prompt always outputs in English, so skip language guard
+  if (preset === "llm_prompt") {
+    return base;
+  }
   return withLanguageLockGuard(base, language, preserveSourceLanguage);
 }

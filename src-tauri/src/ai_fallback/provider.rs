@@ -40,6 +40,10 @@ const OLLAMA_PROMPT_ACTION_ITEMS_EN: &str = "Convert this transcript into action
 
 const OLLAMA_PROMPT_ACTION_ITEMS_DE: &str = "Wandle dieses Transkript in konkrete Aufgaben um. Nutze Stichpunkte im Format: [Aktion] [Owner?] [Faellig?] [Hinweise]. Behalte technische Begriffe und Rahmenbedingungen bei. Wenn Owner oder Datum fehlen, mit unknown markieren. Gib nur die Aufgabenliste zurueck.";
 
+const OLLAMA_PROMPT_LLM_PROMPT_EN: &str = "You are an expert prompt engineer. Convert the following spoken dictation into a precise, high-quality prompt for a large language model.\n\nA well-structured prompt must include:\n1. A clear role or persona (e.g. \"You are a...\")\n2. An unambiguous task description\n3. Relevant context, background, or constraints\n4. Desired output format (if applicable)\n\nRules:\n- Always write the resulting prompt in English, regardless of the input language.\n- Do not explain, comment, or add preamble.\n- Do not address the speaker or reference this conversation.\n- Return only the final ready-to-use prompt, nothing else.";
+
+const OLLAMA_PROMPT_LLM_PROMPT_DE: &str = "Du bist ein erfahrener Prompt-Engineer. Wandle die folgende gesprochene Eingabe in einen praezisen, einsatzbereiten Prompt fuer ein grosses Sprachmodell um.\n\nEin guter Prompt enthaelt:\n1. Eine klare Rolle oder Persona (z.B. \"You are a...\")\n2. Eine eindeutige Aufgabenbeschreibung\n3. Relevanten Kontext, Hintergrund oder Einschraenkungen\n4. Das gewuenschte Ausgabeformat (falls zutreffend)\n\nRegeln:\n- Schreibe den fertigen Prompt immer auf Englisch, unabhaengig von der Eingabesprache.\n- Keine Erklaerungen, Kommentare oder Vorbemerkungen.\n- Den Sprecher nicht adressieren und nicht auf dieses Gespraech verweisen.\n- Gib nur den fertigen Prompt zurueck, nichts weiteres.";
+
 pub trait AIProvider: Send + Sync {
     fn id(&self) -> &'static str;
     fn validate_api_key(&self, api_key: &str) -> Result<(), AIError>;
@@ -405,8 +409,18 @@ pub fn prompt_for_profile(
             _ => OLLAMA_PROMPT_ACTION_ITEMS_EN,
         }
         .to_string(),
+        "llm_prompt" => match language.trim().to_lowercase().as_str() {
+            "de" | "german" => OLLAMA_PROMPT_LLM_PROMPT_DE,
+            _ => OLLAMA_PROMPT_LLM_PROMPT_EN,
+        }
+        .to_string(),
         _ => default_prompt_for_language(language).to_string(),
     };
+
+    // llm_prompt always outputs in English, so skip language lock
+    if normalize_prompt_profile(profile) == "llm_prompt" {
+        return if base.is_empty() { None } else { Some(base) };
+    }
 
     let effective = with_language_lock(&base, language, preserve_source_language);
     if effective.is_empty() {

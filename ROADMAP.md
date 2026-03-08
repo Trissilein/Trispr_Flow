@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-06 (Block L hardening closed, focus shifted to Block M/N delivery)
+Last updated: 2026-03-08 (Block M closed: M9-M12 complete, focus shifts to Block N)
 
 This file is the canonical source for priorities and execution order.
 
@@ -29,7 +29,7 @@ This file is the canonical source for priorities and execution order.
 | J | Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary) | Medium | D | Planned |
 | K | Expert Mode UX Overhaul (standard/expert toggle, hide technical settings) | Medium | E | Planned |
 | L | Module Platform + GDD Automation + Confluence Cloud publishing | Extra High | E, F, K | Complete ✅ |
-| M | Workflow-Agent voice automation for GDD (wakeword -> confirm -> execute) | Extra High | L, F | In progress |
+| M | Workflow-Agent voice automation for GDD (wakeword -> confirm -> execute) | Extra High | L, F | Complete ✅ |
 | N | Multimodal I/O modules (screen vision input + TTS voice output) | Extra High | M, L | Planned |
 
 ## v0.7 Task Ledger
@@ -63,12 +63,11 @@ This file is the canonical source for priorities and execution order.
 
 ## Immediate Next Actions
 
-1. Complete Block M phase M9-M12: candidate-confirm hardening, stricter target-language UX, regression suites, release hardening for v0.8.1.
-2. Keep GDD Core + Confluence path stable while agent command-channel changes continue.
-3. Start Block N execution once Block M release gate is met (N1-N4 first, then N5-N14).
-4. Run N11 benchmark track (>=3 runs/provider/scenario) and set default TTS provider based on measured data.
-5. Keep Block J and Block G as lower-priority backlog until M/N delivery gates are met.
-6. Keep quantization configurability (Task 45) deferred until dedicated benchmark iteration.
+1. Start Block N execution (N1-N4 first: screen vision input + TTS voice output scaffolding).
+2. Keep GDD Core + Confluence path stable; Block M changes (agent command channel) are now locked.
+3. Run N11 benchmark track (>=3 runs/provider/scenario) and set default TTS provider based on measured data.
+4. Keep Block J and Block G as lower-priority backlog until N delivery gates are met.
+5. Keep quantization configurability (Task 45) deferred until dedicated benchmark iteration.
 
 ## References
 

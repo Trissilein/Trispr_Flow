@@ -44,6 +44,7 @@ export type RefinementPromptPreset =
   | "summary"
   | "technical_specs"
   | "action_items"
+  | "llm_prompt"
   | "custom";
 
 export interface ModuleDescriptor {

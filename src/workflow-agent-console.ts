@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import * as dom from "./dom-refs";
 import { settings } from "./state";
 import { showToast } from "./toast";
+import { isAmbiguousSelection, isValidTargetLanguage } from "./workflow-agent-policy";
 import type {
   AgentBuildExecutionPlanRequest,
   AgentCommandParseResult,
@@ -16,6 +17,7 @@ let lastParse: AgentCommandParseResult | null = null;
 let lastCandidates: TranscriptSessionCandidate[] = [];
 let selectedSessionId = "";
 let currentPlan: AgentExecutionPlan | null = null;
+let languageExplicitlySet = false;
 
 function ensureWorkflowAgentDefaults(): void {
   if (!settings) return;
@@ -130,6 +132,7 @@ async function parseCommand(commandText: string): Promise<void> {
     },
   });
   lastParse = parsed;
+  languageExplicitlySet = false; // M10: reset on each new command
   appendLog(
     `Parsed command -> intent=${parsed.intent}, confidence=${(parsed.confidence * 100).toFixed(0)}%, publish=${parsed.publish_requested}`
   );
@@ -164,24 +167,67 @@ async function refreshCandidates(): Promise<void> {
     },
   });
   lastCandidates = candidates;
-  selectedSessionId = candidates[0]?.session_id ?? "";
+  selectedSessionId = ""; // M9: require explicit selection, no auto-select
   currentPlan = null;
   renderCandidates();
   renderPlanPreview();
-  appendLog(`Session search -> ${candidates.length} candidates.`);
+  appendLog(`Session search -> ${candidates.length} candidate(s) found.`);
+  if (candidates.length === 0) {
+    appendLog("No matching sessions found. Try different keywords or check transcript history.");
+    return;
+  }
+  if (lastParse?.topic_hint) {
+    appendLog(`Detected topic: "${lastParse.topic_hint}"`);
+  }
+  if (lastParse?.temporal_hint) {
+    appendLog(`Detected time hint: "${lastParse.temporal_hint}"`);
+  }
+  if (isAmbiguousSelection(candidates)) {
+    appendLog(
+      `⚠ Top sessions have similar scores (${(candidates[0].score * 100).toFixed(0)}% vs ${(candidates[1].score * 100).toFixed(0)}%). Please review and select manually.`
+    );
+  }
+  appendLog("Select a session above before building the plan.");
 }
 
 async function buildPlan(): Promise<void> {
-  if (!lastParse?.detected || !selectedSessionId) {
+  if (!lastParse?.detected) {
     showToast({
       type: "warning",
-      title: "Missing selection",
-      message: "Parse command and select a session candidate first.",
+      title: "No command parsed",
+      message: "Parse a command first.",
       duration: 3200,
     });
     return;
   }
-  const targetLanguage = dom.workflowAgentTargetLanguage?.value || "source";
+  if (!selectedSessionId) {
+    showToast({
+      type: "warning",
+      title: "No session selected",
+      message: "Click a session candidate above to select it before building the plan.",
+      duration: 3500,
+    });
+    return;
+  }
+  if (!languageExplicitlySet) {
+    showToast({
+      type: "warning",
+      title: "Language required",
+      message: "Please select the target language before building the plan.",
+      duration: 3500,
+    });
+    return;
+  }
+  const targetLanguage = dom.workflowAgentTargetLanguage?.value ?? "";
+  if (!isValidTargetLanguage(targetLanguage)) {
+    showToast({
+      type: "warning",
+      title: "Invalid language",
+      message: `Language "${targetLanguage}" is not supported. Please select a valid option.`,
+      duration: 3500,
+    });
+    return;
+  }
   const req: AgentBuildExecutionPlanRequest = {
     intent: lastParse.intent,
     session_id: selectedSessionId,
@@ -244,6 +290,9 @@ function bindUi(): void {
     selectedSessionId = button.dataset.sessionId || "";
     renderCandidates();
     appendLog(`Selected session ${selectedSessionId}`);
+  });
+  dom.workflowAgentTargetLanguage?.addEventListener("change", () => {
+    languageExplicitlySet = true; // M10: user actively chose language
   });
 }
 

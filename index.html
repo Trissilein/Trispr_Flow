@@ -1521,6 +1521,7 @@
                           <option value="summary">Summary</option>
                           <option value="technical_specs">Technical Specs</option>
                           <option value="action_items">Action Items</option>
+                          <option value="llm_prompt">LLM Prompt Engineer</option>
                           <option value="custom">Custom Prompt</option>
                         </select>
                       </label>
@@ -1608,14 +1609,16 @@
                 </div>
                 <div id="workflow-agent-candidates" class="module-agent-candidates"></div>
                 <label class="field">
-                  <span class="field-label">Target language (always ask)</span>
+                  <span class="field-label">Target language <strong>(required — select before building plan)</strong></span>
                   <select id="workflow-agent-target-language">
-                    <option value="source">Source language</option>
+                    <option value="" disabled selected>— select language —</option>
+                    <option value="source">Source language (keep original)</option>
                     <option value="en">English</option>
                     <option value="de">Deutsch</option>
                     <option value="fr">Français</option>
                     <option value="es">Español</option>
                   </select>
+                  <span class="field-hint">You must explicitly choose a language for each command. This resets with each new parse.</span>
                 </label>
                 <div class="auth-modal-actions">
                   <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn">Build Plan</button>

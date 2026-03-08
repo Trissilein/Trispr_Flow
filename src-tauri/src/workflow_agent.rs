@@ -433,3 +433,198 @@ pub fn default_execution_plan(request: &AgentBuildExecutionPlanRequest) -> Agent
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_wakewords() -> Vec<String> {
+        vec!["trispr".to_string(), "hey trispr".to_string()]
+    }
+
+    fn make_keywords() -> Vec<String> {
+        vec!["gdd".to_string(), "game design document".to_string(), "draft".to_string()]
+    }
+
+    fn make_entry(id: &str, text: &str, timestamp_ms: u64) -> HistoryEntry {
+        HistoryEntry {
+            id: id.to_string(),
+            text: text.to_string(),
+            timestamp_ms,
+            source: "mic".to_string(),
+            speaker_name: None,
+            refinement: None,
+        }
+    }
+
+    // --- parse_command tests ---
+
+    #[test]
+    fn detects_intent_with_wakeword_and_keyword() {
+        let req = AgentParseCommandRequest {
+            command_text: "hey trispr create a gdd for today".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(result.detected);
+        assert_eq!(result.intent, "gdd_generate_publish");
+        assert!(result.confidence >= 0.8);
+    }
+
+    #[test]
+    fn no_detection_without_wakeword() {
+        let req = AgentParseCommandRequest {
+            command_text: "create a gdd and draft something".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(!result.detected);
+        assert_eq!(result.intent, "unknown");
+    }
+
+    #[test]
+    fn no_detection_without_keyword() {
+        let req = AgentParseCommandRequest {
+            command_text: "trispr please do something".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(!result.detected);
+    }
+
+    #[test]
+    fn detects_temporal_hint_today() {
+        let req = AgentParseCommandRequest {
+            command_text: "trispr gdd from today's meeting".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert_eq!(result.temporal_hint.as_deref(), Some("today"));
+        assert!(result.confidence >= 0.9);
+    }
+
+    #[test]
+    fn detects_temporal_hint_gestern() {
+        let req = AgentParseCommandRequest {
+            command_text: "trispr draft gdd von gestern".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert_eq!(result.temporal_hint.as_deref(), Some("gestern"));
+    }
+
+    #[test]
+    fn detects_topic_hint_after_about() {
+        let req = AgentParseCommandRequest {
+            command_text: "trispr gdd about combat mechanics".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert_eq!(result.topic_hint.as_deref(), Some("combat mechanics"));
+    }
+
+    #[test]
+    fn detects_publish_flag() {
+        let req = AgentParseCommandRequest {
+            command_text: "trispr gdd publish to confluence".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(result.publish_requested);
+    }
+
+    #[test]
+    fn confidence_is_clamped_to_one() {
+        let req = AgentParseCommandRequest {
+            command_text: "hey trispr gdd today about combat mechanics".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(result.confidence <= 1.0);
+    }
+
+    // --- build_sessions tests ---
+
+    #[test]
+    fn empty_entries_returns_empty() {
+        let sessions = build_sessions(&[], 20);
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn single_entry_creates_one_session() {
+        let entries = vec![make_entry("e1", "hello world", 1_000_000)];
+        let sessions = build_sessions(&entries, 20);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].entries.len(), 1);
+    }
+
+    #[test]
+    fn entries_within_gap_are_grouped() {
+        let entries = vec![
+            make_entry("e1", "first", 0),
+            make_entry("e2", "second", 5 * 60_000), // 5 min later
+        ];
+        let sessions = build_sessions(&entries, 20);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].entries.len(), 2);
+    }
+
+    #[test]
+    fn entries_beyond_gap_create_separate_sessions() {
+        let entries = vec![
+            make_entry("e1", "first", 0),
+            make_entry("e2", "second", 30 * 60_000), // 30 min later (> 20 min gap)
+        ];
+        let sessions = build_sessions(&entries, 20);
+        assert_eq!(sessions.len(), 2);
+    }
+
+    #[test]
+    fn sessions_sorted_most_recent_first() {
+        let entries = vec![
+            make_entry("e1", "old", 0),
+            make_entry("e2", "new", 60 * 60_000), // 1 hour later
+        ];
+        let sessions = build_sessions(&entries, 20);
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions[0].start_ms > sessions[1].start_ms);
+    }
+
+    // --- score_sessions tests ---
+
+    #[test]
+    fn topic_match_raises_score() {
+        let entries_match = vec![make_entry("e1", "combat mechanics discussion", 0)];
+        let entries_no_match = vec![make_entry("e2", "unrelated content here", 0)];
+        let sessions = vec![
+            SessionBucket { id: "s1".to_string(), start_ms: 0, end_ms: 0, entries: entries_match },
+            SessionBucket { id: "s2".to_string(), start_ms: 0, end_ms: 0, entries: entries_no_match },
+        ];
+        let req = SearchTranscriptSessionsRequest {
+            temporal_hint: None,
+            topic_hint: Some("combat mechanics".to_string()),
+            session_gap_minutes: Some(20),
+            max_candidates: Some(5),
+        };
+        let scored = score_sessions(&sessions, &req);
+        assert_eq!(scored[0].session_id, "s1");
+        assert!(scored[0].score > scored[1].score);
+    }
+
+    #[test]
+    fn max_candidates_limits_results() {
+        let entries: Vec<_> = (0..10)
+            .map(|i| make_entry(&format!("e{i}"), "text", i * 60_000))
+            .collect();
+        let sessions = build_sessions(&entries, 1);
+        let req = SearchTranscriptSessionsRequest {
+            temporal_hint: None,
+            topic_hint: None,
+            session_gap_minutes: Some(1),
+            max_candidates: Some(3),
+        };
+        let scored = score_sessions(&sessions, &req);
+        assert!(scored.len() <= 3);
+    }
+}

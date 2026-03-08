@@ -215,7 +215,9 @@ pub(crate) fn prepare_refinement(
     } else {
         "auto".to_string()
     };
-    let enforce_language_guard = ai.preserve_source_language && ai.prompt_profile != "custom";
+    let enforce_language_guard = ai.preserve_source_language
+        && ai.prompt_profile != "custom"
+        && ai.prompt_profile != "llm_prompt";
 
     let options = RefinementOptions {
         temperature: ai.temperature,
@@ -1649,6 +1651,18 @@ fn agent_build_execution_plan(
     }
     if request.session_id.trim().is_empty() {
         return Err("Session id is required.".to_string());
+    }
+    const ALLOWED_LANGUAGES: &[&str] = &[
+        "source", "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "ko", "zh", "ar",
+        "tr", "hi",
+    ];
+    let lang = request.target_language.trim();
+    if !ALLOWED_LANGUAGES.contains(&lang) {
+        return Err(format!(
+            "Invalid target language '{}'. Allowed: {}",
+            lang,
+            ALLOWED_LANGUAGES.join(", ")
+        ));
     }
     let plan = crate::workflow_agent::default_execution_plan(&request);
     let _ = app.emit("agent:plan-ready", &plan);

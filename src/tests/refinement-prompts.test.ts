@@ -32,12 +32,25 @@ describe("refinement prompt presets", () => {
 
   it("appends language-lock guard when preserve_source_language is enabled", () => {
     const prompt = resolveEffectiveRefinementPrompt("wording", "en", "", true);
-    expect(prompt).toContain("Keep the output in the same language as the input. Do not translate.");
+    expect(prompt).toContain("Keep the output in the same language as the input");
+    expect(prompt).toContain("Do not translate");
   });
 
   it("uses auto language-lock guard when language hint is auto", () => {
     const prompt = resolveEffectiveRefinementPrompt("wording", "auto", "", true);
     expect(prompt).toContain("Detect the input language and keep it unchanged.");
     expect(prompt).toContain("preserve each segment in its original language");
+  });
+
+  it("does not append language-lock guard for llm_prompt profile", () => {
+    const promptEn = resolveEffectiveRefinementPrompt("llm_prompt", "en", "", true);
+    expect(promptEn).toContain("You are an expert prompt engineer");
+    expect(promptEn).toContain("Always write the resulting prompt in English");
+    expect(promptEn).not.toContain("Keep the output in the same language");
+
+    const promptDe = resolveEffectiveRefinementPrompt("llm_prompt", "de", "", true);
+    expect(promptDe).toContain("Du bist ein erfahrener Prompt-Engineer");
+    expect(promptDe).toContain("Schreibe den fertigen Prompt immer auf Englisch");
+    expect(promptDe).not.toContain("Behalte die Ausgabe in derselben Sprache");
   });
 });

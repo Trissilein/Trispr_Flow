@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **LLM Prompt Engineer Preset** (Block M / M-extra):
+  - New refinement prompt preset `llm_prompt` that converts spoken dictation into high-quality, ready-to-use LLM prompts.
+  - Output is always English regardless of input language — language guard is explicitly excluded for this preset.
+  - Bilingual meta-prompts (EN + DE) on both TypeScript and Rust sides.
+- **Workflow-Agent: Candidate Confirm Hardening** (Block M / M9):
+  - Removed automatic first-candidate selection; user must explicitly click a session row.
+  - Disambiguation warning shown when top-2 candidates score within 0.1 of each other.
+  - Topic/temporal hint feedback displayed in agent console log.
+- **Workflow-Agent: Target Language Enforcement** (Block M / M10):
+  - `languageExplicitlySet` flag: user must actively choose a language per parse before building a plan.
+  - Language select resets to disabled placeholder on every new parse.
+  - Backend validates `target_language` against `ALLOWED_LANGUAGES` list and returns a structured error for unknown values.
+- **Workflow-Agent Policy Module** (`src/workflow-agent-policy.ts`) (Block M / M11):
+  - Pure, side-effect-free functions `isAmbiguousSelection` and `isValidTargetLanguage` extracted for testability.
+  - Exported constants `DISAMBIGUATION_SCORE_THRESHOLD` and `ALLOWED_TARGET_LANGUAGES`.
+- **Workflow-Agent Test Coverage** (Block M / M11):
+  - 16 Rust unit tests for `parse_command`, `build_sessions`, and `score_sessions` in `workflow_agent.rs`.
+  - 14 TypeScript tests (WA-S1/S2/S3) covering disambiguation, language validation, and score edge cases.
+
+### Fixed
+
+- **Hotkey toasts deduplication**: Repeated hotkey-conflict toasts (same message) are now suppressed after the first appearance per session (`src/toast.ts`).
+
 ## [0.7.0] - 2026-02-26
 
 ### Added

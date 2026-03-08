@@ -401,6 +401,7 @@ pub fn normalize_prompt_profile_id(profile: &str) -> &'static str {
         "summary" => "summary",
         "technical_specs" => "technical_specs",
         "action_items" => "action_items",
+        "llm_prompt" => "llm_prompt",
         "custom" => "custom",
         _ => "",
     }

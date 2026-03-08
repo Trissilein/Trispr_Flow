@@ -2,6 +2,7 @@
 import type { ToastType, ToastOptions, AppErrorType } from "./types";
 
 let toastCounter = 0;
+const shownHotkeyErrors = new Set<string>();
 
 export function showToast(options: ToastOptions): string | null {
   const container = document.getElementById("toast-container");
@@ -110,6 +111,12 @@ export function showErrorToast(error: AppErrorType, context?: string) {
     Window: "Window Error",
     Other: "Error",
   };
+
+  if (error.type === "Hotkey") {
+    const key = error.message;
+    if (shownHotkeyErrors.has(key)) return;
+    shownHotkeyErrors.add(key);
+  }
 
   showToast({
     type: "error",

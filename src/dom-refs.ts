@@ -244,6 +244,7 @@ export const historyCopyConversation = $("history-copy-conversation") as HTMLBut
 export const historyDeleteConversation = $("history-delete-conversation") as HTMLButtonElement | null;
 export const analyseButton = $("analyse-button") as HTMLButtonElement | null;
 export const historyExport = $("history-export") as HTMLButtonElement | null;
+export const openRecordingsBtn = $("open-recordings-btn") as HTMLButtonElement | null;
 export const archiveBrowseBtn = $("archive-browse-btn") as HTMLButtonElement | null;
 export const openModulesBtn = $("open-modules-btn") as HTMLButtonElement | null;
 export const historySearch = $("history-search") as HTMLInputElement | null;

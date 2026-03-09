@@ -1010,6 +1010,10 @@ export function wireEvents() {
     void openExportDialog();
   });
 
+  dom.openRecordingsBtn?.addEventListener("click", () => {
+    void invoke("open_recordings_directory");
+  });
+
   dom.archiveBrowseBtn?.addEventListener("click", () => {
     void openArchiveBrowser();
   });

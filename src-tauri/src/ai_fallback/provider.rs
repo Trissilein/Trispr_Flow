@@ -22,6 +22,18 @@ fn shared_agent() -> &'static ureq::Agent {
     })
 }
 
+/// Returns a per-request ureq agent whose read timeout scales with the combined
+/// token count of input text and system prompt.
+/// Range: 60 s (short inputs) … 120 s (long/multilingual prompts).
+fn refinement_agent(input_text: &str, system_prompt: &str) -> ureq::Agent {
+    let total_tokens = rough_token_estimate(input_text) + rough_token_estimate(system_prompt);
+    let timeout_secs = ((total_tokens as f64 / 500.0 * 1.5) + 30.0).clamp(60.0, 120.0) as u64;
+    ureq::builder()
+        .timeout_connect(Duration::from_secs(5))
+        .timeout_read(Duration::from_secs(timeout_secs))
+        .build()
+}
+
 // Prompt templates optimized for local models (Ollama: qwen3, mistral-small).
 // Guidelines: no translation, no explanations, preserve register and proper nouns.
 pub const OLLAMA_PROMPT_EN: &str = "You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors in the text below. Rules: do NOT translate; do NOT add explanations or commentary; preserve all proper nouns and technical terms exactly; preserve the original register (formal/informal). Output ONLY the corrected text with no preamble.";
@@ -550,13 +562,20 @@ fn default_ollama_num_thread() -> usize {
     (cores / 2).max(2).clamp(2, 8)
 }
 
-fn adaptive_num_predict(input_text: &str, configured_max: u32, low_latency_mode: bool) -> u32 {
+fn adaptive_num_predict(
+    input_text: &str,
+    system_prompt: &str,
+    configured_max: u32,
+    low_latency_mode: bool,
+) -> u32 {
     let configured = configured_max.clamp(128, 8192);
     let input_tokens = rough_token_estimate(input_text);
+    let prompt_tokens = rough_token_estimate(system_prompt);
+    let total = input_tokens + prompt_tokens;
     let heuristic = if low_latency_mode {
-        ((input_tokens * 2) + 24).clamp(64, 384) as u32
+        ((total * 2) + 24).clamp(64, 512) as u32
     } else {
-        ((input_tokens * 3) + 48).clamp(96, 1024) as u32
+        ((total * 3) + 48).clamp(96, 1536) as u32
     };
     configured.min(heuristic.max(64))
 }
@@ -587,7 +606,7 @@ fn build_ollama_options_payload(
         serde_json::json!(options.temperature),
     );
     let num_predict =
-        adaptive_num_predict(input_text, options.max_tokens, options.low_latency_mode);
+        adaptive_num_predict(input_text, system_prompt, options.max_tokens, options.low_latency_mode);
     payload.insert("num_predict".to_string(), serde_json::json!(num_predict));
     let num_ctx = parse_env_usize("TRISPR_OLLAMA_NUM_CTX")
         .map(|n| n.clamp(1024, 8192))
@@ -807,6 +826,11 @@ fn likely_mixed_en_de(text: &str) -> bool {
 }
 
 fn detect_language_drift_reason(original: &str, refined: &str) -> Option<String> {
+    // Skip language-drift check for very short texts — too few words to detect
+    // language reliably, and false positives are common in mixed-language environments.
+    if original.len() < 80 {
+        return None;
+    }
     if likely_mixed_en_de(original) {
         return None;
     }
@@ -828,7 +852,9 @@ fn detect_language_drift_reason(original: &str, refined: &str) -> Option<String>
     if let (Some(orig), Some(new)) = (original_lang, refined_lang) {
         if orig != new && !likely_mixed_en_de(refined) {
             let overlap = shared_word_ratio(original, refined);
-            if overlap < 0.65 {
+            // Raised from 0.65 to 0.50 — EN/DE mixed sessions produce low word-overlap
+            // naturally (stopwords differ) and were triggering false positives.
+            if overlap < 0.50 {
                 return Some(format!(
                     "stopword-language mismatch ({} -> {}, overlap={:.2})",
                     orig, new, overlap
@@ -1086,9 +1112,9 @@ impl AIProvider for OllamaProvider {
             "keep_alive": keep_alive
         });
 
-        // Shared agent has a 60 s read timeout — generous enough for both normal
-        // (≤45 s) and low-latency (≤20 s) inference on 8B models.
-        let agent = shared_agent();
+        // Per-request agent with timeout scaled to input + prompt complexity.
+        // Short inputs: 60 s; long/multilingual prompts: up to 120 s.
+        let agent = refinement_agent(text, system_prompt);
 
         let mut last_transport_error: Option<AIError> = None;
 

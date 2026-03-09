@@ -6,6 +6,9 @@ const $ = <T extends HTMLElement>(id: string) => {
   return document.getElementById(id) as T | null;
 };
 
+// Bootstrap overlay
+export const bootstrapOverlay = $("bootstrap-overlay") as HTMLDivElement | null;
+
 // Main tabs
 export const tabBtnTranscription = $("tab-btn-transcription") as HTMLButtonElement | null;
 export const tabBtnSettings = $("tab-btn-settings") as HTMLButtonElement | null;

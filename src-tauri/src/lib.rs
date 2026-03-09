@@ -44,6 +44,7 @@ use tracing::{error, info, warn};
 
 use crate::ai_fallback::keyring as ai_fallback_keyring;
 use crate::ai_fallback::models::RefinementOptions;
+use crate::ai_fallback::error::AIError;
 use crate::ai_fallback::provider::{
     default_models_for_provider, is_local_ollama_endpoint, is_ssrf_target, list_ollama_models,
     list_ollama_models_with_size, ping_ollama, ping_ollama_quick, prompt_for_profile,
@@ -773,9 +774,15 @@ fn refine_transcript(
 
     let result = setup
         .provider
-        .refine_transcript(&transcript, &setup.model, &setup.options, &setup.api_key)
-        .map_err(|e| e.to_string())?;
+        .refine_transcript(&transcript, &setup.model, &setup.options, &setup.api_key);
 
+    // Emit health-degraded event on transport failures so the frontend can
+    // re-check Ollama state without requiring a full app restart.
+    if let Err(AIError::Timeout | AIError::OllamaNotRunning) = &result {
+        let _ = app.emit("ai_fallback:health_degraded", ());
+    }
+
+    let result = result.map_err(|e| e.to_string())?;
     serde_json::to_value(&result).map_err(|e| e.to_string())
 }
 

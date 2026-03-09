@@ -262,24 +262,28 @@ async function bootstrap() {
   // Reset the paste queue to prevent accumulation across re-bootstrap cycles
   pasteQueue = Promise.resolve();
 
-  // Phase 1: Load data from backend — any failure here is fatal
-  const fetchedSettings = await invoke<Settings>("get_settings");
+  // Phase 1: Load data from backend in parallel — any failure here is fatal
+  const [
+    fetchedSettings,
+    fetchedDevices,
+    fetchedOutputDevices,
+    fetchedHistory,
+    fetchedTranscribeHistory,
+    fetchedModels,
+  ] = await Promise.all([
+    invoke<Settings>("get_settings"),
+    invoke<AudioDevice[]>("list_audio_devices"),
+    invoke<AudioDevice[]>("list_output_devices"),
+    invoke<HistoryEntry[]>("get_history"),
+    invoke<HistoryEntry[]>("get_transcribe_history"),
+    invoke<ModelInfo[]>("list_models"),
+  ]);
   setSettings(fetchedSettings);
-
-  const fetchedDevices = await invoke<AudioDevice[]>("list_audio_devices");
   setDevices(fetchedDevices);
-
-  const fetchedOutputDevices = await invoke<AudioDevice[]>("list_output_devices");
   setOutputDevices(fetchedOutputDevices);
-
-  const fetchedHistory = await invoke<HistoryEntry[]>("get_history");
   setHistory(fetchedHistory);
-
-  const fetchedTranscribeHistory = await invoke<HistoryEntry[]>("get_transcribe_history");
   setTranscribeHistory(fetchedTranscribeHistory);
   restoreRefinementInspector([...fetchedHistory, ...fetchedTranscribeHistory]);
-
-  const fetchedModels = await invoke<ModelInfo[]>("list_models");
   setModels(fetchedModels);
 
   // Phase 2: Wire event handlers FIRST so UI is always interactive
@@ -297,7 +301,7 @@ async function bootstrap() {
   initWorkflowAgentConsole();
   syncVoiceOutputConsoleState();
 
-  // Phase 3: Render UI — failures here should not block interaction
+  // Phase 3: Render UI synchronously — UI becomes interactive here
   try {
     renderDevices();
     renderOutputDevices();
@@ -310,22 +314,34 @@ async function bootstrap() {
     renderRefinementInspector();
     renderModels();
     refreshModulesHub();
-    await refreshModelsDir();
-    // Initialize Ollama model manager if provider is Ollama
-    if (settings?.ai_fallback?.provider === "ollama") {
-      await refreshOllamaRuntimeState({ force: true });
-      if (getOllamaRuntimeCardState().healthy) {
-        await refreshOllamaInstalledModels();
-      }
-    }
-    void autoStartLocalRuntimeIfNeeded("bootstrap").finally(() => {
-      renderAIFallbackSettingsUi();
-      renderOllamaModelManager();
-    });
-    renderOllamaModelManager();
   } catch (renderError) {
     console.error("Non-fatal render error during bootstrap:", renderError);
   }
+
+  // Remove loading overlay — UI is now ready for interaction
+  dom.bootstrapOverlay?.setAttribute("hidden", "");
+
+  // Phase 3b: Heavy background checks — run async without blocking the UI
+  void (async () => {
+    try {
+      await refreshModelsDir();
+      // Initialize Ollama model manager if provider is Ollama
+      if (settings?.ai_fallback?.provider === "ollama") {
+        await refreshOllamaRuntimeState({ force: true });
+        if (getOllamaRuntimeCardState().healthy) {
+          await refreshOllamaInstalledModels();
+        }
+      }
+      renderAIFallbackSettingsUi();
+      renderOllamaModelManager();
+      void autoStartLocalRuntimeIfNeeded("bootstrap").finally(() => {
+        renderAIFallbackSettingsUi();
+        renderOllamaModelManager();
+      });
+    } catch (bgError) {
+      console.error("Non-fatal background init error:", bgError);
+    }
+  })();
 
   // Display app version
   if (dom.appVersion) {
@@ -415,6 +431,15 @@ async function bootstrap() {
         title: "Voice output failed",
         message: event.payload.error,
       });
+    })
+  );
+
+  // Re-check Ollama health when a timeout or connection error occurs during
+  // refinement — avoids requiring a full app restart to recover the status.
+  eventUnlisteners.push(
+    await listen("ai_fallback:health_degraded", async () => {
+      await refreshOllamaRuntimeState({ force: true });
+      renderAIFallbackSettingsUi();
     })
   );
 

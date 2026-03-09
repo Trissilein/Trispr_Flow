@@ -4691,3 +4691,35 @@ input[type="range"]:focus-visible {
     max-width: min(88vw, 320px);
   }
 }
+
+/* ── Bootstrap loading overlay ─────────────────────────────── */
+.bootstrap-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: var(--bg-base, #141414);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+.bootstrap-overlay[hidden] {
+  display: none;
+}
+.bootstrap-spinner {
+  width: 26px;
+  height: 26px;
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  border-top-color: var(--accent, #7b9cff);
+  border-radius: 50%;
+  animation: bootstrap-spin 0.75s linear infinite;
+}
+@keyframes bootstrap-spin {
+  to { transform: rotate(360deg); }
+}
+.bootstrap-label {
+  font-size: 0.75rem;
+  color: var(--text-muted, #8a8e99);
+  letter-spacing: 0.02em;
+}

@@ -367,9 +367,20 @@ export const modelList = $("model-list");
 // Overlay controls (button not reachable via id helper above)
 export const applyOverlayBtn = $("apply-overlay-btn") as HTMLButtonElement | null;
 
-// Voice Output Console (Modules tab)
+// Voice Output Console (Module config modal)
 export const voiceOutputConsole = $("voice-output-console") as HTMLElement | null;
 export const voiceOutputConsoleStatus = $("voice-output-console-status") as HTMLSpanElement | null;
+
+// Module config modal
+export const moduleConfigModal = $("module-config-modal") as HTMLDivElement | null;
+export const moduleConfigModalBackdrop = $("module-config-modal-backdrop") as HTMLDivElement | null;
+export const moduleConfigModalClose = $("module-config-modal-close") as HTMLButtonElement | null;
+export const moduleConfigModalName = $("module-config-modal-name") as HTMLElement | null;
+export const moduleConfigModalMeta = $("module-config-modal-meta") as HTMLElement | null;
+export const moduleConfigModalDesc = $("module-config-modal-desc") as HTMLElement | null;
+export const moduleConfigModalUsage = $("module-config-modal-usage") as HTMLElement | null;
+export const moduleConfigModalDeps = $("module-config-modal-deps") as HTMLDivElement | null;
+export const moduleConfigModalFeedback = $("module-config-modal-feedback") as HTMLDivElement | null;
 
 // Voice Output Settings
 export const voiceOutputDefaultProvider = $("voice-output-default-provider") as HTMLSelectElement | null;

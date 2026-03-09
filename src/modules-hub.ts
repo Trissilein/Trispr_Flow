@@ -3,8 +3,9 @@ import * as dom from "./dom-refs";
 import { settings } from "./state";
 import { showToast } from "./toast";
 import { openGddFlow } from "./gdd-flow";
-import { focusWorkflowAgentConsole, syncWorkflowAgentConsoleState } from "./workflow-agent-console";
-import { focusVoiceOutputConsole, syncVoiceOutputConsoleState } from "./voice-output-console";
+import { syncWorkflowAgentConsoleState } from "./workflow-agent-console";
+import { syncVoiceOutputConsoleState } from "./voice-output-console";
+import { focusFirstElement } from "./modal-focus";
 import type { ModuleDescriptor, ModuleHealthStatus, ModuleUpdateInfo } from "./types";
 
 let initialized = false;
@@ -82,6 +83,46 @@ function missingConsents(moduleInfo: ModuleDescriptor): string[] {
   return moduleInfo.permissions.filter((permission) => !consented.includes(permission));
 }
 
+function openModuleConfig(moduleId: string): void {
+  const moduleInfo = moduleSnapshot.find((m) => m.id === moduleId);
+  if (!moduleInfo || !dom.moduleConfigModal) return;
+
+  const guide = moduleGuide(moduleId);
+  const missing = missingConsents(moduleInfo);
+  const feedbackParts: string[] = [];
+  if (missing.length) feedbackParts.push(`Consent required: ${missing.join(", ")}`);
+  if (moduleInfo.last_error) feedbackParts.push(moduleInfo.last_error);
+
+  if (dom.moduleConfigModalName)
+    dom.moduleConfigModalName.textContent = moduleInfo.name;
+  if (dom.moduleConfigModalMeta)
+    dom.moduleConfigModalMeta.textContent = `ID: ${moduleInfo.id} · v${moduleInfo.version} · ${moduleStateLabel(moduleInfo.state)}`;
+  if (dom.moduleConfigModalDesc)
+    dom.moduleConfigModalDesc.textContent = guide.description;
+  if (dom.moduleConfigModalUsage)
+    dom.moduleConfigModalUsage.textContent = guide.usage;
+  if (dom.moduleConfigModalDeps)
+    dom.moduleConfigModalDeps.textContent = moduleInfo.dependencies.length
+      ? `Deps: ${moduleInfo.dependencies.join(", ")}`
+      : "";
+  if (dom.moduleConfigModalFeedback)
+    dom.moduleConfigModalFeedback.textContent = feedbackParts.join(" · ") || "Ready";
+
+  if (dom.workflowAgentConsole)
+    dom.workflowAgentConsole.hidden = moduleId !== "workflow_agent";
+  if (dom.voiceOutputConsole)
+    dom.voiceOutputConsole.hidden = moduleId !== "output_voice_tts";
+
+  dom.moduleConfigModal.removeAttribute("hidden");
+  focusFirstElement(dom.moduleConfigModal);
+}
+
+function closeModuleConfig(): void {
+  dom.moduleConfigModal?.setAttribute("hidden", "");
+  syncWorkflowAgentConsoleState();
+  syncVoiceOutputConsoleState();
+}
+
 function cardActions(moduleInfo: ModuleDescriptor): string {
   if (moduleInfo.core) {
     return `<button class="hotkey-record-btn" disabled>Core (always on)</button>
@@ -132,13 +173,11 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
           : "module-card-feedback is-ok";
       const launch = moduleInfo.id === "gdd"
         ? `<button class="ghost-btn" data-module-action="launch-gdd" data-module-id="gdd">Open GDD Flow</button>`
-        : moduleInfo.id === "workflow_agent"
-          ? `<button class="ghost-btn" data-module-action="launch-workflow-agent" data-module-id="workflow_agent">Open Agent Console</button>`
         : moduleInfo.id === "analysis"
           ? `<button class="ghost-btn" data-module-action="launch-analysis" data-module-id="analysis">Open Analysis Flow</button>`
-          : moduleInfo.id === "output_voice_tts"
-            ? `<button class="ghost-btn" data-module-action="launch-voice-output" data-module-id="output_voice_tts">Open Voice Settings</button>`
-            : "";
+          : moduleInfo.core
+            ? ""
+            : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}">Configure</button>`;
 
       return `<article class="module-card model-item" data-module-card="${moduleInfo.id}">
         <div class="module-card-header model-header">
@@ -334,13 +373,18 @@ function bindModulesEvents(): void {
       });
       return;
     }
-    if (action === "launch-workflow-agent") {
-      focusWorkflowAgentConsole();
+    if (action === "open-config") {
+      openModuleConfig(moduleId);
       return;
     }
-    if (action === "launch-voice-output") {
-      focusVoiceOutputConsole();
-      return;
+  });
+
+  dom.moduleConfigModalClose?.addEventListener("click", closeModuleConfig);
+  dom.moduleConfigModalBackdrop?.addEventListener("click", closeModuleConfig);
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !dom.moduleConfigModal?.hasAttribute("hidden")) {
+      closeModuleConfig();
     }
   });
 

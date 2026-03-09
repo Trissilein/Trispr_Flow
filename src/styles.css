@@ -467,15 +467,9 @@ html.expert-mode details[data-expert-only="true"] > summary {
 
 .modules-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 8px;
   align-items: stretch;
-}
-
-@media (max-width: 760px) {
-  .modules-list {
-    grid-template-columns: 1fr;
-  }
 }
 
 .module-card {
@@ -488,9 +482,9 @@ html.expert-mode details[data-expert-only="true"] > summary {
   border: 1px solid var(--stroke);
   border-radius: var(--radius-sm);
   transition: all 0.15s ease;
-  min-height: 292px;
-  height: 292px;
-  overflow: hidden;
+  min-height: auto;
+  height: auto;
+  overflow: visible;
 }
 
 .module-card .model-name {
@@ -557,6 +551,7 @@ html.expert-mode details[data-expert-only="true"] > summary {
 
 .module-card-desc,
 .module-card-usage {
+  display: none;
   font-size: 0.7rem;
   line-height: 1.28;
   color: var(--ink-soft);
@@ -608,6 +603,21 @@ html.expert-mode details[data-expert-only="true"] > summary {
 .module-agent-candidates {
   display: grid;
   gap: 8px;
+}
+
+.module-config-modal-card {
+  width: min(680px, 96vw);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
+.module-config-desc {
+  margin: 6px 0 2px;
+  font-size: 0.82rem;
+}
+
+.module-config-usage {
+  margin-bottom: 10px;
 }
 
 .workflow-agent-candidate {

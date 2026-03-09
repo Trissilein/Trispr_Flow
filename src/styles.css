@@ -501,13 +501,18 @@ html.expert-mode details[data-expert-only="true"] > summary {
 }
 
 .module-state-tag {
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  white-space: nowrap;
-  flex-shrink: 0;
+  font-size: 0.65rem !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.04em !important;
+  color: var(--muted) !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .module-card[data-module-state="core"] .module-state-tag {
@@ -520,6 +525,11 @@ html.expert-mode details[data-expert-only="true"] > summary {
 
 .module-card[data-module-state="inactive"] .module-state-tag {
   color: #6ab4d4;
+}
+
+/* Hide any lingering .model-status in module cards (should not exist) */
+.module-card .model-status {
+  display: none !important;
 }
 
 .module-card .model-name {

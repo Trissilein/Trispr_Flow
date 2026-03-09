@@ -3,48 +3,52 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 use tracing::warn;
 
-pub(crate) fn resolve_config_path(app: &AppHandle, filename: &str) -> PathBuf {
-  let base = app
+/// Returns the single canonical base directory for all Trispr Flow data.
+///
+/// Windows default: `%LOCALAPPDATA%\Trispr Flow\`
+/// Override: set `TRISPR_DATA_DIR` env var for dev/testing.
+pub(crate) fn resolve_base_dir(app: &AppHandle) -> PathBuf {
+  if let Ok(p) = std::env::var("TRISPR_DATA_DIR") {
+    let path = PathBuf::from(p);
+    let _ = fs::create_dir_all(&path);
+    return path;
+  }
+  // app_local_data_dir() returns %LOCALAPPDATA%\{identifier}; parent() gives %LOCALAPPDATA%
+  if let Some(path) = app
     .path()
-    .app_config_dir()
-    .unwrap_or_else(|e| {
-      warn!("app_config_dir failed, falling back to current directory: {}", e);
-      std::env::current_dir().unwrap_or_else(|e2| {
-        warn!("current_dir also failed, falling back to \".\": {}", e2);
-        PathBuf::from(".")
-      })
-    });
+    .app_local_data_dir()
+    .ok()
+    .and_then(|p| p.parent().map(|parent| parent.join("Trispr Flow")))
+  {
+    return path;
+  }
+
+  // Fallback: read LOCALAPPDATA env var directly (Windows)
+  if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+    return PathBuf::from(local_app_data).join("Trispr Flow");
+  }
+
+  warn!("Could not resolve %LOCALAPPDATA%, falling back to current directory");
+  std::env::current_dir().unwrap_or_else(|e| {
+    warn!("current_dir also failed, falling back to \".\": {}", e);
+    PathBuf::from(".")
+  })
+}
+
+pub(crate) fn resolve_config_path(app: &AppHandle, filename: &str) -> PathBuf {
+  let base = resolve_base_dir(app);
   let _ = fs::create_dir_all(&base);
   base.join(filename)
 }
 
 pub(crate) fn resolve_data_path(app: &AppHandle, filename: &str) -> PathBuf {
-  let base = app
-    .path()
-    .app_data_dir()
-    .unwrap_or_else(|e| {
-      warn!("app_data_dir failed, falling back to current directory: {}", e);
-      std::env::current_dir().unwrap_or_else(|e2| {
-        warn!("current_dir also failed, falling back to \".\": {}", e2);
-        PathBuf::from(".")
-      })
-    });
+  let base = resolve_base_dir(app);
   let _ = fs::create_dir_all(&base);
   base.join(filename)
 }
 
 pub(crate) fn resolve_recordings_dir(app: &AppHandle) -> PathBuf {
-  let base = app
-    .path()
-    .app_data_dir()
-    .unwrap_or_else(|e| {
-      warn!("app_data_dir failed, falling back to current directory: {}", e);
-      std::env::current_dir().unwrap_or_else(|e2| {
-        warn!("current_dir also failed, falling back to \".\": {}", e2);
-        PathBuf::from(".")
-      })
-    });
-  let dir = base.join("recordings");
+  let dir = resolve_base_dir(app).join("recordings");
   let _ = fs::create_dir_all(&dir);
   dir
 }
@@ -59,17 +63,7 @@ pub(crate) fn resolve_models_dir(app: &AppHandle) -> PathBuf {
       }
     }
   }
-  let base = app
-    .path()
-    .app_data_dir()
-    .unwrap_or_else(|e| {
-      warn!("app_data_dir failed, falling back to current directory: {}", e);
-      std::env::current_dir().unwrap_or_else(|e2| {
-        warn!("current_dir also failed, falling back to \".\": {}", e2);
-        PathBuf::from(".")
-      })
-    });
-  let dir = base.join("models");
+  let dir = resolve_base_dir(app).join("models");
   let _ = fs::create_dir_all(&dir);
   dir
 }

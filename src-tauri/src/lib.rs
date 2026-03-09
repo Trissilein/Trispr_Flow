@@ -5,6 +5,7 @@ mod ai_fallback;
 mod audio;
 mod constants;
 mod continuous_dump;
+mod data_migration;
 mod errors;
 mod gdd;
 mod history_partition;
@@ -4232,12 +4233,14 @@ pub fn run() {
         tauri::Builder::default().plugin(tauri_plugin_global_shortcut::Builder::new().build());
     with_dialog_plugin(builder)
         .setup(|app| {
+            // Migrate data from legacy %APPDATA%\com.trispr.flow\ to
+            // %LOCALAPPDATA%\Trispr Flow\ before any state is loaded.
+            crate::data_migration::migrate_legacy_data(app.handle());
+
             let settings = load_settings(app.handle());
 
             // Compute partition base directories and legacy paths for migration.
-            let app_data_dir = app.path().app_data_dir().unwrap_or_else(|_| {
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-            });
+            let app_data_dir = crate::paths::resolve_base_dir(app.handle());
             let mic_history_dir = app_data_dir.join("history").join("mic");
             let system_history_dir = app_data_dir.join("history").join("system");
             let legacy_mic_path = app_data_dir.join("history.json");

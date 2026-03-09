@@ -28,13 +28,6 @@ function moduleStateLabel(moduleState: ModuleDescriptor["state"]): string {
   return "Error";
 }
 
-function moduleStateClass(moduleState: ModuleDescriptor["state"]): string {
-  if (moduleState === "active") return "model-status--active";
-  if (moduleState === "installed" || moduleState === "enabled") return "model-status--available";
-  if (moduleState === "not_installed") return "model-status--available";
-  return "is-error";
-}
-
 function moduleGuide(moduleId: string): { description: string; usage: string } {
   if (moduleId === "gdd") {
     return {

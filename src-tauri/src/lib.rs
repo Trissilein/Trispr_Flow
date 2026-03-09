@@ -2149,18 +2149,26 @@ fn speak_tts(
             }
         };
 
-        let result = attempt(&preferred_provider_for_thread).or_else(|primary_error| {
-            if preferred_provider_for_thread == fallback_provider_for_thread {
-                Err(primary_error)
-            } else {
-                attempt(&fallback_provider_for_thread).map_err(|fallback_error| {
-                    format!(
-                        "Primary provider '{}' failed: {} | Fallback '{}' failed: {}",
-                        preferred_provider_for_thread, primary_error, fallback_provider_for_thread, fallback_error
-                    )
-                })
+        // Track which provider actually succeeded (primary or fallback).
+        let (result, used_provider) = match attempt(&preferred_provider_for_thread) {
+            Ok(()) => (Ok(()), preferred_provider_for_thread.clone()),
+            Err(primary_error) => {
+                if preferred_provider_for_thread == fallback_provider_for_thread {
+                    (Err(primary_error), preferred_provider_for_thread.clone())
+                } else {
+                    match attempt(&fallback_provider_for_thread) {
+                        Ok(()) => (Ok(()), fallback_provider_for_thread.clone()),
+                        Err(fallback_error) => (
+                            Err(format!(
+                                "Primary provider '{}' failed: {} | Fallback '{}' failed: {}",
+                                preferred_provider_for_thread, primary_error, fallback_provider_for_thread, fallback_error
+                            )),
+                            preferred_provider_for_thread.clone(),
+                        ),
+                    }
+                }
             }
-        });
+        };
 
         let state = app_c.state::<AppState>();
         state.tts_speaking.store(false, Ordering::Release);
@@ -2169,7 +2177,7 @@ fn speak_tts(
                 let _ = app_c.emit(
                     "tts:speech-finished",
                     serde_json::json!({
-                        "provider_used": preferred_provider_for_thread,
+                        "provider_used": used_provider,
                         "timestamp_ms": crate::util::now_ms(),
                     }),
                 );

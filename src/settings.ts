@@ -1162,6 +1162,7 @@ export function renderSettings() {
   renderVocabulary();
 
   renderAIRefinementTab();
+  renderVoiceOutputSettings();
 }
 
 /**
@@ -1220,4 +1221,52 @@ export async function renderTopicKeywords(): Promise<void> {
       dom.topicKeywordsList.appendChild(container);
     }
   });
+}
+
+/**
+ * Render Voice Output Settings from settings.voice_output_settings to the UI.
+ */
+export function renderVoiceOutputSettings(): void {
+  if (!settings?.voice_output_settings) return;
+
+  const vo = settings.voice_output_settings;
+
+  if (dom.voiceOutputDefaultProvider) {
+    dom.voiceOutputDefaultProvider.value = vo.default_provider ?? "windows_native";
+  }
+  if (dom.voiceOutputFallbackProvider) {
+    dom.voiceOutputFallbackProvider.value = vo.fallback_provider ?? "windows_native";
+  }
+  if (dom.voiceOutputPolicy) {
+    dom.voiceOutputPolicy.value = vo.output_policy ?? "agent_replies_only";
+  }
+
+  // Rate slider
+  if (dom.voiceOutputRate) {
+    const rate = vo.rate ?? 1.0;
+    dom.voiceOutputRate.value = String(rate);
+    if (dom.voiceOutputRateValue) {
+      dom.voiceOutputRateValue.textContent = rate.toFixed(2);
+    }
+  }
+
+  // Volume slider
+  if (dom.voiceOutputVolume) {
+    const volume = vo.volume ?? 1.0;
+    dom.voiceOutputVolume.value = String(volume);
+    if (dom.voiceOutputVolumeValue) {
+      dom.voiceOutputVolumeValue.textContent = volume.toFixed(2);
+    }
+  }
+
+  // Piper paths
+  if (dom.voiceOutputPiperBinary) {
+    dom.voiceOutputPiperBinary.value = vo.piper_binary_path ?? "";
+  }
+  if (dom.voiceOutputPiperModel) {
+    dom.voiceOutputPiperModel.value = vo.piper_model_path ?? "";
+  }
+  if (dom.voiceOutputPiperModelDir) {
+    dom.voiceOutputPiperModelDir.value = vo.piper_model_dir ?? "";
+  }
 }

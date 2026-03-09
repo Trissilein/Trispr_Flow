@@ -242,6 +242,9 @@ export interface VoiceOutputSettings {
   rate: number;
   volume: number;
   output_policy: "agent_replies_only" | "replies_and_events" | "explicit_only";
+  piper_binary_path?: string;
+  piper_model_path?: string;
+  piper_model_dir?: string;
 }
 
 export interface AgentCommandParseResult {

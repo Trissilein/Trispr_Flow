@@ -364,6 +364,20 @@ export const modelList = $("model-list");
 // Overlay controls (button not reachable via id helper above)
 export const applyOverlayBtn = $("apply-overlay-btn") as HTMLButtonElement | null;
 
+// Voice Output Settings
+export const voiceOutputDefaultProvider = $("voice-output-default-provider") as HTMLSelectElement | null;
+export const voiceOutputFallbackProvider = $("voice-output-fallback-provider") as HTMLSelectElement | null;
+export const voiceOutputPolicy = $("voice-output-policy") as HTMLSelectElement | null;
+export const voiceOutputRate = $("voice-output-rate") as HTMLInputElement | null;
+export const voiceOutputRateValue = $("voice-output-rate-value") as HTMLSpanElement | null;
+export const voiceOutputVolume = $("voice-output-volume") as HTMLInputElement | null;
+export const voiceOutputVolumeValue = $("voice-output-volume-value") as HTMLSpanElement | null;
+export const voiceOutputTestBtn = $("voice-output-test-btn") as HTMLButtonElement | null;
+export const voiceOutputTestStatus = $("voice-output-test-status") as HTMLSpanElement | null;
+export const voiceOutputPiperBinary = $("voice-output-piper-binary") as HTMLInputElement | null;
+export const voiceOutputPiperModel = $("voice-output-piper-model") as HTMLInputElement | null;
+export const voiceOutputPiperModelDir = $("voice-output-piper-model-dir") as HTMLInputElement | null;
+
 // Model panel (queried by data attribute, not id)
 export const modelPanel =
   typeof document !== "undefined"

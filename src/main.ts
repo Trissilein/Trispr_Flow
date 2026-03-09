@@ -406,6 +406,16 @@ async function bootstrap() {
     refreshModulesHub();
   }));
 
+  eventUnlisteners.push(
+    await listen<{ provider: string; error: string }>("tts:speech-error", (event) => {
+      showToast({
+        type: "error",
+        title: "Voice output failed",
+        message: event.payload.error,
+      });
+    })
+  );
+
   eventUnlisteners.push(await listen<TranscriptionResultEvent>("transcription:result", (event) => {
     const payload = event.payload;
     handlePipelineTranscriptionResult(payload);

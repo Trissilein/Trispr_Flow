@@ -1574,6 +1574,112 @@
 
             </div>
           </section>
+
+          <!-- Voice Output Settings -->
+          <section class="panel" id="voice-output-settings-panel" style="--delay: 0.10s">
+            <div class="panel-header">
+              <div class="panel-title">
+                <h2>Voice Output</h2>
+                <p>Configure spoken agent replies via Windows native or Piper TTS.</p>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="panel-grid">
+
+                <!-- Default Provider -->
+                <label class="field">
+                  <span class="field-label">Default provider</span>
+                  <select id="voice-output-default-provider" title="Primary TTS engine">
+                    <option value="windows_native">Windows Native TTS</option>
+                    <option value="local_custom">Local Custom (Piper)</option>
+                  </select>
+                </label>
+
+                <!-- Fallback Provider -->
+                <label class="field">
+                  <span class="field-label">Fallback provider</span>
+                  <select id="voice-output-fallback-provider" title="Used if default provider fails">
+                    <option value="windows_native">Windows Native TTS</option>
+                    <option value="local_custom">Local Custom (Piper)</option>
+                  </select>
+                  <span class="field-hint">Automatically used if the default provider fails.</span>
+                </label>
+
+                <!-- Output Policy -->
+                <label class="field">
+                  <span class="field-label">Output policy</span>
+                  <select id="voice-output-policy" title="Controls when voice output is triggered">
+                    <option value="agent_replies_only">Agent replies only</option>
+                    <option value="replies_and_events">Replies and system events</option>
+                    <option value="explicit_only">Explicit calls only</option>
+                  </select>
+                  <span class="field-hint">Agent replies only = voice plays only for workflow-agent responses.</span>
+                </label>
+
+                <!-- Rate -->
+                <label class="field range">
+                  <span class="field-label">Speech rate</span>
+                  <div class="range-row">
+                    <input id="voice-output-rate" type="range" min="0.5" max="2.0" step="0.05"
+                           title="Speech speed: 0.5 = half speed, 2.0 = double speed"
+                           aria-valuemin="0.5" aria-valuemax="2.0" aria-valuenow="1.0"
+                           aria-label="Voice output speech rate"
+                           aria-describedby="voice-output-rate-value" />
+                    <span id="voice-output-rate-value" class="range-value" aria-live="polite">1.00</span>
+                  </div>
+                </label>
+
+                <!-- Volume -->
+                <label class="field range">
+                  <span class="field-label">Volume</span>
+                  <div class="range-row">
+                    <input id="voice-output-volume" type="range" min="0" max="1" step="0.05"
+                           title="Output volume: 0 = muted, 1 = full"
+                           aria-valuemin="0" aria-valuemax="1" aria-valuenow="1.0"
+                           aria-label="Voice output volume"
+                           aria-describedby="voice-output-volume-value" />
+                    <span id="voice-output-volume-value" class="range-value" aria-live="polite">1.00</span>
+                  </div>
+                </label>
+
+                <!-- Test Button -->
+                <div class="field">
+                  <button id="voice-output-test-btn" type="button" class="hotkey-record-btn">
+                    Test provider
+                  </button>
+                  <span class="field-hint" id="voice-output-test-status"></span>
+                </div>
+
+              </div>
+
+              <!-- Advanced / Piper paths -->
+              <details class="expander">
+                <summary><h3 class="ai-refine-section-title">Advanced (Piper paths)</h3></summary>
+                <div class="expander-body">
+                  <div class="panel-grid">
+                    <label class="field">
+                      <span class="field-label">Piper binary path</span>
+                      <input id="voice-output-piper-binary" type="text"
+                             placeholder="Auto-detected (leave empty)" title="Full path to piper.exe" />
+                      <span class="field-hint">Leave empty to auto-detect from PATH or bundled resources.</span>
+                    </label>
+                    <label class="field">
+                      <span class="field-label">Piper model path</span>
+                      <input id="voice-output-piper-model" type="text"
+                             placeholder="Auto-selected (leave empty)" title="Full path to .onnx voice model" />
+                      <span class="field-hint">Leave empty to auto-select the first available voice model.</span>
+                    </label>
+                    <label class="field">
+                      <span class="field-label">Voice model directory</span>
+                      <input id="voice-output-piper-model-dir" type="text"
+                             placeholder="Auto-detected (leave empty)" title="Directory containing .onnx voice models" />
+                      <span class="field-hint">Directory scanned for available Piper voice models.</span>
+                    </label>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </section>
         </div>
 
         <!-- Modules Tab -->

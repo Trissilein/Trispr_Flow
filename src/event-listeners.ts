@@ -2246,4 +2246,92 @@ export function wireEvents() {
     await renderTopicKeywords();
     await persistSettings();
   });
+
+  // Voice Output Settings
+  dom.voiceOutputDefaultProvider?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings) return;
+    settings.voice_output_settings.default_provider = dom.voiceOutputDefaultProvider!
+      .value as "windows_native" | "local_custom";
+    await persistSettings();
+  });
+
+  dom.voiceOutputFallbackProvider?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings) return;
+    settings.voice_output_settings.fallback_provider = dom.voiceOutputFallbackProvider!
+      .value as "windows_native" | "local_custom";
+    await persistSettings();
+  });
+
+  dom.voiceOutputPolicy?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings) return;
+    settings.voice_output_settings.output_policy = dom.voiceOutputPolicy!
+      .value as "agent_replies_only" | "replies_and_events" | "explicit_only";
+    await persistSettings();
+  });
+
+  // Voice Output Rate slider (live update)
+  dom.voiceOutputRate?.addEventListener("input", () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputRate) return;
+    const rate = parseFloat(dom.voiceOutputRate.value);
+    settings.voice_output_settings.rate = rate;
+    if (dom.voiceOutputRateValue) {
+      dom.voiceOutputRateValue.textContent = rate.toFixed(2);
+    }
+  });
+
+  // Voice Output Rate slider (persist on change)
+  dom.voiceOutputRate?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputRate) return;
+    settings.voice_output_settings.rate = parseFloat(dom.voiceOutputRate.value);
+    await persistSettings();
+  });
+
+  // Voice Output Volume slider (live update)
+  dom.voiceOutputVolume?.addEventListener("input", () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputVolume) return;
+    const volume = parseFloat(dom.voiceOutputVolume.value);
+    settings.voice_output_settings.volume = volume;
+    if (dom.voiceOutputVolumeValue) {
+      dom.voiceOutputVolumeValue.textContent = volume.toFixed(2);
+    }
+  });
+
+  // Voice Output Volume slider (persist on change)
+  dom.voiceOutputVolume?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputVolume) return;
+    settings.voice_output_settings.volume = parseFloat(dom.voiceOutputVolume.value);
+    await persistSettings();
+  });
+
+  // Voice Output Test Button
+  dom.voiceOutputTestBtn?.addEventListener("click", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputTestBtn || !dom.voiceOutputTestStatus) return;
+    const provider = settings.voice_output_settings.default_provider;
+    dom.voiceOutputTestStatus.textContent = "Testing…";
+    try {
+      await invoke("test_tts_provider", { provider });
+      dom.voiceOutputTestStatus.textContent = "✓ Provider responded.";
+    } catch (e) {
+      dom.voiceOutputTestStatus.textContent = `Error: ${e}`;
+    }
+  });
+
+  // Voice Output Piper Paths (text inputs)
+  dom.voiceOutputPiperBinary?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputPiperBinary) return;
+    settings.voice_output_settings.piper_binary_path = dom.voiceOutputPiperBinary.value;
+    await persistSettings();
+  });
+
+  dom.voiceOutputPiperModel?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputPiperModel) return;
+    settings.voice_output_settings.piper_model_path = dom.voiceOutputPiperModel.value;
+    await persistSettings();
+  });
+
+  dom.voiceOutputPiperModelDir?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputPiperModelDir) return;
+    settings.voice_output_settings.piper_model_dir = dom.voiceOutputPiperModelDir.value;
+    await persistSettings();
+  });
 }

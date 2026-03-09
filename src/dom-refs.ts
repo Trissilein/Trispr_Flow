@@ -364,6 +364,10 @@ export const modelList = $("model-list");
 // Overlay controls (button not reachable via id helper above)
 export const applyOverlayBtn = $("apply-overlay-btn") as HTMLButtonElement | null;
 
+// Voice Output Console (Modules tab)
+export const voiceOutputConsole = $("voice-output-console") as HTMLElement | null;
+export const voiceOutputConsoleStatus = $("voice-output-console-status") as HTMLSpanElement | null;
+
 // Voice Output Settings
 export const voiceOutputDefaultProvider = $("voice-output-default-provider") as HTMLSelectElement | null;
 export const voiceOutputFallbackProvider = $("voice-output-fallback-provider") as HTMLSelectElement | null;

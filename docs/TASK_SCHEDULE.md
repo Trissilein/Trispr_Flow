@@ -358,6 +358,39 @@ Goal: Add optional capability modules `input_vision` and `output_voice_tts` and 
 
 ---
 
+### Block O: Voice Confirmation Loop --- PLANNED
+
+**Duration**: 3-4 weeks | **Model**: Claude Sonnet | **Depends on**: Block M (M8) + Block N (N6) | **Status**: Planned
+
+Goal: Enable a voice-driven confirmation dialog — Agent speaks a question, user responds with "bestätigen"/"abbrechen" via activation word, Agent executes or cancels.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| O1 | `awaiting_confirmation` State im Workflow-Agent | High | M8, N6 | PLANNED | New backend state machine entry; pending action stored with TTL and unique token. |
+| O2 | Activation-Word-Matching für confirm/cancel | Medium | O1 | PLANNED | Recognize "bestätigen" / "abbrechen" (+ EN synonyms) as confirmation tokens in `transcription:raw-result` handler. |
+| O3 | `confirm_pending_action` / `cancel_pending_action` Commands | High | O1 | PLANNED | Tauri commands to resolve pending action; emit `agent:confirmed` / `agent:cancelled` events. |
+| O4 | TTS Confirmation Prompt + Timeout | Medium | O1, N6 | PLANNED | Agent speaks confirmation request via TTS; auto-cancels pending action after configurable timeout. |
+| O5 | KITT-Overlay: "Awaiting confirmation" Visual | Low | O4 | PLANNED | Overlay shows distinct "waiting" state while confirmation is pending. |
+| O6 | Integration Tests für Confirmation Loop | High | O1–O5 | PLANNED | Unit + integration tests for state machine transitions, token matching, and timeout behavior. |
+
+---
+
+### Block P: Hands-Free Screen Interaction --- PLANNED
+
+**Duration**: 4-5 weeks | **Model**: Claude Opus | **Depends on**: Block N (N5) + Block O (O3) | **Status**: Planned
+
+Goal: Agent detects the active window, injects text into focused input fields via `enigo` (already in Cargo.toml), and confirms via TTS — fully keyboard-free workflow.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| P1 | `enigo`-Command-Surface: `type_text`, `key_combo` | High | N5 | PLANNED | Expose `enigo::Enigo` as Tauri commands `inject_text` and `send_key_combo`. |
+| P2 | Active Window Detection (WinAPI) | Medium | P1 | PLANNED | Detect foreground window title and class via WinAPI or `tauri-plugin-os`; return to agent as context. |
+| P3 | Agent-Step-Type: `inject_text` in Execution Plan | High | P1, M5 | PLANNED | New step variant in `AgentExecutionPlan`; runner delegates to `inject_text` command. |
+| P4 | Window-Switch + Focus: `focus_window_by_title` | Medium | P2 | PLANNED | Raise and focus a window by title match before text injection. |
+| P5 | E2E Test: Voice → Screen-Insert | High | P1–P4 | PLANNED | Validate full path: voice command → agent plan → window focus → text inject → TTS confirmation. |
+
+---
+
 ## Key Scheduling Principles
 
 1. **Offline First**: Local refinement path is shipped before online provider integrations.

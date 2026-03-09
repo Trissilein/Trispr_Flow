@@ -345,6 +345,16 @@ Last updated: 2026-03-06
   - Synthesis: `piper.exe --model <model.onnx> --output_file <tmp.wav>` then cpal WAV playback
   - Fallback: `local_custom` → `windows_native` (existing chain)
 
+### DEC-052 Voice Interaction Model — Stufen-Architektur (2026-03-09)
+
+- Status: `accepted`
+- Decision: Dreistufige Voice-Interaktionsarchitektur:
+  - **Stufe 1 — Passives Feedback** (sofort, Block N6/N8): TTS spricht Agent-Antworten; policy `agent_replies_only`. Keine Architekturänderungen.
+  - **Stufe 2 — Confirmation Loop** (Block O): Agent stellt Bestätigungsfrage via TTS; User antwortet via Aktivierungswort. Erfordert `awaiting_confirmation`-State, Confirmation-Token-Matching und `confirm/cancel_pending_action`-Commands.
+  - **Stufe 3 — Hands-Free Screen Interaction** (Block P): Agent erkennt aktives Fenster (N5 Vision), injiziert Text via `enigo` (bereits in `Cargo.toml`), meldet Ergebnis via TTS.
+- Context: Trispr Flow ist derzeit "interaction-less" (Mikrofon → Transkription → Clipboard). Mit TTS (N6/N8) und Vision (N5) wird ein echter Voice-Loop ohne Tastatur möglich.
+- Why: Stufe 1 liefert sofort Mehrwert mit vorhandenen Komponenten. Stufe 2 + 3 sind eigenständige Blöcke, die keine Stufe-1-Architektur ändern. `enigo` ist bereits als Dependency vorhanden → Block P erfordert keine neuen Runtime-Dependencies.
+
 ## Open Decisions
 
 ### DEC-011 Optional backend scope

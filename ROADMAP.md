@@ -61,6 +61,12 @@ This file is the canonical source for priorities and execution order.
 - GDD generation is now treated as core workflow capability; autonomous orchestration is handled by `workflow_agent`.
 - Multimodal modules (`input_vision`, `output_voice_tts`) are capability modules consumed by `workflow_agent` when enabled.
 
+## Upcoming Blocks (Post-N)
+
+**Block O — Voice Confirmation Loop** (after N6, N8): Agent speaks a confirmation question via TTS; user answers "bestätigen"/"abbrechen" via activation word. Requires `awaiting_confirmation` state, token matching, `confirm/cancel_pending_action` commands, and KITT visual hint. See `docs/TASK_SCHEDULE.md` Block O.
+
+**Block P — Hands-Free Screen Interaction** (after N5, Block O): Agent detects active window, injects text via `enigo` (already in `Cargo.toml`), and confirms via TTS. Closes the keyboard-free voice loop. See `docs/TASK_SCHEDULE.md` Block P.
+
 ## Immediate Next Actions
 
 1. Start Block N execution (N1-N4 first: screen vision input + TTS voice output scaffolding).

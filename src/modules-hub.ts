@@ -4,6 +4,7 @@ import { settings } from "./state";
 import { showToast } from "./toast";
 import { openGddFlow } from "./gdd-flow";
 import { focusWorkflowAgentConsole, syncWorkflowAgentConsoleState } from "./workflow-agent-console";
+import { focusVoiceOutputConsole, syncVoiceOutputConsoleState } from "./voice-output-console";
 import type { ModuleDescriptor, ModuleHealthStatus, ModuleUpdateInfo } from "./types";
 
 let initialized = false;
@@ -135,7 +136,9 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
           ? `<button class="ghost-btn" data-module-action="launch-workflow-agent" data-module-id="workflow_agent">Open Agent Console</button>`
         : moduleInfo.id === "analysis"
           ? `<button class="ghost-btn" data-module-action="launch-analysis" data-module-id="analysis">Open Analysis Flow</button>`
-          : "";
+          : moduleInfo.id === "output_voice_tts"
+            ? `<button class="ghost-btn" data-module-action="launch-voice-output" data-module-id="output_voice_tts">Open Voice Settings</button>`
+            : "";
 
       return `<article class="module-card model-item" data-module-card="${moduleInfo.id}">
         <div class="module-card-header model-header">
@@ -160,6 +163,7 @@ async function refreshModuleState(): Promise<void> {
   moduleSnapshot = modules;
   renderModulesList(modules);
   syncWorkflowAgentConsoleState();
+  syncVoiceOutputConsoleState();
   if (dom.modulesStatus) {
     const active = modules.filter((moduleInfo) => moduleInfo.state === "active").length;
     dom.modulesStatus.textContent = `${active}/${modules.length} active`;
@@ -332,6 +336,10 @@ function bindModulesEvents(): void {
     }
     if (action === "launch-workflow-agent") {
       focusWorkflowAgentConsole();
+      return;
+    }
+    if (action === "launch-voice-output") {
+      focusVoiceOutputConsole();
       return;
     }
   });

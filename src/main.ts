@@ -82,6 +82,7 @@ import {
   initWorkflowAgentConsole,
   syncWorkflowAgentConsoleState,
 } from "./workflow-agent-console";
+import { syncVoiceOutputConsoleState } from "./voice-output-console";
 import {
   handleRefinementFailureForInspector,
   handleRefinementStartedForInspector,
@@ -294,6 +295,7 @@ async function bootstrap() {
   initModulesHub();
   initGddFlow();
   initWorkflowAgentConsole();
+  syncVoiceOutputConsoleState();
 
   // Phase 3: Render UI — failures here should not block interaction
   try {

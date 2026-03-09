@@ -83,6 +83,13 @@ function missingConsents(moduleInfo: ModuleDescriptor): string[] {
   return moduleInfo.permissions.filter((permission) => !consented.includes(permission));
 }
 
+function moduleStateKey(moduleInfo: ModuleDescriptor): string {
+  if (moduleInfo.core) return "core";
+  if (moduleInfo.state === "active") return "active";
+  if (moduleInfo.state === "enabled" || moduleInfo.state === "installed") return "inactive";
+  return "unavailable";
+}
+
 function openModuleConfig(moduleId: string): void {
   const moduleInfo = moduleSnapshot.find((m) => m.id === moduleId);
   if (!moduleInfo || !dom.moduleConfigModal) return;
@@ -179,13 +186,13 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
             ? ""
             : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}">Configure</button>`;
 
-      return `<article class="module-card model-item" data-module-card="${moduleInfo.id}">
+      return `<article class="module-card model-item" data-module-card="${moduleInfo.id}" data-module-state="${moduleStateKey(moduleInfo)}">
         <div class="module-card-header model-header">
           <div>
             <div class="model-name">${moduleInfo.name}</div>
             <div class="model-meta">ID: <code>${moduleInfo.id}</code> · v${moduleInfo.version}</div>
           </div>
-          <span class="model-status ${moduleStateClass(moduleInfo.state)}">${moduleInfo.core ? "Core" : moduleStateLabel(moduleInfo.state)}</span>
+          <span class="module-state-tag">${moduleInfo.core ? "Core" : moduleStateLabel(moduleInfo.state)}</span>
         </div>
         <div class="model-meta" title="${summaryTitle}">${summary}</div>
         <div class="module-card-desc">${escapeHtml(guide.description)}</div>

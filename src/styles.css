@@ -480,11 +480,46 @@ html.expert-mode details[data-expert-only="true"] > summary {
   padding: 10px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--stroke);
+  border-left: 3px solid #4a4a5a;
   border-radius: var(--radius-sm);
   transition: all 0.15s ease;
   min-height: auto;
   height: auto;
   overflow: visible;
+}
+
+.module-card[data-module-state="core"] {
+  border-left-color: #f3c87b;
+}
+
+.module-card[data-module-state="active"] {
+  border-left-color: #8dd7b1;
+}
+
+.module-card[data-module-state="inactive"] {
+  border-left-color: #6ab4d4;
+}
+
+.module-state-tag {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.module-card[data-module-state="core"] .module-state-tag {
+  color: #f3c87b;
+}
+
+.module-card[data-module-state="active"] .module-state-tag {
+  color: #8dd7b1;
+}
+
+.module-card[data-module-state="inactive"] .module-state-tag {
+  color: #6ab4d4;
 }
 
 .module-card .model-name {

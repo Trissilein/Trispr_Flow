@@ -476,60 +476,18 @@ html.expert-mode details[data-expert-only="true"] > summary {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  align-self: stretch;
   padding: 10px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--stroke);
-  border-left: 3px solid #4a4a5a;
   border-radius: var(--radius-sm);
   transition: all 0.15s ease;
-  min-height: auto;
-  height: auto;
-  overflow: visible;
+  min-height: 260px;
+  overflow: hidden;
 }
 
-.module-card[data-module-state="core"] {
-  border-left-color: #f3c87b;
-}
-
-.module-card[data-module-state="active"] {
-  border-left-color: #8dd7b1;
-}
-
-.module-card[data-module-state="inactive"] {
-  border-left-color: #6ab4d4;
-}
-
-.module-state-tag {
-  font-size: 0.65rem !important;
-  font-weight: 600 !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.04em !important;
-  color: var(--muted) !important;
-  white-space: nowrap !important;
-  flex-shrink: 0 !important;
-  padding: 0 !important;
-  border: none !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-.module-card[data-module-state="core"] .module-state-tag {
-  color: #f3c87b;
-}
-
-.module-card[data-module-state="active"] .module-state-tag {
-  color: #8dd7b1;
-}
-
-.module-card[data-module-state="inactive"] .module-state-tag {
-  color: #6ab4d4;
-}
-
-/* Hide any lingering .model-status in module cards (should not exist) */
-.module-card .model-status {
-  display: none !important;
+/* Spezifität (0,2,0) überstimmt .model-item align-self: start (0,1,0) */
+.modules-list .module-card {
+  align-self: stretch;
 }
 
 .module-card .model-name {
@@ -2067,6 +2025,12 @@ button.refinement-chip:focus-visible {
   background: rgba(156, 163, 175, 0.15);
   color: var(--muted);
   border: 1px solid rgba(156, 163, 175, 0.2);
+}
+
+.model-status--installed {
+  background: rgba(96, 165, 250, 0.15);
+  color: rgb(147, 197, 253);
+  border: 1px solid rgba(96, 165, 250, 0.3);
 }
 
 .model-status.active,
@@ -3787,11 +3751,21 @@ input[type="range"]:focus-visible {
   transform: translateY(-50%) rotate(-180deg);
 }
 
+.ai-provider-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.ai-provider-advanced-body > .field {
+  margin: 0;
+}
+
 .ai-provider-advanced-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 8px;
 }
 
 .ai-provider-advanced-actions .hotkey-record-btn {

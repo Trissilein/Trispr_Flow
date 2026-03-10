@@ -8,6 +8,7 @@ const $ = <T extends HTMLElement>(id: string) => {
 
 // Bootstrap overlay
 export const bootstrapOverlay = $("bootstrap-overlay") as HTMLDivElement | null;
+export const bootstrapLabel = $("bootstrap-label") as HTMLSpanElement | null;
 
 // Main tabs
 export const tabBtnTranscription = $("tab-btn-transcription") as HTMLButtonElement | null;
@@ -105,13 +106,10 @@ export const aiFallbackLocalPrimaryStatus = $("ai-fallback-local-primary-status"
 export const aiFallbackLocalPrimaryAction = $("ai-fallback-local-primary-action") as HTMLButtonElement | null;
 export const aiFallbackLocalImportAction = $("ai-fallback-local-import-action") as HTMLButtonElement | null;
 export const aiFallbackLocalAdvanced = $("ai-fallback-local-advanced") as HTMLDetailsElement | null;
-export const aiFallbackLocalDetectAction = $("ai-fallback-local-detect-action") as HTMLButtonElement | null;
-export const aiFallbackLocalUseSystemAction = $("ai-fallback-local-use-system-action") as HTMLButtonElement | null;
-export const aiFallbackLocalUseManagedAction = $("ai-fallback-local-use-managed-action") as HTMLButtonElement | null;
 export const aiFallbackLocalVerifyAction = $("ai-fallback-local-verify-action") as HTMLButtonElement | null;
 export const aiFallbackLocalRefreshAction = $("ai-fallback-local-refresh-action") as HTMLButtonElement | null;
 export const aiFallbackLocalRuntimeVersion = $("ai-fallback-local-runtime-version") as HTMLSelectElement | null;
-export const aiFallbackLocalRuntimeVersionRefresh = $("ai-fallback-local-runtime-version-refresh") as HTMLButtonElement | null;
+export const aiFallbackLocalRuntimeSource = $("ai-fallback-local-runtime-source") as HTMLSelectElement | null;
 export const aiFallbackLocalRuntimeVersionNote = $("ai-fallback-local-runtime-version-note") as HTMLSpanElement | null;
 export const aiFallbackLocalRuntimeNote = $("ai-fallback-local-runtime-note") as HTMLSpanElement | null;
 export const aiFallbackOnlineStatusBadge = $("ai-fallback-online-status-badge") as HTMLSpanElement | null;

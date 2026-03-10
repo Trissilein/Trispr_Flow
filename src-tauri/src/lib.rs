@@ -4246,14 +4246,21 @@ pub fn run() {
             let legacy_mic_path = app_data_dir.join("history.json");
             let legacy_system_path = app_data_dir.join("history_transcribe.json");
 
-            let history = PartitionedHistory::load_or_migrate(
-                mic_history_dir,
-                Some(&legacy_mic_path),
-            );
-            let history_transcribe = PartitionedHistory::load_or_migrate(
-                system_history_dir,
-                Some(&legacy_system_path),
-            );
+            let (history, history_transcribe) = std::thread::scope(|s| {
+                let mic = s.spawn(|| {
+                    PartitionedHistory::load_or_migrate(mic_history_dir, Some(&legacy_mic_path))
+                });
+                let sys = s.spawn(|| {
+                    PartitionedHistory::load_or_migrate(
+                        system_history_dir,
+                        Some(&legacy_system_path),
+                    )
+                });
+                (
+                    mic.join().expect("mic history load"),
+                    sys.join().expect("system history load"),
+                )
+            });
 
             app.manage(AppState {
                 settings: Mutex::new(settings.clone()),
@@ -4284,19 +4291,22 @@ pub fn run() {
             });
 
             {
-                let state = app.state::<AppState>();
-                let report = build_dependency_preflight_report(app.handle(), state.inner());
-                if report.overall_status != "ok" {
-                    for item in report.items.iter().filter(|item| item.status != "ok") {
-                        warn!(
-                            "Dependency preflight [{}] {}: {}",
-                            item.status, item.id, item.message
-                        );
+                let handle = app.handle().clone();
+                thread::spawn(move || {
+                    let state = handle.state::<AppState>();
+                    let report = build_dependency_preflight_report(&handle, state.inner());
+                    if report.overall_status != "ok" {
+                        for item in report.items.iter().filter(|item| item.status != "ok") {
+                            warn!(
+                                "Dependency preflight [{}] {}: {}",
+                                item.status, item.id, item.message
+                            );
+                        }
+                    } else {
+                        info!("Dependency preflight passed with no warnings.");
                     }
-                } else {
-                    info!("Dependency preflight passed with no warnings.");
-                }
-                let _ = app.emit("dependency:preflight", &report);
+                    let _ = handle.emit("dependency:preflight", &report);
+                });
             }
 
             if env_flag("TRISPR_RUN_LATENCY_BENCHMARK") {

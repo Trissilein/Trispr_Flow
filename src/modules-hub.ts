@@ -83,6 +83,15 @@ function moduleStateKey(moduleInfo: ModuleDescriptor): string {
   return "unavailable";
 }
 
+function moduleStatusClass(moduleInfo: ModuleDescriptor): string {
+  if (moduleInfo.core) return "model-status active";
+  if (moduleInfo.state === "active") return "model-status downloaded";
+  if (moduleInfo.state === "enabled" || moduleInfo.state === "installed")
+    return "model-status model-status--installed";
+  if (moduleInfo.state === "error") return "model-status is-error";
+  return "model-status available";
+}
+
 function openModuleConfig(moduleId: string): void {
   const moduleInfo = moduleSnapshot.find((m) => m.id === moduleId);
   if (!moduleInfo || !dom.moduleConfigModal) return;
@@ -185,7 +194,7 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
             <div class="model-name">${moduleInfo.name}</div>
             <div class="model-meta">ID: <code>${moduleInfo.id}</code> · v${moduleInfo.version}</div>
           </div>
-          <span class="module-state-tag">${moduleInfo.core ? "Core" : moduleStateLabel(moduleInfo.state)}</span>
+          <span class="${moduleStatusClass(moduleInfo)}">${moduleInfo.core ? "Core" : moduleStateLabel(moduleInfo.state)}</span>
         </div>
         <div class="model-meta" title="${summaryTitle}">${summary}</div>
         <div class="module-card-desc">${escapeHtml(guide.description)}</div>
@@ -197,10 +206,15 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
     .join("\n");
 }
 
+function sortModules(modules: ModuleDescriptor[]): ModuleDescriptor[] {
+  const order: Record<string, number> = { core: 0, active: 1, inactive: 2, unavailable: 3 };
+  return [...modules].sort((a, b) => (order[moduleStateKey(a)] ?? 3) - (order[moduleStateKey(b)] ?? 3));
+}
+
 async function refreshModuleState(): Promise<void> {
   const modules = await invoke<ModuleDescriptor[]>("list_modules");
   moduleSnapshot = modules;
-  renderModulesList(modules);
+  renderModulesList(sortModules(modules));
   syncWorkflowAgentConsoleState();
   syncVoiceOutputConsoleState();
   if (dom.modulesStatus) {

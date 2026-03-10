@@ -51,7 +51,6 @@ import {
 } from "./refinement-prompts";
 import {
   autoStartLocalRuntimeIfNeeded,
-  detectOllamaRuntime,
   ensureLocalRuntimeReady,
   getOllamaRuntimeCardState,
   importOllamaModelFromLocalFile,
@@ -1657,35 +1656,6 @@ export function wireEvents() {
     refreshAIUi();
   });
 
-  dom.aiFallbackLocalDetectAction?.addEventListener("click", async () => {
-    const detectPromise = detectOllamaRuntime();
-    renderAIFallbackSettingsUi();
-    await detectPromise;
-    renderAIFallbackSettingsUi();
-  });
-
-  dom.aiFallbackLocalUseSystemAction?.addEventListener("click", async () => {
-    if (!settings) return;
-    ensureAIFallbackSettingsDefaults();
-    applyExecutionModeInSettings("local_primary");
-    await persistSettings();
-    const systemPromise = useSystemOllamaRuntime();
-    renderAIFallbackSettingsUi();
-    await systemPromise;
-    refreshAIUi();
-  });
-
-  dom.aiFallbackLocalUseManagedAction?.addEventListener("click", async () => {
-    if (!settings) return;
-    ensureAIFallbackSettingsDefaults();
-    applyExecutionModeInSettings("local_primary");
-    await persistSettings();
-    const managedPromise = useManagedOllamaRuntime();
-    renderAIFallbackSettingsUi();
-    await managedPromise;
-    refreshAIUi();
-  });
-
   dom.aiFallbackLocalVerifyAction?.addEventListener("click", async () => {
     const verifyPromise = verifyOllamaRuntime();
     renderAIFallbackSettingsUi();
@@ -1693,10 +1663,13 @@ export function wireEvents() {
     renderAIFallbackSettingsUi();
   });
 
+  // Combined refresh: runtime state + models + version catalog + detect
   dom.aiFallbackLocalRefreshAction?.addEventListener("click", async () => {
-    const refreshPromise = refreshOllamaRuntimeAndModels();
     renderAIFallbackSettingsUi();
-    await refreshPromise;
+    await Promise.all([
+      refreshOllamaRuntimeAndModels(),
+      refreshOllamaRuntimeVersionCatalog(true),
+    ]);
     renderAIFallbackSettingsUi();
   });
 
@@ -1709,9 +1682,19 @@ export function wireEvents() {
     renderAIFallbackSettingsUi();
   });
 
-  dom.aiFallbackLocalRuntimeVersionRefresh?.addEventListener("click", async () => {
-    await refreshOllamaRuntimeVersionCatalog(true);
+  // Runtime source toggle: managed ↔ system
+  dom.aiFallbackLocalRuntimeSource?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackLocalRuntimeSource) return;
+    const source = dom.aiFallbackLocalRuntimeSource.value;
+    ensureAIFallbackSettingsDefaults();
+    applyExecutionModeInSettings("local_primary");
+    await persistSettings();
+    const switchPromise = source === "system"
+      ? useSystemOllamaRuntime()
+      : useManagedOllamaRuntime();
     renderAIFallbackSettingsUi();
+    await switchPromise;
+    refreshAIUi();
   });
 
   const handleSaveCredentialsClick = async () => {

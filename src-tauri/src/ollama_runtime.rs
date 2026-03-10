@@ -28,7 +28,7 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-const DEFAULT_RUNTIME_VERSION: &str = "0.17.5";
+const DEFAULT_RUNTIME_VERSION: &str = "0.17.7";
 const GITHUB_RELEASES_API: &str = "https://api.github.com/repos/ollama/ollama/releases";
 const BACKGROUND_IO_THROTTLE_BYTES: u64 = 16 * 1024 * 1024;
 const BACKGROUND_IO_THROTTLE_SLEEP_MS: u64 = 2;
@@ -47,11 +47,18 @@ struct RuntimeManifestResolved {
     sha256: String,
 }
 
-const WINDOWS_MANIFESTS: [RuntimeManifest; 1] = [RuntimeManifest {
-    version: "0.17.5",
-    url: "https://github.com/ollama/ollama/releases/download/v0.17.5/ollama-windows-amd64.zip",
-    sha256: "2748fe1a44a2cef4c3071f84d000e5cbe1ff614c574465f4404f66f559e414b6",
-}];
+const WINDOWS_MANIFESTS: [RuntimeManifest; 2] = [
+    RuntimeManifest {
+        version: "0.17.7",
+        url: "https://github.com/ollama/ollama/releases/download/v0.17.7/ollama-windows-amd64.zip",
+        sha256: "67710550b4b77d86dc307b52d84cb3b5780847d5468428325470e37e1a394a72",
+    },
+    RuntimeManifest {
+        version: "0.17.5",
+        url: "https://github.com/ollama/ollama/releases/download/v0.17.5/ollama-windows-amd64.zip",
+        sha256: "2748fe1a44a2cef4c3071f84d000e5cbe1ff614c574465f4404f66f559e414b6",
+    },
+];
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OllamaRuntimeInstallProgress {

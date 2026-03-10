@@ -571,7 +571,7 @@ export function renderAIFallbackSettingsUi() {
     );
   });
   const ai = settings.ai_fallback;
-  settings.providers.ollama.runtime_target_version ??= "0.17.5";
+  settings.providers.ollama.runtime_target_version ??= "0.17.7";
   ai.prompt_profile = normalizeRefinementPromptPreset(ai.prompt_profile);
   ai.custom_prompt_enabled = ai.prompt_profile === "custom";
   ai.use_default_prompt = false;
@@ -672,14 +672,10 @@ export function renderAIFallbackSettingsUi() {
   if (dom.aiFallbackLocalImportAction) {
     dom.aiFallbackLocalImportAction.disabled = runtimeCardState.busy;
   }
-  if (dom.aiFallbackLocalDetectAction) {
-    dom.aiFallbackLocalDetectAction.disabled = runtimeCardState.busy;
-  }
-  if (dom.aiFallbackLocalUseSystemAction) {
-    dom.aiFallbackLocalUseSystemAction.disabled = runtimeCardState.busy;
-  }
-  if (dom.aiFallbackLocalUseManagedAction) {
-    dom.aiFallbackLocalUseManagedAction.disabled = runtimeCardState.busy;
+  if (dom.aiFallbackLocalRuntimeSource) {
+    const currentSource = settings.providers.ollama.runtime_source || "per_user_zip";
+    dom.aiFallbackLocalRuntimeSource.value = currentSource;
+    dom.aiFallbackLocalRuntimeSource.disabled = runtimeCardState.busy;
   }
   if (dom.aiFallbackLocalVerifyAction) {
     dom.aiFallbackLocalVerifyAction.disabled = runtimeCardState.busy || !runtimeCardState.detected;
@@ -689,7 +685,7 @@ export function renderAIFallbackSettingsUi() {
   }
   if (dom.aiFallbackLocalRuntimeVersion) {
     const selectedVersion =
-      settings.providers.ollama.runtime_target_version?.trim() || runtimeCardState.version || "0.17.5";
+      settings.providers.ollama.runtime_target_version?.trim() || runtimeCardState.version || "0.17.7";
     const optionPool = [...runtimeVersionOptions];
     const appendIfMissing = (version: string) => {
       if (!version) return;
@@ -699,7 +695,7 @@ export function renderAIFallbackSettingsUi() {
         source: "online",
         selected: version === selectedVersion,
         installed: version === runtimeCardState.version,
-        recommended: version === "0.17.5",
+        recommended: version === "0.17.7",
       });
     };
     appendIfMissing(selectedVersion);
@@ -711,25 +707,7 @@ export function renderAIFallbackSettingsUi() {
         return bScore - aScore || b.version.localeCompare(a.version, undefined, { numeric: true });
       })
       .filter((entry, idx, arr) => idx === arr.findIndex((e) => e.version === entry.version));
-    const limited = prioritized.slice(0, 3);
-    const selectedInLimited = limited.some((entry) => entry.version === selectedVersion);
-    if (!selectedInLimited) {
-      const selectedEntry = prioritized.find((entry) => entry.version === selectedVersion);
-      if (selectedEntry) {
-        limited[limited.length - 1] = selectedEntry;
-      }
-    }
-    const installedVersion = runtimeCardState.version?.trim() || "";
-    const installedInLimited = installedVersion
-      ? limited.some((entry) => entry.version === installedVersion)
-      : true;
-    if (!installedInLimited && installedVersion) {
-      const installedEntry = prioritized.find((entry) => entry.version === installedVersion);
-      if (installedEntry) {
-        const replaceIdx = limited.findIndex((entry) => !entry.selected);
-        limited[replaceIdx >= 0 ? replaceIdx : limited.length - 1] = installedEntry;
-      }
-    }
+    const limited = prioritized;
 
     dom.aiFallbackLocalRuntimeVersion.innerHTML = "";
     limited.forEach((entry) => {
@@ -750,11 +728,8 @@ export function renderAIFallbackSettingsUi() {
       limited.find((entry) => entry.version === dom.aiFallbackLocalRuntimeVersion?.value) ?? null;
     dom.aiFallbackLocalRuntimeVersion.disabled = runtimeCardState.busy;
   }
-  if (dom.aiFallbackLocalRuntimeVersionRefresh) {
-    dom.aiFallbackLocalRuntimeVersionRefresh.disabled = runtimeCardState.busy;
-  }
   if (dom.aiFallbackLocalRuntimeVersionNote) {
-    const selected = settings.providers.ollama.runtime_target_version || "0.17.5";
+    const selected = settings.providers.ollama.runtime_target_version || "0.17.7";
     dom.aiFallbackLocalRuntimeVersionNote.textContent = "";
     const lead = document.createElement("span");
     lead.textContent = `Selected target ${selected}. `;

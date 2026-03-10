@@ -294,8 +294,6 @@ export function renderAIRefinementStaticHelp(): void {
   applyHelpTooltip(document.getElementById("ai-fallback-online-lane-title"), "ai_refinement_online_fallback");
   applyHelpTooltip(document.getElementById("ai-fallback-local-primary-action"), "ollama_action_install");
   applyHelpTooltip(document.getElementById("ai-fallback-local-import-action"), "ollama_action_import");
-  applyHelpTooltip(document.getElementById("ai-fallback-local-detect-action"), "ollama_action_detect");
-  applyHelpTooltip(document.getElementById("ai-fallback-local-use-system-action"), "ollama_action_use_system");
   applyHelpTooltip(document.getElementById("ai-fallback-local-verify-action"), "ollama_action_verify");
   applyHelpTooltip(document.getElementById("ai-fallback-local-refresh-action"), "ollama_action_refresh");
   applyHelpTooltip(document.getElementById("ai-refinement-models-title"), "ollama_models_section");

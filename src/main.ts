@@ -62,7 +62,7 @@ import {
   setTranscribeStatus,
   updateThresholdMarkers,
 } from "./ui-state";
-import { renderHistory, scheduleHistoryRender, setHistoryTab, initHistoryDelegation } from "./history";
+import { scheduleHistoryRender, setHistoryTab, initHistoryDelegation } from "./history";
 import { initPanelState, isPanelCollapsed, setPanelCollapsed } from "./panels";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
 import { wireEvents, initMainTab, cleanupWindowListeners, scheduleSettingsRender } from "./event-listeners";
@@ -215,6 +215,7 @@ function handleDeferredPasteTimeout(jobId: string): void {
 
 function cleanupEventListeners() {
   clearPendingDeferredPasteJobs();
+  cancelPendingRenderFrames();
   cleanupUnifiedTooltips();
   cleanupWindowListeners();
   eventUnlisteners.forEach((unlisten) => unlisten());
@@ -256,11 +257,89 @@ function initConversationView() {
   }
 }
 
+// ── RAF-guarded render helpers ──────────────────────────────────────────────
+// High-frequency Tauri events (audio meters, download progress) can fire
+// 30-60× per second.  Instead of touching the DOM on every event, we buffer
+// the latest value and flush once per animation frame.
+
+let _pendingAudioLevel: number | null = null;
+let _pendingTranscribeLevel: number | null = null;
+let _pendingTranscribeDb: number | null = null;
+let _meterRafId: number | null = null;
+
+function flushMeterUpdates(): void {
+  _meterRafId = null;
+
+  if (_pendingAudioLevel !== null) {
+    const level = _pendingAudioLevel;
+    _pendingAudioLevel = null;
+    if (dom.vadMeterFill) {
+      dom.vadMeterFill.style.width = `${thresholdToPercent(level)}%`;
+    }
+    if (dom.vadLevelDbm) {
+      const db = levelToDb(level);
+      dom.vadLevelDbm.textContent = db <= -60 ? "-∞ dB" : `${db.toFixed(0)} dB`;
+    }
+  }
+
+  if (_pendingTranscribeLevel !== null) {
+    const level = _pendingTranscribeLevel;
+    _pendingTranscribeLevel = null;
+    if (dom.transcribeMeterFill) {
+      dom.transcribeMeterFill.style.width = `${Math.round(level * 100)}%`;
+    }
+  }
+
+  if (_pendingTranscribeDb !== null) {
+    const value = _pendingTranscribeDb;
+    _pendingTranscribeDb = null;
+    if (dom.transcribeMeterDb) {
+      dom.transcribeMeterDb.textContent = `${value.toFixed(1)} dB`;
+    }
+  }
+}
+
+function scheduleMeterFlush(): void {
+  if (_meterRafId === null) {
+    _meterRafId = requestAnimationFrame(flushMeterUpdates);
+  }
+}
+
+let _ollamaRenderFrame: number | null = null;
+
+function scheduleOllamaRender(): void {
+  if (_ollamaRenderFrame !== null) return;
+  _ollamaRenderFrame = requestAnimationFrame(() => {
+    _ollamaRenderFrame = null;
+    renderAIFallbackSettingsUi();
+    renderOllamaModelManager();
+  });
+}
+
+let _modelRenderFrame: number | null = null;
+
+function scheduleModelRender(): void {
+  if (_modelRenderFrame !== null) return;
+  _modelRenderFrame = requestAnimationFrame(() => {
+    _modelRenderFrame = null;
+    renderModels();
+  });
+}
+
+function cancelPendingRenderFrames(): void {
+  if (_meterRafId !== null) { cancelAnimationFrame(_meterRafId); _meterRafId = null; }
+  if (_ollamaRenderFrame !== null) { cancelAnimationFrame(_ollamaRenderFrame); _ollamaRenderFrame = null; }
+  if (_modelRenderFrame !== null) { cancelAnimationFrame(_modelRenderFrame); _modelRenderFrame = null; }
+  _pendingAudioLevel = _pendingTranscribeLevel = _pendingTranscribeDb = null;
+}
+
 async function bootstrap() {
   // Clean up old listeners if re-bootstrapping to prevent memory leaks
   cleanupEventListeners();
   // Reset the paste queue to prevent accumulation across re-bootstrap cycles
   pasteQueue = Promise.resolve();
+
+  if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Loading configuration…";
 
   // Phase 1: Load data from backend in parallel — any failure here is fatal
   const [
@@ -270,6 +349,7 @@ async function bootstrap() {
     fetchedHistory,
     fetchedTranscribeHistory,
     fetchedModels,
+    fetchedVersion,
   ] = await Promise.all([
     invoke<Settings>("get_settings"),
     invoke<AudioDevice[]>("list_audio_devices"),
@@ -277,14 +357,20 @@ async function bootstrap() {
     invoke<HistoryEntry[]>("get_history"),
     invoke<HistoryEntry[]>("get_transcribe_history"),
     invoke<ModelInfo[]>("list_models"),
+    getVersion().catch(() => null),
   ]);
   setSettings(fetchedSettings);
   setDevices(fetchedDevices);
   setOutputDevices(fetchedOutputDevices);
   setHistory(fetchedHistory);
   setTranscribeHistory(fetchedTranscribeHistory);
-  restoreRefinementInspector([...fetchedHistory, ...fetchedTranscribeHistory]);
+  restoreRefinementInspector(fetchedHistory.concat(fetchedTranscribeHistory));
   setModels(fetchedModels);
+  if (dom.appVersion && fetchedVersion) {
+    dom.appVersion.textContent = `v${fetchedVersion}`;
+  }
+
+  if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Wiring events…";
 
   // Phase 2: Wire event handlers FIRST so UI is always interactive
   wireEvents();
@@ -301,6 +387,8 @@ async function bootstrap() {
   initWorkflowAgentConsole();
   syncVoiceOutputConsoleState();
 
+  if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Rendering interface…";
+
   // Phase 3: Render UI synchronously — UI becomes interactive here
   try {
     renderDevices();
@@ -310,7 +398,6 @@ async function bootstrap() {
     setCaptureStatus("idle");
     setTranscribeStatus("idle");
     setRefiningActive(false);
-    renderHistory();
     renderRefinementInspector();
     renderModels();
     refreshModulesHub();
@@ -320,6 +407,9 @@ async function bootstrap() {
 
   // Remove loading overlay — UI is now ready for interaction
   dom.bootstrapOverlay?.setAttribute("hidden", "");
+
+  // Defer history render to next animation frame so the overlay removal is painted first
+  scheduleHistoryRender();
 
   // Phase 3b: Heavy background checks — run async without blocking the UI
   void (async () => {
@@ -343,67 +433,7 @@ async function bootstrap() {
     }
   })();
 
-  // Display app version
-  if (dom.appVersion) {
-    try {
-      const version = await getVersion();
-      dom.appVersion.textContent = `v${version}`;
-    } catch (error) {
-      console.warn("Failed to get app version:", error);
-    }
-  }
-
-  eventUnlisteners.push(await listen<Settings>("settings-changed", (event) => {
-    setSettings(event.payload ?? null);
-    if (!settings?.ai_fallback?.enabled) setRefiningActive(false);
-    scheduleSettingsRender();
-    renderHero();
-    renderModels();
-    refreshModulesHub();
-    syncWorkflowAgentConsoleState();
-    void refreshModelsDir().catch((e) => console.error("refreshModelsDir failed:", e));
-    if (settings?.ai_fallback?.provider === "ollama") {
-      if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshInstalledModels) {
-        void refreshOllamaInstalledModels();
-      }
-      if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshRuntimeState) {
-        void refreshOllamaRuntimeState();
-      }
-    }
-    if (OLLAMA_SETTINGS_CHANGED_POLICY.renderManager) {
-      renderOllamaModelManager();
-    }
-  }));
-
-  eventUnlisteners.push(await listen<string>("capture:state", (event) => {
-    const state = event.payload as TranscriptionStatus;
-    setCaptureStatus(state ?? "idle");
-  }));
-
-  eventUnlisteners.push(await listen<string>("transcribe:state", (event) => {
-    const state = event.payload as TranscriptionStatus;
-    setTranscribeStatus(state ?? "idle");
-  }));
-
-  eventUnlisteners.push(
-    await listen<TranscriptionGpuActivityEvent>("transcription:gpu-activity", (event) => {
-      setGpuActivity(event.payload);
-    })
-  );
-
-  eventUnlisteners.push(await listen<number>("transcribe:level", (event) => {
-    if (!dom.transcribeMeterFill) return;
-    const level = Math.max(0, Math.min(1, event.payload ?? 0));
-    dom.transcribeMeterFill.style.width = `${Math.round(level * 100)}%`;
-  }));
-
-  eventUnlisteners.push(await listen<number>("transcribe:db", (event) => {
-    if (!dom.transcribeMeterDb) return;
-    const value = event.payload ?? -60;
-    const clamped = Math.max(-60, Math.min(0, value));
-    dom.transcribeMeterDb.textContent = `${clamped.toFixed(1)} dB`;
-  }));
-
+  // Hoist before Promise.all so it's accessible to history listener callbacks
   function makeHistoryUpdateHandler(setter: (entries: HistoryEntry[]) => void) {
     return async (event: { payload: HistoryEntry[] }) => {
       setter(event.payload ?? []);
@@ -416,149 +446,160 @@ async function bootstrap() {
     };
   }
 
-  eventUnlisteners.push(await listen<HistoryEntry[]>("history:updated", makeHistoryUpdateHandler(setHistory)));
-
-  eventUnlisteners.push(await listen<HistoryEntry[]>("transcribe:history-updated", makeHistoryUpdateHandler(setTranscribeHistory)));
-
-  eventUnlisteners.push(await listen("module:state-changed", () => {
-    refreshModulesHub();
-  }));
-
-  eventUnlisteners.push(
-    await listen<{ provider: string; error: string }>("tts:speech-error", (event) => {
+  // Register all event listeners in parallel — avoids 10-20s sequential IPC overhead
+  const _newListeners = await Promise.all([
+    listen<Settings>("settings-changed", (event) => {
+      setSettings(event.payload ?? null);
+      if (!settings?.ai_fallback?.enabled) setRefiningActive(false);
+      scheduleSettingsRender();
+      renderHero();
+      renderModels();
+      refreshModulesHub();
+      syncWorkflowAgentConsoleState();
+      void refreshModelsDir().catch((e) => console.error("refreshModelsDir failed:", e));
+      if (settings?.ai_fallback?.provider === "ollama") {
+        if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshInstalledModels) {
+          void refreshOllamaInstalledModels();
+        }
+        if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshRuntimeState) {
+          void refreshOllamaRuntimeState();
+        }
+      }
+      if (OLLAMA_SETTINGS_CHANGED_POLICY.renderManager) {
+        renderOllamaModelManager();
+      }
+    }),
+    listen<string>("capture:state", (event) => {
+      const state = event.payload as TranscriptionStatus;
+      setCaptureStatus(state ?? "idle");
+    }),
+    listen<string>("transcribe:state", (event) => {
+      const state = event.payload as TranscriptionStatus;
+      setTranscribeStatus(state ?? "idle");
+    }),
+    listen<TranscriptionGpuActivityEvent>("transcription:gpu-activity", (event) => {
+      setGpuActivity(event.payload);
+    }),
+    listen<number>("transcribe:level", (event) => {
+      _pendingTranscribeLevel = Math.max(0, Math.min(1, event.payload ?? 0));
+      scheduleMeterFlush();
+    }),
+    listen<number>("transcribe:db", (event) => {
+      _pendingTranscribeDb = Math.max(-60, Math.min(0, event.payload ?? -60));
+      scheduleMeterFlush();
+    }),
+    listen<HistoryEntry[]>("history:updated", makeHistoryUpdateHandler(setHistory)),
+    listen<HistoryEntry[]>("transcribe:history-updated", makeHistoryUpdateHandler(setTranscribeHistory)),
+    listen("module:state-changed", () => {
+      refreshModulesHub();
+    }),
+    listen<{ provider: string; error: string }>("tts:speech-error", (event) => {
       showToast({
         type: "error",
         title: "Voice output failed",
         message: event.payload.error,
       });
-    })
-  );
-
-  // Re-check Ollama health when a timeout or connection error occurs during
-  // refinement — avoids requiring a full app restart to recover the status.
-  eventUnlisteners.push(
-    await listen("ai_fallback:health_degraded", async () => {
+    }),
+    // Re-check Ollama health when a timeout or connection error occurs during
+    // refinement — avoids requiring a full app restart to recover the status.
+    listen("ai_fallback:health_degraded", async () => {
       await refreshOllamaRuntimeState({ force: true });
       renderAIFallbackSettingsUi();
-    })
-  );
+    }),
+    listen<TranscriptionResultEvent>("transcription:result", (event) => {
+      const payload = event.payload;
+      handlePipelineTranscriptionResult(payload);
+      handleTranscriptionResultForInspector(payload);
+      scheduleHistoryRender();
+      if (dom.statusMessage) dom.statusMessage.textContent = "";
 
-  eventUnlisteners.push(await listen<TranscriptionResultEvent>("transcription:result", (event) => {
-    const payload = event.payload;
-    handlePipelineTranscriptionResult(payload);
-    handleTranscriptionResultForInspector(payload);
-    scheduleHistoryRender();
-    if (dom.statusMessage) dom.statusMessage.textContent = "";
+      const jobId = typeof payload?.job_id === "string" ? payload.job_id.trim() : "";
+      const pasteDeferred = Boolean(payload?.paste_deferred && jobId);
+      if (!pasteDeferred) {
+        queueTranscriptPaste(payload.text, `raw:${jobId || "unknown"}`);
+        return;
+      }
 
-    const jobId = typeof payload?.job_id === "string" ? payload.job_id.trim() : "";
-    const pasteDeferred = Boolean(payload?.paste_deferred && jobId);
-    if (!pasteDeferred) {
-      queueTranscriptPaste(payload.text, `raw:${jobId || "unknown"}`);
-      return;
-    }
+      const completedOutcome = deferredPasteOutcomes.get(jobId);
+      if (completedOutcome === "refined") {
+        const refinedText = deferredRefinedTextByJobId.get(jobId);
+        queueTranscriptPaste(refinedText && refinedText.trim() ? refinedText : payload.text, `late_result_refined:${jobId}`);
+        return;
+      }
+      if (completedOutcome === "failed" || completedOutcome === "timed_out") {
+        queueTranscriptPaste(payload.text, `late_result_fallback:${jobId}`);
+        return;
+      }
 
-    const completedOutcome = deferredPasteOutcomes.get(jobId);
-    if (completedOutcome === "refined") {
-      const refinedText = deferredRefinedTextByJobId.get(jobId);
-      queueTranscriptPaste(refinedText && refinedText.trim() ? refinedText : payload.text, `late_result_refined:${jobId}`);
-      return;
-    }
-    if (completedOutcome === "failed" || completedOutcome === "timed_out") {
-      queueTranscriptPaste(payload.text, `late_result_fallback:${jobId}`);
-      return;
-    }
-
-    const timeoutMs = Math.max(1, Number(payload.paste_timeout_ms ?? 10_000));
-    const existing = pendingDeferredPasteJobs.get(jobId);
-    if (existing) {
-      window.clearTimeout(existing.timeoutHandle);
-    }
-    const timeoutHandle = window.setTimeout(() => {
-      handleDeferredPasteTimeout(jobId);
-    }, timeoutMs);
-    pendingDeferredPasteJobs.set(jobId, {
-      rawText: payload.text,
-      timeoutHandle,
-    });
-  }));
-
-  eventUnlisteners.push(await listen<TranscriptionRawResultEvent>("transcription:raw-result", (event) => {
-    void handleWorkflowAgentRawResult(event.payload);
-  }));
-
-  eventUnlisteners.push(await listen("agent:command-detected", (event) => {
-    appendWorkflowAgentLog(`Event agent:command-detected -> ${JSON.stringify(event.payload)}`);
-  }));
-
-  eventUnlisteners.push(await listen("agent:plan-ready", (event) => {
-    appendWorkflowAgentLog(`Event agent:plan-ready -> ${JSON.stringify(event.payload)}`);
-  }));
-
-  eventUnlisteners.push(await listen("agent:execution-progress", (event) => {
-    appendWorkflowAgentLog(`Event agent:execution-progress -> ${JSON.stringify(event.payload)}`);
-  }));
-
-  eventUnlisteners.push(await listen("agent:execution-finished", (event) => {
-    appendWorkflowAgentLog(`Event agent:execution-finished -> ${JSON.stringify(event.payload)}`);
-  }));
-
-  eventUnlisteners.push(await listen("agent:execution-failed", (event) => {
-    appendWorkflowAgentLog(`Event agent:execution-failed -> ${JSON.stringify(event.payload)}`);
-  }));
-
-  eventUnlisteners.push(
-    await listen<TranscriptionRefinementStartedEvent>("transcription:refinement-started", (event) => {
+      const timeoutMs = Math.max(1, Number(payload.paste_timeout_ms ?? 10_000));
+      const existing = pendingDeferredPasteJobs.get(jobId);
+      if (existing) {
+        window.clearTimeout(existing.timeoutHandle);
+      }
+      const timeoutHandle = window.setTimeout(() => {
+        handleDeferredPasteTimeout(jobId);
+      }, timeoutMs);
+      pendingDeferredPasteJobs.set(jobId, {
+        rawText: payload.text,
+        timeoutHandle,
+      });
+    }),
+    listen<TranscriptionRawResultEvent>("transcription:raw-result", (event) => {
+      void handleWorkflowAgentRawResult(event.payload);
+    }),
+    ...(["agent:command-detected", "agent:plan-ready", "agent:execution-progress",
+      "agent:execution-finished", "agent:execution-failed"] as const).map((name) =>
+      listen(name, (event) => {
+        appendWorkflowAgentLog(`Event ${name} -> ${JSON.stringify(event.payload)}`);
+      })
+    ),
+    listen<TranscriptionRefinementStartedEvent>("transcription:refinement-started", (event) => {
       handlePipelineRefinementStarted(event.payload);
       handleRefinementStartedForInspector(event.payload);
       scheduleHistoryRender();
-    })
-  );
-
-  // AI Fallback: refined transcript available — log silently (original already shown).
-  eventUnlisteners.push(await listen<TranscriptionRefinedEvent>("transcription:refined", (event) => {
-    handleRefinementSuccessForInspector(event.payload);
-    scheduleHistoryRender();
-    const { refined, model, execution_time_ms, job_id: jobId } = event.payload;
-    const priorOutcome = deferredPasteOutcomes.get(jobId);
-    const pending = settleDeferredPasteJob(jobId);
-    if (pending) {
-      rememberDeferredPasteOutcome(jobId, "refined", refined);
-      handlePipelineRefined(event.payload);
-      queueTranscriptPaste(refined, `refined:${jobId}`);
-    } else if (priorOutcome === "timed_out") {
-      rememberDeferredPasteOutcome(jobId, "refined", refined);
-      handlePipelineRefinementTimeout(jobId);
-      console.debug(`[AI] Late refinement received after timeout (${jobId}); history updated only.`);
-    } else {
-      rememberDeferredPasteOutcome(jobId, "refined", refined);
-      handlePipelineRefined(event.payload);
-    }
-    console.debug(`[AI] Refinement done (${model}, ${execution_time_ms}ms):`, refined);
-  }));
-
-  // AI Fallback: refinement failed — log, no disruption to user workflow.
-  eventUnlisteners.push(await listen<TranscriptionRefinementFailedEvent>("transcription:refinement-failed", (event) => {
-    const payload = event.payload;
-    const priorOutcome = deferredPasteOutcomes.get(payload.job_id);
-    if (priorOutcome === "timed_out") {
-      handlePipelineRefinementTimeout(payload.job_id);
-    } else {
-      handlePipelineRefinementFailed(payload);
-    }
-    handleRefinementFailureForInspector(payload);
-    scheduleHistoryRender();
-    const pending = settleDeferredPasteJob(payload.job_id);
-    if (pending) {
-      rememberDeferredPasteOutcome(payload.job_id, "failed");
-      queueTranscriptPaste(pending.rawText, `fallback_failed:${payload.job_id}`);
-    } else {
-      rememberDeferredPasteOutcome(payload.job_id, "failed");
-    }
-    console.warn(`[AI] Refinement failed (${payload.source}):`, payload.error);
-  }));
-
-  eventUnlisteners.push(
-    await listen<TranscriptionRefinementActivityEvent>("transcription:refinement-activity", (event) => {
+    }),
+    // AI Fallback: refined transcript available — log silently (original already shown).
+    listen<TranscriptionRefinedEvent>("transcription:refined", (event) => {
+      handleRefinementSuccessForInspector(event.payload);
+      scheduleHistoryRender();
+      const { refined, model, execution_time_ms, job_id: jobId } = event.payload;
+      const priorOutcome = deferredPasteOutcomes.get(jobId);
+      const pending = settleDeferredPasteJob(jobId);
+      if (pending) {
+        rememberDeferredPasteOutcome(jobId, "refined", refined);
+        handlePipelineRefined(event.payload);
+        queueTranscriptPaste(refined, `refined:${jobId}`);
+      } else if (priorOutcome === "timed_out") {
+        rememberDeferredPasteOutcome(jobId, "refined", refined);
+        handlePipelineRefinementTimeout(jobId);
+        console.debug(`[AI] Late refinement received after timeout (${jobId}); history updated only.`);
+      } else {
+        rememberDeferredPasteOutcome(jobId, "refined", refined);
+        handlePipelineRefined(event.payload);
+      }
+      console.debug(`[AI] Refinement done (${model}, ${execution_time_ms}ms):`, refined);
+    }),
+    // AI Fallback: refinement failed — log, no disruption to user workflow.
+    listen<TranscriptionRefinementFailedEvent>("transcription:refinement-failed", (event) => {
+      const payload = event.payload;
+      const priorOutcome = deferredPasteOutcomes.get(payload.job_id);
+      if (priorOutcome === "timed_out") {
+        handlePipelineRefinementTimeout(payload.job_id);
+      } else {
+        handlePipelineRefinementFailed(payload);
+      }
+      handleRefinementFailureForInspector(payload);
+      scheduleHistoryRender();
+      const pending = settleDeferredPasteJob(payload.job_id);
+      if (pending) {
+        rememberDeferredPasteOutcome(payload.job_id, "failed");
+        queueTranscriptPaste(pending.rawText, `fallback_failed:${payload.job_id}`);
+      } else {
+        rememberDeferredPasteOutcome(payload.job_id, "failed");
+      }
+      console.warn(`[AI] Refinement failed (${payload.source}):`, payload.error);
+    }),
+    listen<TranscriptionRefinementActivityEvent>("transcription:refinement-activity", (event) => {
       const payload = event.payload;
       const activeCount = Number(payload?.active_count ?? 0);
       setRefiningActive(activeCount > 0);
@@ -573,191 +614,154 @@ async function bootstrap() {
           duration: 4200,
         });
       }
-    })
-  );
-
-  eventUnlisteners.push(await listen<DownloadProgress>("model:download-progress", (event) => {
-    modelProgress.set(event.payload.id, event.payload);
-    const updatedModels = models.map((model) =>
-      model.id === event.payload.id ? { ...model, downloading: true } : model
-    );
-    setModels(updatedModels);
-    renderModels();
-  }));
-
-  eventUnlisteners.push(await listen<DownloadComplete>("model:download-complete", async (event) => {
-    modelProgress.delete(event.payload.id);
-    await refreshModels();
-  }));
-
-  eventUnlisteners.push(await listen<DownloadError>("model:download-error", async (event) => {
-    console.error("model download error", event.payload.error);
-    modelProgress.delete(event.payload.id);
-    await refreshModels();
-  }));
-
-  eventUnlisteners.push(await listen<QuantizeProgress>("model:quantize-progress", (event) => {
-    const payload = event.payload;
-    if (!payload?.file_name) return;
-    quantizeProgress.set(payload.file_name, payload);
-    renderModels();
-  }));
-
-  // Ollama pull progress events
-  eventUnlisteners.push(await listen<OllamaPullProgress>("ollama:pull-progress", (event) => {
-    ollamaPullProgress.set(event.payload.model, event.payload);
-    renderOllamaModelManager();
-    renderAIFallbackSettingsUi();
-  }));
-
-  eventUnlisteners.push(await listen<OllamaPullComplete>("ollama:pull-complete", async (event) => {
-    clearActiveOllamaPull(event.payload.model);
-    ollamaPullProgress.delete(event.payload.model);
-    showToast({
-      type: "success",
-      title: "Model Downloaded",
-      message: `${event.payload.model} is ready to use.`,
-    });
-    await refreshOllamaRuntimeState({ force: true });
-    if (getOllamaRuntimeCardState().healthy) {
-      await refreshOllamaInstalledModels();
-    }
-    renderOllamaModelManager();
-    renderAIFallbackSettingsUi();
-  }));
-
-  eventUnlisteners.push(await listen<OllamaPullError>("ollama:pull-error", (event) => {
-    clearActiveOllamaPull(event.payload.model);
-    ollamaPullProgress.delete(event.payload.model);
-    showToast({
-      type: "error",
-      title: "Download Failed",
-      message: `${event.payload.model}: ${event.payload.error}`,
-    });
-    renderOllamaModelManager();
-    renderAIFallbackSettingsUi();
-  }));
-
-  eventUnlisteners.push(
-    await listen<OllamaRuntimeInstallProgress>("ollama:runtime-install-progress", (event) => {
-      setOllamaRuntimeInstallProgress(event.payload);
+    }),
+    listen<DownloadProgress>("model:download-progress", (event) => {
+      modelProgress.set(event.payload.id, event.payload);
+      const updatedModels = models.map((model) =>
+        model.id === event.payload.id ? { ...model, downloading: true } : model
+      );
+      setModels(updatedModels);
+      scheduleModelRender();
+    }),
+    listen<DownloadComplete>("model:download-complete", async (event) => {
+      modelProgress.delete(event.payload.id);
+      await refreshModels();
+    }),
+    listen<DownloadError>("model:download-error", async (event) => {
+      console.error("model download error", event.payload.error);
+      modelProgress.delete(event.payload.id);
+      await refreshModels();
+    }),
+    listen<QuantizeProgress>("model:quantize-progress", (event) => {
+      const payload = event.payload;
+      if (!payload?.file_name) return;
+      quantizeProgress.set(payload.file_name, payload);
+      scheduleModelRender();
+    }),
+    // Ollama pull progress events
+    listen<OllamaPullProgress>("ollama:pull-progress", (event) => {
+      ollamaPullProgress.set(event.payload.model, event.payload);
+      scheduleOllamaRender();
+    }),
+    listen<OllamaPullComplete>("ollama:pull-complete", async (event) => {
+      clearActiveOllamaPull(event.payload.model);
+      ollamaPullProgress.delete(event.payload.model);
+      showToast({
+        type: "success",
+        title: "Model Downloaded",
+        message: `${event.payload.model} is ready to use.`,
+      });
+      await refreshOllamaRuntimeState({ force: true });
+      if (getOllamaRuntimeCardState().healthy) {
+        await refreshOllamaInstalledModels();
+      }
+      renderOllamaModelManager();
       renderAIFallbackSettingsUi();
-    })
-  );
-
-  eventUnlisteners.push(
-    await listen<OllamaRuntimeInstallComplete>("ollama:runtime-install-complete", async (event) => {
+    }),
+    listen<OllamaPullError>("ollama:pull-error", (event) => {
+      clearActiveOllamaPull(event.payload.model);
+      ollamaPullProgress.delete(event.payload.model);
+      showToast({
+        type: "error",
+        title: "Download Failed",
+        message: `${event.payload.model}: ${event.payload.error}`,
+      });
+      renderOllamaModelManager();
+      renderAIFallbackSettingsUi();
+    }),
+    listen<OllamaRuntimeInstallProgress>("ollama:runtime-install-progress", (event) => {
+      setOllamaRuntimeInstallProgress(event.payload);
+      scheduleOllamaRender();
+    }),
+    listen<OllamaRuntimeInstallComplete>("ollama:runtime-install-complete", async (event) => {
       setOllamaRuntimeInstallComplete(event.payload);
       await refreshOllamaRuntimeState({ force: true });
       renderAIFallbackSettingsUi();
-    })
-  );
-
-  eventUnlisteners.push(
-    await listen<OllamaRuntimeInstallError>("ollama:runtime-install-error", (event) => {
+    }),
+    listen<OllamaRuntimeInstallError>("ollama:runtime-install-error", (event) => {
       setOllamaRuntimeInstallError(event.payload);
       renderAIFallbackSettingsUi();
-    })
-  );
+    }),
+    listen<OllamaRuntimeHealth>("ollama:runtime-health", (event) => {
+      setOllamaRuntimeHealth(event.payload);
+      renderAIFallbackSettingsUi();
+    }),
+    listen<string>("transcription:error", (event) => {
+      console.error("transcription error", event.payload);
+      setCaptureStatus("idle");
+      if (dom.statusMessage) dom.statusMessage.textContent = event.payload;
 
-  eventUnlisteners.push(await listen<OllamaRuntimeHealth>("ollama:runtime-health", (event) => {
-    setOllamaRuntimeHealth(event.payload);
-    renderAIFallbackSettingsUi();
-  }));
+      // Show toast for transcription errors
+      showToast({
+        type: "error",
+        title: "Transcription Failed",
+        message: event.payload,
+        duration: 7000,
+      });
+    }),
+    listen<TranscribeBacklogStatus>("transcribe:backlog-expanded", (event) => {
+      const payload = event.payload;
+      if (!payload) return;
+      dismissToast(backlogWarningToastId);
+      backlogWarningToastId = null;
+      showToast({
+        type: "success",
+        title: "Output Backlog Expanded",
+        message: `New capacity: ${payload.capacity_chunks} chunks (${payload.percent_used}% used).`,
+        duration: 5000,
+      });
+    }),
+    listen<TranscribeBacklogStatus>("transcribe:backlog-warning", (event) => {
+      const payload = event.payload;
+      if (!payload) return;
 
-  eventUnlisteners.push(await listen<string>("transcription:error", (event) => {
-    console.error("transcription error", event.payload);
-    setCaptureStatus("idle");
-    if (dom.statusMessage) dom.statusMessage.textContent = event.payload;
+      dismissToast(backlogWarningToastId);
 
-    // Show toast for transcription errors
-    showToast({
-      type: "error",
-      title: "Transcription Failed",
-      message: event.payload,
-      duration: 7000,
-    });
-  }));
-
-  eventUnlisteners.push(await listen<TranscribeBacklogStatus>("transcribe:backlog-expanded", (event) => {
-    const payload = event.payload;
-    if (!payload) return;
-    dismissToast(backlogWarningToastId);
-    backlogWarningToastId = null;
-    showToast({
-      type: "success",
-      title: "Output Backlog Expanded",
-      message: `New capacity: ${payload.capacity_chunks} chunks (${payload.percent_used}% used).`,
-      duration: 5000,
-    });
-  }));
-
-  eventUnlisteners.push(await listen<TranscribeBacklogStatus>("transcribe:backlog-warning", (event) => {
-    const payload = event.payload;
-    if (!payload) return;
-
-    dismissToast(backlogWarningToastId);
-
-    const droppedSuffix = payload.dropped_chunks > 0 ? ` Dropped chunks: ${payload.dropped_chunks}.` : "";
-    backlogWarningToastId = showToast({
-      type: "warning",
-      title: "Output Backlog Near Capacity",
-      message: `Queue at ${payload.percent_used}% (${payload.queued_chunks}/${payload.capacity_chunks} chunks). Auto-expand is scheduled.${droppedSuffix}`,
-      duration: 0,
-      actionLabel: "Expand now",
-      actionDismiss: false,
-      onAction: async () => {
-        try {
-          await invoke<TranscribeBacklogStatus>("expand_transcribe_backlog");
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          showToast({
-            type: "error",
-            title: "Backlog Expansion Failed",
-            message,
-            duration: 7000,
-          });
-        }
-      },
-    });
-  }));
-
-  // Listen for app-wide errors from backend
-  eventUnlisteners.push(await listen<ErrorEvent>("app:error", (event) => {
-    showErrorToast(event.payload.error, event.payload.context);
-  }));
-
-  // Listen for audio cues (beep on recording start/stop)
-  eventUnlisteners.push(await listen<string>("audio:cue", (event) => {
-    const type = event.payload as AudioCueType;
-    if (settings?.audio_cues) {
-      playAudioCue(type);
-    }
-  }));
-
-  eventUnlisteners.push(await listen<number>("audio:level", (event) => {
-    if (!dom.vadMeterFill) return;
-    const level = Math.max(0, Math.min(1, event.payload ?? 0));
-    // Convert to dB scale for display (-60dB to 0dB)
-    const db = levelToDb(level);
-    const percent = thresholdToPercent(level);
-    dom.vadMeterFill.style.width = `${percent}%`;
-
-    // Update dBm display
-    if (dom.vadLevelDbm) {
-      if (db <= -60) {
-        dom.vadLevelDbm.textContent = "-∞ dB";
-      } else {
-        dom.vadLevelDbm.textContent = `${db.toFixed(0)} dB`;
+      const droppedSuffix = payload.dropped_chunks > 0 ? ` Dropped chunks: ${payload.dropped_chunks}.` : "";
+      backlogWarningToastId = showToast({
+        type: "warning",
+        title: "Output Backlog Near Capacity",
+        message: `Queue at ${payload.percent_used}% (${payload.queued_chunks}/${payload.capacity_chunks} chunks). Auto-expand is scheduled.${droppedSuffix}`,
+        duration: 0,
+        actionLabel: "Expand now",
+        actionDismiss: false,
+        onAction: async () => {
+          try {
+            await invoke<TranscribeBacklogStatus>("expand_transcribe_backlog");
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            showToast({
+              type: "error",
+              title: "Backlog Expansion Failed",
+              message,
+              duration: 7000,
+            });
+          }
+        },
+      });
+    }),
+    // Listen for app-wide errors from backend
+    listen<ErrorEvent>("app:error", (event) => {
+      showErrorToast(event.payload.error, event.payload.context);
+    }),
+    // Listen for audio cues (beep on recording start/stop)
+    listen<string>("audio:cue", (event) => {
+      const type = event.payload as AudioCueType;
+      if (settings?.audio_cues) {
+        playAudioCue(type);
       }
-    }
-  }));
-
-  // Listen for dynamic sustain threshold updates from backend
-  eventUnlisteners.push(await listen<number>("vad:dynamic-threshold", (event) => {
-    setDynamicSustainThreshold(event.payload ?? 0.01);
-    updateThresholdMarkers();
-  }));
+    }),
+    listen<number>("audio:level", (event) => {
+      _pendingAudioLevel = Math.max(0, Math.min(1, event.payload ?? 0));
+      scheduleMeterFlush();
+    }),
+    // Listen for dynamic sustain threshold updates from backend
+    listen<number>("vad:dynamic-threshold", (event) => {
+      setDynamicSustainThreshold(event.payload ?? 0.01);
+      updateThresholdMarkers();
+    }),
+  ]);
+  eventUnlisteners.push(..._newListeners);
 
   // Initialize live transcript dump for crash recovery
   initLiveDump();
@@ -863,7 +867,7 @@ window.addEventListener("DOMContentLoaded", () => {
   bootstrap()
     .then(() => {
       initWindowStatePersistence();
-      return checkModelOnStartup().then(() => checkDependencyPreflightOnStartup());
+      return Promise.all([checkModelOnStartup(), checkDependencyPreflightOnStartup()]);
     })
     .catch((error) => {
       console.error("bootstrap failed", error);

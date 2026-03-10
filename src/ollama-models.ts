@@ -20,7 +20,7 @@ import type {
 } from "./types";
 
 const DEFAULT_LOCAL_ENDPOINT = "http://localhost:11434";
-const DEFAULT_RUNTIME_VERSION = "0.17.5";
+const DEFAULT_RUNTIME_VERSION = "0.17.7";
 const AUTOSTART_WARNING_COOLDOWN_MS = 60_000;
 const LOCAL_OLLAMA_HOSTS = new Set(["localhost", "127.0.0.1"]);
 const BACKGROUND_START_POLL_INTERVAL_MS = 2_000;
@@ -418,6 +418,17 @@ function resolvePrimaryAction(): {
       disabled: true,
     };
   }
+  // If the user has selected a different target version, offer to install it
+  const targetVersion = settings?.providers?.ollama?.runtime_target_version?.trim();
+  const detectedVersion = runtimeDetect?.version?.trim();
+  if (targetVersion && detectedVersion && targetVersion !== detectedVersion) {
+    return {
+      action: "install",
+      label: `Install ${targetVersion}`,
+      disabled: false,
+    };
+  }
+
   if (runtimeIsHealthy()) {
     return {
       action: "ready",

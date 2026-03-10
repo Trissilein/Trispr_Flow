@@ -1482,6 +1482,8 @@ fn process_toggle_segment(
         return;
     }
 
+    let t_segment_start = std::time::Instant::now();
+
     // Read the latest persisted settings per segment so model/AI option changes
     // apply immediately to the next transcription/refinement job.
     let effective_settings = app_handle
@@ -1498,12 +1500,26 @@ fn process_toggle_segment(
         recorder.transcribing = true;
     }
 
+    info!(
+        "[TIMING] segment_start: audio_duration={}ms, samples={}, reason={:?}",
+        duration_ms,
+        chunk.len(),
+        reason
+    );
+
+    let t_before_transcribe = std::time::Instant::now();
     let result = transcribe_audio(app_handle, &effective_settings, &chunk);
+    info!(
+        "[TIMING] transcribe_audio done: {:.2}s (total since segment_start: {:.2}s)",
+        t_before_transcribe.elapsed().as_secs_f32(),
+        t_segment_start.elapsed().as_secs_f32()
+    );
 
     if let Ok(mut recorder) = app_handle.state::<AppState>().recorder.lock() {
         recorder.transcribing = false;
     }
 
+    let t_before_postproc = std::time::Instant::now();
     match result {
         Ok((text, source)) => {
             if let Some(text_len) = handle_transcription_ok(
@@ -1514,6 +1530,11 @@ fn process_toggle_segment(
                 segment_rms,
                 duration_ms,
             ) {
+                info!(
+                    "[TIMING] handle_transcription_ok done: {:.2}s (total: {:.2}s)",
+                    t_before_postproc.elapsed().as_secs_f32(),
+                    t_segment_start.elapsed().as_secs_f32()
+                );
                 let _ = app_handle.emit(
                     "continuous-dump:segment",
                     ContinuousDumpEvent {
@@ -1530,6 +1551,11 @@ fn process_toggle_segment(
             let _ = app_handle.emit("transcription:error", err);
         }
     }
+
+    info!(
+        "[TIMING] segment_total: {:.2}s",
+        t_segment_start.elapsed().as_secs_f32()
+    );
 
     let is_active = app_handle
         .state::<AppState>()

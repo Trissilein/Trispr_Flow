@@ -1455,8 +1455,10 @@ fn whisper_cli_looks_gpu_capable(cli_path: Option<&Path>) -> bool {
         .unwrap_or(false)
 }
 
-fn resolve_whisper_gpu_layers() -> Option<usize> {
+fn resolve_whisper_gpu_layers(settings: &Settings) -> Option<usize> {
+    // Priority: environment variable > settings > default
     parse_env_usize("TRISPR_WHISPER_GPU_LAYERS")
+        .or(settings.whisper_gpu_layers)
 }
 
 fn resolve_whisper_threads(gpu_hint: bool) -> usize {
@@ -1476,6 +1478,12 @@ fn resolve_whisper_threads(gpu_hint: bool) -> usize {
 
     // CPU mode: avoid saturating all cores.
     cores.saturating_sub(1).clamp(2, 12)
+}
+
+/// Call at app startup in a background thread to pre-warm the GPU capability cache,
+/// so the first PTT transcription doesn't pay the 2-3s CUDA init cost.
+pub(crate) fn prewarm_whisper_capability_cache(cli_path: &Path) {
+    whisper_cli_supports_gpu_layers(cli_path);
 }
 
 fn whisper_cli_supports_gpu_layers(cli_path: &Path) -> bool {
@@ -1683,6 +1691,7 @@ fn transcribe_local(
     settings: &Settings,
     wav_bytes: &[u8],
 ) -> Result<String, String> {
+    let t0 = std::time::Instant::now();
     let temp_dir = std::env::temp_dir();
     let _ = fs::create_dir_all(&temp_dir);
     let stamp = SystemTime::now()
@@ -1700,6 +1709,11 @@ fn transcribe_local(
             e
         )
     })?;
+    info!(
+        "[TIMING] wav_write: {:.3}s ({} bytes)",
+        t0.elapsed().as_secs_f32(),
+        wav_bytes.len()
+    );
     // Guard ensures wav_path is deleted on every exit path (early returns, panic).
     let _wav_guard = TempFileGuard::new(wav_path.clone());
 
@@ -1719,7 +1733,7 @@ fn transcribe_local(
 
     let mut command = Command::new(&cli_path);
 
-    let gpu_layers = resolve_whisper_gpu_layers();
+    let gpu_layers = resolve_whisper_gpu_layers(settings);
     let backend_gpu_capable = whisper_cli_looks_gpu_capable(Some(cli_path.as_path()));
     let gpu_hint = gpu_layers
         .map(|layers| layers > 0)
@@ -1732,11 +1746,11 @@ fn transcribe_local(
 
     command
         .arg("-m")
-        .arg(model_path)
+        .arg(&model_path)
         .arg("-f")
         .arg(&wav_path)
         .arg("-t")
-        .arg(threads)
+        .arg(&threads)
         .arg("-l")
         .arg(if settings.language_pinned {
             &settings.language_mode
@@ -1766,6 +1780,11 @@ fn transcribe_local(
         }
     }
 
+    // Explicitly enable GPU on CUDA builds if detected
+    if backend_gpu_capable {
+        command.arg("-dev").arg("0");
+    }
+
     let expected_gpu = if requested_gpu_layers.is_some() {
         applied_gpu_layers.is_some() || backend_gpu_capable
     } else {
@@ -1775,6 +1794,14 @@ fn transcribe_local(
     let mut gpu_activity_guard =
         WhisperGpuActivityGuard::new(app, if expected_gpu { "gpu" } else { "cpu" }, backend);
 
+    info!(
+        "[TIMING] whisper_spawn: model={}, gpu_layers={:?}, backend_gpu={}, threads={}",
+        model_path.display(),
+        gpu_layers,
+        backend_gpu_capable,
+        &threads
+    );
+    let t_spawn = std::time::Instant::now();
     // Use spawn + polling instead of output() to enforce a hard timeout.
     // command.output() blocks forever if whisper-cli hangs (e.g. GPU deadlock).
     let mut child = command
@@ -1802,6 +1829,7 @@ fn transcribe_local(
             Err(e) => return Err(format!("Failed to wait for whisper-cli: {}", e)),
         }
     };
+    info!("[TIMING] whisper_process: {:.2}s", t_spawn.elapsed().as_secs_f32());
     let stderr = String::from_utf8_lossy(&output.stderr);
     if whisper_stderr_indicates_gpu(&stderr) {
         gpu_activity_guard.set_accelerator("gpu");

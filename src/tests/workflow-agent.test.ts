@@ -11,7 +11,6 @@ import { describe, expect, it } from "vitest";
 import {
   isAmbiguousSelection,
   isValidTargetLanguage,
-  DISAMBIGUATION_SCORE_THRESHOLD,
   ALLOWED_TARGET_LANGUAGES,
 } from "../workflow-agent-policy";
 import type { TranscriptSessionCandidate } from "../types";

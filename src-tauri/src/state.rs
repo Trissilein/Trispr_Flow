@@ -232,6 +232,10 @@ fn effective_asr_language_hint(language_mode: &str, language_pinned: bool) -> St
     }
 }
 
+fn default_whisper_gpu_layers() -> Option<usize> {
+    Some(35)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
@@ -374,6 +378,9 @@ pub(crate) struct Settings {
     pub(crate) main_window_monitor: Option<String>,
     /// Window visibility state at shutdown: "normal", "minimized", or "tray"
     pub(crate) main_window_start_state: String,
+    /// GPU layers for Whisper (CUDA acceleration). Default: 35
+    #[serde(default = "default_whisper_gpu_layers")]
+    pub(crate) whisper_gpu_layers: Option<usize>,
 }
 
 impl Default for Settings {
@@ -498,6 +505,7 @@ impl Default for Settings {
       main_window_height: None,
       main_window_monitor: None,
       main_window_start_state: "normal".to_string(),
+      whisper_gpu_layers: default_whisper_gpu_layers(),
     }
     }
 }

@@ -52,7 +52,8 @@
       "bin/piper/voices/de_DE-thorsten-medium.onnx": "bin/piper/voices/de_DE-thorsten-medium.onnx",
       "bin/piper/voices/de_DE-thorsten-medium.onnx.json": "bin/piper/voices/de_DE-thorsten-medium.onnx.json",
       "bin/piper/voices/en_US-amy-medium.onnx": "bin/piper/voices/en_US-amy-medium.onnx",
-      "bin/piper/voices/en_US-amy-medium.onnx.json": "bin/piper/voices/en_US-amy-medium.onnx.json"
+      "bin/piper/voices/en_US-amy-medium.onnx.json": "bin/piper/voices/en_US-amy-medium.onnx.json",
+      "bin/ffmpeg/ffmpeg.exe": "bin/ffmpeg/ffmpeg.exe"
     },
     "windows": {
       "nsis": {

@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GPU Acceleration Hardening**:
+  - NVIDIA GPU layer auto-detection and configuration during installer setup (nsDialogs custom page).
+  - Registry environment variable `TRISPR_WHISPER_GPU_LAYERS` for persistent GPU settings.
+  - Explicit CUDA device selection (`-dev 0`) for multi-GPU systems.
+  - GPU capability pre-warming at app startup (background thread) to eliminate 2.75s cold-start probe on first transcription.
+- **Q5 Quantized Model Variants**:
+  - Added friendly labels for whisper Q5/Q8 German and English models for VRAM-constrained GPUs.
+  - Local model scan recognizes ggml-large-v3-turbo-german-q5_0.bin automatically.
+- **FFmpeg Binary Bundling**:
+  - FFmpeg 7.1.1 essentials bundled at `src-tauri/bin/ffmpeg/ffmpeg.exe` for OPUS encoding pipeline.
+  - Bundled copy included in release resources for guaranteed availability across installations.
+- **Performance Instrumentation**:
+  - [TIMING] logs added to transcription pipeline (wav_write, whisper_spawn, whisper_process, handle_transcription_ok, segment_total) for latency diagnosis.
+  - File-based logging to `%APPDATA%\com.trispr.flow\logs\trispr-flow.log.YYYY-MM-DD` (daily rotation, tracing-appender).
+- **Ollama Fallback Timeout Optimization**:
+  - Added `ping_ollama_quick()` (300ms timeout) in `prepare_refinement()` to fail fast if Ollama is unreachable.
+  - Prevents blocking transcription paste for 5-10s when AI fallback is misconfigured but Ollama is not running.
+- **Release Build Default**:
+  - Changed `npm run dev` to use `tauri dev --release` for optimal local development performance (eliminates debug build overhead).
+- **Windows Exit Optimization**:
+  - Direct Windows API `ExitProcess(0)` on quit to bypass WebView2 teardown and eliminate 5-10s hang on exit.
+
+### Fixed
+
+- **GPU Capability Probe Cache**: OnceLock-backed cache prevents repeated whisper-cli invocations during transcription.
 - **LLM Prompt Engineer Preset** (Block M / M-extra):
   - New refinement prompt preset `llm_prompt` that converts spoken dictation into high-quality, ready-to-use LLM prompts.
   - Output is always English regardless of input language — language guard is explicitly excluded for this preset.

@@ -1,6 +1,6 @@
 # Trispr Flow - Status
 
-Last updated: 2026-03-02
+Last updated: 2026-03-10
 
 ## Snapshot
 
@@ -16,9 +16,18 @@ Last updated: 2026-03-02
 - Session chunk persistence is source-specific (`mic` and `output`) to avoid finalize collisions.
 - AI fallback foundation is in place in Post-Processing settings.
 - Release QA automation is available via `npm run qa:release` (build/test/rust/audit + strict latency SLO gate).
-- Installer variants are now:
-  - CUDA (base)
-  - Vulkan (base)
+- **GPU Acceleration Pipeline** (v0.7.0+):
+  - NVIDIA CUDA auto-detection and configuration during installer setup.
+  - Pre-warming GPU capability cache at startup (eliminates 2.75s cold-start probe).
+  - Q5 quantized models for VRAM-constrained GPUs (e.g., T500 mobile GPU).
+  - Benchmarked latency (PTT release → paste): **~7.5-8s on NVIDIA T500 + Q5 model** (Whisper + CUDA inference).
+    - Baseline: ~55s on CPU alone (not viable for interactive use).
+    - GPU speedup: **7x faster than CPU** (6.6s GPU vs 55s CPU for longer audio).
+  - FFmpeg bundled for OPUS encoding pipeline.
+  - Direct Windows API exit to prevent WebView2 teardown hang on quit.
+- Installer variants available:
+  - CUDA (recommended for NVIDIA GPUs)
+  - Vulkan (experimental, cross-platform)
 
 ## Analysis De-Scope
 
@@ -39,7 +48,12 @@ Last updated: 2026-03-02
 
 ## Next Focus
 
-1. Finalize latency benchmark baseline (`benchmark:latency`) and track p50/p95 trend.
-2. Validate runtime-start background behavior on Windows (no stuck "Starting runtime..." state).
-3. Continue Block E (UX/UI consistency + settings IA cleanup).
-4. Complete Block F reliability hardening + release QA.
+1. **Whisper-Server Mode** (Optional latency optimization):
+   - Keep Whisper model pre-loaded in GPU VRAM across transcriptions.
+   - Eliminates ~1.4s model-load overhead per transcription (7.5s → ~6.2s on T500; 4-5s → ~3s on RTX 5700 XT).
+   - Requires `whisper-server.exe` CUDA binary (either compile from whisper.cpp or pre-built).
+   - Medium complexity: ~3-4h implementation + binary sourcing.
+2. Finalize latency benchmark baseline (`benchmark:latency`) with updated GPU timings and track p50/p95 trend.
+3. Validate runtime-start background behavior on Windows (no stuck "Starting runtime..." state).
+4. Continue Block E (UX/UI consistency + settings IA cleanup).
+5. Complete Block F reliability hardening + release QA.

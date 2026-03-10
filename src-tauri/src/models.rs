@@ -994,6 +994,10 @@ pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<Mod
       let label = match file_name.as_str() {
         "ggml-large-v3-turbo-q5_0.bin" => "Whisper large-v3-turbo (q5_0)".to_string(),
         "ggml-large-v3-turbo-q8_0.bin" => "Whisper large-v3-turbo (q8_0)".to_string(),
+        "ggml-large-v3-turbo-german-q5_0.bin" => "Whisper large-v3-turbo DE (q5_0)".to_string(),
+        "ggml-large-v3-turbo-german-q8_0.bin" => "Whisper large-v3-turbo DE (q8_0)".to_string(),
+        "ggml-large-v3-q5_0.bin" => "Whisper large-v3 (q5_0)".to_string(),
+        "ggml-large-v3-q8_0.bin" => "Whisper large-v3 (q8_0)".to_string(),
         _ => file_name.clone(),
       };
       let size_mb = entry

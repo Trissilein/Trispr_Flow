@@ -26,10 +26,20 @@ Var CaptureModeRadioPtt
 Var CaptureModeRadioVad
 Var CaptureModeChoice
 
+; Variables for the GPU optimization page
+Var GpuOptimizeDialog
+Var GpuOptimizeLabel
+Var GpuOptimizeRadioAuto
+Var GpuOptimizeRadioManual
+Var GpuOptimizeChoice
+Var GpuLayersText
+Var GpuLayersInput
+
 ; --- Custom page declarations (top-level, included before MUI pages) ---
 Page custom InstallModePage InstallModePageLeave
 Page custom OverlayStylePage OverlayStylePageLeave
 Page custom CaptureModePage CaptureModePageLeave
+Page custom GpuOptimizePage GpuOptimizePageLeave
 
 ; =====================================================================
 ; Page 1: Install/Uninstall Mode Selection
@@ -143,7 +153,44 @@ Function CaptureModePageLeave
 FunctionEnd
 
 ; =====================================================================
-; Post-install: write settings
+; Page 4: GPU Optimization for Whisper (CUDA)
+; =====================================================================
+
+Function GpuOptimizePage
+  nsDialogs::Create 1018
+  Pop $GpuOptimizeDialog
+  ${If} $GpuOptimizeDialog == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateLabel} 0 0 100% 60u "GPU acceleration speeds up speech transcription.$\r$\n$\r$\nAuto: Uses default GPU settings (recommended for most users)$\r$\nManual: Specify GPU layers for advanced users$\r$\n$\r$\nYou can change this later in the app settings."
+  Pop $GpuOptimizeLabel
+
+  ${NSD_CreateRadioButton} 10u 70u 100% 14u "Auto (default GPU optimization)"
+  Pop $GpuOptimizeRadioAuto
+  ${NSD_SetState} $GpuOptimizeRadioAuto ${BST_CHECKED}
+
+  ${NSD_CreateRadioButton} 10u 88u 100% 14u "Manual (specify GPU layers):"
+  Pop $GpuOptimizeRadioManual
+
+  ${NSD_CreateText} 30u 106u 40u 12u "35"
+  Pop $GpuLayersInput
+
+  nsDialogs::Show
+FunctionEnd
+
+Function GpuOptimizePageLeave
+  ${NSD_GetState} $GpuOptimizeRadioAuto $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $GpuOptimizeChoice "auto"
+  ${Else}
+    StrCpy $GpuOptimizeChoice "manual"
+    ${NSD_GetText} $GpuLayersInput $GpuLayersText
+  ${EndIf}
+FunctionEnd
+
+; =====================================================================
+; Post-install: write settings and environment
 ; =====================================================================
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -220,12 +267,30 @@ FunctionEnd
   FileWrite $0 '"hallucination_max_chars":50,'
   FileWrite $0 '"workflow_agent":{"enabled":false,"wakewords":["trispr","hey trispr","trispr agent"],"intent_keywords":{"gdd_generate_publish":["gdd","game design document","design document","designdokument","publish","confluence","draft","generate","create gdd","erstelle gdd","erstellen","veroeffentlichen","posten","session","meeting","interview","minutes","zusammenfassung","dokument","doc","spec","gameplay","feature"]},"model":"qwen3:4b","temperature":0.2,"max_tokens":512,"session_gap_minutes":20,"max_candidates":3},'
   FileWrite $0 '"vision_input_settings":{"enabled":false,"fps":2,"source_scope":"all_monitors","max_width":1280,"jpeg_quality":75,"ram_buffer_seconds":30,"all_monitors_default":true},'
-  FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_native","fallback_provider":"local_custom","voice_id_windows":"","voice_id_local":"","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only"}'
+  FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_native","fallback_provider":"local_custom","voice_id_windows":"","voice_id_local":"","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only"},'
+  ; Determine GPU layers setting based on user choice
+  ${If} $GpuOptimizeChoice == "manual"
+    FileWrite $0 '"whisper_gpu_layers":$GpuLayersText'
+  ${Else}
+    FileWrite $0 '"whisper_gpu_layers":35'
+  ${EndIf}
   FileWrite $0 '}'
   FileClose $0
 
   ; Create models directory for future use (app will download model on first start)
   CreateDirectory "$APPDATA\com.trispr.flow\models"
+
+  ; Set GPU environment variable based on user choice
+  ${If} $GpuOptimizeChoice == "auto"
+    ; Auto mode: set to 35 (reasonable default for Turing/Ampere GPUs)
+    WriteRegExpandStr HKCU "Environment" "TRISPR_WHISPER_GPU_LAYERS" "35"
+  ${ElseIf} $GpuOptimizeChoice == "manual"
+    ${If} $GpuLayersText != ""
+      WriteRegExpandStr HKCU "Environment" "TRISPR_WHISPER_GPU_LAYERS" "$GpuLayersText"
+    ${Else}
+      WriteRegExpandStr HKCU "Environment" "TRISPR_WHISPER_GPU_LAYERS" "35"
+    ${EndIf}
+  ${EndIf}
 
   SkipPostInstall:
 !macroend

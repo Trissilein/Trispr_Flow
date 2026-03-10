@@ -187,6 +187,11 @@ pub(crate) fn prepare_refinement(
     if is_ollama {
         let endpoint = settings.providers.ollama.endpoint.clone();
         let preferred = settings.providers.ollama.preferred_model.clone();
+        // Fast reachability check (300ms) before the slow model-list call (up to 5s).
+        // This prevents the AI refinement thread from blocking paste for seconds
+        // when Ollama is not running.
+        crate::ai_fallback::provider::ping_ollama_quick(&endpoint)
+            .map_err(|e| e.to_string())?;
         let resolved = resolve_effective_local_model(&model, &preferred, &endpoint)
             .map_err(|e| e.to_string())?;
         repaired = resolved.repaired
@@ -3558,19 +3563,36 @@ fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
 }
 
 fn init_logging() {
-    use tracing_subscriber::{fmt, EnvFilter};
+    use tracing_appender::rolling;
+    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .with_thread_ids(false)
-        .with_file(true)
-        .with_line_number(true)
+    // Write logs to %APPDATA%\com.trispr.flow\logs\trispr-flow.log (daily rotation)
+    let log_dir = std::env::var("APPDATA")
+        .map(|d| std::path::PathBuf::from(d).join("com.trispr.flow").join("logs"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("logs"));
+    let _ = std::fs::create_dir_all(&log_dir);
+    let file_appender = rolling::daily(&log_dir, "trispr-flow.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    // Keep the guard alive for the process lifetime
+    std::mem::forget(_guard);
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            fmt::layer()
+                .with_target(false)
+                .with_thread_ids(false)
+                .with_file(true)
+                .with_line_number(true)
+                .with_writer(non_blocking)
+                .with_ansi(false),
+        )
         .init();
 
-    info!("Trispr Flow starting up");
+    info!("Trispr Flow starting up — log: {}", log_dir.display());
 }
 
 pub(crate) fn emit_error(app: &AppHandle, error: AppError, context: Option<&str>) {
@@ -4290,6 +4312,16 @@ pub fn run() {
                 system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
             });
 
+            // Pre-warm whisper capability probe in background so the first PTT transcription
+            // doesn't pay the 2-3s CUDA init cost for the -ngl support check.
+            {
+                thread::spawn(|| {
+                    if let Some(cli_path) = crate::paths::resolve_whisper_cli_path() {
+                        crate::transcription::prewarm_whisper_capability_cache(&cli_path);
+                    }
+                });
+            }
+
             {
                 let handle = app.handle().clone();
                 thread::spawn(move || {
@@ -4488,7 +4520,15 @@ pub fn run() {
                         let _ = cancel_backlog_item_event.set_text("Cancel Auto-Expand");
                     }
                     "quit" => {
-                        app.exit(0);
+                        // Use ExitProcess directly to bypass all Rust/C cleanup handlers,
+                        // including WebView2 destructors that cause ERROR_CLASS_HAS_WINDOWS (1412)
+                        // and a 5-10s hang on Windows. Settings are persisted on every change.
+                        #[cfg(target_os = "windows")]
+                        unsafe {
+                            windows_sys::Win32::System::Threading::ExitProcess(0);
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        std::process::exit(0);
                     }
                     _ => {}
                 })

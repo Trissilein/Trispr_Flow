@@ -37,6 +37,7 @@
     ],
     "resources": {
       "bin/cuda/whisper-cli.exe": "bin/cuda/whisper-cli.exe",
+      "bin/cuda/whisper-server.exe": "bin/cuda/whisper-server.exe",
       "bin/cuda/whisper.dll": "bin/cuda/whisper.dll",
       "bin/cuda/ggml.dll": "bin/cuda/ggml.dll",
       "bin/cuda/ggml-base.dll": "bin/cuda/ggml-base.dll",

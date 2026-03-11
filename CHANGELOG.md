@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GPU VRAM Monitoring & Management**:
+  - Real-time VRAM usage display in header status bar (updated every 2s via nvidia-smi).
+  - Format: "2.1 GB / 8.0 GB" showing used/total VRAM.
+  - Click GPU status item to purge VRAM (unload Ollama models, kill Whisper server).
+  - Automatic VRAM cleanup on model switches (Whisper server restart, Ollama unload via API).
+  - Hidden CMD window for nvidia-smi queries on Windows (CREATE_NO_WINDOW flag).
+- **UX Improvements - Header Reorganization**:
+  - Status indicators reorganized into 2-row layout:
+    - Row 1: Recording + Transcribing status
+    - Row 2: Refining + GPU status (clickable) + no separate button needed
+  - Visual feedback: VRAM purge shows "Purging..." → "Purged ✓" (2s) in status display
+  - Keyboard accessible: Tab + Enter/Space to trigger VRAM purge
+
+### Fixed
+
+- **Three UX Fixes**:
+  1. Voice Input Enabled by Default: `transcribe_enabled: true` in Settings::default()
+     - Users can use PTT (Push-to-Talk) immediately after fresh install
+  2. AI Refinement Without Ollama - Guided Onboarding:
+     - Modal dialog when user enables AI Refinement without Ollama installed
+     - Prominent download progress bar (MB counter) during Ollama installation
+     - "Jetzt installieren" vs. "Später" options for user control
+  3. AppData Path Unification:
+     - All writes to canonical `%LOCALAPPDATA%\Trispr Flow\`
+     - Legacy migration fallback for `%LOCALAPPDATA%\TrisprFlow\` (old Ollama paths)
+     - Removed fragmentation across `%APPDATA%\com.trispr.flow\` and `%LOCALAPPDATA%\TrisprFlow\`
+- **Ollama Process Lifecycle Management**:
+  - Stop Ollama runtime when AI Refinement is disabled (prevents orphaned processes)
+  - Enhanced app exit handler with logging for process cleanup verification
+  - New `stop_ollama_runtime()` command for explicit process termination
 - **GPU Acceleration Hardening**:
   - NVIDIA GPU layer auto-detection and configuration during installer setup (nsDialogs custom page).
   - Registry environment variable `TRISPR_WHISPER_GPU_LAYERS` for persistent GPU settings.

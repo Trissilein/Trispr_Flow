@@ -18,7 +18,7 @@ use crate::transcription::TranscribeRecorder;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
@@ -587,6 +587,10 @@ pub(crate) struct AppState {
     pub(crate) last_system_recording_path: Mutex<Option<String>>,
     /// Handle to the managed Ollama child process for cleanup on app exit.
     pub(crate) managed_ollama_child: Mutex<Option<std::process::Child>>,
+    /// Handle to the managed Whisper-Server child process for cleanup on app exit.
+    pub(crate) managed_whisper_server_child: Mutex<Option<std::process::Child>>,
+    /// Port for Whisper-Server HTTP API (default 8178).
+    pub(crate) whisper_server_port: AtomicU16,
     pub(crate) vision_stream_running: AtomicBool,
     pub(crate) vision_stream_started_ms: AtomicU64,
     pub(crate) vision_stream_frame_seq: AtomicU64,

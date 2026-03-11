@@ -1721,6 +1721,37 @@ fn transcribe_local(
         "Model file not found. Set TRISPR_WHISPER_MODEL_DIR or TRISPR_WHISPER_MODEL.".to_string()
     })?;
 
+    // Try Whisper-Server first (persistent mode with pre-loaded model)
+    {
+        let state = app.state::<crate::state::AppState>();
+        let port = state.whisper_server_port.load(std::sync::atomic::Ordering::Relaxed);
+
+        if crate::whisper_server::ping_whisper_server(port) {
+            let lang_str = if settings.language_pinned {
+                settings.language_mode.clone()
+            } else {
+                "auto".to_string()
+            };
+
+            info!(
+                "[TIMING] whisper_server mode: sending {} bytes WAV",
+                wav_bytes.len()
+            );
+            let t_server = std::time::Instant::now();
+
+            match crate::whisper_server::transcribe_via_server(wav_bytes, port, &lang_str) {
+                Ok(text) => {
+                    info!("[TIMING] whisper_server: {:.2}s", t_server.elapsed().as_secs_f32());
+                    return Ok(text);
+                }
+                Err(e) => {
+                    warn!("whisper-server failed ({}), falling back to CLI", e);
+                    // Continue to CLI fallback below
+                }
+            }
+        }
+    }
+
     let cli_path = resolve_whisper_cli_path().ok_or_else(|| {
         whisper_runtime_missing_message("whisper-cli executable could not be located")
     })?;

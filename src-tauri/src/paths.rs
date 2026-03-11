@@ -116,6 +116,53 @@ pub(crate) fn resolve_whisper_cli_path() -> Option<PathBuf> {
   None
 }
 
+pub(crate) fn resolve_whisper_server_path() -> Option<PathBuf> {
+  // Same search strategy as whisper-cli, but for whisper-server.exe
+  // 1. Explicit env var override
+  if let Ok(path) = std::env::var("TRISPR_WHISPER_SERVER") {
+    let candidate = PathBuf::from(path);
+    if candidate.exists() {
+      return Some(candidate);
+    }
+  }
+
+  let mut candidates = Vec::new();
+
+  // 2. Next to our own executable (installed app)
+  if let Ok(exe) = std::env::current_exe() {
+    if let Some(exe_dir) = exe.parent() {
+      // Backend subdirectories
+      for backend in &["cuda", "vulkan"] {
+        candidates.push(exe_dir.join(format!("bin/{}/whisper-server.exe", backend)));
+        candidates.push(exe_dir.join(format!("bin/{}/whisper-server", backend)));
+      }
+      // Flat layout fallback
+      candidates.push(exe_dir.join("bin/whisper-server.exe"));
+      candidates.push(exe_dir.join("bin/whisper-server"));
+      candidates.push(exe_dir.join("whisper-server.exe"));
+      candidates.push(exe_dir.join("whisper-server"));
+    }
+  }
+
+  // 3. Relative to CWD (dev mode)
+  if let Ok(cwd) = std::env::current_dir() {
+    for backend in &["cuda", "vulkan"] {
+      candidates.push(cwd.join(format!("src-tauri/bin/{}/whisper-server.exe", backend)));
+      candidates.push(cwd.join(format!("src-tauri/bin/{}/whisper-server", backend)));
+      candidates.push(cwd.join(format!("bin/{}/whisper-server.exe", backend)));
+      candidates.push(cwd.join(format!("bin/{}/whisper-server", backend)));
+    }
+  }
+
+  for path in candidates {
+    if path.exists() {
+      return Some(path);
+    }
+  }
+
+  None
+}
+
 pub(crate) fn resolve_quantize_path(app: &AppHandle) -> Option<PathBuf> {
   if let Ok(path) = std::env::var("TRISPR_WHISPER_QUANTIZE") {
     let candidate = PathBuf::from(path);

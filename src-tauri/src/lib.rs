@@ -23,6 +23,7 @@ mod session_manager;
 mod state;
 mod transcription;
 mod util;
+mod whisper_server;
 mod workflow_agent;
 
 use arboard::{Clipboard, ImageData};
@@ -33,7 +34,7 @@ use state::{AppState, HistoryEntry, Settings};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -4304,6 +4305,8 @@ pub fn run() {
                 last_mic_recording_path: Mutex::new(None),
                 last_system_recording_path: Mutex::new(None),
                 managed_ollama_child: Mutex::new(None),
+                managed_whisper_server_child: Mutex::new(None),
+                whisper_server_port: AtomicU16::new(8178),
                 vision_stream_running: AtomicBool::new(false),
                 vision_stream_started_ms: AtomicU64::new(0),
                 vision_stream_frame_seq: AtomicU64::new(0),
@@ -4318,6 +4321,25 @@ pub fn run() {
                 thread::spawn(|| {
                     if let Some(cli_path) = crate::paths::resolve_whisper_cli_path() {
                         crate::transcription::prewarm_whisper_capability_cache(&cli_path);
+                    }
+                });
+            }
+
+            // Start Whisper-Server to keep the model pre-loaded in GPU VRAM
+            // (eliminates ~1.4s model-load overhead per transcription).
+            // Runs in background; if startup fails, CLI mode will be used as fallback.
+            {
+                let handle = app.handle().clone();
+                thread::spawn(move || {
+                    let state = handle.state::<AppState>();
+                    let settings = state.settings.lock().unwrap().clone();
+
+                    if let Some(model_path) = crate::models::resolve_model_path(&handle, &settings.model)
+                    {
+                        match crate::whisper_server::start_whisper_server(&handle, state.inner(), &model_path) {
+                            Ok(()) => info!("whisper-server ready"),
+                            Err(e) => warn!("whisper-server startup failed: {} (CLI fallback active)", e),
+                        }
                     }
                 });
             }
@@ -4772,6 +4794,18 @@ pub fn run() {
                 if let Ok(mut guard) = app_handle
                     .state::<AppState>()
                     .managed_ollama_child
+                    .lock()
+                {
+                    if let Some(mut child) = guard.take() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                }
+
+                // Kill managed Whisper-Server child process on app exit.
+                if let Ok(mut guard) = app_handle
+                    .state::<AppState>()
+                    .managed_whisper_server_child
                     .lock()
                 {
                     if let Some(mut child) = guard.take() {

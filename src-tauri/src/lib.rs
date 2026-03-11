@@ -2921,7 +2921,8 @@ fn apply_model(app: AppHandle, state: State<'_, AppState>, model_id: String) -> 
     // Save the new model setting
     save_settings_file(&app, &state.settings.lock().unwrap())?;
 
-    // If transcription is active, restart it with the new model
+    // If transcription is active or Whisper server is running, restart with new model
+    // to clear old model from VRAM and load new model
     if state.transcribe_active.load(Ordering::Relaxed) {
         stop_transcribe_monitor(&app, &state);
         let new_settings = state.settings.lock().unwrap().clone();
@@ -2934,9 +2935,45 @@ fn apply_model(app: AppHandle, state: State<'_, AppState>, model_id: String) -> 
             state.transcribe_active.store(false, Ordering::Relaxed);
             return Err(format!("Failed to apply model: {}", err));
         }
+    } else {
+        // Even if transcription is inactive, restart Whisper server if it's running
+        // to clear old model from VRAM and load new model
+        if let Some(new_model_path) = crate::models::resolve_model_path(&app, &model_id) {
+            let _ = crate::whisper_server::restart_whisper_server_if_running(&app, &state, &new_model_path);
+        }
     }
 
     let _ = app.emit("model:changed", model_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn unload_ollama_model(model: String) -> Result<(), String> {
+    // Send a request to Ollama to unload the model from VRAM.
+    // This uses a minimal POST to /api/generate with keep_alive: "0m" to signal
+    // that the model should be unloaded immediately.
+
+    let ollama_endpoint = "http://localhost:11434";
+    let unload_body = serde_json::json!({
+        "model": model,
+        "prompt": "",
+        "keep_alive": "0m",
+        "stream": false
+    });
+
+    let agent = ureq::builder()
+        .timeout_connect(std::time::Duration::from_secs(2))
+        .timeout_read(std::time::Duration::from_secs(5))
+        .build();
+
+    let url = format!("{}/api/generate", ollama_endpoint);
+
+    // Fire and forget — we don't care about the response, just sending the unload signal
+    let _ = agent
+        .post(&url)
+        .set("Content-Type", "application/json")
+        .send_json(&unload_body);
+
     Ok(())
 }
 
@@ -4766,6 +4803,7 @@ pub fn run() {
             pull_ollama_model,
             delete_ollama_model,
             get_ollama_model_info,
+            unload_ollama_model,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

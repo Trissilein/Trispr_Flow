@@ -1032,10 +1032,20 @@ export async function importOllamaModelFromLocalFile(): Promise<void> {
 async function handleSetActiveModel(modelName: string): Promise<void> {
   if (!settings) return;
   const normalized = normalizeModelTag(modelName);
+  const previousModel = settings.ai_fallback.model;
+
   settings.ai_fallback.model = normalized;
   settings.postproc_llm_model = normalized;
   settings.providers.ollama.preferred_model = normalized;
   await persistCurrentSettings();
+
+  // Unload the previous model from VRAM to free up GPU memory
+  if (previousModel && previousModel !== normalized) {
+    await invoke("unload_ollama_model", { model: previousModel }).catch(() => {
+      // Silently ignore unload errors; it's not critical if unload fails
+    });
+  }
+
   showToast({
     type: "success",
     title: "Model selected",

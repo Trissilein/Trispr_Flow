@@ -2977,6 +2977,133 @@ fn unload_ollama_model(model: String) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HardwareInfo {
+    pub gpu_name: String,
+    pub gpu_vram: String,
+    pub backend_recommended: String, // "cuda" | "vulkan" | "cpu"
+    pub cuda_available: bool,
+    pub driver_version: String,
+    pub update_url: Option<String>,
+}
+
+#[tauri::command]
+fn get_hardware_info() -> Result<HardwareInfo, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
+        
+        let mut gpu_name = "Unknown".to_string();
+        let mut cuda_available = false;
+        let mut driver_version = "Unknown".to_string();
+        let mut update_url = None;
+
+        // 1. Detect GPU via DXGI
+        if let Ok(factory) = unsafe { CreateDXGIFactory1::<IDXGIFactory1>() } {
+            let mut adapter_index = 0;
+            while let Ok(adapter) = unsafe { factory.EnumAdapters1(adapter_index) } {
+                if let Ok(desc) = unsafe { adapter.GetDesc1() } {
+                    let name = String::from_utf16_lossy(&desc.Description);
+                    let name = name.trim_matches(char::from(0)).trim().to_string();
+                    
+                    // Prioritize dedicated GPUs (especially NVIDIA)
+                    if name.to_lowercase().contains("nvidia") {
+                        gpu_name = name;
+                        break; 
+                    } else if gpu_name == "Unknown" || gpu_name.to_lowercase().contains("intel") || gpu_name.to_lowercase().contains("microsoft") {
+                        gpu_name = name;
+                    }
+                }
+                adapter_index += 1;
+            }
+        }
+
+        // 2. Check for CUDA readiness
+        // We look for the NVIDIA compiler/runtime DLL which is a good indicator of driver support.
+        let cuda_dlls = ["nvrtc64_120_0.dll", "nvrtc64_112_0.dll", "nvcuda.dll"];
+        for dll in cuda_dlls {
+            if unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleA(windows::core::PCSTR(format!("{}\0", dll).as_ptr())).is_ok() } {
+                cuda_available = true;
+                break;
+            }
+            // Also check on disk if not loaded
+            if which::which(dll).is_ok() {
+                cuda_available = true;
+                break;
+            }
+        }
+        
+        // Manual check in System32 for nvcuda.dll
+        if !cuda_available {
+            let sys32_nvcuda = std::path::PathBuf::from("C:\\Windows\\System32\\nvcuda.dll");
+            if sys32_nvcuda.exists() {
+                cuda_available = true;
+            }
+        }
+
+        // 3. Get VRAM and Driver Version via nvidia-smi if available
+        let mut gpu_vram = "Unknown".to_string();
+        if gpu_name.to_lowercase().contains("nvidia") {
+            use std::process::Command;
+            let mut cmd = Command::new("nvidia-smi");
+            cmd.args(&["--query-gpu=memory.total,driver_version", "--format=csv,noheader,nounits"]);
+            
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+
+            if let Ok(output) = cmd.output() {
+                if output.status.success() {
+                    let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    let parts: Vec<&str> = result.split(',').map(|s| s.trim()).collect();
+                    if parts.len() >= 2 {
+                        if let Ok(total_mb) = parts[0].parse::<f64>() {
+                            gpu_vram = format!("{:.1} GB", total_mb / 1024.0);
+                        }
+                        driver_version = parts[1].to_string();
+                    }
+                }
+            }
+            
+            if driver_version == "Unknown" || driver_version.is_empty() {
+                update_url = Some("https://www.nvidia.com/Download/index.aspx".to_string());
+            }
+        }
+
+        let backend_recommended = if cuda_available {
+            "cuda".to_string()
+        } else if gpu_name.to_lowercase().contains("amd") || gpu_name.to_lowercase().contains("intel") {
+            "vulkan".to_string()
+        } else {
+            "cpu".to_string()
+        };
+
+        Ok(HardwareInfo {
+            gpu_name,
+            gpu_vram,
+            backend_recommended,
+            cuda_available,
+            driver_version,
+            update_url,
+        })
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(HardwareInfo {
+            gpu_name: "Generic".to_string(),
+            gpu_vram: "Unknown".to_string(),
+            backend_recommended: "cpu".to_string(),
+            cuda_available: false,
+            driver_version: "N/A".to_string(),
+            update_url: None,
+        })
+    }
+}
+
 #[tauri::command]
 fn get_gpu_vram_usage() -> Result<String, String> {
     // Query NVIDIA GPU VRAM usage via nvidia-smi
@@ -4406,7 +4533,7 @@ pub fn run() {
                 last_system_recording_path: Mutex::new(None),
                 managed_ollama_child: Mutex::new(None),
                 managed_whisper_server_child: Mutex::new(None),
-                whisper_server_port: AtomicU16::new(8178),
+                whisper_server_port: AtomicU16::new(crate::whisper_server::WHISPER_SERVER_PORT),
                 vision_stream_running: AtomicBool::new(false),
                 vision_stream_started_ms: AtomicU64::new(0),
                 vision_stream_frame_seq: AtomicU64::new(0),
@@ -4886,6 +5013,7 @@ pub fn run() {
             get_ollama_model_info,
             unload_ollama_model,
             get_gpu_vram_usage,
+            get_hardware_info,
             purge_gpu_memory,
             stop_ollama_runtime,
         ])

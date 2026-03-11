@@ -329,9 +329,28 @@ Goal: Ship an optional `workflow_agent` module that converts wakeword-triggered 
 | M9 | Candidate confirm hardening | Medium | M7 | DONE | Removed auto-select; disambiguation warning when top-2 score diff < 0.1; topic/temporal hint feedback in log. |
 | M10 | Language target enforcement UX | Medium | M7 | DONE | `languageExplicitlySet` flag resets per parse; backend validates `target_language` against ALLOWED_LANGUAGES. |
 | M11 | Workflow-agent regression tests | High | M8, M9, M10 | DONE | 16 Rust unit tests (parse_command/score_sessions/build_sessions) + 14 TS tests (WA-S1/S2/S3). All 154 tests green. |
-| M12 | v0.8.1 release hardening | High | M11 | DONE | ROADMAP + CHANGELOG + TASK_SCHEDULE updated; `.claude/ROADMAP.md` redirect stub created. |
+| M12 | v0.8.1 release hardening | High | M11 | DONE | ROADMAP + CHANGELOG + TASK_SCHEDULE updated; .claude/ROADMAP.md redirect stub created. |
 
 ---
+
+### Block Q: Onboarding Refinement & Stability --- IN PROGRESS
+
+**Duration**: 1 week | **Model**: Gemini (Sonnet/Opus equivalent) | **Status**: In Progress
+
+Goal: Ensure a smooth, robust first-time user experience and fix critical startup bugs.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| Q1 | Fix Onboarding Import Bug | Low | - | DONE | Resolved SyntaxError by adding `updateSettings` to state.ts and fixing imports. |
+| Q2 | Functional Hotkey Setup | Medium | Q1 | DONE | Enabled real hotkey recording in Step 3 of the wizard. |
+| Q3 | Deep Merge Settings Update | Medium | Q1 | DONE | Refactored `updateSettings` to handle nested objects (setup, ai_fallback) robustly. |
+| Q4 | Hardware Detection Timeout | Low | Q1 | DONE | Added 8s timeout to `get_hardware_info` in wizard to prevent UI hang on slow systems. |
+| Q4b | Hardware Detection Spinner | Low | Q4 | DONE | Added visual loading spinner and state management during GPU detection. |
+| Q5 | UI Polishing (Wizard) | Low | Q2 | DONE | Added styling for hotkey box and finish animation in styles-modern.css. |
+| Q6 | Robustness Audit (Backend) | Medium | - | DONE | Verified atomic settings save and non-blocking GPU detection in Rust. |
+
+---
+
 
 ### Block N: Multimodal I/O Modules --- PLANNED
 

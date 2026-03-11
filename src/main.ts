@@ -76,6 +76,7 @@ import { initArchiveBrowser } from "./archive-browser";
 import { initExpertMode } from "./expert-mode";
 import { initModulesHub, refreshModulesHub } from "./modules-hub";
 import { initGddFlow } from "./gdd-flow";
+import { initOnboardingWizard } from "./onboarding-wizard";
 import {
   appendWorkflowAgentLog,
   handleWorkflowAgentRawResult,
@@ -385,6 +386,7 @@ async function bootstrap() {
   initModulesHub();
   initGddFlow();
   initWorkflowAgentConsole();
+  initOnboardingWizard();
   syncVoiceOutputConsoleState();
 
   if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Rendering interface…";

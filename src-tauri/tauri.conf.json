@@ -44,6 +44,13 @@
       "bin/cuda/ggml-cuda.dll": "bin/cuda/ggml-cuda.dll",
       "bin/cuda/cublas64_13.dll": "bin/cuda/cublas64_13.dll",
       "bin/cuda/cudart64_13.dll": "bin/cuda/cudart64_13.dll",
+      "bin/cuda/whisper-server.exe": "bin/cuda/whisper-server.exe",
+      "bin/vulkan/whisper-cli.exe": "bin/vulkan/whisper-cli.exe",
+      "bin/vulkan/whisper.dll": "bin/vulkan/whisper.dll",
+      "bin/vulkan/ggml.dll": "bin/vulkan/ggml.dll",
+      "bin/vulkan/ggml-base.dll": "bin/vulkan/ggml-base.dll",
+      "bin/vulkan/ggml-cpu.dll": "bin/vulkan/ggml-cpu.dll",
+      "bin/vulkan/ggml-vulkan.dll": "bin/vulkan/ggml-vulkan.dll",
       "bin/quantize.exe": "bin/quantize.exe",
       "bin/piper/piper.exe": "bin/piper/piper.exe",
       "bin/piper/onnxruntime.dll": "bin/piper/onnxruntime.dll",
@@ -52,8 +59,7 @@
       "bin/piper/voices/de_DE-thorsten-medium.onnx": "bin/piper/voices/de_DE-thorsten-medium.onnx",
       "bin/piper/voices/de_DE-thorsten-medium.onnx.json": "bin/piper/voices/de_DE-thorsten-medium.onnx.json",
       "bin/piper/voices/en_US-amy-medium.onnx": "bin/piper/voices/en_US-amy-medium.onnx",
-      "bin/piper/voices/en_US-amy-medium.onnx.json": "bin/piper/voices/en_US-amy-medium.onnx.json",
-      "bin/cuda/whisper-server.exe": "bin/cuda/whisper-server.exe"
+      "bin/piper/voices/en_US-amy-medium.onnx.json": "bin/piper/voices/en_US-amy-medium.onnx.json"
     },
     "windows": {
       "nsis": {

@@ -32,6 +32,21 @@ export function setSettings(newSettings: Settings | null) {
   settings = newSettings;
 }
 
+export function updateSettings(newSettings: Partial<Settings>) {
+  if (settings) {
+    // Deep merge for nested objects like setup and ai_fallback
+    if (newSettings.setup) {
+      settings.setup = { ...settings.setup, ...newSettings.setup };
+    }
+    if (newSettings.ai_fallback) {
+      settings.ai_fallback = { ...settings.ai_fallback, ...newSettings.ai_fallback };
+    }
+    
+    // Merge the rest
+    Object.assign(settings, { ...newSettings, setup: settings.setup, ai_fallback: settings.ai_fallback });
+  }
+}
+
 export function setHistory(newHistory: HistoryEntry[]) {
   history = newHistory;
 }

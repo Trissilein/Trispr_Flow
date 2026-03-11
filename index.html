@@ -1613,6 +1613,108 @@
       </div>
     </main>
 
+    <div id="onboarding-wizard" class="auth-modal onboarding-wizard" hidden>
+      <div id="onboarding-wizard-backdrop" class="auth-modal-backdrop"></div>
+      <div class="auth-modal-card onboarding-card" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+        <div class="auth-modal-header">
+          <h3 id="wizard-title" class="ai-refine-section-title">Welcome to Trispr Flow</h3>
+          <div class="wizard-progress">Step <span id="wizard-step-current">1</span> of 5</div>
+        </div>
+
+        <!-- Step 1: Privacy & Welcome -->
+        <div id="wizard-step-1" class="wizard-step">
+          <p class="wizard-text">Trispr Flow is a <strong>privacy-first</strong> dictation tool. All your recordings and transcriptions stay on this computer.</p>
+          <div class="onboarding-feature-list">
+            <div class="feature-item">
+              <span class="feature-icon">🔒</span>
+              <div>
+                <strong>Offline-First</strong>
+                <p class="field-hint">No audio data is sent to the cloud by default.</p>
+              </div>
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon">⚡</span>
+              <div>
+                <strong>GPU Accelerated</strong>
+                <p class="field-hint">Uses your graphics card for ultra-fast response.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: Hardware Detection -->
+        <div id="wizard-step-2" class="wizard-step" hidden>
+          <p class="wizard-text">Detecting your hardware to optimize performance...</p>
+          
+          <div id="wizard-loading" class="wizard-loading-overlay">
+            <div class="bootstrap-spinner"></div>
+            <span class="field-hint">Analyzing GPU and Driver capabilities...</span>
+          </div>
+
+          <div id="wizard-gpu-info" class="gpu-info-card" hidden>
+            <div class="gpu-info-row">
+              <span class="field-label">GPU:</span>
+              <span id="wizard-gpu-name" class="hero-value">Detecting...</span>
+            </div>
+            <div class="gpu-info-row">
+              <span class="field-label">Memory:</span>
+              <span id="wizard-gpu-vram" class="hero-value">-</span>
+            </div>
+            <div class="gpu-info-row">
+              <span class="field-label">Recommended:</span>
+              <span id="wizard-backend-recommended" class="status-pill status-pill--active">-</span>
+            </div>
+          </div>
+          <p id="wizard-driver-warning" class="field-hint warning-text" hidden>
+            ⚠️ Your NVIDIA drivers might be outdated. For best CUDA performance, please update them.
+            <a id="wizard-driver-link" href="#" class="btn-link">Download Drivers</a>
+          </p>
+        </div>
+
+        <!-- Step 3: Hotkey Setup -->
+        <div id="wizard-step-3" class="wizard-step" hidden>
+          <p class="wizard-text">Define your Push-to-Talk hotkey. Hold this key while speaking to record.</p>
+          <div class="hotkey-setup-box">
+            <div class="field-label">Current Hotkey:</div>
+            <div class="hotkey-input-group wizard-hotkey-group">
+              <input id="wizard-hotkey-input" type="text" value="Ctrl + Shift + Space" readonly />
+              <button id="wizard-setup-hotkey-btn" type="button" class="hotkey-record-btn">🎹 Record</button>
+            </div>
+            <span id="wizard-hotkey-status" class="hotkey-status"></span>
+          </div>
+          <p class="field-hint">You can always change this later in the settings.</p>
+        </div>
+
+        <!-- Step 4: AI Refinement -->
+        <div id="wizard-step-4" class="wizard-step" hidden>
+          <p class="wizard-text">Do you want to enable <strong>Local AI Refinement</strong>?</p>
+          <p class="field-hint">This uses Ollama to fix punctuation and grammar automatically after you speak. It requires a one-time download of ~3GB.</p>
+          <div class="toggle-box">
+            <label class="switch-label">
+              <input type="checkbox" id="wizard-ollama-enable" />
+              <span class="switch-text">Enable AI Refinement (Ollama)</span>
+            </label>
+          </div>
+          <div id="wizard-ollama-status" class="field-hint" hidden>
+            Ollama will be downloaded when you finish this wizard.
+          </div>
+        </div>
+
+        <!-- Step 5: Finish -->
+        <div id="wizard-step-5" class="wizard-step" hidden>
+          <div class="finish-anim">✨</div>
+          <h4 class="center-text">You're all set!</h4>
+          <p class="wizard-text center-text">Trispr Flow is ready to use. Click finish to start your first transcription.</p>
+        </div>
+
+        <div class="auth-modal-actions wizard-actions">
+          <button id="wizard-prev-btn" type="button" class="hotkey-record-btn" disabled>Back</button>
+          <button id="wizard-next-btn" type="button" class="btn btn-primary">Next</button>
+          <button id="wizard-finish-btn" type="button" class="btn btn-primary" hidden>Finish</button>
+        </div>
+      </div>
+    </div>
+
     <div id="ai-auth-modal" class="auth-modal" hidden>
       <div id="ai-auth-modal-backdrop" class="auth-modal-backdrop"></div>
       <div class="auth-modal-card" role="dialog" aria-modal="true" aria-labelledby="ai-auth-modal-title">

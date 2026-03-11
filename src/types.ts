@@ -818,3 +818,12 @@ export interface ConfluenceTargetSuggestion {
   confidence: number;
   reasoning: string;
 }
+
+export interface HardwareInfo {
+  gpu_name: string;
+  gpu_vram: string;
+  backend_recommended: string;
+  cuda_available: boolean;
+  driver_version: string;
+  update_url?: string | null;
+}

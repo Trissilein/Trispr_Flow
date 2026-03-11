@@ -56,3 +56,4 @@ tauri-plugin-dialog = "2"
 [target."cfg(target_os = \"windows\")".dependencies]
 wasapi = "0.22"
 windows-sys = { version = "0.59", features = ["Win32_System_Threading"] }
+windows = { version = "0.59", features = ["Win32_Graphics_Dxgi", "Win32_System_LibraryLoader"] }

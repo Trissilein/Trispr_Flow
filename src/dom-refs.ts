@@ -405,3 +405,22 @@ export const modelPanel =
   typeof document !== "undefined"
     ? (document.querySelector('[data-panel="model"]') as HTMLElement | null)
     : null;
+
+// Onboarding Wizard
+export const onboardingWizard = $("onboarding-wizard");
+export const wizardStepCurrent = $("wizard-step-current");
+export const wizardNextBtn = $("wizard-next-btn") as HTMLButtonElement | null;
+export const wizardPrevBtn = $("wizard-prev-btn") as HTMLButtonElement | null;
+export const wizardFinishBtn = $("wizard-finish-btn") as HTMLButtonElement | null;
+export const wizardGpuName = $("wizard-gpu-name");
+export const wizardGpuVram = $("wizard-gpu-vram");
+export const wizardLoading = $("wizard-loading");
+export const wizardGpuInfo = $("wizard-gpu-info");
+export const wizardBackendRecommended = $("wizard-backend-recommended");
+export const wizardDriverWarning = $("wizard-driver-warning");
+export const wizardDriverLink = $("wizard-driver-link");
+export const wizardHotkeyInput = $("wizard-hotkey-input") as HTMLInputElement | null;
+export const wizardSetupHotkeyBtn = $("wizard-setup-hotkey-btn") as HTMLButtonElement | null;
+export const wizardHotkeyStatus = $("wizard-hotkey-status") as HTMLSpanElement | null;
+export const wizardOllamaEnable = $("wizard-ollama-enable") as HTMLInputElement | null;
+export const wizardOllamaStatus = $("wizard-ollama-status");

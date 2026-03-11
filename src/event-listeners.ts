@@ -2347,25 +2347,33 @@ export function wireEvents() {
     await persistSettings();
   });
 
-  // GPU VRAM Purge Button
-  dom.purgeVramBtn?.addEventListener("click", async () => {
-    if (!dom.purgeVramBtn) return;
-    const originalText = dom.purgeVramBtn.textContent;
-    dom.purgeVramBtn.disabled = true;
-    dom.purgeVramBtn.textContent = "Purging...";
+  // GPU VRAM Purge on click
+  dom.gpuStatusItem?.addEventListener("click", async () => {
+    if (!dom.gpuStatusItem || !dom.gpuVramLabel) return;
+    const originalVramText = dom.gpuVramLabel.textContent;
+    dom.gpuStatusItem.style.pointerEvents = "none";
+    dom.gpuVramLabel.textContent = "Purging...";
     try {
       await invoke("purge_gpu_memory");
-      dom.purgeVramBtn.textContent = "VRAM Purged ✓";
+      dom.gpuVramLabel.textContent = "Purged ✓";
       setTimeout(() => {
-        dom.purgeVramBtn!.textContent = originalText;
-        dom.purgeVramBtn!.disabled = false;
+        dom.gpuVramLabel!.textContent = originalVramText;
+        dom.gpuStatusItem!.style.pointerEvents = "auto";
       }, 2000);
     } catch (error) {
-      dom.purgeVramBtn.textContent = `Error: ${error}`;
-      dom.purgeVramBtn.disabled = false;
+      dom.gpuVramLabel.textContent = `Error`;
+      dom.gpuStatusItem.style.pointerEvents = "auto";
       setTimeout(() => {
-        dom.purgeVramBtn!.textContent = originalText;
+        dom.gpuVramLabel!.textContent = originalVramText;
       }, 3000);
+    }
+  });
+
+  // Also support keyboard access (Enter/Space)
+  dom.gpuStatusItem?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      dom.gpuStatusItem?.click();
     }
   });
 }

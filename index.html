@@ -59,7 +59,7 @@
                 <span id="transcribe-label" class="status-label">Transcribing: Idle</span>
               </div>
             </div>
-            <!-- Row 2: Refining + GPU + Purge -->
+            <!-- Row 2: Refining + GPU (clickable to purge VRAM) -->
             <div class="status-row">
               <div class="status-item">
                 <span id="refining-pill" class="status-pill status-pill--disabled">Refining</span>
@@ -67,7 +67,7 @@
                       aria-label="Refining status: idle"></span>
                 <span id="refining-label" class="status-label">Refining: Idle</span>
               </div>
-              <div class="status-item gpu-item">
+              <div id="gpu-status-item" class="status-item gpu-item gpu-item--clickable" role="button" tabindex="0" title="Click to purge GPU VRAM">
                 <span id="gpu-pill" class="status-pill status-pill--disabled">GPU</span>
                 <span class="status-dot" id="gpu-dot" data-state="idle"
                       aria-label="GPU status: idle"></span>
@@ -76,7 +76,6 @@
                   <span id="gpu-vram" class="gpu-vram-label"></span>
                 </div>
               </div>
-              <button id="purge-vram-btn" class="btn-sm btn-secondary" title="Free unused GPU memory">Purge VRAM</button>
             </div>
             <span id="status-message" class="status-message" role="alert"></span>
           </div>

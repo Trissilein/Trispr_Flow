@@ -2984,12 +2984,21 @@ fn get_gpu_vram_usage() -> Result<String, String> {
 
     use std::process::Command;
 
-    let output = Command::new("nvidia-smi")
-        .args(&[
-            "--query-gpu=memory.used,memory.total",
-            "--format=csv,noheader,nounits",
-        ])
-        .output()
+    let mut cmd = Command::new("nvidia-smi");
+    cmd.args(&[
+        "--query-gpu=memory.used,memory.total",
+        "--format=csv,noheader,nounits",
+    ]);
+
+    // On Windows, hide the command window to prevent visual pop-ups
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd.output()
         .map_err(|_| "nvidia-smi not found".to_string())?;
 
     if !output.status.success() {

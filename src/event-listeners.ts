@@ -1514,6 +1514,13 @@ export function wireEvents() {
         renderAIFallbackSettingsUi();
         renderOllamaModelManager();
       });
+    } else {
+      // Stop Ollama runtime when AI refinement is disabled
+      try {
+        await invoke("stop_ollama_runtime");
+      } catch (error) {
+        console.warn("Failed to stop Ollama runtime:", error);
+      }
     }
   });
 

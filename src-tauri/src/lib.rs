@@ -3044,6 +3044,21 @@ fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn stop_ollama_runtime(state: State<'_, AppState>) -> Result<(), String> {
+    // Stop the managed Ollama runtime process
+    // This is called when user disables AI refinement or exits the app
+
+    if let Ok(mut guard) = state.managed_ollama_child.lock() {
+        if let Some(mut child) = guard.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn validate_hotkey(key: String) -> hotkeys::ValidationResult {
     hotkeys::validate_hotkey_format(&key)
 }
@@ -4872,11 +4887,14 @@ pub fn run() {
             unload_ollama_model,
             get_gpu_vram_usage,
             purge_gpu_memory,
+            stop_ollama_runtime,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
+                info!("Application exiting, cleaning up child processes");
+
                 // Kill managed Ollama child process on app exit.
                 // Use if-let to gracefully handle a poisoned mutex (e.g. from a prior panic).
                 if let Ok(mut guard) = app_handle
@@ -4885,6 +4903,7 @@ pub fn run() {
                     .lock()
                 {
                     if let Some(mut child) = guard.take() {
+                        info!("Killing managed Ollama process");
                         let _ = child.kill();
                         let _ = child.wait();
                     }
@@ -4897,6 +4916,7 @@ pub fn run() {
                     .lock()
                 {
                     if let Some(mut child) = guard.take() {
+                        info!("Killing managed Whisper-Server process");
                         let _ = child.kill();
                         let _ = child.wait();
                     }

@@ -867,12 +867,36 @@ window.addEventListener("DOMContentLoaded", () => {
   bootstrap()
     .then(() => {
       initWindowStatePersistence();
+      // Start GPU VRAM monitoring (update every 2 seconds)
+      startGpuVramMonitoring();
       return Promise.all([checkModelOnStartup(), checkDependencyPreflightOnStartup()]);
     })
     .catch((error) => {
       console.error("bootstrap failed", error);
     });
 });
+
+// GPU VRAM monitoring and updates
+function startGpuVramMonitoring() {
+  const updateVramDisplay = async () => {
+    try {
+      const vramUsage = await invoke<string>("get_gpu_vram_usage");
+      if (dom.gpuVramLabel && vramUsage) {
+        dom.gpuVramLabel.textContent = vramUsage;
+      }
+    } catch (error) {
+      // Silently ignore nvidia-smi errors (GPU might not be present)
+    }
+  };
+
+  // Initial update
+  void updateVramDisplay();
+
+  // Then update every 2 seconds
+  setInterval(() => {
+    void updateVramDisplay();
+  }, 2000);
+}
 
 // Cleanup event listeners on window unload to prevent memory leaks
 window.addEventListener("beforeunload", () => {

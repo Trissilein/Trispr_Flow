@@ -2339,4 +2339,26 @@ export function wireEvents() {
     settings.voice_output_settings.piper_model_dir = dom.voiceOutputPiperModelDir.value;
     await persistSettings();
   });
+
+  // GPU VRAM Purge Button
+  dom.purgeVramBtn?.addEventListener("click", async () => {
+    if (!dom.purgeVramBtn) return;
+    const originalText = dom.purgeVramBtn.textContent;
+    dom.purgeVramBtn.disabled = true;
+    dom.purgeVramBtn.textContent = "Purging...";
+    try {
+      await invoke("purge_gpu_memory");
+      dom.purgeVramBtn.textContent = "VRAM Purged ✓";
+      setTimeout(() => {
+        dom.purgeVramBtn!.textContent = originalText;
+        dom.purgeVramBtn!.disabled = false;
+      }, 2000);
+    } catch (error) {
+      dom.purgeVramBtn.textContent = `Error: ${error}`;
+      dom.purgeVramBtn.disabled = false;
+      setTimeout(() => {
+        dom.purgeVramBtn!.textContent = originalText;
+      }, 3000);
+    }
+  });
 }

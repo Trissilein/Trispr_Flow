@@ -44,29 +44,39 @@
             a privacy-first local pipeline and optional AI fallback refinement.
           </p>
           <div class="status" role="status" aria-live="polite">
-            <div class="status-item">
-              <span id="recording-pill" class="status-pill status-pill--disabled">Recording</span>
-              <span class="status-dot" id="status-dot" data-state="idle"
-                    aria-label="Recording status: idle"></span>
-              <span id="status-label" class="status-label">Recording: Idle</span>
+            <!-- Row 1: Recording + Transcribing -->
+            <div class="status-row">
+              <div class="status-item">
+                <span id="recording-pill" class="status-pill status-pill--disabled">Recording</span>
+                <span class="status-dot" id="status-dot" data-state="idle"
+                      aria-label="Recording status: idle"></span>
+                <span id="status-label" class="status-label">Recording: Idle</span>
+              </div>
+              <div class="status-item">
+                <span id="transcribe-pill" class="status-pill status-pill--disabled">Transcribing</span>
+                <span class="status-dot" id="transcribe-dot" data-state="idle"
+                      aria-label="Transcribing status: idle"></span>
+                <span id="transcribe-label" class="status-label">Transcribing: Idle</span>
+              </div>
             </div>
-            <div class="status-item">
-              <span id="transcribe-pill" class="status-pill status-pill--disabled">Transcribing</span>
-              <span class="status-dot" id="transcribe-dot" data-state="idle"
-                    aria-label="Transcribing status: idle"></span>
-              <span id="transcribe-label" class="status-label">Transcribing: Idle</span>
-            </div>
-            <div class="status-item">
-              <span id="refining-pill" class="status-pill status-pill--disabled">Refining</span>
-              <span class="status-dot" id="refining-dot" data-state="idle"
-                    aria-label="Refining status: idle"></span>
-              <span id="refining-label" class="status-label">Refining: Idle</span>
-            </div>
-            <div class="status-item">
-              <span id="gpu-pill" class="status-pill status-pill--disabled">GPU</span>
-              <span class="status-dot" id="gpu-dot" data-state="idle"
-                    aria-label="GPU status: idle"></span>
-              <span id="gpu-label" class="status-label">GPU: Idle</span>
+            <!-- Row 2: Refining + GPU + Purge -->
+            <div class="status-row">
+              <div class="status-item">
+                <span id="refining-pill" class="status-pill status-pill--disabled">Refining</span>
+                <span class="status-dot" id="refining-dot" data-state="idle"
+                      aria-label="Refining status: idle"></span>
+                <span id="refining-label" class="status-label">Refining: Idle</span>
+              </div>
+              <div class="status-item gpu-item">
+                <span id="gpu-pill" class="status-pill status-pill--disabled">GPU</span>
+                <span class="status-dot" id="gpu-dot" data-state="idle"
+                      aria-label="GPU status: idle"></span>
+                <div class="gpu-status-group">
+                  <span id="gpu-label" class="status-label">GPU: Idle</span>
+                  <span id="gpu-vram" class="gpu-vram-label"></span>
+                </div>
+              </div>
+              <button id="purge-vram-btn" class="btn-sm btn-secondary" title="Free unused GPU memory">Purge VRAM</button>
             </div>
             <span id="status-message" class="status-message" role="alert"></span>
           </div>

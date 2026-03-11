@@ -113,17 +113,43 @@ h1 {
 
 .status {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 8px;
   font-weight: 600;
   font-size: 0.85rem;
   color: var(--ink-soft);
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .status-item {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.status-item.gpu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.gpu-status-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gpu-vram-label {
+  font-size: 0.75rem;
+  color: var(--ink-softer);
+  font-weight: 500;
 }
 
 .status-pill {

@@ -2978,6 +2978,63 @@ fn unload_ollama_model(model: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_gpu_vram_usage() -> Result<String, String> {
+    // Query NVIDIA GPU VRAM usage via nvidia-smi
+    // Returns formatted string like "2.1 GB / 8.0 GB" or empty if unavailable
+
+    use std::process::Command;
+
+    let output = Command::new("nvidia-smi")
+        .args(&[
+            "--query-gpu=memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .map_err(|_| "nvidia-smi not found".to_string())?;
+
+    if !output.status.success() {
+        return Ok(String::new()); // Silently return empty if nvidia-smi fails
+    }
+
+    let result = String::from_utf8(output.stdout)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    // Parse "XXXX, YYYY" format and convert to "X.X GB / Y.Y GB"
+    let parts: Vec<&str> = result.split(',').map(|s| s.trim()).collect();
+    if parts.len() == 2 {
+        if let (Ok(used_mb), Ok(total_mb)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+            let used_gb = used_mb / 1024.0;
+            let total_gb = total_mb / 1024.0;
+            return Ok(format!("{:.1} GB / {:.1} GB", used_gb, total_gb));
+        }
+    }
+
+    Ok(String::new())
+}
+
+#[tauri::command]
+fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String> {
+    // Purge GPU memory by unloading all loaded models from both Ollama and Whisper
+
+    // Unload current Ollama model if set
+    let settings = state.settings.lock().unwrap();
+    let current_ollama_model = settings.ai_fallback.model.clone();
+    drop(settings);
+
+    if !current_ollama_model.is_empty() {
+        let _ = unload_ollama_model(current_ollama_model);
+    }
+
+    // Kill and restart Whisper server to clear old model
+    // This is the most reliable way to free VRAM from Whisper
+    let _ = crate::whisper_server::kill_whisper_server(&state);
+
+    Ok(())
+}
+
+#[tauri::command]
 fn validate_hotkey(key: String) -> hotkeys::ValidationResult {
     hotkeys::validate_hotkey_format(&key)
 }
@@ -4804,6 +4861,8 @@ pub fn run() {
             delete_ollama_model,
             get_ollama_model_info,
             unload_ollama_model,
+            get_gpu_vram_usage,
+            purge_gpu_memory,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

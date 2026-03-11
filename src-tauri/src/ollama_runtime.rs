@@ -349,7 +349,7 @@ fn resolve_runtime_root(app: &AppHandle) -> PathBuf {
     {
         if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
             let path = PathBuf::from(local_app_data)
-                .join("TrisprFlow")
+                .join("Trispr Flow")
                 .join("ollama-runtime");
             let _ = fs::create_dir_all(&path);
             return path;
@@ -608,9 +608,22 @@ fn find_managed_runtime_binary(
     settings: &crate::state::Settings,
 ) -> Option<PathBuf> {
     let runtime_root = resolve_runtime_root(app);
-    if !runtime_root.is_dir() {
+
+    // Check legacy path if new path doesn't exist (migration support)
+    let runtime_root = if runtime_root.is_dir() {
+        runtime_root
+    } else if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let legacy_root = PathBuf::from(local_app_data)
+            .join("TrisprFlow")
+            .join("ollama-runtime");
+        if legacy_root.is_dir() {
+            legacy_root
+        } else {
+            return None;
+        }
+    } else {
         return None;
-    }
+    };
 
     let mut preferred_versions: Vec<String> = Vec::new();
     let target = settings.providers.ollama.runtime_target_version.trim();

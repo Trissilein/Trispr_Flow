@@ -852,10 +852,7 @@ fn run_latency_benchmark_inner(
         default_latency_fixture_paths()
     } else {
         // Validate user-provided paths against app data directory
-        let allowed_root = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+        let allowed_root = crate::paths::resolve_base_dir(&app);
         let mut validated = Vec::new();
         for path_str in &request.fixture_paths {
             validated.push(validate_path_within(path_str, &allowed_root)?);
@@ -2991,10 +2988,7 @@ fn save_transcript(filename: String, content: String, format: String) -> Result<
 #[tauri::command]
 fn save_crash_recovery(app: AppHandle, content: String) -> Result<(), String> {
     // Write to app data dir (user-private) instead of world-readable %TEMP%
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let data_dir = crate::paths::resolve_base_dir(&app);
     let _ = std::fs::create_dir_all(&data_dir);
 
     let crash_file = data_dir.join(".crash_recovery.json");
@@ -3006,10 +3000,7 @@ fn save_crash_recovery(app: AppHandle, content: String) -> Result<(), String> {
 
 #[tauri::command]
 fn clear_crash_recovery(app: AppHandle) -> Result<(), String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let data_dir = crate::paths::resolve_base_dir(&app);
 
     let crash_file = data_dir.join(".crash_recovery.json");
     if crash_file.exists() {
@@ -3082,10 +3073,7 @@ fn encode_to_opus(
     output_path: String,
     bitrate_kbps: Option<u32>,
 ) -> Result<opus::OpusEncodeResult, String> {
-    let allowed_root = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let allowed_root = crate::paths::resolve_base_dir(&app);
 
     let input = validate_path_within(&input_path, &allowed_root)?;
     let output = validate_path_within(&output_path, &allowed_root)?;
@@ -3362,10 +3350,7 @@ fn get_last_recording_path(
 
 #[tauri::command]
 fn get_recordings_directory(app: AppHandle) -> Result<String, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let data_dir = crate::paths::resolve_base_dir(&app);
     let recordings_dir = data_dir.join("recordings");
 
     // Create directory if it doesn't exist
@@ -3450,10 +3435,7 @@ pub(crate) fn save_recording_opus(
     };
 
     // Save to app data dir: ~/.local/share/trispr-flow/recordings/
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let data_dir = crate::paths::resolve_base_dir(&app);
     let recordings_dir = data_dir.join("recordings");
 
     std::fs::create_dir_all(&recordings_dir)
@@ -3569,9 +3551,9 @@ fn init_logging() {
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    // Write logs to %APPDATA%\com.trispr.flow\logs\trispr-flow.log (daily rotation)
-    let log_dir = std::env::var("APPDATA")
-        .map(|d| std::path::PathBuf::from(d).join("com.trispr.flow").join("logs"))
+    // Write logs to %LOCALAPPDATA%\Trispr Flow\logs\trispr-flow.log (daily rotation)
+    let log_dir = std::env::var("LOCALAPPDATA")
+        .map(|d| std::path::PathBuf::from(d).join("Trispr Flow").join("logs"))
         .unwrap_or_else(|_| std::path::PathBuf::from("logs"));
     let _ = std::fs::create_dir_all(&log_dir);
     let file_appender = rolling::daily(&log_dir, "trispr-flow.log");

@@ -1389,6 +1389,12 @@
                           <span id="ai-fallback-local-runtime-note" class="field-hint">
                             Local mode keeps transcript data on this device.
                           </span>
+                          <div id="ai-fallback-runtime-progress" class="model-progress" hidden>
+                            <div class="ollama-progress-bar">
+                              <div id="ai-fallback-runtime-progress-fill" class="ollama-progress-fill" style="width: 0%"></div>
+                            </div>
+                            <span id="ai-fallback-runtime-progress-text" class="ollama-progress-text"></span>
+                          </div>
                         </div>
 
                         <div id="ai-fallback-online-lane" data-lane="online" class="ai-provider-lane ai-provider-lane--online is-roadmap-disabled" role="button" tabindex="0" aria-pressed="false" aria-disabled="true">
@@ -1623,6 +1629,24 @@
           <button id="ai-auth-verify-key" class="hotkey-record-btn" type="button">Verify</button>
         </div>
         <span id="ai-auth-status" class="field-hint">No API key stored.</span>
+      </div>
+    </div>
+
+    <div id="ollama-required-modal" class="auth-modal" hidden>
+      <div id="ollama-required-modal-backdrop" class="auth-modal-backdrop"></div>
+      <div class="auth-modal-card" role="dialog" aria-modal="true" aria-labelledby="ollama-required-modal-title">
+        <div class="auth-modal-header">
+          <h3 id="ollama-required-modal-title" class="ai-refine-section-title">AI-Verbesserung benötigt Ollama</h3>
+        </div>
+        <p class="field-hint">
+          Ollama wird lokal auf deinem PC ausgeführt, um deine Transkriptionen zu verfeinern und Fehler zu korrigieren.
+          <br /><br />
+          Soll Trispr Flow Ollama jetzt herunterladen und installieren? (ca. 4 GB)
+        </p>
+        <div class="auth-modal-actions">
+          <button id="ollama-required-install" class="hotkey-record-btn is-recommended" type="button">Jetzt installieren</button>
+          <button id="ollama-required-cancel" class="hotkey-record-btn" type="button">Später</button>
+        </div>
       </div>
     </div>
 

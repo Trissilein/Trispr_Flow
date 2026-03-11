@@ -410,7 +410,7 @@ impl Default for Settings {
       vad_threshold_start: VAD_THRESHOLD_START_DEFAULT,
       vad_threshold_sustain: VAD_THRESHOLD_SUSTAIN_DEFAULT,
       vad_silence_ms: VAD_SILENCE_MS_DEFAULT,
-      transcribe_enabled: false,
+      transcribe_enabled: true,
       transcribe_hotkey: "CommandOrControl+Shift+T".to_string(),
       hotkey_toggle_activation_words: "CommandOrControl+Shift+A".to_string(),
       transcribe_output_device: "default".to_string(),

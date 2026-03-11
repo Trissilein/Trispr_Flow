@@ -659,6 +659,35 @@ export function renderAIFallbackSettingsUi() {
     );
     dom.aiFallbackLocalRuntimeNote.setAttribute("aria-live", "polite");
   }
+
+  // Show/update Ollama runtime installation progress bar
+  if (dom.aiFallbackRuntimeProgress && dom.aiFallbackRuntimeProgressFill && dom.aiFallbackRuntimeProgressText) {
+    const progress = (window as any).runtimeInstallProgress;
+    if (progress) {
+      // Show progress bar
+      dom.aiFallbackRuntimeProgress.removeAttribute("hidden");
+
+      // Update progress fill
+      let percent = 0;
+      if (progress.downloaded !== undefined && progress.total !== undefined && progress.total > 0) {
+        percent = Math.min(100, Math.round((progress.downloaded / progress.total) * 100));
+      }
+      dom.aiFallbackRuntimeProgressFill.style.width = `${percent}%`;
+
+      // Update progress text
+      let progressText = progress.message || "";
+      if (progress.downloaded !== undefined && progress.total !== undefined && progress.total > 0) {
+        const mbDone = Math.round(progress.downloaded / (1024 * 1024));
+        const mbTotal = Math.round(progress.total / (1024 * 1024));
+        progressText = `${progressText} (${mbDone}/${mbTotal} MB)`;
+      }
+      dom.aiFallbackRuntimeProgressText.textContent = progressText;
+    } else {
+      // Hide progress bar
+      dom.aiFallbackRuntimeProgress.setAttribute("hidden", "");
+    }
+  }
+
   if (dom.aiFallbackLocalPrimaryAction) {
     dom.aiFallbackLocalPrimaryAction.textContent = runtimeCardState.primaryLabel;
     dom.aiFallbackLocalPrimaryAction.disabled = runtimeCardState.primaryDisabled;

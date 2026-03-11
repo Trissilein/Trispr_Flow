@@ -59,6 +59,7 @@ import {
   refreshOllamaRuntimeAndModels,
   refreshOllamaRuntimeState,
   renderOllamaModelManager,
+  showOllamaRequiredModal,
   startOllamaRuntime,
   useManagedOllamaRuntime,
   useSystemOllamaRuntime,
@@ -1486,7 +1487,24 @@ export function wireEvents() {
   dom.aiFallbackEnabled?.addEventListener("change", async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
-    settings.ai_fallback.enabled = dom.aiFallbackEnabled!.checked;
+    const enabling = dom.aiFallbackEnabled!.checked;
+
+    if (enabling) {
+      // Check if Ollama is available; if not, show modal
+      const runtimeInfo = await invoke<any>("detect_ollama_runtime").catch(() => null);
+      const ollamaDetected = runtimeInfo?.found === true;
+
+      if (!ollamaDetected) {
+        const userWantsInstall = await showOllamaRequiredModal();
+        if (!userWantsInstall) {
+          // User clicked "Später" — don't enable AI fallback yet
+          dom.aiFallbackEnabled!.checked = false;
+          return;
+        }
+      }
+    }
+
+    settings.ai_fallback.enabled = enabling;
     settings.postproc_llm_enabled = settings.ai_fallback.enabled;
     await persistSettings();
     renderAIFallbackSettingsUi();

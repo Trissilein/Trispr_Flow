@@ -457,6 +457,50 @@ function resolvePrimaryAction(): {
   };
 }
 
+/**
+ * Shows a modal dialog asking the user if they want to install Ollama
+ * for AI Refinement. Returns a Promise that resolves to true if the user
+ * clicks "Jetzt installieren", false if they click "Später".
+ */
+export function showOllamaRequiredModal(): Promise<boolean> {
+  const dom = document.getElementById("ollama-required-modal") as HTMLDivElement | null;
+  if (!dom) {
+    console.error("ollama-required-modal element not found");
+    return Promise.resolve(false);
+  }
+
+  return new Promise((resolve) => {
+    const installBtn = dom.querySelector("#ollama-required-install") as HTMLButtonElement | null;
+    const cancelBtn = dom.querySelector("#ollama-required-cancel") as HTMLButtonElement | null;
+    const backdrop = dom.querySelector("#ollama-required-modal-backdrop") as HTMLDivElement | null;
+
+    const cleanup = () => {
+      dom.setAttribute("hidden", "");
+      installBtn?.removeEventListener("click", onInstall);
+      cancelBtn?.removeEventListener("click", onCancel);
+      backdrop?.removeEventListener("click", onCancel);
+    };
+
+    const onInstall = () => {
+      cleanup();
+      resolve(true);
+    };
+
+    const onCancel = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    // Show modal
+    dom.removeAttribute("hidden");
+
+    // Add listeners
+    installBtn?.addEventListener("click", onInstall);
+    cancelBtn?.addEventListener("click", onCancel);
+    backdrop?.addEventListener("click", onCancel);
+  });
+}
+
 export function getOllamaRuntimeCardState(): OllamaRuntimeCardState {
   const source = runtimeDetect?.source || settings?.providers?.ollama?.runtime_source || "manual";
   const version = runtimeDetect?.version || settings?.providers?.ollama?.runtime_version || "unknown";

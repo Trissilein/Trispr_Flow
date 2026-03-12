@@ -229,9 +229,19 @@ FunctionEnd
   ; Create models directory
   CreateDirectory "$APPDATA\com.trispr.flow\models"
 
-  ; Detect NVIDIA GPU in installer for a first hint (optional, but good for Wizard speed)
-  ; We use a simple registry/WMI check or just let the app do the deep probe.
-  ; For now, the app's deep probe is more reliable.
+  ; Detect NVIDIA GPU in installer
+  ; Check if nvcuda.dll is in the Windows System directory
+  IfFileExists "$SYSDIR\nvcuda.dll" CudaFound CudaNotFound
+
+  CudaFound:
+    ; CUDA is available, remove Vulkan backend to save space
+    RMDir /r "$INSTDIR\bin\vulkan"
+    Goto SkipPostInstall
+
+  CudaNotFound:
+    ; CUDA not found, fall back to Vulkan and remove CUDA backend
+    RMDir /r "$INSTDIR\bin\cuda"
+    Goto SkipPostInstall
 
   SkipPostInstall:
 !macroend

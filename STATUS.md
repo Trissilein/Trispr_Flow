@@ -12,6 +12,7 @@ Last updated: 2026-03-13
 
 - Contributor process now enforces a pre-push housekeeping gate in `CONTRIBUTING.md` ("Housekeeping (Required Before Push)").
 - `N5+Q Stabilization Packet` is in execution (P1-P3): startup/runtime diagnostics, overlay resilience, and vision runtime hardening are integrated in mainline WIP.
+- Ollama runtime IPC paths used by model refresh/verify/info/pull-delete are hardened with non-blocking worker dispatch; UI stays interactive during background runtime activity.
 - Mainline installer/runtime packaging now keeps both Whisper backends (`bin/cuda` + `bin/vulkan`) and resolves backend at runtime (`local_backend_preference`).
 - First-run developer bootstrap is available via `FIRST_RUN.bat` (`npm install` + runtime hydration from installed app resources).
 - Core capture/transcription pipeline is stable (PTT/VAD + system audio + export).
@@ -42,7 +43,7 @@ Last updated: 2026-03-13
 
 - Hands-on desktop/mobile UX QA remains manual and ongoing.
 - Some historical planning docs still reference previous analysis experiments.
-- Fresh-install startup freeze on at least one Optimus system is reported and pending targeted diagnostics capture.
+- Fresh-install startup responsiveness on Optimus systems has improved with non-blocking Ollama IPC hardening; regression monitoring remains active.
 
 ## Privacy + Network Notes
 
@@ -51,8 +52,7 @@ Last updated: 2026-03-13
 
 ## Next Focus
 
-1. Reproduce and triage fresh-install startup freeze on Optimus hardware with diagnostics/log capture.
-2. Complete `N5d` regression validation for `N5+Q Stabilization Packet` (startup diagnostics, overlay recovery, vision buffer/snapshot flows).
-3. Expand multimodal integration tests for Block N (`N12`) on top of the new frame-buffer pipeline.
-4. Continue Block N privacy/consent hardening (`N9`) with updated in-app status messaging.
-5. Finalize latency benchmark baseline (`benchmark:latency`) with updated GPU timings and track p50/p95 trend.
+1. Complete `N5d` regression validation for `N5+Q Stabilization Packet` (startup diagnostics, overlay recovery, vision buffer/snapshot flows, Ollama UI responsiveness under runtime load).
+2. Expand multimodal integration tests for Block N (`N12`) on top of the new frame-buffer pipeline.
+3. Continue Block N privacy/consent hardening (`N9`) with updated in-app status messaging.
+4. Finalize latency benchmark baseline (`benchmark:latency`) with updated GPU timings and track p50/p95 trend.

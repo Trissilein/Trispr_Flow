@@ -68,6 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Stop Ollama runtime when AI Refinement is disabled (prevents orphaned processes)
   - Enhanced app exit handler with logging for process cleanup verification
   - New `stop_ollama_runtime()` command for explicit process termination
+- **Ollama UI Responsiveness Hardening (Non-blocking IPC)**:
+  - Moved blocking Ollama command paths (`fetch_available_models`, `fetch_ollama_models_with_size`, `test_provider_connection`, `delete_ollama_model`, `get_ollama_model_info`, `unload_ollama_model`) to async worker dispatch.
+  - Added timeout-protected `get_ollama_model_info` refresh path with soft-fail behavior to avoid runtime-state hangs in UI.
+  - Reduced refresh-loop info logging to state transitions to lower frontend->backend IPC pressure while Ollama is starting or busy.
+  - Guarded settings-driven runtime refresh while background startup polling is active to avoid refresh storms.
 - **GPU Acceleration Hardening**:
   - NVIDIA GPU layer auto-detection and configuration during installer setup (nsDialogs custom page).
   - Registry environment variable `TRISPR_WHISPER_GPU_LAYERS` for persistent GPU settings.

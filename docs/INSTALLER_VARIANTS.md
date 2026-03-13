@@ -1,24 +1,18 @@
 # Trispr Flow - Installer Variants
 
-Last updated: 2026-02-26
+Last updated: 2026-03-13
 
-This document describes the current Windows installer variants for Trispr Flow mainline.
+This document describes the current Windows installer packaging in Trispr Flow mainline.
 
-## Editions
-
-### 1. CUDA Edition
+## Mainline Packaging
 
 - Config: `src-tauri/tauri.conf.json`
 - NSIS hooks: `src-tauri/nsis/hooks.nsh`
-- Includes: CUDA whisper runtime only (`whisper-cli.exe`, `ggml-*.dll`, `cublas64_13.dll`, `cudart64_13.dll`)
-- Installer flow: no GPU backend selector page
+- Includes: both Whisper runtime folders (`bin/cuda/*` and `bin/vulkan/*`) plus `bin/quantize.exe`.
+- Installer flow: no in-installer backend selector page.
 
-### 2. Vulkan Edition
-
-- Config: `src-tauri/tauri.conf.vulkan.json`
-- NSIS hooks: `src-tauri/nsis/hooks.vulkan.nsh`
-- Includes: Vulkan whisper runtime only
-- Installer flow: no GPU backend selector page
+Backend choice is made at runtime via diagnostics + settings (`local_backend_preference`: `auto|cuda|vulkan`).
+The installer no longer prunes CUDA/Vulkan folders post-install.
 
 ## Ollama Runtime + Dependencies
 
@@ -26,15 +20,15 @@ This document describes the current Windows installer variants for Trispr Flow m
 - Ollama models are intentionally **not** bundled in installers; they are pulled/imported via the in-app model manager.
 - The managed runtime includes its own dependency tree (`lib/ollama`, `cuda_v12`, `cuda_v13`, `vulkan`).
 - We do **not** mix Whisper CUDA DLLs into Ollama runtime folders and do **not** rely on Ollama DLLs for Whisper.
-- CUDA edition keeps the minimal whisper DLL set; `cublasLt64_13.dll` is intentionally excluded as redundant for whisper.cpp.
+- CUDA runtime keeps the minimal whisper DLL set; `cublasLt64_13.dll` is intentionally excluded as redundant for whisper.cpp.
 
 ## Build Command
 
 ```bat
-build-both-installers.bat
+rebuild-installer.bat
 ```
 
-Outputs are written to `installers/` for both variants.
+Output is written to the NSIS bundle output folder (and copied to `installers/` by helper scripts where configured).
 
 ## Notes
 

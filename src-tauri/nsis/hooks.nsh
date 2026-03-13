@@ -229,19 +229,12 @@ FunctionEnd
   ; Create models directory
   CreateDirectory "$APPDATA\com.trispr.flow\models"
 
-  ; Detect NVIDIA GPU in installer
-  ; Check if nvcuda.dll is in the Windows System directory
-  IfFileExists "$SYSDIR\nvcuda.dll" CudaFound CudaNotFound
-
-  CudaFound:
-    ; CUDA is available, remove Vulkan backend to save space
-    RMDir /r "$INSTDIR\bin\vulkan"
-    Goto SkipPostInstall
-
-  CudaNotFound:
-    ; CUDA not found, fall back to Vulkan and remove CUDA backend
-    RMDir /r "$INSTDIR\bin\cuda"
-    Goto SkipPostInstall
+  ; Keep both CUDA and Vulkan runtime folders on disk.
+  ; Rationale:
+  ; - Hybrid GPU/Optimus systems can report CUDA availability late.
+  ; - quantize.exe may need runtime DLLs from either backend folder.
+  ; Runtime backend selection is handled by app diagnostics/settings.
+  Goto SkipPostInstall
 
   SkipPostInstall:
 !macroend

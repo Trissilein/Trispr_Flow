@@ -127,7 +127,7 @@ fn acquire_single_instance_guard() -> bool {
         .collect();
 
     let handle = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
-    if handle == 0 {
+    if handle.is_null() {
         warn!("Failed to create single-instance mutex; continuing without lock.");
         return true;
     }

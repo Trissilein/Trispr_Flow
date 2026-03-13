@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **First-Run Bootstrap (Windows)**:
+  - Added `FIRST_RUN.bat` + `scripts/first-run.ps1` for post-clone onboarding.
+  - Bootstrap now installs npm dependencies and reports local runtime readiness for transcription/quantization.
+  - Includes best-effort runtime hydration from an installed app (`resources/bin` -> `src-tauri/bin`).
 - **GPU VRAM Monitoring & Management**:
   - Real-time VRAM usage display in header status bar (updated every 2s via nvidia-smi).
   - Format: "2.1 GB / 8.0 GB" showing used/total VRAM.
@@ -41,9 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Contributor Workflow**:
   - Added a mandatory pre-push housekeeping gate in `CONTRIBUTING.md`.
   - Housekeeping now standardizes context check, cleanup audit, doc sync, and a separate `chore(housekeeping): <scope>` commit before push.
+- **Installer Runtime Packaging**:
+  - NSIS post-install no longer prunes `bin/cuda` or `bin/vulkan`.
+  - Both Whisper runtime folders now remain installed, with backend chosen at runtime.
 
 ### Fixed
 
+- **Optimus/Hybrid Runtime Reliability**:
+  - Prevented post-install backend folder deletion that could leave missing DLL/runtime states for quantization and backend fallback paths.
 - **Three UX Fixes**:
   1. Voice Input Enabled by Default: `transcribe_enabled: true` in Settings::default()
      - Users can use PTT (Push-to-Talk) immediately after fresh install

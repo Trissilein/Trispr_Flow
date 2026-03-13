@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-02-20
+Last updated: 2026-03-13
 
 ## Frontend architecture
 
@@ -91,8 +91,10 @@ Last updated: 2026-02-20
 
 ## Build and distribution
 
-Installer variants:
-- CUDA Edition (`src-tauri/tauri.conf.json`)
-- Vulkan Edition (`src-tauri/tauri.conf.vulkan.json`)
+Mainline installer packaging:
+- Config: `src-tauri/tauri.conf.json`
+- NSIS hooks: `src-tauri/nsis/hooks.nsh`
+- Bundled runtime folders: `bin/cuda/*` and `bin/vulkan/*` (+ `bin/quantize.exe`)
 
+Backend selection is resolved at runtime (`local_backend_preference`: `auto|cuda|vulkan`).
 The previous CUDA+Analysis variant is no longer part of mainline.

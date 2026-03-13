@@ -12,6 +12,8 @@ Last updated: 2026-03-13
 
 - Contributor process now enforces a pre-push housekeeping gate in `CONTRIBUTING.md` ("Housekeeping (Required Before Push)").
 - `N5+Q Stabilization Packet` is in execution (P1-P3): startup/runtime diagnostics, overlay resilience, and vision runtime hardening are integrated in mainline WIP.
+- Mainline installer/runtime packaging now keeps both Whisper backends (`bin/cuda` + `bin/vulkan`) and resolves backend at runtime (`local_backend_preference`).
+- First-run developer bootstrap is available via `FIRST_RUN.bat` (`npm install` + runtime hydration from installed app resources).
 - Core capture/transcription pipeline is stable (PTT/VAD + system audio + export).
 - Adaptive continuous dump is unified across mic Toggle mode and system loopback.
 - Continuous dump profiles and per-source overrides are available in Settings.
@@ -19,7 +21,7 @@ Last updated: 2026-03-13
 - AI fallback foundation is in place in Post-Processing settings.
 - Release QA automation is available via `npm run qa:release` (build/test/rust/audit + strict latency SLO gate).
 - **GPU Acceleration Pipeline** (v0.7.0+):
-  - NVIDIA CUDA auto-detection and configuration during installer setup.
+  - NVIDIA CUDA capability detection with runtime backend preference (`auto|cuda|vulkan`).
   - Pre-warming GPU capability cache at startup (eliminates 2.75s cold-start probe).
   - Q5 quantized models for VRAM-constrained GPUs (e.g., T500 mobile GPU).
   - Benchmarked latency (PTT release → paste): **~7.5-8s on NVIDIA T500 + Q5 model** (Whisper + CUDA inference).
@@ -27,9 +29,7 @@ Last updated: 2026-03-13
     - GPU speedup: **7x faster than CPU** (6.6s GPU vs 55s CPU for longer audio).
   - FFmpeg bundled for OPUS encoding pipeline.
   - Direct Windows API exit to prevent WebView2 teardown hang on quit.
-- Installer variants available:
-  - CUDA (recommended for NVIDIA GPUs)
-  - Vulkan (experimental, cross-platform)
+- Mainline installer bundles both CUDA and Vulkan Whisper runtimes; backend selection happens in-app at runtime.
 
 ## Analysis De-Scope
 
@@ -42,6 +42,7 @@ Last updated: 2026-03-13
 
 - Hands-on desktop/mobile UX QA remains manual and ongoing.
 - Some historical planning docs still reference previous analysis experiments.
+- Fresh-install startup freeze on at least one Optimus system is reported and pending targeted diagnostics capture.
 
 ## Privacy + Network Notes
 
@@ -50,8 +51,8 @@ Last updated: 2026-03-13
 
 ## Next Focus
 
-1. Complete `N5d` regression validation for `N5+Q Stabilization Packet` (startup diagnostics, overlay recovery, vision buffer/snapshot flows).
-2. Expand multimodal integration tests for Block N (`N12`) on top of the new frame-buffer pipeline.
-3. Continue Block N privacy/consent hardening (`N9`) with updated in-app status messaging.
-4. Finalize latency benchmark baseline (`benchmark:latency`) with updated GPU timings and track p50/p95 trend.
-5. Complete Block F reliability hardening + release QA.
+1. Reproduce and triage fresh-install startup freeze on Optimus hardware with diagnostics/log capture.
+2. Complete `N5d` regression validation for `N5+Q Stabilization Packet` (startup diagnostics, overlay recovery, vision buffer/snapshot flows).
+3. Expand multimodal integration tests for Block N (`N12`) on top of the new frame-buffer pipeline.
+4. Continue Block N privacy/consent hardening (`N9`) with updated in-app status messaging.
+5. Finalize latency benchmark baseline (`benchmark:latency`) with updated GPU timings and track p50/p95 trend.

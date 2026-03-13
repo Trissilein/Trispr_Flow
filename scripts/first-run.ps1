@@ -109,8 +109,8 @@ function Get-ResourceBinCandidates {
   if ($env:ProgramFiles) {
     $candidates.Add((Join-Path $env:ProgramFiles "Trispr Flow\resources\bin"))
   }
-  if ($env:'ProgramFiles(x86)') {
-    $candidates.Add((Join-Path $env:'ProgramFiles(x86)' "Trispr Flow\resources\bin"))
+  if (${env:ProgramFiles(x86)}) {
+    $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Trispr Flow\resources\bin"))
   }
 
   return ($candidates | Select-Object -Unique)

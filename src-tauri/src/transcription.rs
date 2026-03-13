@@ -2,6 +2,8 @@
 use crate::audio::CaptureBuffer;
 #[cfg(target_os = "windows")]
 use crate::audio::ContinuousDumpEvent;
+#[cfg(any(test, target_os = "windows"))]
+use crate::constants::TRANSCRIBE_BACKLOG_WARNING_PERCENT;
 #[cfg(target_os = "windows")]
 use crate::constants::TRANSCRIBE_IDLE_METER_MS;
 #[cfg(target_os = "windows")]
@@ -10,16 +12,14 @@ use crate::constants::{
     TARGET_SAMPLE_RATE, TRANSCRIBE_BACKLOG_EXPAND_DENOMINATOR, TRANSCRIBE_BACKLOG_EXPAND_NUMERATOR,
     TRANSCRIBE_BACKLOG_MIN_CHUNKS, TRANSCRIBE_BACKLOG_TARGET_MS,
 };
-#[cfg(any(test, target_os = "windows"))]
-use crate::constants::TRANSCRIBE_BACKLOG_WARNING_PERCENT;
 #[cfg(target_os = "windows")]
 use crate::continuous_dump::{AdaptiveSegmenter, AdaptiveSegmenterConfig};
 use crate::errors::AppError;
 use crate::models::resolve_model_path;
-use crate::overlay::{update_overlay_state, OverlayState};
+use crate::overlay::{emit_capture_idle_overlay, update_overlay_state, OverlayState};
 #[cfg(target_os = "windows")]
 use crate::paths::resolve_recordings_dir;
-use crate::paths::resolve_whisper_cli_path;
+use crate::paths::{resolve_whisper_cli_path_for_backend, resolve_whisper_server_path_for_backend};
 #[cfg(target_os = "windows")]
 use crate::postprocessing::process_transcript;
 #[cfg(target_os = "windows")]
@@ -36,13 +36,13 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::time::Duration;
 #[cfg(target_os = "windows")]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tracing::{error, warn};
-#[cfg(target_os = "windows")]
 use tracing::info;
+use tracing::{error, warn};
 
 const TRANSCRIPTION_ACCEL_UNKNOWN: u8 = 0;
 const TRANSCRIPTION_ACCEL_CPU: u8 = 1;
@@ -56,7 +56,6 @@ pub(crate) fn last_transcription_accelerator() -> &'static str {
         _ => "unknown",
     }
 }
-
 
 #[cfg(target_os = "windows")]
 #[derive(Debug, Clone, Serialize)]
@@ -335,7 +334,12 @@ mod tests {
 
     #[test]
     fn short_meaningful_transcript_is_not_dropped() {
-        assert!(!should_drop_transcript("Bitte speichere das", 0.001, 450, false));
+        assert!(!should_drop_transcript(
+            "Bitte speichere das",
+            0.001,
+            450,
+            false
+        ));
         assert!(!should_drop_transcript("das passt", 0.002, 300, false));
     }
 
@@ -361,7 +365,9 @@ fn update_transcribe_overlay(app: &AppHandle, active: bool) {
     let state = if active {
         OverlayState::Transcribing
     } else {
-        OverlayState::Idle
+        let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+        let _ = emit_capture_idle_overlay(app, &settings);
+        return;
     };
     let _ = update_overlay_state(app, state);
 }
@@ -505,10 +511,7 @@ pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppStat
             let _ = handle.join();
             let _ = done_tx.send(());
         });
-        if done_rx
-            .recv_timeout(Duration::from_secs(2))
-            .is_err()
-        {
+        if done_rx.recv_timeout(Duration::from_secs(2)).is_err() {
             warn!("Transcribe monitor thread did not exit within 2 s after stop signal");
         }
     }
@@ -579,7 +582,12 @@ fn normalize_transcript(text: &str) -> String {
 ///   2. Any utterance that is ≤ 2 words **and** ≤ 15 characters is dropped — these
 ///      are almost always background-audio noise ("All right.", "Oh.", "Fine.") that
 ///      Whisper transcribes but are not useful content.
-pub(crate) fn should_drop_transcript(text: &str, _rms: f32, duration_ms: u64, strict: bool) -> bool {
+pub(crate) fn should_drop_transcript(
+    text: &str,
+    _rms: f32,
+    duration_ms: u64,
+    strict: bool,
+) -> bool {
     let normalized = normalize_transcript(text);
     if normalized.is_empty() {
         return true;
@@ -631,22 +639,76 @@ pub(crate) fn should_drop_by_activation_words(
 
 const HALLUCINATION_PHRASES: &[&str] = &[
     // Filler sounds / acknowledgements
-    "uh", "um", "hmm", "huh", "ah", "oh", "uh huh",
+    "uh",
+    "um",
+    "hmm",
+    "huh",
+    "ah",
+    "oh",
+    "uh huh",
     // Single-word reactions
-    "yes", "no", "okay", "ok", "yeah", "right", "sure", "fine",
-    "good", "great", "nice", "wow", "cool", "really", "exactly",
-    "absolutely", "definitely", "correct", "true",
-    "hey", "hi", "hello", "bye", "goodbye", "welcome",
-    "please", "wait", "sorry",
+    "yes",
+    "no",
+    "okay",
+    "ok",
+    "yeah",
+    "right",
+    "sure",
+    "fine",
+    "good",
+    "great",
+    "nice",
+    "wow",
+    "cool",
+    "really",
+    "exactly",
+    "absolutely",
+    "definitely",
+    "correct",
+    "true",
+    "hey",
+    "hi",
+    "hello",
+    "bye",
+    "goodbye",
+    "welcome",
+    "please",
+    "wait",
+    "sorry",
     // Gratitude / social phrases
-    "you", "thank you", "thanks",
+    "you",
+    "thank you",
+    "thanks",
     // Two-word phrases common in background audio
-    "all right", "alright", "oh no", "oh yeah", "oh well", "oh wow", "oh my",
-    "come on", "go on", "hold on",
-    "i see", "me too", "of course", "no no", "yes yes",
-    "good job", "well done", "no problem", "no worries", "for sure",
-    "see ya", "take care", "good luck", "good night", "good morning",
-    "thats right", "youre right", "youre welcome", "not bad",
+    "all right",
+    "alright",
+    "oh no",
+    "oh yeah",
+    "oh well",
+    "oh wow",
+    "oh my",
+    "come on",
+    "go on",
+    "hold on",
+    "i see",
+    "me too",
+    "of course",
+    "no no",
+    "yes yes",
+    "good job",
+    "well done",
+    "no problem",
+    "no worries",
+    "for sure",
+    "see ya",
+    "take care",
+    "good luck",
+    "good night",
+    "good morning",
+    "thats right",
+    "youre right",
+    "youre welcome",
+    "not bad",
 ];
 
 /// Flush accumulated system audio as a session chunk via SessionManager.
@@ -907,10 +969,12 @@ fn flush_system_cluster(
     {
         let speaker_name = {
             let current_settings = state.settings.lock().unwrap();
-            Some(crate::state::speaker_name_for_source(&current_settings, "output"))
+            Some(crate::state::speaker_name_for_source(
+                &current_settings,
+                "output",
+            ))
         };
-        let cluster_ids: HashSet<&str> =
-            entries.iter().map(|(id, _, _)| id.as_str()).collect();
+        let cluster_ids: HashSet<&str> = entries.iter().map(|(id, _, _)| id.as_str()).collect();
         let mut ph = state.history_transcribe.lock().unwrap();
         ph.retain_active(|e| !cluster_ids.contains(e.id.as_str()));
         ph.push_entry(crate::state::HistoryEntry {
@@ -921,8 +985,7 @@ fn flush_system_cluster(
             speaker_name,
             refinement: None,
         });
-        let updated: Vec<crate::state::HistoryEntry> =
-            ph.active.iter().cloned().collect();
+        let updated: Vec<crate::state::HistoryEntry> = ph.active.iter().cloned().collect();
         drop(ph);
         let _ = app.emit("transcribe:history-updated", updated);
     }
@@ -1457,8 +1520,7 @@ fn whisper_cli_looks_gpu_capable(cli_path: Option<&Path>) -> bool {
 
 fn resolve_whisper_gpu_layers(settings: &Settings) -> Option<usize> {
     // Priority: environment variable > settings > default
-    parse_env_usize("TRISPR_WHISPER_GPU_LAYERS")
-        .or(settings.whisper_gpu_layers)
+    parse_env_usize("TRISPR_WHISPER_GPU_LAYERS").or(settings.whisper_gpu_layers)
 }
 
 fn resolve_whisper_threads(gpu_hint: bool) -> usize {
@@ -1510,7 +1572,12 @@ fn whisper_cli_probe_gpu_layers(cli_path: &Path) -> bool {
     #[cfg(target_os = "windows")]
     probe.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
-    let output = match probe.arg("--help").stdout(Stdio::piped()).stderr(Stdio::piped()).output() {
+    let output = match probe
+        .arg("--help")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+    {
         Ok(output) => output,
         Err(err) => {
             warn!(
@@ -1570,11 +1637,9 @@ fn map_whisper_spawn_error(cli_path: &Path, err: std::io::Error) -> String {
     )
 }
 
-fn whisper_backend_from_cli_path(cli_path: &Path) -> &'static str {
+pub(crate) fn whisper_backend_from_cli_path(cli_path: &Path) -> &'static str {
     let lowered = cli_path.to_string_lossy().to_ascii_lowercase();
-    if lowered.contains("/cuda/")
-        || lowered.contains("\\cuda\\")
-        || lowered.contains("build-cuda")
+    if lowered.contains("/cuda/") || lowered.contains("\\cuda\\") || lowered.contains("build-cuda")
     {
         return "cuda";
     }
@@ -1619,6 +1684,51 @@ fn emit_transcription_gpu_activity(
     );
 }
 
+fn update_whisper_runtime_diagnostics(
+    app: &AppHandle,
+    settings: &Settings,
+    mode: &str,
+    accelerator: &str,
+    gpu_layers_requested: Option<usize>,
+    gpu_layers_applied: Option<usize>,
+    last_error: Option<String>,
+) {
+    let cli_path =
+        resolve_whisper_cli_path_for_backend(Some(settings.local_backend_preference.as_str()));
+    let server_path =
+        resolve_whisper_server_path_for_backend(Some(settings.local_backend_preference.as_str()));
+    let backend_selected = if mode == "server" {
+        server_path
+            .as_deref()
+            .map(whisper_backend_from_cli_path)
+            .or_else(|| cli_path.as_deref().map(whisper_backend_from_cli_path))
+            .unwrap_or("unknown")
+    } else {
+        cli_path
+            .as_deref()
+            .map(whisper_backend_from_cli_path)
+            .unwrap_or("unknown")
+    };
+
+    let state = app.state::<AppState>();
+    crate::update_runtime_diagnostics(app, state.inner(), |diagnostics| {
+        diagnostics.whisper.cli_path = cli_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default();
+        diagnostics.whisper.server_path = server_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default();
+        diagnostics.whisper.backend_selected = backend_selected.to_string();
+        diagnostics.whisper.mode = mode.to_string();
+        diagnostics.whisper.accelerator = accelerator.to_string();
+        diagnostics.whisper.gpu_layers_requested = gpu_layers_requested;
+        diagnostics.whisper.gpu_layers_applied = gpu_layers_applied;
+        diagnostics.whisper.last_error = last_error.unwrap_or_default();
+    });
+}
+
 struct WhisperGpuActivityGuard {
     app: AppHandle,
     backend: String,
@@ -1629,7 +1739,11 @@ impl WhisperGpuActivityGuard {
     fn new(app: &AppHandle, accelerator: &'static str, backend: &str) -> Self {
         emit_transcription_gpu_activity(
             app,
-            if accelerator == "gpu" { "active" } else { "cpu" },
+            if accelerator == "gpu" {
+                "active"
+            } else {
+                "cpu"
+            },
             accelerator,
             backend,
             None,
@@ -1648,7 +1762,11 @@ impl WhisperGpuActivityGuard {
         self.accelerator = accelerator;
         emit_transcription_gpu_activity(
             &self.app,
-            if accelerator == "gpu" { "active" } else { "cpu" },
+            if accelerator == "gpu" {
+                "active"
+            } else {
+                "cpu"
+            },
             accelerator,
             &self.backend,
             None,
@@ -1658,13 +1776,7 @@ impl WhisperGpuActivityGuard {
 
 impl Drop for WhisperGpuActivityGuard {
     fn drop(&mut self) {
-        emit_transcription_gpu_activity(
-            &self.app,
-            "idle",
-            self.accelerator,
-            &self.backend,
-            None,
-        );
+        emit_transcription_gpu_activity(&self.app, "idle", self.accelerator, &self.backend, None);
     }
 }
 
@@ -1724,7 +1836,9 @@ fn transcribe_local(
     // Try Whisper-Server first (persistent mode with pre-loaded model)
     {
         let state = app.state::<crate::state::AppState>();
-        let port = state.whisper_server_port.load(std::sync::atomic::Ordering::Relaxed);
+        let port = state
+            .whisper_server_port
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         if crate::whisper_server::ping_whisper_server(port) {
             let lang_str = if settings.language_pinned {
@@ -1741,25 +1855,69 @@ fn transcribe_local(
 
             match crate::whisper_server::transcribe_via_server(wav_bytes, port, &lang_str) {
                 Ok(text) => {
-                    info!("[TIMING] whisper_server: {:.2}s", t_server.elapsed().as_secs_f32());
+                    update_whisper_runtime_diagnostics(
+                        app,
+                        settings,
+                        "server",
+                        "gpu",
+                        resolve_whisper_gpu_layers(settings),
+                        resolve_whisper_gpu_layers(settings),
+                        None,
+                    );
+                    info!(
+                        "[TIMING] whisper_server: {:.2}s",
+                        t_server.elapsed().as_secs_f32()
+                    );
                     return Ok(text);
                 }
                 Err(e) => {
                     warn!("whisper-server failed ({}), falling back to CLI", e);
+                    update_whisper_runtime_diagnostics(
+                        app,
+                        settings,
+                        "cli",
+                        "cpu",
+                        resolve_whisper_gpu_layers(settings),
+                        None,
+                        Some(format!("server unavailable, CLI active: {}", e)),
+                    );
                     // Continue to CLI fallback below
                 }
             }
         }
     }
 
-    let cli_path = resolve_whisper_cli_path().ok_or_else(|| {
-        whisper_runtime_missing_message("whisper-cli executable could not be located")
-    })?;
+    let cli_path =
+        resolve_whisper_cli_path_for_backend(Some(settings.local_backend_preference.as_str()))
+            .ok_or_else(|| {
+                update_whisper_runtime_diagnostics(
+                    app,
+                    settings,
+                    "cli",
+                    "cpu",
+                    resolve_whisper_gpu_layers(settings),
+                    None,
+                    Some(whisper_runtime_missing_message(
+                        "whisper-cli executable could not be located",
+                    )),
+                );
+                whisper_runtime_missing_message("whisper-cli executable could not be located")
+            })?;
     if !cli_path.exists() {
-        return Err(whisper_runtime_missing_message(&format!(
+        let message = whisper_runtime_missing_message(&format!(
             "whisper-cli not found at '{}'",
             cli_path.display()
-        )));
+        ));
+        update_whisper_runtime_diagnostics(
+            app,
+            settings,
+            "cli",
+            "cpu",
+            resolve_whisper_gpu_layers(settings),
+            None,
+            Some(message.clone()),
+        );
+        return Err(message);
     }
 
     let mut command = Command::new(&cli_path);
@@ -1835,9 +1993,19 @@ fn transcribe_local(
     let t_spawn = std::time::Instant::now();
     // Use spawn + polling instead of output() to enforce a hard timeout.
     // command.output() blocks forever if whisper-cli hangs (e.g. GPU deadlock).
-    let mut child = command
-        .spawn()
-        .map_err(|e| map_whisper_spawn_error(cli_path.as_path(), e))?;
+    let mut child = command.spawn().map_err(|e| {
+        let message = map_whisper_spawn_error(cli_path.as_path(), e);
+        update_whisper_runtime_diagnostics(
+            app,
+            settings,
+            "cli",
+            "cpu",
+            requested_gpu_layers,
+            applied_gpu_layers,
+            Some(message.clone()),
+        );
+        message
+    })?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     let output = loop {
         match child.try_wait() {
@@ -1850,28 +2018,64 @@ fn transcribe_local(
                 if std::time::Instant::now() >= deadline {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(format!(
+                    let message = format!(
                         "whisper-cli timed out after 120 seconds ('{}')",
                         cli_path.display()
-                    ));
+                    );
+                    update_whisper_runtime_diagnostics(
+                        app,
+                        settings,
+                        "cli",
+                        "cpu",
+                        requested_gpu_layers,
+                        applied_gpu_layers,
+                        Some(message.clone()),
+                    );
+                    return Err(message);
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            Err(e) => return Err(format!("Failed to wait for whisper-cli: {}", e)),
+            Err(e) => {
+                let message = format!("Failed to wait for whisper-cli: {}", e);
+                update_whisper_runtime_diagnostics(
+                    app,
+                    settings,
+                    "cli",
+                    "cpu",
+                    requested_gpu_layers,
+                    applied_gpu_layers,
+                    Some(message.clone()),
+                );
+                return Err(message);
+            }
         }
     };
-    info!("[TIMING] whisper_process: {:.2}s", t_spawn.elapsed().as_secs_f32());
+    info!(
+        "[TIMING] whisper_process: {:.2}s",
+        t_spawn.elapsed().as_secs_f32()
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if whisper_stderr_indicates_gpu(&stderr) {
+    let stderr_gpu = whisper_stderr_indicates_gpu(&stderr);
+    if stderr_gpu {
         gpu_activity_guard.set_accelerator("gpu");
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     if stderr.to_lowercase().contains("unknown argument:") {
-        return Err(format!(
+        let message = format!(
             "whisper-cli argument mismatch ('{}'): {}",
             cli_path.display(),
             stderr.trim()
-        ));
+        );
+        update_whisper_runtime_diagnostics(
+            app,
+            settings,
+            "cli",
+            "cpu",
+            requested_gpu_layers,
+            applied_gpu_layers,
+            Some(message.clone()),
+        );
+        return Err(message);
     }
     if !output.status.success() {
         let details = if stderr.trim().is_empty() {
@@ -1879,11 +2083,17 @@ fn transcribe_local(
         } else {
             stderr.trim()
         };
-        return Err(format!(
-            "whisper-cli failed ('{}'): {}",
-            cli_path.display(),
-            details
-        ));
+        let message = format!("whisper-cli failed ('{}'): {}", cli_path.display(), details);
+        update_whisper_runtime_diagnostics(
+            app,
+            settings,
+            "cli",
+            if stderr_gpu { "gpu" } else { "cpu" },
+            requested_gpu_layers,
+            applied_gpu_layers,
+            Some(message.clone()),
+        );
+        return Err(message);
     }
 
     let mut transcript_candidates: Vec<PathBuf> = Vec::new();
@@ -1926,12 +2136,22 @@ fn transcribe_local(
             .map(|path| format!("'{}'", path.display()))
             .collect::<Vec<_>>()
             .join(", ");
-        return Err(format!(
+        let message = format!(
             "Whisper finished without producing transcript output. Checked: {}. whisper-cli: '{}'. stderr: {}",
             expected,
             cli_path.display(),
             stderr_text.trim()
-        ));
+        );
+        update_whisper_runtime_diagnostics(
+            app,
+            settings,
+            "cli",
+            if stderr_gpu { "gpu" } else { "cpu" },
+            requested_gpu_layers,
+            applied_gpu_layers,
+            Some(message.clone()),
+        );
+        return Err(message);
     };
 
     let _ = fs::remove_file(&wav_path);
@@ -1946,6 +2166,30 @@ fn transcribe_local(
     for ext in &["srt", "vtt", "json", "lrc", "tsv"] {
         let _ = fs::remove_file(output_base.with_extension(ext));
         let _ = fs::remove_file(wav_path.with_extension(ext));
+    }
+
+    let accelerator = if stderr_gpu { "gpu" } else { "cpu" };
+    update_whisper_runtime_diagnostics(
+        app,
+        settings,
+        "cli",
+        accelerator,
+        requested_gpu_layers,
+        applied_gpu_layers,
+        if accelerator == "cpu" && backend != "cpu" {
+            Some("server unavailable, CLI active".to_string())
+        } else {
+            None
+        },
+    );
+
+    if accelerator == "gpu" || backend != "cpu" {
+        crate::whisper_server::schedule_whisper_server_warmup(
+            app,
+            app.state::<crate::state::AppState>().inner(),
+            &model_path,
+            settings,
+        );
     }
 
     Ok(text.trim().to_string())

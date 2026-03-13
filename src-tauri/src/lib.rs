@@ -3,6 +3,7 @@
 
 mod ai_fallback;
 mod audio;
+mod confluence;
 mod constants;
 mod continuous_dump;
 mod data_migration;
@@ -11,14 +12,13 @@ mod gdd;
 mod history_partition;
 mod hotkeys;
 mod models;
-mod multimodal_io;
 mod modules;
+mod multimodal_io;
 mod ollama_runtime;
 mod opus;
 mod overlay;
 mod paths;
 mod postprocessing;
-mod confluence;
 mod session_manager;
 mod state;
 mod transcription;
@@ -29,8 +29,8 @@ mod workflow_agent;
 use arboard::{Clipboard, ImageData};
 use enigo::{Enigo, Key, KeyboardControllable};
 use errors::{AppError, ErrorEvent};
-use overlay::{update_overlay_state, OverlayState};
-use state::{AppState, HistoryEntry, Settings};
+use overlay::emit_capture_idle_overlay;
+use state::{AppState, HistoryEntry, RuntimeDiagnostics, Settings, StartupStatus};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,9 +44,9 @@ use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tracing::{error, info, warn};
 
+use crate::ai_fallback::error::AIError;
 use crate::ai_fallback::keyring as ai_fallback_keyring;
 use crate::ai_fallback::models::RefinementOptions;
-use crate::ai_fallback::error::AIError;
 use crate::ai_fallback::provider::{
     default_models_for_provider, is_local_ollama_endpoint, is_ssrf_target, list_ollama_models,
     list_ollama_models_with_size, ping_ollama, ping_ollama_quick, prompt_for_profile,
@@ -58,16 +58,16 @@ use crate::models::{
     check_model_available, clear_hidden_external_models, download_model, get_models_dir,
     hide_external_model, list_models, pick_model_dir, quantize_model, remove_model,
 };
+use crate::modules::{
+    health as module_health, lifecycle as module_lifecycle, normalize_confluence_settings,
+    normalize_gdd_module_settings, normalize_module_settings, normalize_vision_input_settings,
+    normalize_voice_output_settings, normalize_workflow_agent_settings,
+    registry as module_registry,
+};
 use crate::ollama_runtime::{
     detect_ollama_runtime, download_ollama_runtime, import_ollama_model_from_file,
     install_ollama_runtime, list_ollama_runtime_versions, set_strict_local_mode,
     start_ollama_runtime, verify_ollama_runtime,
-};
-use crate::modules::{
-    health as module_health, lifecycle as module_lifecycle, normalize_confluence_settings,
-    normalize_gdd_module_settings, normalize_module_settings, normalize_voice_output_settings,
-    normalize_vision_input_settings, normalize_workflow_agent_settings,
-    registry as module_registry,
 };
 use crate::state::{
     get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
@@ -102,6 +102,346 @@ static LAST_GEOMETRY_SAVE_MS: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+fn build_startup_degraded_reasons(
+    settings: &Settings,
+    whisper_cli_ready: bool,
+    model_ready: bool,
+    status: &StartupStatus,
+) -> Vec<String> {
+    let mut degraded_reasons = Vec::new();
+
+    if !whisper_cli_ready {
+        degraded_reasons.push("Local transcription runtime unavailable.".to_string());
+    }
+    if !model_ready {
+        degraded_reasons.push(format!(
+            "Selected transcription model '{}' is not available yet.",
+            settings.model
+        ));
+    }
+    if settings.ai_fallback.enabled && settings.ai_fallback.provider == "ollama" {
+        if status.ollama_starting {
+            degraded_reasons.push("Ollama is starting in background.".to_string());
+        } else if !status.ollama_ready {
+            degraded_reasons.push(
+                "Ollama refinement unavailable; raw or rule-based output remains active."
+                    .to_string(),
+            );
+        }
+    }
+
+    degraded_reasons
+}
+
+pub(crate) fn startup_status_snapshot(state: &AppState) -> StartupStatus {
+    state
+        .startup_status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+pub(crate) fn update_startup_status<F>(app: &AppHandle, state: &AppState, f: F) -> StartupStatus
+where
+    F: FnOnce(&mut StartupStatus),
+{
+    let settings = state
+        .settings
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let whisper_cli_ready = paths::resolve_whisper_cli_path_for_backend(Some(
+        settings.local_backend_preference.as_str(),
+    ))
+    .is_some();
+    let model_ready = check_model_available(app.clone(), settings.model.clone());
+    let snapshot = {
+        let mut status = state
+            .startup_status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        f(&mut status);
+        status.transcription_ready = whisper_cli_ready && model_ready;
+        status.rules_ready = true;
+        status.degraded_reasons =
+            build_startup_degraded_reasons(&settings, whisper_cli_ready, model_ready, &status);
+        status.clone()
+    };
+    let _ = app.emit("startup:status", &snapshot);
+    snapshot
+}
+
+pub(crate) fn refresh_startup_status(app: &AppHandle, state: &AppState) -> StartupStatus {
+    update_startup_status(app, state, |_| {})
+}
+
+pub(crate) fn update_runtime_diagnostics<F>(
+    app: &AppHandle,
+    state: &AppState,
+    f: F,
+) -> RuntimeDiagnostics
+where
+    F: FnOnce(&mut RuntimeDiagnostics),
+{
+    let snapshot = {
+        let mut diagnostics = state
+            .runtime_diagnostics
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        f(&mut diagnostics);
+        diagnostics.clone()
+    };
+    let _ = app.emit("runtime:diagnostics", &snapshot);
+    snapshot
+}
+
+pub(crate) fn managed_child_slot_status(
+    slot: &Mutex<Option<std::process::Child>>,
+) -> (Option<u32>, bool) {
+    let Ok(mut guard) = slot.lock() else {
+        return (None, false);
+    };
+
+    let Some(child) = guard.as_mut() else {
+        return (None, false);
+    };
+
+    let pid = Some(child.id());
+    match child.try_wait() {
+        Ok(Some(_)) => {
+            *guard = None;
+            (pid, false)
+        }
+        Ok(None) => (pid, true),
+        Err(_) => (pid, false),
+    }
+}
+
+pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> RuntimeDiagnostics {
+    let settings = state
+        .settings
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let whisper_cli = crate::paths::resolve_whisper_cli_path_for_backend(Some(
+        settings.local_backend_preference.as_str(),
+    ));
+    let whisper_server = crate::paths::resolve_whisper_server_path_for_backend(Some(
+        settings.local_backend_preference.as_str(),
+    ));
+    let whisper_backend = whisper_cli
+        .as_deref()
+        .map(crate::transcription::whisper_backend_from_cli_path)
+        .unwrap_or("unknown")
+        .to_string();
+    let (managed_pid, _) = managed_child_slot_status(&state.managed_ollama_child);
+    let endpoint = settings.providers.ollama.endpoint.clone();
+    let reachable = ping_ollama_quick(&endpoint).is_ok();
+
+    if reachable {
+        update_startup_status(app, state, |status| {
+            status.ollama_ready = true;
+            status.ollama_starting = false;
+        });
+    }
+
+    update_runtime_diagnostics(app, state, |diagnostics| {
+        diagnostics.ollama.configured_path = settings.providers.ollama.runtime_path.clone();
+        diagnostics.ollama.detected = !settings.providers.ollama.runtime_path.trim().is_empty();
+        diagnostics.ollama.managed_pid = managed_pid;
+        diagnostics.ollama.endpoint = endpoint.clone();
+        diagnostics.ollama.reachable = reachable;
+        if reachable {
+            diagnostics.ollama.spawn_stage = "ready".to_string();
+            diagnostics.ollama.last_error.clear();
+        }
+
+        diagnostics.whisper.cli_path = whisper_cli
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default();
+        diagnostics.whisper.server_path = whisper_server
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default();
+        diagnostics.whisper.backend_selected = whisper_backend.clone();
+        if diagnostics.whisper.mode == "idle" && settings.capture_enabled {
+            diagnostics.whisper.mode = "cli".to_string();
+        }
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn create_managed_process_job() -> Option<state::ManagedProcessJob> {
+    use std::ffi::c_void;
+    use windows_sys::Win32::System::JobObjects::{
+        JobObjectExtendedLimitInformation, SetInformationJobObject,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    unsafe extern "system" {
+        fn CreateJobObjectW(
+            lp_job_attributes: *const c_void,
+            lp_name: *const u16,
+        ) -> windows_sys::Win32::Foundation::HANDLE;
+    }
+
+    let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if handle.is_null() {
+        warn!("Failed to create managed-process job object.");
+        return None;
+    }
+
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let ok = unsafe {
+        SetInformationJobObject(
+            handle,
+            JobObjectExtendedLimitInformation,
+            &mut limits as *mut _ as *mut _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    };
+    if ok == 0 {
+        warn!("Failed to configure managed-process job object.");
+        unsafe {
+            let _ = windows_sys::Win32::Foundation::CloseHandle(handle);
+        }
+        return None;
+    }
+
+    Some(state::ManagedProcessJob {
+        handle: handle as isize,
+    })
+}
+
+pub(crate) struct ManagedChildSpawnResult {
+    pub(crate) pid: u32,
+    pub(crate) job_assigned: bool,
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn assign_child_to_managed_process_job(
+    state: &AppState,
+    label: &str,
+    child: &std::process::Child,
+) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+
+    let Some(job) = state.managed_process_job.as_ref() else {
+        return Err("no managed-process job object available".to_string());
+    };
+    let process_handle = child.as_raw_handle();
+    if process_handle.is_null() {
+        return Err(format!(
+            "failed to assign {label} to managed-process job object: null handle"
+        ));
+    }
+    let ok = unsafe { AssignProcessToJobObject(job.handle as _, process_handle as *mut _) };
+    if ok == 0 {
+        return Err(format!(
+            "failed to assign {label} (pid {}) to managed-process job object",
+            child.id()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn assign_child_to_managed_process_job(
+    _state: &AppState,
+    _label: &str,
+    _child: &std::process::Child,
+) -> Result<(), String> {
+    Ok(())
+}
+
+pub(crate) fn spawn_managed_child(
+    state: &AppState,
+    label: &str,
+    slot: &Mutex<Option<std::process::Child>>,
+    cmd: &mut std::process::Command,
+) -> Result<ManagedChildSpawnResult, String> {
+    let child = cmd
+        .spawn()
+        .map_err(|err| format!("spawn_failed: {}", err))?;
+    let pid = child.id();
+    let job_assigned = match assign_child_to_managed_process_job(state, label, &child) {
+        Ok(()) => true,
+        Err(err) => {
+            warn!("{err}");
+            false
+        }
+    };
+
+    match slot.lock() {
+        Ok(mut guard) => {
+            *guard = Some(child);
+        }
+        Err(err) => {
+            let mut child = child;
+            terminate_child_process(label, &mut child);
+            return Err(format!(
+                "spawn_failed: failed to store managed child handle for {label}: {}",
+                err
+            ));
+        }
+    }
+
+    Ok(ManagedChildSpawnResult { pid, job_assigned })
+}
+
+fn terminate_child_process(label: &str, child: &mut std::process::Child) {
+    let pid = child.id();
+    info!("Stopping {label} (pid {pid})");
+
+    #[cfg(target_os = "windows")]
+    {
+        let pid_string = pid.to_string();
+        let forced = std::process::Command::new("taskkill")
+            .args(["/PID", pid_string.as_str(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        match forced {
+            Ok(status) if !status.success() => {
+                warn!("Forced taskkill returned non-zero exit for {label} (pid {pid}): {status}");
+            }
+            Err(err) => {
+                warn!("Failed to force taskkill for {label} (pid {pid}): {err}");
+            }
+            Ok(_) => {}
+        }
+    }
+
+    if matches!(child.try_wait(), Ok(None)) {
+        let _ = child.kill();
+    }
+    if let Err(err) = child.wait() {
+        warn!("Failed to wait for {label} (pid {pid}): {err}");
+    }
+}
+
+pub(crate) fn terminate_managed_child_slot(label: &str, slot: &Mutex<Option<std::process::Child>>) {
+    let child = match slot.lock() {
+        Ok(mut guard) => guard.take(),
+        Err(err) => {
+            warn!("Failed to lock managed process slot for {label}: {err}");
+            None
+        }
+    };
+    if let Some(mut child) = child {
+        terminate_child_process(label, &mut child);
+    }
+}
+
+pub(crate) fn cleanup_managed_processes(state: &AppState) {
+    terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
+    terminate_managed_child_slot(
+        "managed Whisper-Server runtime",
+        &state.managed_whisper_server_child,
+    );
 }
 
 /// Guard that rejects requests when strict-local-mode is active and the
@@ -162,6 +502,16 @@ pub(crate) fn prepare_refinement(
     }
 
     let is_ollama = ai.provider == "ollama";
+    if is_ollama {
+        let state = app.state::<AppState>();
+        let startup_status = startup_status_snapshot(state.inner());
+        if !startup_status.ollama_ready {
+            return Err(
+                "Ollama refinement is not ready yet. Raw or rule-based fallback remains active."
+                    .to_string(),
+            );
+        }
+    }
 
     let provider = if is_ollama {
         check_strict_local_mode(settings)?;
@@ -191,8 +541,7 @@ pub(crate) fn prepare_refinement(
         // Fast reachability check (300ms) before the slow model-list call (up to 5s).
         // This prevents the AI refinement thread from blocking paste for seconds
         // when Ollama is not running.
-        crate::ai_fallback::provider::ping_ollama_quick(&endpoint)
-            .map_err(|e| e.to_string())?;
+        crate::ai_fallback::provider::ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
         let resolved = resolve_effective_local_model(&model, &preferred, &endpoint)
             .map_err(|e| e.to_string())?;
         repaired = resolved.repaired
@@ -498,6 +847,16 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 }
 
 #[tauri::command]
+fn get_startup_status(app: AppHandle, state: State<'_, AppState>) -> StartupStatus {
+    refresh_startup_status(&app, state.inner())
+}
+
+#[tauri::command]
+fn get_runtime_diagnostics(app: AppHandle, state: State<'_, AppState>) -> RuntimeDiagnostics {
+    refresh_runtime_diagnostics(&app, state.inner())
+}
+
+#[tauri::command]
 fn fetch_available_models(
     state: State<'_, AppState>,
     provider: String,
@@ -779,9 +1138,10 @@ fn refine_transcript(
         })?;
     }
 
-    let result = setup
-        .provider
-        .refine_transcript(&transcript, &setup.model, &setup.options, &setup.api_key);
+    let result =
+        setup
+            .provider
+            .refine_transcript(&transcript, &setup.model, &setup.options, &setup.api_key);
 
     // Emit health-degraded event on transport failures so the frontend can
     // re-check Ollama state without requiring a full app restart.
@@ -1144,6 +1504,45 @@ fn record_runtime_metric(state: State<'_, AppState>, metric: String) -> Result<(
     }
 }
 
+#[tauri::command]
+fn log_frontend_event(level: String, context: String, message: String) -> Result<(), String> {
+    let normalized_context = context.trim();
+    let normalized_message = message.trim();
+    if normalized_message.is_empty() {
+        return Ok(());
+    }
+    match level.trim().to_ascii_lowercase().as_str() {
+        "error" => error!(
+            "[frontend:{}] {}",
+            if normalized_context.is_empty() {
+                "unknown"
+            } else {
+                normalized_context
+            },
+            normalized_message
+        ),
+        "warn" => warn!(
+            "[frontend:{}] {}",
+            if normalized_context.is_empty() {
+                "unknown"
+            } else {
+                normalized_context
+            },
+            normalized_message
+        ),
+        _ => info!(
+            "[frontend:{}] {}",
+            if normalized_context.is_empty() {
+                "unknown"
+            } else {
+                normalized_context
+            },
+            normalized_message
+        ),
+    }
+    Ok(())
+}
+
 fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
     let state = app.state::<AppState>();
     let settings = {
@@ -1427,10 +1826,12 @@ fn save_settings(
 
     let recorder = state.recorder.lock().unwrap();
     if !recorder.active {
-        let _ = update_overlay_state(&app, OverlayState::Idle);
+        let _ = emit_capture_idle_overlay(&app, &settings);
     }
     drop(recorder);
 
+    refresh_startup_status(&app, state.inner());
+    refresh_runtime_diagnostics(&app, state.inner());
     let _ = app.emit("settings-changed", settings.clone());
     let _ = app.emit("menu:update-mic", settings.capture_enabled);
     let _ = app.emit("menu:update-transcribe", settings.transcribe_enabled);
@@ -1458,7 +1859,8 @@ fn enable_module(
     let grants = grant_permissions.unwrap_or_default();
     let (result, snapshot, descriptors) = {
         let mut settings = state.settings.lock().unwrap();
-        let result = module_lifecycle::enable_module(&mut settings.module_settings, &module_id, &grants);
+        let result =
+            module_lifecycle::enable_module(&mut settings.module_settings, &module_id, &grants);
         if result.is_ok() {
             if module_id == "workflow_agent" {
                 settings.workflow_agent.enabled = true;
@@ -1706,12 +2108,7 @@ fn agent_execute_gdd_plan(
         }),
     );
 
-    let (
-        workflow_gap_minutes,
-        preset_clones,
-        confluence_settings,
-        one_click_threshold,
-    ) = {
+    let (workflow_gap_minutes, preset_clones, confluence_settings, one_click_threshold) = {
         let settings = state.settings.lock().unwrap();
         (
             settings.workflow_agent.session_gap_minutes,
@@ -1913,7 +2310,9 @@ fn agent_execute_gdd_plan(
 }
 
 #[tauri::command]
-fn list_screen_sources(app: AppHandle) -> Result<Vec<crate::multimodal_io::VisionSourceInfo>, String> {
+fn list_screen_sources(
+    app: AppHandle,
+) -> Result<Vec<crate::multimodal_io::VisionSourceInfo>, String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "Main window not found.".to_string())?;
@@ -1957,12 +2356,15 @@ fn start_vision_stream(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<crate::multimodal_io::VisionStreamHealth, String> {
-    let (enabled, fps, source_scope) = {
+    let (enabled, fps, source_scope, max_width, jpeg_quality, ram_buffer_seconds) = {
         let settings = state.settings.lock().unwrap();
         (
             settings.vision_input_settings.enabled,
             settings.vision_input_settings.fps,
             settings.vision_input_settings.source_scope.clone(),
+            settings.vision_input_settings.max_width,
+            settings.vision_input_settings.jpeg_quality,
+            settings.vision_input_settings.ram_buffer_seconds,
         )
     };
     if !enabled {
@@ -1971,29 +2373,48 @@ fn start_vision_stream(
 
     let already_running = state.vision_stream_running.swap(true, Ordering::AcqRel);
     if !already_running {
+        state.vision_stream_frame_seq.store(0, Ordering::Release);
         state
             .vision_stream_started_ms
             .store(crate::util::now_ms(), Ordering::Release);
+        state.vision_frame_buffer.lock().unwrap().clear();
         let source_scope_for_thread = source_scope.clone();
+        let buffer_frame_cap =
+            (usize::from(fps.max(1)) * usize::from(ram_buffer_seconds.max(1))).max(1);
         let app_c = app.clone();
-        std::thread::spawn(move || {
-            loop {
-                let state = app_c.state::<AppState>();
-                if !state.vision_stream_running.load(Ordering::Acquire) {
-                    break;
-                }
-                let frame_seq = state.vision_stream_frame_seq.fetch_add(1, Ordering::AcqRel) + 1;
-                let _ = app_c.emit(
-                    "vision:frame-meta",
-                    serde_json::json!({
-                        "seq": frame_seq,
-                        "timestamp_ms": crate::util::now_ms(),
-                        "source_scope": source_scope_for_thread,
-                    }),
-                );
-                let frame_sleep_ms = (1000u64 / (fps.max(1) as u64)).clamp(50, 1000);
-                std::thread::sleep(Duration::from_millis(frame_sleep_ms));
+        std::thread::spawn(move || loop {
+            let state = app_c.state::<AppState>();
+            if !state.vision_stream_running.load(Ordering::Acquire) {
+                break;
             }
+            match crate::multimodal_io::capture_vision_frame(
+                &app_c,
+                &source_scope_for_thread,
+                max_width,
+                jpeg_quality,
+            ) {
+                Ok(mut frame) => {
+                    frame.seq = state.vision_stream_frame_seq.fetch_add(1, Ordering::AcqRel) + 1;
+                    let meta = state
+                        .vision_frame_buffer
+                        .lock()
+                        .unwrap()
+                        .push(frame, buffer_frame_cap);
+                    let _ = app_c.emit("vision:frame-meta", &meta);
+                }
+                Err(error) => {
+                    let _ = app_c.emit(
+                        "vision:stream-error",
+                        serde_json::json!({
+                            "timestamp_ms": crate::util::now_ms(),
+                            "source_scope": source_scope_for_thread,
+                            "error": error,
+                        }),
+                    );
+                }
+            }
+            let frame_sleep_ms = (1000u64 / (fps.max(1) as u64)).clamp(50, 1000);
+            std::thread::sleep(Duration::from_millis(frame_sleep_ms));
         });
         let _ = app.emit(
             "vision:stream-started",
@@ -2004,12 +2425,18 @@ fn start_vision_stream(
         );
     }
 
+    let buffer_stats = state.vision_frame_buffer.lock().unwrap().stats();
     Ok(crate::multimodal_io::VisionStreamHealth {
         running: true,
         fps,
         source_scope,
         started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
         frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
+        buffered_frames: buffer_stats.buffered_frames,
+        buffered_bytes: buffer_stats.buffered_bytes,
+        last_frame_timestamp_ms: buffer_stats.last_frame_timestamp_ms,
+        last_frame_width: buffer_stats.last_frame_width,
+        last_frame_height: buffer_stats.last_frame_height,
     })
 }
 
@@ -2026,13 +2453,20 @@ fn stop_vision_stream(
             settings.vision_input_settings.source_scope.clone(),
         )
     };
+    let buffer_stats = state.vision_frame_buffer.lock().unwrap().stats();
     let health = crate::multimodal_io::VisionStreamHealth {
         running: false,
         fps,
         source_scope,
         started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
         frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
+        buffered_frames: buffer_stats.buffered_frames,
+        buffered_bytes: buffer_stats.buffered_bytes,
+        last_frame_timestamp_ms: buffer_stats.last_frame_timestamp_ms,
+        last_frame_width: buffer_stats.last_frame_width,
+        last_frame_height: buffer_stats.last_frame_height,
     };
+    state.vision_frame_buffer.lock().unwrap().clear();
     let _ = app.emit("vision:stream-stopped", &health);
     Ok(health)
 }
@@ -2048,32 +2482,53 @@ fn get_vision_stream_health(
             settings.vision_input_settings.source_scope.clone(),
         )
     };
+    let buffer_stats = state.vision_frame_buffer.lock().unwrap().stats();
     crate::multimodal_io::VisionStreamHealth {
         running: state.vision_stream_running.load(Ordering::Acquire),
         fps,
         source_scope,
         started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
         frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
+        buffered_frames: buffer_stats.buffered_frames,
+        buffered_bytes: buffer_stats.buffered_bytes,
+        last_frame_timestamp_ms: buffer_stats.last_frame_timestamp_ms,
+        last_frame_width: buffer_stats.last_frame_width,
+        last_frame_height: buffer_stats.last_frame_height,
     }
 }
 
 #[tauri::command]
 fn capture_vision_snapshot(
     app: AppHandle,
+    state: State<'_, AppState>,
 ) -> Result<crate::multimodal_io::VisionSnapshotResult, String> {
-    let sources = list_screen_sources(app.clone())?;
-    let snapshot = crate::multimodal_io::VisionSnapshotResult {
-        captured: !sources.is_empty(),
-        timestamp_ms: crate::util::now_ms(),
-        source_count: sources.len(),
-        note: if sources.is_empty() {
-            "No screen sources were available.".to_string()
-        } else {
-            "Snapshot metadata captured (image persistence disabled by policy).".to_string()
-        },
+    let source_scope = {
+        let settings = state.settings.lock().unwrap();
+        settings.vision_input_settings.source_scope.clone()
     };
-    let _ = app.emit("vision:frame-meta", &snapshot);
-    Ok(snapshot)
+    if let Some(frame) = state.vision_frame_buffer.lock().unwrap().latest().cloned() {
+        return Ok(crate::multimodal_io::vision_snapshot_from_frame(
+            &frame,
+            "Snapshot returned from in-memory vision buffer.".to_string(),
+        ));
+    }
+
+    let settings = state.settings.lock().unwrap().vision_input_settings.clone();
+    let mut frame = crate::multimodal_io::capture_vision_frame(
+        &app,
+        &source_scope,
+        settings.max_width,
+        settings.jpeg_quality,
+    )?;
+    frame.seq = state.vision_stream_frame_seq.load(Ordering::Acquire);
+    Ok(crate::multimodal_io::vision_snapshot_from_frame(
+        &frame,
+        if source_scope == "active_window" {
+            "Snapshot captured from active monitor fallback for active_window scope.".to_string()
+        } else {
+            "Snapshot captured from in-memory vision path without disk persistence.".to_string()
+        },
+    ))
 }
 
 #[tauri::command]
@@ -2115,7 +2570,9 @@ fn speak_tts(
     let voice_settings = {
         let settings = state.settings.lock().unwrap();
         if !settings.voice_output_settings.enabled {
-            return Err("Voice output is disabled. Enable module 'output_voice_tts' first.".to_string());
+            return Err(
+                "Voice output is disabled. Enable module 'output_voice_tts' first.".to_string(),
+            );
         }
         settings.voice_output_settings.clone()
     };
@@ -2127,7 +2584,10 @@ fn speak_tts(
     };
     let fallback_provider = voice_settings.fallback_provider.clone();
     let rate = request.rate.unwrap_or(voice_settings.rate).clamp(0.5, 2.0);
-    let volume = request.volume.unwrap_or(voice_settings.volume).clamp(0.0, 1.0);
+    let volume = request
+        .volume
+        .unwrap_or(voice_settings.volume)
+        .clamp(0.0, 1.0);
 
     state.tts_speaking.store(true, Ordering::Release);
     let _ = app.emit(
@@ -2172,7 +2632,10 @@ fn speak_tts(
                         Err(fallback_error) => (
                             Err(format!(
                                 "Primary provider '{}' failed: {} | Fallback '{}' failed: {}",
-                                preferred_provider_for_thread, primary_error, fallback_provider_for_thread, fallback_error
+                                preferred_provider_for_thread,
+                                primary_error,
+                                fallback_provider_for_thread,
+                                fallback_error
                             )),
                             preferred_provider_for_thread.clone(),
                         ),
@@ -2307,7 +2770,10 @@ fn generate_gdd_draft(
     state: State<'_, AppState>,
     request: crate::gdd::GenerateGddDraftRequest,
 ) -> Result<crate::gdd::GddDraft, String> {
-    let _ = app.emit("gdd:generation-started", serde_json::json!({ "preset": request.preset_id }));
+    let _ = app.emit(
+        "gdd:generation-started",
+        serde_json::json!({ "preset": request.preset_id }),
+    );
     let draft = {
         let settings = state.settings.lock().unwrap();
         crate::gdd::generate_draft(&request, &settings.gdd_module_settings.preset_clones)
@@ -2434,7 +2900,10 @@ fn publish_gdd_to_confluence(
     state: State<'_, AppState>,
     request: crate::gdd::confluence::ConfluencePublishRequest,
 ) -> Result<crate::gdd::confluence::ConfluencePublishResult, String> {
-    let _ = app.emit("gdd:publish-started", serde_json::json!({ "title": request.title }));
+    let _ = app.emit(
+        "gdd:publish-started",
+        serde_json::json!({ "title": request.title }),
+    );
 
     let settings_snapshot = state.settings.lock().unwrap().clone();
     let result =
@@ -2574,8 +3043,11 @@ fn retry_pending_gdd_publish(
     );
 
     let settings_snapshot = state.settings.lock().unwrap().clone();
-    let publish_result =
-        crate::gdd::confluence::publish(&app, &settings_snapshot.confluence_settings, &publish_request);
+    let publish_result = crate::gdd::confluence::publish(
+        &app,
+        &settings_snapshot.confluence_settings,
+        &publish_request,
+    );
 
     match publish_result {
         Ok(publish) => {
@@ -2661,10 +3133,7 @@ fn save_confluence_secret(
 }
 
 #[tauri::command]
-fn clear_confluence_secret(
-    app: AppHandle,
-    secret_id: String,
-) -> Result<serde_json::Value, String> {
+fn clear_confluence_secret(app: AppHandle, secret_id: String) -> Result<serde_json::Value, String> {
     let secret_id = secret_id.trim().to_lowercase();
     confluence::keyring::clear_secret(&app, &secret_id)?;
     Ok(serde_json::json!({
@@ -2939,10 +3408,16 @@ fn apply_model(app: AppHandle, state: State<'_, AppState>, model_id: String) -> 
         // Even if transcription is inactive, restart Whisper server if it's running
         // to clear old model from VRAM and load new model
         if let Some(new_model_path) = crate::models::resolve_model_path(&app, &model_id) {
-            let _ = crate::whisper_server::restart_whisper_server_if_running(&app, &state, &new_model_path);
+            let _ = crate::whisper_server::restart_whisper_server_if_running(
+                &app,
+                &state,
+                &new_model_path,
+            );
         }
     }
 
+    refresh_startup_status(&app, state.inner());
+    refresh_runtime_diagnostics(&app, state.inner());
     let _ = app.emit("model:changed", model_id);
     Ok(())
 }
@@ -2992,7 +3467,7 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
-        
+
         let mut gpu_name = "Unknown".to_string();
         let mut cuda_available = false;
         let mut driver_version = "Unknown".to_string();
@@ -3005,12 +3480,15 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
                 if let Ok(desc) = unsafe { adapter.GetDesc1() } {
                     let name = String::from_utf16_lossy(&desc.Description);
                     let name = name.trim_matches(char::from(0)).trim().to_string();
-                    
+
                     // Prioritize dedicated GPUs (especially NVIDIA)
                     if name.to_lowercase().contains("nvidia") {
                         gpu_name = name;
-                        break; 
-                    } else if gpu_name == "Unknown" || gpu_name.to_lowercase().contains("intel") || gpu_name.to_lowercase().contains("microsoft") {
+                        break;
+                    } else if gpu_name == "Unknown"
+                        || gpu_name.to_lowercase().contains("intel")
+                        || gpu_name.to_lowercase().contains("microsoft")
+                    {
                         gpu_name = name;
                     }
                 }
@@ -3022,7 +3500,12 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
         // We look for the NVIDIA compiler/runtime DLL which is a good indicator of driver support.
         let cuda_dlls = ["nvrtc64_120_0.dll", "nvrtc64_112_0.dll", "nvcuda.dll"];
         for dll in cuda_dlls {
-            if unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleA(windows::core::PCSTR(format!("{}\0", dll).as_ptr())).is_ok() } {
+            if unsafe {
+                windows::Win32::System::LibraryLoader::GetModuleHandleA(windows::core::PCSTR(
+                    format!("{}\0", dll).as_ptr(),
+                ))
+                .is_ok()
+            } {
                 cuda_available = true;
                 break;
             }
@@ -3032,7 +3515,7 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
                 break;
             }
         }
-        
+
         // Manual check in System32 for nvcuda.dll
         if !cuda_available {
             let sys32_nvcuda = std::path::PathBuf::from("C:\\Windows\\System32\\nvcuda.dll");
@@ -3046,8 +3529,11 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
         if gpu_name.to_lowercase().contains("nvidia") {
             use std::process::Command;
             let mut cmd = Command::new("nvidia-smi");
-            cmd.args(&["--query-gpu=memory.total,driver_version", "--format=csv,noheader,nounits"]);
-            
+            cmd.args(&[
+                "--query-gpu=memory.total,driver_version",
+                "--format=csv,noheader,nounits",
+            ]);
+
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;
@@ -3067,7 +3553,7 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
                     }
                 }
             }
-            
+
             if driver_version == "Unknown" || driver_version.is_empty() {
                 update_url = Some("https://www.nvidia.com/Download/index.aspx".to_string());
             }
@@ -3075,7 +3561,9 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
 
         let backend_recommended = if cuda_available {
             "cuda".to_string()
-        } else if gpu_name.to_lowercase().contains("amd") || gpu_name.to_lowercase().contains("intel") {
+        } else if gpu_name.to_lowercase().contains("amd")
+            || gpu_name.to_lowercase().contains("intel")
+        {
             "vulkan".to_string()
         } else {
             "cpu".to_string()
@@ -3125,7 +3613,8 @@ fn get_gpu_vram_usage() -> Result<String, String> {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let output = cmd.output()
+    let output = cmd
+        .output()
         .map_err(|_| "nvidia-smi not found".to_string())?;
 
     if !output.status.success() {
@@ -3166,21 +3655,41 @@ fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String> {
     // Kill and restart Whisper server to clear old model
     // This is the most reliable way to free VRAM from Whisper
     let _ = crate::whisper_server::kill_whisper_server(&state);
+    state
+        .whisper_server_warmup_started
+        .store(false, Ordering::Relaxed);
 
     Ok(())
 }
 
 #[tauri::command]
-fn stop_ollama_runtime(state: State<'_, AppState>) -> Result<(), String> {
+fn stop_ollama_runtime(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     // Stop the managed Ollama runtime process
     // This is called when user disables AI refinement or exits the app
 
-    if let Ok(mut guard) = state.managed_ollama_child.lock() {
-        if let Some(mut child) = guard.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+    terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
+
+    let endpoint = {
+        let settings = state.settings.lock().unwrap().clone();
+        settings.providers.ollama.endpoint
+    };
+    let runtime_reachable = ping_ollama_quick(&endpoint).is_ok();
+    update_startup_status(&app, state.inner(), |status| {
+        status.ollama_ready = runtime_reachable;
+        status.ollama_starting = false;
+    });
+    update_runtime_diagnostics(&app, state.inner(), |diagnostics| {
+        diagnostics.ollama.managed_pid = None;
+        diagnostics.ollama.reachable = runtime_reachable;
+        diagnostics.ollama.spawn_stage = if runtime_reachable {
+            "running_externally".to_string()
+        } else {
+            "stopped".to_string()
+        };
+        if !runtime_reachable {
+            diagnostics.ollama.last_error.clear();
         }
-    }
+    });
 
     Ok(())
 }
@@ -3376,7 +3885,9 @@ fn build_dependency_preflight_report(
     let settings_snapshot = state.settings.lock().unwrap().clone();
     let mut items: Vec<DependencyPreflightItem> = Vec::new();
 
-    let whisper_cli = paths::resolve_whisper_cli_path();
+    let whisper_cli = paths::resolve_whisper_cli_path_for_backend(Some(
+        settings_snapshot.local_backend_preference.as_str(),
+    ));
     if let Some(path) = whisper_cli {
         items.push(DependencyPreflightItem {
             id: "whisper_runtime".to_string(),
@@ -3524,8 +4035,7 @@ fn build_dependency_preflight_report(
                 None
             } else {
                 Some(if local_mode {
-                    "Start/install local Ollama runtime in AI Refinement > Runtime."
-                        .to_string()
+                    "Start/install local Ollama runtime in AI Refinement > Runtime.".to_string()
                 } else {
                     "Ensure configured Ollama endpoint is running.".to_string()
                 })
@@ -3533,8 +4043,12 @@ fn build_dependency_preflight_report(
         });
     }
 
-    let module_descriptors = module_registry::modules_as_descriptors(&settings_snapshot.module_settings);
-    for descriptor in module_descriptors.iter().filter(|module| module.state == "error") {
+    let module_descriptors =
+        module_registry::modules_as_descriptors(&settings_snapshot.module_settings);
+    for descriptor in module_descriptors
+        .iter()
+        .filter(|module| module.state == "error")
+    {
         let message = descriptor
             .last_error
             .clone()
@@ -4534,39 +5048,40 @@ pub fn run() {
                 managed_ollama_child: Mutex::new(None),
                 managed_whisper_server_child: Mutex::new(None),
                 whisper_server_port: AtomicU16::new(crate::whisper_server::WHISPER_SERVER_PORT),
+                whisper_server_warmup_started: AtomicBool::new(false),
                 vision_stream_running: AtomicBool::new(false),
                 vision_stream_started_ms: AtomicU64::new(0),
                 vision_stream_frame_seq: AtomicU64::new(0),
+                vision_frame_buffer: Mutex::new(crate::multimodal_io::VisionFrameBuffer::default()),
+                startup_status: Mutex::new(StartupStatus::default()),
+                runtime_diagnostics: Mutex::new(RuntimeDiagnostics::default()),
+                overlay_controller: Mutex::new(crate::overlay::OverlayController::default()),
                 tts_speaking: AtomicBool::new(false),
                 #[cfg(target_os = "windows")]
                 system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
+                #[cfg(target_os = "windows")]
+                managed_process_job: create_managed_process_job(),
             });
+
+            {
+                let state = app.state::<AppState>();
+                update_startup_status(app.handle(), state.inner(), |status| {
+                    status.rules_ready = true;
+                });
+                refresh_runtime_diagnostics(app.handle(), state.inner());
+            }
 
             // Pre-warm whisper capability probe in background so the first PTT transcription
             // doesn't pay the 2-3s CUDA init cost for the -ngl support check.
-            {
-                thread::spawn(|| {
-                    if let Some(cli_path) = crate::paths::resolve_whisper_cli_path() {
-                        crate::transcription::prewarm_whisper_capability_cache(&cli_path);
-                    }
-                });
-            }
-
-            // Start Whisper-Server to keep the model pre-loaded in GPU VRAM
-            // (eliminates ~1.4s model-load overhead per transcription).
-            // Runs in background; if startup fails, CLI mode will be used as fallback.
             {
                 let handle = app.handle().clone();
                 thread::spawn(move || {
                     let state = handle.state::<AppState>();
                     let settings = state.settings.lock().unwrap().clone();
-
-                    if let Some(model_path) = crate::models::resolve_model_path(&handle, &settings.model)
-                    {
-                        match crate::whisper_server::start_whisper_server(&handle, state.inner(), &model_path) {
-                            Ok(()) => info!("whisper-server ready"),
-                            Err(e) => warn!("whisper-server startup failed: {} (CLI fallback active)", e),
-                        }
+                    if let Some(cli_path) = crate::paths::resolve_whisper_cli_path_for_backend(
+                        Some(settings.local_backend_preference.as_str()),
+                    ) {
+                        crate::transcription::prewarm_whisper_capability_cache(&cli_path);
                     }
                 });
             }
@@ -4675,24 +5190,14 @@ pub fn run() {
 
             let overlay_app = app.handle().clone();
             app.listen("overlay:ready", move |_| {
-                overlay::mark_overlay_ready();
-                let settings = overlay_app
-                    .state::<AppState>()
-                    .settings
-                    .lock()
-                    .unwrap()
-                    .clone();
-                let _ = overlay::apply_overlay_settings(
-                    &overlay_app,
-                    &build_overlay_settings(&settings),
-                );
+                overlay::mark_overlay_ready(&overlay_app);
             });
             if let Err(err) = overlay::create_overlay_window(&app.handle()) {
                 eprintln!("⚠ Failed to create overlay window: {}", err);
             }
             let overlay_settings = build_overlay_settings(&settings);
             let _ = overlay::apply_overlay_settings(&app.handle(), &overlay_settings);
-            let _ = overlay::update_overlay_state(&app.handle(), overlay::OverlayState::Idle);
+            let _ = overlay::emit_capture_idle_overlay(&app.handle(), &settings);
 
             let icon = {
                 let paths = [
@@ -4769,6 +5274,7 @@ pub fn run() {
                         let _ = cancel_backlog_item_event.set_text("Cancel Auto-Expand");
                     }
                     "quit" => {
+                        cleanup_managed_processes(app.state::<AppState>().inner());
                         // Use ExitProcess directly to bypass all Rust/C cleanup handlers,
                         // including WebView2 destructors that cause ERROR_CLASS_HAS_WINDOWS (1412)
                         // and a 5-10s hang on Windows. Settings are persisted on every change.
@@ -4893,6 +5399,13 @@ pub fn run() {
                 }
             }
 
+            {
+                let state = app.state::<AppState>();
+                update_startup_status(app.handle(), state.inner(), |status| {
+                    status.interactive = true;
+                });
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -4907,6 +5420,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            get_startup_status,
+            get_runtime_diagnostics,
             save_settings,
             save_window_state,
             save_window_visibility_state,
@@ -5008,6 +5523,7 @@ pub fn run() {
             run_latency_benchmark,
             get_runtime_metrics_snapshot,
             record_runtime_metric,
+            log_frontend_event,
             pull_ollama_model,
             delete_ollama_model,
             get_ollama_model_info,
@@ -5022,33 +5538,7 @@ pub fn run() {
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
                 info!("Application exiting, cleaning up child processes");
-
-                // Kill managed Ollama child process on app exit.
-                // Use if-let to gracefully handle a poisoned mutex (e.g. from a prior panic).
-                if let Ok(mut guard) = app_handle
-                    .state::<AppState>()
-                    .managed_ollama_child
-                    .lock()
-                {
-                    if let Some(mut child) = guard.take() {
-                        info!("Killing managed Ollama process");
-                        let _ = child.kill();
-                        let _ = child.wait();
-                    }
-                }
-
-                // Kill managed Whisper-Server child process on app exit.
-                if let Ok(mut guard) = app_handle
-                    .state::<AppState>()
-                    .managed_whisper_server_child
-                    .lock()
-                {
-                    if let Some(mut child) = guard.take() {
-                        info!("Killing managed Whisper-Server process");
-                        let _ = child.kill();
-                        let _ = child.wait();
-                    }
-                }
+                cleanup_managed_processes(app_handle.state::<AppState>().inner());
             }
         });
 }

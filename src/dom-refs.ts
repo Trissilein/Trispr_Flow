@@ -101,6 +101,9 @@ export const postprocVocabRows = $("postproc-vocab-rows") as HTMLDivElement | nu
 export const postprocVocabAdd = $("postproc-vocab-add") as HTMLButtonElement | null;
 export const aiFallbackEnabled = $("ai-fallback-enabled") as HTMLInputElement | null;
 export const aiFallbackSettings = $("ai-fallback-settings") as HTMLDivElement | null;
+export const aiFallbackLoadingScrim = $("ai-fallback-loading-scrim") as HTMLDivElement | null;
+export const aiFallbackLoadingTitle = $("ai-fallback-loading-title") as HTMLSpanElement | null;
+export const aiFallbackLoadingDetail = $("ai-fallback-loading-detail") as HTMLSpanElement | null;
 export const aiFallbackProviderLanes = $("ai-fallback-provider-lanes") as HTMLDivElement | null;
 export const aiFallbackLocalLane = $("ai-fallback-local-lane") as HTMLDivElement | null;
 export const aiFallbackOnlineLane = $("ai-fallback-online-lane") as HTMLDivElement | null;
@@ -237,6 +240,7 @@ export const overlayKittMaxWidth = $("overlay-kitt-max-width") as HTMLInputEleme
 export const overlayKittMaxWidthValue = $("overlay-kitt-max-width-value");
 export const overlayKittHeight = $("overlay-kitt-height") as HTMLInputElement | null;
 export const overlayKittHeightValue = $("overlay-kitt-height-value");
+export const overlayHealthNote = $("overlay-health-note") as HTMLSpanElement | null;
 
 // History controls
 export const historyList = $("history-list");

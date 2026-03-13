@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { settings, ollamaPullProgress } from "./state";
+import {
+  traceFrontendError,
+  traceFrontendInfo,
+  traceFrontendWarn,
+} from "./frontend-trace";
+import { settings, ollamaPullProgress, runtimeDiagnostics, startupStatus } from "./state";
 import { showToast } from "./toast";
 import { isExactModelTagMatch, normalizeModelTag } from "./ollama-tag-utils";
 import { applyHelpTooltip } from "./ai-refinement-help";
@@ -26,6 +31,8 @@ const LOCAL_OLLAMA_HOSTS = new Set(["localhost", "127.0.0.1"]);
 const BACKGROUND_START_POLL_INTERVAL_MS = 2_000;
 const BACKGROUND_START_POLL_MAX_MS = 30_000;
 const RUNTIME_BUSY_START_STALE_MS = 45_000;
+const RUNTIME_DETECT_TIMEOUT_MS = 2_500;
+const RUNTIME_VERIFY_TIMEOUT_MS = 4_000;
 
 type WizardStage =
   | "not_detected"
@@ -109,6 +116,7 @@ let runtimeVersionCatalogLastRefreshMs = 0;
 let lastAutostartWarningMs = 0;
 let runtimeBackgroundStartUntilMs = 0;
 let runtimeBackgroundStartPollInFlight: Promise<void> | null = null;
+let runtimeStateDriftLogged = false;
 
 let renderFrame: number | null = null;
 const PASSIVE_RUNTIME_REFRESH_TTL_MS = 1500;
@@ -132,6 +140,28 @@ type RuntimeStateRefreshOptions = {
   skipDetect?: boolean;
   force?: boolean;
 };
+
+async function invokeWithTimeout<T>(
+  command: string,
+  args: Record<string, unknown> = {},
+  timeoutMs = 2_500
+): Promise<T> {
+  let timeoutHandle: number | null = null;
+  try {
+    return await Promise.race([
+      invoke<T>(command, args),
+      new Promise<T>((_, reject) => {
+        timeoutHandle = window.setTimeout(() => {
+          reject(new Error(`${command} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle !== null) {
+      window.clearTimeout(timeoutHandle);
+    }
+  }
+}
 
 export type OllamaRuntimeCardState = {
   detected: boolean;
@@ -217,6 +247,9 @@ function shouldAutoStartLocalRuntime(): boolean {
 }
 
 function showAutostartWarning(trigger: "bootstrap" | "enable_toggle", message: string): void {
+  if (trigger === "bootstrap") {
+    return;
+  }
   const now = Date.now();
   if (now - lastAutostartWarningMs < AUTOSTART_WARNING_COOLDOWN_MS) {
     return;
@@ -234,7 +267,13 @@ function showAutostartWarning(trigger: "bootstrap" | "enable_toggle", message: s
 }
 
 function runtimeIsHealthy(): boolean {
-  return Boolean(runtimeVerify?.ok || runtimeHealth?.ok);
+  return Boolean(
+    runtimeVerify?.ok
+    || runtimeHealth?.ok
+    || runtimeDiagnostics?.ollama?.reachable
+    || runtimeDiagnostics?.ollama?.spawn_stage === "ready"
+    || startupStatus?.ollama_ready
+  );
 }
 
 function sleep(ms: number): Promise<void> {
@@ -242,12 +281,62 @@ function sleep(ms: number): Promise<void> {
 }
 
 function isRuntimeBackgroundStarting(): boolean {
-  return runtimeBackgroundStartUntilMs > Date.now() && !runtimeIsHealthy();
+  return Boolean(startupStatus?.ollama_starting)
+    || (runtimeBackgroundStartUntilMs > Date.now() && !runtimeIsHealthy());
+}
+
+function traceRuntimeStateDriftIfNeeded(): void {
+  const drift = runtimeIsHealthy() && Boolean(startupStatus?.ollama_starting);
+  if (drift && !runtimeStateDriftLogged) {
+    runtimeStateDriftLogged = true;
+    traceFrontendWarn("ollama.state", "healthy runtime with stale startup starting flag", {
+      startupStatus,
+      runtimeDiagnostics: runtimeDiagnostics?.ollama ?? null,
+    });
+    return;
+  }
+  if (!drift) {
+    runtimeStateDriftLogged = false;
+  }
+}
+
+function formatOllamaDiagnosticDetail(): string | null {
+  const diagnostics = runtimeDiagnostics?.ollama;
+  if (!diagnostics) return null;
+  const error = diagnostics.last_error?.trim();
+  switch (diagnostics.spawn_stage) {
+    case "spawn_failed":
+      return error ? `Spawn failed: ${error}` : "Spawn failed.";
+    case "job_assign_failed":
+      return error || "Runtime started with degraded cleanup path.";
+    case "health_timeout":
+      return error || "Health timeout. Runtime is still warming up.";
+    case "verify_failed":
+      return error ? `Verify failed: ${error}` : "Verify failed.";
+    case "runtime_not_found":
+      return error || "No local runtime detected.";
+    case "running_externally":
+      return "Running externally.";
+    case "ready":
+      return "Runtime ready.";
+    default:
+      return error || null;
+  }
+}
+
+function ollamaRuntimeFailureTitle(defaultAction: string): string {
+  const stage = runtimeDiagnostics?.ollama?.spawn_stage;
+  if (stage === "spawn_failed") return "Runtime start failed (spawn)";
+  if (stage === "health_timeout") return "Runtime start delayed (health)";
+  if (stage === "verify_failed") return "Runtime verify failed";
+  if (stage === "runtime_not_found") return "Runtime not found";
+  return defaultAction;
 }
 
 function startRuntimeBackgroundPolling(reason: "autostart" | "manual"): void {
   runtimeBackgroundStartUntilMs = Date.now() + BACKGROUND_START_POLL_MAX_MS;
   renderOllamaModelManager();
+  traceFrontendInfo("ollama.background", "background polling started", { reason });
 
   if (runtimeBackgroundStartPollInFlight) {
     return;
@@ -256,9 +345,16 @@ function startRuntimeBackgroundPolling(reason: "autostart" | "manual"): void {
   runtimeBackgroundStartPollInFlight = (async () => {
     while (Date.now() < runtimeBackgroundStartUntilMs) {
       await refreshOllamaRuntimeState({ force: true, verify: true });
+      traceFrontendInfo("ollama.background", "background polling tick", {
+        reason,
+        healthy: runtimeIsHealthy(),
+        stage: runtimeDiagnostics?.ollama?.spawn_stage ?? null,
+        error: runtimeDiagnostics?.ollama?.last_error ?? null,
+      });
       if (runtimeIsHealthy()) {
         await refreshOllamaInstalledModels();
         runtimeBackgroundStartUntilMs = 0;
+        traceFrontendInfo("ollama.background", "background polling reached healthy state", { reason });
         return;
       }
       await sleep(BACKGROUND_START_POLL_INTERVAL_MS);
@@ -275,6 +371,7 @@ function startRuntimeBackgroundPolling(reason: "autostart" | "manual"): void {
   })().finally(() => {
     runtimeBackgroundStartPollInFlight = null;
     renderOllamaModelManager();
+    traceFrontendInfo("ollama.background", "background polling finished", { reason });
   });
 }
 
@@ -303,12 +400,23 @@ function setRuntimeBusyAction(action: string | null): void {
 export async function autoStartLocalRuntimeIfNeeded(
   trigger: "bootstrap" | "enable_toggle"
 ): Promise<void> {
+  traceFrontendInfo("ollama.autostart", "autostart requested", { trigger });
   if (!shouldAutoStartLocalRuntime()) {
+    traceFrontendInfo("ollama.autostart", "autostart skipped: policy disabled", { trigger });
     return;
   }
 
   await refreshOllamaRuntimeState({ force: true });
   const card = getOllamaRuntimeCardState();
+  traceFrontendInfo("ollama.autostart", "runtime state before autostart", {
+    trigger,
+    healthy: card.healthy,
+    detected: card.detected,
+    busy: card.busy,
+    backgroundStarting: card.backgroundStarting,
+    stage: card.stage,
+    detail: card.detail,
+  });
   if (card.busy || card.healthy || !card.detected) {
     return;
   }
@@ -322,6 +430,7 @@ export async function autoStartLocalRuntimeIfNeeded(
   renderOllamaModelManager();
   try {
     const startResult = await invoke<OllamaRuntimeStartResult>("start_ollama_runtime");
+    traceFrontendInfo("ollama.autostart", "start_ollama_runtime returned", startResult);
     if (startResult.pending_start) {
       startRuntimeBackgroundPolling("autostart");
       await refreshOllamaRuntimeState({ force: true });
@@ -334,10 +443,12 @@ export async function autoStartLocalRuntimeIfNeeded(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`Ollama autostart failed (${trigger}):`, message);
+    traceFrontendError("ollama.autostart", "autostart failed", { trigger, message });
     showAutostartWarning(trigger, message);
   } finally {
     setRuntimeBusyAction(null);
     renderOllamaModelManager();
+    traceFrontendInfo("ollama.autostart", "autostart finalized", { trigger });
   }
 }
 
@@ -502,6 +613,7 @@ export function showOllamaRequiredModal(): Promise<boolean> {
 }
 
 export function getOllamaRuntimeCardState(): OllamaRuntimeCardState {
+  traceRuntimeStateDriftIfNeeded();
   const source = runtimeDetect?.source || settings?.providers?.ollama?.runtime_source || "manual";
   const version = runtimeDetect?.version || settings?.providers?.ollama?.runtime_version || "unknown";
   const endpoint = settings?.providers?.ollama?.endpoint || DEFAULT_LOCAL_ENDPOINT;
@@ -514,7 +626,7 @@ export function getOllamaRuntimeCardState(): OllamaRuntimeCardState {
       ? runtimeActionLabel(busyAction)
       : backgroundStarting
         ? "Starting runtime in background..."
-        : stageHint(stage));
+        : formatOllamaDiagnosticDetail() || stageHint(stage));
   const compatibilityWarning =
     activeModelRequiredRuntime &&
     version &&
@@ -651,14 +763,15 @@ async function runRuntimeAction(action: string, task: () => Promise<void>): Prom
     await task();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const detail = formatOllamaDiagnosticDetail() || message;
     runtimeInstallError = {
-      stage: action,
-      error: message,
+      stage: runtimeDiagnostics?.ollama?.spawn_stage || action,
+      error: detail,
     };
     showToast({
       type: "error",
-      title: "Runtime action failed",
-      message,
+      title: ollamaRuntimeFailureTitle("Runtime action failed"),
+      message: detail,
       duration: 6000,
     });
   } finally {
@@ -1237,6 +1350,7 @@ export async function refreshOllamaRuntimeState(
   const skipDetect = options.skipDetect ?? false;
   const force = options.force ?? false;
   const now = Date.now();
+  traceFrontendInfo("ollama.refresh", "refresh requested", options);
 
   if (!verify && !force && now - runtimeStateLastRefreshMs < PASSIVE_RUNTIME_REFRESH_TTL_MS) {
     renderOllamaModelManager();
@@ -1253,9 +1367,17 @@ export async function refreshOllamaRuntimeState(
 
     if (!skipDetect) {
       try {
-        runtimeDetect = await invoke<OllamaRuntimeDetectResult>("detect_ollama_runtime");
-      } catch {
+        runtimeDetect = await invokeWithTimeout<OllamaRuntimeDetectResult>(
+          "detect_ollama_runtime",
+          {},
+          RUNTIME_DETECT_TIMEOUT_MS
+        );
+        traceFrontendInfo("ollama.refresh", "detect_ollama_runtime completed", runtimeDetect);
+      } catch (error) {
         runtimeDetect = null;
+        traceFrontendWarn("ollama.refresh", "detect_ollama_runtime failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -1263,14 +1385,22 @@ export async function refreshOllamaRuntimeState(
 
     if (verify) {
       try {
-        runtimeVerify = await invoke<OllamaRuntimeVerifyResult>("verify_ollama_runtime");
+        runtimeVerify = await invokeWithTimeout<OllamaRuntimeVerifyResult>(
+          "verify_ollama_runtime",
+          {},
+          RUNTIME_VERIFY_TIMEOUT_MS
+        );
+        traceFrontendInfo("ollama.refresh", "verify_ollama_runtime completed", runtimeVerify);
         runtimeHealth = {
           ok: runtimeVerify.ok,
           endpoint: runtimeVerify.endpoint,
           models_count: runtimeVerify.models_count,
         };
-      } catch {
+      } catch (error) {
         runtimeVerify = null;
+        traceFrontendWarn("ollama.refresh", "verify_ollama_runtime failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
         runtimeHealth = {
           ok: false,
           endpoint,
@@ -1317,6 +1447,11 @@ export async function refreshOllamaRuntimeState(
 
     runtimeStateLastRefreshMs = Date.now();
     renderOllamaModelManager();
+    traceFrontendInfo("ollama.refresh", "refresh completed", {
+      healthy: runtimeHealth?.ok ?? false,
+      stage: runtimeDiagnostics?.ollama?.spawn_stage ?? null,
+      detail: formatOllamaDiagnosticDetail(),
+    });
   })();
 
   runtimeStateRefreshInFlight = refreshTask;

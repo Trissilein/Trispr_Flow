@@ -6,7 +6,9 @@ import {
   devices,
   outputDevices,
   models,
-  dynamicSustainThreshold
+  dynamicSustainThreshold,
+  runtimeDiagnostics,
+  startupStatus,
 } from "./state";
 import * as dom from "./dom-refs";
 import { updateRecordingStatus, updateRefiningStatus, updateTranscribeStatus } from "./accessibility";
@@ -72,6 +74,28 @@ function prettifyGpuBackend(backend: string): string {
   if (normalized === "vulkan") return "Vulkan";
   if (normalized === "cpu") return "CPU";
   return normalized.toUpperCase();
+}
+
+function whisperRuntimeLabel(): string | null {
+  const whisper = runtimeDiagnostics?.whisper;
+  if (!whisper) return null;
+  const backend = prettifyGpuBackend(whisper.backend_selected || gpuBackend);
+  if (whisper.mode === "server") {
+    return `GPU: Server warm (${backend})`;
+  }
+  if (whisper.mode === "cli" && whisper.accelerator === "gpu") {
+    return `GPU: CLI GPU (${backend})`;
+  }
+  if (whisper.mode === "cli" && whisper.backend_selected && whisper.backend_selected !== "cpu") {
+    if (whisper.last_error.toLowerCase().includes("server unavailable")) {
+      return `GPU: Server unavailable, CLI active (${backend})`;
+    }
+    return `GPU: CLI CPU fallback (${backend})`;
+  }
+  if (whisper.mode === "cli") {
+    return "GPU: CLI CPU";
+  }
+  return null;
 }
 
 function renderFeedbackIndicators() {
@@ -145,7 +169,10 @@ function renderFeedbackIndicators() {
     dom.gpuStatusDot.dataset.state = gpuDotState;
   }
   if (dom.gpuStatusLabel) {
-    if (!gpuKnown && gpuRuntimeState === "idle") {
+    const diagnosticsLabel = whisperRuntimeLabel();
+    if (diagnosticsLabel) {
+      dom.gpuStatusLabel.textContent = diagnosticsLabel;
+    } else if (!gpuKnown && gpuRuntimeState === "idle") {
       dom.gpuStatusLabel.textContent = "GPU: Waiting for first run";
     } else if (gpuRuntimeState === "active") {
       dom.gpuStatusLabel.textContent = `GPU: Active (${prettifyGpuBackend(gpuBackend)})`;
@@ -161,7 +188,11 @@ function renderFeedbackIndicators() {
     }
   }
   if (dom.gpuPill) {
-    const gpuEnabled = gpuKnown && (gpuAccelerator === "gpu" || gpuRuntimeState === "active");
+    const diagnosticsGpuReady =
+      runtimeDiagnostics?.whisper?.mode === "server"
+      || runtimeDiagnostics?.whisper?.accelerator === "gpu";
+    const gpuEnabled =
+      diagnosticsGpuReady || (gpuKnown && (gpuAccelerator === "gpu" || gpuRuntimeState === "active"));
     dom.gpuPill.classList.toggle("status-pill--enabled", gpuEnabled);
     dom.gpuPill.classList.toggle("status-pill--disabled", !gpuEnabled);
   }
@@ -219,8 +250,18 @@ export function renderHero() {
 
   if (dom.cloudState) dom.cloudState.textContent = aiFallbackOn ? "Yes" : "No";
   if (dom.cloudDetail) {
+    const runtimeDetail =
+      aiFallbackOn && provider === "ollama"
+        ? startupStatus?.ollama_ready
+          ? "Offline"
+          : startupStatus?.ollama_starting
+            ? "Offline • Starting in background"
+            : "Offline • Fallback active"
+        : isOnlineRefinement
+          ? "Online"
+          : "Offline";
     dom.cloudDetail.textContent = aiFallbackOn
-      ? `${isOnlineRefinement ? "Online" : "Offline"} • ${effectiveRefinementModel} • ${providerLabel}`
+      ? `${runtimeDetail} • ${effectiveRefinementModel} • ${providerLabel}`
       : "Offline • AI refinement disabled";
   }
   if (dom.cloudCheck) dom.cloudCheck.classList.toggle("is-active", aiFallbackOn);

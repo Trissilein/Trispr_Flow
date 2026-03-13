@@ -3,6 +3,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
+import {
+  installGlobalFrontendErrorLogging,
+  traceFrontendError,
+  traceFrontendInfo,
+} from "./frontend-trace";
 import { initWindowStatePersistence } from "./window-state";
 
 type TranscriptionStatus = "idle" | "recording" | "transcribing";
@@ -26,6 +31,8 @@ import type {
   OllamaRuntimeInstallComplete,
   OllamaRuntimeInstallError,
   OllamaRuntimeHealth,
+  OverlayHealthEvent,
+  RuntimeDiagnostics,
   TranscriptionRefinedEvent,
   TranscriptionRefinementFailedEvent,
   TranscriptionRefinementStartedEvent,
@@ -34,6 +41,7 @@ import type {
   TranscriptionResultEvent,
   TranscriptionRawResultEvent,
   DependencyPreflightReport,
+  StartupStatus,
 } from "./types";
 import {
   settings,
@@ -50,6 +58,10 @@ import {
   modelProgress,
   quantizeProgress,
   ollamaPullProgress,
+  startupStatus,
+  setRuntimeDiagnostics,
+  setOverlayHealth,
+  setStartupStatus,
 } from "./state";
 import * as dom from "./dom-refs";
 import { renderAIFallbackSettingsUi, renderSettings } from "./settings";
@@ -97,6 +109,7 @@ import {
 import {
   handlePipelineRefined,
   handlePipelineRefinementFailed,
+  reconcilePipelineRefinementIdle,
   handlePipelineRefinementReset,
   handlePipelineRefinementStarted,
   handlePipelineRefinementTimeout,
@@ -119,6 +132,7 @@ import { OLLAMA_SETTINGS_CHANGED_POLICY } from "./ollama-refresh-policy";
 // Track event listeners for cleanup to prevent memory leaks
 let eventUnlisteners: Array<() => void> = [];
 let backlogWarningToastId: string | null = null;
+let overlayHealthToastId: string | null = null;
 let pasteQueue: Promise<void> = Promise.resolve();
 
 type PendingDeferredPasteJob = {
@@ -131,7 +145,9 @@ type DeferredPasteOutcome = "refined" | "failed" | "timed_out";
 const pendingDeferredPasteJobs = new Map<string, PendingDeferredPasteJob>();
 const deferredPasteOutcomes = new Map<string, DeferredPasteOutcome>();
 const deferredRefinedTextByJobId = new Map<string, string>();
+const trackedRefinementJobs = new Set<string>();
 const MAX_DEFERRED_PASTE_OUTCOMES = 500;
+let backendRefinementActiveCount = 0;
 
 function clearPendingDeferredPasteJobs() {
   for (const pending of pendingDeferredPasteJobs.values()) {
@@ -165,6 +181,73 @@ function reportRuntimeMetric(metric: string): void {
   void invoke("record_runtime_metric", { metric }).catch((error) => {
     console.warn("record_runtime_metric failed", metric, error);
   });
+}
+
+function syncRefiningIndicator(preferTrackedState = false): void {
+  const trackedActive = trackedRefinementJobs.size > 0;
+  const active = preferTrackedState
+    ? trackedActive
+    : trackedActive || backendRefinementActiveCount > 0;
+  setRefiningActive(active);
+}
+
+function markRefinementJobStarted(jobId: string): void {
+  const normalized = jobId.trim();
+  if (!normalized) return;
+  trackedRefinementJobs.add(normalized);
+  syncRefiningIndicator();
+}
+
+function markRefinementJobFinished(jobId: string): void {
+  const normalized = jobId.trim();
+  if (!normalized) return;
+  trackedRefinementJobs.delete(normalized);
+  syncRefiningIndicator();
+}
+
+function resetTrackedRefinementJobs(): void {
+  trackedRefinementJobs.clear();
+  backendRefinementActiveCount = 0;
+  syncRefiningIndicator(true);
+}
+
+function applyStartupStatus(status: StartupStatus | null): void {
+  setStartupStatus(status);
+  applyStartupReadinessUi();
+  renderHero();
+  renderAIFallbackSettingsUi();
+  renderOllamaModelManager();
+}
+
+function applyStartupReadinessUi(): void {
+  const ready = Boolean(startupStatus?.interactive && startupStatus?.transcription_ready);
+  const controls = [
+    dom.captureEnabledToggle,
+    dom.modeSelect,
+    dom.deviceSelect,
+    dom.pttHotkey,
+    dom.pttHotkeyRecord,
+    dom.toggleHotkey,
+    dom.toggleHotkeyRecord,
+    dom.transcribeEnabledToggle,
+    dom.transcribeHotkey,
+    dom.transcribeHotkeyRecord,
+    dom.transcribeDeviceSelect,
+  ];
+  for (const control of controls) {
+    if (control) {
+      control.disabled = !ready;
+    }
+  }
+}
+
+async function refreshStartupStatusFromBackend(): Promise<void> {
+  try {
+    const nextStatus = await invoke<StartupStatus>("get_startup_status");
+    applyStartupStatus(nextStatus);
+  } catch (error) {
+    console.warn("get_startup_status failed", error);
+  }
 }
 
 function queueTranscriptPaste(text: string, context: string): void {
@@ -208,6 +291,7 @@ function handleDeferredPasteTimeout(jobId: string): void {
   }
 
   pendingDeferredPasteJobs.delete(jobId);
+  markRefinementJobFinished(jobId);
   rememberDeferredPasteOutcome(jobId, "timed_out");
   handlePipelineRefinementTimeout(jobId);
   reportRuntimeMetric("refinement_timeout");
@@ -216,6 +300,7 @@ function handleDeferredPasteTimeout(jobId: string): void {
 
 function cleanupEventListeners() {
   clearPendingDeferredPasteJobs();
+  resetTrackedRefinementJobs();
   cancelPendingRenderFrames();
   cleanupUnifiedTooltips();
   cleanupWindowListeners();
@@ -223,6 +308,8 @@ function cleanupEventListeners() {
   eventUnlisteners = [];
   dismissToast(backlogWarningToastId);
   backlogWarningToastId = null;
+  dismissToast(overlayHealthToastId);
+  overlayHealthToastId = null;
 }
 
 function initConversationView() {
@@ -335,43 +422,51 @@ function cancelPendingRenderFrames(): void {
 }
 
 async function bootstrap() {
+  traceFrontendInfo("bootstrap", "bootstrap start");
   // Clean up old listeners if re-bootstrapping to prevent memory leaks
   cleanupEventListeners();
   // Reset the paste queue to prevent accumulation across re-bootstrap cycles
   pasteQueue = Promise.resolve();
 
   if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Loading configuration…";
+  traceFrontendInfo("bootstrap", "loading initial configuration");
 
   // Phase 1: Load data from backend in parallel — any failure here is fatal
   const [
     fetchedSettings,
     fetchedDevices,
     fetchedOutputDevices,
-    fetchedHistory,
-    fetchedTranscribeHistory,
-    fetchedModels,
     fetchedVersion,
+    fetchedStartupStatus,
+    fetchedRuntimeDiagnostics,
   ] = await Promise.all([
     invoke<Settings>("get_settings"),
     invoke<AudioDevice[]>("list_audio_devices"),
     invoke<AudioDevice[]>("list_output_devices"),
-    invoke<HistoryEntry[]>("get_history"),
-    invoke<HistoryEntry[]>("get_transcribe_history"),
-    invoke<ModelInfo[]>("list_models"),
     getVersion().catch(() => null),
+    invoke<StartupStatus>("get_startup_status"),
+    invoke<RuntimeDiagnostics>("get_runtime_diagnostics").catch(() => null),
   ]);
+  traceFrontendInfo("bootstrap", "initial configuration loaded", {
+    audioDevices: fetchedDevices.length,
+    outputDevices: fetchedOutputDevices.length,
+    startupInteractive: fetchedStartupStatus?.interactive ?? null,
+    ollamaStarting: fetchedStartupStatus?.ollama_starting ?? null,
+  });
   setSettings(fetchedSettings);
   setDevices(fetchedDevices);
   setOutputDevices(fetchedOutputDevices);
-  setHistory(fetchedHistory);
-  setTranscribeHistory(fetchedTranscribeHistory);
-  restoreRefinementInspector(fetchedHistory.concat(fetchedTranscribeHistory));
-  setModels(fetchedModels);
+  setHistory([]);
+  setTranscribeHistory([]);
+  setModels([]);
+  setStartupStatus(fetchedStartupStatus);
+  setRuntimeDiagnostics(fetchedRuntimeDiagnostics);
   if (dom.appVersion && fetchedVersion) {
     dom.appVersion.textContent = `v${fetchedVersion}`;
   }
 
   if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Wiring events…";
+  traceFrontendInfo("bootstrap", "wiring events");
 
   // Phase 2: Wire event handlers FIRST so UI is always interactive
   wireEvents();
@@ -390,6 +485,7 @@ async function bootstrap() {
   syncVoiceOutputConsoleState();
 
   if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Rendering interface…";
+  traceFrontendInfo("bootstrap", "rendering primary interface");
 
   // Phase 3: Render UI synchronously — UI becomes interactive here
   try {
@@ -397,6 +493,7 @@ async function bootstrap() {
     renderOutputDevices();
     renderSettings();
     renderHero();
+    applyStartupReadinessUi();
     setCaptureStatus("idle");
     setTranscribeStatus("idle");
     setRefiningActive(false);
@@ -405,10 +502,14 @@ async function bootstrap() {
     refreshModulesHub();
   } catch (renderError) {
     console.error("Non-fatal render error during bootstrap:", renderError);
+    traceFrontendError("bootstrap.render", "non-fatal render error", {
+      error: renderError instanceof Error ? renderError.message : String(renderError),
+    });
   }
 
   // Remove loading overlay — UI is now ready for interaction
   dom.bootstrapOverlay?.setAttribute("hidden", "");
+  traceFrontendInfo("bootstrap", "bootstrap overlay hidden");
 
   // Defer history render to next animation frame so the overlay removal is painted first
   scheduleHistoryRender();
@@ -416,22 +517,47 @@ async function bootstrap() {
   // Phase 3b: Heavy background checks — run async without blocking the UI
   void (async () => {
     try {
+      traceFrontendInfo("bootstrap.background", "background init start");
+      const [fetchedHistory, fetchedTranscribeHistory, fetchedModels] = await Promise.all([
+        invoke<HistoryEntry[]>("get_history").catch((): HistoryEntry[] => []),
+        invoke<HistoryEntry[]>("get_transcribe_history").catch((): HistoryEntry[] => []),
+        invoke<ModelInfo[]>("list_models").catch((): ModelInfo[] => []),
+      ]);
+      traceFrontendInfo("bootstrap.background", "heavy data loaded", {
+        history: fetchedHistory.length,
+        transcribeHistory: fetchedTranscribeHistory.length,
+        models: fetchedModels.length,
+      });
+      setHistory(fetchedHistory);
+      setTranscribeHistory(fetchedTranscribeHistory);
+      restoreRefinementInspector(fetchedHistory.concat(fetchedTranscribeHistory));
+      setModels(fetchedModels);
+      scheduleHistoryRender();
+      renderModels();
+
       await refreshModelsDir();
+      traceFrontendInfo("bootstrap.background", "models dir refreshed");
       // Initialize Ollama model manager if provider is Ollama
       if (settings?.ai_fallback?.provider === "ollama") {
+        traceFrontendInfo("bootstrap.background", "refreshing ollama runtime state");
         await refreshOllamaRuntimeState({ force: true });
         if (getOllamaRuntimeCardState().healthy) {
+          traceFrontendInfo("bootstrap.background", "ollama runtime healthy; refreshing installed models");
           await refreshOllamaInstalledModels();
         }
       }
       renderAIFallbackSettingsUi();
       renderOllamaModelManager();
       void autoStartLocalRuntimeIfNeeded("bootstrap").finally(() => {
+        traceFrontendInfo("bootstrap.background", "ollama autostart finished");
         renderAIFallbackSettingsUi();
         renderOllamaModelManager();
       });
     } catch (bgError) {
       console.error("Non-fatal background init error:", bgError);
+      traceFrontendError("bootstrap.background", "background init failed", {
+        error: bgError instanceof Error ? bgError.message : String(bgError),
+      });
     }
   })();
 
@@ -452,7 +578,13 @@ async function bootstrap() {
   const _newListeners = await Promise.all([
     listen<Settings>("settings-changed", (event) => {
       setSettings(event.payload ?? null);
-      if (!settings?.ai_fallback?.enabled) setRefiningActive(false);
+      if (
+        !settings?.ai_fallback?.enabled
+        || settings.ai_fallback.provider !== "ollama"
+        || settings.ai_fallback.execution_mode !== "local_primary"
+      ) {
+        resetTrackedRefinementJobs();
+      }
       scheduleSettingsRender();
       renderHero();
       renderModels();
@@ -556,6 +688,7 @@ async function bootstrap() {
       })
     ),
     listen<TranscriptionRefinementStartedEvent>("transcription:refinement-started", (event) => {
+      markRefinementJobStarted(event.payload?.job_id || "");
       handlePipelineRefinementStarted(event.payload);
       handleRefinementStartedForInspector(event.payload);
       scheduleHistoryRender();
@@ -565,6 +698,7 @@ async function bootstrap() {
       handleRefinementSuccessForInspector(event.payload);
       scheduleHistoryRender();
       const { refined, model, execution_time_ms, job_id: jobId } = event.payload;
+      markRefinementJobFinished(jobId);
       const priorOutcome = deferredPasteOutcomes.get(jobId);
       const pending = settleDeferredPasteJob(jobId);
       if (pending) {
@@ -584,6 +718,7 @@ async function bootstrap() {
     // AI Fallback: refinement failed — log, no disruption to user workflow.
     listen<TranscriptionRefinementFailedEvent>("transcription:refinement-failed", (event) => {
       const payload = event.payload;
+      markRefinementJobFinished(payload.job_id);
       const priorOutcome = deferredPasteOutcomes.get(payload.job_id);
       if (priorOutcome === "timed_out") {
         handlePipelineRefinementTimeout(payload.job_id);
@@ -603,9 +738,16 @@ async function bootstrap() {
     }),
     listen<TranscriptionRefinementActivityEvent>("transcription:refinement-activity", (event) => {
       const payload = event.payload;
-      const activeCount = Number(payload?.active_count ?? 0);
-      setRefiningActive(activeCount > 0);
+      backendRefinementActiveCount = Math.max(0, Number(payload?.active_count ?? 0));
+      if (backendRefinementActiveCount === 0) {
+        if (trackedRefinementJobs.size > 0) {
+          reconcilePipelineRefinementIdle(payload?.reason || "activity_zero");
+        }
+        trackedRefinementJobs.clear();
+      }
+      syncRefiningIndicator();
       if (payload?.reason === "watchdog_reset" || payload?.reason === "forced_reset") {
+        resetTrackedRefinementJobs();
         handlePipelineRefinementReset(payload.reason);
         markAllPendingAsFailed(payload.reason);
         scheduleHistoryRender();
@@ -628,6 +770,7 @@ async function bootstrap() {
     listen<DownloadComplete>("model:download-complete", async (event) => {
       modelProgress.delete(event.payload.id);
       await refreshModels();
+      await refreshStartupStatusFromBackend();
     }),
     listen<DownloadError>("model:download-error", async (event) => {
       console.error("model download error", event.payload.error);
@@ -688,8 +831,40 @@ async function bootstrap() {
       setOllamaRuntimeHealth(event.payload);
       renderAIFallbackSettingsUi();
     }),
+    listen<RuntimeDiagnostics>("runtime:diagnostics", (event) => {
+      setRuntimeDiagnostics(event.payload ?? null);
+      renderHero();
+      renderAIFallbackSettingsUi();
+    }),
+    listen<OverlayHealthEvent>("overlay:health", (event) => {
+      const payload = event.payload ?? null;
+      if (!payload) {
+        setOverlayHealth(null);
+        renderSettings();
+        return;
+      }
+      if (payload.status === "recovering") {
+        setOverlayHealth(null);
+        renderSettings();
+        return;
+      }
+      setOverlayHealth(payload);
+      renderSettings();
+      dismissToast(overlayHealthToastId);
+      overlayHealthToastId = showToast({
+        type: "warning",
+        title: "Overlay degraded",
+        message: payload.reason,
+        duration: 5200,
+      });
+    }),
+    listen<StartupStatus>("startup:status", (event) => {
+      applyStartupStatus(event.payload ?? null);
+    }),
     listen<string>("transcription:error", (event) => {
       console.error("transcription error", event.payload);
+      resetTrackedRefinementJobs();
+      handlePipelineRefinementReset("transcription_error");
       setCaptureStatus("idle");
       if (dom.statusMessage) dom.statusMessage.textContent = event.payload;
 
@@ -866,8 +1041,11 @@ async function checkDependencyPreflightOnStartup() {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  installGlobalFrontendErrorLogging();
+  traceFrontendInfo("bootstrap", "DOMContentLoaded");
   bootstrap()
     .then(() => {
+      traceFrontendInfo("bootstrap", "bootstrap resolved");
       initWindowStatePersistence();
       // Start GPU VRAM monitoring (update every 2 seconds)
       startGpuVramMonitoring();
@@ -875,6 +1053,19 @@ window.addEventListener("DOMContentLoaded", () => {
     })
     .catch((error) => {
       console.error("bootstrap failed", error);
+      traceFrontendError("bootstrap", "bootstrap failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (dom.bootstrapLabel) {
+        dom.bootstrapLabel.textContent = "Startup failed. Open DevTools/logs and retry.";
+      }
+      dom.bootstrapOverlay?.setAttribute("hidden", "");
+      showToast({
+        type: "error",
+        title: "Startup failed",
+        message: error instanceof Error ? error.message : String(error),
+        duration: 9000,
+      });
     });
 });
 

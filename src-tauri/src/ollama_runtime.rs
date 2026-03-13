@@ -2,11 +2,16 @@ use crate::ai_fallback::provider::{
     is_local_ollama_endpoint, list_ollama_models, ping_ollama, ping_ollama_quick,
 };
 use crate::check_strict_local_mode;
+use crate::managed_child_slot_status;
 use crate::now_iso;
 use crate::paths::resolve_data_path;
+use crate::spawn_managed_child;
 use crate::state::{
     record_runtime_start_attempt, record_runtime_start_failure, save_settings_file, AppState,
+    Settings,
 };
+use crate::terminate_managed_child_slot;
+use crate::{update_runtime_diagnostics, update_startup_status};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
@@ -18,6 +23,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tracing::info;
 use url::Url;
 use which::which;
 use zip::ZipArchive;
@@ -182,7 +188,10 @@ fn parse_sha256_from_text(text: &str, file_name: &str) -> Option<String> {
             }
             continue;
         }
-        if tokens[1..].iter().any(|token| token.trim_start_matches('*') == file_name) {
+        if tokens[1..]
+            .iter()
+            .any(|token| token.trim_start_matches('*') == file_name)
+        {
             let hash = tokens[0].trim().trim_start_matches('*');
             if hash.len() == 64 && hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
                 return Some(hash.to_ascii_lowercase());
@@ -318,11 +327,7 @@ fn list_online_release_versions(limit: usize) -> Result<Vec<String>, String> {
         return Ok(versions);
     };
     for item in items {
-        if item
-            .get("draft")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
+        if item.get("draft").and_then(|v| v.as_bool()).unwrap_or(false) {
             continue;
         }
         let Some(tag_name) = item.get("tag_name").and_then(|v| v.as_str()) else {
@@ -402,6 +407,13 @@ fn emit_install_error(app: &AppHandle, stage: &str, error: String) {
 }
 
 fn emit_runtime_health(app: &AppHandle, endpoint: String, models_count: usize, ok: bool) {
+    let state = app.state::<AppState>();
+    update_startup_status(app, state.inner(), |status| {
+        status.ollama_ready = ok;
+        if ok {
+            status.ollama_starting = false;
+        }
+    });
     let _ = app.emit(
         "ollama:runtime-health",
         OllamaRuntimeHealth {
@@ -410,6 +422,36 @@ fn emit_runtime_health(app: &AppHandle, endpoint: String, models_count: usize, o
             models_count,
         },
     );
+}
+
+fn update_ollama_runtime_diagnostics(
+    app: &AppHandle,
+    settings: &Settings,
+    detected: bool,
+    spawn_stage: &str,
+    managed_pid: Option<u32>,
+    reachable: bool,
+    last_error: Option<String>,
+) {
+    let state = app.state::<AppState>();
+    if reachable || matches!(spawn_stage, "ready" | "running_externally") {
+        update_startup_status(app, state.inner(), |status| {
+            if status.ollama_starting {
+                info!("Ollama startup status synced to ready via runtime diagnostics");
+            }
+            status.ollama_ready = true;
+            status.ollama_starting = false;
+        });
+    }
+    update_runtime_diagnostics(app, state.inner(), |diagnostics| {
+        diagnostics.ollama.configured_path = settings.providers.ollama.runtime_path.clone();
+        diagnostics.ollama.detected = detected;
+        diagnostics.ollama.spawn_stage = spawn_stage.to_string();
+        diagnostics.ollama.last_error = last_error.unwrap_or_default();
+        diagnostics.ollama.managed_pid = managed_pid;
+        diagnostics.ollama.endpoint = settings.providers.ollama.endpoint.clone();
+        diagnostics.ollama.reachable = reachable;
+    });
 }
 
 fn maybe_throttle_background_io(processed_since_pause: &mut u64) {
@@ -556,6 +598,23 @@ fn parse_ollama_version(binary_path: &Path) -> String {
         guard.insert(cache_key, empty.clone());
     }
     empty
+}
+
+fn detect_runtime_version_hint(settings: &Settings, binary_path: &Path) -> String {
+    let cached_path = settings.providers.ollama.runtime_path.trim();
+    let cached_version = settings.providers.ollama.runtime_version.trim();
+    if !cached_version.is_empty() && !cached_path.is_empty() {
+        let cached = PathBuf::from(cached_path);
+        if cached == binary_path {
+            return cached_version.to_string();
+        }
+    }
+
+    if !cached_version.is_empty() {
+        return cached_version.to_string();
+    }
+
+    String::new()
 }
 
 fn sanitize_model_name(name: &str) -> String {
@@ -781,23 +840,7 @@ fn runtime_endpoint_reachable(endpoint: &str) -> bool {
 }
 
 fn managed_child_status(state: &AppState) -> (Option<u32>, bool) {
-    let Ok(mut guard) = state.managed_ollama_child.lock() else {
-        return (None, false);
-    };
-
-    let Some(child) = guard.as_mut() else {
-        return (None, false);
-    };
-
-    let pid = Some(child.id());
-    match child.try_wait() {
-        Ok(Some(_)) => {
-            *guard = None;
-            (pid, false)
-        }
-        Ok(None) => (pid, true),
-        Err(_) => (pid, false),
-    }
+    managed_child_slot_status(&state.managed_ollama_child)
 }
 
 #[tauri::command]
@@ -849,11 +892,8 @@ pub fn list_ollama_runtime_versions(
     Ok(out)
 }
 
-#[tauri::command]
-pub fn detect_ollama_runtime(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<OllamaRuntimeDetectResult, String> {
+fn detect_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeDetectResult, String> {
+    let state = app.state::<AppState>();
     let settings = state.settings.lock().unwrap().clone();
     let (managed_pid, managed_alive) = managed_child_status(state.inner());
     let endpoint = settings.providers.ollama.endpoint.clone();
@@ -899,8 +939,8 @@ pub fn detect_ollama_runtime(
             find_managed_runtime_binary(&app, &settings).map(|p| ("per_user_zip".to_string(), p))
         });
 
-    match binary_info {
-        None => Ok(OllamaRuntimeDetectResult {
+    let result = match binary_info {
+        None => OllamaRuntimeDetectResult {
             found: false,
             is_serving: false,
             source: "manual".to_string(),
@@ -908,21 +948,63 @@ pub fn detect_ollama_runtime(
             version: String::new(),
             managed_pid,
             managed_alive,
-        }),
+        },
         Some((source, path)) => {
             // Phase 2: single quick ping (≤ 300 ms) — never blocks the UI thread noticeably.
             let is_serving = ping_ollama_quick(&endpoint).is_ok();
-            Ok(OllamaRuntimeDetectResult {
+            OllamaRuntimeDetectResult {
                 found: true,
                 is_serving,
                 source,
-                version: parse_ollama_version(&path),
+                version: detect_runtime_version_hint(&settings, &path),
                 path: path.to_string_lossy().to_string(),
                 managed_pid,
                 managed_alive,
-            })
+            }
         }
-    }
+    };
+    info!(
+        "detect_ollama_runtime => found={} serving={} source={} managed_alive={} endpoint={}",
+        result.found, result.is_serving, result.source, result.managed_alive, endpoint
+    );
+    update_startup_status(&app, state.inner(), |status| {
+        status.ollama_ready = result.is_serving;
+        status.ollama_starting = !result.is_serving && result.managed_alive;
+    });
+    update_ollama_runtime_diagnostics(
+        &app,
+        &settings,
+        result.found,
+        if result.is_serving {
+            if result.managed_alive {
+                "ready"
+            } else {
+                "running_externally"
+            }
+        } else if result.managed_alive {
+            "starting"
+        } else if result.found {
+            "detected"
+        } else {
+            "not_detected"
+        },
+        result.managed_pid,
+        result.is_serving,
+        if result.found {
+            None
+        } else {
+            Some("No Ollama runtime detected.".to_string())
+        },
+    );
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn detect_ollama_runtime(app: AppHandle) -> Result<OllamaRuntimeDetectResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || detect_ollama_runtime_impl(&app_handle))
+        .await
+        .map_err(|e| format!("Runtime detect task failed: {}", e))?
 }
 
 #[tauri::command]
@@ -1223,6 +1305,46 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
     let state = app.state::<AppState>();
     record_runtime_start_attempt(state.inner());
     let settings_snapshot = state.settings.lock().unwrap().clone();
+    let mark_failure = |stage: &str, message: String| {
+        record_runtime_start_failure(state.inner());
+        update_startup_status(app, state.inner(), |status| {
+            status.ollama_ready = false;
+            status.ollama_starting = false;
+        });
+        update_ollama_runtime_diagnostics(
+            app,
+            &settings_snapshot,
+            !settings_snapshot
+                .providers
+                .ollama
+                .runtime_path
+                .trim()
+                .is_empty(),
+            stage,
+            None,
+            false,
+            Some(message.clone()),
+        );
+        message
+    };
+    update_startup_status(app, state.inner(), |status| {
+        status.ollama_ready = false;
+        status.ollama_starting = true;
+    });
+    update_ollama_runtime_diagnostics(
+        app,
+        &settings_snapshot,
+        !settings_snapshot
+            .providers
+            .ollama
+            .runtime_path
+            .trim()
+            .is_empty(),
+        "starting",
+        None,
+        false,
+        None,
+    );
     let endpoint = settings_snapshot
         .providers
         .ollama
@@ -1230,28 +1352,28 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
         .trim()
         .to_string();
     if endpoint.is_empty() {
-        record_runtime_start_failure(state.inner());
-        return Err("Ollama endpoint is empty.".to_string());
+        return Err(mark_failure(
+            "invalid_configuration",
+            "Ollama endpoint is empty.".to_string(),
+        ));
     }
     if settings_snapshot.ai_fallback.strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
-        record_runtime_start_failure(state.inner());
-        return Err(
+        return Err(mark_failure(
+            "invalid_configuration",
             "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
                 .to_string(),
-        );
+        ));
     }
     if !is_local_ollama_endpoint(&endpoint) {
-        record_runtime_start_failure(state.inner());
-        return Err(
+        return Err(mark_failure(
+            "invalid_configuration",
             "Runtime autostart only supports local endpoints. Configure a local endpoint first."
                 .to_string(),
-        );
+        ));
     }
 
-    let (binary_path, source) = select_runtime_binary(app, &settings_snapshot).map_err(|err| {
-        record_runtime_start_failure(state.inner());
-        err
-    })?;
+    let (binary_path, source) = select_runtime_binary(app, &settings_snapshot)
+        .map_err(|err| mark_failure("runtime_not_found", err))?;
     let version = parse_ollama_version(&binary_path);
     if runtime_endpoint_reachable(&endpoint) {
         let ts = now_iso();
@@ -1266,6 +1388,15 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
         );
         let models = list_ollama_models(&endpoint);
         emit_runtime_health(app, endpoint.clone(), models.len(), true);
+        update_ollama_runtime_diagnostics(
+            app,
+            &settings_snapshot,
+            true,
+            "running_externally",
+            None,
+            true,
+            None,
+        );
         return Ok(OllamaRuntimeStartResult {
             pid: None,
             endpoint,
@@ -1276,15 +1407,14 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
         });
     }
 
-    let host = endpoint_host_port(&endpoint).map_err(|err| {
-        record_runtime_start_failure(state.inner());
-        err
-    })?;
+    let host =
+        endpoint_host_port(&endpoint).map_err(|err| mark_failure("invalid_configuration", err))?;
     let runtime_dep_dirs = runtime_dependency_dirs(&binary_path);
     let runners_dir = binary_path
         .parent()
         .map(|dir| dir.join("lib").join("ollama"))
         .filter(|dir| dir.is_dir());
+    terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
     let mut cmd = Command::new(&binary_path);
     cmd.arg("serve")
         .env("OLLAMA_HOST", host)
@@ -1305,13 +1435,33 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let child = cmd.spawn().map_err(|e| {
-        record_runtime_start_failure(state.inner());
-        format!("Failed to start Ollama runtime: {}", e)
+    let spawn_result = spawn_managed_child(
+        state.inner(),
+        "managed Ollama runtime",
+        &state.managed_ollama_child,
+        &mut cmd,
+    )
+    .map_err(|e| {
+        let details = e.trim_start_matches("spawn_failed: ").trim();
+        mark_failure(
+            "spawn_failed",
+            format!("Failed to start Ollama runtime (spawn_failed): {}", details),
+        )
     })?;
-    let pid = child.id();
-    // Store child handle for cleanup on app exit
-    *state.managed_ollama_child.lock().unwrap() = Some(child);
+    let pid = spawn_result.pid;
+    if !spawn_result.job_assigned {
+        update_ollama_runtime_diagnostics(
+            app,
+            &settings_snapshot,
+            true,
+            "job_assign_failed",
+            Some(pid),
+            false,
+            Some(
+                "Job assignment failed; explicit process-tree cleanup remains active.".to_string(),
+            ),
+        );
+    }
 
     let wait_started = Instant::now();
     let deadline = wait_started + Duration::from_millis(STARTUP_FOREGROUND_WAIT_MS);
@@ -1333,6 +1483,15 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
             )?;
             let models = list_ollama_models(&endpoint);
             emit_runtime_health(app, endpoint.clone(), models.len(), true);
+            update_ollama_runtime_diagnostics(
+                app,
+                &settings_snapshot,
+                true,
+                "ready",
+                Some(pid),
+                true,
+                None,
+            );
             return Ok(OllamaRuntimeStartResult {
                 pid: Some(pid),
                 endpoint,
@@ -1354,6 +1513,18 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
                 false,
             );
             emit_runtime_health(app, endpoint.clone(), 0, false);
+            update_ollama_runtime_diagnostics(
+                app,
+                &settings_snapshot,
+                true,
+                "health_timeout",
+                Some(pid),
+                false,
+                Some(format!(
+                    "Local runtime started but is not reachable yet after {} ms.",
+                    STARTUP_FOREGROUND_WAIT_MS
+                )),
+            );
             return Ok(OllamaRuntimeStartResult {
                 pid: Some(pid),
                 endpoint,
@@ -1386,15 +1557,86 @@ fn verify_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeVerifyResu
         .trim()
         .to_string();
     if endpoint.is_empty() {
+        update_ollama_runtime_diagnostics(
+            app,
+            &settings_snapshot,
+            !settings_snapshot
+                .providers
+                .ollama
+                .runtime_path
+                .trim()
+                .is_empty(),
+            "verify_failed",
+            None,
+            false,
+            Some("Ollama endpoint is empty.".to_string()),
+        );
         return Err("Ollama endpoint is empty.".to_string());
     }
-    check_strict_local_mode(&settings_snapshot)?;
+    check_strict_local_mode(&settings_snapshot).inspect_err(|err| {
+        update_ollama_runtime_diagnostics(
+            app,
+            &settings_snapshot,
+            !settings_snapshot
+                .providers
+                .ollama
+                .runtime_path
+                .trim()
+                .is_empty(),
+            "verify_failed",
+            None,
+            false,
+            Some(err.clone()),
+        );
+    })?;
     let models = list_ollama_models(&endpoint);
     if models.is_empty() {
-        ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
+        if let Err(err) = ping_ollama_quick(&endpoint) {
+            update_startup_status(app, state.inner(), |status| {
+                status.ollama_ready = false;
+                status.ollama_starting = false;
+            });
+            emit_runtime_health(app, endpoint.clone(), 0, false);
+            update_ollama_runtime_diagnostics(
+                app,
+                &settings_snapshot,
+                !settings_snapshot
+                    .providers
+                    .ollama
+                    .runtime_path
+                    .trim()
+                    .is_empty(),
+                "verify_failed",
+                None,
+                false,
+                Some(err.to_string()),
+            );
+            return Err(err.to_string());
+        }
     }
 
     emit_runtime_health(app, endpoint.clone(), models.len(), true);
+    update_startup_status(app, state.inner(), |status| {
+        if status.ollama_starting {
+            info!("Ollama startup status synced to ready via verify");
+        }
+        status.ollama_ready = true;
+        status.ollama_starting = false;
+    });
+    update_ollama_runtime_diagnostics(
+        app,
+        &settings_snapshot,
+        !settings_snapshot
+            .providers
+            .ollama
+            .runtime_path
+            .trim()
+            .is_empty(),
+        "ready",
+        managed_child_status(state.inner()).0,
+        true,
+        None,
+    );
 
     Ok(OllamaRuntimeVerifyResult {
         ok: true,

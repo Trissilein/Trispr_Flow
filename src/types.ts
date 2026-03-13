@@ -316,6 +316,11 @@ export interface VisionStreamHealth {
   source_scope: string;
   started_at_ms?: number | null;
   frame_seq: number;
+  buffered_frames: number;
+  buffered_bytes: number;
+  last_frame_timestamp_ms?: number | null;
+  last_frame_width?: number | null;
+  last_frame_height?: number | null;
 }
 
 export interface VisionSnapshotResult {
@@ -323,6 +328,12 @@ export interface VisionSnapshotResult {
   timestamp_ms: number;
   source_count: number;
   note: string;
+  frame_seq?: number | null;
+  width?: number | null;
+  height?: number | null;
+  bytes?: number | null;
+  source_scope?: string | null;
+  jpeg_base64?: string | null;
 }
 
 export interface TtsProviderInfo {
@@ -496,6 +507,7 @@ export interface Settings {
   continuous_system_silence_flush_ms?: number;
   continuous_system_hard_cut_ms?: number;
   transcribe_backend?: "whisper_cpp";
+  local_backend_preference?: "auto" | "cuda" | "vulkan";
   // Window state fields from backend
   main_window_x?: number | null;
   main_window_y?: number | null;
@@ -657,6 +669,7 @@ export interface TranscriptionRefinementStartedEvent {
   entry_id?: string;
   source: string;
   original: string;
+  model?: string;
 }
 
 export interface TranscriptionRefinedEvent {
@@ -782,6 +795,47 @@ export interface OllamaRuntimeHealth {
   ok: boolean;
   endpoint: string;
   models_count: number;
+}
+
+export interface OllamaRuntimeDiagnostics {
+  configured_path: string;
+  detected: boolean;
+  spawn_stage: string;
+  last_error: string;
+  managed_pid?: number | null;
+  endpoint: string;
+  reachable: boolean;
+}
+
+export interface WhisperRuntimeDiagnostics {
+  cli_path: string;
+  server_path: string;
+  backend_selected: string;
+  mode: string;
+  accelerator: "gpu" | "cpu" | string;
+  gpu_layers_requested?: number | null;
+  gpu_layers_applied?: number | null;
+  last_error: string;
+}
+
+export interface RuntimeDiagnostics {
+  ollama: OllamaRuntimeDiagnostics;
+  whisper: WhisperRuntimeDiagnostics;
+}
+
+export interface OverlayHealthEvent {
+  status: "recovering" | "failed";
+  attempt: number;
+  reason: string;
+}
+
+export interface StartupStatus {
+  interactive: boolean;
+  transcription_ready: boolean;
+  rules_ready: boolean;
+  ollama_ready: boolean;
+  ollama_starting: boolean;
+  degraded_reasons: string[];
 }
 
 export interface PartitionInfo {

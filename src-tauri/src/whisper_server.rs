@@ -1,12 +1,16 @@
 //! Whisper-Server persistent process manager.
 //! Keeps the Whisper model pre-loaded in GPU VRAM to eliminate per-transcription model-load overhead (~1.4s).
 
-use crate::paths::resolve_whisper_server_path;
-use crate::state::AppState;
+use crate::paths::resolve_whisper_server_path_for_backend;
+use crate::spawn_managed_child;
+use crate::state::{AppState, Settings};
+use crate::terminate_managed_child_slot;
+use crate::update_runtime_diagnostics;
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tracing::{info, warn};
 
 /// Default port for Whisper-Server HTTP API.
@@ -30,27 +34,40 @@ pub fn ping_whisper_server(port: u16) -> bool {
 /// Returns Ok if the server is running (either just started or already running).
 /// Returns Err if the binary is missing or startup failed after timeout.
 pub fn start_whisper_server(
-    _app: &AppHandle,
+    app: &AppHandle,
     state: &AppState,
     model_path: &Path,
 ) -> Result<(), String> {
-    let port = state.whisper_server_port.load(std::sync::atomic::Ordering::Relaxed);
+    let port = state
+        .whisper_server_port
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let settings = state.settings.lock().unwrap().clone();
 
     // Already running?
     if ping_whisper_server(port) {
         info!("whisper-server already running on port {}", port);
+        update_whisper_server_diagnostics(app, &settings, "server", "gpu", None);
         return Ok(());
     }
 
-    let server_path = resolve_whisper_server_path().ok_or_else(|| {
-        "whisper-server.exe not found (Phase 0 incomplete — binary not sourced)".to_string()
-    })?;
+    let server_path =
+        resolve_whisper_server_path_for_backend(Some(settings.local_backend_preference.as_str()))
+            .ok_or_else(|| {
+            let message = "whisper-server.exe not found (Phase 0 incomplete — binary not sourced)"
+                .to_string();
+            update_whisper_server_diagnostics(app, &settings, "cli", "cpu", Some(message.clone()));
+            message
+        })?;
 
     info!(
         "Starting whisper-server: {} -m {} --port {}",
         server_path.display(),
         model_path.display(),
         port
+    );
+    terminate_managed_child_slot(
+        "managed Whisper-Server runtime",
+        &state.managed_whisper_server_child,
     );
 
     let mut cmd = std::process::Command::new(&server_path);
@@ -74,24 +91,43 @@ pub fn start_whisper_server(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let child = cmd.spawn().map_err(|e| format!("Failed to spawn whisper-server: {}", e))?;
-
-    // Store the child handle for cleanup on app exit
-    *state.managed_whisper_server_child.lock().unwrap() = Some(child);
+    let spawn_result = spawn_managed_child(
+        state,
+        "managed Whisper-Server runtime",
+        &state.managed_whisper_server_child,
+        &mut cmd,
+    )
+    .map_err(|e| {
+        let message = format!("Failed to spawn whisper-server ({})", e);
+        update_whisper_server_diagnostics(app, &settings, "cli", "cpu", Some(message.clone()));
+        message
+    })?;
+    if !spawn_result.job_assigned {
+        warn!(
+            "whisper-server started without managed job assignment (pid {})",
+            spawn_result.pid
+        );
+    }
 
     // Poll for server readiness (max 8 seconds, check every 250ms)
     let deadline = std::time::Instant::now() + Duration::from_secs(8);
     while std::time::Instant::now() < deadline {
         if ping_whisper_server(port) {
             info!("whisper-server ready on port {}", port);
+            update_whisper_server_diagnostics(app, &settings, "server", "gpu", None);
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(250));
     }
 
     // Timeout — log warning but don't fail. Fallback to CLI will be used.
-    warn!(
-        "whisper-server startup timeout (8s) — will fall back to CLI transcription for now"
+    warn!("whisper-server startup timeout (8s) — will fall back to CLI transcription for now");
+    update_whisper_server_diagnostics(
+        app,
+        &settings,
+        "cli",
+        "cpu",
+        Some("server unavailable, CLI active".to_string()),
     );
     Ok(())
 }
@@ -108,8 +144,15 @@ pub fn transcribe_via_server(
     let mut body: Vec<u8> = Vec::new();
 
     // Add WAV file part
-    write_multipart_field_file(&mut body, boundary, "file", "audio.wav", "audio/wav", wav_bytes)
-        .map_err(|e| format!("Failed to encode multipart: {}", e))?;
+    write_multipart_field_file(
+        &mut body,
+        boundary,
+        "file",
+        "audio.wav",
+        "audio/wav",
+        wav_bytes,
+    )
+    .map_err(|e| format!("Failed to encode multipart: {}", e))?;
 
     // Add response-format part
     write_multipart_field_text(&mut body, boundary, "response_format", "json")
@@ -153,13 +196,18 @@ pub fn restart_whisper_server_if_running(
     state: &AppState,
     new_model_path: &Path,
 ) -> Result<(), String> {
-    let port = state.whisper_server_port.load(std::sync::atomic::Ordering::Relaxed);
+    let port = state
+        .whisper_server_port
+        .load(std::sync::atomic::Ordering::Relaxed);
 
     if ping_whisper_server(port) {
-        // Kill the current server
-        if let Some(mut child) = state.managed_whisper_server_child.lock().unwrap().take() {
-            let _ = child.kill();
-        }
+        state
+            .whisper_server_warmup_started
+            .store(false, Ordering::Relaxed);
+        terminate_managed_child_slot(
+            "managed Whisper-Server runtime",
+            &state.managed_whisper_server_child,
+        );
         std::thread::sleep(Duration::from_millis(500));
 
         // Start a new one
@@ -171,10 +219,84 @@ pub fn restart_whisper_server_if_running(
 
 /// Kill the Whisper-Server process (called on app exit).
 pub fn kill_whisper_server(state: &AppState) {
-    if let Some(mut child) = state.managed_whisper_server_child.lock().unwrap().take() {
-        let _ = child.kill();
-        let _ = child.wait();
+    state
+        .whisper_server_warmup_started
+        .store(false, Ordering::Relaxed);
+    terminate_managed_child_slot(
+        "managed Whisper-Server runtime",
+        &state.managed_whisper_server_child,
+    );
+}
+
+pub fn schedule_whisper_server_warmup(
+    app: &AppHandle,
+    state: &AppState,
+    model_path: &Path,
+    settings: &Settings,
+) {
+    let port = state.whisper_server_port.load(Ordering::Relaxed);
+    if ping_whisper_server(port) {
+        return;
     }
+    if state
+        .whisper_server_warmup_started
+        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+
+    let handle = app.clone();
+    let model_path = model_path.to_path_buf();
+    let settings_snapshot = settings.clone();
+    std::thread::spawn(move || {
+        let state = handle.state::<AppState>();
+        match start_whisper_server(&handle, state.inner(), &model_path) {
+            Ok(()) => {
+                if ping_whisper_server(port) {
+                    info!("whisper-server warmup complete");
+                } else {
+                    warn!("whisper-server warmup finished without healthy server; CLI remains primary");
+                }
+            }
+            Err(err) => {
+                warn!("whisper-server warmup failed: {}", err);
+                update_whisper_server_diagnostics(
+                    &handle,
+                    &settings_snapshot,
+                    "cli",
+                    "cpu",
+                    Some(err),
+                );
+            }
+        }
+    });
+}
+
+fn update_whisper_server_diagnostics(
+    app: &AppHandle,
+    settings: &Settings,
+    mode: &str,
+    accelerator: &str,
+    last_error: Option<String>,
+) {
+    let server_path =
+        resolve_whisper_server_path_for_backend(Some(settings.local_backend_preference.as_str()));
+    let backend = server_path
+        .as_deref()
+        .map(crate::transcription::whisper_backend_from_cli_path)
+        .unwrap_or("unknown");
+    let state = app.state::<AppState>();
+    update_runtime_diagnostics(app, state.inner(), |diagnostics| {
+        diagnostics.whisper.server_path = server_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default();
+        diagnostics.whisper.backend_selected = backend.to_string();
+        diagnostics.whisper.mode = mode.to_string();
+        diagnostics.whisper.accelerator = accelerator.to_string();
+        diagnostics.whisper.last_error = last_error.unwrap_or_default();
+    });
 }
 
 // ────────────────────────────────────────────────────────────────────────────────

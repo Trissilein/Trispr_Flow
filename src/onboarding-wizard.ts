@@ -9,6 +9,7 @@ import type { HardwareInfo } from "./types";
 
 let currentStep = 1;
 const TOTAL_STEPS = 5;
+let detectedBackendRecommendation: "auto" | "cuda" | "vulkan" = "auto";
 
 export function initOnboardingWizard(): void {
   if (!dom.onboardingWizard) return;
@@ -100,6 +101,10 @@ async function detectHardware(): Promise<void> {
       dom.wizardBackendRecommended.textContent = info.backend_recommended.toUpperCase();
       dom.wizardBackendRecommended.className = `status-pill status-pill--${info.cuda_available ? "active" : "warning"}`;
     }
+    detectedBackendRecommendation =
+      info.backend_recommended === "cuda" || info.backend_recommended === "vulkan"
+        ? info.backend_recommended
+        : "auto";
 
     if (info.update_url && dom.wizardDriverWarning) {
       dom.wizardDriverWarning.hidden = false;
@@ -114,6 +119,7 @@ async function detectHardware(): Promise<void> {
       dom.wizardBackendRecommended.textContent = "CPU (Fallback)";
       dom.wizardBackendRecommended.className = "status-pill status-pill--warning";
     }
+    detectedBackendRecommendation = "auto";
   } finally {
     if (dom.wizardLoading) dom.wizardLoading.hidden = true;
     if (dom.wizardGpuInfo) dom.wizardGpuInfo.hidden = false;
@@ -141,7 +147,8 @@ async function finishWizard(): Promise<void> {
   updateSettings({ 
     setup, 
     ai_fallback,
-    hotkey_ptt: hotkey 
+    hotkey_ptt: hotkey,
+    local_backend_preference: detectedBackendRecommendation,
   });
   await saveSettings();
 

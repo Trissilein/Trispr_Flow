@@ -9,6 +9,9 @@ import type {
   RecordingState,
   HistoryTab,
   OllamaPullProgress,
+  OverlayHealthEvent,
+  RuntimeDiagnostics,
+  StartupStatus,
 } from "./types";
 
 export let settings: Settings | null = null;
@@ -26,6 +29,9 @@ export let currentCaptureStatus: RecordingState = "idle";
 export let currentTranscribeStatus: RecordingState = "idle";
 export let currentHistoryTab: HistoryTab = "mic";
 export let dynamicSustainThreshold: number = 0.01;
+export let startupStatus: StartupStatus | null = null;
+export let runtimeDiagnostics: RuntimeDiagnostics | null = null;
+export let overlayHealth: OverlayHealthEvent | null = null;
 
 // State setters
 export function setSettings(newSettings: Settings | null) {
@@ -81,6 +87,18 @@ export function setCurrentHistoryTab(tab: HistoryTab) {
 
 export function setDynamicSustainThreshold(threshold: number) {
   dynamicSustainThreshold = threshold;
+}
+
+export function setStartupStatus(status: StartupStatus | null) {
+  startupStatus = status;
+}
+
+export function setRuntimeDiagnostics(diagnostics: RuntimeDiagnostics | null) {
+  runtimeDiagnostics = diagnostics;
+}
+
+export function setOverlayHealth(health: OverlayHealthEvent | null) {
+  overlayHealth = health;
 }
 
 // Model descriptions constant

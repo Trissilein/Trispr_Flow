@@ -1,6 +1,6 @@
 // Settings persistence and UI rendering
 import { invoke } from "@tauri-apps/api/core";
-import { settings } from "./state";
+import { overlayHealth, runtimeDiagnostics, settings, startupStatus } from "./state";
 import * as dom from "./dom-refs";
 import { thresholdToDb, VAD_DB_FLOOR } from "./ui-helpers";
 import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "./utils";
@@ -8,6 +8,7 @@ import { renderVocabulary } from "./event-listeners";
 import { DEFAULT_TOPICS, setTopicKeywords, type TopicKeywords } from "./history";
 import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
 import { getOllamaRuntimeCardState, getOllamaRuntimeVersionCatalog } from "./ollama-models";
+import { traceFrontendWarn } from "./frontend-trace";
 import { syncRefinementPipelineGraphFromSettings } from "./refinement-pipeline-graph";
 import {
   normalizeRefinementPromptPreset,
@@ -544,13 +545,20 @@ function renderRefinementPipelineNote() {
   if (!settings || !dom.refinementPipelineNote) return;
   const aiEnabled = Boolean(settings.ai_fallback?.enabled);
   const rulesEnabled = Boolean(settings.postproc_enabled);
+  const ollamaReady = Boolean(startupStatus?.ollama_ready);
+  const ollamaStarting = Boolean(startupStatus?.ollama_starting);
 
   let note = "No refinement active: raw transcription output is used.";
   if (aiEnabled && rulesEnabled) {
-    note =
-      "Primary output: AI refinement. Rule-based refiner remains active as non-AI fallback (no token/API cost).";
+    note = ollamaReady
+      ? "Primary output: AI refinement. Rule-based refiner remains active as non-AI fallback (no token/API cost)."
+      : ollamaStarting
+        ? "Primary output: Rule-based refiner while local AI starts in background."
+        : "Primary output: Rule-based refiner while local AI is unavailable.";
   } else if (aiEnabled) {
-    note = "Primary output: AI refinement only. Rule-based non-AI fallback is disabled.";
+    note = ollamaReady
+      ? "Primary output: AI refinement only. Rule-based non-AI fallback is disabled."
+      : "Primary output: Raw transcription while local AI is unavailable.";
   } else if (rulesEnabled) {
     note = "Primary output: Rule-based refiner only (non-AI, zero token/API cost).";
   }
@@ -558,6 +566,23 @@ function renderRefinementPipelineNote() {
   dom.refinementPipelineNote.textContent = note;
   dom.refinementPipelineNote.classList.toggle("is-warning", !rulesEnabled);
 }
+
+function renderOverlayHealthNote() {
+  if (!dom.overlayHealthNote) return;
+  const health = overlayHealth;
+  if (!health) {
+    dom.overlayHealthNote.hidden = true;
+    dom.overlayHealthNote.textContent = "";
+    return;
+  }
+  dom.overlayHealthNote.hidden = false;
+  dom.overlayHealthNote.textContent =
+    health.status === "failed"
+      ? `Overlay degraded after ${health.attempt} recovery attempts: ${health.reason}`
+      : `Overlay recovering (${health.attempt}): ${health.reason}`;
+}
+
+let aiRuntimeStateDriftLogged = false;
 
 export function renderAIFallbackSettingsUi() {
   if (!settings) return;
@@ -592,6 +617,31 @@ export function renderAIFallbackSettingsUi() {
 
   const runtimeCardState = getOllamaRuntimeCardState();
   const runtimeVersionOptions = getOllamaRuntimeVersionCatalog();
+  const runtimeStage = runtimeDiagnostics?.ollama?.spawn_stage?.trim() || "";
+  const runtimeHealthy =
+    runtimeCardState.healthy
+    || Boolean(runtimeDiagnostics?.ollama?.reachable)
+    || Boolean(startupStatus?.ollama_ready)
+    || runtimeStage === "ready";
+  const runtimeStarting =
+    !runtimeHealthy
+    && (
+      runtimeCardState.busy
+      || runtimeCardState.backgroundStarting
+      || Boolean(startupStatus?.ollama_starting)
+    );
+  const aiRuntimeBannerVisible = Boolean(ai?.enabled) && provider === "ollama" && runtimeStarting;
+  if (runtimeHealthy && startupStatus?.ollama_starting) {
+    if (!aiRuntimeStateDriftLogged) {
+      aiRuntimeStateDriftLogged = true;
+      traceFrontendWarn("ai.runtime_ui", "runtime healthy while startup still reports starting", {
+        startupStatus,
+        runtimeDiagnostics: runtimeDiagnostics?.ollama ?? null,
+      });
+    }
+  } else {
+    aiRuntimeStateDriftLogged = false;
+  }
   let selectedRuntimeEntry: (typeof runtimeVersionOptions)[number] | null = null;
 
   if (dom.aiFallbackEnabled) {
@@ -602,6 +652,20 @@ export function renderAIFallbackSettingsUi() {
   if (dom.aiFallbackSettings) {
     dom.aiFallbackSettings.style.display = "block";
     dom.aiFallbackSettings.classList.toggle("is-disabled", !ai?.enabled);
+    dom.aiFallbackSettings.setAttribute("aria-busy", runtimeCardState.busy ? "true" : "false");
+  }
+  if (dom.aiFallbackLoadingScrim) {
+    dom.aiFallbackLoadingScrim.hidden = !aiRuntimeBannerVisible;
+  }
+  if (dom.aiFallbackLoadingTitle) {
+    dom.aiFallbackLoadingTitle.textContent = "Local AI runtime is starting";
+  }
+  if (dom.aiFallbackLoadingDetail) {
+    const detail = runtimeCardState.detail?.trim();
+    dom.aiFallbackLoadingDetail.textContent =
+      detail && detail.length > 0
+        ? detail
+        : "Preparing Ollama in the background.";
   }
   renderCloudProviderList(fallbackProvider);
 
@@ -645,11 +709,20 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackLocalPrimaryStatus.textContent = `Runtime ${healthText} • Source: ${runtimeCardState.source} • Version: ${runtimeCardState.version} • Process: ${processText}`;
   }
   if (dom.aiFallbackLocalRuntimeNote) {
-    const baseNote = runtimeCardState.busy
+    let baseNote = runtimeCardState.busy
       ? `${runtimeCardState.detail} Running in background.`
-      : runtimeCardState.backgroundStarting
-        ? "Starting runtime in background. Controls remain available."
+      : runtimeStarting
+        ? "Starting in background. Controls remain available."
         : runtimeCardState.detail;
+    if (!runtimeCardState.busy && !runtimeCardState.healthy) {
+      if (runtimeStarting) {
+        baseNote = "Starting in background. Controls remain available.";
+      } else if (settings.postproc_enabled) {
+        baseNote = "Unavailable, fallback active.";
+      } else {
+        baseNote = "Available later.";
+      }
+    }
     dom.aiFallbackLocalRuntimeNote.textContent = runtimeCardState.compatibilityWarning
       ? `${baseNote} ${runtimeCardState.compatibilityWarning}`
       : baseNote;
@@ -1043,6 +1116,7 @@ export function renderSettings() {
   if (dom.overlayKittMaxWidthValue) dom.overlayKittMaxWidthValue.textContent = `${Math.round(settings.overlay_kitt_max_width)}`;
   if (dom.overlayKittHeight) dom.overlayKittHeight.value = Math.round(settings.overlay_kitt_height).toString();
   if (dom.overlayKittHeightValue) dom.overlayKittHeightValue.textContent = `${Math.round(settings.overlay_kitt_height)}`;
+  renderOverlayHealthNote();
 
   // Quality & Encoding settings
   if (dom.opusEnabledToggle) {

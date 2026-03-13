@@ -1159,6 +1159,9 @@
                   </label>
                 </div>
               </div>
+              <span id="overlay-health-note" class="field-hint overlay-health-note" hidden>
+                Overlay runtime is recovering.
+              </span>
               <button id="apply-overlay-btn" class="button primary" title="Apply overlay position and style settings" style="margin-top: 12px; width: 100%;">Apply Overlay Settings</button>
             </div>
           </details>
@@ -1348,6 +1351,13 @@
                   </summary>
                   <div class="expander-body">
                     <div id="ai-fallback-settings" class="panel-grid span-2">
+                      <div id="ai-fallback-loading-scrim" class="ai-fallback-loading-banner span-2" hidden aria-live="polite">
+                        <span class="bootstrap-spinner ai-fallback-loading-spinner" aria-hidden="true"></span>
+                        <div class="ai-fallback-loading-copy">
+                          <span id="ai-fallback-loading-title" class="ai-fallback-loading-title">Local AI runtime is starting</span>
+                          <span id="ai-fallback-loading-detail" class="ai-fallback-loading-detail">Preparing Ollama in the background…</span>
+                        </div>
+                      </div>
 
                       <div id="ai-fallback-provider-lanes" class="ai-provider-lanes span-2">
                         <div id="ai-fallback-local-lane" data-lane="local" class="ai-provider-lane ai-provider-lane--local" role="button" tabindex="0" aria-pressed="true">

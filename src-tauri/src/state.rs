@@ -9,10 +9,12 @@ use crate::constants::{
 use crate::history_partition::PartitionedHistory;
 use crate::modules::{
     normalize_confluence_settings, normalize_gdd_module_settings, normalize_module_settings,
-    normalize_voice_output_settings, normalize_vision_input_settings,
+    normalize_vision_input_settings, normalize_voice_output_settings,
     normalize_workflow_agent_settings, ConfluenceSettings, GddModuleSettings, ModuleSettings,
-    VoiceOutputSettings, VisionInputSettings, WorkflowAgentSettings,
+    VisionInputSettings, VoiceOutputSettings, WorkflowAgentSettings,
 };
+use crate::multimodal_io::VisionFrameBuffer;
+use crate::overlay::OverlayController;
 use crate::paths::resolve_config_path;
 use crate::transcription::TranscribeRecorder;
 use serde::{Deserialize, Serialize};
@@ -236,6 +238,10 @@ fn default_whisper_gpu_layers() -> Option<usize> {
     Some(35)
 }
 
+fn default_local_backend_preference() -> String {
+    "auto".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
@@ -366,6 +372,8 @@ pub(crate) struct Settings {
     pub(crate) continuous_system_silence_flush_ms: u64,
     pub(crate) continuous_system_hard_cut_ms: u64,
     pub(crate) transcribe_backend: String, // "whisper_cpp" | future backends
+    #[serde(default = "default_local_backend_preference")]
+    pub(crate) local_backend_preference: String, // "auto" | "cuda" | "vulkan"
     // Session consolidation settings (v0.7.0)
     pub(crate) session_idle_timeout_ms: u64, // Auto-finalize session after N ms of silence
     pub(crate) ptt_session_grouping_enabled: bool, // Group multiple PTT presses into one session
@@ -496,6 +504,7 @@ impl Default for Settings {
       continuous_system_silence_flush_ms: 1_200,
       continuous_system_hard_cut_ms: 45_000,
       transcribe_backend: "whisper_cpp".to_string(),
+      local_backend_preference: default_local_backend_preference(),
       session_idle_timeout_ms: 60_000,       // 60 seconds
       ptt_session_grouping_enabled: true,
       ptt_session_group_timeout_s: 120,      // 2 minutes
@@ -555,6 +564,23 @@ pub(crate) struct SystemClusterBuffer {
 }
 
 #[cfg(target_os = "windows")]
+pub(crate) struct ManagedProcessJob {
+    pub(crate) handle: isize,
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for ManagedProcessJob {
+    fn drop(&mut self) {
+        if self.handle == 0 {
+            return;
+        }
+        unsafe {
+            let _ = windows_sys::Win32::Foundation::CloseHandle(self.handle as _);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 impl Default for SystemClusterBuffer {
     fn default() -> Self {
         Self {
@@ -562,6 +588,77 @@ impl Default for SystemClusterBuffer {
             last_chunk_ms: 0,
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct StartupStatus {
+    pub(crate) interactive: bool,
+    pub(crate) transcription_ready: bool,
+    pub(crate) rules_ready: bool,
+    pub(crate) ollama_ready: bool,
+    pub(crate) ollama_starting: bool,
+    pub(crate) degraded_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct OllamaRuntimeDiagnostics {
+    pub(crate) configured_path: String,
+    pub(crate) detected: bool,
+    pub(crate) spawn_stage: String,
+    pub(crate) last_error: String,
+    pub(crate) managed_pid: Option<u32>,
+    pub(crate) endpoint: String,
+    pub(crate) reachable: bool,
+}
+
+impl Default for OllamaRuntimeDiagnostics {
+    fn default() -> Self {
+        Self {
+            configured_path: String::new(),
+            detected: false,
+            spawn_stage: "idle".to_string(),
+            last_error: String::new(),
+            managed_pid: None,
+            endpoint: String::new(),
+            reachable: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct WhisperRuntimeDiagnostics {
+    pub(crate) cli_path: String,
+    pub(crate) server_path: String,
+    pub(crate) backend_selected: String,
+    pub(crate) mode: String,
+    pub(crate) accelerator: String,
+    pub(crate) gpu_layers_requested: Option<usize>,
+    pub(crate) gpu_layers_applied: Option<usize>,
+    pub(crate) last_error: String,
+}
+
+impl Default for WhisperRuntimeDiagnostics {
+    fn default() -> Self {
+        Self {
+            cli_path: String::new(),
+            server_path: String::new(),
+            backend_selected: "unknown".to_string(),
+            mode: "idle".to_string(),
+            accelerator: "cpu".to_string(),
+            gpu_layers_requested: None,
+            gpu_layers_applied: None,
+            last_error: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct RuntimeDiagnostics {
+    pub(crate) ollama: OllamaRuntimeDiagnostics,
+    pub(crate) whisper: WhisperRuntimeDiagnostics,
 }
 
 pub(crate) struct AppState {
@@ -591,12 +688,19 @@ pub(crate) struct AppState {
     pub(crate) managed_whisper_server_child: Mutex<Option<std::process::Child>>,
     /// Port for Whisper-Server HTTP API (default 8178).
     pub(crate) whisper_server_port: AtomicU16,
+    pub(crate) whisper_server_warmup_started: AtomicBool,
     pub(crate) vision_stream_running: AtomicBool,
     pub(crate) vision_stream_started_ms: AtomicU64,
     pub(crate) vision_stream_frame_seq: AtomicU64,
+    pub(crate) vision_frame_buffer: Mutex<VisionFrameBuffer>,
+    pub(crate) startup_status: Mutex<StartupStatus>,
+    pub(crate) runtime_diagnostics: Mutex<RuntimeDiagnostics>,
+    pub(crate) overlay_controller: Mutex<OverlayController>,
     pub(crate) tts_speaking: AtomicBool,
     #[cfg(target_os = "windows")]
     pub(crate) system_cluster_buffer: Mutex<SystemClusterBuffer>,
+    #[cfg(target_os = "windows")]
+    pub(crate) managed_process_job: Option<ManagedProcessJob>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -722,6 +826,16 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if settings.transcribe_backend != "whisper_cpp" {
                 settings.transcribe_backend = "whisper_cpp".to_string();
             }
+            settings.local_backend_preference = match settings
+                .local_backend_preference
+                .trim()
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "cuda" => "cuda".to_string(),
+                "vulkan" => "vulkan".to_string(),
+                _ => "auto".to_string(),
+            };
             // Validate language_mode
             let valid_languages = [
                 "auto", "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "ko", "zh",

@@ -11,6 +11,27 @@ npm install
 npm run tauri dev
 ```
 
+## First run (Windows)
+Use the repo-root bootstrap entrypoint after cloning:
+
+```bat
+FIRST_RUN.bat
+```
+
+What it does:
+- runs `npm install`
+- tries to copy runtime files from an existing installed app:
+  - `%LOCALAPPDATA%\Programs\Trispr Flow\resources\bin\cuda`
+  - `%LOCALAPPDATA%\Programs\Trispr Flow\resources\bin\vulkan`
+  - `%LOCALAPPDATA%\Programs\Trispr Flow\resources\bin\quantize.exe`
+- prints runtime readiness summary for transcription and quantization
+
+Optional flags:
+- `FIRST_RUN.bat -SkipNpmInstall`
+- `FIRST_RUN.bat -SkipRuntimeHydration`
+
+If no runtime is found, the script exits with actionable instructions.
+
 Notes:
 - `npm run dev` starts the desktop app (`tauri dev`) and reuses an already running Trispr Vite server on `http://localhost:1420`.
 - `npm run dev:web` starts only the Vite frontend dev server (web preview).

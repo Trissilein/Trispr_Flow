@@ -94,11 +94,13 @@ Ollama models are downloaded separately in-app (AI Refinement -> Models).
 ```bash
 git clone https://github.com/Trissilein/Trispr_Flow.git
 cd Trispr_Flow
-npm install
-npm run tauri dev
+FIRST_RUN.bat
 ```
 
-See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for system requirements and build configuration.
+`FIRST_RUN.bat` installs npm dependencies and tries to hydrate missing local runtime files
+from an installed Trispr Flow app (`resources/bin` -> `src-tauri/bin`).
+
+See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for detailed build configuration and fallbacks.
 
 ## Active Branches
 

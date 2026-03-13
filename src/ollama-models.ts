@@ -33,6 +33,7 @@ const BACKGROUND_START_POLL_MAX_MS = 30_000;
 const RUNTIME_BUSY_START_STALE_MS = 45_000;
 const RUNTIME_DETECT_TIMEOUT_MS = 2_500;
 const RUNTIME_VERIFY_TIMEOUT_MS = 4_000;
+const RUNTIME_MODEL_INFO_TIMEOUT_MS = 2_500;
 
 type WizardStage =
   | "not_detected"
@@ -117,6 +118,7 @@ let lastAutostartWarningMs = 0;
 let runtimeBackgroundStartUntilMs = 0;
 let runtimeBackgroundStartPollInFlight: Promise<void> | null = null;
 let runtimeStateDriftLogged = false;
+let runtimeRefreshTraceSignature = "";
 
 let renderFrame: number | null = null;
 const PASSIVE_RUNTIME_REFRESH_TTL_MS = 1500;
@@ -324,6 +326,23 @@ function formatOllamaDiagnosticDetail(): string | null {
   }
 }
 
+function traceRuntimeRefreshStateIfChanged(reason: string): void {
+  const stage = runtimeDiagnostics?.ollama?.spawn_stage ?? "unknown";
+  const healthy = runtimeHealth?.ok ?? runtimeIsHealthy();
+  const error = runtimeDiagnostics?.ollama?.last_error?.trim() || "";
+  const signature = `${stage}|${healthy ? "1" : "0"}|${error}`;
+  if (signature === runtimeRefreshTraceSignature) {
+    return;
+  }
+  runtimeRefreshTraceSignature = signature;
+  traceFrontendInfo("ollama.refresh", reason, {
+    healthy,
+    stage,
+    error: error || null,
+    detail: formatOllamaDiagnosticDetail(),
+  });
+}
+
 function ollamaRuntimeFailureTitle(defaultAction: string): string {
   const stage = runtimeDiagnostics?.ollama?.spawn_stage;
   if (stage === "spawn_failed") return "Runtime start failed (spawn)";
@@ -345,12 +364,6 @@ function startRuntimeBackgroundPolling(reason: "autostart" | "manual"): void {
   runtimeBackgroundStartPollInFlight = (async () => {
     while (Date.now() < runtimeBackgroundStartUntilMs) {
       await refreshOllamaRuntimeState({ force: true, verify: true });
-      traceFrontendInfo("ollama.background", "background polling tick", {
-        reason,
-        healthy: runtimeIsHealthy(),
-        stage: runtimeDiagnostics?.ollama?.spawn_stage ?? null,
-        error: runtimeDiagnostics?.ollama?.last_error ?? null,
-      });
       if (runtimeIsHealthy()) {
         await refreshOllamaInstalledModels();
         runtimeBackgroundStartUntilMs = 0;
@@ -1350,7 +1363,11 @@ export async function refreshOllamaRuntimeState(
   const skipDetect = options.skipDetect ?? false;
   const force = options.force ?? false;
   const now = Date.now();
-  traceFrontendInfo("ollama.refresh", "refresh requested", options);
+
+  if (runtimeBackgroundStartPollInFlight && force && !verify) {
+    renderOllamaModelManager();
+    return;
+  }
 
   if (!verify && !force && now - runtimeStateLastRefreshMs < PASSIVE_RUNTIME_REFRESH_TTL_MS) {
     renderOllamaModelManager();
@@ -1358,6 +1375,9 @@ export async function refreshOllamaRuntimeState(
   }
 
   if (runtimeStateRefreshInFlight) {
+    if (!verify && !force) {
+      return;
+    }
     await runtimeStateRefreshInFlight;
     if (!verify) return;
   }
@@ -1372,7 +1392,6 @@ export async function refreshOllamaRuntimeState(
           {},
           RUNTIME_DETECT_TIMEOUT_MS
         );
-        traceFrontendInfo("ollama.refresh", "detect_ollama_runtime completed", runtimeDetect);
       } catch (error) {
         runtimeDetect = null;
         traceFrontendWarn("ollama.refresh", "detect_ollama_runtime failed", {
@@ -1390,7 +1409,6 @@ export async function refreshOllamaRuntimeState(
           {},
           RUNTIME_VERIFY_TIMEOUT_MS
         );
-        traceFrontendInfo("ollama.refresh", "verify_ollama_runtime completed", runtimeVerify);
         runtimeHealth = {
           ok: runtimeVerify.ok,
           endpoint: runtimeVerify.endpoint,
@@ -1423,15 +1441,20 @@ export async function refreshOllamaRuntimeState(
     const activeModel = settings?.ai_fallback?.model?.trim();
     if (activeModel) {
       try {
-        const modelInfo = await invoke<Record<string, unknown>>("get_ollama_model_info", {
-          model: activeModel,
-        });
+        const modelInfo = await invokeWithTimeout<Record<string, unknown>>(
+          "get_ollama_model_info",
+          { model: activeModel },
+          RUNTIME_MODEL_INFO_TIMEOUT_MS
+        );
         const requiresRaw = modelInfo?.requires;
         if (typeof requiresRaw === "string" && requiresRaw.trim()) {
           activeModelRequiredRuntime = requiresRaw.trim().replace(/^v/i, "");
         }
-      } catch {
+      } catch (error) {
         activeModelRequiredRuntime = null;
+        traceFrontendWarn("ollama.refresh", "get_ollama_model_info failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -1447,11 +1470,7 @@ export async function refreshOllamaRuntimeState(
 
     runtimeStateLastRefreshMs = Date.now();
     renderOllamaModelManager();
-    traceFrontendInfo("ollama.refresh", "refresh completed", {
-      healthy: runtimeHealth?.ok ?? false,
-      stage: runtimeDiagnostics?.ollama?.spawn_stage ?? null,
-      detail: formatOllamaDiagnosticDetail(),
-    });
+    traceRuntimeRefreshStateIfChanged("runtime state changed");
   })();
 
   runtimeStateRefreshInFlight = refreshTask;
@@ -1462,6 +1481,10 @@ export async function refreshOllamaRuntimeState(
       runtimeStateRefreshInFlight = null;
     }
   }
+}
+
+export function isRuntimeBackgroundPollingActive(): boolean {
+  return Boolean(runtimeBackgroundStartPollInFlight) || runtimeBackgroundStartUntilMs > Date.now();
 }
 
 async function handleOllamaPull(modelName: string): Promise<void> {

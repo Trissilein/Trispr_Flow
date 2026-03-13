@@ -906,28 +906,45 @@ fn get_runtime_diagnostics(app: AppHandle, state: State<'_, AppState>) -> Runtim
 }
 
 #[tauri::command]
-fn fetch_available_models(
+async fn fetch_available_models(
+    app: AppHandle,
     state: State<'_, AppState>,
     provider: String,
 ) -> Result<Vec<String>, String> {
     let provider_id = provider.trim().to_lowercase();
-
-    // Ollama: always query live /api/tags for up-to-date model list
     if provider_id == "ollama" {
         let endpoint = {
             let settings = state.settings.lock().unwrap();
             check_strict_local_mode(&settings)?;
             settings.providers.ollama.endpoint.clone()
         };
-        let models = list_ollama_models(&endpoint);
-        if models.is_empty() {
-            // Distinguish "Ollama not reachable" from "reachable but no models installed".
-            ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
-        }
-        return Ok(models);
+        return tauri::async_runtime::spawn_blocking(move || {
+            fetch_available_models_ollama_impl(endpoint)
+        })
+        .await
+        .map_err(|e| format!("Fetch available models task failed: {}", e))?;
     }
 
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || fetch_available_models_impl(&app_handle, provider))
+        .await
+        .map_err(|e| format!("Fetch available models task failed: {}", e))?
+}
+
+fn fetch_available_models_ollama_impl(endpoint: String) -> Result<Vec<String>, String> {
+    let models = list_ollama_models(&endpoint);
+    if models.is_empty() {
+        // Distinguish "Ollama not reachable" from "reachable but no models installed".
+        ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
+    }
+    Ok(models)
+}
+
+fn fetch_available_models_impl(app: &AppHandle, provider: String) -> Result<Vec<String>, String> {
+    let provider_id = provider.trim().to_lowercase();
+
     let from_settings = {
+        let state = app.state::<AppState>();
         let settings = state.settings.lock().unwrap();
         settings
             .providers
@@ -948,7 +965,7 @@ fn fetch_available_models(
 }
 
 #[tauri::command]
-fn fetch_ollama_models_with_size(
+async fn fetch_ollama_models_with_size(
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let endpoint = {
@@ -956,6 +973,12 @@ fn fetch_ollama_models_with_size(
         check_strict_local_mode(&settings)?;
         settings.providers.ollama.endpoint.clone()
     };
+    tauri::async_runtime::spawn_blocking(move || fetch_ollama_models_with_size_impl(endpoint))
+        .await
+        .map_err(|e| format!("Fetch Ollama models task failed: {}", e))?
+}
+
+fn fetch_ollama_models_with_size_impl(endpoint: String) -> Result<Vec<serde_json::Value>, String> {
     let models = list_ollama_models_with_size(&endpoint);
     if models.is_empty() {
         // Distinguish "Ollama not reachable" from "reachable but no models installed".
@@ -969,7 +992,7 @@ fn fetch_ollama_models_with_size(
 }
 
 #[tauri::command]
-fn test_provider_connection(
+async fn test_provider_connection(
     state: State<'_, AppState>,
     provider: String,
     api_key: String,
@@ -983,16 +1006,35 @@ fn test_provider_connection(
             check_strict_local_mode(&settings)?;
             settings.providers.ollama.endpoint.clone()
         };
-        ping_ollama(&endpoint).map_err(|e| e.to_string())?;
-        let models = list_ollama_models(&endpoint);
-        return Ok(serde_json::json!({
-            "ok": true,
-            "provider": "ollama",
-            "message": format!("Ollama is running. {} model(s) available.", models.len()),
-            "models": models,
-        }));
+        return tauri::async_runtime::spawn_blocking(move || {
+            test_provider_connection_ollama_impl(endpoint)
+        })
+        .await
+        .map_err(|e| format!("Test provider connection task failed: {}", e))?;
     }
 
+    tauri::async_runtime::spawn_blocking(move || {
+        test_provider_connection_impl(provider_id, api_key)
+    })
+    .await
+    .map_err(|e| format!("Test provider connection task failed: {}", e))?
+}
+
+fn test_provider_connection_ollama_impl(endpoint: String) -> Result<serde_json::Value, String> {
+    ping_ollama(&endpoint).map_err(|e| e.to_string())?;
+    let models = list_ollama_models(&endpoint);
+    Ok(serde_json::json!({
+        "ok": true,
+        "provider": "ollama",
+        "message": format!("Ollama is running. {} model(s) available.", models.len()),
+        "models": models,
+    }))
+}
+
+fn test_provider_connection_impl(
+    provider_id: String,
+    api_key: String,
+) -> Result<serde_json::Value, String> {
     let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
     provider_client
         .validate_api_key(api_key.trim())
@@ -1680,8 +1722,11 @@ fn pull_ollama_model(
 }
 
 #[tauri::command]
-fn delete_ollama_model(state: State<'_, AppState>, model: String) -> Result<(), String> {
-    use crate::ai_fallback::provider::{ollama_endpoint_candidates, validate_ollama_model_name};
+async fn delete_ollama_model(
+    state: State<'_, AppState>,
+    model: String,
+) -> Result<(), String> {
+    use crate::ai_fallback::provider::validate_ollama_model_name;
 
     validate_ollama_model_name(&model)?;
 
@@ -1691,7 +1736,15 @@ fn delete_ollama_model(state: State<'_, AppState>, model: String) -> Result<(), 
         settings.providers.ollama.endpoint.clone()
     };
 
-    let body = serde_json::json!({ "model": model });
+    tauri::async_runtime::spawn_blocking(move || delete_ollama_model_impl(endpoint, model))
+        .await
+        .map_err(|e| format!("Delete Ollama model task failed: {}", e))?
+}
+
+fn delete_ollama_model_impl(endpoint: String, model: String) -> Result<(), String> {
+    use crate::ai_fallback::provider::ollama_endpoint_candidates;
+
+    let body = serde_json::json!({ "model": model.clone() });
 
     let agent = ureq::builder()
         .timeout_connect(std::time::Duration::from_secs(5))
@@ -1725,11 +1778,11 @@ fn delete_ollama_model(state: State<'_, AppState>, model: String) -> Result<(), 
 }
 
 #[tauri::command]
-fn get_ollama_model_info(
+async fn get_ollama_model_info(
     state: State<'_, AppState>,
     model: String,
 ) -> Result<serde_json::Value, String> {
-    use crate::ai_fallback::provider::{ollama_endpoint_candidates, validate_ollama_model_name};
+    use crate::ai_fallback::provider::validate_ollama_model_name;
 
     validate_ollama_model_name(&model)?;
 
@@ -1738,6 +1791,14 @@ fn get_ollama_model_info(
         check_strict_local_mode(&settings)?;
         settings.providers.ollama.endpoint.clone()
     };
+
+    tauri::async_runtime::spawn_blocking(move || get_ollama_model_info_impl(endpoint, model))
+        .await
+        .map_err(|e| format!("Get Ollama model info task failed: {}", e))?
+}
+
+fn get_ollama_model_info_impl(endpoint: String, model: String) -> Result<serde_json::Value, String> {
+    use crate::ai_fallback::provider::ollama_endpoint_candidates;
 
     let body = serde_json::json!({ "model": model });
 
@@ -3472,7 +3533,13 @@ fn apply_model(app: AppHandle, state: State<'_, AppState>, model_id: String) -> 
 }
 
 #[tauri::command]
-fn unload_ollama_model(model: String) -> Result<(), String> {
+async fn unload_ollama_model(model: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || unload_ollama_model_impl(model))
+        .await
+        .map_err(|e| format!("Unload Ollama model task failed: {}", e))?
+}
+
+fn unload_ollama_model_impl(model: String) -> Result<(), String> {
     // Send a request to Ollama to unload the model from VRAM.
     // This uses a minimal POST to /api/generate with keep_alive: "0m" to signal
     // that the model should be unloaded immediately.
@@ -3698,7 +3765,7 @@ fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String> {
     drop(settings);
 
     if !current_ollama_model.is_empty() {
-        let _ = unload_ollama_model(current_ollama_model);
+        let _ = unload_ollama_model_impl(current_ollama_model);
     }
 
     // Kill and restart Whisper server to clear old model

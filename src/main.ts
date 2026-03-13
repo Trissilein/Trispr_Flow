@@ -119,6 +119,7 @@ import {
   autoStartLocalRuntimeIfNeeded,
   clearActiveOllamaPull,
   getOllamaRuntimeCardState,
+  isRuntimeBackgroundPollingActive,
   renderOllamaModelManager,
   refreshOllamaInstalledModels,
   refreshOllamaRuntimeState,
@@ -596,7 +597,9 @@ async function bootstrap() {
           void refreshOllamaInstalledModels();
         }
         if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshRuntimeState) {
-          void refreshOllamaRuntimeState();
+          if (!isRuntimeBackgroundPollingActive()) {
+            void refreshOllamaRuntimeState();
+          }
         }
       }
       if (OLLAMA_SETTINGS_CHANGED_POLICY.renderManager) {

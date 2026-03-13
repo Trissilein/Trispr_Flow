@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Visual feedback: VRAM purge shows "Purging..." → "Purged ✓" (2s) in status display
   - Keyboard accessible: Tab + Enter/Space to trigger VRAM purge
 
+### Changed
+
+- **Contributor Workflow**:
+  - Added a mandatory pre-push housekeeping gate in `CONTRIBUTING.md`.
+  - Housekeeping now standardizes context check, cleanup audit, doc sync, and a separate `chore(housekeeping): <scope>` commit before push.
+
 ### Fixed
 
 - **Three UX Fixes**:

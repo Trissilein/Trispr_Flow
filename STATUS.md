@@ -1,6 +1,6 @@
 # Trispr Flow - Status
 
-Last updated: 2026-03-10
+Last updated: 2026-03-13
 
 ## Snapshot
 
@@ -10,6 +10,7 @@ Last updated: 2026-03-10
 
 ## Working State
 
+- Contributor process now enforces a pre-push housekeeping gate in `CONTRIBUTING.md` ("Housekeeping (Required Before Push)").
 - Core capture/transcription pipeline is stable (PTT/VAD + system audio + export).
 - Adaptive continuous dump is unified across mic Toggle mode and system loopback.
 - Continuous dump profiles and per-source overrides are available in Settings.

@@ -1,6 +1,6 @@
 # Read Me First - Documentation Rules
 
-Last updated: 2026-02-09
+Last updated: 2026-03-13
 
 This file defines where information belongs.
 Rule: write each topic once, in one canonical file.
@@ -48,6 +48,7 @@ Rule: write each topic once, in one canonical file.
    - what changed
    - why it changed
    - verification result
+5. Before each push, run the housekeeping workflow defined in `CONTRIBUTING.md` under `Housekeeping (Required Before Push)`.
 
 ## 5) Naming and format conventions
 

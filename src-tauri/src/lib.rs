@@ -36,6 +36,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
+#[cfg(target_os = "windows")]
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::{CheckMenuItem, MenuItem};
@@ -79,6 +81,10 @@ use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, last_transcription_accelerator,
     start_transcribe_monitor, stop_transcribe_monitor, toggle_transcribe_state, transcribe_audio,
 };
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Threading::CreateMutexW;
 
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
@@ -99,6 +105,49 @@ static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
 static MAIN_WINDOW_RESTORED: AtomicBool = AtomicBool::new(false);
 static CLIPBOARD_PASTE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static LAST_GEOMETRY_SAVE_MS: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "windows")]
+static SINGLE_INSTANCE_MUTEX_HANDLE: OnceLock<isize> = OnceLock::new();
+
+fn show_already_running_dialog() {
+    eprintln!("Trispr Flow is already running. Please close the existing instance first.");
+    let _ = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title("Trispr Flow läuft bereits")
+        .set_description(
+            "Trispr Flow ist bereits gestartet.\nBitte schließe die laufende Instanz zuerst.",
+        )
+        .show();
+}
+
+#[cfg(target_os = "windows")]
+fn acquire_single_instance_guard() -> bool {
+    let mutex_name: Vec<u16> = "Global\\com.trispr.flow.single_instance"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
+    if handle == 0 {
+        warn!("Failed to create single-instance mutex; continuing without lock.");
+        return true;
+    }
+
+    let last_error = unsafe { GetLastError() };
+    if last_error == ERROR_ALREADY_EXISTS {
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+        return false;
+    }
+
+    let _ = SINGLE_INSTANCE_MUTEX_HANDLE.set(handle as isize);
+    true
+}
+
+#[cfg(not(target_os = "windows"))]
+fn acquire_single_instance_guard() -> bool {
+    true
+}
 
 pub(crate) fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -4991,6 +5040,12 @@ fn with_dialog_plugin(builder: tauri::Builder<Wry>) -> tauri::Builder<Wry> {
 pub fn run() {
     init_logging();
     load_local_env();
+
+    if !acquire_single_instance_guard() {
+        warn!("Second instance launch blocked: Trispr Flow is already running.");
+        show_already_running_dialog();
+        return;
+    }
 
     info!("Starting Trispr Flow application");
     let builder =

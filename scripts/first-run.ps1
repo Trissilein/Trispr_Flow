@@ -14,7 +14,8 @@
 #>
 param(
   [switch]$SkipNpmInstall,
-  [switch]$SkipRuntimeHydration
+  [switch]$SkipRuntimeHydration,
+  [switch]$RequireWhisperRuntime
 )
 
 $ErrorActionPreference = "Stop"
@@ -105,15 +106,31 @@ function Get-ResourceBinCandidates {
 
   if ($env:LOCALAPPDATA) {
     $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Trispr Flow\resources\bin"))
+    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Trispr_Flow\resources\bin"))
+    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\trispr-flow\resources\bin"))
+    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\com.trispr.flow\resources\bin"))
+    $candidates.Add((Join-Path $env:LOCALAPPDATA "Trispr Flow\resources\bin"))
+    $candidates.Add((Join-Path $env:LOCALAPPDATA "com.trispr.flow\resources\bin"))
+
+    $programsRoot = Join-Path $env:LOCALAPPDATA "Programs"
+    if (Test-Dir $programsRoot) {
+      Get-ChildItem -Path $programsRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match "(?i)trispr" } |
+        ForEach-Object {
+          $candidates.Add((Join-Path $_.FullName "resources\bin"))
+        }
+    }
   }
   if ($env:ProgramFiles) {
     $candidates.Add((Join-Path $env:ProgramFiles "Trispr Flow\resources\bin"))
+    $candidates.Add((Join-Path $env:ProgramFiles "Trispr_Flow\resources\bin"))
   }
   if (${env:ProgramFiles(x86)}) {
     $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Trispr Flow\resources\bin"))
+    $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Trispr_Flow\resources\bin"))
   }
 
-  return ($candidates | Select-Object -Unique)
+  return ($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
 }
 
 function Hydrate-RuntimeFromInstalledApp {
@@ -126,6 +143,7 @@ function Hydrate-RuntimeFromInstalledApp {
 
   $copiedAnything = $false
   foreach ($candidateBin in $candidates) {
+    Write-Info "Checking candidate: $candidateBin"
     if (-not (Test-Dir $candidateBin)) {
       continue
     }
@@ -189,7 +207,10 @@ if (-not $status.transcription_ready) {
   Write-Host "Action required:"
   Write-Host "  1) Install Trispr Flow once and rerun FIRST_RUN.bat (runtime files are copied from the installed app), or"
   Write-Host "  2) Build whisper.cpp and set TRISPR_WHISPER_CLI / TRISPR_WHISPER_MODEL_DIR (see docs/DEVELOPMENT.md)."
-  exit 2
+  if ($RequireWhisperRuntime) {
+    exit 2
+  }
+  Write-Warn "Continuing without local Whisper runtime (non-fatal)."
 }
 
 if (-not $status.quantize) {

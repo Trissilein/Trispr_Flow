@@ -29,8 +29,9 @@ What it does:
 Optional flags:
 - `FIRST_RUN.bat -SkipNpmInstall`
 - `FIRST_RUN.bat -SkipRuntimeHydration`
+- `FIRST_RUN.bat -RequireWhisperRuntime` (fail with exit code 2 if no local Whisper runtime is detected)
 
-If no runtime is found, the script exits with actionable instructions.
+If no runtime is found, the script prints actionable instructions and continues by default.
 
 Notes:
 - `npm run dev` starts the desktop app (`tauri dev`) and reuses an already running Trispr Vite server on `http://localhost:1420`.

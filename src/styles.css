@@ -2001,6 +2001,16 @@ button.refinement-chip:focus-visible {
   transition: all 0.15s ease;
 }
 
+.model-manager .model-item,
+.ollama-model-list .model-item {
+  padding: 12px;
+  border: 1px solid rgba(var(--accent-2-bright-rgb), 0.24);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(24, 53, 58, 0.34), rgba(22, 32, 42, 0.52));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 10px 24px rgba(0, 0, 0, 0.16);
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease, background 140ms ease, opacity 140ms ease;
+}
+
 /* Removed .model-item.selectable cursor - only Apply button switches models */
 
 .model-item.selected {
@@ -2009,6 +2019,15 @@ button.refinement-chip:focus-visible {
   border-width: 2px;
   box-shadow: 0 0 0 1px rgba(var(--accent-2-rgb), 0.15), 0 4px 12px rgba(var(--accent-2-rgb), 0.08);
   position: relative;
+}
+
+.model-manager .model-item.selected,
+.ollama-model-list .model-item.selected {
+  border-width: 1px;
+  border-color: rgba(var(--accent-2-bright-rgb), 0.62);
+  background: linear-gradient(135deg, rgba(24, 53, 58, 0.48), rgba(22, 32, 42, 0.54));
+  box-shadow: 0 0 0 1px rgba(var(--accent-2-bright-rgb), 0.18), 0 6px 18px rgba(0, 0, 0, 0.22);
+  transform: translateY(-1px);
 }
 
 .model-item.selected::before {
@@ -2022,8 +2041,21 @@ button.refinement-chip:focus-visible {
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
+.model-manager .model-item.selected::before,
+.ollama-model-list .model-item.selected::before {
+  display: none;
+}
+
 .model-item--available {
   opacity: 0.6;
+}
+
+.model-manager .model-item.model-item--available,
+.ollama-model-list .model-item.model-item--available {
+  opacity: 0.78;
+  border-color: rgba(255, 255, 255, 0.1);
+  background: linear-gradient(135deg, rgba(31, 37, 46, 0.58), rgba(24, 29, 37, 0.64));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 /* Removed hover states - models are not clickable, only Apply button is */
@@ -3458,6 +3490,30 @@ input[type="range"]:focus-visible {
   color: var(--ink-soft);
 }
 
+#pipeline-node-ai .pipeline-node-toggle[data-visual-state="off"] .toggle-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--stroke);
+}
+
+#pipeline-node-ai .pipeline-node-toggle[data-visual-state="off"] .toggle-thumb,
+#pipeline-node-ai .pipeline-node-toggle[data-visual-state="pending"] .toggle-thumb {
+  transform: translateX(0);
+}
+
+#pipeline-node-ai .pipeline-node-toggle[data-visual-state="pending"] .toggle-track {
+  background: rgba(255, 196, 92, 0.18);
+  border-color: rgba(255, 196, 92, 0.55);
+}
+
+#pipeline-node-ai .pipeline-node-toggle[data-visual-state="on"] .toggle-track {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
+#pipeline-node-ai .pipeline-node-toggle[data-visual-state="on"] .toggle-thumb {
+  transform: translateX(18px);
+}
+
 .pipeline-node-output {
   min-height: 78px;
 }
@@ -3601,6 +3657,51 @@ input[type="range"]:focus-visible {
 
 #ai-fallback-settings.is-disabled {
   opacity: 0.88;
+}
+
+#ai-fallback-settings {
+  position: relative;
+}
+
+.ai-fallback-loading-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(var(--accent-2-bright-rgb), 0.24);
+  background:
+    linear-gradient(180deg, rgba(11, 18, 29, 0.88), rgba(10, 16, 25, 0.94)),
+    radial-gradient(circle at left, rgba(var(--accent-2-bright-rgb), 0.12), transparent 56%);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+.ai-fallback-loading-banner[hidden] {
+  display: none !important;
+}
+
+.ai-fallback-loading-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ai-fallback-loading-spinner {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.ai-fallback-loading-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ai-fallback-loading-detail {
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
 }
 
 .ai-provider-lanes {
@@ -3965,10 +4066,10 @@ input[type="range"]:focus-visible {
 
 /* Ollama Model Manager Cards */
 .ollama-card {
-  border: 1px solid rgba(255, 255, 255, 0.11);
+  border: 1px solid rgba(var(--accent-2-bright-rgb), 0.24);
   border-radius: 10px;
-  background: linear-gradient(135deg, rgba(35, 41, 50, 0.62), rgba(28, 34, 44, 0.58));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  background: linear-gradient(135deg, rgba(24, 53, 58, 0.34), rgba(22, 32, 42, 0.52));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 10px 24px rgba(0, 0, 0, 0.16);
 }
 
 .ollama-card--large {
@@ -4151,6 +4252,24 @@ input[type="range"]:focus-visible {
   border-radius: 999px;
   background: #f5b342;
   box-shadow: 0 0 0 rgba(245, 179, 66, 0.4);
+  animation: runtime-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.overlay-health-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  color: #ffb86b;
+}
+
+.overlay-health-note::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ffb86b;
+  box-shadow: 0 0 0 rgba(255, 184, 107, 0.4);
   animation: runtime-dot-pulse 1.2s ease-in-out infinite;
 }
 

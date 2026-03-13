@@ -4,13 +4,14 @@ import type {
   TranscriptionRefinementStartedEvent,
   TranscriptionResultEvent,
 } from "./types";
-import { settings } from "./state";
+import { settings, startupStatus } from "./state";
 import { getOllamaRuntimeCardState } from "./ollama-models";
 import * as dom from "./dom-refs";
 
 type NodeState = "idle" | "active" | "success" | "bypassed" | "blocked" | "error" | "timeout" | "warming";
 type EdgeState = "idle" | "active" | "muted";
 type PipelinePhase = "idle" | "raw_emitted" | "refining" | "refined" | "failed" | "timed_out";
+type ToggleVisualState = "off" | "pending" | "on";
 
 type PipelineJobState = {
   jobId: string;
@@ -21,6 +22,8 @@ type PipelineJobState = {
   error: string;
 };
 
+const PIPELINE_TERMINAL_RESET_MS = 2200;
+
 const pipelineJobState: PipelineJobState = {
   jobId: "",
   source: "",
@@ -29,6 +32,41 @@ const pipelineJobState: PipelineJobState = {
   model: "",
   error: "",
 };
+
+let pipelineTerminalResetTimer: number | null = null;
+
+function clearPipelineTerminalResetTimer(): void {
+  if (pipelineTerminalResetTimer !== null) {
+    window.clearTimeout(pipelineTerminalResetTimer);
+    pipelineTerminalResetTimer = null;
+  }
+}
+
+function resetPipelineJobState(): void {
+  pipelineJobState.jobId = "";
+  pipelineJobState.source = "";
+  pipelineJobState.phase = "idle";
+  pipelineJobState.deferred = false;
+  pipelineJobState.model = "";
+  pipelineJobState.error = "";
+}
+
+function schedulePipelineTerminalReset(jobId: string): void {
+  const normalized = jobId.trim();
+  if (!normalized) return;
+  clearPipelineTerminalResetTimer();
+  pipelineTerminalResetTimer = window.setTimeout(() => {
+    pipelineTerminalResetTimer = null;
+    if (pipelineJobState.jobId.trim() !== normalized) {
+      return;
+    }
+    if (pipelineJobState.phase === "idle" || pipelineJobState.phase === "refining") {
+      return;
+    }
+    resetPipelineJobState();
+    renderRefinementPipelineGraph();
+  }, PIPELINE_TERMINAL_RESET_MS);
+}
 
 function setNodeState(nodeId: string, state: NodeState): void {
   const element = document.getElementById(nodeId);
@@ -40,6 +78,41 @@ function setEdgeState(edgeId: string, state: EdgeState): void {
   const element = document.getElementById(edgeId);
   if (!element) return;
   element.dataset.state = state;
+}
+
+function setPipelineToggleVisualState(
+  nodeId: string,
+  visualState: ToggleVisualState,
+  labelText: string,
+): void {
+  const node = document.getElementById(nodeId);
+  if (!node) return;
+  const toggle = node.querySelector<HTMLLabelElement>(".pipeline-node-toggle");
+  const label = node.querySelector<HTMLElement>(".pipeline-node-toggle-label");
+  if (toggle) {
+    toggle.dataset.visualState = visualState;
+  }
+  if (label) {
+    label.textContent = labelText;
+  }
+}
+
+function resolveConfiguredAiModel(): string {
+  const configured = settings?.ai_fallback?.model?.trim();
+  if (configured) return configured;
+  const preferred = settings?.providers?.ollama?.preferred_model?.trim();
+  if (preferred) return preferred;
+  const postproc = settings?.postproc_llm_model?.trim();
+  if (postproc) return postproc;
+  return "";
+}
+
+function setAiNodeCopy(summary: string): void {
+  const node = document.getElementById("pipeline-node-ai");
+  const body = node?.querySelector("p");
+  if (body) {
+    body.textContent = summary;
+  }
 }
 
 function isLocalAiPathEnabled(): boolean {
@@ -92,11 +165,12 @@ function updateLiveSummary(
   switch (pipelineJobState.phase) {
     case "raw_emitted":
       dom.refinementPipelineLive.textContent = localAiPath && pipelineJobState.deferred
-        ? `Job ${jobToken}: raw transcript ready, waiting for AI refinement.`
+        ? `Job ${jobToken}: raw transcript ready, waiting for AI refinement${pipelineJobState.model ? ` (${pipelineJobState.model})` : ""}.`
         : `Job ${jobToken}: raw/rule output path selected.`;
       break;
     case "refining":
-      dom.refinementPipelineLive.textContent = `Job ${jobToken}: AI refinement running in background.`;
+      dom.refinementPipelineLive.textContent =
+        `Job ${jobToken}: AI refinement running in background${pipelineJobState.model ? ` (${pipelineJobState.model})` : ""}.`;
       break;
     case "refined":
       dom.refinementPipelineLive.textContent = `Job ${jobToken}: refined output ready${pipelineJobState.model ? ` (${pipelineJobState.model})` : ""}.`;
@@ -118,9 +192,19 @@ export function renderRefinementPipelineGraph(): void {
 
   const aiEnabled = Boolean(settings?.ai_fallback?.enabled);
   const rulesEnabled = Boolean(settings?.postproc_enabled);
+  const rulesReady = startupStatus?.rules_ready ?? true;
+  const ollamaReady = Boolean(startupStatus?.ollama_ready);
+  const ollamaStarting = Boolean(startupStatus?.ollama_starting);
   const localAiPath = isLocalAiPathEnabled();
   const runtime = getOllamaRuntimeCardState();
   const hasJob = pipelineJobState.phase !== "idle" && pipelineJobState.jobId.trim().length > 0;
+  const configuredAiModel = resolveConfiguredAiModel();
+  const rulesVisualState: ToggleVisualState = rulesEnabled && rulesReady ? "on" : "off";
+  const aiVisualState: ToggleVisualState = aiEnabled && ollamaReady
+    ? "on"
+    : aiEnabled && ollamaStarting
+      ? "pending"
+      : "off";
   const aiBlocked = localAiPath
     && !runtime.healthy
     && !runtime.busy
@@ -190,6 +274,34 @@ export function renderRefinementPipelineGraph(): void {
       ? "active"
       : "idle";
 
+  setPipelineToggleVisualState(
+    "pipeline-node-rules",
+    rulesVisualState,
+    rulesEnabled && rulesReady ? "Rule-based active" : "Enable rule-based",
+  );
+  setPipelineToggleVisualState(
+    "pipeline-node-ai",
+    aiVisualState,
+    aiVisualState === "on"
+      ? "AI refinement active"
+      : aiVisualState === "pending"
+        ? "AI refinement queued"
+        : "Enable AI refinement",
+  );
+  if (pipelineJobState.phase === "refined" && pipelineJobState.model.trim()) {
+    setAiNodeCopy(`Ollama local refinement active. Model in use: ${pipelineJobState.model.trim()}.`);
+  } else if (configuredAiModel) {
+    setAiNodeCopy(
+      aiVisualState === "on"
+        ? `Ollama local refinement ready. Active model: ${configuredAiModel}.`
+        : aiVisualState === "pending"
+          ? `Ollama local refinement queued. Model selected: ${configuredAiModel}.`
+          : `Ollama local refinement for final wording. Selected model: ${configuredAiModel}.`,
+    );
+  } else {
+    setAiNodeCopy("Ollama local refinement for final wording.");
+  }
+
   setNodeState("pipeline-node-transcribe", transcribeState);
   setNodeState("pipeline-node-rules", rulesState);
   setNodeState("pipeline-node-ai", aiState);
@@ -230,6 +342,7 @@ export function handlePipelineTranscriptionResult(payload: TranscriptionResultEv
   if (!jobId) {
     return;
   }
+  clearPipelineTerminalResetTimer();
   pipelineJobState.jobId = jobId;
   pipelineJobState.source = payload.source || "";
   pipelineJobState.phase = "raw_emitted";
@@ -237,14 +350,19 @@ export function handlePipelineTranscriptionResult(payload: TranscriptionResultEv
   pipelineJobState.model = "";
   pipelineJobState.error = "";
   renderRefinementPipelineGraph();
+  if (!pipelineJobState.deferred) {
+    schedulePipelineTerminalReset(jobId);
+  }
 }
 
 export function handlePipelineRefinementStarted(payload: TranscriptionRefinementStartedEvent): void {
   const jobId = (payload?.job_id || "").trim();
   if (!jobId) return;
+  clearPipelineTerminalResetTimer();
   pipelineJobState.jobId = jobId;
   pipelineJobState.source = payload.source || pipelineJobState.source;
   pipelineJobState.phase = "refining";
+  pipelineJobState.model = payload.model || pipelineJobState.model;
   renderRefinementPipelineGraph();
 }
 
@@ -257,6 +375,7 @@ export function handlePipelineRefined(payload: TranscriptionRefinedEvent): void 
   pipelineJobState.model = payload.model || "";
   pipelineJobState.error = "";
   renderRefinementPipelineGraph();
+  schedulePipelineTerminalReset(jobId);
 }
 
 export function handlePipelineRefinementFailed(payload: TranscriptionRefinementFailedEvent): void {
@@ -267,6 +386,7 @@ export function handlePipelineRefinementFailed(payload: TranscriptionRefinementF
   pipelineJobState.phase = "failed";
   pipelineJobState.error = payload.error || "";
   renderRefinementPipelineGraph();
+  schedulePipelineTerminalReset(jobId);
 }
 
 export function handlePipelineRefinementTimeout(jobId: string): void {
@@ -275,6 +395,7 @@ export function handlePipelineRefinementTimeout(jobId: string): void {
   pipelineJobState.jobId = normalized;
   pipelineJobState.phase = "timed_out";
   renderRefinementPipelineGraph();
+  schedulePipelineTerminalReset(normalized);
 }
 
 export function handlePipelineRefinementReset(reason: string): void {
@@ -282,4 +403,14 @@ export function handlePipelineRefinementReset(reason: string): void {
   pipelineJobState.phase = "failed";
   pipelineJobState.error = reason || "refinement reset";
   renderRefinementPipelineGraph();
+  schedulePipelineTerminalReset(pipelineJobState.jobId);
+}
+
+export function reconcilePipelineRefinementIdle(reason: string): void {
+  if (!pipelineJobState.jobId) return;
+  if (pipelineJobState.phase !== "refining") return;
+  pipelineJobState.phase = "failed";
+  pipelineJobState.error = reason || "refinement finished without terminal event";
+  renderRefinementPipelineGraph();
+  schedulePipelineTerminalReset(pipelineJobState.jobId);
 }

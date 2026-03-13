@@ -1,8 +1,10 @@
-use crate::constants::{
-    TARGET_SAMPLE_RATE, VAD_MIN_CONSECUTIVE_CHUNKS, VAD_MIN_VOICE_MS,
-};
+use crate::constants::{TARGET_SAMPLE_RATE, VAD_MIN_CONSECUTIVE_CHUNKS, VAD_MIN_VOICE_MS};
 use crate::continuous_dump::{AdaptiveSegmenter, AdaptiveSegmenterConfig, SegmentFlushReason};
-use crate::overlay::{update_overlay_refining_indicator, update_overlay_state, OverlayState};
+use crate::overlay::{
+    emit_capture_idle_overlay, sync_overlay_level, update_overlay_refining_indicator,
+    update_overlay_state,
+    OverlayState,
+};
 use crate::postprocessing::process_transcript;
 use crate::state::{
     mark_entry_refinement_failed, mark_entry_refinement_started, mark_entry_refinement_success,
@@ -30,6 +32,7 @@ const REFINEMENT_WATCHDOG_TIMEOUT_MS: u64 = 90_000;
 const REFINEMENT_WATCHDOG_POLL_MS: u64 = 1_000;
 const REFINEMENT_PASTE_TIMEOUT_MS: u64 = 10_000;
 const OVERLAY_EMIT_INTERVAL_MS: u64 = 33; // ~30 FPS for smoother overlay motion
+const PTT_VAD_TAIL_MS: u64 = 150;
 static TRANSCRIPTION_JOB_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -306,45 +309,37 @@ impl OverlayLevelEmitter {
             let _ = self.app.emit("vad:dynamic-threshold", dynamic_thresh);
         }
 
-        if let Some(window) = self.app.get_webview_window("overlay") {
-            if let Ok(state) = self.app.state::<AppState>().settings.lock() {
-                let (rise_ms, fall_ms) = if state.overlay_style == "kitt" {
-                    (state.overlay_kitt_rise_ms, state.overlay_kitt_fall_ms)
+        if let Ok(state) = self.app.state::<AppState>().settings.lock() {
+            let (rise_ms, fall_ms) = if state.overlay_style == "kitt" {
+                (state.overlay_kitt_rise_ms, state.overlay_kitt_fall_ms)
+            } else {
+                (state.overlay_rise_ms, state.overlay_fall_ms)
+            };
+            // Fine-tuned coefficients:
+            // Keep slider impact noticeable but avoid "too laggy at low values".
+            let effective_rise_ms = (rise_ms as f32 * 1.15).max(20.0);
+            let effective_fall_ms = (fall_ms as f32 * 1.05).max(20.0);
+
+            let last_smooth = self.last_smooth_ms.load(Ordering::Relaxed);
+            let mut current = self.smooth_level.load(Ordering::Relaxed) as f32 / 1_000_000.0;
+            if last_smooth == 0 {
+                current = visual_target;
+            } else {
+                let dt = now_ms.saturating_sub(last_smooth).max(1) as f32;
+                let tau = if visual_target > current {
+                    effective_rise_ms
                 } else {
-                    (state.overlay_rise_ms, state.overlay_fall_ms)
+                    effective_fall_ms
                 };
-                // Fine-tuned coefficients:
-                // Keep slider impact noticeable but avoid "too laggy at low values".
-                let effective_rise_ms = (rise_ms as f32 * 1.15).max(20.0);
-                let effective_fall_ms = (fall_ms as f32 * 1.05).max(20.0);
-
-                let last_smooth = self.last_smooth_ms.load(Ordering::Relaxed);
-                let mut current = self.smooth_level.load(Ordering::Relaxed) as f32 / 1_000_000.0;
-                if last_smooth == 0 {
-                    current = visual_target;
-                } else {
-                    let dt = now_ms.saturating_sub(last_smooth).max(1) as f32;
-                    let tau = if visual_target > current {
-                        effective_rise_ms
-                    } else {
-                        effective_fall_ms
-                    };
-                    let alpha = 1.0 - (-dt / tau.max(1.0)).exp();
-                    current += (visual_target - current) * alpha;
-                }
-                self.last_smooth_ms.store(now_ms, Ordering::Relaxed);
-                let clamped = current.clamp(0.0, 1.0);
-                self.smooth_level
-                    .store((clamped * 1_000_000.0) as u64, Ordering::Relaxed);
-
-                // Use window.setOverlayLevel() for both KITT and Dot modes
-                // This delegates the rendering logic to the frontend, which is cleaner
-                let js = format!(
-                    "if(window.setOverlayLevel){{window.setOverlayLevel({});}}",
-                    clamped
-                );
-                let _ = window.eval(&js);
+                let alpha = 1.0 - (-dt / tau.max(1.0)).exp();
+                current += (visual_target - current) * alpha;
             }
+            self.last_smooth_ms.store(now_ms, Ordering::Relaxed);
+            let clamped = current.clamp(0.0, 1.0);
+            self.smooth_level
+                .store((clamped * 1_000_000.0) as u64, Ordering::Relaxed);
+
+            let _ = sync_overlay_level(&self.app, clamped as f64);
         }
     }
 }
@@ -355,12 +350,14 @@ struct VadRuntime {
     pending_flush: std::sync::atomic::AtomicBool,
     processing: std::sync::atomic::AtomicBool,
     flush_on_silence: bool,
+    hold_gate: bool,
     last_voice_ms: AtomicU64,
     start_ms: AtomicU64,
     audio_cues: bool,
     threshold_start_scaled: AtomicU64,
     threshold_sustain_scaled: AtomicU64,
     silence_ms: AtomicU64,
+    hold_tail_ms: AtomicU64,
     consecutive_above: AtomicU64,
 }
 
@@ -371,6 +368,8 @@ impl VadRuntime {
         threshold_sustain: f32,
         silence_ms: u64,
         flush_on_silence: bool,
+        hold_gate: bool,
+        hold_tail_ms: u64,
     ) -> Self {
         let start_scaled = (threshold_start.clamp(0.001, 0.5) * 1_000_000.0) as u64;
         let sustain_scaled = (threshold_sustain.clamp(0.001, 0.5) * 1_000_000.0) as u64;
@@ -379,12 +378,14 @@ impl VadRuntime {
             pending_flush: std::sync::atomic::AtomicBool::new(false),
             processing: std::sync::atomic::AtomicBool::new(false),
             flush_on_silence,
+            hold_gate,
             last_voice_ms: AtomicU64::new(0),
             start_ms: AtomicU64::new(0),
             audio_cues,
             threshold_start_scaled: AtomicU64::new(start_scaled),
             threshold_sustain_scaled: AtomicU64::new(sustain_scaled),
             silence_ms: AtomicU64::new(silence_ms.max(100)),
+            hold_tail_ms: AtomicU64::new(hold_tail_ms.max(1)),
             consecutive_above: AtomicU64::new(0),
         }
     }
@@ -413,6 +414,10 @@ impl VadRuntime {
     fn update_silence_ms(&self, silence_ms: u64) {
         self.silence_ms
             .store(silence_ms.max(100), Ordering::Relaxed);
+    }
+
+    fn hold_tail_ms(&self) -> u64 {
+        self.hold_tail_ms.load(Ordering::Relaxed)
     }
 }
 
@@ -577,8 +582,10 @@ fn handle_vad_audio(
             let include_pre_roll = warmup.len() >= vad_handle.pre_roll_min_samples
                 && rms_i16(&warmup) >= runtime.threshold_start() * VAD_PRE_ROLL_ENERGY_FACTOR;
             if let Ok(mut buf) = buffer.lock() {
-                buf.reset();
-                if include_pre_roll {
+                if buf.samples.is_empty() {
+                    buf.reset();
+                }
+                if include_pre_roll && buf.samples.is_empty() {
                     buf.samples.extend_from_slice(&warmup);
                 }
             }
@@ -593,11 +600,15 @@ fn handle_vad_audio(
     }
 
     if runtime.recording.load(Ordering::Relaxed) {
-        push_mono_samples(buffer, &mono, sample_rate);
-
         let last = runtime.last_voice_ms.load(Ordering::Relaxed);
         let start = runtime.start_ms.load(Ordering::Relaxed);
         let silence_ms = runtime.silence_ms();
+        let within_tail = now.saturating_sub(last) <= runtime.hold_tail_ms();
+
+        if level >= threshold || !runtime.hold_gate || within_tail {
+            push_mono_samples(buffer, &mono, sample_rate);
+        }
+
         if runtime.flush_on_silence
             && now.saturating_sub(last) > silence_ms
             && now.saturating_sub(start) > VAD_MIN_VOICE_MS
@@ -609,6 +620,12 @@ fn handle_vad_audio(
                     buf.drain()
                 };
                 let _ = vad_handle.tx.send(VadEvent::Finalize(samples));
+            }
+        } else if runtime.hold_gate && now.saturating_sub(last) > runtime.hold_tail_ms() {
+            runtime.recording.store(false, Ordering::Relaxed);
+            runtime.consecutive_above.store(0, Ordering::Relaxed);
+            if let Ok(settings) = vad_handle.app.state::<AppState>().settings.lock() {
+                let _ = emit_capture_idle_overlay(&vad_handle.app, &settings);
             }
         }
     } else if vad_handle.pre_roll_samples > 0 {
@@ -928,9 +945,16 @@ pub(crate) fn sync_ptt_hot_standby(
     if should_run {
         if let Err(err) = start_ptt_hot_standby(app, state, settings) {
             warn!("Failed to start PTT standby stream: {}", err);
+        } else {
+            let recorder = state.recorder.lock().unwrap();
+            if !recorder.active && !recorder.transcribing {
+                drop(recorder);
+                let _ = emit_capture_idle_overlay(app, settings);
+            }
         }
     } else {
         stop_ptt_hot_standby(state);
+        let _ = emit_capture_idle_overlay(app, settings);
     }
 }
 
@@ -1203,6 +1227,15 @@ pub(crate) fn maybe_spawn_ai_refinement(
     if settings.ai_fallback.provider != "ollama" {
         return;
     }
+    if !app_handle
+        .state::<AppState>()
+        .startup_status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .ollama_ready
+    {
+        return;
+    }
 
     let settings_snapshot = settings.clone();
 
@@ -1254,6 +1287,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
                 "entry_id": entry_id.clone(),
                 "source": source.clone(),
                 "original": text.clone(),
+                "model": setup.model.clone(),
             }),
         );
 
@@ -1275,7 +1309,10 @@ pub(crate) fn maybe_spawn_ai_refinement(
             }
         }
 
-        match setup.provider.refine_transcript(&text, &setup.model, &setup.options, &setup.api_key) {
+        match setup
+            .provider
+            .refine_transcript(&text, &setup.model, &setup.options, &setup.api_key)
+        {
             Ok(result) => {
                 if let Some(entry_id_value) = entry_id.as_deref() {
                     let _ = mark_entry_refinement_success(
@@ -1351,44 +1388,48 @@ fn emit_refinement_activity(app_handle: &AppHandle, active_count: usize, reason:
 }
 
 fn schedule_refinement_watchdog(app_handle: AppHandle, generation: u64) {
-    thread::spawn(move || {
-        loop {
-            thread::sleep(Duration::from_millis(REFINEMENT_WATCHDOG_POLL_MS));
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_millis(REFINEMENT_WATCHDOG_POLL_MS));
 
-            let state = app_handle.state::<AppState>();
-            if state.refinement_watchdog_generation.load(Ordering::SeqCst) != generation {
-                return;
-            }
-
-            let active_count = state.refinement_active_count.load(Ordering::SeqCst);
-            if active_count == 0 {
-                return;
-            }
-
-            let last_change_ms = state.refinement_last_change_ms.load(Ordering::SeqCst);
-            let now_ms = crate::util::now_ms();
-            if now_ms.saturating_sub(last_change_ms) <= REFINEMENT_WATCHDOG_TIMEOUT_MS {
-                continue;
-            }
-
-            state.refinement_active_count.store(0, Ordering::SeqCst);
-            state.refinement_watchdog_generation.fetch_add(1, Ordering::SeqCst);
-            state.refinement_last_change_ms.store(now_ms, Ordering::SeqCst);
-            let _ = update_overlay_refining_indicator(&app_handle, false);
-            emit_refinement_activity(&app_handle, 0, "watchdog_reset");
-            warn!(
-                "Refinement watchdog reset triggered after {}ms without lifecycle completion",
-                REFINEMENT_WATCHDOG_TIMEOUT_MS
-            );
+        let state = app_handle.state::<AppState>();
+        if state.refinement_watchdog_generation.load(Ordering::SeqCst) != generation {
             return;
         }
+
+        let active_count = state.refinement_active_count.load(Ordering::SeqCst);
+        if active_count == 0 {
+            return;
+        }
+
+        let last_change_ms = state.refinement_last_change_ms.load(Ordering::SeqCst);
+        let now_ms = crate::util::now_ms();
+        if now_ms.saturating_sub(last_change_ms) <= REFINEMENT_WATCHDOG_TIMEOUT_MS {
+            continue;
+        }
+
+        state.refinement_active_count.store(0, Ordering::SeqCst);
+        state
+            .refinement_watchdog_generation
+            .fetch_add(1, Ordering::SeqCst);
+        state
+            .refinement_last_change_ms
+            .store(now_ms, Ordering::SeqCst);
+        let _ = update_overlay_refining_indicator(&app_handle, false);
+        emit_refinement_activity(&app_handle, 0, "watchdog_reset");
+        warn!(
+            "Refinement watchdog reset triggered after {}ms without lifecycle completion",
+            REFINEMENT_WATCHDOG_TIMEOUT_MS
+        );
+        return;
     });
 }
 
 pub(crate) fn force_reset_refinement_activity(app_handle: &AppHandle, reason: &str) {
     let state = app_handle.state::<AppState>();
     state.refinement_active_count.store(0, Ordering::SeqCst);
-    state.refinement_watchdog_generation.fetch_add(1, Ordering::SeqCst);
+    state
+        .refinement_watchdog_generation
+        .fetch_add(1, Ordering::SeqCst);
     state
         .refinement_last_change_ms
         .store(crate::util::now_ms(), Ordering::SeqCst);
@@ -1447,7 +1488,9 @@ fn end_refinement_activity(app_handle: &AppHandle) {
                 .store(crate::util::now_ms(), Ordering::SeqCst);
             emit_refinement_activity(app_handle, next, "finished");
             if next == 0 {
-                state.refinement_watchdog_generation.fetch_add(1, Ordering::SeqCst);
+                state
+                    .refinement_watchdog_generation
+                    .fetch_add(1, Ordering::SeqCst);
                 let _ = update_overlay_refining_indicator(app_handle, false);
             }
             return;
@@ -1567,8 +1610,13 @@ fn process_toggle_segment(
         let _ = app_handle.emit("capture:state", "recording");
         let _ = update_overlay_state(app_handle, OverlayState::Recording);
     } else {
-        let _ = app_handle.emit("capture:state", "idle");
-        let _ = update_overlay_state(app_handle, OverlayState::Idle);
+        let settings = app_handle
+            .state::<AppState>()
+            .settings
+            .lock()
+            .unwrap()
+            .clone();
+        let _ = emit_capture_idle_overlay(app_handle, &settings);
     }
 }
 
@@ -1768,8 +1816,7 @@ pub(crate) fn stop_toggle_recording_async(app: AppHandle, state: &State<'_, AppS
             let _ = handle.join();
         }
 
-        let _ = app_handle.emit("capture:state", "idle");
-        let _ = update_overlay_state(&app_handle, OverlayState::Idle);
+        let _ = emit_capture_idle_overlay(&app_handle, &settings);
         if settings.audio_cues {
             let _ = app_handle.emit("audio:cue", "stop");
         }
@@ -1832,6 +1879,8 @@ pub(crate) fn start_vad_monitor(
         settings.vad_threshold_sustain,
         silence_ms,
         flush_on_silence,
+        ptt_threshold_gate,
+        PTT_VAD_TAIL_MS,
     ));
     let vad_handle = VadHandle {
         runtime: vad_runtime.clone(),
@@ -1930,8 +1979,7 @@ pub(crate) fn start_vad_monitor(
     recorder.vad_tx = Some(vad_tx);
     recorder.vad_runtime = Some(vad_runtime);
 
-    let _ = app.emit("capture:state", "idle");
-    let _ = update_overlay_state(app, OverlayState::Idle);
+    let _ = emit_capture_idle_overlay(app, settings);
     Ok(())
 }
 
@@ -1954,8 +2002,11 @@ pub(crate) fn stop_vad_monitor(app: &AppHandle, state: &State<'_, AppState>) {
     let should_flush_on_stop = vad_runtime
         .as_ref()
         .map(|runtime| {
-            runtime.recording.load(Ordering::Relaxed)
-                && !runtime.pending_flush.load(Ordering::Relaxed)
+            !runtime.pending_flush.load(Ordering::Relaxed)
+                && buffer
+                    .lock()
+                    .map(|guard| !guard.samples.is_empty())
+                    .unwrap_or(false)
         })
         .unwrap_or(false);
 
@@ -1992,8 +2043,8 @@ pub(crate) fn stop_vad_monitor(app: &AppHandle, state: &State<'_, AppState>) {
 
     drop(vad_tx);
 
-    let _ = app.emit("capture:state", "idle");
-    let _ = update_overlay_state(app, OverlayState::Idle);
+    let settings = state.settings.lock().unwrap().clone();
+    let _ = emit_capture_idle_overlay(app, &settings);
 }
 
 fn process_vad_segment(
@@ -2013,19 +2064,21 @@ fn process_vad_segment(
 
     let min_samples = mic_min_samples();
     if samples.len() < min_samples {
-        let _ = app_handle.emit("capture:state", "idle");
-        let _ = update_overlay_state(&app_handle, OverlayState::Idle);
-        let _ = app_handle.emit(
-            "transcription:error",
-            format!(
-                "Audio too short ({} ms). Speak a bit longer.",
-                (samples.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64)
-            ),
-        );
+        let runtime_settings = state.settings.lock().unwrap().clone();
+        let _ = emit_capture_idle_overlay(&app_handle, &runtime_settings);
         runtime.processing.store(false, Ordering::Relaxed);
         runtime.pending_flush.store(false, Ordering::Relaxed);
         if let Ok(mut recorder) = state.recorder.lock() {
             recorder.transcribing = false;
+        }
+        if !(settings.mode == "ptt" && settings.ptt_use_vad) {
+            let _ = app_handle.emit(
+                "transcription:error",
+                format!(
+                    "Audio too short ({} ms). Speak a bit longer.",
+                    (samples.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64)
+                ),
+            );
         }
         return;
     }
@@ -2049,8 +2102,8 @@ fn process_vad_segment(
         let _ = app_handle.emit("capture:state", "recording");
         let _ = update_overlay_state(&app_handle, OverlayState::Recording);
     } else {
-        let _ = app_handle.emit("capture:state", "idle");
-        let _ = update_overlay_state(&app_handle, OverlayState::Idle);
+        let runtime_settings = state.settings.lock().unwrap().clone();
+        let _ = emit_capture_idle_overlay(&app_handle, &runtime_settings);
     }
 
     if settings.audio_cues {
@@ -2109,8 +2162,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         }
         if let Some(join_handle) = proc_join_handle {
             let _ = join_handle.join();
-            let _ = app_handle.emit("capture:state", "idle");
-            let _ = update_overlay_state(&app_handle, OverlayState::Idle);
+            let _ = emit_capture_idle_overlay(&app_handle, &settings);
             if settings.audio_cues {
                 let _ = app_handle.emit("audio:cue", "stop");
             }
@@ -2124,8 +2176,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
 
         let min_samples = mic_min_samples();
         if samples.len() < min_samples {
-            let _ = app_handle.emit("capture:state", "idle");
-            let _ = update_overlay_state(&app_handle, OverlayState::Idle);
+            let _ = emit_capture_idle_overlay(&app_handle, &settings);
             let _ = app_handle.emit(
                 "transcription:error",
                 format!(
@@ -2158,8 +2209,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         recorder.transcribing = false;
         drop(recorder);
 
-        let _ = app_handle.emit("capture:state", "idle");
-        let _ = update_overlay_state(&app_handle, OverlayState::Idle);
+        let _ = emit_capture_idle_overlay(&app_handle, &settings);
 
         if settings.audio_cues {
             let _ = app_handle.emit("audio:cue", "stop");

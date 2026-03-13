@@ -116,11 +116,20 @@ function updateRefiningAppearance() {
   refineIndicator.style.setProperty("--refine-range-scale", `${(refiningRangePercent / 100).toFixed(2)}`);
 }
 
+function resetOverlayGeometryToMinimum() {
+  dot.style.width = `${dotMinRadius * 2}px`;
+  dot.style.height = `${dotMinRadius * 2}px`;
+  kitt.style.width = `${kittMinWidth}px`;
+}
+
 // --- Public API called from Rust via window.eval() ---
 
 window.setOverlayState = function(state) {
   isActive = (state === "recording" || state === "transcribing");
   container.dataset.state = state;
+  if (state !== "recording") {
+    resetOverlayGeometryToMinimum();
+  }
   updateOpacity();
   updateRefiningIndicator();
 };
@@ -142,6 +151,9 @@ window.setOverlayOpacity = function(active, inactive) {
 window.setOverlayStyle = function(style) {
   currentStyle = style;
   container.dataset.style = style;
+  if (!isActive || container.dataset.state !== "recording") {
+    resetOverlayGeometryToMinimum();
+  }
 };
 
 window.setOverlayRefining = function(active) {
@@ -203,6 +215,10 @@ window.setDotDimensions = function(minRadius, maxRadius) {
 };
 
 window.setOverlayLevel = function(level) {
+  if (container.dataset.state !== "recording") {
+    resetOverlayGeometryToMinimum();
+    return;
+  }
   const clamped = Math.max(0, Math.min(1, level));
   if (currentStyle === "kitt") {
     const widthRaw = kittMinWidth + (kittMaxWidth - kittMinWidth) * clamped;

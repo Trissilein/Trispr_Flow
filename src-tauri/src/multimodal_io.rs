@@ -1,8 +1,11 @@
+use base64::Engine;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 #[cfg(target_os = "windows")]
-use std::process::Command;
+use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionSourceInfo {
@@ -19,6 +22,11 @@ pub struct VisionStreamHealth {
     pub source_scope: String,
     pub started_at_ms: Option<u64>,
     pub frame_seq: u64,
+    pub buffered_frames: usize,
+    pub buffered_bytes: usize,
+    pub last_frame_timestamp_ms: Option<u64>,
+    pub last_frame_width: Option<u32>,
+    pub last_frame_height: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +35,100 @@ pub struct VisionSnapshotResult {
     pub timestamp_ms: u64,
     pub source_count: usize,
     pub note: String,
+    pub frame_seq: Option<u64>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub bytes: Option<usize>,
+    pub source_scope: Option<String>,
+    pub jpeg_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VisionFrameMeta {
+    pub seq: u64,
+    pub timestamp_ms: u64,
+    pub source_scope: String,
+    pub source_count: usize,
+    pub width: u32,
+    pub height: u32,
+    pub bytes: usize,
+    pub buffered_frames: usize,
+    pub buffered_bytes: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct VisionFrame {
+    pub seq: u64,
+    pub timestamp_ms: u64,
+    pub source_scope: String,
+    pub source_count: usize,
+    pub width: u32,
+    pub height: u32,
+    pub jpeg_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct VisionBufferStats {
+    pub buffered_frames: usize,
+    pub buffered_bytes: usize,
+    pub last_frame_timestamp_ms: Option<u64>,
+    pub last_frame_width: Option<u32>,
+    pub last_frame_height: Option<u32>,
+}
+
+#[derive(Debug, Default)]
+pub struct VisionFrameBuffer {
+    frames: VecDeque<VisionFrame>,
+    total_bytes: usize,
+}
+
+impl VisionFrameBuffer {
+    pub fn clear(&mut self) {
+        self.frames.clear();
+        self.total_bytes = 0;
+    }
+
+    pub fn latest(&self) -> Option<&VisionFrame> {
+        self.frames.back()
+    }
+
+    pub fn stats(&self) -> VisionBufferStats {
+        VisionBufferStats {
+            buffered_frames: self.frames.len(),
+            buffered_bytes: self.total_bytes,
+            last_frame_timestamp_ms: self.frames.back().map(|frame| frame.timestamp_ms),
+            last_frame_width: self.frames.back().map(|frame| frame.width),
+            last_frame_height: self.frames.back().map(|frame| frame.height),
+        }
+    }
+
+    pub fn push(&mut self, frame: VisionFrame, max_frames: usize) -> VisionFrameMeta {
+        self.total_bytes += frame.jpeg_bytes.len();
+        self.frames.push_back(frame);
+
+        let keep_frames = max_frames.max(1);
+        while self.frames.len() > keep_frames {
+            if let Some(removed) = self.frames.pop_front() {
+                self.total_bytes = self.total_bytes.saturating_sub(removed.jpeg_bytes.len());
+            }
+        }
+
+        let latest = self
+            .frames
+            .back()
+            .expect("vision buffer just received a frame");
+        VisionFrameMeta {
+            seq: latest.seq,
+            timestamp_ms: latest.timestamp_ms,
+            source_scope: latest.source_scope.clone(),
+            source_count: latest.source_count,
+            width: latest.width,
+            height: latest.height,
+            bytes: latest.jpeg_bytes.len(),
+            buffered_frames: self.frames.len(),
+            buffered_bytes: self.total_bytes,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +158,189 @@ pub struct TtsSpeakResult {
     pub provider_used: String,
     pub accepted: bool,
     pub message: String,
+}
+
+pub fn vision_snapshot_from_frame(frame: &VisionFrame, note: String) -> VisionSnapshotResult {
+    VisionSnapshotResult {
+        captured: true,
+        timestamp_ms: frame.timestamp_ms,
+        source_count: frame.source_count,
+        note,
+        frame_seq: Some(frame.seq),
+        width: Some(frame.width),
+        height: Some(frame.height),
+        bytes: Some(frame.jpeg_bytes.len()),
+        source_scope: Some(frame.source_scope.clone()),
+        jpeg_base64: Some(base64::engine::general_purpose::STANDARD.encode(&frame.jpeg_bytes)),
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy)]
+struct CaptureRect {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_capture_rect(
+    app: &AppHandle,
+    source_scope: &str,
+) -> Result<(CaptureRect, usize), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window is unavailable for vision capture.".to_string())?;
+
+    match source_scope {
+        "active_monitor" | "active_window" => {
+            let monitor = window
+                .current_monitor()
+                .map_err(|e| e.to_string())?
+                .or_else(|| window.primary_monitor().ok().flatten())
+                .ok_or_else(|| "No monitor is available for vision capture.".to_string())?;
+            let pos = monitor.position();
+            let size = monitor.size();
+            Ok((
+                CaptureRect {
+                    x: pos.x,
+                    y: pos.y,
+                    width: size.width.max(1),
+                    height: size.height.max(1),
+                },
+                1,
+            ))
+        }
+        _ => {
+            let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+            if monitors.is_empty() {
+                return Err("No monitors are available for vision capture.".to_string());
+            }
+
+            let mut min_x = i32::MAX;
+            let mut min_y = i32::MAX;
+            let mut max_x = i32::MIN;
+            let mut max_y = i32::MIN;
+            for monitor in &monitors {
+                let pos = monitor.position();
+                let size = monitor.size();
+                min_x = min_x.min(pos.x);
+                min_y = min_y.min(pos.y);
+                max_x = max_x.max(pos.x.saturating_add(size.width as i32));
+                max_y = max_y.max(pos.y.saturating_add(size.height as i32));
+            }
+
+            Ok((
+                CaptureRect {
+                    x: min_x,
+                    y: min_y,
+                    width: (max_x - min_x).max(1) as u32,
+                    height: (max_y - min_y).max(1) as u32,
+                },
+                monitors.len(),
+            ))
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn capture_rect_jpeg(
+    rect: CaptureRect,
+    max_width: u16,
+    jpeg_quality: u8,
+) -> Result<Vec<u8>, String> {
+    let max_width = max_width.clamp(640, 3840);
+    let jpeg_quality = jpeg_quality.clamp(40, 95);
+    let script = format!(
+        r#"
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
+$rect = New-Object System.Drawing.Rectangle({x}, {y}, {width}, {height})
+$bitmap = New-Object System.Drawing.Bitmap($rect.Width, $rect.Height)
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$graphics.CopyFromScreen($rect.Location, [System.Drawing.Point]::Empty, $rect.Size)
+$image = $bitmap
+if ($bitmap.Width -gt {max_width}) {{
+    $scaledWidth = {max_width}
+    $scaledHeight = [int][Math]::Round(($bitmap.Height * $scaledWidth) / [double]$bitmap.Width)
+    $resized = New-Object System.Drawing.Bitmap($scaledWidth, $scaledHeight)
+    $graphics2 = [System.Drawing.Graphics]::FromImage($resized)
+    $graphics2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $graphics2.DrawImage($bitmap, 0, 0, $scaledWidth, $scaledHeight)
+    $graphics2.Dispose()
+    $image = $resized
+}}
+$stream = New-Object System.IO.MemoryStream
+$codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object {{ $_.MimeType -eq 'image/jpeg' }} | Select-Object -First 1
+$encoder = [System.Drawing.Imaging.Encoder]::Quality
+$parameters = New-Object System.Drawing.Imaging.EncoderParameters(1)
+$parameters.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter($encoder, [long]{jpeg_quality})
+$image.Save($stream, $codec, $parameters)
+[Console]::Out.Write([Convert]::ToBase64String($stream.ToArray()))
+$stream.Dispose()
+if ($image -ne $bitmap) {{ $image.Dispose() }}
+$graphics.Dispose()
+$bitmap.Dispose()
+"#,
+        x = rect.x,
+        y = rect.y,
+        width = rect.width,
+        height = rect.height,
+        max_width = max_width,
+        jpeg_quality = jpeg_quality
+    );
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .map_err(|error| format!("Failed to start vision capture: {error}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Vision capture failed with status {:?}: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|error| format!("Vision capture returned invalid UTF-8: {error}"))?;
+    base64::engine::general_purpose::STANDARD
+        .decode(stdout.trim())
+        .map_err(|error| format!("Vision capture returned invalid base64: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+pub fn capture_vision_frame(
+    app: &AppHandle,
+    source_scope: &str,
+    max_width: u16,
+    jpeg_quality: u8,
+) -> Result<VisionFrame, String> {
+    let (rect, source_count) = resolve_capture_rect(app, source_scope)?;
+    let jpeg_bytes = capture_rect_jpeg(rect, max_width, jpeg_quality)?;
+    let image = image::load_from_memory(&jpeg_bytes)
+        .map_err(|error| format!("Vision capture decode failed: {error}"))?;
+
+    Ok(VisionFrame {
+        seq: 0,
+        timestamp_ms: crate::util::now_ms(),
+        source_scope: source_scope.to_string(),
+        source_count,
+        width: image.width(),
+        height: image.height(),
+        jpeg_bytes,
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn capture_vision_frame(
+    _app: &tauri::AppHandle,
+    _source_scope: &str,
+    _max_width: u16,
+    _jpeg_quality: u8,
+) -> Result<VisionFrame, String> {
+    Err("Vision capture is currently available on Windows only.".to_string())
 }
 
 pub fn list_tts_providers() -> Vec<TtsProviderInfo> {
@@ -317,13 +602,10 @@ pub fn speak_piper(
     } else {
         // Auto-discover: take the first .onnx in the bundled/configured voices dir.
         let voices = list_piper_voices("");
-        voices
-            .into_iter()
-            .next()
-            .map(|v| v.id)
-            .ok_or_else(|| {
-                "No Piper voice model found. Run scripts/setup-piper.ps1 or set piper_model_path.".to_string()
-            })?
+        voices.into_iter().next().map(|v| v.id).ok_or_else(|| {
+            "No Piper voice model found. Run scripts/setup-piper.ps1 or set piper_model_path."
+                .to_string()
+        })?
     };
     let model_path = resolved_model.as_str();
 
@@ -383,8 +665,7 @@ pub fn speak_piper(
 fn play_wav_blocking(path: &std::path::Path, volume: f32) -> Result<(), String> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-    let reader =
-        hound::WavReader::open(path).map_err(|e| format!("Cannot read WAV: {e}"))?;
+    let reader = hound::WavReader::open(path).map_err(|e| format!("Cannot read WAV: {e}"))?;
     let spec = reader.spec();
 
     let vol = volume.clamp(0.0, 1.0);
@@ -447,4 +728,51 @@ fn play_wav_blocking(path: &std::path::Path, volume: f32) -> Result<(), String> 
 
     drop(stream);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{VisionFrame, VisionFrameBuffer};
+
+    fn frame(seq: u64, bytes: usize) -> VisionFrame {
+        VisionFrame {
+            seq,
+            timestamp_ms: seq * 100,
+            source_scope: "all_monitors".to_string(),
+            source_count: 1,
+            width: 640,
+            height: 360,
+            jpeg_bytes: vec![7; bytes],
+        }
+    }
+
+    #[test]
+    fn vision_buffer_evicts_oldest_frames() {
+        let mut buffer = VisionFrameBuffer::default();
+
+        let meta_a = buffer.push(frame(1, 10), 2);
+        let meta_b = buffer.push(frame(2, 20), 2);
+        let meta_c = buffer.push(frame(3, 30), 2);
+
+        assert_eq!(meta_a.buffered_frames, 1);
+        assert_eq!(meta_b.buffered_frames, 2);
+        assert_eq!(meta_c.buffered_frames, 2);
+        assert_eq!(meta_c.buffered_bytes, 50);
+        assert_eq!(buffer.latest().map(|latest| latest.seq), Some(3));
+        assert_eq!(buffer.stats().buffered_frames, 2);
+        assert_eq!(buffer.stats().buffered_bytes, 50);
+    }
+
+    #[test]
+    fn vision_buffer_clear_releases_stats() {
+        let mut buffer = VisionFrameBuffer::default();
+        buffer.push(frame(1, 42), 10);
+        buffer.clear();
+
+        let stats = buffer.stats();
+        assert_eq!(stats.buffered_frames, 0);
+        assert_eq!(stats.buffered_bytes, 0);
+        assert!(stats.last_frame_timestamp_ms.is_none());
+        assert!(buffer.latest().is_none());
+    }
 }

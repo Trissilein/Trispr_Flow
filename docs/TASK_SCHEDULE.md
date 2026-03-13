@@ -1,6 +1,6 @@
 # Task Schedule - Trispr Flow
 
-Last updated: 2026-03-05
+Last updated: 2026-03-13
 
 ## Overview
 
@@ -348,6 +348,8 @@ Goal: Ensure a smooth, robust first-time user experience and fix critical startu
 | Q4b | Hardware Detection Spinner | Low | Q4 | DONE | Added visual loading spinner and state management during GPU detection. |
 | Q5 | UI Polishing (Wizard) | Low | Q2 | DONE | Added styling for hotkey box and finish animation in styles-modern.css. |
 | Q6 | Robustness Audit (Backend) | Medium | - | DONE | Verified atomic settings save and non-blocking GPU detection in Rust. |
+| Q7 | Startup diagnostics + staged bootstrap hardening | High | Q6 | DONE | Added startup/runtime diagnostics model + frontend staged bootstrap with readiness gating and runtime drift handling. |
+| Q8 | Overlay + refinement lifecycle resilience | High | Q7 | DONE | Added overlay health signaling and refinement activity reconciliation to prevent stuck UI states after timeout/watchdog paths. |
 
 ---
 
@@ -364,7 +366,11 @@ Goal: Add optional capability modules `input_vision` and `output_voice_tts` and 
 | N2 | Module registry + permissions for Vision/TTS | Medium | N1 | DONE | Added `input_vision` and `output_voice_tts` manifests and permissions (`screen_capture`, `audio_output`). |
 | N3 | Vision command surface | High | N2 | DONE | Added `list_screen_sources`, `start_vision_stream`, `stop_vision_stream`, `get_vision_stream_health`, `capture_vision_snapshot`. |
 | N4 | TTS command surface | High | N2 | DONE | Added `list_tts_providers`, `list_tts_voices`, `speak_tts`, `stop_tts`, `test_tts_provider`. |
-| N5 | Vision runtime hardening | High | N3 | PLANNED | Replace metadata-only stream with production screen-frame pipeline and bounded RAM ring buffer policy enforcement. |
+| N5 | Vision runtime hardening | High | N3 | IN PROGRESS | Executed via `N5+Q Stabilization Packet` in three delivery packets (P1-P3). |
+| N5a | Runtime diagnostics + startup status event surface | High | N3 | DONE | Added `get_startup_status`, `get_runtime_diagnostics`, `startup:status`, `runtime:diagnostics`, and frontend/runtime integration. |
+| N5b | Overlay health + resilient state replay | High | N5a | DONE | Added overlay controller recovery path and `overlay:health` signaling with frontend diagnostics hints. |
+| N5c | Vision frame pipeline + bounded RAM buffer | High | N5a | DONE | Replaced metadata-only stream with capture pipeline (`capture_vision_frame`) and in-memory ring buffer stats/telemetry. |
+| N5d | Vision/diagnostics regression validation packet | Medium | N5b, N5c | IN PROGRESS | Build/check gates are green; packet-level regression scenarios are being finalized before full N12/N13 test expansion. |
 | N6 | Local custom TTS backend hardening | High | N4 | DONE | Piper TTS integrated: `speak_piper()` + `play_wav_blocking()` in `multimodal_io.rs`; 4-level binary/model auto-discovery; `VoiceOutputSettings` extended; NSIS installer bundles `piper.exe`, DLLs, `espeak-ng-data/`, `de_DE-thorsten-medium` + `en_US-amy-medium` models; `scripts/setup-piper.ps1` downloads assets. |
 | N7 | Agent capability bridge | Medium | M8, N3, N4 | PLANNED | Route vision and TTS usage through workflow-agent only when corresponding module is active. |
 | N8 | Voice output policy enforcement | Medium | N4 | PLANNED | Enforce `agent replies only` default plus optional policy modes in UX. |

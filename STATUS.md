@@ -11,6 +11,7 @@ Last updated: 2026-03-13
 ## Working State
 
 - Contributor process now enforces a pre-push housekeeping gate in `CONTRIBUTING.md` ("Housekeeping (Required Before Push)").
+- `N5+Q Stabilization Packet` is in execution (P1-P3): startup/runtime diagnostics, overlay resilience, and vision runtime hardening are integrated in mainline WIP.
 - Core capture/transcription pipeline is stable (PTT/VAD + system audio + export).
 - Adaptive continuous dump is unified across mic Toggle mode and system loopback.
 - Continuous dump profiles and per-source overrides are available in Settings.
@@ -49,12 +50,8 @@ Last updated: 2026-03-13
 
 ## Next Focus
 
-1. **Whisper-Server Mode** (Optional latency optimization):
-   - Keep Whisper model pre-loaded in GPU VRAM across transcriptions.
-   - Eliminates ~1.4s model-load overhead per transcription (7.5s → ~6.2s on T500; 4-5s → ~3s on RTX 5700 XT).
-   - Requires `whisper-server.exe` CUDA binary (either compile from whisper.cpp or pre-built).
-   - Medium complexity: ~3-4h implementation + binary sourcing.
-2. Finalize latency benchmark baseline (`benchmark:latency`) with updated GPU timings and track p50/p95 trend.
-3. Validate runtime-start background behavior on Windows (no stuck "Starting runtime..." state).
-4. Continue Block E (UX/UI consistency + settings IA cleanup).
+1. Complete `N5d` regression validation for `N5+Q Stabilization Packet` (startup diagnostics, overlay recovery, vision buffer/snapshot flows).
+2. Expand multimodal integration tests for Block N (`N12`) on top of the new frame-buffer pipeline.
+3. Continue Block N privacy/consent hardening (`N9`) with updated in-app status messaging.
+4. Finalize latency benchmark baseline (`benchmark:latency`) with updated GPU timings and track p50/p95 trend.
 5. Complete Block F reliability hardening + release QA.

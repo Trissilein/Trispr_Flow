@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-08 (Block M closed: M9-M12 complete, focus shifts to Block N)
+Last updated: 2026-03-13 (N5+Q Stabilization Packet P1-P3 in execution)
 
 This file is the canonical source for priorities and execution order.
 
@@ -9,7 +9,7 @@ This file is the canonical source for priorities and execution order.
 - Released: `v0.7.0`
 - Current phase: `v0.7.1` stabilization execution
 - Foundation complete: Blocks F + G + H
-- Active execution blocks: Workflow-Agent execution hardening (Block M) + Multimodal planning runway (Block N)
+- Active execution blocks: Workflow-Agent execution hardening (Block M) + Multimodal planning runway (Block N) + Onboarding stability follow-up (Block Q)
 
 ## Analysis De-Scope Decision
 
@@ -31,6 +31,7 @@ This file is the canonical source for priorities and execution order.
 | L | Module Platform + GDD Automation + Confluence Cloud publishing | Extra High | E, F, K | Complete ✅ |
 | M | Workflow-Agent voice automation for GDD (wakeword -> confirm -> execute) | Extra High | L, F | Complete ✅ |
 | N | Multimodal I/O modules (screen vision input + TTS voice output) | Extra High | M, L | Planned |
+| Q | Onboarding refinement and startup stability | Medium | D | In Progress |
 
 ## v0.7 Task Ledger
 
@@ -69,7 +70,7 @@ This file is the canonical source for priorities and execution order.
 
 ## Immediate Next Actions
 
-1. Start Block N execution (N1-N4 first: screen vision input + TTS voice output scaffolding).
+1. Execute `N5+Q Stabilization Packet (P1-P3)` as semantical salvage: startup/runtime diagnostics, overlay/refinement resilience, and vision runtime hardening.
 2. Keep GDD Core + Confluence path stable; Block M changes (agent command channel) are now locked.
 3. Run N11 benchmark track (>=3 runs/provider/scenario) and set default TTS provider based on measured data.
 4. Keep Block J and Block G as lower-priority backlog until N delivery gates are met.

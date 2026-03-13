@@ -21,6 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Row 2: Refining + GPU status (clickable) + no separate button needed
   - Visual feedback: VRAM purge shows "Purging..." → "Purged ✓" (2s) in status display
   - Keyboard accessible: Tab + Enter/Space to trigger VRAM purge
+- **N5+Q Stabilization Packet (P1-P3)**:
+  - Startup/runtime diagnostics surface:
+    - New backend commands `get_startup_status`, `get_runtime_diagnostics`, and `log_frontend_event`.
+    - New event channels `startup:status`, `runtime:diagnostics`, and `overlay:health`.
+    - Frontend staged bootstrap now loads heavy data after UI readiness to reduce startup stalls.
+  - Local backend preference flow:
+    - Added persistent `local_backend_preference` (`auto|cuda|vulkan`) in settings model/migration path.
+    - Onboarding now stores detected backend recommendation into settings.
+  - Overlay and refinement resilience:
+    - Overlay state machine migrated to `Hidden/Armed/Recording/Transcribing` with recovery replay.
+    - Added overlay health note/toast wiring and refinement activity reconciliation to prevent stuck indicators.
+  - Vision runtime hardening:
+    - Replaced metadata-only vision stream path with captured frame pipeline and bounded in-memory buffer stats.
+    - `capture_vision_snapshot` now prefers buffered frames and falls back to live capture without disk persistence.
 
 ### Changed
 

@@ -205,8 +205,8 @@ fn fetch_online_manifest(version: &str) -> Result<RuntimeManifestResolved, Strin
     let tag = format!("v{}", version);
     let release_url = format!("{}/tags/{}", GITHUB_RELEASES_API, tag);
     let agent = ureq::builder()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(30))
+        .timeout_connect(Duration::from_secs(3))
+        .timeout_read(Duration::from_secs(5))
         .build();
 
     let release_json = agent
@@ -311,8 +311,8 @@ fn resolve_manifest(version: Option<&str>) -> Result<RuntimeManifestResolved, St
 fn list_online_release_versions(limit: usize) -> Result<Vec<String>, String> {
     let url = format!("{}?per_page={}", GITHUB_RELEASES_API, limit.max(1));
     let agent = ureq::builder()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(20))
+        .timeout_connect(Duration::from_secs(3))
+        .timeout_read(Duration::from_secs(5))
         .build();
     let releases = agent
         .get(&url)
@@ -834,9 +834,20 @@ fn runtime_endpoint_reachable(endpoint: &str) -> bool {
         return true;
     }
 
-    // Fallback to a slower probe. Quick ping can miss a busy but already
-    // serving runtime, which would otherwise leave the UI in "starting".
-    ping_ollama(endpoint).is_ok()
+    // Fallback to a slightly slower probe (2 s) for busy-but-running Ollama.
+    // Do NOT use the shared agent here — its 60 s read timeout would cause a
+    // full freeze when Ollama is simply not running.
+    let agent = ureq::builder()
+        .timeout_connect(Duration::from_secs(2))
+        .timeout_read(Duration::from_secs(2))
+        .build();
+    for candidate in crate::ai_fallback::provider::ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/tags", candidate);
+        if agent.get(&url).call().is_ok() {
+            return true;
+        }
+    }
+    false
 }
 
 fn managed_child_status(state: &AppState) -> (Option<u32>, bool) {

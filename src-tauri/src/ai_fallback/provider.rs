@@ -40,6 +40,10 @@ pub const OLLAMA_PROMPT_EN: &str = "You are a transcript editor. Fix punctuation
 
 pub const OLLAMA_PROMPT_DE: &str = "Du bist ein Transkript-Editor. Korrigiere Zeichensetzung, Groß-/Kleinschreibung und offensichtliche Sprache-zu-Text-Fehler im Text unten. Regeln: NICHT übersetzen; KEINE Erklärungen oder Kommentare hinzufügen; alle Eigennamen und Fachbegriffe exakt beibehalten; Anredeform (Du/Sie) aus dem Original beibehalten. Gib NUR den korrigierten Text aus, ohne Einleitung.";
 
+// Used when Whisper language is set to auto-detect. Language-neutral phrasing avoids
+// the model inferring "output in English" from an English-only system prompt.
+pub const OLLAMA_PROMPT_AUTO: &str = "IMPORTANT: Detect the language of the input text and output in that SAME language — never translate. You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors. Rules: do NOT translate under any circumstances; do NOT add explanations; preserve all proper nouns and technical terms exactly; preserve the original register. Output ONLY the corrected text with no preamble.";
+
 const OLLAMA_PROMPT_SUMMARY_EN: &str = "Summarize this transcript into 3 to 6 concise bullet points. Preserve key facts, numbers, names, and decisions. Do not invent information. If something is uncertain, state it cautiously. Return only the bullet list.";
 
 const OLLAMA_PROMPT_SUMMARY_DE: &str = "Fasse dieses Transkript in 3 bis 6 praegnanten Stichpunkten zusammen. Behalte wichtige Fakten, Zahlen, Namen und Entscheidungen bei. Keine Informationen erfinden. Unsichere Inhalte vorsichtig formulieren. Gib nur die Stichpunktliste zurueck.";
@@ -355,6 +359,7 @@ pub fn default_models_for_provider(provider: &str) -> Vec<String> {
 pub fn default_prompt_for_language(language: &str) -> &'static str {
     match language.trim().to_lowercase().as_str() {
         "de" | "german" => OLLAMA_PROMPT_DE,
+        "auto" | "" => OLLAMA_PROMPT_AUTO,
         _ => OLLAMA_PROMPT_EN,
     }
 }
@@ -379,7 +384,9 @@ fn with_language_lock(prompt: &str, language: &str, preserve_source_language: bo
     if !preserve_source_language {
         return normalized.to_string();
     }
-    format!("{}\n\n{}", normalized, language_lock_suffix(language))
+    // Prepend the language lock so it has higher precedence than the main prompt body.
+    // Models weight early instructions more heavily than late ones.
+    format!("{}\n\n{}", language_lock_suffix(language), normalized)
 }
 
 pub fn normalize_prompt_profile(profile: &str) -> &'static str {
@@ -1493,7 +1500,14 @@ mod tests {
     fn default_prompt_uses_english_for_unknown_language() {
         assert_eq!(default_prompt_for_language("en"), OLLAMA_PROMPT_EN);
         assert_eq!(default_prompt_for_language("fr"), OLLAMA_PROMPT_EN);
-        assert_eq!(default_prompt_for_language(""), OLLAMA_PROMPT_EN);
+    }
+
+    #[test]
+    fn default_prompt_uses_auto_for_empty_or_auto_language() {
+        assert_eq!(default_prompt_for_language(""), OLLAMA_PROMPT_AUTO);
+        assert_eq!(default_prompt_for_language("auto"), OLLAMA_PROMPT_AUTO);
+        assert!(OLLAMA_PROMPT_AUTO.contains("Detect the language"));
+        assert!(OLLAMA_PROMPT_AUTO.contains("never translate"));
     }
 
     #[test]
@@ -1511,10 +1525,13 @@ mod tests {
     }
 
     #[test]
-    fn auto_language_lock_suffix_mentions_mixed_language_preservation() {
+    fn auto_language_prompt_has_language_preservation() {
+        // When language="auto", the auto prompt is used which leads with language detection.
+        // The language lock prefix is prepended before the base prompt body.
         let prompt = prompt_for_profile("wording", "auto", None, true).unwrap_or_default();
-        assert!(prompt.contains("Detect the input language and keep it unchanged."));
-        assert!(prompt.contains("mixed-language"));
+        // The auto base prompt already embeds a strong language guard at the start.
+        assert!(prompt.contains("Detect the language") || prompt.contains("Detect the input language"));
+        assert!(prompt.contains("never translate") || prompt.contains("keep it unchanged"));
     }
 
     // --- OllamaProvider: validate_api_key is always Ok (no key needed) ---

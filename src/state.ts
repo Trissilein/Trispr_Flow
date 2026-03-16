@@ -38,6 +38,11 @@ export function setSettings(newSettings: Settings | null) {
   settings = newSettings;
 }
 
+/** Returns true only when AI refinement is explicitly enabled in settings. */
+export function isRefinementEnabled(): boolean {
+  return settings?.ai_fallback?.enabled === true;
+}
+
 export function updateSettings(newSettings: Partial<Settings>) {
   if (settings) {
     // Deep merge for nested objects like setup and ai_fallback

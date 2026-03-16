@@ -690,6 +690,7 @@ export async function refreshOllamaRuntimeVersionCatalog(force = false): Promise
   }
 
   try {
+    // Only pinned versions — no network call. Use fetchOnlineVersionCatalog() for GitHub.
     const versions = await invoke<OllamaRuntimeVersionInfo[]>("list_ollama_runtime_versions");
     runtimeVersionCatalog = versions;
     runtimeVersionCatalogLastRefreshMs = now;
@@ -707,6 +708,33 @@ export async function refreshOllamaRuntimeVersionCatalog(force = false): Promise
       ];
     }
   }
+}
+
+let onlineVersionFetchInProgress = false;
+
+/** Fetches available versions from GitHub and merges into the catalog. Shows status feedback via callback. */
+export async function fetchOnlineVersionCatalog(
+  onStatus: (msg: string | null) => void
+): Promise<void> {
+  if (onlineVersionFetchInProgress) return;
+  onlineVersionFetchInProgress = true;
+  onStatus("Fetching version list from GitHub...");
+  try {
+    const versions = await invoke<OllamaRuntimeVersionInfo[]>("fetch_ollama_online_versions");
+    runtimeVersionCatalog = versions;
+    runtimeVersionCatalogLastRefreshMs = Date.now();
+    onStatus(null);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn("Failed to fetch online Ollama versions:", msg);
+    onStatus("GitHub fetch failed. Showing pinned versions only.");
+  } finally {
+    onlineVersionFetchInProgress = false;
+  }
+}
+
+export function isOnlineVersionFetchInProgress(): boolean {
+  return onlineVersionFetchInProgress;
 }
 
 function isModelInstalled(name: string): boolean {

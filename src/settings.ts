@@ -7,7 +7,11 @@ import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "./uti
 import { renderVocabulary } from "./event-listeners";
 import { DEFAULT_TOPICS, setTopicKeywords, type TopicKeywords } from "./history";
 import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
-import { getOllamaRuntimeCardState, getOllamaRuntimeVersionCatalog } from "./ollama-models";
+import {
+  getOllamaRuntimeCardState,
+  getOllamaRuntimeVersionCatalog,
+  isOnlineVersionFetchInProgress,
+} from "./ollama-models";
 import { traceFrontendWarn } from "./frontend-trace";
 import { syncRefinementPipelineGraphFromSettings } from "./refinement-pipeline-graph";
 import {
@@ -784,6 +788,12 @@ export function renderAIFallbackSettingsUi() {
   }
   if (dom.aiFallbackLocalRefreshAction) {
     dom.aiFallbackLocalRefreshAction.disabled = runtimeCardState.busy;
+  }
+  if (dom.aiFallbackFetchVersionsAction) {
+    dom.aiFallbackFetchVersionsAction.disabled = runtimeCardState.busy || isOnlineVersionFetchInProgress();
+    dom.aiFallbackFetchVersionsAction.textContent = isOnlineVersionFetchInProgress()
+      ? "Fetching..."
+      : "Get versions";
   }
   if (dom.aiFallbackLocalRuntimeVersion) {
     const selectedVersion =

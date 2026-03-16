@@ -67,9 +67,9 @@ use crate::modules::{
     registry as module_registry,
 };
 use crate::ollama_runtime::{
-    detect_ollama_runtime, download_ollama_runtime, import_ollama_model_from_file,
-    install_ollama_runtime, list_ollama_runtime_versions, set_strict_local_mode,
-    start_ollama_runtime, verify_ollama_runtime,
+    detect_ollama_runtime, download_ollama_runtime, fetch_ollama_online_versions,
+    import_ollama_model_from_file, install_ollama_runtime, list_ollama_runtime_versions,
+    set_strict_local_mode, start_ollama_runtime, verify_ollama_runtime,
 };
 use crate::state::{
     get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
@@ -896,13 +896,23 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 }
 
 #[tauri::command]
-fn get_startup_status(app: AppHandle, state: State<'_, AppState>) -> StartupStatus {
-    refresh_startup_status(&app, state.inner())
+async fn get_startup_status(app: AppHandle) -> StartupStatus {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        refresh_startup_status(&app, state.inner())
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
-fn get_runtime_diagnostics(app: AppHandle, state: State<'_, AppState>) -> RuntimeDiagnostics {
-    refresh_runtime_diagnostics(&app, state.inner())
+async fn get_runtime_diagnostics(app: AppHandle) -> RuntimeDiagnostics {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        refresh_runtime_diagnostics(&app, state.inner())
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -3709,50 +3719,52 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
 }
 
 #[tauri::command]
-fn get_gpu_vram_usage() -> Result<String, String> {
-    // Query NVIDIA GPU VRAM usage via nvidia-smi
-    // Returns formatted string like "2.1 GB / 8.0 GB" or empty if unavailable
+async fn get_gpu_vram_usage() -> Result<String, String> {
+    // Query NVIDIA GPU VRAM usage via nvidia-smi — wrapped in spawn_blocking to
+    // avoid blocking the Tokio worker thread during the nvidia-smi process spawn.
+    tauri::async_runtime::spawn_blocking(|| {
+        use std::process::Command;
 
-    use std::process::Command;
+        let mut cmd = Command::new("nvidia-smi");
+        cmd.args(&[
+            "--query-gpu=memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ]);
 
-    let mut cmd = Command::new("nvidia-smi");
-    cmd.args(&[
-        "--query-gpu=memory.used,memory.total",
-        "--format=csv,noheader,nounits",
-    ]);
-
-    // On Windows, hide the command window to prevent visual pop-ups
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    let output = cmd
-        .output()
-        .map_err(|_| "nvidia-smi not found".to_string())?;
-
-    if !output.status.success() {
-        return Ok(String::new()); // Silently return empty if nvidia-smi fails
-    }
-
-    let result = String::from_utf8(output.stdout)
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-
-    // Parse "XXXX, YYYY" format and convert to "X.X GB / Y.Y GB"
-    let parts: Vec<&str> = result.split(',').map(|s| s.trim()).collect();
-    if parts.len() == 2 {
-        if let (Ok(used_mb), Ok(total_mb)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
-            let used_gb = used_mb / 1024.0;
-            let total_gb = total_mb / 1024.0;
-            return Ok(format!("{:.1} GB / {:.1} GB", used_gb, total_gb));
+        // On Windows, hide the command window to prevent visual pop-ups
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
         }
-    }
 
-    Ok(String::new())
+        let output = cmd
+            .output()
+            .map_err(|_| "nvidia-smi not found".to_string())?;
+
+        if !output.status.success() {
+            return Ok(String::new());
+        }
+
+        let result = String::from_utf8(output.stdout)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        let parts: Vec<&str> = result.split(',').map(|s| s.trim()).collect();
+        if parts.len() == 2 {
+            if let (Ok(used_mb), Ok(total_mb)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+                let used_gb = used_mb / 1024.0;
+                let total_gb = total_mb / 1024.0;
+                return Ok(format!("{:.1} GB / {:.1} GB", used_gb, total_gb));
+            }
+        }
+
+        Ok(String::new())
+    })
+    .await
+    .unwrap_or_else(|_| Ok(String::new()))
 }
 
 #[tauri::command]
@@ -3779,35 +3791,39 @@ fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn stop_ollama_runtime(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+async fn stop_ollama_runtime(app: AppHandle) -> Result<(), String> {
     // Stop the managed Ollama runtime process
     // This is called when user disables AI refinement or exits the app
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
 
-    terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
-
-    let endpoint = {
-        let settings = state.settings.lock().unwrap().clone();
-        settings.providers.ollama.endpoint
-    };
-    let runtime_reachable = ping_ollama_quick(&endpoint).is_ok();
-    update_startup_status(&app, state.inner(), |status| {
-        status.ollama_ready = runtime_reachable;
-        status.ollama_starting = false;
-    });
-    update_runtime_diagnostics(&app, state.inner(), |diagnostics| {
-        diagnostics.ollama.managed_pid = None;
-        diagnostics.ollama.reachable = runtime_reachable;
-        diagnostics.ollama.spawn_stage = if runtime_reachable {
-            "running_externally".to_string()
-        } else {
-            "stopped".to_string()
+        let endpoint = {
+            let settings = state.settings.lock().unwrap().clone();
+            settings.providers.ollama.endpoint
         };
-        if !runtime_reachable {
-            diagnostics.ollama.last_error.clear();
-        }
-    });
+        let runtime_reachable = ping_ollama_quick(&endpoint).is_ok();
+        update_startup_status(&app, state.inner(), |status| {
+            status.ollama_ready = runtime_reachable;
+            status.ollama_starting = false;
+        });
+        update_runtime_diagnostics(&app, state.inner(), |diagnostics| {
+            diagnostics.ollama.managed_pid = None;
+            diagnostics.ollama.reachable = runtime_reachable;
+            diagnostics.ollama.spawn_stage = if runtime_reachable {
+                "running_externally".to_string()
+            } else {
+                "stopped".to_string()
+            };
+            if !runtime_reachable {
+                diagnostics.ollama.last_error.clear();
+            }
+        });
 
-    Ok(())
+        Ok(())
+    })
+    .await
+    .unwrap_or_else(|_| Ok(()))
 }
 
 #[tauri::command]
@@ -4198,11 +4214,21 @@ fn build_dependency_preflight_report(
 }
 
 #[tauri::command]
-fn get_dependency_preflight_status(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> DependencyPreflightReport {
-    build_dependency_preflight_report(&app, state.inner())
+async fn get_dependency_preflight_status(app: AppHandle) -> DependencyPreflightReport {
+    // Wrapped in spawn_blocking: check_powershell_available() spawns powershell.exe
+    // which blocks for 1-5s; running that on a Tokio worker thread would starve IPC.
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        build_dependency_preflight_report(&app, state.inner())
+    })
+    .await
+    .unwrap_or_else(|_| DependencyPreflightReport {
+        generated_at_ms: 0,
+        overall_status: "error".to_string(),
+        blocking_count: 0,
+        warning_count: 0,
+        items: vec![],
+    })
 }
 
 #[tauri::command]
@@ -5190,7 +5216,13 @@ pub fn run() {
                 update_startup_status(app.handle(), state.inner(), |status| {
                     status.rules_ready = true;
                 });
-                refresh_runtime_diagnostics(app.handle(), state.inner());
+            }
+            {
+                let handle = app.handle().clone();
+                thread::spawn(move || {
+                    let state = handle.state::<AppState>();
+                    refresh_runtime_diagnostics(&handle, state.inner());
+                });
             }
 
             // Pre-warm whisper capability probe in background so the first PTT transcription
@@ -5523,9 +5555,15 @@ pub fn run() {
 
             {
                 let state = app.state::<AppState>();
-                update_startup_status(app.handle(), state.inner(), |status| {
+                let snapshot = {
+                    let mut status = state
+                        .startup_status
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
                     status.interactive = true;
-                });
+                    status.clone()
+                };
+                let _ = app.emit("startup:status", &snapshot);
             }
 
             Ok(())
@@ -5635,6 +5673,7 @@ pub fn run() {
             save_ollama_endpoint,
             detect_ollama_runtime,
             list_ollama_runtime_versions,
+            fetch_ollama_online_versions,
             download_ollama_runtime,
             install_ollama_runtime,
             start_ollama_runtime,

@@ -52,6 +52,7 @@ import {
 import {
   autoStartLocalRuntimeIfNeeded,
   ensureLocalRuntimeReady,
+  fetchOnlineVersionCatalog,
   getOllamaRuntimeCardState,
   importOllamaModelFromLocalFile,
   refreshOllamaInstalledModels,
@@ -1688,13 +1689,35 @@ export function wireEvents() {
     renderAIFallbackSettingsUi();
   });
 
-  // Combined refresh: runtime state + models + version catalog + detect
+  // Combined refresh: runtime state + models (no GitHub call)
   dom.aiFallbackLocalRefreshAction?.addEventListener("click", async () => {
     renderAIFallbackSettingsUi();
     await Promise.all([
       refreshOllamaRuntimeAndModels(),
       refreshOllamaRuntimeVersionCatalog(true),
     ]);
+    renderAIFallbackSettingsUi();
+  });
+
+  // Explicit GitHub fetch for version list — only on user request
+  dom.aiFallbackFetchVersionsAction?.addEventListener("click", async () => {
+    if (dom.aiFallbackFetchVersionsAction) {
+      dom.aiFallbackFetchVersionsAction.disabled = true;
+    }
+    await fetchOnlineVersionCatalog((msg) => {
+      if (dom.aiFallbackFetchVersionsStatus) {
+        if (msg) {
+          dom.aiFallbackFetchVersionsStatus.textContent = msg;
+          dom.aiFallbackFetchVersionsStatus.hidden = false;
+        } else {
+          dom.aiFallbackFetchVersionsStatus.hidden = true;
+          dom.aiFallbackFetchVersionsStatus.textContent = "";
+        }
+      }
+    });
+    if (dom.aiFallbackFetchVersionsAction) {
+      dom.aiFallbackFetchVersionsAction.disabled = false;
+    }
     renderAIFallbackSettingsUi();
   });
 

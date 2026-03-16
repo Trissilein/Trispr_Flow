@@ -843,11 +843,35 @@ fn managed_child_status(state: &AppState) -> (Option<u32>, bool) {
     managed_child_slot_status(&state.managed_ollama_child)
 }
 
+/// Returns only pinned (bundled) versions — no network call. Fast and safe for automatic use.
 #[tauri::command]
 pub fn list_ollama_runtime_versions(
     state: State<'_, AppState>,
 ) -> Result<Vec<OllamaRuntimeVersionInfo>, String> {
     let snapshot = state.settings.lock().unwrap().clone();
+    build_version_list(&snapshot, &[])
+}
+
+/// Fetches available versions from GitHub and merges with pinned list.
+/// Only call this when the user explicitly requests it — makes a network request.
+#[tauri::command]
+pub async fn fetch_ollama_online_versions(
+    app: AppHandle,
+) -> Result<Vec<OllamaRuntimeVersionInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let snapshot = state.settings.lock().unwrap().clone();
+        let online = list_online_release_versions(20).unwrap_or_default();
+        build_version_list(&snapshot, &online)
+    })
+    .await
+    .map_err(|e| format!("Online version fetch failed: {}", e))?
+}
+
+fn build_version_list(
+    snapshot: &crate::state::Settings,
+    online: &[String],
+) -> Result<Vec<OllamaRuntimeVersionInfo>, String> {
     let selected = snapshot.providers.ollama.runtime_target_version.clone();
     let installed_version = snapshot.providers.ollama.runtime_version.clone();
 
@@ -855,11 +879,9 @@ pub fn list_ollama_runtime_versions(
         .iter()
         .map(|m| m.version.to_string())
         .collect();
-    if let Ok(online) = list_online_release_versions(20) {
-        for version in online {
-            if !merged.iter().any(|v| v == &version) {
-                merged.push(version);
-            }
+    for version in online {
+        if !merged.iter().any(|v| v == version) {
+            merged.push(version.clone());
         }
     }
     if !installed_version.trim().is_empty() && !merged.iter().any(|v| v == &installed_version) {

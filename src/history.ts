@@ -3,7 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { escapeHtml } from "./utils";
 import type { HistoryEntry, HistoryTab, TopicScore } from "./types";
-import { history, transcribeHistory, currentHistoryTab, setCurrentHistoryTab as setCurrentTab } from "./state";
+import { history, transcribeHistory, currentHistoryTab, setCurrentHistoryTab as setCurrentTab, isRefinementEnabled } from "./state";
 import * as dom from "./dom-refs";
 import { formatTime } from "./ui-helpers";
 import { updateRangeAria } from "./accessibility";
@@ -474,6 +474,13 @@ export function buildTopicBadges(topics: string[] | TopicScore[]): string {
 // even when multiple state changes occur synchronously in one tick.
 let _historyRenderFrame: number | null = null;
 
+const HISTORY_PAGE_SIZE = 50;
+let _historyVisibleCount = HISTORY_PAGE_SIZE;
+
+export function resetHistoryVisibleCount(): void {
+  _historyVisibleCount = HISTORY_PAGE_SIZE;
+}
+
 export function scheduleHistoryRender(): void {
   if (_historyRenderFrame !== null) return;
   if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
@@ -498,6 +505,7 @@ let selectedTopicFilters: Set<string> = new Set();
  */
 export function setSearchQuery(query: string) {
   currentSearchQuery = query.trim().toLowerCase();
+  _historyVisibleCount = HISTORY_PAGE_SIZE;
   scheduleHistoryRender();
 }
 
@@ -517,6 +525,7 @@ export function toggleTopicFilter(topic: string): void {
   } else {
     selectedTopicFilters.add(topic);
   }
+  _historyVisibleCount = HISTORY_PAGE_SIZE;
   scheduleHistoryRender();
 }
 
@@ -629,7 +638,15 @@ function getPreferredEntryText(entry: HistoryEntry): string {
   return pair.refined;
 }
 
+const DIFF_MAX_CHARS = 2_000;
+const DIFF_MAX_MATRIX_CELLS = 80_000;
+
 function buildRefinementDiffSummary(raw: string, refined: string): HTMLElement | null {
+  if (!isRefinementEnabled()) return null;
+  if (raw.length + refined.length > DIFF_MAX_CHARS) return null;
+  const aWords = raw.split(/\s+/).filter(Boolean).length;
+  const bWords = refined.split(/\s+/).filter(Boolean).length;
+  if (aWords * bWords > DIFF_MAX_MATRIX_CELLS) return null;
   const diff = buildRefinementWordDiff(raw, refined).filter((token) => token.kind !== "same");
   if (diff.length === 0) return null;
 
@@ -905,7 +922,10 @@ export function renderHistory() {
     return;
   }
 
-  dataset.forEach((entry) => {
+  const visible = dataset.slice(0, _historyVisibleCount);
+  const remaining = dataset.length - visible.length;
+
+  visible.forEach((entry) => {
     const wrapper = document.createElement("div");
     wrapper.className = "history-item history-entry"; // For search highlighting
     wrapper.dataset.entryId = entry.id;
@@ -959,6 +979,17 @@ export function renderHistory() {
 
     historyList.appendChild(wrapper);
   });
+
+  if (remaining > 0) {
+    const loadMore = document.createElement("button");
+    loadMore.className = "history-load-more";
+    loadMore.textContent = `${remaining} weitere Einträge laden`;
+    loadMore.addEventListener("click", () => {
+      _historyVisibleCount += HISTORY_PAGE_SIZE;
+      renderHistory();
+    });
+    historyList.appendChild(loadMore);
+  }
 }
 
 /**

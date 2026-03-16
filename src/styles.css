@@ -1869,6 +1869,25 @@ button.refinement-chip:focus-visible {
   border-radius: 3px;
 }
 
+.history-load-more {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  margin-top: 8px;
+  background: transparent;
+  border: 1px solid var(--stroke);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  text-align: center;
+}
+
+.history-load-more:hover {
+  background: var(--surface-hover, rgba(255,255,255,0.04));
+  color: var(--text);
+}
+
 .meter-row {
   display: flex;
   align-items: center;

@@ -437,70 +437,81 @@ struct VadHandle {
 }
 
 #[tauri::command]
-pub(crate) fn list_audio_devices() -> Vec<AudioDevice> {
-    let mut devices = vec![AudioDevice {
-        id: "default".to_string(),
-        label: "Default (System)".to_string(),
-    }];
+pub(crate) async fn list_audio_devices() -> Vec<AudioDevice> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut devices = vec![AudioDevice {
+            id: "default".to_string(),
+            label: "Default (System)".to_string(),
+        }];
 
-    let host = cpal::default_host();
-    if let Ok(inputs) = host.input_devices() {
-        for (index, device) in inputs.enumerate() {
-            let name = device
-                .name()
-                .unwrap_or_else(|_| format!("Input {}", index + 1));
-            let id = format!("input-{}-{}", index, name);
-            devices.push(AudioDevice { id, label: name });
+        let host = cpal::default_host();
+        if let Ok(inputs) = host.input_devices() {
+            for (index, device) in inputs.enumerate() {
+                let name = device
+                    .name()
+                    .unwrap_or_else(|_| format!("Input {}", index + 1));
+                let id = format!("input-{}-{}", index, name);
+                devices.push(AudioDevice { id, label: name });
+            }
         }
-    }
 
-    devices
+        devices
+    })
+    .await
+    .unwrap_or_else(|_| vec![])
 }
 
 #[tauri::command]
-pub(crate) fn list_output_devices() -> Vec<AudioDevice> {
-    let mut devices = vec![AudioDevice {
-        id: "default".to_string(),
-        label: "System Default Output".to_string(),
-    }];
+pub(crate) async fn list_output_devices() -> Vec<AudioDevice> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut devices = vec![AudioDevice {
+            id: "default".to_string(),
+            label: "System Default Output".to_string(),
+        }];
 
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(enumerator) = wasapi::DeviceEnumerator::new() {
-            if let Ok(collection) = enumerator.get_device_collection(&wasapi::Direction::Render) {
-                if let Ok(count) = collection.get_nbr_devices() {
-                    for index in 0..count {
-                        if let Ok(device) = collection.get_device_at_index(index) {
-                            let name = device
-                                .get_friendlyname()
-                                .unwrap_or_else(|_| format!("Output {}", index + 1));
-                            let id = device.get_id().unwrap_or_else(|_| format!("idx-{index}"));
-                            devices.push(AudioDevice {
-                                id: format!("wasapi:{id}"),
-                                label: name,
-                            });
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(enumerator) = wasapi::DeviceEnumerator::new() {
+                if let Ok(collection) =
+                    enumerator.get_device_collection(&wasapi::Direction::Render)
+                {
+                    if let Ok(count) = collection.get_nbr_devices() {
+                        for index in 0..count {
+                            if let Ok(device) = collection.get_device_at_index(index) {
+                                let name = device
+                                    .get_friendlyname()
+                                    .unwrap_or_else(|_| format!("Output {}", index + 1));
+                                let id =
+                                    device.get_id().unwrap_or_else(|_| format!("idx-{index}"));
+                                devices.push(AudioDevice {
+                                    id: format!("wasapi:{id}"),
+                                    label: name,
+                                });
+                            }
                         }
                     }
                 }
             }
         }
-    }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        let host = cpal::default_host();
-        if let Ok(outputs) = host.output_devices() {
-            for (index, device) in outputs.enumerate() {
-                let name = device
-                    .name()
-                    .unwrap_or_else(|_| format!("Output {}", index + 1));
-                let id = format!("output-{}-{}", index, name);
-                devices.push(AudioDevice { id, label: name });
+        #[cfg(not(target_os = "windows"))]
+        {
+            let host = cpal::default_host();
+            if let Ok(outputs) = host.output_devices() {
+                for (index, device) in outputs.enumerate() {
+                    let name = device
+                        .name()
+                        .unwrap_or_else(|_| format!("Output {}", index + 1));
+                    let id = format!("output-{}-{}", index, name);
+                    devices.push(AudioDevice { id, label: name });
+                }
             }
         }
-    }
 
-    devices
+        devices
+    })
+    .await
+    .unwrap_or_else(|_| vec![])
 }
 
 fn resolve_input_device(device_id: &str) -> Option<cpal::Device> {

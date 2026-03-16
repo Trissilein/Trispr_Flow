@@ -1,4 +1,5 @@
 import { escapeHtml } from "./utils";
+import { isRefinementEnabled } from "./state";
 import * as dom from "./dom-refs";
 import type {
   HistoryEntry,
@@ -229,7 +230,15 @@ export function buildRefinementWordDiff(raw: string, refined: string): Refinemen
   return out.reverse();
 }
 
+const INSPECTOR_DIFF_MAX_CHARS = 2_000;
+
 function renderWordDiff(raw: string, refined: string): string {
+  if (!isRefinementEnabled()) {
+    return '<span class="refinement-diff-token refinement-diff-token--same">AI refinement disabled.</span>';
+  }
+  if (raw.length + refined.length > INSPECTOR_DIFF_MAX_CHARS) {
+    return '<span class="refinement-diff-token refinement-diff-token--same">Text too long for inline diff.</span>';
+  }
   const diff = buildRefinementWordDiff(raw, refined);
   if (diff.length === 0) {
     return '<span class="refinement-diff-token refinement-diff-token--same">No text to diff.</span>';

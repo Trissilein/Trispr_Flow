@@ -72,14 +72,18 @@ impl AIFallbackSettings {
         }
 
         let normalized_provider = normalize_provider_id(&self.provider).to_string();
+        const LOCAL_BACKENDS: &[&str] = &["ollama", "lm_studio", "oobabooga"];
         self.provider = if self.execution_mode == "online_fallback" {
             self.fallback_provider
                 .clone()
                 .unwrap_or_else(|| DEFAULT_PROVIDER.to_string())
+        } else if LOCAL_BACKENDS.contains(&self.provider.as_str()) {
+            // Preserve the currently selected local backend.
+            self.provider.clone()
         } else {
             DEFAULT_PROVIDER.to_string()
         };
-        if self.provider != "ollama" && self.fallback_provider.is_none() {
+        if !LOCAL_BACKENDS.contains(&self.provider.as_str()) && self.fallback_provider.is_none() {
             self.fallback_provider =
                 normalize_cloud_provider_id(&normalized_provider).map(str::to_string);
         }
@@ -441,6 +445,8 @@ pub fn normalize_provider_id(provider: &str) -> &'static str {
         "openai" => "openai",
         "gemini" => "gemini",
         "ollama" => "ollama",
+        "lm_studio" => "lm_studio",
+        "oobabooga" => "oobabooga",
         _ => DEFAULT_PROVIDER,
     }
 }

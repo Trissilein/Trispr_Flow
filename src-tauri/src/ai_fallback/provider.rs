@@ -89,6 +89,14 @@ impl ProviderFactory {
     pub fn create_ollama(endpoint: String) -> Box<dyn AIProvider> {
         Box::new(OllamaProvider::with_endpoint(endpoint))
     }
+
+    pub fn create_lm_studio(endpoint: String, api_key: String) -> Box<dyn AIProvider> {
+        Box::new(OpenAICompatProvider::lm_studio(endpoint, api_key))
+    }
+
+    pub fn create_oobabooga(endpoint: String, api_key: String) -> Box<dyn AIProvider> {
+        Box::new(OpenAICompatProvider::oobabooga(endpoint, api_key))
+    }
 }
 
 fn normalize_ollama_endpoint(endpoint: &str) -> String {
@@ -1264,6 +1272,200 @@ impl AIProvider for OllamaProvider {
 
         Err(last_transport_error.unwrap_or(AIError::OllamaNotRunning))
     }
+}
+
+// ============================================================================
+// OpenAI-compatible provider (LM Studio, Oobabooga, any /v1/chat/completions)
+// ============================================================================
+
+pub struct OpenAICompatProvider {
+    pub endpoint: String,
+    pub api_key: String,
+    pub provider_id: &'static str,
+    pub label: &'static str,
+}
+
+impl OpenAICompatProvider {
+    fn lm_studio(endpoint: String, api_key: String) -> Self {
+        Self {
+            endpoint,
+            api_key,
+            provider_id: "lm_studio",
+            label: "LM Studio",
+        }
+    }
+
+    fn oobabooga(endpoint: String, api_key: String) -> Self {
+        Self {
+            endpoint,
+            api_key,
+            provider_id: "oobabooga",
+            label: "Oobabooga",
+        }
+    }
+}
+
+impl AIProvider for OpenAICompatProvider {
+    fn id(&self) -> &'static str {
+        self.provider_id
+    }
+
+    fn validate_api_key(&self, _api_key: &str) -> Result<(), AIError> {
+        // Local OpenAI-compat backends (LM Studio, Oobabooga) don't require API keys.
+        Ok(())
+    }
+
+    fn estimate_cost_usd(&self, _model: &str, _input_tokens: usize, _output_tokens: usize) -> f64 {
+        0.0
+    }
+
+    fn refine_transcript(
+        &self,
+        text: &str,
+        model: &str,
+        options: &RefinementOptions,
+        _api_key: &str,
+    ) -> Result<RefinementResult, AIError> {
+        let start = Instant::now();
+        let model = model.trim();
+        if model.is_empty() {
+            return Err(AIError::NetworkError(format!(
+                "No model selected for {}. Set an active model in AI Refinement settings.",
+                self.label
+            )));
+        }
+
+        let system_prompt = options
+            .custom_prompt
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| {
+                let lang = options.language.as_deref().unwrap_or("en");
+                default_prompt_for_language(lang)
+            });
+
+        let system_prompt = with_language_lock(
+            system_prompt,
+            options.language.as_deref().unwrap_or(""),
+            options.enforce_language_guard,
+        );
+
+        let body = serde_json::json!({
+            "model": model,
+            "stream": false,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": text }
+            ],
+            "temperature": options.temperature,
+        });
+
+        let agent = refinement_agent(text, &system_prompt);
+        let endpoint = normalize_ollama_endpoint(&self.endpoint);
+        let url = format!("{}/v1/chat/completions", endpoint);
+
+        let mut request = agent
+            .post(&url)
+            .set("Content-Type", "application/json");
+
+        if !self.api_key.is_empty() {
+            request = request.set("Authorization", &format!("Bearer {}", self.api_key));
+        }
+
+        let response = match request.send_json(body) {
+            Ok(resp) => resp,
+            Err(ureq::Error::Status(code, resp)) => {
+                let body = resp.into_string().unwrap_or_default();
+                if code == 404 {
+                    return Err(AIError::NetworkError(format!(
+                        "{} endpoint not reachable at {}. Is {} running?",
+                        self.label, url, self.label
+                    )));
+                }
+                return Err(AIError::NetworkError(format!(
+                    "{} returned HTTP {}: {}",
+                    self.label, code, body
+                )));
+            }
+            Err(ureq::Error::Transport(t)) => {
+                let msg = t.to_string().to_lowercase();
+                return Err(if msg.contains("timed out") || msg.contains("timeout") {
+                    AIError::Timeout
+                } else {
+                    AIError::NetworkError(format!(
+                        "{} not reachable at {}. Is it running?",
+                        self.label, url
+                    ))
+                });
+            }
+        };
+
+        let json: serde_json::Value = response.into_json().map_err(|e| {
+            AIError::NetworkError(format!("Failed to parse {} response: {}", self.label, e))
+        })?;
+
+        let refined_text = json
+            .pointer("/choices/0/message/content")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| {
+                AIError::NetworkError(format!(
+                    "Unexpected {} response format: missing choices[0].message.content",
+                    self.label
+                ))
+            })?;
+
+        let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
+
+        let input_tokens = json
+            .pointer("/usage/prompt_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        let output_tokens = json
+            .pointer("/usage/completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+
+        Ok(RefinementResult {
+            text: refined_text,
+            usage: TokenUsage {
+                input_tokens,
+                output_tokens,
+                total_cost_usd: 0.0,
+            },
+            provider: self.id().to_string(),
+            model: model.to_string(),
+            execution_time_ms: start.elapsed().as_millis() as u64,
+        })
+    }
+}
+
+/// List models available on an OpenAI-compatible endpoint via GET /v1/models.
+pub fn list_openai_compat_models(endpoint: &str, api_key: &str) -> Vec<String> {
+    let normalized = normalize_ollama_endpoint(endpoint);
+    let url = format!("{}/v1/models", normalized);
+    let agent = ureq::builder()
+        .timeout_connect(Duration::from_secs(3))
+        .timeout_read(Duration::from_secs(5))
+        .build();
+    let mut request = agent.get(&url).set("Content-Type", "application/json");
+    if !api_key.is_empty() {
+        request = request.set("Authorization", &format!("Bearer {}", api_key));
+    }
+    let Ok(resp) = request.call() else {
+        return Vec::new();
+    };
+    let Ok(json) = resp.into_json::<serde_json::Value>() else {
+        return Vec::new();
+    };
+    json.get("data")
+        .and_then(|d| d.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.get("id").and_then(|id| id.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // ============================================================================

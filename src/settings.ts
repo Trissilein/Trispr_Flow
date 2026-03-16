@@ -864,6 +864,22 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackLocalRuntimeVersionNote.appendChild(badges);
   }
 
+  if (dom.aiFallbackLocalBackendSelect) {
+    const currentBackend = ai?.provider ?? "ollama";
+    const validBackends = ["ollama", "lm_studio", "oobabooga"];
+    dom.aiFallbackLocalBackendSelect.value = validBackends.includes(currentBackend) ? currentBackend : "ollama";
+    dom.aiFallbackLocalBackendSelect.disabled = runtimeCardState.busy;
+  }
+  const backendTitleEl = document.getElementById("ai-fallback-local-lane-title-text");
+  if (backendTitleEl) {
+    const labels: Record<string, string> = {
+      ollama: "Ollama (Local)",
+      lm_studio: "LM Studio (Local)",
+      oobabooga: "Oobabooga (Local)",
+    };
+    backendTitleEl.textContent = labels[ai?.provider ?? "ollama"] ?? "Local AI (Local)";
+  }
+
   if (dom.aiFallbackLocalFallbackEndpoints && document.activeElement !== dom.aiFallbackLocalFallbackEndpoints) {
     dom.aiFallbackLocalFallbackEndpoints.value = (settings.providers.ollama.fallback_endpoints ?? []).join("\n");
     dom.aiFallbackLocalFallbackEndpoints.disabled = runtimeCardState.busy;

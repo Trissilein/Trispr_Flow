@@ -1365,7 +1365,15 @@
                             <span id="ai-fallback-local-lane-title" class="field-label">Primary Runtime</span>
                             <span class="badge">Offline • Private</span>
                           </div>
-                          <div class="ai-provider-lane-title">Ollama (Local)</div>
+                          <div class="ai-provider-lane-title" id="ai-fallback-local-lane-title-text">Ollama (Local)</div>
+                          <label class="field" style="margin-top:8px;">
+                            <span class="field-label">Local backend</span>
+                            <select id="ai-fallback-local-backend-select" title="Select the local AI backend to use for refinement">
+                              <option value="ollama">Ollama (managed, port 11434)</option>
+                              <option value="lm_studio">LM Studio (port 1234)</option>
+                              <option value="oobabooga">Oobabooga / text-generation-webui (port 5000)</option>
+                            </select>
+                          </label>
                           <span id="ai-fallback-local-primary-status" class="field-hint">
                             Checking local runtime status...
                           </span>

@@ -1,7 +1,8 @@
 // Type definitions for Trispr Flow application
 
-export type AIFallbackProvider = "claude" | "openai" | "gemini" | "ollama";
-export type CloudAIFallbackProvider = Exclude<AIFallbackProvider, "ollama">;
+export type LocalAIFallbackProvider = "ollama" | "lm_studio" | "oobabooga";
+export type AIFallbackProvider = "claude" | "openai" | "gemini" | LocalAIFallbackProvider;
+export type CloudAIFallbackProvider = Exclude<AIFallbackProvider, LocalAIFallbackProvider>;
 export type AIExecutionMode = "local_primary" | "online_fallback";
 export type AIProviderAuthStatus = "locked" | "verified_api_key" | "verified_oauth";
 export type AIProviderAuthMethodPreference = "api_key" | "oauth";
@@ -386,11 +387,20 @@ export interface OllamaSettings {
   last_health_check: string | null;
 }
 
+export interface OpenAICompatSettings {
+  endpoint: string;
+  api_key: string;
+  preferred_model: string;
+  available_models: string[];
+}
+
 export interface AIProvidersSettings {
   claude: AIProviderSettings;
   openai: AIProviderSettings;
   gemini: AIProviderSettings;
   ollama: OllamaSettings;
+  lm_studio?: OpenAICompatSettings;
+  oobabooga?: OpenAICompatSettings;
 }
 
 export interface SetupSettings {

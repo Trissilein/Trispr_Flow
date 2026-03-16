@@ -1745,6 +1745,14 @@ export function wireEvents() {
     refreshAIUi();
   });
 
+  dom.aiFallbackLocalBackendSelect?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackLocalBackendSelect) return;
+    const backend = dom.aiFallbackLocalBackendSelect.value as "ollama" | "lm_studio" | "oobabooga";
+    settings.ai_fallback.provider = backend;
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+  });
+
   dom.aiFallbackLocalFallbackEndpoints?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackLocalFallbackEndpoints) return;
     const raw = dom.aiFallbackLocalFallbackEndpoints.value;

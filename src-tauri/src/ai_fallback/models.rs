@@ -243,6 +243,48 @@ impl OllamaSettings {
     }
 }
 
+/// Settings for any OpenAI-compatible local backend (LM Studio, Oobabooga, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OpenAICompatSettings {
+    pub endpoint: String,
+    /// Optional API key. LM Studio and Oobabooga usually don't require one.
+    pub api_key: String,
+    pub preferred_model: String,
+    pub available_models: Vec<String>,
+}
+
+impl OpenAICompatSettings {
+    pub fn lm_studio_defaults() -> Self {
+        Self {
+            endpoint: "http://localhost:1234".to_string(),
+            api_key: String::new(),
+            preferred_model: String::new(),
+            available_models: Vec::new(),
+        }
+    }
+
+    pub fn oobabooga_defaults() -> Self {
+        Self {
+            endpoint: "http://localhost:5000".to_string(),
+            api_key: String::new(),
+            preferred_model: String::new(),
+            available_models: Vec::new(),
+        }
+    }
+}
+
+impl Default for OpenAICompatSettings {
+    fn default() -> Self {
+        Self {
+            endpoint: String::new(),
+            api_key: String::new(),
+            preferred_model: String::new(),
+            available_models: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AIProvidersSettings {
@@ -250,6 +292,8 @@ pub struct AIProvidersSettings {
     pub openai: AIProviderSettings,
     pub gemini: AIProviderSettings,
     pub ollama: OllamaSettings,
+    pub lm_studio: OpenAICompatSettings,
+    pub oobabooga: OpenAICompatSettings,
 }
 
 impl Default for AIProvidersSettings {
@@ -259,6 +303,8 @@ impl Default for AIProvidersSettings {
             openai: AIProviderSettings::with_provider_defaults("openai"),
             gemini: AIProviderSettings::with_provider_defaults("gemini"),
             ollama: OllamaSettings::default(),
+            lm_studio: OpenAICompatSettings::lm_studio_defaults(),
+            oobabooga: OpenAICompatSettings::oobabooga_defaults(),
         }
     }
 }

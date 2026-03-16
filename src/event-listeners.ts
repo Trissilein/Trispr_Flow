@@ -1745,6 +1745,16 @@ export function wireEvents() {
     refreshAIUi();
   });
 
+  dom.aiFallbackLocalFallbackEndpoints?.addEventListener("change", async () => {
+    if (!settings || !dom.aiFallbackLocalFallbackEndpoints) return;
+    const raw = dom.aiFallbackLocalFallbackEndpoints.value;
+    settings.providers.ollama.fallback_endpoints = raw
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    await persistSettings();
+  });
+
   const handleSaveCredentialsClick = async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();

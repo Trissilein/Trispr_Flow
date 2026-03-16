@@ -864,6 +864,11 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackLocalRuntimeVersionNote.appendChild(badges);
   }
 
+  if (dom.aiFallbackLocalFallbackEndpoints && document.activeElement !== dom.aiFallbackLocalFallbackEndpoints) {
+    dom.aiFallbackLocalFallbackEndpoints.value = (settings.providers.ollama.fallback_endpoints ?? []).join("\n");
+    dom.aiFallbackLocalFallbackEndpoints.disabled = runtimeCardState.busy;
+  }
+
   applyProviderLaneVisibility(false);
   renderAIFallbackModelOptions(provider, ai?.model || "");
 

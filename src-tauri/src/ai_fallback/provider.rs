@@ -167,6 +167,23 @@ pub fn is_ssrf_target(endpoint: &str) -> bool {
     false
 }
 
+/// Return all endpoint candidates: primary (with localhost/127.0.0.1 variants)
+/// followed by each configured fallback endpoint and its own variants.
+/// SSRF targets are silently filtered out.
+pub fn ollama_all_endpoint_candidates(primary: &str, fallbacks: &[String]) -> Vec<String> {
+    let mut all = ollama_endpoint_candidates(primary);
+    for fb in fallbacks {
+        if !is_ssrf_target(fb) {
+            for candidate in ollama_endpoint_candidates(fb) {
+                if !all.contains(&candidate) {
+                    all.push(candidate);
+                }
+            }
+        }
+    }
+    all
+}
+
 /// Return preferred endpoint plus a localhost/127.0.0.1 fallback variant.
 pub fn ollama_endpoint_candidates(endpoint: &str) -> Vec<String> {
     let primary = normalize_ollama_endpoint(endpoint);

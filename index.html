@@ -1399,6 +1399,18 @@
                                   <option value="system">System (PATH)</option>
                                 </select>
                               </label>
+                              <label class="field span-2">
+                                <span class="field-label">Fallback endpoints</span>
+                                <textarea
+                                  id="ai-fallback-local-fallback-endpoints"
+                                  class="field-textarea"
+                                  rows="3"
+                                  placeholder="One URL per line, e.g.:&#10;http://127.0.0.1:11435&#10;http://localhost:1234"
+                                  title="Additional endpoints tried in order when the primary endpoint is unreachable"
+                                  spellcheck="false"
+                                ></textarea>
+                                <span class="field-hint">Tried in order when the primary endpoint is unreachable. Leave empty to use only the primary.</span>
+                              </label>
                               <div class="ai-provider-advanced-actions">
                                 <button id="ai-fallback-local-verify-action" class="hotkey-record-btn" type="button" title="Verify local runtime health and models">
                                   Verify

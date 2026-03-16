@@ -376,6 +376,7 @@ export interface AIProviderSettings {
 
 export interface OllamaSettings {
   endpoint: string;
+  fallback_endpoints?: string[];
   available_models: string[];
   preferred_model: string;
   runtime_source: "system" | "per_user_zip" | "manual";

@@ -119,6 +119,7 @@ export const aiFallbackFetchVersionsStatus = $("ai-fallback-fetch-versions-statu
 export const aiFallbackLocalRuntimeSource = $("ai-fallback-local-runtime-source") as HTMLSelectElement | null;
 export const aiFallbackLocalRuntimeVersionNote = $("ai-fallback-local-runtime-version-note") as HTMLSpanElement | null;
 export const aiFallbackLocalRuntimeNote = $("ai-fallback-local-runtime-note") as HTMLSpanElement | null;
+export const aiFallbackLocalFallbackEndpoints = $("ai-fallback-local-fallback-endpoints") as HTMLTextAreaElement | null;
 export const aiFallbackRuntimeProgress = $("ai-fallback-runtime-progress") as HTMLDivElement | null;
 export const aiFallbackRuntimeProgressFill = $("ai-fallback-runtime-progress-fill") as HTMLDivElement | null;
 export const aiFallbackRuntimeProgressText = $("ai-fallback-runtime-progress-text") as HTMLSpanElement | null;

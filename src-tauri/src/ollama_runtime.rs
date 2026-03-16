@@ -829,19 +829,21 @@ fn update_runtime_in_settings(
     Ok(())
 }
 
-fn runtime_endpoint_reachable(endpoint: &str) -> bool {
+fn runtime_endpoint_reachable(endpoint: &str, fallbacks: &[String]) -> bool {
     if ping_ollama_quick(endpoint).is_ok() {
         return true;
     }
 
-    // Fallback to a slightly slower probe (2 s) for busy-but-running Ollama.
-    // Do NOT use the shared agent here — its 60 s read timeout would cause a
-    // full freeze when Ollama is simply not running.
+    // Slightly slower probe (2 s) for busy-but-running Ollama, plus any configured fallbacks.
+    // Do NOT use the shared agent — its 60 s read timeout causes full freezes when Ollama
+    // is simply not running.
     let agent = ureq::builder()
         .timeout_connect(Duration::from_secs(2))
         .timeout_read(Duration::from_secs(2))
         .build();
-    for candidate in crate::ai_fallback::provider::ollama_endpoint_candidates(endpoint) {
+    for candidate in
+        crate::ai_fallback::provider::ollama_all_endpoint_candidates(endpoint, fallbacks)
+    {
         let url = format!("{}/api/tags", candidate);
         if agent.get(&url).call().is_ok() {
             return true;
@@ -1465,7 +1467,8 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
     let (binary_path, source) = select_runtime_binary(app, &settings_snapshot)
         .map_err(|err| mark_failure("runtime_not_found", err))?;
     let version = parse_ollama_version(&binary_path);
-    if runtime_endpoint_reachable(&endpoint) {
+    let fallback_endpoints = settings_snapshot.providers.ollama.fallback_endpoints.clone();
+    if runtime_endpoint_reachable(&endpoint, &fallback_endpoints) {
         let ts = now_iso();
         let _ = update_runtime_in_settings(
             app,

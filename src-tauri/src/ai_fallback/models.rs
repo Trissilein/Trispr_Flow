@@ -188,6 +188,9 @@ impl Default for AIProviderSettings {
 #[serde(default)]
 pub struct OllamaSettings {
     pub endpoint: String,
+    /// Additional endpoints tried in order when the primary endpoint is unreachable.
+    /// Useful for alternate ports (e.g. 11435), LM Studio (1234), or Oobabooga (5000).
+    pub fallback_endpoints: Vec<String>,
     pub available_models: Vec<String>,
     pub preferred_model: String,
     pub runtime_source: String, // "system" | "per_user_zip" | "manual"
@@ -201,6 +204,7 @@ impl Default for OllamaSettings {
     fn default() -> Self {
         Self {
             endpoint: "http://localhost:11434".to_string(),
+            fallback_endpoints: Vec::new(),
             available_models: Vec::new(),
             preferred_model: String::new(),
             runtime_source: "manual".to_string(),

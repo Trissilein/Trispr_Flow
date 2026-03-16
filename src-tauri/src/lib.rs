@@ -1075,6 +1075,42 @@ async fn test_provider_connection(
         .map_err(|e| format!("Test provider connection task failed: {}", e))?;
     }
 
+    // OpenAI-compat backends (LM Studio, Oobabooga)
+    if provider_id == "lm_studio" || provider_id == "oobabooga" {
+        let (endpoint, stored_key, label) = {
+            let settings = state.settings.lock().unwrap();
+            if provider_id == "lm_studio" {
+                (
+                    settings.providers.lm_studio.endpoint.clone(),
+                    settings.providers.lm_studio.api_key.clone(),
+                    "LM Studio".to_string(),
+                )
+            } else {
+                (
+                    settings.providers.oobabooga.endpoint.clone(),
+                    settings.providers.oobabooga.api_key.clone(),
+                    "Oobabooga".to_string(),
+                )
+            }
+        };
+        let effective_key = if api_key.trim().is_empty() { stored_key } else { api_key };
+        return tauri::async_runtime::spawn_blocking(move || {
+            let models = crate::ai_fallback::provider::list_openai_compat_models(&endpoint, &effective_key);
+            if models.is_empty() {
+                Err(format!("{} not reachable at {}. Is the server running?", label, endpoint))
+            } else {
+                Ok(serde_json::json!({
+                    "ok": true,
+                    "provider": provider_id,
+                    "message": format!("{} is running. {} model(s) available.", label, models.len()),
+                    "models": models,
+                }))
+            }
+        })
+        .await
+        .map_err(|e| format!("Test provider connection task failed: {}", e))?;
+    }
+
     tauri::async_runtime::spawn_blocking(move || {
         test_provider_connection_impl(provider_id, api_key)
     })

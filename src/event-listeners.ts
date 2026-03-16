@@ -1763,6 +1763,88 @@ export function wireEvents() {
     await persistSettings();
   });
 
+  // ── OpenAI-compat backend (LM Studio / Oobabooga) config listeners ─────────
+
+  function getCompatSettings() {
+    if (!settings) return null;
+    const p = settings.ai_fallback.provider;
+    if (p === "lm_studio") return settings.providers.lm_studio ??= { endpoint: "http://localhost:1234", api_key: "", preferred_model: "", available_models: [] };
+    if (p === "oobabooga") return settings.providers.oobabooga ??= { endpoint: "http://localhost:5000", api_key: "", preferred_model: "", available_models: [] };
+    return null;
+  }
+
+  dom.aiFallbackCompatEndpoint?.addEventListener("change", async () => {
+    const s = getCompatSettings();
+    if (!s || !dom.aiFallbackCompatEndpoint) return;
+    s.endpoint = dom.aiFallbackCompatEndpoint.value.trim() || s.endpoint;
+    await persistSettings();
+  });
+
+  dom.aiFallbackCompatApiKey?.addEventListener("change", async () => {
+    const s = getCompatSettings();
+    if (!s || !dom.aiFallbackCompatApiKey) return;
+    s.api_key = dom.aiFallbackCompatApiKey.value;
+    await persistSettings();
+  });
+
+  dom.aiFallbackCompatModel?.addEventListener("change", async () => {
+    const s = getCompatSettings();
+    if (!s || !dom.aiFallbackCompatModel) return;
+    s.preferred_model = dom.aiFallbackCompatModel.value;
+    settings!.ai_fallback.model = dom.aiFallbackCompatModel.value;
+    await persistSettings();
+  });
+
+  dom.aiFallbackCompatFetchModels?.addEventListener("click", async () => {
+    const s = getCompatSettings();
+    if (!s || !dom.aiFallbackCompatFetchModels || !settings) return;
+    dom.aiFallbackCompatFetchModels.disabled = true;
+    dom.aiFallbackCompatFetchModels.textContent = "Fetching…";
+    if (dom.aiFallbackCompatStatus) dom.aiFallbackCompatStatus.textContent = "Connecting to server…";
+    try {
+      const models = await invoke<string[]>("fetch_available_models", {
+        provider: settings.ai_fallback.provider,
+      });
+      s.available_models = models;
+      if (!s.preferred_model && models.length > 0) {
+        s.preferred_model = models[0];
+        settings.ai_fallback.model = models[0];
+      }
+      await persistSettings();
+      if (dom.aiFallbackCompatStatus) dom.aiFallbackCompatStatus.textContent = `${models.length} model(s) found.`;
+    } catch (err) {
+      if (dom.aiFallbackCompatStatus) {
+        dom.aiFallbackCompatStatus.textContent = `Connection failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    } finally {
+      dom.aiFallbackCompatFetchModels!.disabled = false;
+      dom.aiFallbackCompatFetchModels!.textContent = "Fetch models";
+      renderAIFallbackSettingsUi();
+    }
+  });
+
+  dom.aiFallbackCompatVerifyAction?.addEventListener("click", async () => {
+    const s = getCompatSettings();
+    if (!s || !dom.aiFallbackCompatVerifyAction || !settings) return;
+    dom.aiFallbackCompatVerifyAction.disabled = true;
+    if (dom.aiFallbackCompatStatus) dom.aiFallbackCompatStatus.textContent = "Verifying…";
+    try {
+      const result = await invoke<{ ok: boolean; message: string }>("test_provider_connection", {
+        providerId: settings.ai_fallback.provider,
+        apiKey: s.api_key || "",
+      });
+      if (dom.aiFallbackCompatStatus) {
+        dom.aiFallbackCompatStatus.textContent = result.ok ? `✓ ${result.message}` : `✗ ${result.message}`;
+      }
+    } catch (err) {
+      if (dom.aiFallbackCompatStatus) {
+        dom.aiFallbackCompatStatus.textContent = `✗ ${err instanceof Error ? err.message : String(err)}`;
+      }
+    } finally {
+      dom.aiFallbackCompatVerifyAction!.disabled = false;
+    }
+  });
+
   const handleSaveCredentialsClick = async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();

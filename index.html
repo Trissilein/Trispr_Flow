@@ -1429,6 +1429,48 @@
                               </div>
                             </div>
                           </details>
+                          <!-- OpenAI-compat backend config (LM Studio / Oobabooga) -->
+                          <div id="ai-fallback-compat-config" hidden>
+                            <label class="field span-2">
+                              <span class="field-label">Server endpoint</span>
+                              <input
+                                id="ai-fallback-compat-endpoint"
+                                type="url"
+                                class="field-input"
+                                spellcheck="false"
+                                placeholder="http://localhost:1234"
+                                title="Base URL of the local AI server"
+                              />
+                              <span id="ai-fallback-compat-endpoint-hint" class="field-hint">Default: LM Studio port 1234, Oobabooga port 5000</span>
+                            </label>
+                            <label class="field span-2">
+                              <span class="field-label">API key <span class="field-label-optional">(optional)</span></span>
+                              <input
+                                id="ai-fallback-compat-api-key"
+                                type="password"
+                                class="field-input"
+                                spellcheck="false"
+                                placeholder="Leave empty if not required"
+                                title="API key for the local server (most local servers don't require one)"
+                              />
+                            </label>
+                            <label class="field span-2">
+                              <span class="field-label">Active model</span>
+                              <div class="field-row">
+                                <select id="ai-fallback-compat-model" title="Model to use for refinement"></select>
+                                <button id="ai-fallback-compat-fetch-models" class="hotkey-record-btn" type="button" title="Fetch available models from the server">
+                                  Fetch models
+                                </button>
+                              </div>
+                              <span id="ai-fallback-compat-status" class="field-hint"></span>
+                            </label>
+                            <div class="ai-provider-advanced-actions">
+                              <button id="ai-fallback-compat-verify-action" class="hotkey-record-btn" type="button" title="Test connection to the local server">
+                                Verify connection
+                              </button>
+                            </div>
+                          </div>
+
                           <span id="ai-fallback-local-runtime-note" class="field-hint">
                             Local mode keeps transcript data on this device.
                           </span>

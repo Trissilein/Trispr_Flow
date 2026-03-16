@@ -512,7 +512,8 @@ function renderCloudProviderList(fallbackProvider: CloudAIFallbackProvider | nul
 function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedModel: string) {
   if (!dom.aiFallbackModel) return;
 
-  if (provider === "ollama") {
+  if (provider === "ollama" || provider === "lm_studio" || provider === "oobabooga") {
+    // Local backends manage their model in the Runtime section — hide this picker
     dom.aiFallbackModel.disabled = true;
     dom.aiFallbackModel.innerHTML = "";
     const option = document.createElement("option");
@@ -607,17 +608,21 @@ export function renderAIFallbackSettingsUi() {
   ai.preserve_source_language ??= true;
   ai.fallback_provider = normalizeCloudProvider(ai?.fallback_provider ?? null);
   ai.execution_mode = normalizeExecutionMode(ai?.execution_mode);
-  if (!ai.fallback_provider && ai.provider !== "ollama") {
-    ai.fallback_provider = normalizeCloudProvider(ai.provider);
+  const LOCAL_BACKENDS: AIFallbackProvider[] = ["ollama", "lm_studio", "oobabooga"];
+  if (!LOCAL_BACKENDS.includes(ai.provider as AIFallbackProvider)) {
+    // Cloud provider somehow set as primary — migrate fallback and reset to ollama
+    if (!ai.fallback_provider) {
+      ai.fallback_provider = normalizeCloudProvider(ai.provider);
+    }
+    ai.provider = "ollama";
   }
 
   const fallbackProvider = normalizeCloudProvider(ai?.fallback_provider ?? null);
   const fallbackConfig = fallbackProvider ? getProviderSettings(fallbackProvider) : null;
   const executionMode: AIExecutionMode = "local_primary";
-  const provider: AIFallbackProvider = "ollama";
+  const provider = ai.provider as AIFallbackProvider;
   ai.execution_mode = executionMode;
-  ai.provider = provider;
-  settings.postproc_llm_provider = "ollama";
+  settings.postproc_llm_provider = provider === "ollama" ? "ollama" : provider;
 
   const runtimeCardState = getOllamaRuntimeCardState();
   const runtimeVersionOptions = getOllamaRuntimeVersionCatalog();
@@ -880,9 +885,66 @@ export function renderAIFallbackSettingsUi() {
     backendTitleEl.textContent = labels[ai?.provider ?? "ollama"] ?? "Local AI (Local)";
   }
 
-  if (dom.aiFallbackLocalFallbackEndpoints && document.activeElement !== dom.aiFallbackLocalFallbackEndpoints) {
-    dom.aiFallbackLocalFallbackEndpoints.value = (settings.providers.ollama.fallback_endpoints ?? []).join("\n");
-    dom.aiFallbackLocalFallbackEndpoints.disabled = runtimeCardState.busy;
+  const isOllama = provider === "ollama";
+  const isCompatBackend = provider === "lm_studio" || provider === "oobabooga";
+
+  // Show/hide Ollama-specific advanced tools vs OpenAI-compat config
+  if (dom.aiFallbackLocalAdvanced) {
+    dom.aiFallbackLocalAdvanced.hidden = !isOllama;
+  }
+  if (dom.aiFallbackCompatConfig) {
+    dom.aiFallbackCompatConfig.hidden = !isCompatBackend;
+  }
+
+  if (isOllama) {
+    if (dom.aiFallbackLocalFallbackEndpoints && document.activeElement !== dom.aiFallbackLocalFallbackEndpoints) {
+      dom.aiFallbackLocalFallbackEndpoints.value = (settings.providers.ollama.fallback_endpoints ?? []).join("\n");
+      dom.aiFallbackLocalFallbackEndpoints.disabled = runtimeCardState.busy;
+    }
+  }
+
+  if (isCompatBackend) {
+    const compatSettings = provider === "lm_studio"
+      ? settings.providers.lm_studio
+      : settings.providers.oobabooga;
+    const defaultEndpoint = provider === "lm_studio" ? "http://localhost:1234" : "http://localhost:5000";
+    const endpointHint = provider === "lm_studio"
+      ? "Default LM Studio port: 1234"
+      : "Default Oobabooga port: 5000";
+
+    if (dom.aiFallbackCompatEndpoint && document.activeElement !== dom.aiFallbackCompatEndpoint) {
+      dom.aiFallbackCompatEndpoint.value = compatSettings?.endpoint || defaultEndpoint;
+      dom.aiFallbackCompatEndpoint.placeholder = defaultEndpoint;
+    }
+    if (dom.aiFallbackCompatEndpointHint) {
+      dom.aiFallbackCompatEndpointHint.textContent = endpointHint;
+    }
+    if (dom.aiFallbackCompatApiKey && document.activeElement !== dom.aiFallbackCompatApiKey) {
+      dom.aiFallbackCompatApiKey.value = compatSettings?.api_key || "";
+    }
+
+    // Model select
+    if (dom.aiFallbackCompatModel) {
+      const models = compatSettings?.available_models ?? [];
+      const preferred = compatSettings?.preferred_model || "";
+      dom.aiFallbackCompatModel.innerHTML = "";
+      if (models.length === 0) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "Click 'Fetch models' to load available models";
+        dom.aiFallbackCompatModel.appendChild(opt);
+        dom.aiFallbackCompatModel.disabled = true;
+      } else {
+        dom.aiFallbackCompatModel.disabled = false;
+        models.forEach((m) => {
+          const opt = document.createElement("option");
+          opt.value = m;
+          opt.textContent = m;
+          dom.aiFallbackCompatModel?.appendChild(opt);
+        });
+        dom.aiFallbackCompatModel.value = models.includes(preferred) ? preferred : models[0];
+      }
+    }
   }
 
   applyProviderLaneVisibility(false);

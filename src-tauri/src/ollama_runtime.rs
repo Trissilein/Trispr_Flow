@@ -843,6 +843,63 @@ fn managed_child_status(state: &AppState) -> (Option<u32>, bool) {
     managed_child_slot_status(&state.managed_ollama_child)
 }
 
+// ── PID lockfile helpers ──────────────────────────────────────────────────────
+// The Job Object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) is the primary cleanup
+// mechanism, but fails when the host process is already inside a non-nested
+// job (e.g. Windows Terminal, VSCode). The PID lockfile is the fallback: on
+// every spawn we persist the PID, and on the next startup (or explicit stop)
+// we kill any process that matches, ensuring no zombie Ollama server lingers.
+
+const OLLAMA_PID_LOCKFILE: &str = "ollama_managed.pid";
+
+pub(crate) fn write_ollama_pid_lockfile(app: &AppHandle) {
+    // Read current managed PID from the slot
+    let state = app.state::<AppState>();
+    let pid = match state.managed_ollama_child.lock() {
+        Ok(guard) => guard.as_ref().map(|c| c.id()),
+        Err(_) => return,
+    };
+    let Some(pid) = pid else { return };
+    let path = resolve_data_path(app, OLLAMA_PID_LOCKFILE);
+    let _ = std::fs::write(&path, pid.to_string());
+}
+
+pub(crate) fn kill_stale_ollama_pid(app: &AppHandle) {
+    let path = resolve_data_path(app, OLLAMA_PID_LOCKFILE);
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(pid) = content.trim().parse::<u32>() else {
+        let _ = std::fs::remove_file(&path);
+        return;
+    };
+
+    info!("Killing stale managed Ollama pid {pid} from previous session");
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status();
+    }
+
+    let _ = std::fs::remove_file(&path);
+}
+
+pub(crate) fn clear_ollama_pid_lockfile(app: &AppHandle) {
+    let path = resolve_data_path(app, OLLAMA_PID_LOCKFILE);
+    let _ = std::fs::remove_file(&path);
+}
+
 /// Returns only pinned (bundled) versions — no network call. Fast and safe for automatic use.
 #[tauri::command]
 pub fn list_ollama_runtime_versions(
@@ -1436,6 +1493,8 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
         .parent()
         .map(|dir| dir.join("lib").join("ollama"))
         .filter(|dir| dir.is_dir());
+    // Kill any Ollama left over from a previous session (crash or hard-kill)
+    kill_stale_ollama_pid(app);
     terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
     let mut cmd = Command::new(&binary_path);
     cmd.arg("serve")
@@ -1471,6 +1530,8 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
         )
     })?;
     let pid = spawn_result.pid;
+    // Persist PID so we can clean it up even if the app crashes before proper shutdown
+    write_ollama_pid_lockfile(app);
     if !spawn_result.job_assigned {
         update_ollama_runtime_diagnostics(
             app,

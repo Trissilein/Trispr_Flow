@@ -485,8 +485,9 @@ pub(crate) fn terminate_managed_child_slot(label: &str, slot: &Mutex<Option<std:
     }
 }
 
-pub(crate) fn cleanup_managed_processes(state: &AppState) {
+pub(crate) fn cleanup_managed_processes(app: &AppHandle, state: &AppState) {
     terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
+    crate::ollama_runtime::clear_ollama_pid_lockfile(app);
     terminate_managed_child_slot(
         "managed Whisper-Server runtime",
         &state.managed_whisper_server_child,
@@ -3797,6 +3798,7 @@ async fn stop_ollama_runtime(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
+        crate::ollama_runtime::clear_ollama_pid_lockfile(&app);
 
         let endpoint = {
             let settings = state.settings.lock().unwrap().clone();
@@ -5149,6 +5151,9 @@ pub fn run() {
             // %LOCALAPPDATA%\Trispr Flow\ before any state is loaded.
             crate::data_migration::migrate_legacy_data(app.handle());
 
+            // Kill any Ollama process left over from a previous crash or hard-kill.
+            crate::ollama_runtime::kill_stale_ollama_pid(app.handle());
+
             let settings = load_settings(app.handle());
 
             // Compute partition base directories and legacy paths for migration.
@@ -5428,7 +5433,7 @@ pub fn run() {
                         let _ = cancel_backlog_item_event.set_text("Cancel Auto-Expand");
                     }
                     "quit" => {
-                        cleanup_managed_processes(app.state::<AppState>().inner());
+                        cleanup_managed_processes(app, app.state::<AppState>().inner());
                         // Use ExitProcess directly to bypass all Rust/C cleanup handlers,
                         // including WebView2 destructors that cause ERROR_CLASS_HAS_WINDOWS (1412)
                         // and a 5-10s hang on Windows. Settings are persisted on every change.
@@ -5699,7 +5704,7 @@ pub fn run() {
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
                 info!("Application exiting, cleaning up child processes");
-                cleanup_managed_processes(app_handle.state::<AppState>().inner());
+                cleanup_managed_processes(app_handle, app_handle.state::<AppState>().inner());
             }
         });
 }

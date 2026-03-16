@@ -123,11 +123,16 @@ function isProviderVerified(provider: CloudAIFallbackProvider | null): boolean {
   return isVerifiedAuthStatus(providerSettings.auth_status);
 }
 
+const LOCAL_BACKENDS = ["ollama", "lm_studio", "oobabooga"] as const;
+
 function applyExecutionModeInSettings(mode: AIExecutionMode): void {
   if (!settings) return;
   settings.ai_fallback.execution_mode = "local_primary";
-  settings.ai_fallback.provider = "ollama";
-  settings.postproc_llm_provider = "ollama";
+  // Preserve the currently selected local backend — do NOT reset to "ollama"
+  if (!LOCAL_BACKENDS.includes(settings.ai_fallback.provider as typeof LOCAL_BACKENDS[number])) {
+    settings.ai_fallback.provider = "ollama";
+  }
+  settings.postproc_llm_provider = settings.ai_fallback.provider;
   if (mode === "online_fallback") {
     settings.ai_fallback.execution_mode = "local_primary";
   }
@@ -287,13 +292,16 @@ function ensureAIFallbackSettingsDefaults() {
     settings.ai_fallback.fallback_provider ?? null
   );
   settings.ai_fallback.execution_mode = normalizeExecutionMode(settings.ai_fallback.execution_mode);
-  if (!settings.ai_fallback.fallback_provider && settings.ai_fallback.provider !== "ollama") {
+  if (!settings.ai_fallback.fallback_provider && !LOCAL_BACKENDS.includes(settings.ai_fallback.provider as typeof LOCAL_BACKENDS[number])) {
     settings.ai_fallback.fallback_provider = normalizeCloudProvider(settings.ai_fallback.provider);
   }
   // Online fallback lane is intentionally roadmap-only for now.
   settings.ai_fallback.execution_mode = "local_primary";
-  settings.ai_fallback.provider = "ollama";
-  settings.postproc_llm_provider = "ollama";
+  // Preserve the selected local backend — only reset if something invalid crept in
+  if (!LOCAL_BACKENDS.includes(settings.ai_fallback.provider as typeof LOCAL_BACKENDS[number])) {
+    settings.ai_fallback.provider = "ollama";
+  }
+  settings.postproc_llm_provider = settings.ai_fallback.provider;
   settings.postproc_language = derivePostprocLanguageFromAsr(
     settings.language_mode,
     settings.language_pinned

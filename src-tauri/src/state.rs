@@ -1147,8 +1147,12 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
     }
 
     // Preserve legacy cloud provider selection as optional fallback candidate.
-    if settings.ai_fallback.fallback_provider.is_none() && settings.ai_fallback.provider != "ollama"
-    {
+    // Skip for local backends — they are not cloud providers.
+    let is_local = matches!(
+        settings.ai_fallback.provider.as_str(),
+        "ollama" | "lm_studio" | "oobabooga"
+    );
+    if settings.ai_fallback.fallback_provider.is_none() && !is_local {
         settings.ai_fallback.fallback_provider =
             normalize_cloud_provider(&settings.ai_fallback.provider);
     }
@@ -1185,6 +1189,8 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
         .as_ref()
         .and_then(|provider| normalize_cloud_provider(provider));
 
+    const LOCAL_BACKENDS: &[&str] = &["ollama", "lm_studio", "oobabooga"];
+
     if settings.ai_fallback.execution_mode == "online_fallback" {
         let verified = settings
             .ai_fallback
@@ -1205,7 +1211,11 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
             settings.ai_fallback.provider = "ollama".to_string();
         }
     } else {
-        settings.ai_fallback.provider = "ollama".to_string();
+        // Preserve the selected local backend (ollama / lm_studio / oobabooga).
+        // Only reset to "ollama" if something invalid crept in.
+        if !LOCAL_BACKENDS.contains(&settings.ai_fallback.provider.as_str()) {
+            settings.ai_fallback.provider = "ollama".to_string();
+        }
     }
 
     if settings.ai_fallback.provider == "ollama"

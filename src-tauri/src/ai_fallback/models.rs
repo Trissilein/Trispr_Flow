@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use super::provider::default_models_for_provider;
 
@@ -7,12 +8,31 @@ const DEFAULT_TEMPERATURE: f32 = 0.3;
 const DEFAULT_MAX_TOKENS: u32 = 4000;
 const DEFAULT_EXECUTION_MODE: &str = "local_primary";
 const DEFAULT_PROMPT_PROFILE: &str = "wording";
+const USER_PROMPT_PRESET_PREFIX: &str = "user:";
 const DEFAULT_PRESERVE_SOURCE_LANGUAGE: bool = true;
 const AUTH_STATUS_LOCKED: &str = "locked";
 const AUTH_STATUS_VERIFIED_API_KEY: &str = "verified_api_key";
 const AUTH_STATUS_VERIFIED_OAUTH: &str = "verified_oauth";
 const AUTH_METHOD_API_KEY: &str = "api_key";
 const AUTH_METHOD_OAUTH: &str = "oauth";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UserPromptPreset {
+    pub id: String,
+    pub name: String,
+    pub prompt: String,
+}
+
+impl Default for UserPromptPreset {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            prompt: String::new(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -31,6 +51,8 @@ pub struct AIFallbackSettings {
     pub custom_prompt_enabled: bool,
     pub custom_prompt: String,
     pub use_default_prompt: bool,
+    pub prompt_presets: Vec<UserPromptPreset>,
+    pub active_prompt_preset_id: String, // "wording" | "summary" | ... | "custom" | "user:<id>"
 }
 
 impl Default for AIFallbackSettings {
@@ -56,6 +78,8 @@ impl Default for AIFallbackSettings {
             custom_prompt:
                 "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
             use_default_prompt: true,
+            prompt_presets: Vec::new(),
+            active_prompt_preset_id: DEFAULT_PROMPT_PROFILE.to_string(),
         }
     }
 }
@@ -104,6 +128,19 @@ impl AIFallbackSettings {
             }
         } else {
             self.prompt_profile = normalized_profile.to_string();
+        }
+        self.prompt_presets = normalize_user_prompt_presets(std::mem::take(&mut self.prompt_presets));
+        self.active_prompt_preset_id = normalize_active_prompt_preset_id(
+            &self.active_prompt_preset_id,
+            &self.prompt_profile,
+            &self.prompt_presets,
+        );
+        if let Some(selected_user_preset) =
+            user_prompt_preset_from_option_id(&self.active_prompt_preset_id, &self.prompt_presets)
+        {
+            self.prompt_profile = "custom".to_string();
+            self.custom_prompt_enabled = true;
+            self.custom_prompt = selected_user_preset.prompt.clone();
         }
         if self.custom_prompt.trim().is_empty() {
             self.custom_prompt = AIFallbackSettings::default().custom_prompt;
@@ -207,7 +244,7 @@ pub struct OllamaSettings {
 impl Default for OllamaSettings {
     fn default() -> Self {
         Self {
-            endpoint: "http://localhost:11434".to_string(),
+            endpoint: "http://127.0.0.1:11434".to_string(),
             fallback_endpoints: Vec::new(),
             available_models: Vec::new(),
             preferred_model: String::new(),
@@ -223,7 +260,7 @@ impl Default for OllamaSettings {
 impl OllamaSettings {
     fn normalize(&mut self) {
         if self.endpoint.trim().is_empty() {
-            self.endpoint = "http://localhost:11434".to_string();
+            self.endpoint = "http://127.0.0.1:11434".to_string();
         }
         if self.available_models.is_empty() {
             self.preferred_model = String::new();
@@ -261,7 +298,7 @@ pub struct OpenAICompatSettings {
 impl OpenAICompatSettings {
     pub fn lm_studio_defaults() -> Self {
         Self {
-            endpoint: "http://localhost:1234".to_string(),
+            endpoint: "http://127.0.0.1:1234".to_string(),
             api_key: String::new(),
             preferred_model: String::new(),
             available_models: Vec::new(),
@@ -270,7 +307,7 @@ impl OpenAICompatSettings {
 
     pub fn oobabooga_defaults() -> Self {
         Self {
-            endpoint: "http://localhost:5000".to_string(),
+            endpoint: "http://127.0.0.1:5000".to_string(),
             api_key: String::new(),
             preferred_model: String::new(),
             available_models: Vec::new(),
@@ -461,4 +498,69 @@ pub fn normalize_prompt_profile_id(profile: &str) -> &'static str {
         "custom" => "custom",
         _ => "",
     }
+}
+
+fn sanitize_user_prompt_preset_id(id: &str) -> String {
+    let lowered = id.trim().to_lowercase();
+    let mut normalized = String::with_capacity(lowered.len());
+    for ch in lowered.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            normalized.push(ch);
+        } else {
+            normalized.push('-');
+        }
+    }
+    normalized.trim_matches('-').to_string()
+}
+
+fn normalize_user_prompt_presets(presets: Vec<UserPromptPreset>) -> Vec<UserPromptPreset> {
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    let mut cleaned: Vec<UserPromptPreset> = Vec::new();
+    for preset in presets {
+        let id = sanitize_user_prompt_preset_id(&preset.id);
+        let name = preset.name.trim().to_string();
+        let prompt = preset.prompt.trim().to_string();
+        if id.is_empty() || name.is_empty() || prompt.is_empty() {
+            continue;
+        }
+        if !seen_ids.insert(id.clone()) {
+            continue;
+        }
+        cleaned.push(UserPromptPreset { id, name, prompt });
+    }
+    cleaned
+}
+
+fn user_prompt_preset_from_option_id<'a>(
+    option_id: &str,
+    presets: &'a [UserPromptPreset],
+) -> Option<&'a UserPromptPreset> {
+    let normalized = option_id.trim().to_lowercase();
+    let raw_id = normalized.strip_prefix(USER_PROMPT_PRESET_PREFIX)?;
+    let preset_id = sanitize_user_prompt_preset_id(raw_id);
+    if preset_id.is_empty() {
+        return None;
+    }
+    presets.iter().find(|preset| preset.id == preset_id)
+}
+
+fn normalize_active_prompt_preset_id(
+    active_prompt_preset_id: &str,
+    prompt_profile: &str,
+    presets: &[UserPromptPreset],
+) -> String {
+    let normalized_active = active_prompt_preset_id.trim().to_lowercase();
+    let normalized_profile = normalize_prompt_profile_id(prompt_profile);
+    let normalized_active_profile = normalize_prompt_profile_id(&normalized_active);
+
+    if !normalized_active_profile.is_empty() {
+        return normalized_active_profile.to_string();
+    }
+    if let Some(user_preset) = user_prompt_preset_from_option_id(&normalized_active, presets) {
+        return format!("{}{}", USER_PROMPT_PRESET_PREFIX, user_preset.id);
+    }
+    if !normalized_profile.is_empty() {
+        return normalized_profile.to_string();
+    }
+    DEFAULT_PROMPT_PROFILE.to_string()
 }

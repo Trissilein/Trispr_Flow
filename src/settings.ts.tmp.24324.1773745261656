@@ -15,18 +15,8 @@ import {
 import { traceFrontendWarn } from "./frontend-trace";
 import { syncRefinementPipelineGraphFromSettings } from "./refinement-pipeline-graph";
 import {
-  BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS,
-  CUSTOM_REFINEMENT_PROMPT_OPTION,
-  DEFAULT_REFINEMENT_PROMPT_PRESET,
-  findUserRefinementPromptPresetByOptionId,
-  NEW_REFINEMENT_PROMPT_OPTION,
-  NEW_REFINEMENT_PROMPT_OPTION_ID,
-  normalizeActiveRefinementPromptPresetId,
-  normalizePersistedRefinementPromptPresetId,
   normalizeRefinementPromptPreset,
-  normalizeUserRefinementPromptPresets,
   resolveEffectiveRefinementPrompt,
-  toUserRefinementPromptOptionId,
 } from "./refinement-prompts";
 import type {
   AIProviderSettings,
@@ -35,7 +25,6 @@ import type {
   AIExecutionMode,
   AIProviderAuthMethodPreference,
   OverlayRefiningIndicatorPreset,
-  UserRefinementPromptPreset,
 } from "./types";
 import {
   CLOUD_PROVIDER_IDS,
@@ -70,24 +59,9 @@ export function ensureContinuousDumpDefaults() {
 
 export async function persistSettings() {
   if (!settings) return;
-  const aiFallback = settings.ai_fallback;
-  const settingsForSave = {
-    ...settings,
-    ai_fallback: aiFallback ? { ...aiFallback } : aiFallback,
-  };
-  if (settingsForSave.ai_fallback) {
-    settingsForSave.ai_fallback.prompt_presets = normalizeUserRefinementPromptPresets(
-      settingsForSave.ai_fallback.prompt_presets
-    );
-    settingsForSave.ai_fallback.active_prompt_preset_id = normalizePersistedRefinementPromptPresetId(
-      settingsForSave.ai_fallback.active_prompt_preset_id,
-      settingsForSave.ai_fallback.prompt_profile,
-      settingsForSave.ai_fallback.prompt_presets
-    );
-  }
   try {
     await Promise.race([
-      invoke("save_settings", { settings: settingsForSave }),
+      invoke("save_settings", { settings }),
       new Promise<void>((_, reject) =>
         setTimeout(() => reject(new Error("save_settings timed out")), 3_000)
       ),
@@ -471,68 +445,6 @@ function syncAIRefinementExpanders(): void {
   });
 }
 
-/**
- * Render model cards for OpenAI-compatible providers (LM Studio, Oobabooga).
- * Reuses the same .model-item CSS as the Ollama model manager.
- */
-function renderCompatModelCards(
-  compatSettings: import("./types").OpenAICompatSettings | undefined,
-  _provider?: string,
-) {
-  const container = dom.aiFallbackCompatModelList;
-  if (!container) return;
-  container.innerHTML = "";
-
-  const models = compatSettings?.available_models ?? [];
-  const preferred = compatSettings?.preferred_model || "";
-
-  if (models.length === 0) {
-    const hint = document.createElement("p");
-    hint.className = "field-hint";
-    hint.textContent = "Click \u2018Fetch models\u2019 to discover loaded models from the server.";
-    container.appendChild(hint);
-    return;
-  }
-
-  // Sort: active model first, then alphabetical
-  const sorted = [...models].sort((a, b) => {
-    if (a === preferred) return -1;
-    if (b === preferred) return 1;
-    return a.localeCompare(b);
-  });
-
-  sorted.forEach((modelName) => {
-    const isActive = modelName === preferred;
-    const card = document.createElement("article");
-    card.className = `model-item${isActive ? " selected" : ""}`;
-
-    card.innerHTML = `
-      <div class="model-header">
-        <div class="model-name">${modelName}</div>
-      </div>
-      <div class="model-status ${isActive ? "active" : "downloaded"}">${isActive ? "Active" : "Available"}</div>
-      <div class="model-actions"></div>
-    `;
-
-    const actionsEl = card.querySelector(".model-actions") as HTMLDivElement | null;
-    if (actionsEl && !isActive) {
-      const activateBtn = document.createElement("button");
-      activateBtn.className = "btn-sm btn-primary";
-      activateBtn.textContent = "Set active";
-      activateBtn.title = `Use ${modelName} for AI refinement`;
-      activateBtn.addEventListener("click", () => {
-        if (!settings || !compatSettings) return;
-        compatSettings.preferred_model = modelName;
-        settings.ai_fallback.model = modelName;
-        void persistSettings().then(() => renderAIFallbackSettingsUi());
-      });
-      actionsEl.appendChild(activateBtn);
-    }
-
-    container.appendChild(card);
-  });
-}
-
 function applyProviderLaneVisibility(isOnlineMode: boolean) {
   if (dom.aiFallbackModelField)
     dom.aiFallbackModelField.style.display = isOnlineMode ? "block" : "none";
@@ -690,43 +602,6 @@ function renderOverlayHealthNote() {
       : `Overlay recovering (${health.attempt}): ${health.reason}`;
 }
 
-function renderRefinementPromptPresetSelect(
-  userPresets: UserRefinementPromptPreset[],
-  activePresetId: string
-): void {
-  if (!dom.aiFallbackPromptPreset) return;
-  const select = dom.aiFallbackPromptPreset;
-  const fragment = document.createDocumentFragment();
-
-  for (const preset of BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS) {
-    const option = document.createElement("option");
-    option.value = preset.id;
-    option.textContent = preset.label;
-    fragment.appendChild(option);
-  }
-
-  const customOption = document.createElement("option");
-  customOption.value = CUSTOM_REFINEMENT_PROMPT_OPTION.id;
-  customOption.textContent = CUSTOM_REFINEMENT_PROMPT_OPTION.label;
-  fragment.appendChild(customOption);
-
-  for (const preset of userPresets) {
-    const option = document.createElement("option");
-    option.value = toUserRefinementPromptOptionId(preset.id);
-    option.textContent = `${preset.name} (User)`;
-    fragment.appendChild(option);
-  }
-
-  const newPresetOption = document.createElement("option");
-  newPresetOption.value = NEW_REFINEMENT_PROMPT_OPTION.id;
-  newPresetOption.textContent = NEW_REFINEMENT_PROMPT_OPTION.label;
-  fragment.appendChild(newPresetOption);
-
-  select.replaceChildren(fragment);
-  const hasActiveOption = Array.from(select.options).some((option) => option.value === activePresetId);
-  select.value = hasActiveOption ? activePresetId : DEFAULT_REFINEMENT_PROMPT_PRESET;
-}
-
 let aiRuntimeStateDriftLogged = false;
 
 export function renderAIFallbackSettingsUi() {
@@ -743,28 +618,7 @@ export function renderAIFallbackSettingsUi() {
   const ai = settings.ai_fallback;
   settings.providers.ollama.runtime_target_version ??= "0.17.7";
   ai.prompt_profile = normalizeRefinementPromptPreset(ai.prompt_profile);
-  ai.prompt_presets = normalizeUserRefinementPromptPresets(ai.prompt_presets);
-  ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
-    ai.active_prompt_preset_id,
-    ai.prompt_profile,
-    ai.prompt_presets
-  );
-  const selectedUserPromptPresetFromActive = findUserRefinementPromptPresetByOptionId(
-    ai.prompt_presets,
-    ai.active_prompt_preset_id
-  );
-  const isNewPromptPresetModeFromActive = ai.active_prompt_preset_id === NEW_REFINEMENT_PROMPT_OPTION_ID;
-  if (selectedUserPromptPresetFromActive) {
-    ai.prompt_profile = "custom";
-    ai.custom_prompt_enabled = true;
-    ai.custom_prompt = selectedUserPromptPresetFromActive.prompt;
-  } else if (isNewPromptPresetModeFromActive) {
-    ai.prompt_profile = "custom";
-    ai.custom_prompt_enabled = true;
-  } else {
-    ai.prompt_profile = normalizeRefinementPromptPreset(ai.active_prompt_preset_id);
-    ai.custom_prompt_enabled = ai.prompt_profile === "custom";
-  }
+  ai.custom_prompt_enabled = ai.prompt_profile === "custom";
   ai.use_default_prompt = false;
   ai.preserve_source_language ??= true;
   ai.fallback_provider = normalizeCloudProvider(ai?.fallback_provider ?? null);
@@ -1128,8 +982,27 @@ export function renderAIFallbackSettingsUi() {
     }
 
     // Model select
-    // Render model cards (same visual pattern as Ollama model manager)
-    renderCompatModelCards(compatSettings, provider);
+    if (dom.aiFallbackCompatModel) {
+      const models = compatSettings?.available_models ?? [];
+      const preferred = compatSettings?.preferred_model || "";
+      dom.aiFallbackCompatModel.innerHTML = "";
+      if (models.length === 0) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "Click 'Fetch models' to load available models";
+        dom.aiFallbackCompatModel.appendChild(opt);
+        dom.aiFallbackCompatModel.disabled = true;
+      } else {
+        dom.aiFallbackCompatModel.disabled = false;
+        models.forEach((m) => {
+          const opt = document.createElement("option");
+          opt.value = m;
+          opt.textContent = m;
+          dom.aiFallbackCompatModel?.appendChild(opt);
+        });
+        dom.aiFallbackCompatModel.value = models.includes(preferred) ? preferred : models[0];
+      }
+    }
   }
 
   applyProviderLaneVisibility(false);
@@ -1162,25 +1035,7 @@ export function renderAIFallbackSettingsUi() {
   if (dom.aiFallbackMaxTokens) {
     dom.aiFallbackMaxTokens.value = String(ai?.max_tokens ?? 4000);
   }
-  const userPromptPresets = normalizeUserRefinementPromptPresets(ai?.prompt_presets);
-  ai.prompt_presets = userPromptPresets;
-  const activePromptPresetId = normalizeActiveRefinementPromptPresetId(
-    ai?.active_prompt_preset_id,
-    ai?.prompt_profile,
-    userPromptPresets
-  );
-  ai.active_prompt_preset_id = activePromptPresetId;
-  renderRefinementPromptPresetSelect(userPromptPresets, activePromptPresetId);
-  const selectedUserPromptPreset = findUserRefinementPromptPresetByOptionId(
-    userPromptPresets,
-    activePromptPresetId
-  );
-  const isNewPresetMode = activePromptPresetId === NEW_REFINEMENT_PROMPT_OPTION_ID;
-  const promptProfile = selectedUserPromptPreset || isNewPresetMode
-    ? "custom"
-    : normalizeRefinementPromptPreset(activePromptPresetId);
-  ai.prompt_profile = promptProfile;
-  ai.custom_prompt_enabled = promptProfile === "custom";
+  const promptProfile = normalizeRefinementPromptPreset(ai?.prompt_profile);
   const effectiveLanguageHint = resolveEffectiveAsrLanguageHint(
     settings.language_mode,
     settings.language_pinned
@@ -1191,62 +1046,22 @@ export function renderAIFallbackSettingsUi() {
     ai?.custom_prompt,
     Boolean(ai?.preserve_source_language ?? true)
   );
-  const isCustomPrompt = activePromptPresetId === "custom";
-  const isUserPrompt = Boolean(selectedUserPromptPreset);
-  const isBuiltInPrompt = !isCustomPrompt && !isUserPrompt && !isNewPresetMode;
-  const shownPrompt = isBuiltInPrompt
-    ? promptPreview
-    : ai?.custom_prompt || selectedUserPromptPreset?.prompt || "";
+  if (dom.aiFallbackPromptPreset) {
+    dom.aiFallbackPromptPreset.value = promptProfile;
+  }
+  const isCustomPrompt = promptProfile === "custom";
   if (dom.aiFallbackPromptPreviewLabel) {
-    dom.aiFallbackPromptPreviewLabel.textContent = isBuiltInPrompt
-      ? "Prompt preview"
-      : isUserPrompt
-        ? "User preset"
-        : isNewPresetMode
-          ? "New preset prompt"
-          : "Custom prompt";
+    dom.aiFallbackPromptPreviewLabel.textContent = isCustomPrompt ? "Custom prompt" : "Prompt preview";
   }
   if (dom.aiFallbackPromptPreviewHint) {
-    dom.aiFallbackPromptPreviewHint.textContent = isBuiltInPrompt
-      ? "Built-in preset is read-only and acts as source of truth."
-      : isUserPrompt
-        ? "User presets are editable. Save explicitly or switch presets to auto-save."
-        : isNewPresetMode
-          ? "Start with an empty name and prompt, then click New."
-          : "Custom prompt is editable and sent as-is.";
+    dom.aiFallbackPromptPreviewHint.textContent = isCustomPrompt
+      ? "Custom prompt is editable and sent as-is. Language lock does not modify custom prompts."
+      : "Preset prompt is shown read-only so users can understand prompt structure.";
   }
   if (dom.aiFallbackCustomPrompt) {
-    dom.aiFallbackCustomPrompt.value = shownPrompt;
-    dom.aiFallbackCustomPrompt.readOnly = isBuiltInPrompt;
-    dom.aiFallbackCustomPrompt.classList.toggle("is-readonly", isBuiltInPrompt);
-  }
-  if (dom.aiFallbackPromptPresetName) {
-    dom.aiFallbackPromptPresetName.disabled = !(isUserPrompt || isNewPresetMode);
-    if (document.activeElement !== dom.aiFallbackPromptPresetName) {
-      if (isUserPrompt) {
-        dom.aiFallbackPromptPresetName.value = selectedUserPromptPreset?.name || "";
-      } else if (!isNewPresetMode) {
-        dom.aiFallbackPromptPresetName.value = "";
-      }
-    }
-  }
-  if (dom.aiFallbackPromptPresetSave) {
-    if (isUserPrompt) {
-      dom.aiFallbackPromptPresetSave.textContent = "Save";
-      dom.aiFallbackPromptPresetSave.disabled = false;
-      dom.aiFallbackPromptPresetSave.title = "Save changes to this user preset";
-    } else if (isNewPresetMode) {
-      dom.aiFallbackPromptPresetSave.textContent = "New";
-      dom.aiFallbackPromptPresetSave.disabled = false;
-      dom.aiFallbackPromptPresetSave.title = "Create a new user preset";
-    } else {
-      dom.aiFallbackPromptPresetSave.textContent = "New";
-      dom.aiFallbackPromptPresetSave.disabled = true;
-      dom.aiFallbackPromptPresetSave.title = "Select 'New Preset…' to create a preset";
-    }
-  }
-  if (dom.aiFallbackPromptPresetDelete) {
-    dom.aiFallbackPromptPresetDelete.disabled = !isUserPrompt;
+    dom.aiFallbackCustomPrompt.value = isCustomPrompt ? ai?.custom_prompt || "" : promptPreview;
+    dom.aiFallbackCustomPrompt.readOnly = !isCustomPrompt;
+    dom.aiFallbackCustomPrompt.classList.toggle("is-readonly", !isCustomPrompt);
   }
 }
 

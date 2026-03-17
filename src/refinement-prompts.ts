@@ -1,6 +1,43 @@
-import type { RefinementPromptPreset } from "./types";
+import type { RefinementPromptPreset, UserRefinementPromptPreset } from "./types";
 
 export const DEFAULT_REFINEMENT_PROMPT_PRESET: RefinementPromptPreset = "wording";
+export const NEW_REFINEMENT_PROMPT_OPTION_ID = "__new_preset__" as const;
+export type BuiltInRefinementPromptPreset = Exclude<RefinementPromptPreset, "custom">;
+export type RefinementPromptPresetOptionId =
+  | RefinementPromptPreset
+  | `user:${string}`
+  | typeof NEW_REFINEMENT_PROMPT_OPTION_ID;
+export type PersistedRefinementPromptPresetOptionId =
+  Exclude<RefinementPromptPresetOptionId, typeof NEW_REFINEMENT_PROMPT_OPTION_ID>;
+
+export const BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS: ReadonlyArray<{
+  id: BuiltInRefinementPromptPreset;
+  label: string;
+}> = [
+  { id: "wording", label: "Wording (Recommended)" },
+  { id: "summary", label: "Summary" },
+  { id: "technical_specs", label: "Technical Specs" },
+  { id: "action_items", label: "Action Items" },
+  { id: "llm_prompt", label: "LLM Prompt Engineer" },
+];
+
+export const CUSTOM_REFINEMENT_PROMPT_OPTION: {
+  id: "custom";
+  label: string;
+} = {
+  id: "custom",
+  label: "Custom Prompt",
+};
+
+export const NEW_REFINEMENT_PROMPT_OPTION: {
+  id: typeof NEW_REFINEMENT_PROMPT_OPTION_ID;
+  label: string;
+} = {
+  id: NEW_REFINEMENT_PROMPT_OPTION_ID,
+  label: "New Preset…",
+};
+
+const USER_PRESET_OPTION_PREFIX = "user:";
 
 function isGermanLanguage(language: string | null | undefined): boolean {
   const normalized = (language || "").trim().toLowerCase();
@@ -33,7 +70,7 @@ function withLanguageLockGuard(
 }
 
 const PRESET_PROMPTS: Record<
-  Exclude<RefinementPromptPreset, "custom">,
+  BuiltInRefinementPromptPreset,
   { en: string; de: string }
 > = {
   wording: {
@@ -77,6 +114,94 @@ export function normalizeRefinementPromptPreset(
   if (preset === "llm_prompt") return "llm_prompt";
   if (preset === "custom") return "custom";
   return "wording";
+}
+
+function normalizeUserPresetId(rawId: string | null | undefined): string {
+  return (rawId || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export function normalizeUserRefinementPromptPresets(
+  presets: UserRefinementPromptPreset[] | null | undefined
+): UserRefinementPromptPreset[] {
+  if (!Array.isArray(presets) || presets.length === 0) return [];
+  const out: UserRefinementPromptPreset[] = [];
+  const seenIds = new Set<string>();
+  for (const preset of presets) {
+    if (!preset || typeof preset !== "object") continue;
+    const id = normalizeUserPresetId(preset.id);
+    const name = String(preset.name || "").trim();
+    const prompt = String(preset.prompt || "").trim();
+    if (!id || !name || !prompt || seenIds.has(id)) continue;
+    seenIds.add(id);
+    out.push({ id, name, prompt });
+  }
+  return out;
+}
+
+export function toUserRefinementPromptOptionId(presetId: string): `user:${string}` {
+  return `${USER_PRESET_OPTION_PREFIX}${presetId}`;
+}
+
+export function parseUserRefinementPromptOptionId(
+  optionId: string | null | undefined
+): string | null {
+  const normalized = String(optionId || "").trim();
+  if (!normalized.startsWith(USER_PRESET_OPTION_PREFIX)) return null;
+  const id = normalizeUserPresetId(normalized.slice(USER_PRESET_OPTION_PREFIX.length));
+  return id || null;
+}
+
+export function findUserRefinementPromptPresetByOptionId(
+  presets: UserRefinementPromptPreset[] | null | undefined,
+  optionId: string | null | undefined
+): UserRefinementPromptPreset | null {
+  const presetId = parseUserRefinementPromptOptionId(optionId);
+  if (!presetId) return null;
+  const normalized = normalizeUserRefinementPromptPresets(presets);
+  return normalized.find((preset) => preset.id === presetId) || null;
+}
+
+export function normalizeActiveRefinementPromptPresetId(
+  activePresetId: string | null | undefined,
+  promptProfile: string | null | undefined,
+  presets: UserRefinementPromptPreset[] | null | undefined
+): RefinementPromptPresetOptionId {
+  const normalizedActive = String(activePresetId || "").trim();
+  if (normalizedActive === NEW_REFINEMENT_PROMPT_OPTION_ID) {
+    return NEW_REFINEMENT_PROMPT_OPTION_ID;
+  }
+  const normalizedPresets = normalizeUserRefinementPromptPresets(presets);
+  if (normalizeRefinementPromptPreset(normalizedActive) === normalizedActive) {
+    return normalizedActive as RefinementPromptPreset;
+  }
+
+  const userPreset = findUserRefinementPromptPresetByOptionId(normalizedPresets, normalizedActive);
+  if (userPreset) {
+    return toUserRefinementPromptOptionId(userPreset.id);
+  }
+
+  const normalizedProfile = normalizeRefinementPromptPreset(promptProfile);
+  return normalizedProfile;
+}
+
+export function normalizePersistedRefinementPromptPresetId(
+  activePresetId: string | null | undefined,
+  promptProfile: string | null | undefined,
+  presets: UserRefinementPromptPreset[] | null | undefined
+): PersistedRefinementPromptPresetOptionId {
+  const normalizedActive = normalizeActiveRefinementPromptPresetId(
+    activePresetId,
+    promptProfile,
+    presets
+  );
+  if (normalizedActive === NEW_REFINEMENT_PROMPT_OPTION_ID) {
+    return normalizeRefinementPromptPreset(promptProfile);
+  }
+  return normalizedActive;
 }
 
 export function resolveRefinementPresetPrompt(

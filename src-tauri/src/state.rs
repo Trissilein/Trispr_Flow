@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::warn;
@@ -662,7 +662,7 @@ pub(crate) struct RuntimeDiagnostics {
 }
 
 pub(crate) struct AppState {
-    pub(crate) settings: Mutex<Settings>,
+    pub(crate) settings: RwLock<Settings>,
     pub(crate) history: Mutex<PartitionedHistory>,
     pub(crate) history_transcribe: Mutex<PartitionedHistory>,
     pub(crate) recorder: Mutex<Recorder>,
@@ -1222,7 +1222,7 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
         && settings.ai_fallback.strict_local_mode
         && !is_local_ollama_endpoint(&settings.providers.ollama.endpoint)
     {
-        settings.providers.ollama.endpoint = "http://localhost:11434".to_string();
+        settings.providers.ollama.endpoint = "http://127.0.0.1:11434".to_string();
     }
     settings
         .providers
@@ -1423,11 +1423,11 @@ pub(crate) fn push_history_entry_inner(
 ) -> Result<Vec<HistoryEntry>, String> {
     let speaker_name = {
         let state = app.state::<AppState>();
-        let settings = state.settings.lock().unwrap();
+        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
         Some(speaker_name_for_source(&settings, &source))
     };
     let lock_started = Instant::now();
-    let mut ph = history.lock().unwrap();
+    let mut ph = history.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let entry = HistoryEntry {
         id: format!("h_{}", crate::util::now_ms()),
         text,
@@ -1450,11 +1450,11 @@ pub(crate) fn push_history_entry_inner(
     // Debounced persist: only schedule a disk write if none is already pending.
     if !HISTORY_SAVE_PENDING.swap(true, Ordering::AcqRel) {
         let app_clone = app.clone();
-        std::thread::spawn(move || {
+        crate::util::spawn_guarded("history_save_debounce", move || {
             std::thread::sleep(std::time::Duration::from_millis(200));
             HISTORY_SAVE_PENDING.store(false, Ordering::Release);
             let state = app_clone.state::<AppState>();
-            let ph = state.history.lock().unwrap();
+            let ph = state.history.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Err(e) = ph.flush_to_disk() {
                 warn!("Debounced history save failed: {}", e);
             }
@@ -1471,11 +1471,11 @@ pub(crate) fn push_transcribe_entry_inner(
 ) -> Result<Vec<HistoryEntry>, String> {
     let speaker_name = {
         let state = app.state::<AppState>();
-        let settings = state.settings.lock().unwrap();
+        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
         Some(speaker_name_for_source(&settings, "output"))
     };
     let lock_started = Instant::now();
-    let mut ph = history.lock().unwrap();
+    let mut ph = history.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let entry = HistoryEntry {
         id: format!("o_{}", crate::util::now_ms()),
         text,
@@ -1498,11 +1498,11 @@ pub(crate) fn push_transcribe_entry_inner(
     // Debounced persist: only schedule a disk write if none is already pending.
     if !TRANSCRIBE_HISTORY_SAVE_PENDING.swap(true, Ordering::AcqRel) {
         let app_clone = app.clone();
-        std::thread::spawn(move || {
+        crate::util::spawn_guarded("transcribe_history_save_debounce", move || {
             std::thread::sleep(std::time::Duration::from_millis(200));
             TRANSCRIBE_HISTORY_SAVE_PENDING.store(false, Ordering::Release);
             let state = app_clone.state::<AppState>();
-            let ph = state.history_transcribe.lock().unwrap();
+            let ph = state.history_transcribe.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Err(e) = ph.flush_to_disk() {
                 warn!("Debounced transcribe history save failed: {}", e);
             }
@@ -1529,7 +1529,7 @@ where
     F: FnMut(&mut HistoryEntry),
 {
     let lock_started = Instant::now();
-    let mut ph = store.lock().unwrap();
+    let mut ph = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let Some(entry) = ph.active.iter_mut().find(|entry| entry.id == entry_id) else {
         return Ok(false);
     };

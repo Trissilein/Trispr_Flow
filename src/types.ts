@@ -48,6 +48,12 @@ export type RefinementPromptPreset =
   | "llm_prompt"
   | "custom";
 
+export interface UserRefinementPromptPreset {
+  id: string;
+  name: string;
+  prompt: string;
+}
+
 export interface ModuleDescriptor {
   id: ModuleId | string;
   name: string;
@@ -364,6 +370,8 @@ export interface AIFallbackSettings {
   custom_prompt_enabled: boolean;
   custom_prompt: string;
   use_default_prompt: boolean;
+  prompt_presets?: UserRefinementPromptPreset[];
+  active_prompt_preset_id?: string;
 }
 
 export interface AIProviderSettings {

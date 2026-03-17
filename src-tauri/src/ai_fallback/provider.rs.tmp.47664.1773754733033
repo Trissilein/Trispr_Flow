@@ -1001,18 +1001,6 @@ fn suspicious_refinement_shape(original: &str, refined: &str) -> bool {
     (severe_shrink && low_overlap) || (blank_line_spike && severe_shrink)
 }
 
-/// Strip `<think>…</think>` blocks that reasoning models (Qwen3, DeepSeek-R1,
-/// etc.) inject before the actual answer.  Works for both single-line and
-/// multi-line think blocks.  Returns input unchanged if no `<think>` tag found.
-fn strip_thinking_tags(text: &str) -> String {
-    if !text.contains("<think>") {
-        return text.to_string();
-    }
-    static RE: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| regex::Regex::new(r"(?s)<think>.*?</think>\s*").unwrap());
-    RE.replace_all(text, "").trim().to_string()
-}
-
 fn sanitize_ollama_refinement_output(
     original: &str,
     refined: &str,
@@ -1275,7 +1263,6 @@ impl AIProvider for OllamaProvider {
                             .to_string(),
                     )
                 })?;
-                let refined_text = strip_thinking_tags(&refined_text);
                 let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
                 let (input_tokens, output_tokens) = parse_ollama_usage(&json);
                 let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -1336,7 +1323,6 @@ impl AIProvider for OllamaProvider {
                         .to_string(),
                 )
             })?;
-            let refined_text = strip_thinking_tags(&refined_text);
             let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
             let (input_tokens, output_tokens) = parse_ollama_usage(&json);
             let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -1520,8 +1506,6 @@ impl AIProvider for OpenAICompatProvider {
                 ))
             })?;
 
-        // Strip <think>...</think> blocks from reasoning models before sanitization
-        let refined_text = strip_thinking_tags(&refined_text);
         let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
 
         let input_tokens = json

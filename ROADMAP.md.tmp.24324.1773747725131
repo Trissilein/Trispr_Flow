@@ -91,13 +91,6 @@ This file is the canonical source for priorities and execution order.
 | P8 | Event-driven Ollama init: wait for `ollama:runtime-health` instead of immediate ping-storm at startup | Done ✅ |
 | P9 | Rust-side cold-start buffer: 10 s OLLAMA_DIAG_NEXT_MS suppresses all Ollama pings during bootstrap | Done ✅ |
 
-## LM Studio Integration (2026-03-17)
-
-| Phase | Title | Status |
-| --- | --- | --- |
-| LS1 | Daemon lifecycle: `lms daemon up` on switch-to, `lms daemon stop` on switch-away | Done ✅ |
-| LS2 | `max_tokens` in OpenAI-compatible request body (LM Studio + Oobabooga) — caps reasoning model output | Done ✅ |
-
 ## Block R Task Details
 
 | Task | Title | Depends on | Note |

@@ -46,13 +46,8 @@ import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
 import { applyAccentColor, DEFAULT_ACCENT_COLOR } from "./utils";
 import {
   DEFAULT_REFINEMENT_PROMPT_PRESET,
-  findUserRefinementPromptPresetByOptionId,
-  NEW_REFINEMENT_PROMPT_OPTION_ID,
-  normalizeActiveRefinementPromptPresetId,
   normalizeRefinementPromptPreset,
-  normalizeUserRefinementPromptPresets,
   resolveEffectiveRefinementPrompt,
-  toUserRefinementPromptOptionId,
 } from "./refinement-prompts";
 import {
   autoStartLocalRuntimeIfNeeded,
@@ -214,98 +209,6 @@ function normalizeTopicKeywordsInput(
   return normalized;
 }
 
-function refreshResolvedRefinementPromptInSettings() {
-  if (!settings) return;
-  settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
-    settings.ai_fallback.prompt_profile,
-    resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
-    settings.ai_fallback.custom_prompt,
-    settings.ai_fallback.preserve_source_language
-  );
-}
-
-function syncActivePromptPresetSelection() {
-  if (!settings) return;
-  const ai = settings.ai_fallback;
-  ai.prompt_presets = normalizeUserRefinementPromptPresets(ai.prompt_presets);
-  ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
-    ai.active_prompt_preset_id,
-    ai.prompt_profile,
-    ai.prompt_presets
-  );
-  if (ai.active_prompt_preset_id === NEW_REFINEMENT_PROMPT_OPTION_ID) {
-    ai.prompt_profile = "custom";
-    ai.custom_prompt_enabled = true;
-    ai.use_default_prompt = false;
-    return;
-  }
-  const selectedUserPreset = findUserRefinementPromptPresetByOptionId(
-    ai.prompt_presets,
-    ai.active_prompt_preset_id
-  );
-  if (selectedUserPreset) {
-    ai.prompt_profile = "custom";
-    ai.custom_prompt_enabled = true;
-    ai.custom_prompt = selectedUserPreset.prompt;
-  } else {
-    ai.prompt_profile = normalizeRefinementPromptPreset(ai.active_prompt_preset_id);
-    ai.custom_prompt_enabled = ai.prompt_profile === "custom";
-  }
-  ai.use_default_prompt = false;
-}
-
-function createUserPromptPresetId(baseName: string, existingIds: Set<string>): string {
-  const slug = baseName
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "preset";
-  let candidate = slug;
-  let suffix = 1;
-  while (existingIds.has(candidate)) {
-    candidate = `${slug}-${suffix}`;
-    suffix += 1;
-  }
-  return candidate;
-}
-
-function applyPendingUserPresetEditsFromEditor(): boolean {
-  if (!settings || !dom.aiFallbackCustomPrompt || !dom.aiFallbackPromptPresetName) {
-    return false;
-  }
-  const ai = settings.ai_fallback;
-  ai.prompt_presets = normalizeUserRefinementPromptPresets(ai.prompt_presets);
-  ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
-    ai.active_prompt_preset_id,
-    ai.prompt_profile,
-    ai.prompt_presets
-  );
-  const selectedUserPreset = findUserRefinementPromptPresetByOptionId(
-    ai.prompt_presets,
-    ai.active_prompt_preset_id
-  );
-  if (!selectedUserPreset) return false;
-
-  const nextPrompt = dom.aiFallbackCustomPrompt.value.trim();
-  const nextName = dom.aiFallbackPromptPresetName.value.trim() || selectedUserPreset.name;
-  if (!nextPrompt) {
-    return false;
-  }
-  if (nextPrompt === selectedUserPreset.prompt && nextName === selectedUserPreset.name) {
-    return false;
-  }
-
-  ai.prompt_presets = ai.prompt_presets.map((preset) =>
-    preset.id === selectedUserPreset.id
-      ? { ...preset, name: nextName, prompt: nextPrompt }
-      : preset
-  );
-  ai.active_prompt_preset_id = toUserRefinementPromptOptionId(selectedUserPreset.id);
-  syncActivePromptPresetSelection();
-  refreshResolvedRefinementPromptInSettings();
-  return true;
-}
-
 function ensureAIFallbackSettingsDefaults() {
   if (!settings) return;
   if (!settings.ai_fallback) {
@@ -325,8 +228,6 @@ function ensureAIFallbackSettingsDefaults() {
       custom_prompt:
         "Fix this transcribed text: correct punctuation, capitalization, and obvious errors. Keep the meaning unchanged. Return only the corrected text.",
       use_default_prompt: true,
-      prompt_presets: [],
-      active_prompt_preset_id: DEFAULT_REFINEMENT_PROMPT_PRESET,
     };
   }
   if (!settings.providers) {
@@ -381,17 +282,12 @@ function ensureAIFallbackSettingsDefaults() {
   }
   settings.ai_fallback.strict_local_mode ??= true;
   settings.ai_fallback.preserve_source_language ??= true;
-  settings.ai_fallback.prompt_profile = normalizeRefinementPromptPreset(settings.ai_fallback.prompt_profile);
-  settings.ai_fallback.prompt_presets = normalizeUserRefinementPromptPresets(
-    settings.ai_fallback.prompt_presets
-  );
-  settings.ai_fallback.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
-    settings.ai_fallback.active_prompt_preset_id,
-    settings.ai_fallback.prompt_profile,
-    settings.ai_fallback.prompt_presets
+  settings.ai_fallback.prompt_profile = normalizeRefinementPromptPreset(
+    settings.ai_fallback.prompt_profile
   );
   settings.ai_fallback.low_latency_mode ??= false;
-  syncActivePromptPresetSelection();
+  settings.ai_fallback.custom_prompt_enabled = settings.ai_fallback.prompt_profile === "custom";
+  settings.ai_fallback.use_default_prompt = false;
   settings.ai_fallback.fallback_provider = normalizeCloudProvider(
     settings.ai_fallback.fallback_provider ?? null
   );
@@ -1309,8 +1205,12 @@ export function wireEvents() {
       settings.language_mode,
       settings.language_pinned
     );
-    syncActivePromptPresetSelection();
-    refreshResolvedRefinementPromptInSettings();
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      normalizeRefinementPromptPreset(settings.ai_fallback.prompt_profile),
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
     await persistSettings();
     renderSettings();
   });
@@ -1322,8 +1222,12 @@ export function wireEvents() {
       settings.language_mode,
       settings.language_pinned
     );
-    syncActivePromptPresetSelection();
-    refreshResolvedRefinementPromptInSettings();
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      normalizeRefinementPromptPreset(settings.ai_fallback.prompt_profile),
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
     await persistSettings();
     renderSettings();
   });
@@ -2101,7 +2005,12 @@ export function wireEvents() {
     if (!settings || !dom.aiFallbackPreserveLanguage) return;
     ensureAIFallbackSettingsDefaults();
     settings.ai_fallback.preserve_source_language = dom.aiFallbackPreserveLanguage.checked;
-    refreshResolvedRefinementPromptInSettings();
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      normalizeRefinementPromptPreset(settings.ai_fallback.prompt_profile),
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
     await persistSettings();
     renderAIFallbackSettingsUi();
   });
@@ -2135,205 +2044,52 @@ export function wireEvents() {
   dom.aiFallbackPromptPreset?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackPromptPreset) return;
     ensureAIFallbackSettingsDefaults();
-    const hasPendingUserChanges = applyPendingUserPresetEditsFromEditor();
-    const nextSelection = dom.aiFallbackPromptPreset.value;
-    if (nextSelection === NEW_REFINEMENT_PROMPT_OPTION_ID) {
-      if (hasPendingUserChanges) {
-        await persistSettings();
-      }
-      settings.ai_fallback.active_prompt_preset_id = NEW_REFINEMENT_PROMPT_OPTION_ID;
-      settings.ai_fallback.prompt_profile = "custom";
-      settings.ai_fallback.custom_prompt_enabled = true;
-      settings.ai_fallback.use_default_prompt = false;
-      settings.ai_fallback.custom_prompt = "";
-      if (dom.aiFallbackPromptPresetName) {
-        dom.aiFallbackPromptPresetName.value = "";
-      }
-      if (dom.aiFallbackCustomPrompt) {
-        dom.aiFallbackCustomPrompt.value = "";
-      }
-      refreshResolvedRefinementPromptInSettings();
-      renderAIFallbackSettingsUi();
-      return;
-    }
-
-    settings.ai_fallback.active_prompt_preset_id = nextSelection;
-    syncActivePromptPresetSelection();
-    refreshResolvedRefinementPromptInSettings();
+    const profile = normalizeRefinementPromptPreset(dom.aiFallbackPromptPreset.value);
+    settings.ai_fallback.prompt_profile = profile;
+    settings.ai_fallback.custom_prompt_enabled = profile === "custom";
+    settings.ai_fallback.use_default_prompt = false;
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      profile,
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
     await persistSettings();
     renderAIFallbackSettingsUi();
-  });
-
-  dom.aiFallbackPromptPresetSave?.addEventListener("click", async () => {
-    if (!settings || !dom.aiFallbackCustomPrompt || !dom.aiFallbackPromptPresetName) return;
-    ensureAIFallbackSettingsDefaults();
-    const prompt = dom.aiFallbackCustomPrompt.value.trim();
-    if (!prompt) {
-      showToast({
-        type: "warning",
-        title: "Prompt is empty",
-        message: "Enter a prompt before saving a preset.",
-        duration: 3000,
-      });
-      return;
-    }
-
-    const ai = settings.ai_fallback;
-    ai.prompt_presets = normalizeUserRefinementPromptPresets(ai.prompt_presets);
-    ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
-      ai.active_prompt_preset_id,
-      ai.prompt_profile,
-      ai.prompt_presets
-    );
-
-    const selectedUserPreset = findUserRefinementPromptPresetByOptionId(
-      ai.prompt_presets,
-      ai.active_prompt_preset_id
-    );
-    const activePresetSelection = dom.aiFallbackPromptPreset?.value || ai.active_prompt_preset_id;
-    const requestedName = dom.aiFallbackPromptPresetName.value.trim();
-
-    if (selectedUserPreset) {
-      const nextName = requestedName || selectedUserPreset.name;
-      ai.prompt_presets = ai.prompt_presets.map((preset) =>
-        preset.id === selectedUserPreset.id
-          ? { ...preset, name: nextName, prompt }
-          : preset
-      );
-      ai.active_prompt_preset_id = toUserRefinementPromptOptionId(selectedUserPreset.id);
-      showToast({
-        type: "success",
-        title: "Preset updated",
-        message: `Updated "${nextName}".`,
-        duration: 2600,
-      });
-    } else if (activePresetSelection === NEW_REFINEMENT_PROMPT_OPTION_ID) {
-      if (!requestedName) {
-        showToast({
-          type: "warning",
-          title: "Name required",
-          message: "Enter a preset name to create a new preset.",
-          duration: 3000,
-        });
-        return;
-      }
-      const existingIds = new Set(ai.prompt_presets.map((preset) => preset.id));
-      const newId = createUserPromptPresetId(requestedName, existingIds);
-      ai.prompt_presets.push({
-        id: newId,
-        name: requestedName,
-        prompt,
-      });
-      ai.active_prompt_preset_id = toUserRefinementPromptOptionId(newId);
-      showToast({
-        type: "success",
-        title: "Preset saved",
-        message: `Saved "${requestedName}".`,
-        duration: 2600,
-      });
-    } else {
-      showToast({
-        type: "info",
-        title: "Select New Preset",
-        message: "Choose 'New Preset…' in the dropdown to create a new user preset.",
-        duration: 3000,
-      });
-      return;
-    }
-
-    syncActivePromptPresetSelection();
-    refreshResolvedRefinementPromptInSettings();
-    await persistSettings();
-    renderAIFallbackSettingsUi();
-  });
-
-  dom.aiFallbackPromptPresetDelete?.addEventListener("click", async () => {
-    if (!settings) return;
-    ensureAIFallbackSettingsDefaults();
-    const ai = settings.ai_fallback;
-    ai.prompt_presets = normalizeUserRefinementPromptPresets(ai.prompt_presets);
-    ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
-      ai.active_prompt_preset_id,
-      ai.prompt_profile,
-      ai.prompt_presets
-    );
-    const selectedUserPreset = findUserRefinementPromptPresetByOptionId(
-      ai.prompt_presets,
-      ai.active_prompt_preset_id
-    );
-    if (!selectedUserPreset) {
-      showToast({
-        type: "warning",
-        title: "Select user preset",
-        message: "Only user presets can be deleted.",
-        duration: 2600,
-      });
-      return;
-    }
-
-    ai.prompt_presets = ai.prompt_presets.filter((preset) => preset.id !== selectedUserPreset.id);
-    ai.custom_prompt = selectedUserPreset.prompt;
-    ai.active_prompt_preset_id = "custom";
-    syncActivePromptPresetSelection();
-    refreshResolvedRefinementPromptInSettings();
-    await persistSettings();
-    renderAIFallbackSettingsUi();
-    showToast({
-      type: "info",
-      title: "Preset deleted",
-      message: `Deleted "${selectedUserPreset.name}".`,
-      duration: 2600,
-    });
   });
 
   dom.aiFallbackCustomPrompt?.addEventListener("input", () => {
     if (!settings || !dom.aiFallbackCustomPrompt) return;
     ensureAIFallbackSettingsDefaults();
-    const activePresetId = normalizeActiveRefinementPromptPresetId(
-      settings.ai_fallback.active_prompt_preset_id,
-      settings.ai_fallback.prompt_profile,
-      settings.ai_fallback.prompt_presets
-    );
-    const isUserPreset = activePresetId.startsWith("user:");
-    const isEditablePreset =
-      activePresetId === "custom"
-      || activePresetId === NEW_REFINEMENT_PROMPT_OPTION_ID
-      || isUserPreset;
-    if (!isEditablePreset) return;
+    if (settings.ai_fallback.prompt_profile !== "custom") return;
     settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value;
-    settings.ai_fallback.active_prompt_preset_id = activePresetId;
-    settings.ai_fallback.prompt_profile = "custom";
     settings.ai_fallback.custom_prompt_enabled = true;
     settings.ai_fallback.use_default_prompt = false;
-    refreshResolvedRefinementPromptInSettings();
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      "custom",
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
   });
 
   dom.aiFallbackCustomPrompt?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackCustomPrompt) return;
     ensureAIFallbackSettingsDefaults();
-    const activePresetId = normalizeActiveRefinementPromptPresetId(
-      settings.ai_fallback.active_prompt_preset_id,
-      settings.ai_fallback.prompt_profile,
-      settings.ai_fallback.prompt_presets
-    );
-    const isUserPreset = activePresetId.startsWith("user:");
-    const isEditablePreset =
-      activePresetId === "custom"
-      || activePresetId === NEW_REFINEMENT_PROMPT_OPTION_ID
-      || isUserPreset;
-    if (!isEditablePreset) {
+    if (settings.ai_fallback.prompt_profile !== "custom") {
       renderAIFallbackSettingsUi();
       return;
     }
     settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value.trim();
-    settings.ai_fallback.active_prompt_preset_id = activePresetId;
-    settings.ai_fallback.prompt_profile = "custom";
     settings.ai_fallback.custom_prompt_enabled = true;
     settings.ai_fallback.use_default_prompt = false;
-    refreshResolvedRefinementPromptInSettings();
-    if (activePresetId === "custom") {
-      await persistSettings();
-    }
+    settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
+      "custom",
+      resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+      settings.ai_fallback.custom_prompt,
+      settings.ai_fallback.preserve_source_language
+    );
+    await persistSettings();
   });
 
   dom.micGain?.addEventListener("input", () => {

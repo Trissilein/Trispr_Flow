@@ -41,7 +41,7 @@ pub fn start_whisper_server(
     let port = state
         .whisper_server_port
         .load(std::sync::atomic::Ordering::Relaxed);
-    let settings = state.settings.lock().unwrap().clone();
+    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
 
     // Already running?
     if ping_whisper_server(port) {
@@ -249,7 +249,7 @@ pub fn schedule_whisper_server_warmup(
     let handle = app.clone();
     let model_path = model_path.to_path_buf();
     let settings_snapshot = settings.clone();
-    std::thread::spawn(move || {
+    crate::util::spawn_guarded("whisper_server_warmup", move || {
         let state = handle.state::<AppState>();
         match start_whisper_server(&handle, state.inner(), &model_path) {
             Ok(()) => {

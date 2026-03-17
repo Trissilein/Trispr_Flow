@@ -1275,7 +1275,6 @@ impl AIProvider for OllamaProvider {
                             .to_string(),
                     )
                 })?;
-                let refined_text = strip_thinking_tags(&refined_text);
                 let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
                 let (input_tokens, output_tokens) = parse_ollama_usage(&json);
                 let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -1336,7 +1335,6 @@ impl AIProvider for OllamaProvider {
                         .to_string(),
                 )
             })?;
-            let refined_text = strip_thinking_tags(&refined_text);
             let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
             let (input_tokens, output_tokens) = parse_ollama_usage(&json);
             let elapsed_ms = start.elapsed().as_millis() as u64;

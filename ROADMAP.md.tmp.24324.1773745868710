@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-17 (Crash-Proof Shell P1-P9 + LM Studio daemon lifecycle + max_tokens for OpenAI-compat providers)
+Last updated: 2026-03-17 (Crash-Proof Shell P1-P4 + event-driven Ollama init + startup freeze fix)
 
 This file is the canonical source for priorities and execution order.
 
@@ -85,18 +85,6 @@ This file is the canonical source for priorities and execution order.
 | P2 | All 31 `thread::spawn` → `spawn_guarded` (catch_unwind wrapper) | Done ✅ |
 | P3 | All remaining `.lock().unwrap()` → `.unwrap_or_else(\|p\| p.into_inner())` — zero poison-cascade risk | Done ✅ |
 | P4 | 26 module Tauri commands wrapped with `guarded_command!` macro | Done ✅ |
-| P5 | Overlay WebView2 failure guard: `OVERLAY_CREATION_FAILED` flag prevents infinite retry loops | Done ✅ |
-| P6 | `register_hotkeys` moved to background thread (cross-thread deadlock with Windows event loop) | Done ✅ |
-| P7 | `save_settings` IPC calls: 3 s timeout via `Promise.race` (prevents frontend freeze if backend blocks) | Done ✅ |
-| P8 | Event-driven Ollama init: wait for `ollama:runtime-health` instead of immediate ping-storm at startup | Done ✅ |
-| P9 | Rust-side cold-start buffer: 10 s OLLAMA_DIAG_NEXT_MS suppresses all Ollama pings during bootstrap | Done ✅ |
-
-## LM Studio Integration (2026-03-17)
-
-| Phase | Title | Status |
-| --- | --- | --- |
-| LS1 | Daemon lifecycle: `lms daemon up` on switch-to, `lms daemon stop` on switch-away | Done ✅ |
-| LS2 | `max_tokens` in OpenAI-compatible request body (LM Studio + Oobabooga) — caps reasoning model output | Done ✅ |
 
 ## Block R Task Details
 

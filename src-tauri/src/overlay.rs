@@ -1,8 +1,14 @@
 use crate::state::{AppState, Settings};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WindowEvent};
 use tracing::warn;
+
+/// Set to `true` after the very first WebView2 creation failure so we stop
+/// retrying and blocking threads.  The overlay is cosmetic — the app must
+/// never freeze because of it.
+static OVERLAY_CREATION_FAILED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -116,6 +122,12 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         return Ok(existing);
     }
 
+    // If a previous creation attempt failed (e.g. WebView2 E_INVALIDARG),
+    // don't retry — it will fail again and block the calling thread.
+    if OVERLAY_CREATION_FAILED.load(Ordering::Relaxed) {
+        return Err("Overlay creation previously failed; skipping retry".to_string());
+    }
+
     let window =
         tauri::WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("overlay.html".into()))
             .title("Trispr Flow Overlay")
@@ -129,11 +141,19 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
             .skip_taskbar(true)
             .visible(false)
             .build()
-            .map_err(|e| format!("Failed to create overlay window: {}", e))?;
+            .map_err(|e| {
+                let msg = format!("Failed to create overlay window: {}", e);
+                warn!("{} — overlay disabled for this session", msg);
+                OVERLAY_CREATION_FAILED.store(true, Ordering::Relaxed);
+                msg
+            })?;
 
+    // Park the window off-screen until apply_overlay_settings repositions it.
+    // Previously (12, 12) caused a "ghost overlay" in the upper-left corner when
+    // apply_overlay_settings failed or ran late.
     let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition {
-        x: 12.0,
-        y: 12.0,
+        x: -9999.0,
+        y: -9999.0,
     }));
 
     let _ = window.set_ignore_cursor_events(true);
@@ -145,6 +165,24 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
             api.prevent_close();
             if let Some(window) = app_handle.get_webview_window("overlay") {
                 let _ = window.hide();
+            }
+        }
+    });
+
+    // Re-anchor overlay when DPI scale changes (monitor switch, display settings change).
+    // ScaleFactorChanged fires per-window when it crosses into a different DPI zone.
+    let app_handle_dpi = app.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::ScaleFactorChanged { .. } = event {
+            let desired = app_handle_dpi
+                .state::<AppState>()
+                .overlay_controller
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .desired_settings
+                .clone();
+            if let Some(settings) = desired {
+                let _ = apply_overlay_settings(&app_handle_dpi, &settings);
             }
         }
     });
@@ -165,6 +203,18 @@ fn apply_overlay_state_to_window(
 
     let should_show = !matches!(state_clone, OverlayState::Hidden);
     if should_show {
+        // Defensive: if the window is still parked off-screen (apply_overlay_settings
+        // failed or hasn't run yet), re-apply cached settings before showing.
+        let still_offscreen = window
+            .outer_position()
+            .map(|pos| pos.x < -5000 || pos.y < -5000)
+            .unwrap_or(false);
+        if still_offscreen {
+            let controller = overlay_controller_snapshot(app);
+            if let Some(ref settings) = controller.desired_settings {
+                let _ = apply_overlay_settings_to_window(window, settings);
+            }
+        }
         window
             .show()
             .map_err(|e| format!("Failed to show overlay: {}", e))?;

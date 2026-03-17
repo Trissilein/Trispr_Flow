@@ -28,7 +28,7 @@ const VAD_PRE_ROLL_MS_MIN: u64 = 250;
 const VAD_PRE_ROLL_MS_MAX: u64 = 350;
 const VAD_PRE_ROLL_MIN_MS: u64 = 60;
 const VAD_PRE_ROLL_ENERGY_FACTOR: f32 = 0.45;
-const REFINEMENT_WATCHDOG_TIMEOUT_MS: u64 = 90_000;
+const REFINEMENT_WATCHDOG_TIMEOUT_MS: u64 = 45_000;
 const REFINEMENT_WATCHDOG_POLL_MS: u64 = 1_000;
 const REFINEMENT_PASTE_TIMEOUT_MS: u64 = 10_000;
 const OVERLAY_EMIT_INTERVAL_MS: u64 = 33; // ~30 FPS for smoother overlay motion
@@ -309,7 +309,7 @@ impl OverlayLevelEmitter {
             let _ = self.app.emit("vad:dynamic-threshold", dynamic_thresh);
         }
 
-        if let Ok(state) = self.app.state::<AppState>().settings.lock() {
+        if let Ok(state) = self.app.state::<AppState>().settings.read() {
             let (rise_ms, fall_ms) = if state.overlay_style == "kitt" {
                 (state.overlay_kitt_rise_ms, state.overlay_kitt_fall_ms)
             } else {
@@ -587,7 +587,7 @@ fn handle_vad_audio(
             runtime.start_ms.store(now, Ordering::Relaxed);
             runtime.pending_flush.store(false, Ordering::Relaxed);
             let warmup = {
-                let mut pre = vad_handle.pre_roll_buffer.lock().unwrap();
+                let mut pre = vad_handle.pre_roll_buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 pre.take_all_samples()
             };
             let include_pre_roll = warmup.len() >= vad_handle.pre_roll_min_samples
@@ -627,7 +627,7 @@ fn handle_vad_audio(
             if !runtime.pending_flush.swap(true, Ordering::Relaxed) {
                 runtime.recording.store(false, Ordering::Relaxed);
                 let samples = {
-                    let mut buf = buffer.lock().unwrap();
+                    let mut buf = buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                     buf.drain()
                 };
                 let _ = vad_handle.tx.send(VadEvent::Finalize(samples));
@@ -635,7 +635,7 @@ fn handle_vad_audio(
         } else if runtime.hold_gate && now.saturating_sub(last) > runtime.hold_tail_ms() {
             runtime.recording.store(false, Ordering::Relaxed);
             runtime.consecutive_above.store(0, Ordering::Relaxed);
-            if let Ok(settings) = vad_handle.app.state::<AppState>().settings.lock() {
+            if let Ok(settings) = vad_handle.app.state::<AppState>().settings.read() {
                 let _ = emit_capture_idle_overlay(&vad_handle.app, &settings);
             }
         }
@@ -812,7 +812,7 @@ build_ptt_hot_stream_typed!(build_ptt_hot_stream_u16, u16, |s: &u16| {
 
 fn stop_ptt_hot_standby(state: &State<'_, AppState>) {
     let (stop_tx, join_handle) = {
-        let mut recorder = state.recorder.lock().unwrap();
+        let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
         recorder.ptt_hot_device_id = None;
         (
@@ -836,7 +836,7 @@ fn start_ptt_hot_standby(
     let device_id = settings.input_device.clone();
 
     let (existing_stop_tx, existing_join_handle, buffer, gain_db, recording_flag) = {
-        let mut recorder = state.recorder.lock().unwrap();
+        let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         recorder.input_gain_db.store(
             (settings.mic_input_gain_db * 1000.0) as i64,
             Ordering::Relaxed,
@@ -877,7 +877,7 @@ fn start_ptt_hot_standby(
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
     let thread_device_id = device_id.clone();
 
-    let join_handle = thread::spawn(move || {
+    let join_handle = crate::util::spawn_guarded("ptt_audio_capture", move || {
         let result = (|| -> Result<(), String> {
             let device = resolve_input_device(&thread_device_id)
                 .ok_or_else(|| "No input device available".to_string())?;
@@ -940,7 +940,7 @@ fn start_ptt_hot_standby(
         return Err(err);
     }
 
-    let mut recorder = state.recorder.lock().unwrap();
+    let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     recorder.ptt_hot_stop_tx = Some(stop_tx);
     recorder.ptt_hot_join_handle = Some(join_handle);
     recorder.ptt_hot_device_id = Some(device_id);
@@ -957,7 +957,7 @@ pub(crate) fn sync_ptt_hot_standby(
         if let Err(err) = start_ptt_hot_standby(app, state, settings) {
             warn!("Failed to start PTT standby stream: {}", err);
         } else {
-            let recorder = state.recorder.lock().unwrap();
+            let recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if !recorder.active && !recorder.transcribing {
                 drop(recorder);
                 let _ = emit_capture_idle_overlay(app, settings);
@@ -979,7 +979,7 @@ fn start_ptt_hot_recording(
     }
     start_ptt_hot_standby(app, state, settings)?;
 
-    let mut recorder = state.recorder.lock().unwrap();
+    let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if recorder.active || recorder.transcribing {
         return Ok(());
     }
@@ -1019,7 +1019,7 @@ pub(crate) fn start_recording_with_settings(
     if !settings.capture_enabled {
         return Ok(());
     }
-    let mut recorder = state.recorder.lock().unwrap();
+    let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if recorder.active || recorder.transcribing {
         info!("Recording already active or transcribing, skipping");
         return Ok(());
@@ -1044,7 +1044,7 @@ pub(crate) fn start_recording_with_settings(
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
 
-    let join_handle = thread::spawn(move || {
+    let join_handle = crate::util::spawn_guarded("vad_audio_capture", move || {
         let result = (|| -> Result<(), String> {
             let device = resolve_input_device(&device_id)
                 .ok_or_else(|| "No input device available".to_string())?;
@@ -1209,9 +1209,17 @@ fn handle_transcription_ok(
 }
 
 fn should_defer_paste_for_refinement(settings: &Settings) -> bool {
-    settings.ai_fallback.enabled
-        && settings.ai_fallback.provider == "ollama"
-        && settings.ai_fallback.execution_mode == "local_primary"
+    if !settings.ai_fallback.enabled {
+        return false;
+    }
+    let provider = settings.ai_fallback.provider.as_str();
+    // Ollama: defer only in local_primary mode (runtime managed by Trispr Flow).
+    if provider == "ollama" {
+        return settings.ai_fallback.execution_mode == "local_primary";
+    }
+    // LM Studio / Oobabooga: external local servers — always defer so refined
+    // output replaces raw paste instead of both appearing in sequence.
+    provider == "lm_studio" || provider == "oobabooga"
 }
 
 fn next_transcription_job_id(source: &str) -> String {
@@ -1234,144 +1242,187 @@ pub(crate) fn maybe_spawn_ai_refinement(
     if !settings.ai_fallback.enabled {
         return;
     }
-    // Only Ollama is active in v0.7.x (cloud providers deferred to v0.7.3)
-    if settings.ai_fallback.provider != "ollama" {
+    let provider = settings.ai_fallback.provider.as_str();
+    let is_local_compat = provider == "lm_studio" || provider == "oobabooga";
+    // Cloud providers (claude, openai, gemini) are deferred to v0.7.3.
+    if provider != "ollama" && !is_local_compat {
         return;
     }
-    if !app_handle
-        .state::<AppState>()
-        .startup_status
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .ollama_ready
+    // Ollama requires its local runtime to be ready before spawning refinement.
+    // LM Studio / Oobabooga are external servers managed by the user — skip this check.
+    if provider == "ollama"
+        && !app_handle
+            .state::<AppState>()
+            .startup_status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .ollama_ready
     {
+        return;
+    }
+
+    // Concurrency gate: skip if too many refinement threads are already active.
+    // This prevents thread explosion when the user dictates faster than inference runs.
+    const MAX_CONCURRENT_REFINEMENTS: usize = 2;
+    let active = app_handle
+        .state::<AppState>()
+        .refinement_active_count
+        .load(Ordering::SeqCst);
+    if active >= MAX_CONCURRENT_REFINEMENTS {
+        warn!(
+            "Refinement concurrency limit reached ({}/{}), skipping job {}",
+            active, MAX_CONCURRENT_REFINEMENTS, job_id
+        );
+        let _ = app_handle.emit(
+            "transcription:refinement-failed",
+            serde_json::json!({
+                "job_id": job_id,
+                "entry_id": entry_id,
+                "source": source,
+                "original": text,
+                "error": "Refinement queue full — previous refinement still running.",
+            }),
+        );
         return;
     }
 
     let settings_snapshot = settings.clone();
 
     thread::spawn(move || {
-        // Resolve provider, model, and options via the shared helper.
-        // This performs model resolution BEFORE signalling "started" — if
-        // Ollama is down or no model is available the frontend never sees a
-        // spinner for a doomed job.
-        let setup = match crate::prepare_refinement(&app_handle, &settings_snapshot) {
-            Ok(s) => s,
-            Err(error) => {
-                error!("AI refinement skipped: {}", error);
-                record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
-                if let Some(entry_id_value) = entry_id.as_deref() {
-                    let _ = mark_entry_refinement_failed(
-                        &app_handle,
-                        entry_id_value,
-                        &job_id,
-                        &text,
-                        &error,
+        let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Resolve provider, model, and options via the shared helper.
+            // This performs model resolution BEFORE signalling "started" — if
+            // Ollama is down or no model is available the frontend never sees a
+            // spinner for a doomed job.
+            let setup = match crate::prepare_refinement(&app_handle, &settings_snapshot) {
+                Ok(s) => s,
+                Err(error) => {
+                    error!("AI refinement skipped: {}", error);
+                    record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
+                    if let Some(entry_id_value) = entry_id.as_deref() {
+                        let _ = mark_entry_refinement_failed(
+                            &app_handle,
+                            entry_id_value,
+                            &job_id,
+                            &text,
+                            &error,
+                        );
+                    }
+                    let _ = app_handle.emit(
+                        "transcription:refinement-failed",
+                        serde_json::json!({
+                            "job_id": job_id.clone(),
+                            "entry_id": entry_id.clone(),
+                            "source": source.clone(),
+                            "original": text.clone(),
+                            "error": error,
+                        }),
                     );
+                    return;
                 }
-                let _ = app_handle.emit(
-                    "transcription:refinement-failed",
-                    serde_json::json!({
-                        "job_id": job_id.clone(),
-                        "entry_id": entry_id.clone(),
-                        "source": source.clone(),
-                        "original": text.clone(),
-                        "error": error,
-                    }),
-                );
-                return;
-            }
-        };
-
-        // Model resolved successfully — now signal that refinement is active.
-        begin_refinement_activity(&app_handle);
-        let _activity_guard = RefinementActivityGuard {
-            app_handle: app_handle.clone(),
-        };
-        if let Some(entry_id_value) = entry_id.as_deref() {
-            let _ = mark_entry_refinement_started(&app_handle, entry_id_value, &job_id, &text);
-        }
-        let _ = app_handle.emit(
-            "transcription:refinement-started",
-            serde_json::json!({
-                "job_id": job_id.clone(),
-                "entry_id": entry_id.clone(),
-                "source": source.clone(),
-                "original": text.clone(),
-                "model": setup.model.clone(),
-            }),
-        );
-
-        if setup.repaired {
-            let model = setup.model.clone();
-            let snapshot = {
-                let state = app_handle.state::<AppState>();
-                let mut live = state.settings.lock().unwrap();
-                live.ai_fallback.model = model.clone();
-                live.providers.ollama.preferred_model = model.clone();
-                live.postproc_llm_model = model.clone();
-                normalize_ai_fallback_fields(&mut live);
-                live.clone()
             };
-            if let Err(err) = save_settings_file(&app_handle, &snapshot) {
-                error!("Failed to persist repaired local model selection: {}", err);
-            } else {
-                let _ = app_handle.emit("settings-changed", snapshot.clone());
-            }
-        }
 
-        match setup
-            .provider
-            .refine_transcript(&text, &setup.model, &setup.options, &setup.api_key)
-        {
-            Ok(result) => {
-                if let Some(entry_id_value) = entry_id.as_deref() {
-                    let _ = mark_entry_refinement_success(
-                        &app_handle,
-                        entry_id_value,
-                        &job_id,
-                        &text,
-                        &result.text,
-                        &result.model,
-                        result.execution_time_ms,
+            // Model resolved successfully — now signal that refinement is active.
+            begin_refinement_activity(&app_handle);
+            let _activity_guard = RefinementActivityGuard {
+                app_handle: app_handle.clone(),
+            };
+            if let Some(entry_id_value) = entry_id.as_deref() {
+                let _ = mark_entry_refinement_started(&app_handle, entry_id_value, &job_id, &text);
+            }
+            let _ = app_handle.emit(
+                "transcription:refinement-started",
+                serde_json::json!({
+                    "job_id": job_id.clone(),
+                    "entry_id": entry_id.clone(),
+                    "source": source.clone(),
+                    "original": text.clone(),
+                    "model": setup.model.clone(),
+                }),
+            );
+
+            if setup.repaired {
+                let model = setup.model.clone();
+                let snapshot = {
+                    let state = app_handle.state::<AppState>();
+                    let mut live = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    live.ai_fallback.model = model.clone();
+                    live.providers.ollama.preferred_model = model.clone();
+                    live.postproc_llm_model = model.clone();
+                    normalize_ai_fallback_fields(&mut live);
+                    live.clone()
+                };
+                if let Err(err) = save_settings_file(&app_handle, &snapshot) {
+                    error!("Failed to persist repaired local model selection: {}", err);
+                } else {
+                    let _ = app_handle.emit("settings-changed", snapshot.clone());
+                }
+            }
+
+            match setup
+                .provider
+                .refine_transcript(&text, &setup.model, &setup.options, &setup.api_key)
+            {
+                Ok(result) => {
+                    if let Some(entry_id_value) = entry_id.as_deref() {
+                        let _ = mark_entry_refinement_success(
+                            &app_handle,
+                            entry_id_value,
+                            &job_id,
+                            &text,
+                            &result.text,
+                            &result.model,
+                            result.execution_time_ms,
+                        );
+                    }
+                    let _ = app_handle.emit(
+                        "transcription:refined",
+                        serde_json::json!({
+                            "job_id": job_id,
+                            "entry_id": entry_id,
+                            "original": text,
+                            "refined": result.text,
+                            "source": source,
+                            "model": result.model,
+                            "execution_time_ms": result.execution_time_ms,
+                        }),
                     );
                 }
-                let _ = app_handle.emit(
-                    "transcription:refined",
-                    serde_json::json!({
-                        "job_id": job_id,
-                        "entry_id": entry_id,
-                        "original": text,
-                        "refined": result.text,
-                        "source": source,
-                        "model": result.model,
-                        "execution_time_ms": result.execution_time_ms,
-                    }),
-                );
-            }
-            Err(e) => {
-                error!("AI refinement failed ({}): {}", setup.model, e);
-                record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
-                if let Some(entry_id_value) = entry_id.as_deref() {
-                    let _ = mark_entry_refinement_failed(
-                        &app_handle,
-                        entry_id_value,
-                        &job_id,
-                        &text,
-                        &e.to_string(),
+                Err(e) => {
+                    error!("AI refinement failed ({}): {}", setup.model, e);
+                    record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
+                    if let Some(entry_id_value) = entry_id.as_deref() {
+                        let _ = mark_entry_refinement_failed(
+                            &app_handle,
+                            entry_id_value,
+                            &job_id,
+                            &text,
+                            &e.to_string(),
+                        );
+                    }
+                    let _ = app_handle.emit(
+                        "transcription:refinement-failed",
+                        serde_json::json!({
+                            "job_id": job_id,
+                            "entry_id": entry_id,
+                            "source": source,
+                            "original": text,
+                            "error": e.to_string(),
+                        }),
                     );
                 }
-                let _ = app_handle.emit(
-                    "transcription:refinement-failed",
-                    serde_json::json!({
-                        "job_id": job_id,
-                        "entry_id": entry_id,
-                        "source": source,
-                        "original": text,
-                        "error": e.to_string(),
-                    }),
-                );
             }
+        }));
+
+        if let Err(panic_info) = panic_result {
+            let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic in refinement thread".to_string()
+            };
+            error!("Refinement thread panicked: {}", msg);
         }
     });
 }
@@ -1399,7 +1450,7 @@ fn emit_refinement_activity(app_handle: &AppHandle, active_count: usize, reason:
 }
 
 fn schedule_refinement_watchdog(app_handle: AppHandle, generation: u64) {
-    thread::spawn(move || loop {
+    crate::util::spawn_guarded("refinement_watchdog", move || loop {
         thread::sleep(Duration::from_millis(REFINEMENT_WATCHDOG_POLL_MS));
 
         let state = app_handle.state::<AppState>();
@@ -1464,7 +1515,7 @@ fn begin_refinement_activity(app_handle: &AppHandle) {
             + 1;
         let enabled = state
             .settings
-            .lock()
+            .read()
             .map(|settings| settings.overlay_refining_indicator_enabled)
             .unwrap_or(true);
         if enabled {
@@ -1543,7 +1594,7 @@ fn process_toggle_segment(
     let effective_settings = app_handle
         .state::<AppState>()
         .settings
-        .lock()
+        .read()
         .map(|settings| settings.clone())
         .unwrap_or_else(|_| runtime_settings.clone());
 
@@ -1624,8 +1675,8 @@ fn process_toggle_segment(
         let settings = app_handle
             .state::<AppState>()
             .settings
-            .lock()
-            .unwrap()
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
             .clone();
         let _ = emit_capture_idle_overlay(app_handle, &settings);
     }
@@ -1658,7 +1709,7 @@ fn run_toggle_processor(
         }
 
         if last_settings_check.elapsed() >= Duration::from_millis(200) {
-            if let Ok(settings) = app_handle.state::<AppState>().settings.lock() {
+            if let Ok(settings) = app_handle.state::<AppState>().settings.read() {
                 runtime_settings = settings.clone();
                 segmenter.update_config(mic_segmenter_config(&runtime_settings));
             }
@@ -1756,7 +1807,7 @@ fn run_toggle_processor(
         match crate::session_manager::finalize_for("mic") {
             Ok(Some(path)) => {
                 let state = app_handle.state::<AppState>();
-                *state.last_mic_recording_path.lock().unwrap() =
+                *state.last_mic_recording_path.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
                     Some(path.to_string_lossy().to_string());
             }
             Ok(None) => {}
@@ -1773,7 +1824,7 @@ fn start_toggle_recording_with_settings(
     start_recording_with_settings(app, state, settings)?;
 
     let (buffer, stop_rx) = {
-        let mut recorder = state.recorder.lock().unwrap();
+        let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         recorder.continuous_toggle_mode = true;
         recorder.continuous_processor_stop_tx = Some(tx);
@@ -1782,23 +1833,23 @@ fn start_toggle_recording_with_settings(
 
     let app_handle = app.clone();
     let settings_clone = settings.clone();
-    let handle = thread::spawn(move || {
+    let handle = crate::util::spawn_guarded("toggle_recording", move || {
         run_toggle_processor(app_handle, settings_clone, buffer, stop_rx);
     });
 
-    let mut recorder = state.recorder.lock().unwrap();
+    let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     recorder.continuous_processor_join_handle = Some(handle);
     Ok(())
 }
 
 pub(crate) fn stop_toggle_recording_async(app: AppHandle, state: &State<'_, AppState>) {
     let app_handle = app.clone();
-    let settings = state.settings.lock().unwrap().clone();
+    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
 
-    thread::spawn(move || {
+    crate::util::spawn_guarded("vad_processor", move || {
         let state = app_handle.state::<AppState>();
         let (capture_stop_tx, capture_join_handle, proc_stop_tx, proc_join_handle) = {
-            let mut recorder = state.recorder.lock().unwrap();
+            let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if !recorder.active {
                 return;
             }
@@ -1843,7 +1894,7 @@ pub(crate) fn start_vad_monitor(
     if !settings.capture_enabled {
         return Ok(());
     }
-    let mut recorder = state.recorder.lock().unwrap();
+    let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if recorder.active || recorder.transcribing {
         info!("VAD already active or transcribing, skipping");
         return Ok(());
@@ -1905,7 +1956,7 @@ pub(crate) fn start_vad_monitor(
     let app_handle = app.clone();
     let settings_clone = settings.clone();
     let vad_runtime_clone = vad_runtime.clone();
-    thread::spawn(move || {
+    crate::util::spawn_guarded("async_stop_toggle", move || {
         for event in vad_rx {
             match event {
                 VadEvent::Finalize(samples) => {
@@ -1920,7 +1971,7 @@ pub(crate) fn start_vad_monitor(
         }
     });
 
-    let join_handle = thread::spawn(move || {
+    let join_handle = crate::util::spawn_guarded("stop_recording_watchdog", move || {
         let result = (|| -> Result<(), String> {
             let device = resolve_input_device(&device_id)
                 .ok_or_else(|| "No input device available".to_string())?;
@@ -1996,7 +2047,7 @@ pub(crate) fn start_vad_monitor(
 
 pub(crate) fn stop_vad_monitor(app: &AppHandle, state: &State<'_, AppState>) {
     let (buffer, stop_tx, join_handle, vad_tx, vad_runtime) = {
-        let mut recorder = state.recorder.lock().unwrap();
+        let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if !recorder.active {
             return;
         }
@@ -2036,7 +2087,7 @@ pub(crate) fn stop_vad_monitor(app: &AppHandle, state: &State<'_, AppState>) {
     if should_flush_on_stop {
         if let (Some(tx), Some(runtime)) = (vad_tx.as_ref(), vad_runtime.as_ref()) {
             let samples = {
-                let mut buf = buffer.lock().unwrap();
+                let mut buf = buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 buf.drain()
             };
             if !samples.is_empty() {
@@ -2054,7 +2105,7 @@ pub(crate) fn stop_vad_monitor(app: &AppHandle, state: &State<'_, AppState>) {
 
     drop(vad_tx);
 
-    let settings = state.settings.lock().unwrap().clone();
+    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
     let _ = emit_capture_idle_overlay(app, &settings);
 }
 
@@ -2075,7 +2126,7 @@ fn process_vad_segment(
 
     let min_samples = mic_min_samples();
     if samples.len() < min_samples {
-        let runtime_settings = state.settings.lock().unwrap().clone();
+        let runtime_settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
         let _ = emit_capture_idle_overlay(&app_handle, &runtime_settings);
         runtime.processing.store(false, Ordering::Relaxed);
         runtime.pending_flush.store(false, Ordering::Relaxed);
@@ -2113,7 +2164,7 @@ fn process_vad_segment(
         let _ = app_handle.emit("capture:state", "recording");
         let _ = update_overlay_state(&app_handle, OverlayState::Recording);
     } else {
-        let runtime_settings = state.settings.lock().unwrap().clone();
+        let runtime_settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
         let _ = emit_capture_idle_overlay(&app_handle, &runtime_settings);
     }
 
@@ -2123,7 +2174,7 @@ fn process_vad_segment(
 
     match result {
         Ok((text, source)) => {
-            let settings = state.settings.lock().unwrap().clone();
+            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
             handle_transcription_ok(&app_handle, &text, &source, &settings, level, duration_ms);
         }
         Err(err) => {
@@ -2134,13 +2185,13 @@ fn process_vad_segment(
 
 pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
     let app_handle = app.clone();
-    let settings = state.settings.lock().unwrap().clone();
+    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
 
-    thread::spawn(move || {
+    crate::util::spawn_guarded("async_stop_recording", move || {
         info!("stop_recording_async called");
         let state = app_handle.state::<AppState>();
         let (buffer, stop_tx, join_handle, proc_stop_tx, proc_join_handle) = {
-            let mut recorder = state.recorder.lock().unwrap();
+            let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if !recorder.active {
                 info!("Recording not active, skipping stop");
                 return;
@@ -2181,7 +2232,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         }
 
         let samples = {
-            let mut buf = buffer.lock().unwrap();
+            let mut buf = buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             buf.drain()
         };
 
@@ -2195,7 +2246,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
                     (samples.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64)
                 ),
             );
-            let mut recorder = state.recorder.lock().unwrap();
+            let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             recorder.transcribing = false;
             return;
         }
@@ -2212,11 +2263,11 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         if duration_ms >= 10_000 {
             if let Ok(opus_path) = crate::save_recording_opus(&app_handle, &samples, "mic", None) {
                 let state_ref = app_handle.state::<crate::state::AppState>();
-                *state_ref.last_mic_recording_path.lock().unwrap() = Some(opus_path);
+                *state_ref.last_mic_recording_path.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(opus_path);
             }
         }
 
-        let mut recorder = state.recorder.lock().unwrap();
+        let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         recorder.transcribing = false;
         drop(recorder);
 
@@ -2228,7 +2279,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
 
         match result {
             Ok((text, source)) => {
-                let settings = state.settings.lock().unwrap().clone();
+                let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
                 handle_transcription_ok(&app_handle, &text, &source, &settings, level, duration_ms);
             }
             Err(err) => {
@@ -2240,7 +2291,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
 
 pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let settings = state.settings.lock().unwrap().clone();
+    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
     if !settings.capture_enabled {
         return Ok(());
     }
@@ -2258,7 +2309,7 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
 pub(crate) fn handle_ptt_release_async(app: AppHandle) {
     let app_handle = app.clone();
     let state = app_handle.state::<AppState>();
-    let settings = state.settings.lock().unwrap().clone();
+    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
     if settings.mode != "ptt" {
         return;
     }
@@ -2273,7 +2324,7 @@ pub(crate) fn handle_ptt_release_async(app: AppHandle) {
 pub(crate) fn handle_toggle_async(app: AppHandle) {
     let app_handle = app.clone();
     let state = app_handle.state::<AppState>();
-    let settings = state.settings.lock().unwrap().clone();
+    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
     if !settings.capture_enabled {
         return;
     }
@@ -2282,7 +2333,7 @@ pub(crate) fn handle_toggle_async(app: AppHandle) {
     }
 
     let (active, continuous_toggle_mode) = {
-        let recorder = state.recorder.lock().unwrap();
+        let recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         (recorder.active, recorder.continuous_toggle_mode)
     };
     if active {
@@ -2302,7 +2353,7 @@ pub(crate) fn handle_toggle_async(app: AppHandle) {
 
 #[tauri::command]
 pub(crate) fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let settings = state.settings.lock().unwrap().clone();
+    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
     start_recording_with_settings(&app, &state, &settings)
 }
 

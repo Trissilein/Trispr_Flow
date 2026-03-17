@@ -100,8 +100,17 @@ function setPipelineToggleVisualState(
 function resolveConfiguredAiModel(): string {
   const configured = settings?.ai_fallback?.model?.trim();
   if (configured) return configured;
-  const preferred = settings?.providers?.ollama?.preferred_model?.trim();
-  if (preferred) return preferred;
+  const provider = settings?.ai_fallback?.provider;
+  if (provider === "lm_studio") {
+    const lmModel = settings?.providers?.lm_studio?.preferred_model?.trim();
+    if (lmModel) return lmModel;
+  } else if (provider === "oobabooga") {
+    const oobModel = settings?.providers?.oobabooga?.preferred_model?.trim();
+    if (oobModel) return oobModel;
+  } else {
+    const ollamaModel = settings?.providers?.ollama?.preferred_model?.trim();
+    if (ollamaModel) return ollamaModel;
+  }
   const postproc = settings?.postproc_llm_model?.trim();
   if (postproc) return postproc;
   return "";
@@ -121,6 +130,12 @@ function isLocalAiPathEnabled(): boolean {
     settings.ai_fallback.provider === "ollama"
     && settings.ai_fallback.execution_mode === "local_primary"
   );
+}
+
+function isCompatLocalPathEnabled(): boolean {
+  if (!settings?.ai_fallback?.enabled) return false;
+  const p = settings.ai_fallback.provider;
+  return p === "lm_studio" || p === "oobabooga";
 }
 
 function describeIdleState(aiEnabled: boolean, rulesEnabled: boolean): string {
@@ -153,7 +168,10 @@ function updateLiveSummary(
   if (!hasJob) {
     const runtime = getOllamaRuntimeCardState();
     const localAiPath = isLocalAiPathEnabled();
-    if (localAiPath && (runtime.busy || runtime.backgroundStarting)) {
+    const isCompatLocalNow = isCompatLocalPathEnabled();
+    if (isCompatLocalNow && aiEnabled) {
+      dom.refinementPipelineLive.textContent = describeIdleState(aiEnabled, rulesEnabled);
+    } else if (localAiPath && (runtime.busy || runtime.backgroundStarting)) {
       dom.refinementPipelineLive.textContent = "Ollama runtime is starting. AI refiner will activate automatically when ready.";
     } else {
       dom.refinementPipelineLive.textContent = describeIdleState(aiEnabled, rulesEnabled);
@@ -196,11 +214,12 @@ export function renderRefinementPipelineGraph(): void {
   const ollamaReady = Boolean(startupStatus?.ollama_ready);
   const ollamaStarting = Boolean(startupStatus?.ollama_starting);
   const localAiPath = isLocalAiPathEnabled();
+  const isCompatLocal = isCompatLocalPathEnabled();
   const runtime = getOllamaRuntimeCardState();
   const hasJob = pipelineJobState.phase !== "idle" && pipelineJobState.jobId.trim().length > 0;
   const configuredAiModel = resolveConfiguredAiModel();
   const rulesVisualState: ToggleVisualState = rulesEnabled && rulesReady ? "on" : "off";
-  const aiVisualState: ToggleVisualState = aiEnabled && ollamaReady
+  const aiVisualState: ToggleVisualState = (aiEnabled && ollamaReady) || (aiEnabled && isCompatLocal)
     ? "on"
     : aiEnabled && ollamaStarting
       ? "pending"
@@ -225,7 +244,7 @@ export function renderRefinementPipelineGraph(): void {
         : "success";
 
   let aiState: NodeState = "idle";
-  if (!localAiPath) {
+  if (!localAiPath && !isCompatLocal) {
     aiState = "bypassed";
   } else if (aiWarming) {
     aiState = "warming";
@@ -245,7 +264,7 @@ export function renderRefinementPipelineGraph(): void {
     aiState = "active";
   }
 
-  const gateEnabled = localAiPath;
+  const gateEnabled = localAiPath || isCompatLocal;
   const gateState: NodeState = !gateEnabled
     ? "bypassed"
     : !hasJob
@@ -288,18 +307,29 @@ export function renderRefinementPipelineGraph(): void {
         ? "AI refinement queued"
         : "Enable AI refinement",
   );
+  const aiProvider = settings?.ai_fallback?.provider ?? "ollama";
+  const providerLabels: Record<string, string> = {
+    ollama: "Ollama",
+    lm_studio: "LM Studio",
+    oobabooga: "Oobabooga",
+    claude: "Claude",
+    openai: "OpenAI",
+    gemini: "Gemini",
+  };
+  const providerLabel = providerLabels[aiProvider] ?? aiProvider;
+
   if (pipelineJobState.phase === "refined" && pipelineJobState.model.trim()) {
-    setAiNodeCopy(`Ollama local refinement active. Model in use: ${pipelineJobState.model.trim()}.`);
+    setAiNodeCopy(`${providerLabel} refinement active. Model in use: ${pipelineJobState.model.trim()}.`);
   } else if (configuredAiModel) {
     setAiNodeCopy(
       aiVisualState === "on"
-        ? `Ollama local refinement ready. Active model: ${configuredAiModel}.`
+        ? `${providerLabel} refinement ready. Active model: ${configuredAiModel}.`
         : aiVisualState === "pending"
-          ? `Ollama local refinement queued. Model selected: ${configuredAiModel}.`
-          : `Ollama local refinement for final wording. Selected model: ${configuredAiModel}.`,
+          ? `${providerLabel} refinement queued. Model selected: ${configuredAiModel}.`
+          : `${providerLabel} local refinement for final wording. Selected model: ${configuredAiModel}.`,
     );
   } else {
-    setAiNodeCopy("Ollama local refinement for final wording.");
+    setAiNodeCopy(`${providerLabel} local refinement for final wording.`);
   }
 
   setNodeState("pipeline-node-transcribe", transcribeState);

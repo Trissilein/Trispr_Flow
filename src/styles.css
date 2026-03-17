@@ -1030,6 +1030,20 @@ html.expert-mode details[data-expert-only="true"] > summary {
   padding: 8px 10px;
 }
 
+.prompt-preset-manager {
+  gap: 5px;
+}
+
+.prompt-preset-manager-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+}
+
+.prompt-preset-manager-row input {
+  min-width: 0;
+}
+
 /* RANGE SLIDER - COMPACT */
 .field.range .range-row {
   display: flex;
@@ -2513,6 +2527,10 @@ button.refinement-chip:focus-visible {
   }
 
   .panel-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .prompt-preset-manager-row {
     grid-template-columns: 1fr;
   }
 

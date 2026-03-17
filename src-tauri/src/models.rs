@@ -685,7 +685,7 @@ fn spawn_quantize_output_reader<R: Read + Send + 'static>(
   quant: String,
   progress_gate: Arc<AtomicU8>,
 ) -> thread::JoinHandle<()> {
-  thread::spawn(move || {
+  crate::util::spawn_guarded("quantize_output_reader", move || {
     let mut buf = BufReader::new(reader);
     let mut line = String::new();
     loop {
@@ -873,8 +873,8 @@ pub(crate) struct DownloadError {
 
 #[tauri::command]
 pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<ModelInfo> {
-  let downloads = state.downloads.lock().unwrap();
-  let settings = state.settings.lock().unwrap().clone();
+  let downloads = state.downloads.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+  let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
   let models_dir = resolve_models_dir(&app);
   let hidden_external = settings.hidden_external_models.clone();
 
@@ -1054,7 +1054,7 @@ pub(crate) fn download_model(
     (url, name)
   };
   {
-    let mut downloads = state.downloads.lock().unwrap();
+    let mut downloads = state.downloads.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if downloads.contains(&model_id) {
       return Err("Download already in progress".to_string());
     }
@@ -1062,7 +1062,7 @@ pub(crate) fn download_model(
   }
 
   let app_handle = app.clone();
-  thread::spawn(move || {
+  crate::util::spawn_guarded("model_download", move || {
     let result = download_model_file(&app_handle, &model_id, &url, &name);
     match result {
       Ok(path) => {
@@ -1086,7 +1086,7 @@ pub(crate) fn download_model(
     }
 
     let state = app_handle.state::<AppState>();
-    let mut downloads = state.downloads.lock().unwrap();
+    let mut downloads = state.downloads.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     downloads.remove(&model_id);
   });
 
@@ -1378,7 +1378,7 @@ pub(crate) fn hide_external_model(
   if path.trim().is_empty() {
     return Err("Missing model path".to_string());
   }
-  let mut settings = state.settings.lock().unwrap();
+  let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
   settings.hidden_external_models.insert(path);
   let persisted = settings.clone();
   drop(settings);
@@ -1391,7 +1391,7 @@ pub(crate) fn clear_hidden_external_models(
   app: AppHandle,
   state: State<'_, AppState>,
 ) -> Result<(), String> {
-  let mut settings = state.settings.lock().unwrap();
+  let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
   settings.hidden_external_models.clear();
   let persisted = settings.clone();
   drop(settings);

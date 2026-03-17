@@ -5795,12 +5795,15 @@ pub fn run() {
             info!("[DIAG] setup: hotkeys done");
 
             // Heartbeat watchdog: logs alive status every 30s to detect event-loop freezes
-            crate::util::spawn_guarded("heartbeat", || {
-                loop {
-                    std::thread::sleep(std::time::Duration::from_secs(30));
-                    info!("[HEARTBEAT] main process alive");
-                }
-            });
+            {
+                let app_clone = app.handle().clone();
+                crate::util::spawn_guarded("heartbeat", move || {
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(30));
+                        info!("[HEARTBEAT] main process alive");
+                    }
+                });
+            }
 
             if settings.mode == "vad" && settings.capture_enabled {
                 // Delay VAD start by 2 seconds to allow models to load on first startup

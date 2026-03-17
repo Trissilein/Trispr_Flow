@@ -571,12 +571,21 @@ fn apply_overlay_settings_to_window(
 
 /// Applies overlay settings by resizing/repositioning the window and updating
 /// the frontend via window.eval(). This is the primary settings application path.
+///
+/// Win32 safety: window.set_size(), set_position(), and eval() dispatch via the
+/// Win32 message queue. Calling them from a background thread uses SendMessage
+/// which re-enters the event loop and triggers tao warnings/freeze. We queue all
+/// window operations onto the main thread via run_on_main_thread() instead.
 pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Result<(), String> {
     with_overlay_controller(app, |controller| {
         controller.desired_settings = Some(settings.clone());
     });
     let window = ensure_overlay_window(app, "settings_update")?;
-    apply_overlay_settings_to_window(&window, settings)
+    let settings_clone = settings.clone();
+    app.run_on_main_thread(move || {
+        let _ = apply_overlay_settings_to_window(&window, &settings_clone);
+    })
+    .map_err(|e| format!("apply_overlay_settings: run_on_main_thread failed: {:?}", e))
 }
 
 /// Get current overlay position (for settings persistence)

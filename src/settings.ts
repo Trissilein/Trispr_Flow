@@ -16,10 +16,8 @@ import { traceFrontendWarn } from "./frontend-trace";
 import { syncRefinementPipelineGraphFromSettings } from "./refinement-pipeline-graph";
 import {
   BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS,
-  CUSTOM_REFINEMENT_PROMPT_OPTION,
   DEFAULT_REFINEMENT_PROMPT_PRESET,
   findUserRefinementPromptPresetByOptionId,
-  NEW_REFINEMENT_PROMPT_OPTION,
   NEW_REFINEMENT_PROMPT_OPTION_ID,
   normalizeActiveRefinementPromptPresetId,
   normalizePersistedRefinementPromptPresetId,
@@ -690,41 +688,63 @@ function renderOverlayHealthNote() {
       : `Overlay recovering (${health.attempt}): ${health.reason}`;
 }
 
-function renderRefinementPromptPresetSelect(
+function renderPromptPresetCards(
   userPresets: UserRefinementPromptPreset[],
   activePresetId: string
 ): void {
-  if (!dom.aiFallbackPromptPreset) return;
-  const select = dom.aiFallbackPromptPreset;
-  const fragment = document.createDocumentFragment();
+  const container = dom.promptPresetList;
+  if (!container) return;
+  container.innerHTML = "";
 
+  // Normalise "custom" fallback — no card for it, treat as default built-in
+  const effectiveActiveId =
+    activePresetId === "custom" ? DEFAULT_REFINEMENT_PROMPT_PRESET : activePresetId;
+
+  const makeChip = (
+    presetId: string,
+    label: string,
+    isActive: boolean,
+    extraClass: string,
+    action: string,
+    deletable: boolean
+  ): HTMLElement => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = `preset-chip${isActive ? " preset-chip--active" : ""}${extraClass ? " " + extraClass : ""}`;
+    chip.dataset.presetId = presetId;
+    chip.dataset.action = action;
+    chip.textContent = label;
+    if (deletable) {
+      const del = document.createElement("span");
+      del.className = "preset-chip-del";
+      del.dataset.action = "delete-chip-preset";
+      del.title = "Delete preset";
+      del.textContent = "×";
+      chip.appendChild(del);
+    }
+    return chip;
+  };
+
+  // Built-in chips
   for (const preset of BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS) {
-    const option = document.createElement("option");
-    option.value = preset.id;
-    option.textContent = preset.label;
-    fragment.appendChild(option);
+    const isActive = effectiveActiveId === preset.id;
+    container.appendChild(makeChip(preset.id, preset.label, isActive, "", "use-preset", false));
   }
 
-  const customOption = document.createElement("option");
-  customOption.value = CUSTOM_REFINEMENT_PROMPT_OPTION.id;
-  customOption.textContent = CUSTOM_REFINEMENT_PROMPT_OPTION.label;
-  fragment.appendChild(customOption);
-
+  // User preset chips
   for (const preset of userPresets) {
-    const option = document.createElement("option");
-    option.value = toUserRefinementPromptOptionId(preset.id);
-    option.textContent = `${preset.name} (User)`;
-    fragment.appendChild(option);
+    const optionId = toUserRefinementPromptOptionId(preset.id);
+    const isActive = effectiveActiveId === optionId;
+    container.appendChild(
+      makeChip(optionId, preset.name, isActive, "preset-chip--user", "use-preset", true)
+    );
   }
 
-  const newPresetOption = document.createElement("option");
-  newPresetOption.value = NEW_REFINEMENT_PROMPT_OPTION.id;
-  newPresetOption.textContent = NEW_REFINEMENT_PROMPT_OPTION.label;
-  fragment.appendChild(newPresetOption);
-
-  select.replaceChildren(fragment);
-  const hasActiveOption = Array.from(select.options).some((option) => option.value === activePresetId);
-  select.value = hasActiveOption ? activePresetId : DEFAULT_REFINEMENT_PROMPT_PRESET;
+  // "+ New" chip
+  const isNewMode = effectiveActiveId === NEW_REFINEMENT_PROMPT_OPTION_ID;
+  container.appendChild(
+    makeChip(NEW_REFINEMENT_PROMPT_OPTION_ID, "+ New", isNewMode, "preset-chip--new", "new-preset", false)
+  );
 }
 
 let aiRuntimeStateDriftLogged = false;
@@ -1170,7 +1190,7 @@ export function renderAIFallbackSettingsUi() {
     userPromptPresets
   );
   ai.active_prompt_preset_id = activePromptPresetId;
-  renderRefinementPromptPresetSelect(userPromptPresets, activePromptPresetId);
+  renderPromptPresetCards(userPromptPresets, activePromptPresetId);
   const selectedUserPromptPreset = findUserRefinementPromptPresetByOptionId(
     userPromptPresets,
     activePromptPresetId
@@ -1220,8 +1240,11 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackCustomPrompt.readOnly = isBuiltInPrompt;
     dom.aiFallbackCustomPrompt.classList.toggle("is-readonly", isBuiltInPrompt);
   }
+  // Show the name/save/delete row only when editing is possible
+  if (dom.aiFallbackPresetNameField) {
+    dom.aiFallbackPresetNameField.hidden = !(isUserPrompt || isNewPresetMode);
+  }
   if (dom.aiFallbackPromptPresetName) {
-    dom.aiFallbackPromptPresetName.disabled = !(isUserPrompt || isNewPresetMode);
     if (document.activeElement !== dom.aiFallbackPromptPresetName) {
       if (isUserPrompt) {
         dom.aiFallbackPromptPresetName.value = selectedUserPromptPreset?.name || "";
@@ -1236,17 +1259,17 @@ export function renderAIFallbackSettingsUi() {
       dom.aiFallbackPromptPresetSave.disabled = false;
       dom.aiFallbackPromptPresetSave.title = "Save changes to this user preset";
     } else if (isNewPresetMode) {
-      dom.aiFallbackPromptPresetSave.textContent = "New";
+      dom.aiFallbackPromptPresetSave.textContent = "Save new preset";
       dom.aiFallbackPromptPresetSave.disabled = false;
       dom.aiFallbackPromptPresetSave.title = "Create a new user preset";
     } else {
-      dom.aiFallbackPromptPresetSave.textContent = "New";
+      dom.aiFallbackPromptPresetSave.textContent = "Save";
       dom.aiFallbackPromptPresetSave.disabled = true;
-      dom.aiFallbackPromptPresetSave.title = "Select 'New Preset…' to create a preset";
     }
   }
   if (dom.aiFallbackPromptPresetDelete) {
     dom.aiFallbackPromptPresetDelete.disabled = !isUserPrompt;
+    dom.aiFallbackPromptPresetDelete.hidden = !isUserPrompt;
   }
 }
 

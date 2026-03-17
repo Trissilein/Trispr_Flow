@@ -1030,17 +1030,122 @@ html.expert-mode details[data-expert-only="true"] > summary {
   padding: 8px 10px;
 }
 
-.prompt-preset-manager {
-  gap: 5px;
+/* SHARED CARD-LIST STYLE ─────────────────────────────────────────────────
+   Add class="... card-list" to any container that holds .model-item cards
+   to get the standard gradient-border visual treatment. This prevents the
+   recurring bug where new card containers get the wrong (weak) border.
+   ─────────────────────────────────────────────────────────────────────── */
+.card-list .model-item {
+  border: 1px solid rgba(var(--accent-2-bright-rgb), 0.24);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(24, 53, 58, 0.34), rgba(22, 32, 42, 0.52));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 10px 24px rgba(0, 0, 0, 0.16);
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease,
+              background 140ms ease, opacity 140ms ease;
 }
 
-.prompt-preset-manager-row {
+.card-list .model-item.selected {
+  border-width: 1px;
+  border-color: rgba(var(--accent-2-bright-rgb), 0.62);
+  background: linear-gradient(135deg, rgba(24, 53, 58, 0.48), rgba(22, 32, 42, 0.54));
+  box-shadow: 0 0 0 1px rgba(var(--accent-2-bright-rgb), 0.18), 0 6px 18px rgba(0, 0, 0, 0.22);
+  transform: translateY(-1px);
+}
+
+.card-list .model-item.model-item--available {
+  opacity: 0.78;
+  border-color: rgba(255, 255, 255, 0.1);
+  background: linear-gradient(135deg, rgba(31, 37, 46, 0.58), rgba(24, 29, 37, 0.64));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+/* PROMPT PRESET CHIPS ─────────────────────────────────────────────────── */
+.prompt-preset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.preset-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease,
+    box-shadow 120ms ease;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.preset-chip:hover {
+  border-color: rgba(var(--accent-2-bright-rgb), 0.38);
+  background: rgba(var(--accent-2-rgb), 0.08);
+  color: var(--ink);
+}
+
+.preset-chip.preset-chip--active {
+  border-color: rgba(var(--accent-2-bright-rgb), 0.6);
+  background: rgba(var(--accent-2-rgb), 0.14);
+  color: var(--accent-2-bright);
+  box-shadow: 0 0 0 1px rgba(var(--accent-2-bright-rgb), 0.1),
+    0 0 12px rgba(var(--accent-2-rgb), 0.16);
+}
+
+.preset-chip.preset-chip--new {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--muted);
+}
+
+.preset-chip.preset-chip--new:hover {
+  border-color: rgba(var(--accent-2-bright-rgb), 0.32);
+  color: var(--ink-soft);
+}
+
+.preset-chip-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 0.76rem;
+  line-height: 1;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.preset-chip:hover .preset-chip-del {
+  opacity: 1;
+}
+
+.preset-chip-del:hover {
+  background: rgba(255, 80, 80, 0.2);
+  color: #ff8888;
+}
+
+.preset-card--new:hover,
+.preset-card--new.selected {
+  opacity: 1;
+}
+
+.preset-name-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
 }
 
-.prompt-preset-manager-row input {
+.preset-name-row input {
   min-width: 0;
 }
 

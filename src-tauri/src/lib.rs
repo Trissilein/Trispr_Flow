@@ -6084,18 +6084,26 @@ pub fn run() {
             // ScaleFactorChanged too, but the main-window signal catches
             // cases where only the primary display DPI changes and the
             // overlay was parked there.
+            //
+            // IMPORTANT: on_window_event runs on the Win32 message thread.
+            // Calling apply_overlay_settings directly here would invoke
+            // window.set_size/set_position/eval synchronously from within
+            // WndProc, causing tao re-entrance → freeze. Offload to a
+            // background thread via spawn_guarded (same pattern as tray handlers).
             if let tauri::WindowEvent::ScaleFactorChanged { .. } = event {
-                let app = window.app_handle();
-                let desired = app
-                    .state::<AppState>()
-                    .overlay_controller
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .desired_settings
-                    .clone();
-                if let Some(settings) = desired {
-                    let _ = crate::overlay::apply_overlay_settings(app, &settings);
-                }
+                let app = window.app_handle().clone();
+                crate::util::spawn_guarded("dpi_overlay_reanchor", move || {
+                    let desired = app
+                        .state::<AppState>()
+                        .overlay_controller
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .desired_settings
+                        .clone();
+                    if let Some(settings) = desired {
+                        let _ = crate::overlay::apply_overlay_settings(&app, &settings);
+                    }
+                });
             }
         })
         .invoke_handler(tauri::generate_handler![

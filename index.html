@@ -1462,7 +1462,7 @@
                                   Fetch models
                                 </button>
                               </div>
-                              <div id="ai-fallback-compat-model-list" class="model-list"></div>
+                              <div id="ai-fallback-compat-model-list" class="model-list card-list"></div>
                               <span id="ai-fallback-compat-status" class="field-hint"></span>
                             </div>
                             <div class="ai-provider-advanced-actions">
@@ -1609,36 +1609,28 @@
                         <span class="field-hint">~2000 tokens is roughly a few pages of text, not a full book.</span>
                       </label>
 
-                      <label class="field">
+                      <div class="field span-2">
                         <span class="field-label">Prompt preset</span>
-                        <select id="ai-fallback-prompt-preset" title="Select the active refinement prompt profile">
-                          <option value="wording">Wording (Recommended)</option>
-                          <option value="summary">Summary</option>
-                          <option value="technical_specs">Technical Specs</option>
-                          <option value="action_items">Action Items</option>
-                          <option value="llm_prompt">LLM Prompt Engineer</option>
-                          <option value="custom">Custom Prompt</option>
-                          <option value="__new_preset__">New Preset…</option>
-                        </select>
-                      </label>
+                        <div id="prompt-preset-list" class="prompt-preset-list">
+                          <!-- Populated by renderPromptPresetCards() -->
+                        </div>
+                      </div>
 
-                      <div class="field span-2 prompt-preset-manager">
-                        <span class="field-label">Manage presets</span>
-                        <div class="prompt-preset-manager-row">
-                          <input id="ai-fallback-prompt-preset-name" type="text" placeholder="Preset name"
-                                 title="Name for saving the current prompt as a user preset" />
+                      <div id="ai-fallback-preset-name-field" class="field span-2" hidden>
+                        <span class="field-label">Preset name</span>
+                        <div class="preset-name-row">
+                          <input id="ai-fallback-prompt-preset-name" type="text"
+                                 placeholder="Enter a name for this preset"
+                                 title="Name for the user preset" />
                           <button id="ai-fallback-prompt-preset-save" type="button" class="primary"
-                                  title="Save current prompt as a user preset">
-                            New
+                                  title="Save this user preset">
+                            Save
                           </button>
                           <button id="ai-fallback-prompt-preset-delete" type="button" class="danger"
-                                  title="Delete selected user preset">
-                            Delete Preset
+                                  title="Delete this user preset">
+                            Delete
                           </button>
                         </div>
-                        <span class="field-hint">
-                          Built-in presets are read-only source prompts. User presets are editable.
-                        </span>
                       </div>
 
                       <div id="ai-fallback-prompt-preview-field" class="field span-2">

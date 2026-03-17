@@ -2132,36 +2132,61 @@ export function wireEvents() {
     await persistSettings();
   });
 
-  dom.aiFallbackPromptPreset?.addEventListener("change", async () => {
-    if (!settings || !dom.aiFallbackPromptPreset) return;
+  dom.promptPresetList?.addEventListener("click", async (e) => {
+    if (!settings) return;
+    const target = e.target as HTMLElement;
+    const btn = target.closest("[data-action]") as HTMLElement | null;
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const chip = target.closest("[data-preset-id]") as HTMLElement | null;
+    const presetId = chip?.dataset.presetId;
+    if (!presetId) return;
+
     ensureAIFallbackSettingsDefaults();
-    const hasPendingUserChanges = applyPendingUserPresetEditsFromEditor();
-    const nextSelection = dom.aiFallbackPromptPreset.value;
-    if (nextSelection === NEW_REFINEMENT_PROMPT_OPTION_ID) {
-      if (hasPendingUserChanges) {
-        await persistSettings();
-      }
+
+    if (action === "use-preset") {
+      const hasPendingUserChanges = applyPendingUserPresetEditsFromEditor();
+      if (hasPendingUserChanges) await persistSettings();
+      settings.ai_fallback.active_prompt_preset_id = presetId;
+      syncActivePromptPresetSelection();
+      refreshResolvedRefinementPromptInSettings();
+      await persistSettings();
+      renderAIFallbackSettingsUi();
+    } else if (action === "new-preset") {
+      const hasPendingUserChanges = applyPendingUserPresetEditsFromEditor();
+      if (hasPendingUserChanges) await persistSettings();
       settings.ai_fallback.active_prompt_preset_id = NEW_REFINEMENT_PROMPT_OPTION_ID;
       settings.ai_fallback.prompt_profile = "custom";
       settings.ai_fallback.custom_prompt_enabled = true;
       settings.ai_fallback.use_default_prompt = false;
       settings.ai_fallback.custom_prompt = "";
-      if (dom.aiFallbackPromptPresetName) {
-        dom.aiFallbackPromptPresetName.value = "";
-      }
-      if (dom.aiFallbackCustomPrompt) {
-        dom.aiFallbackCustomPrompt.value = "";
-      }
+      if (dom.aiFallbackPromptPresetName) dom.aiFallbackPromptPresetName.value = "";
+      if (dom.aiFallbackCustomPrompt) dom.aiFallbackCustomPrompt.value = "";
       refreshResolvedRefinementPromptInSettings();
       renderAIFallbackSettingsUi();
-      return;
+    } else if (action === "delete-chip-preset") {
+      e.stopPropagation();
+      const ai = settings.ai_fallback;
+      ai.prompt_presets = normalizeUserRefinementPromptPresets(ai.prompt_presets);
+      const selectedUserPreset = findUserRefinementPromptPresetByOptionId(
+        ai.prompt_presets,
+        presetId
+      );
+      if (!selectedUserPreset) return;
+      ai.prompt_presets = ai.prompt_presets.filter((p) => p.id !== selectedUserPreset.id);
+      ai.custom_prompt = selectedUserPreset.prompt;
+      ai.active_prompt_preset_id = DEFAULT_REFINEMENT_PROMPT_PRESET;
+      syncActivePromptPresetSelection();
+      refreshResolvedRefinementPromptInSettings();
+      await persistSettings();
+      renderAIFallbackSettingsUi();
+      showToast({
+        type: "info",
+        title: "Preset deleted",
+        message: `Deleted "${selectedUserPreset.name}".`,
+        duration: 2600,
+      });
     }
-
-    settings.ai_fallback.active_prompt_preset_id = nextSelection;
-    syncActivePromptPresetSelection();
-    refreshResolvedRefinementPromptInSettings();
-    await persistSettings();
-    renderAIFallbackSettingsUi();
   });
 
   dom.aiFallbackPromptPresetSave?.addEventListener("click", async () => {
@@ -2273,7 +2298,7 @@ export function wireEvents() {
 
     ai.prompt_presets = ai.prompt_presets.filter((preset) => preset.id !== selectedUserPreset.id);
     ai.custom_prompt = selectedUserPreset.prompt;
-    ai.active_prompt_preset_id = "custom";
+    ai.active_prompt_preset_id = DEFAULT_REFINEMENT_PROMPT_PRESET;
     syncActivePromptPresetSelection();
     refreshResolvedRefinementPromptInSettings();
     await persistSettings();

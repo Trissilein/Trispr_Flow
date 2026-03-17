@@ -1377,7 +1377,7 @@ fn save_ollama_endpoint(
 }
 
 #[tauri::command]
-fn refine_transcript(
+async fn refine_transcript(
     app: AppHandle,
     state: State<'_, AppState>,
     transcript: String,
@@ -1397,15 +1397,23 @@ fn refine_transcript(
         })?;
     }
 
-    let result =
+    // The HTTP call to the AI provider can block for many seconds (local LLM
+    // inference, slow network, etc.).  Running it on a blocking worker thread
+    // prevents it from stalling the Tauri event loop and triggering tao's
+    // "NewEvents without RedrawEventsCleared" warning that leads to a UI freeze.
+    let app_clone = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         setup
             .provider
-            .refine_transcript(&transcript, &setup.model, &setup.options, &setup.api_key);
+            .refine_transcript(&transcript, &setup.model, &setup.options, &setup.api_key)
+    })
+    .await
+    .map_err(|e| format!("refine_transcript task failed: {}", e))?;
 
     // Emit health-degraded event on transport failures so the frontend can
     // re-check Ollama state without requiring a full app restart.
     if let Err(AIError::Timeout | AIError::OllamaNotRunning) = &result {
-        let _ = app.emit("ai_fallback:health_degraded", ());
+        let _ = app_clone.emit("ai_fallback:health_degraded", ());
     }
 
     let result = result.map_err(|e| e.to_string())?;
@@ -2183,8 +2191,12 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
 }
 
 #[tauri::command]
-fn save_settings(app: AppHandle, mut settings: Settings) -> Result<(), String> {
-    save_settings_inner(&app, &mut settings)
+async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<(), String> {
+    // Run on a blocking worker thread so the Tauri event-loop thread is never
+    // stalled by file I/O, lock contention, or Win32 hotkey-registration calls.
+    tauri::async_runtime::spawn_blocking(move || save_settings_inner(&app, &mut settings))
+        .await
+        .map_err(|e| format!("save_settings task failed: {}", e))?
 }
 
 #[tauri::command]

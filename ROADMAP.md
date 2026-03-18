@@ -8,6 +8,7 @@ This file is the canonical source for priorities and execution order.
 
 - Released: `v0.7.0`
 - Current phase: `v0.7.1` stabilization execution
+- **Next version bump**: After next major feature completion (target: v0.7.1 release). Update `package.json` version, `Cargo.toml` version, create CHANGELOG entry, build installer, push GitHub release.
 - Foundation complete: Blocks F + G + H
 - Active execution blocks: Workflow-Agent execution hardening (Block M) + Multimodal planning runway (Block N) + Onboarding stability follow-up (Block Q)
 

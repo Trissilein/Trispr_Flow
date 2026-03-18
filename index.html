@@ -1180,6 +1180,47 @@
             </div>
             <div class="panel-body" id="ai-refinement-panel-body">
 
+              <!-- Prompt Style — always visible, primary control -->
+              <div class="ai-refine-section ai-refine-section--prompt-style">
+                <div class="prompt-style-header">
+                  <h3 class="ai-refine-section-title">Prompt Style</h3>
+                  <span class="field-hint">Defines what the AI does with your transcript</span>
+                </div>
+                <div class="panel-grid">
+                  <div class="field span-2">
+                    <div id="prompt-preset-list" class="prompt-preset-list">
+                      <!-- Populated by renderPromptPresetCards() -->
+                    </div>
+                  </div>
+
+                  <div id="ai-fallback-preset-name-field" class="field span-2" hidden>
+                    <span class="field-label">Preset name</span>
+                    <div class="preset-name-row">
+                      <input id="ai-fallback-prompt-preset-name" type="text"
+                             placeholder="Enter a name for this preset"
+                             title="Name for the user preset" />
+                      <button id="ai-fallback-prompt-preset-save" type="button" class="primary"
+                              title="Save this user preset">
+                        Save
+                      </button>
+                      <button id="ai-fallback-prompt-preset-delete" type="button" class="danger"
+                              title="Delete this user preset">
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+
+                  <div id="ai-fallback-prompt-preview-field" class="field span-2">
+                    <span id="ai-fallback-prompt-preview-label" class="field-label">Prompt preview</span>
+                    <textarea id="ai-fallback-custom-prompt" rows="6" placeholder="Define your custom refinement prompt..."
+                              title="Prompt sent to the AI before each refinement"></textarea>
+                    <span id="ai-fallback-prompt-preview-hint" class="field-hint">
+                      Built-ins are read-only. User and custom prompts are editable.
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               <!-- Refinement Pipeline -->
               <div class="ai-refine-section">
                 <details id="ai-refinement-rules-expander" class="expander ai-refine-expander" open>
@@ -1608,39 +1649,6 @@
                         </select>
                         <span class="field-hint">~2000 tokens is roughly a few pages of text, not a full book.</span>
                       </label>
-
-                      <div class="field span-2">
-                        <span class="field-label">Prompt preset</span>
-                        <div id="prompt-preset-list" class="prompt-preset-list">
-                          <!-- Populated by renderPromptPresetCards() -->
-                        </div>
-                      </div>
-
-                      <div id="ai-fallback-preset-name-field" class="field span-2" hidden>
-                        <span class="field-label">Preset name</span>
-                        <div class="preset-name-row">
-                          <input id="ai-fallback-prompt-preset-name" type="text"
-                                 placeholder="Enter a name for this preset"
-                                 title="Name for the user preset" />
-                          <button id="ai-fallback-prompt-preset-save" type="button" class="primary"
-                                  title="Save this user preset">
-                            Save
-                          </button>
-                          <button id="ai-fallback-prompt-preset-delete" type="button" class="danger"
-                                  title="Delete this user preset">
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-
-                      <div id="ai-fallback-prompt-preview-field" class="field span-2">
-                        <span id="ai-fallback-prompt-preview-label" class="field-label">Prompt preview</span>
-                        <textarea id="ai-fallback-custom-prompt" rows="6" placeholder="Define your custom refinement prompt..."
-                                  title="Prompt sent to the AI before each refinement"></textarea>
-                        <span id="ai-fallback-prompt-preview-hint" class="field-hint">
-                          Built-ins are read-only. User and custom prompts are editable.
-                        </span>
-                      </div>
 
                     </div>
                   </div>

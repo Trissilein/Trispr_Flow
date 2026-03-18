@@ -3469,6 +3469,25 @@ input[type="range"]:focus-visible {
   border-bottom: none;
 }
 
+.ai-refine-section--prompt-style {
+  padding-bottom: 20px;
+}
+
+.prompt-style-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.prompt-style-header .ai-refine-section-title {
+  margin: 0;
+}
+
+.prompt-style-header .field-hint {
+  margin: 0;
+}
+
 .ai-refine-section-title {
   font-size: 13px;
   font-weight: 600;

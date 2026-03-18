@@ -1463,6 +1463,7 @@ impl AIProvider for OpenAICompatProvider {
             ],
             "temperature": options.temperature,
             "max_tokens": options.max_tokens,
+            "chat_template_kwargs": {"enable_thinking": false}
         });
 
         let agent = refinement_agent(&effective_text, &system_prompt);

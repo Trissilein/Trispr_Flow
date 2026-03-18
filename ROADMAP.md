@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-17 (Crash-Proof Shell P1-P9 + LM Studio daemon lifecycle + max_tokens for OpenAI-compat providers)
+Last updated: 2026-03-18 (LM Studio reasoning disabled via chat_template_kwargs; R1 complete; R4 Keep-Alive added to backlog)
 
 This file is the canonical source for priorities and execution order.
 
@@ -75,7 +75,7 @@ This file is the canonical source for priorities and execution order.
 | --- | --- | --- | --- |
 | Q1 | Startup Freeze: `save_settings` sync revert — remove `spawn_blocking`, `refresh_runtime_diagnostics` stays on detached thread | — | Done ✅ |
 | Q2 | Ghost Overlay: bootstrap position `(12,12)` → off-screen `(-9999,-9999)`, defensive repositioning in `apply_overlay_state_to_window` | — | Done ✅ |
-| Q3 | Refinement Resilience: `catch_unwind` + concurrency gate (max 2 active) + watchdog 90s → 45s | Q1 | Partially Done ✅ (catch_unwind via Crash-Proof Shell P1-P4 covers all threads+commands; concurrency gate + watchdog reduction still open) |
+| Q3 | Refinement Resilience: `catch_unwind` + concurrency gate (max 2 active) + watchdog 90s → 45s | Q1 | Done ✅ (catch_unwind via Crash-Proof Shell P1-P4; concurrency gate via MAX_CONCURRENT_REFINEMENTS=2 in audio.rs:1266; watchdog at 45s in audio.rs:31) |
 
 ## Crash-Proof Shell (2026-03-17)
 
@@ -102,9 +102,12 @@ This file is the canonical source for priorities and execution order.
 
 | Task | Title | Depends on | Note |
 | --- | --- | --- | --- |
-| R1 | Input truncation for local providers (Ollama, LM Studio): max 2000 words, sentence-boundary cutoff, `[truncated]` suffix | Q1 | `ai_fallback/provider.rs` — cloud providers unaffected |
-| R2 | LM Studio auto-start: ping `localhost:1234` on app start → `lms server start` via CLI if unreachable | — | `lms` CLI already installed |
-| R3 | LM Studio reasoning-model detection: UI warning when model name matches CoT pattern (DeepSeek-R1, QwQ, etc.) — recommend instruct model | R2 | Heuristic: model name pattern matching |
+| R1 | Input truncation for local providers (Ollama, LM Studio): max 2000 words, sentence-boundary cutoff, `[truncated]` suffix | Q1 | ✅ Done — both providers truncate at 2000 words with sentence-boundary fallback |
+| R2 | LM Studio auto-start: ping endpoint on app start → `lms daemon up` + model load if unreachable | — | ✅ Done — startup ping-check in setup block; mirrors provider-switch lifecycle (LS1) |
+| R3 | LM Studio reasoning-model detection: UI warning when model name matches CoT pattern (DeepSeek-R1, QwQ, etc.) — recommend instruct model | R2 | ✅ Done — `isReasoningModel()` in settings.ts; amber warning in model card |
+| R4 | **Refinement Model Keep-Alive** (future): Similar to Whisper pre-warm, periodically ping refinement model to prevent cold-start latency. First inference call ~2-5s slower than follow-up calls. Whisper already keeps hot; refinement should too. | Q3 | Low priority; first-call latency acceptable for now. Consider `keep_alive` parameter in Ollama/LM Studio requests. |
+| R5 | **Model Picker UX Unification**: Ollama and LM Studio use different UI patterns for model selection — LM Studio models shown inside provider card, Ollama shows them in a separate model section below. Same models, same UX. Both should use the bottom model-category section. | E | Medium priority; UX consistency issue. |
+| R6 | **LM Studio Thinking Disable** (future): `chat_template_kwargs` in request body is ignored by llmster (llama.cpp backend). True disable requires `model.yaml` with `enable_thinking: false`. Investigate: automated `model.yaml` provisioning on first `lms load`, or LM Studio Config Preset API. | R2 | Blocked on llmster API limitation. Track LM Studio changelog for per-request thinking control. |
 
 ## Immediate Next Actions
 

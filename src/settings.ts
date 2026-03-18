@@ -473,6 +473,22 @@ function syncAIRefinementExpanders(): void {
  * Render model cards for OpenAI-compatible providers (LM Studio, Oobabooga).
  * Reuses the same .model-item CSS as the Ollama model manager.
  */
+/**
+ * Returns true if the model name matches known Chain-of-Thought reasoning patterns.
+ * These models engage extended internal reasoning before output, causing 20-30s latency
+ * for simple refinement tasks where a 3s instruct-model response is expected.
+ */
+function isReasoningModel(name: string): boolean {
+  const n = name.toLowerCase();
+  return (
+    /deepseek-r\d/i.test(n) ||
+    n.includes("qwq") ||
+    n.includes("-think") ||
+    n.includes("thinking") ||
+    n.includes("-reason")
+  );
+}
+
 function renderCompatModelCards(
   compatSettings: import("./types").OpenAICompatSettings | undefined,
   _provider?: string,
@@ -504,11 +520,16 @@ function renderCompatModelCards(
     const card = document.createElement("article");
     card.className = `model-item${isActive ? " selected" : ""}`;
 
+    const reasoningWarn = isReasoningModel(modelName)
+      ? `<div class="model-reasoning-warn">⚠ Reasoning model — refinement may take 20-30s. Prefer an instruct model.</div>`
+      : "";
+
     card.innerHTML = `
       <div class="model-header">
         <div class="model-name">${modelName}</div>
       </div>
       <div class="model-status ${isActive ? "active" : "downloaded"}">${isActive ? "Active" : "Available"}</div>
+      ${reasoningWarn}
       <div class="model-actions"></div>
     `;
 

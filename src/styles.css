@@ -2188,6 +2188,13 @@ button.refinement-chip:focus-visible {
   opacity: 0.6;
 }
 
+.model-reasoning-warn {
+  font-size: 0.72rem;
+  color: #f3c87b;
+  margin-top: 4px;
+  line-height: 1.3;
+}
+
 .model-manager .model-item.model-item--available,
 .ollama-model-list .model-item.model-item--available {
   opacity: 0.78;

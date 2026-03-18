@@ -5819,6 +5819,28 @@ pub fn run() {
                 }
             });
 
+            // LM Studio daemon auto-start: if lm_studio was the active provider when the
+            // app was last closed, the provider-switch event never fires at next launch.
+            // We ping first — if the daemon is already running (e.g. user keeps it open),
+            // we leave it alone. Only start if unreachable.
+            if settings.ai_fallback.enabled && settings.ai_fallback.provider == "lm_studio" {
+                let endpoint = settings.providers.lm_studio.endpoint.clone();
+                let preferred_model = settings.providers.lm_studio.preferred_model.trim().to_string();
+                crate::util::spawn_guarded("lms_daemon_startup", move || {
+                    use crate::ai_fallback::provider::ping_lm_studio_quick;
+                    if ping_lm_studio_quick(&endpoint).is_err() {
+                        info!("LM Studio not reachable at startup — starting daemon");
+                        lms_daemon_command("up");
+                        if !preferred_model.is_empty() {
+                            std::thread::sleep(std::time::Duration::from_secs(3));
+                            lms_load_model(&preferred_model);
+                        }
+                    } else {
+                        info!("LM Studio already reachable at startup — skipping daemon start");
+                    }
+                });
+            }
+
             if settings.mode == "vad" && settings.capture_enabled {
                 // Delay VAD start by 2 seconds to allow models to load on first startup
                 let app_handle = app.handle().clone();

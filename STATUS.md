@@ -1,6 +1,6 @@
 # Trispr Flow - Status
 
-Last updated: 2026-03-13
+Last updated: 2026-03-18
 
 ## Snapshot
 
@@ -11,6 +11,7 @@ Last updated: 2026-03-13
 ## Working State
 
 - Contributor process now enforces a pre-push housekeeping gate in `CONTRIBUTING.md` ("Housekeeping (Required Before Push)").
+- **Recent**: UI refinement iteration — prompt preset cards replaced with chip selector for improved UX + additional stability fixes.
 - `N5+Q Stabilization Packet` is in execution (P1-P3): startup/runtime diagnostics, overlay resilience, and vision runtime hardening are integrated in mainline WIP.
 - Ollama runtime IPC paths used by model refresh/verify/info/pull-delete are hardened with non-blocking worker dispatch; UI stays interactive during background runtime activity.
 - Mainline installer/runtime packaging now keeps both Whisper backends (`bin/cuda` + `bin/vulkan`) and resolves backend at runtime (`local_backend_preference`).

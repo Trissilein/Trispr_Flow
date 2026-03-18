@@ -42,24 +42,17 @@ function debouncedSave() {
 export function initWindowStatePersistence() {
     const window = getCurrentWindow();
 
-    console.log(`[window-state] Initializing for window: ${window.label}`);
-
     // Only track main window
     if (window.label !== "main") {
-        console.log(`[window-state] Skipping - not a tracked window`);
         return;
     }
 
-    console.log(`[window-state] Setting up event listeners for ${window.label}`);
-
     // Listen for move and resize events
     const unlistenMoved = window.onMoved(() => {
-        console.log(`[window-state] Move event detected for ${window.label}`);
         debouncedSave();
     });
 
     const unlistenResized = window.onResized(() => {
-        console.log(`[window-state] Resize event detected for ${window.label}`);
         debouncedSave();
     });
 
@@ -71,7 +64,6 @@ export function initWindowStatePersistence() {
             try {
                 const minimized = await window.isMinimized();
                 if (minimized) {
-                    console.log(`[window-state] Window minimized`);
                     saveWindowVisibility("minimized");
                 }
             } catch (_) { /* ignore */ }
@@ -80,8 +72,6 @@ export function initWindowStatePersistence() {
             saveWindowVisibility("normal");
         }
     });
-
-    console.log(`[window-state] Event listeners registered for ${window.label}`);
 
     // Store unlisteners for potential cleanup
     return { unlistenMoved, unlistenResized, unlistenFocus };

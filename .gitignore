@@ -48,3 +48,9 @@ bench/results/
 # Local telemetry/tooling artifacts
 .vibe-coding/
 src-tauri/.vibe-coding/
+
+# Editor temporary files (from code editing tools, e.g. Claude Code)
+*.tmp.*
+
+# Rust-analyzer build artifacts (flycheck builds, not production)
+target/rust-analyzer/

@@ -25,26 +25,74 @@ Trispr Flow intentionally avoids React/Vue/Svelte to:
 
 ```
 src/
-├── main.ts              # App initialization (~220 lines, modular entry point)
-├── state.ts             # Global application state
-├── types.ts             # TypeScript type definitions
-├── settings.ts          # Settings persistence & UI rendering
-├── devices.ts           # Audio device management
-├── hotkeys.ts           # Hotkey configuration
-├── models.ts            # Model management
-├── history.ts           # Transcript history logic
-├── dom-refs.ts          # Centralized DOM references
-├── event-listeners.ts   # Event handler setup
-├── ui-state.ts          # UI state management
-├── ui-helpers.ts        # UI utility functions
-├── toast.ts             # Toast notifications
-├── accessibility.ts     # Accessibility helpers
-├── audio-cues.ts        # Audio feedback system
-├── overlay.ts           # Overlay state + animation
-└── styles.css           # App styling
-
-index.html               # Main window UI
-overlay.html             # Overlay UI (separate window)
+├── Core State & Initialization
+│   ├── main.ts                      # App initialization (~220 lines, modular entry point)
+│   ├── state.ts                     # Global application state
+│   ├── types.ts                     # TypeScript type definitions
+│   ├── panels.ts                    # Panel state management
+│   └── ui-state.ts                  # UI state management
+│
+├── Settings & Persistence
+│   ├── settings.ts                  # Settings persistence & UI rendering
+│   ├── history-preferences.ts       # History panel preferences
+│   └── feedback-state.ts            # User feedback state
+│
+├── Audio & Capture
+│   ├── devices.ts                   # Audio device management
+│   ├── audio-cues.ts                # Audio feedback system
+│   └── voice-output-console.ts      # Voice output console UI
+│
+├── Transcription & Models
+│   ├── models.ts                    # Model management
+│   ├── history.ts                   # Transcript history logic
+│   ├── hotkeys.ts                   # Hotkey configuration
+│   └── live-dump.ts                 # Live transcript dump & recovery
+│
+├── AI Refinement Pipeline
+│   ├── refinement-inspector.ts      # Original + refined text comparison
+│   ├── refinement-prompts.ts        # Refinement prompt preset selection
+│   ├── refinement-pipeline-graph.ts # Refinement flow visualization
+│   ├── ai-provider-utils.ts         # AI provider (OpenAI/Ollama) utilities
+│   ├── ai-refinement-help.ts        # AI refinement helper & fallback logic
+│   └── custom-tooltips.ts           # Unified tooltip system
+│
+├── Ollama Integration
+│   ├── ollama-models.ts             # Ollama model discovery & management
+│   ├── ollama-refresh-policy.ts     # Ollama refresh strategy & debouncing
+│   └── ollama-tag-utils.ts          # Ollama tag parsing & matching utilities
+│
+├── Advanced Features
+│   ├── expert-mode.ts               # Expert mode gating & feature toggles
+│   ├── export-dialog.ts             # Export transcript dialog
+│   ├── archive-browser.ts           # Session archive browser
+│   ├── modal-focus.ts               # Modal accessibility & focus management
+│   └── window-state.ts              # Window position/size persistence
+│
+├── Workflow Agent & Modules
+│   ├── workflow-agent-console.ts    # Workflow agent console output
+│   ├── workflow-agent-policy.ts     # Workflow agent validation policies
+│   ├── modules-hub.ts               # Modules panel & orchestration
+│   ├── gdd-flow.ts                  # GDD (Graph-Driven Design) flow
+│   └── gdd-policy.ts                # GDD validation rules
+│
+├── Onboarding & Diagnostics
+│   ├── onboarding-wizard.ts         # First-run setup wizard
+│   └── frontend-trace.ts            # Frontend event tracing & diagnostics
+│
+├── DOM & Utilities
+│   ├── dom-refs.ts                  # Centralized DOM references
+│   ├── event-listeners.ts           # Event handler setup
+│   ├── ui-helpers.ts                # UI utility functions
+│   ├── toast.ts                     # Toast notifications
+│   └── accessibility.ts             # Accessibility helpers
+│
+├── Styling
+│   ├── styles.css                   # App base styling
+│   └── styles-modern.css            # Modern CSS module (theme variants)
+│
+index.html                           # Main window UI
+overlay.html                         # Overlay UI (separate window)
+overlay.css                          # Overlay styling
 ```
 
 ---
@@ -342,7 +390,24 @@ historyItems.forEach(item => {
 
 ## Styling Guidelines
 
-### CSS Organization
+### CSS Files & Organization
+
+**`styles.css`** (5000+ lines):
+- Main application stylesheet with all design tokens, base styles, and component classes.
+- Imported in `index.html` for main window.
+- Includes CSS variables, panel layouts, form components, accessibility helpers.
+
+**`styles-modern.css`** (150 lines):
+- Supplemental module for **First-Run Onboarding Wizard** styles.
+- Modern, polished UI for wizard flow (hotkey input, GPU info card, feature list, loading states).
+- Imported in `index.html` alongside `styles.css`.
+- Example: `.wizard-hotkey-group`, `.gpu-info-card`, `.feature-item`, `.wizard-loading-overlay`.
+
+**`overlay.css`**:
+- Minimal styling for overlay window (`overlay.html`).
+
+### CSS Organization within `styles.css`
+
 1. **Variables** (`:root`) — Design tokens
 2. **Reset** (`*`, `body`) — Base styles
 3. **Layout** (`.app`, `.layout-grid`) — Structure
@@ -352,6 +417,7 @@ historyItems.forEach(item => {
 7. **Animations** (`@keyframes`) — Motion
 
 ### Class Naming
+
 - **Component**: `.panel`, `.button`, `.field`
 - **Modifier**: `.panel-collapsed`, `.button.primary`, `.field.toggle`
 - **State**: `[data-state="recording"]`, `.is-active`, `.is-disabled`

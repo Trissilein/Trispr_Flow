@@ -345,8 +345,10 @@ fn list_online_release_versions(limit: usize) -> Result<Vec<String>, String> {
 /// Resolves the root directory for the managed Ollama runtime installation.
 ///
 /// This intentionally does NOT use paths.rs because:
-/// 1. On Windows, the runtime must live under %LOCALAPPDATA%\TrisprFlow to keep
-///    the path short and predictable (Ollama is sensitive to long paths).
+/// 1. On Windows, the runtime lives under %LOCALAPPDATA%\Trispr Flow\ollama-runtime
+///    to keep the path short and predictable (Ollama is sensitive to long paths).
+///    Legacy installs may still have %LOCALAPPDATA%\TrisprFlow\ollama-runtime —
+///    see find_existing_runtime_root() for the migration fallback.
 /// 2. paths.rs uses Tauri's app_data_dir / app_config_dir which resolve to an
 ///    app-identifier-based subdirectory that differs from what we need here.
 fn resolve_runtime_root(app: &AppHandle) -> PathBuf {

@@ -4879,17 +4879,22 @@ fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
 }
 
 fn init_logging() {
-    use tracing_appender::rolling;
+    use tracing_appender::rolling::{RollingFileAppender, Rotation};
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    // Write logs to %LOCALAPPDATA%\Trispr Flow\logs\trispr-flow.log (daily rotation)
+    // Write logs to %LOCALAPPDATA%\Trispr Flow\logs\trispr-flow.YYYY-MM-DD.txt (daily rotation)
     let log_dir = std::env::var("LOCALAPPDATA")
         .map(|d| std::path::PathBuf::from(d).join("Trispr Flow").join("logs"))
         .unwrap_or_else(|_| std::path::PathBuf::from("logs"));
     let _ = std::fs::create_dir_all(&log_dir);
-    let file_appender = rolling::daily(&log_dir, "trispr-flow.log");
+    let file_appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("trispr-flow")
+        .filename_suffix("txt")
+        .build(&log_dir)
+        .expect("failed to initialize log appender");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     // Keep the guard alive for the process lifetime

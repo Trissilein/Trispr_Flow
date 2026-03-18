@@ -5937,6 +5937,10 @@ pub fn run() {
                         // Use ExitProcess directly to bypass all Rust/C cleanup handlers,
                         // including WebView2 destructors that cause ERROR_CLASS_HAS_WINDOWS (1412)
                         // and a 5-10s hang on Windows. Settings are persisted on every change.
+                        info!("Trispr Flow shutting down — user quit (clean exit)");
+                        // Brief pause to let the non-blocking log writer flush before ExitProcess
+                        // kills the process (std::mem::forget(_guard) skips the normal flush).
+                        std::thread::sleep(std::time::Duration::from_millis(200));
                         #[cfg(target_os = "windows")]
                         unsafe {
                             windows_sys::Win32::System::Threading::ExitProcess(0);

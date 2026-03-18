@@ -11,7 +11,11 @@ Last updated: 2026-03-18
 ## Working State
 
 - Contributor process now enforces a pre-push housekeeping gate in `CONTRIBUTING.md` ("Housekeeping (Required Before Push)").
-- **Recent**: UI refinement iteration — prompt preset cards replaced with chip selector for improved UX + additional stability fixes.
+- **Recent (2026-03-18)**:
+  - UI: Prompt Style section promoted to top of AI Refinement tab (was buried 3 levels deep in collapsed expander).
+  - Logging: daily log files now use `.txt` extension (`trispr-flow.YYYY-MM-DD.txt`); shutdown log entry added before `ExitProcess(0)` — normal exits now distinguishable from crashes.
+  - Housekeeping: removed all tracked `.tmp.*` crash artefacts from repository; `.gitignore` hardened for editor temp files and rust-analyzer artefacts; legacy `%LOCALAPPDATA%\TrisprFlow` folder cleaned up.
+  - Chip selector for prompt presets (from previous session) is stable.
 - `N5+Q Stabilization Packet` is in execution (P1-P3): startup/runtime diagnostics, overlay resilience, and vision runtime hardening are integrated in mainline WIP.
 - Ollama runtime IPC paths used by model refresh/verify/info/pull-delete are hardened with non-blocking worker dispatch; UI stays interactive during background runtime activity.
 - Mainline installer/runtime packaging now keeps both Whisper backends (`bin/cuda` + `bin/vulkan`) and resolves backend at runtime (`local_backend_preference`).

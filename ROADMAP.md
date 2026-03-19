@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-18 (LM Studio reasoning disabled via chat_template_kwargs; R1 complete; R4 Keep-Alive added to backlog)
+Last updated: 2026-03-19 (N5d/N7/N8/N12 completed; Block N shifted to remaining hardening gates N9-N14)
 
 This file is the canonical source for priorities and execution order.
 
@@ -10,7 +10,7 @@ This file is the canonical source for priorities and execution order.
 - Current phase: `v0.7.1` stabilization execution
 - **Next version bump**: After next major feature completion (target: v0.7.1 release). Update `package.json` version, `Cargo.toml` version, create CHANGELOG entry, build installer, push GitHub release.
 - Foundation complete: Blocks F + G + H
-- Active execution blocks: Workflow-Agent execution hardening (Block M) + Multimodal planning runway (Block N) + Onboarding stability follow-up (Block Q)
+- Active execution blocks: Multimodal delivery hardening (Block N) + Local AI provider hardening (Block R)
 
 ## Analysis De-Scope Decision
 
@@ -31,8 +31,8 @@ This file is the canonical source for priorities and execution order.
 | K | Expert Mode UX Overhaul (standard/expert toggle, hide technical settings) | Medium | E | Planned |
 | L | Module Platform + GDD Automation + Confluence Cloud publishing | Extra High | E, F, K | Complete ✅ |
 | M | Workflow-Agent voice automation for GDD (wakeword -> confirm -> execute) | Extra High | L, F | Complete ✅ |
-| N | Multimodal I/O modules (screen vision input + TTS voice output) | Extra High | M, L | Planned |
-| Q | Onboarding refinement and startup stability | Medium | D | In Progress |
+| N | Multimodal I/O modules (screen vision input + TTS voice output) | Extra High | M, L | In Progress (N1-N8 + N12 done) |
+| Q | Onboarding refinement and startup stability | Medium | D | Complete ✅ |
 | R | Local AI provider hardening (Input Truncation + LM Studio integration) | Low | Q, D | Planned |
 
 ## v0.7 Task Ledger
@@ -112,10 +112,10 @@ This file is the canonical source for priorities and execution order.
 
 ## Immediate Next Actions
 
-1. Execute `N5+Q Stabilization Packet (P1-P3)` as semantical salvage: startup/runtime diagnostics, overlay/refinement resilience, and vision runtime hardening. Concrete subtasks: Q1–Q3 (Startup Freeze, Ghost Overlay, Refinement Resilience). Block R (Local AI Provider Hardening: R1–R3) follows after Q completion.
-2. Keep GDD Core + Confluence path stable; Block M changes (agent command channel) are now locked.
-3. Run N11 benchmark track (>=3 runs/provider/scenario) and set default TTS provider based on measured data.
-4. Keep Block J and Block G as lower-priority backlog until N delivery gates are met.
+1. Execute remaining Block N gates in order: `N9` (privacy/consent UX), `N10` (fallback/error matrix), `N11` (benchmark evidence), then `N13` E2E and `N14` release hardening.
+2. Keep GDD Core + Confluence path stable; Block M behavior remains locked while multimodal layers are hardened.
+3. Continue Block R follow-up items (`R4`-`R6`) without regressing current local-provider stability.
+4. Keep Block J and Block G as lower-priority backlog until Block N hardening gates are complete.
 5. Keep quantization configurability (Task 45) deferred until dedicated benchmark iteration.
 
 ## References

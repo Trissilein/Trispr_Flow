@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Vision runtime hardening:
     - Replaced metadata-only vision stream path with captured frame pipeline and bounded in-memory buffer stats.
     - `capture_vision_snapshot` now prefers buffered frames and falls back to live capture without disk persistence.
+- **Block N Bridge + Policy Delivery (N7/N8/N12)**:
+  - `agent_execute_gdd_plan` now bridges optional multimodal capabilities through module gates:
+    - Vision context injection via `capture_vision_snapshot_internal` with progress stages `vision_context`, `vision_context_ready`, `vision_context_unavailable`.
+    - Optional agent speech lane via internal `speak_tts_internal` calls with explicit context routing.
+  - Voice output policy enforcement now gates speech by request context:
+    - `agent_replies_only`, `replies_and_events`, `explicit_only` implemented via `is_tts_policy_allowed`.
+    - TTS events now include `context`; provider tests use `manual_test`.
+  - New multimodal integration validation packet:
+    - `src/tests/n12-multimodal-integration.test.ts` added (16 tests).
+    - `src/tests/n5d-regression.test.ts` extended to S1-S6 regression coverage for startup/overlay/module-health/runtime and vision buffer/snapshot contracts.
 
 ### Changed
 

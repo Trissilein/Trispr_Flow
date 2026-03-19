@@ -370,14 +370,14 @@ Goal: Add optional capability modules `input_vision` and `output_voice_tts` and 
 | N5a | Runtime diagnostics + startup status event surface | High | N3 | DONE | Added `get_startup_status`, `get_runtime_diagnostics`, `startup:status`, `runtime:diagnostics`, and frontend/runtime integration. |
 | N5b | Overlay health + resilient state replay | High | N5a | DONE | Added overlay controller recovery path and `overlay:health` signaling with frontend diagnostics hints. |
 | N5c | Vision frame pipeline + bounded RAM buffer | High | N5a | DONE | Replaced metadata-only stream with capture pipeline (`capture_vision_frame`) and in-memory ring buffer stats/telemetry. |
-| N5d | Vision/diagnostics regression validation packet | Medium | N5b, N5c | IN PROGRESS | Build/check gates are green; packet-level regression scenarios are being finalized before full N12/N13 test expansion. |
+| N5d | Vision/diagnostics regression validation packet | Medium | N5b, N5c | DONE | Regression packet finalized in `src/tests/n5d-regression.test.ts` with startup/overlay/module-health/runtime/partial-availability coverage plus vision buffer/snapshot contract checks (S1-S6). |
 | N6 | Local custom TTS backend hardening | High | N4 | DONE | Piper TTS integrated: `speak_piper()` + `play_wav_blocking()` in `multimodal_io.rs`; 4-level binary/model auto-discovery; `VoiceOutputSettings` extended; NSIS installer bundles `piper.exe`, DLLs, `espeak-ng-data/`, `de_DE-thorsten-medium` + `en_US-amy-medium` models; `scripts/setup-piper.ps1` downloads assets. |
-| N7 | Agent capability bridge | Medium | M8, N3, N4 | PLANNED | Route vision and TTS usage through workflow-agent only when corresponding module is active. |
-| N8 | Voice output policy enforcement | Medium | N4 | PLANNED | Enforce `agent replies only` default plus optional policy modes in UX. |
+| N7 | Agent capability bridge | Medium | M8, N3, N4 | DONE | `agent_execute_gdd_plan` now consumes multimodal capabilities via workflow-agent: optional vision snapshot context injection (`vision_context*` progress stages) and agent-driven TTS feedback when capability modules are active. |
+| N8 | Voice output policy enforcement | Medium | N4 | DONE | `speak_tts` now enforces `voice_output_settings.output_policy` using request context (`agent_reply`, `agent_event`, `manual_user`, `manual_test`); `test_tts_provider` uses explicit `manual_test` context. |
 | N9 | Privacy + consent UX hardening | Medium | N5 | PLANNED | Improve consent and in-app status messaging for screen capture and voice output. |
 | N10 | TTS provider fallback matrix | Medium | N6 | PLANNED | Deterministic provider fallback policy and error reporting matrix. |
 | N11 | Benchmark track (>=3 runs/provider/scenario) | Medium | N6, N10 | PLANNED | Record latency/quality/resource metrics and choose default provider with evidence. |
-| N12 | Vision/TTS integration tests | High | N7, N8 | PLANNED | Add command-level and UI integration tests for multimodal path. |
+| N12 | Vision/TTS integration tests | High | N7, N8 | DONE | Added `src/tests/n12-multimodal-integration.test.ts` covering vision command contracts, TTS fallback behavior, policy matrix, multimodal module health scenarios, and voice-output UI integration (16 tests). |
 | N13 | E2E agent automation with multimodal IO | High | N11, N12 | PLANNED | Validate end-to-end voice command -> resolve -> confirm -> publish/queue -> spoken response. |
 | N14 | v0.8.2 release hardening | High | N13 | PLANNED | Final QA packet and rollout notes for multimodal milestone. |
 

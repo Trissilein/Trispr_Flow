@@ -1,6 +1,6 @@
 # Trispr Flow - Status
 
-Last updated: 2026-03-18
+Last updated: 2026-03-19
 
 ## Snapshot
 
@@ -16,7 +16,11 @@ Last updated: 2026-03-18
   - Logging: daily log files now use `.txt` extension (`trispr-flow.YYYY-MM-DD.txt`); shutdown log entry added before `ExitProcess(0)` — normal exits now distinguishable from crashes.
   - Housekeeping: removed all tracked `.tmp.*` crash artefacts from repository; `.gitignore` hardened for editor temp files and rust-analyzer artefacts; legacy `%LOCALAPPDATA%\TrisprFlow` folder cleaned up.
   - Chip selector for prompt presets (from previous session) is stable.
-- `N5+Q Stabilization Packet` is in execution (P1-P3): startup/runtime diagnostics, overlay resilience, and vision runtime hardening are integrated in mainline WIP.
+- `N5+Q Stabilization Packet` is closed for regression scope: `N5d` validation packet is complete and green.
+- Block N bridge milestones are integrated in mainline:
+  - `N7` Agent capability bridge is live (`workflow_agent` now consumes optional vision snapshot context and optional TTS feedback through module gates).
+  - `N8` Voice output policy enforcement is live (`agent_replies_only`, `replies_and_events`, `explicit_only` with request context gating).
+  - `N12` multimodal integration test packet is present (`src/tests/n12-multimodal-integration.test.ts`, 16 tests).
 - Ollama runtime IPC paths used by model refresh/verify/info/pull-delete are hardened with non-blocking worker dispatch; UI stays interactive during background runtime activity.
 - Mainline installer/runtime packaging now keeps both Whisper backends (`bin/cuda` + `bin/vulkan`) and resolves backend at runtime (`local_backend_preference`).
 - First-run developer bootstrap is available via `FIRST_RUN.bat` (`npm install` + runtime hydration from installed app resources).
@@ -57,7 +61,7 @@ Last updated: 2026-03-18
 
 ## Next Focus
 
-1. Complete `N5d` regression validation for `N5+Q Stabilization Packet` (startup diagnostics, overlay recovery, vision buffer/snapshot flows, Ollama UI responsiveness under runtime load).
-2. Expand multimodal integration tests for Block N (`N12`) on top of the new frame-buffer pipeline.
-3. Continue Block N privacy/consent hardening (`N9`) with updated in-app status messaging.
-4. Finalize latency benchmark baseline (`benchmark:latency`) with updated GPU timings and track p50/p95 trend.
+1. Continue Block N privacy/consent hardening (`N9`) with updated in-app status messaging.
+2. Implement deterministic TTS fallback/error matrix (`N10`) and align UX diagnostics surface.
+3. Execute benchmark track (`N11`) with >=3 runs/provider/scenario and lock default TTS provider by evidence.
+4. Prepare `N13` end-to-end agent automation validation (voice command -> resolve -> publish/queue -> spoken response).

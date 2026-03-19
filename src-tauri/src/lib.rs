@@ -34,7 +34,9 @@ use state::{AppState, HistoryEntry, RuntimeDiagnostics, Settings, StartupStatus}
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{
+    AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering,
+};
 use std::sync::Mutex;
 
 // Exponential backoff state for Ollama diagnostics pings.
@@ -313,8 +315,8 @@ pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> 
     // localhost-DNS stall on every save_settings call when the user is on LM Studio
     // or Oobabooga.  The reachability field stays false until Ollama is re-selected
     // and the frontend explicitly calls refreshOllamaRuntimeState.
-    let ollama_is_active_provider = settings.ai_fallback.enabled
-        && settings.ai_fallback.provider == "ollama";
+    let ollama_is_active_provider =
+        settings.ai_fallback.enabled && settings.ai_fallback.provider == "ollama";
     let reachable = if ollama_is_active_provider {
         let now = crate::util::now_ms();
         let next_ms = OLLAMA_DIAG_NEXT_MS.load(Ordering::Relaxed);
@@ -675,9 +677,19 @@ pub(crate) fn prepare_refinement(
             || settings.postproc_llm_model.trim() != resolved.model;
         model = resolved.model;
     } else if is_lm_studio && model.is_empty() {
-        model = settings.providers.lm_studio.preferred_model.trim().to_string();
+        model = settings
+            .providers
+            .lm_studio
+            .preferred_model
+            .trim()
+            .to_string();
     } else if is_oobabooga && model.is_empty() {
-        model = settings.providers.oobabooga.preferred_model.trim().to_string();
+        model = settings
+            .providers
+            .oobabooga
+            .preferred_model
+            .trim()
+            .to_string();
     } else if model.is_empty() {
         model = match ai.provider.as_str() {
             "claude" => settings.providers.claude.preferred_model.trim().to_string(),
@@ -983,7 +995,11 @@ async fn get_settings(app: AppHandle) -> Settings {
     // which also need the same lock during the bootstrap Promise.all.
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         settings
     })
     .await
@@ -1019,7 +1035,10 @@ async fn fetch_available_models(
     let provider_id = provider.trim().to_lowercase();
     if provider_id == "ollama" {
         let endpoint = {
-            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             check_strict_local_mode(&settings)?;
             settings.providers.ollama.endpoint.clone()
         };
@@ -1032,7 +1051,10 @@ async fn fetch_available_models(
 
     if provider_id == "lm_studio" || provider_id == "oobabooga" {
         let (endpoint, api_key) = {
-            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if provider_id == "lm_studio" {
                 (
                     settings.providers.lm_studio.endpoint.clone(),
@@ -1046,9 +1068,13 @@ async fn fetch_available_models(
             }
         };
         return tauri::async_runtime::spawn_blocking(move || {
-            let models = crate::ai_fallback::provider::list_openai_compat_models(&endpoint, &api_key);
+            let models =
+                crate::ai_fallback::provider::list_openai_compat_models(&endpoint, &api_key);
             if models.is_empty() {
-                Err(format!("No models found at {}. Is the server running?", endpoint))
+                Err(format!(
+                    "No models found at {}. Is the server running?",
+                    endpoint
+                ))
             } else {
                 Ok(models)
             }
@@ -1077,7 +1103,10 @@ fn fetch_available_models_impl(app: &AppHandle, provider: String) -> Result<Vec<
 
     let from_settings = {
         let state = app.state::<AppState>();
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         settings
             .providers
             .get(&provider_id)
@@ -1101,7 +1130,10 @@ async fn fetch_ollama_models_with_size(
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let endpoint = {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         check_strict_local_mode(&settings)?;
         settings.providers.ollama.endpoint.clone()
     };
@@ -1134,7 +1166,10 @@ async fn test_provider_connection(
     // Ollama: perform a real HTTP ping instead of API key validation
     if provider_id == "ollama" {
         let endpoint = {
-            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             check_strict_local_mode(&settings)?;
             settings.providers.ollama.endpoint.clone()
         };
@@ -1148,7 +1183,10 @@ async fn test_provider_connection(
     // OpenAI-compat backends (LM Studio, Oobabooga)
     if provider_id == "lm_studio" || provider_id == "oobabooga" {
         let (endpoint, stored_key, label) = {
-            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if provider_id == "lm_studio" {
                 (
                     settings.providers.lm_studio.endpoint.clone(),
@@ -1163,7 +1201,11 @@ async fn test_provider_connection(
                 )
             }
         };
-        let effective_key = if api_key.trim().is_empty() { stored_key } else { api_key };
+        let effective_key = if api_key.trim().is_empty() {
+            stored_key
+        } else {
+            api_key
+        };
         return tauri::async_runtime::spawn_blocking(move || {
             let models = crate::ai_fallback::provider::list_openai_compat_models(&endpoint, &effective_key);
             if models.is_empty() {
@@ -1358,7 +1400,10 @@ fn save_ollama_endpoint(
         return Err("This endpoint address is not allowed (SSRF protection).".to_string());
     }
     {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if settings.ai_fallback.strict_local_mode && !is_local_ollama_endpoint(&trimmed) {
             return Err(
                 "Strict local mode is enabled. Only localhost/127.0.0.1:11434 is allowed."
@@ -1382,7 +1427,11 @@ async fn refine_transcript(
     state: State<'_, AppState>,
     transcript: String,
 ) -> Result<serde_json::Value, String> {
-    let settings_snapshot = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings_snapshot = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
 
     let setup = prepare_refinement(&app, &settings_snapshot)?;
 
@@ -1504,7 +1553,11 @@ fn run_latency_benchmark_inner(
         fixtures.push((label, samples));
     }
 
-    let mut settings_snapshot = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let mut settings_snapshot = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     if include_refinement {
         if let Some(model) = request
             .refinement_model
@@ -1813,7 +1866,10 @@ fn log_frontend_event(level: String, context: String, message: String) -> Result
 fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
     let state = app.state::<AppState>();
     let settings = {
-        let mut current = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut current = state
+            .settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if current.transcribe_enabled == enabled {
             return Ok(());
         }
@@ -1824,7 +1880,10 @@ fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> 
     if enabled {
         if let Err(err) = start_transcribe_monitor(app, &state, &settings) {
             let reverted = {
-                let mut current = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut current = state
+                    .settings
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 current.transcribe_enabled = false;
                 current.clone()
             };
@@ -1853,7 +1912,10 @@ fn pull_ollama_model(
 
     // Prevent duplicate pulls for the same model
     {
-        let mut pulls = state.ollama_pulls.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut pulls = state
+            .ollama_pulls
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if pulls.contains(&model) {
             return Err(format!("Pull already in progress for '{}'", model));
         }
@@ -1861,9 +1923,15 @@ fn pull_ollama_model(
     }
 
     let endpoint = {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Err(e) = check_strict_local_mode(&settings) {
-            let mut pulls = state.ollama_pulls.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut pulls = state
+                .ollama_pulls
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             pulls.remove(&model);
             return Err(e);
         }
@@ -1898,16 +1966,16 @@ fn pull_ollama_model(
 }
 
 #[tauri::command]
-async fn delete_ollama_model(
-    state: State<'_, AppState>,
-    model: String,
-) -> Result<(), String> {
+async fn delete_ollama_model(state: State<'_, AppState>, model: String) -> Result<(), String> {
     use crate::ai_fallback::provider::validate_ollama_model_name;
 
     validate_ollama_model_name(&model)?;
 
     let endpoint = {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         check_strict_local_mode(&settings)?;
         settings.providers.ollama.endpoint.clone()
     };
@@ -1963,7 +2031,10 @@ async fn get_ollama_model_info(
     validate_ollama_model_name(&model)?;
 
     let endpoint = {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         check_strict_local_mode(&settings)?;
         settings.providers.ollama.endpoint.clone()
     };
@@ -1973,7 +2044,10 @@ async fn get_ollama_model_info(
         .map_err(|e| format!("Get Ollama model info task failed: {}", e))?
 }
 
-fn get_ollama_model_info_impl(endpoint: String, model: String) -> Result<serde_json::Value, String> {
+fn get_ollama_model_info_impl(
+    endpoint: String,
+    model: String,
+) -> Result<serde_json::Value, String> {
     use crate::ai_fallback::provider::ollama_endpoint_candidates;
 
     let body = serde_json::json!({ "model": model });
@@ -2013,7 +2087,10 @@ fn get_ollama_model_info_impl(endpoint: String, model: String) -> Result<serde_j
 /// Synchronous core of save_settings — used by both the async Tauri command
 /// and internal callers (e.g. tray menu handlers) that cannot await.
 fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), String> {
-    info!("[DIAG] save_settings_inner: enter (thread {:?})", std::thread::current().id());
+    info!(
+        "[DIAG] save_settings_inner: enter (thread {:?})",
+        std::thread::current().id()
+    );
     let state = app.state::<AppState>();
     info!("[DIAG] save_settings_inner: acquiring settings lock (read)");
     let (
@@ -2025,7 +2102,10 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         prev_ai_refinement_enabled,
         prev_provider,
     ) = {
-        let current = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let current = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         (
             current.mode.clone(),
             current.input_device.clone(),
@@ -2049,7 +2129,10 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
 
     info!("[DIAG] save_settings_inner: acquiring settings lock (write)");
     {
-        let mut current = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut current = state
+            .settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *current = settings.clone();
     }
     info!("[DIAG] save_settings_inner: saving file");
@@ -2075,7 +2158,12 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
     // stop when switching AWAY from lm_studio.
     if prev_provider != settings.ai_fallback.provider {
         if settings.ai_fallback.provider == "lm_studio" {
-            let preferred_model = settings.providers.lm_studio.preferred_model.trim().to_string();
+            let preferred_model = settings
+                .providers
+                .lm_studio
+                .preferred_model
+                .trim()
+                .to_string();
             crate::util::spawn_guarded("lms_daemon_up", move || {
                 lms_daemon_command("up");
                 // Give the daemon a few seconds to bind its HTTP port before
@@ -2155,7 +2243,10 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
     }
 
     info!("[DIAG] save_settings_inner: acquiring recorder lock (2nd)");
-    let recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let recorder = state
+        .recorder
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if !recorder.active {
         let _ = emit_capture_idle_overlay(app, settings);
     }
@@ -2201,7 +2292,10 @@ async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<(), Str
 
 #[tauri::command]
 fn list_modules(state: State<'_, AppState>) -> Vec<crate::modules::ModuleDescriptor> {
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     module_registry::modules_as_descriptors(&settings.module_settings)
 }
 
@@ -2213,51 +2307,54 @@ fn enable_module(
     grant_permissions: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
     guarded_command!("enable_module", {
-    let module_id = module_id.trim().to_string();
-    if module_id.is_empty() {
-        return Err("Module id cannot be empty.".to_string());
-    }
+        let module_id = module_id.trim().to_string();
+        if module_id.is_empty() {
+            return Err("Module id cannot be empty.".to_string());
+        }
 
-    let grants = grant_permissions.unwrap_or_default();
-    let (result, snapshot, descriptors) = {
-        let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let result =
-            module_lifecycle::enable_module(&mut settings.module_settings, &module_id, &grants);
-        if result.is_ok() {
-            if module_id == "workflow_agent" {
-                settings.workflow_agent.enabled = true;
+        let grants = grant_permissions.unwrap_or_default();
+        let (result, snapshot, descriptors) = {
+            let mut settings = state
+                .settings
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let result =
+                module_lifecycle::enable_module(&mut settings.module_settings, &module_id, &grants);
+            if result.is_ok() {
+                if module_id == "workflow_agent" {
+                    settings.workflow_agent.enabled = true;
+                }
+                if module_id == "input_vision" {
+                    settings.vision_input_settings.enabled = true;
+                }
+                if module_id == "output_voice_tts" {
+                    settings.voice_output_settings.enabled = true;
+                }
             }
-            if module_id == "input_vision" {
-                settings.vision_input_settings.enabled = true;
-            }
-            if module_id == "output_voice_tts" {
-                settings.voice_output_settings.enabled = true;
+            normalize_module_settings(&mut settings.module_settings);
+            normalize_gdd_module_settings(&mut settings.gdd_module_settings);
+            normalize_confluence_settings(&mut settings.confluence_settings);
+            normalize_workflow_agent_settings(&mut settings.workflow_agent);
+            normalize_vision_input_settings(&mut settings.vision_input_settings);
+            normalize_voice_output_settings(&mut settings.voice_output_settings);
+            let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
+            (result, settings.clone(), descriptors)
+        };
+
+        save_settings_file(&app, &snapshot)?;
+        let _ = app.emit("settings-changed", snapshot);
+        let _ = app.emit("module:state-changed", descriptors);
+
+        match result {
+            Ok(lifecycle) => Ok(serde_json::json!(lifecycle)),
+            Err(error) => {
+                let _ = app.emit(
+                    "module:error",
+                    serde_json::json!({ "module_id": module_id, "error": error }),
+                );
+                Err(error)
             }
         }
-        normalize_module_settings(&mut settings.module_settings);
-        normalize_gdd_module_settings(&mut settings.gdd_module_settings);
-        normalize_confluence_settings(&mut settings.confluence_settings);
-        normalize_workflow_agent_settings(&mut settings.workflow_agent);
-        normalize_vision_input_settings(&mut settings.vision_input_settings);
-        normalize_voice_output_settings(&mut settings.voice_output_settings);
-        let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
-        (result, settings.clone(), descriptors)
-    };
-
-    save_settings_file(&app, &snapshot)?;
-    let _ = app.emit("settings-changed", snapshot);
-    let _ = app.emit("module:state-changed", descriptors);
-
-    match result {
-        Ok(lifecycle) => Ok(serde_json::json!(lifecycle)),
-        Err(error) => {
-            let _ = app.emit(
-                "module:error",
-                serde_json::json!({ "module_id": module_id, "error": error }),
-            );
-            Err(error)
-        }
-    }
     })
 }
 
@@ -2268,49 +2365,53 @@ fn disable_module(
     module_id: String,
 ) -> Result<serde_json::Value, String> {
     guarded_command!("disable_module", {
-    let module_id = module_id.trim().to_string();
-    if module_id.is_empty() {
-        return Err("Module id cannot be empty.".to_string());
-    }
+        let module_id = module_id.trim().to_string();
+        if module_id.is_empty() {
+            return Err("Module id cannot be empty.".to_string());
+        }
 
-    let (result, snapshot, descriptors) = {
-        let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let result = module_lifecycle::disable_module(&mut settings.module_settings, &module_id);
-        if result.is_ok() {
-            if module_id == "workflow_agent" {
-                settings.workflow_agent.enabled = false;
+        let (result, snapshot, descriptors) = {
+            let mut settings = state
+                .settings
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let result =
+                module_lifecycle::disable_module(&mut settings.module_settings, &module_id);
+            if result.is_ok() {
+                if module_id == "workflow_agent" {
+                    settings.workflow_agent.enabled = false;
+                }
+                if module_id == "input_vision" {
+                    settings.vision_input_settings.enabled = false;
+                }
+                if module_id == "output_voice_tts" {
+                    settings.voice_output_settings.enabled = false;
+                }
             }
-            if module_id == "input_vision" {
-                settings.vision_input_settings.enabled = false;
-            }
-            if module_id == "output_voice_tts" {
-                settings.voice_output_settings.enabled = false;
+            normalize_module_settings(&mut settings.module_settings);
+            normalize_gdd_module_settings(&mut settings.gdd_module_settings);
+            normalize_confluence_settings(&mut settings.confluence_settings);
+            normalize_workflow_agent_settings(&mut settings.workflow_agent);
+            normalize_vision_input_settings(&mut settings.vision_input_settings);
+            normalize_voice_output_settings(&mut settings.voice_output_settings);
+            let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
+            (result, settings.clone(), descriptors)
+        };
+
+        save_settings_file(&app, &snapshot)?;
+        let _ = app.emit("settings-changed", snapshot);
+        let _ = app.emit("module:state-changed", descriptors);
+
+        match result {
+            Ok(lifecycle) => Ok(serde_json::json!(lifecycle)),
+            Err(error) => {
+                let _ = app.emit(
+                    "module:error",
+                    serde_json::json!({ "module_id": module_id, "error": error }),
+                );
+                Err(error)
             }
         }
-        normalize_module_settings(&mut settings.module_settings);
-        normalize_gdd_module_settings(&mut settings.gdd_module_settings);
-        normalize_confluence_settings(&mut settings.confluence_settings);
-        normalize_workflow_agent_settings(&mut settings.workflow_agent);
-        normalize_vision_input_settings(&mut settings.vision_input_settings);
-        normalize_voice_output_settings(&mut settings.voice_output_settings);
-        let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
-        (result, settings.clone(), descriptors)
-    };
-
-    save_settings_file(&app, &snapshot)?;
-    let _ = app.emit("settings-changed", snapshot);
-    let _ = app.emit("module:state-changed", descriptors);
-
-    match result {
-        Ok(lifecycle) => Ok(serde_json::json!(lifecycle)),
-        Err(error) => {
-            let _ = app.emit(
-                "module:error",
-                serde_json::json!({ "module_id": module_id, "error": error }),
-            );
-            Err(error)
-        }
-    }
     })
 }
 
@@ -2319,7 +2420,10 @@ fn get_module_health(
     state: State<'_, AppState>,
     module_id: Option<String>,
 ) -> Vec<crate::modules::ModuleHealthStatus> {
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     module_health::get_health(&settings.module_settings, module_id.as_deref())
 }
 
@@ -2329,7 +2433,10 @@ fn check_module_updates(
     state: State<'_, AppState>,
     module_id: Option<String>,
 ) -> Vec<crate::modules::ModuleUpdateInfo> {
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let updates = module_health::check_updates(&settings.module_settings, module_id.as_deref());
     for update in &updates {
         let _ = app.emit("module:update-available", update);
@@ -2350,15 +2457,25 @@ fn collect_partitioned_entries(history: &PartitionedHistory) -> Vec<HistoryEntry
 fn collect_all_transcript_entries(state: &AppState) -> Vec<HistoryEntry> {
     let mut entries = Vec::new();
     {
-        let history = state.history.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let history = state
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         entries.extend(collect_partitioned_entries(&history));
     }
     {
-        let history = state.history_transcribe.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let history = state
+            .history_transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         entries.extend(collect_partitioned_entries(&history));
     }
     entries.sort_by_key(|entry| entry.timestamp_ms);
     entries
+}
+
+fn module_enabled(settings: &Settings, module_id: &str) -> bool {
+    settings.module_settings.enabled_modules.contains(module_id)
 }
 
 #[tauri::command]
@@ -2373,24 +2490,27 @@ fn agent_parse_command(
     request: crate::workflow_agent::AgentParseCommandRequest,
 ) -> Result<crate::workflow_agent::AgentCommandParseResult, String> {
     guarded_command!("agent_parse_command", {
-    let workflow_settings = {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
-        settings.workflow_agent.clone()
-    };
-    let intent_keywords = workflow_settings
-        .intent_keywords
-        .get("gdd_generate_publish")
-        .cloned()
-        .unwrap_or_default();
-    let parsed = crate::workflow_agent::parse_command(
-        &request,
-        &workflow_settings.wakewords,
-        &intent_keywords,
-    );
-    if parsed.detected {
-        let _ = app.emit("agent:command-detected", &parsed);
-    }
-    Ok(parsed)
+        let workflow_settings = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            settings.workflow_agent.clone()
+        };
+        let intent_keywords = workflow_settings
+            .intent_keywords
+            .get("gdd_generate_publish")
+            .cloned()
+            .unwrap_or_default();
+        let parsed = crate::workflow_agent::parse_command(
+            &request,
+            &workflow_settings.wakewords,
+            &intent_keywords,
+        );
+        if parsed.detected {
+            let _ = app.emit("agent:command-detected", &parsed);
+        }
+        Ok(parsed)
     })
 }
 
@@ -2400,26 +2520,29 @@ fn search_transcript_sessions(
     mut request: crate::workflow_agent::SearchTranscriptSessionsRequest,
 ) -> Result<Vec<crate::workflow_agent::TranscriptSessionCandidate>, String> {
     guarded_command!("search_transcript_sessions", {
-    let defaults = {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
-        (
-            settings.workflow_agent.session_gap_minutes,
-            settings.workflow_agent.max_candidates,
-        )
-    };
-    if request.session_gap_minutes.unwrap_or(0) == 0 {
-        request.session_gap_minutes = Some(defaults.0);
-    }
-    if request.max_candidates.unwrap_or(0) == 0 {
-        request.max_candidates = Some(defaults.1);
-    }
+        let defaults = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            (
+                settings.workflow_agent.session_gap_minutes,
+                settings.workflow_agent.max_candidates,
+            )
+        };
+        if request.session_gap_minutes.unwrap_or(0) == 0 {
+            request.session_gap_minutes = Some(defaults.0);
+        }
+        if request.max_candidates.unwrap_or(0) == 0 {
+            request.max_candidates = Some(defaults.1);
+        }
 
-    let entries = collect_all_transcript_entries(&state);
-    let sessions = crate::workflow_agent::build_sessions(
-        &entries,
-        request.session_gap_minutes.unwrap_or(defaults.0),
-    );
-    Ok(crate::workflow_agent::score_sessions(&sessions, &request))
+        let entries = collect_all_transcript_entries(&state);
+        let sessions = crate::workflow_agent::build_sessions(
+            &entries,
+            request.session_gap_minutes.unwrap_or(defaults.0),
+        );
+        Ok(crate::workflow_agent::score_sessions(&sessions, &request))
     })
 }
 
@@ -2429,27 +2552,27 @@ fn agent_build_execution_plan(
     request: crate::workflow_agent::AgentBuildExecutionPlanRequest,
 ) -> Result<crate::workflow_agent::AgentExecutionPlan, String> {
     guarded_command!("agent_build_execution_plan", {
-    if request.intent.trim().is_empty() {
-        return Err("Intent is required.".to_string());
-    }
-    if request.session_id.trim().is_empty() {
-        return Err("Session id is required.".to_string());
-    }
-    const ALLOWED_LANGUAGES: &[&str] = &[
-        "source", "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "ko", "zh", "ar",
-        "tr", "hi",
-    ];
-    let lang = request.target_language.trim();
-    if !ALLOWED_LANGUAGES.contains(&lang) {
-        return Err(format!(
-            "Invalid target language '{}'. Allowed: {}",
-            lang,
-            ALLOWED_LANGUAGES.join(", ")
-        ));
-    }
-    let plan = crate::workflow_agent::default_execution_plan(&request);
-    let _ = app.emit("agent:plan-ready", &plan);
-    Ok(plan)
+        if request.intent.trim().is_empty() {
+            return Err("Intent is required.".to_string());
+        }
+        if request.session_id.trim().is_empty() {
+            return Err("Session id is required.".to_string());
+        }
+        const ALLOWED_LANGUAGES: &[&str] = &[
+            "source", "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "ko", "zh", "ar",
+            "tr", "hi",
+        ];
+        let lang = request.target_language.trim();
+        if !ALLOWED_LANGUAGES.contains(&lang) {
+            return Err(format!(
+                "Invalid target language '{}'. Allowed: {}",
+                lang,
+                ALLOWED_LANGUAGES.join(", ")
+            ));
+        }
+        let plan = crate::workflow_agent::default_execution_plan(&request);
+        let _ = app.emit("agent:plan-ready", &plan);
+        Ok(plan)
     })
 }
 
@@ -2460,225 +2583,335 @@ fn agent_execute_gdd_plan(
     request: crate::workflow_agent::AgentExecuteGddPlanRequest,
 ) -> Result<crate::workflow_agent::AgentExecutionResult, String> {
     guarded_command!("agent_execute_gdd_plan", {
-    let plan = request.plan.clone();
-    if plan.intent != "gdd_generate_publish" {
-        return Ok(crate::workflow_agent::AgentExecutionResult {
-            status: "failed".to_string(),
-            message: "Unsupported agent intent.".to_string(),
-            draft: None,
-            publish_result: None,
-            queued_job: None,
-            error: Some(format!("Unsupported intent '{}'.", plan.intent)),
-        });
-    }
+        let plan = request.plan.clone();
+        if plan.intent != "gdd_generate_publish" {
+            return Ok(crate::workflow_agent::AgentExecutionResult {
+                status: "failed".to_string(),
+                message: "Unsupported agent intent.".to_string(),
+                draft: None,
+                publish_result: None,
+                queued_job: None,
+                error: Some(format!("Unsupported intent '{}'.", plan.intent)),
+            });
+        }
 
-    let _ = app.emit(
-        "agent:execution-progress",
-        serde_json::json!({
-            "session_id": plan.session_id,
-            "stage": "load_session",
-        }),
-    );
+        let _ = app.emit(
+            "agent:execution-progress",
+            serde_json::json!({
+                "session_id": plan.session_id,
+                "stage": "load_session",
+            }),
+        );
 
-    let (workflow_gap_minutes, preset_clones, confluence_settings, one_click_threshold) = {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
-        (
-            settings.workflow_agent.session_gap_minutes,
-            settings.gdd_module_settings.preset_clones.clone(),
-            settings.confluence_settings.clone(),
-            settings.gdd_module_settings.one_click_confidence_threshold,
-        )
-    };
-    let entries = collect_all_transcript_entries(&state);
-    let sessions = crate::workflow_agent::build_sessions(&entries, workflow_gap_minutes);
-    let session = sessions
-        .iter()
-        .find(|candidate| candidate.id == plan.session_id)
-        .cloned()
-        .ok_or_else(|| format!("Session '{}' not found.", plan.session_id))?;
+        let (
+            workflow_gap_minutes,
+            preset_clones,
+            confluence_settings,
+            one_click_threshold,
+            vision_bridge_enabled,
+            tts_bridge_enabled,
+        ) = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let workflow_agent_active =
+                module_enabled(&settings, "workflow_agent") && settings.workflow_agent.enabled;
+            let vision_active =
+                module_enabled(&settings, "input_vision") && settings.vision_input_settings.enabled;
+            let tts_active = module_enabled(&settings, "output_voice_tts")
+                && settings.voice_output_settings.enabled;
+            (
+                settings.workflow_agent.session_gap_minutes,
+                settings.gdd_module_settings.preset_clones.clone(),
+                settings.confluence_settings.clone(),
+                settings.gdd_module_settings.one_click_confidence_threshold,
+                workflow_agent_active && vision_active,
+                workflow_agent_active && tts_active,
+            )
+        };
+        let maybe_agent_speak = |context: &str, message: &str| {
+            if !tts_bridge_enabled || message.trim().is_empty() {
+                return;
+            }
+            let request = crate::multimodal_io::TtsSpeakRequest {
+                provider: String::new(),
+                text: message.trim().to_string(),
+                rate: None,
+                volume: None,
+                context: Some(context.to_string()),
+            };
+            if let Err(tts_error) = speak_tts_internal(&app, state.inner(), request) {
+                info!("workflow_agent tts skipped: {}", tts_error);
+            }
+        };
+        let entries = collect_all_transcript_entries(&state);
+        let sessions = crate::workflow_agent::build_sessions(&entries, workflow_gap_minutes);
+        let session = sessions
+            .iter()
+            .find(|candidate| candidate.id == plan.session_id)
+            .cloned()
+            .ok_or_else(|| format!("Session '{}' not found.", plan.session_id))?;
 
-    let transcript = session
-        .entries
-        .iter()
-        .map(|entry| entry.text.trim())
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-    if transcript.trim().is_empty() {
-        return Ok(crate::workflow_agent::AgentExecutionResult {
-            status: "failed".to_string(),
-            message: "Session has no transcript content.".to_string(),
-            draft: None,
-            publish_result: None,
-            queued_job: None,
-            error: Some("Session content was empty.".to_string()),
-        });
-    }
+        let transcript = session
+            .entries
+            .iter()
+            .map(|entry| entry.text.trim())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if transcript.trim().is_empty() {
+            return Ok(crate::workflow_agent::AgentExecutionResult {
+                status: "failed".to_string(),
+                message: "Session has no transcript content.".to_string(),
+                draft: None,
+                publish_result: None,
+                queued_job: None,
+                error: Some("Session content was empty.".to_string()),
+            });
+        }
 
-    let title = request
-        .title
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("GDD Session {}", session.start_ms));
-    let target_language = plan.target_language.trim().to_string();
-    let template_hint = if target_language.is_empty() {
-        None
-    } else {
-        Some(format!(
+        let title = request
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("GDD Session {}", session.start_ms));
+        let target_language = plan.target_language.trim().to_string();
+        let mut template_hints: Vec<String> = Vec::new();
+        if !target_language.is_empty() {
+            template_hints.push(format!(
             "Target output language preference: {}. Keep source facts unchanged and avoid invention.",
             target_language
-        ))
-    };
-
-    let _ = app.emit(
-        "agent:execution-progress",
-        serde_json::json!({
-            "session_id": plan.session_id,
-            "stage": "generate_draft",
-            "target_language": target_language,
-        }),
-    );
-
-    let draft_request = crate::gdd::GenerateGddDraftRequest {
-        transcript,
-        preset_id: request.preset_id.clone(),
-        title: Some(title.clone()),
-        max_chunk_chars: request.max_chunk_chars,
-        template_hint,
-        template_label: Some("workflow_agent".to_string()),
-    };
-    let draft = crate::gdd::generate_draft(&draft_request, &preset_clones);
-
-    if !plan.publish {
-        let result = crate::workflow_agent::AgentExecutionResult {
-            status: "completed".to_string(),
-            message: "Draft generated. Publish skipped by plan.".to_string(),
-            draft: Some(draft.clone()),
-            publish_result: None,
-            queued_job: None,
-            error: None,
+        ));
+        }
+        if vision_bridge_enabled {
+            let _ = app.emit(
+                "agent:execution-progress",
+                serde_json::json!({
+                    "session_id": plan.session_id,
+                    "stage": "vision_context",
+                }),
+            );
+            match capture_vision_snapshot_internal(&app, state.inner()) {
+                Ok(snapshot) => {
+                    let dimensions = match (snapshot.width, snapshot.height) {
+                        (Some(w), Some(h)) => format!("{}x{}", w, h),
+                        _ => "unknown".to_string(),
+                    };
+                    let scope = snapshot
+                        .source_scope
+                        .as_deref()
+                        .unwrap_or("unknown")
+                        .to_string();
+                    template_hints.push(format!(
+                    "Vision context available (scope={}, sources={}, frame={}, timestamp_ms={}). Treat this as supporting context only.",
+                    scope,
+                    snapshot.source_count,
+                    dimensions,
+                    snapshot.timestamp_ms
+                ));
+                    let _ = app.emit(
+                        "agent:execution-progress",
+                        serde_json::json!({
+                            "session_id": plan.session_id,
+                            "stage": "vision_context_ready",
+                            "source_scope": scope,
+                            "source_count": snapshot.source_count,
+                            "timestamp_ms": snapshot.timestamp_ms,
+                        }),
+                    );
+                }
+                Err(error) => {
+                    warn!("workflow_agent vision context unavailable: {}", error);
+                    let _ = app.emit(
+                        "agent:execution-progress",
+                        serde_json::json!({
+                            "session_id": plan.session_id,
+                            "stage": "vision_context_unavailable",
+                            "error": error,
+                        }),
+                    );
+                }
+            }
+        }
+        let template_hint = if template_hints.is_empty() {
+            None
+        } else {
+            Some(template_hints.join(" "))
         };
-        let _ = app.emit("agent:execution-finished", &result);
-        return Ok(result);
-    }
 
-    let space_key = request
-        .space_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            let fallback = confluence_settings.default_space_key.trim();
-            if fallback.is_empty() {
-                None
-            } else {
-                Some(fallback.to_string())
-            }
-        })
-        .ok_or_else(|| "No Confluence space key provided for publish.".to_string())?;
-    let parent_page_id = request
-        .parent_page_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            let fallback = confluence_settings.default_parent_page_id.trim();
-            if fallback.is_empty() {
-                None
-            } else {
-                Some(fallback.to_string())
-            }
-        });
-    let target_page_id = request
-        .target_page_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
+        let _ = app.emit(
+            "agent:execution-progress",
+            serde_json::json!({
+                "session_id": plan.session_id,
+                "stage": "generate_draft",
+                "target_language": target_language,
+            }),
+        );
 
-    let _ = app.emit(
-        "agent:execution-progress",
-        serde_json::json!({
-            "session_id": plan.session_id,
-            "stage": "publish_or_queue",
-            "space_key": space_key,
-        }),
-    );
+        let draft_request = crate::gdd::GenerateGddDraftRequest {
+            transcript,
+            preset_id: request.preset_id.clone(),
+            title: Some(title.clone()),
+            max_chunk_chars: request.max_chunk_chars,
+            template_hint,
+            template_label: Some("workflow_agent".to_string()),
+        };
+        let draft = crate::gdd::generate_draft(&draft_request, &preset_clones);
 
-    let storage_body = crate::gdd::render_storage::render_confluence_storage(&draft);
-    let publish_request = crate::gdd::confluence::ConfluencePublishRequest {
-        title,
-        storage_body,
-        space_key: space_key.clone(),
-        parent_page_id,
-        target_page_id,
-    };
-
-    let publish_result =
-        crate::gdd::confluence::publish(&app, &confluence_settings, &publish_request);
-    match publish_result {
-        Ok(publish) => {
-            {
-                let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-                let route_key =
-                    crate::gdd::confluence::routing_key_for(&space_key, &publish_request.title);
-                settings
-                    .confluence_settings
-                    .routing_memory
-                    .insert(route_key, publish.page_id.clone());
-                normalize_confluence_settings(&mut settings.confluence_settings);
-                let _ = save_settings_file(&app, &settings);
-                let _ = app.emit("settings-changed", settings.clone());
-            }
+        if !plan.publish {
             let result = crate::workflow_agent::AgentExecutionResult {
                 status: "completed".to_string(),
-                message: "Draft generated and published to Confluence.".to_string(),
-                draft: Some(draft),
-                publish_result: Some(publish),
+                message: "Draft generated. Publish skipped by plan.".to_string(),
+                draft: Some(draft.clone()),
+                publish_result: None,
                 queued_job: None,
                 error: None,
             };
             let _ = app.emit("agent:execution-finished", &result);
-            Ok(result)
+            maybe_agent_speak(
+                "agent_reply",
+                "Workflow Agent: Draft generated. Publish was skipped.",
+            );
+            return Ok(result);
         }
-        Err(error) => {
-            if crate::gdd::publish_queue::is_queueable_publish_error(&error) {
-                let queue_request = crate::gdd::publish_queue::GddPublishOrQueueRequest {
-                    draft: draft.clone(),
-                    publish_request,
-                    routing_confidence: Some(one_click_threshold),
-                    routing_reasoning: Some("workflow_agent execution".to_string()),
-                };
-                let queued_job =
-                    crate::gdd::publish_queue::queue_publish_request(&app, &queue_request, &error)?;
+
+        let space_key = request
+            .space_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                let fallback = confluence_settings.default_space_key.trim();
+                if fallback.is_empty() {
+                    None
+                } else {
+                    Some(fallback.to_string())
+                }
+            })
+            .ok_or_else(|| "No Confluence space key provided for publish.".to_string())?;
+        let parent_page_id = request
+            .parent_page_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                let fallback = confluence_settings.default_parent_page_id.trim();
+                if fallback.is_empty() {
+                    None
+                } else {
+                    Some(fallback.to_string())
+                }
+            });
+        let target_page_id = request
+            .target_page_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+
+        let _ = app.emit(
+            "agent:execution-progress",
+            serde_json::json!({
+                "session_id": plan.session_id,
+                "stage": "publish_or_queue",
+                "space_key": space_key,
+            }),
+        );
+
+        let storage_body = crate::gdd::render_storage::render_confluence_storage(&draft);
+        let publish_request = crate::gdd::confluence::ConfluencePublishRequest {
+            title,
+            storage_body,
+            space_key: space_key.clone(),
+            parent_page_id,
+            target_page_id,
+        };
+
+        let publish_result =
+            crate::gdd::confluence::publish(&app, &confluence_settings, &publish_request);
+        match publish_result {
+            Ok(publish) => {
+                {
+                    let mut settings = state
+                        .settings
+                        .write()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let route_key =
+                        crate::gdd::confluence::routing_key_for(&space_key, &publish_request.title);
+                    settings
+                        .confluence_settings
+                        .routing_memory
+                        .insert(route_key, publish.page_id.clone());
+                    normalize_confluence_settings(&mut settings.confluence_settings);
+                    let _ = save_settings_file(&app, &settings);
+                    let _ = app.emit("settings-changed", settings.clone());
+                }
                 let result = crate::workflow_agent::AgentExecutionResult {
-                    status: "queued".to_string(),
-                    message: "Confluence unavailable. Publish request queued locally.".to_string(),
+                    status: "completed".to_string(),
+                    message: "Draft generated and published to Confluence.".to_string(),
                     draft: Some(draft),
-                    publish_result: None,
-                    queued_job: Some(queued_job),
-                    error: Some(error),
+                    publish_result: Some(publish),
+                    queued_job: None,
+                    error: None,
                 };
                 let _ = app.emit("agent:execution-finished", &result);
-                Ok(result)
-            } else {
-                let result = crate::workflow_agent::AgentExecutionResult {
-                    status: "failed".to_string(),
-                    message: "Publish failed with non-queueable error.".to_string(),
-                    draft: Some(draft),
-                    publish_result: None,
-                    queued_job: None,
-                    error: Some(error.clone()),
-                };
-                let _ = app.emit("agent:execution-failed", &result);
+                maybe_agent_speak(
+                    "agent_reply",
+                    "Workflow Agent: Draft generated and published to Confluence.",
+                );
                 Ok(result)
             }
+            Err(error) => {
+                if crate::gdd::publish_queue::is_queueable_publish_error(&error) {
+                    let queue_request = crate::gdd::publish_queue::GddPublishOrQueueRequest {
+                        draft: draft.clone(),
+                        publish_request,
+                        routing_confidence: Some(one_click_threshold),
+                        routing_reasoning: Some("workflow_agent execution".to_string()),
+                    };
+                    let queued_job = crate::gdd::publish_queue::queue_publish_request(
+                        &app,
+                        &queue_request,
+                        &error,
+                    )?;
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "queued".to_string(),
+                        message: "Confluence unavailable. Publish request queued locally."
+                            .to_string(),
+                        draft: Some(draft),
+                        publish_result: None,
+                        queued_job: Some(queued_job),
+                        error: Some(error),
+                    };
+                    let _ = app.emit("agent:execution-finished", &result);
+                    maybe_agent_speak(
+                    "agent_event",
+                    "Workflow Agent: Confluence unavailable. Publish request was queued locally.",
+                );
+                    Ok(result)
+                } else {
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "Publish failed with non-queueable error.".to_string(),
+                        draft: Some(draft),
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some(error.clone()),
+                    };
+                    let _ = app.emit("agent:execution-failed", &result);
+                    maybe_agent_speak(
+                        "agent_event",
+                        "Workflow Agent: Publish failed with a non-queueable error.",
+                    );
+                    Ok(result)
+                }
+            }
         }
-    }
     })
 }
 
@@ -2729,10 +2962,12 @@ fn start_vision_stream(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<crate::multimodal_io::VisionStreamHealth, String> {
-
     guarded_command!("start_vision_stream", {
         let (enabled, fps, source_scope, max_width, jpeg_quality, ram_buffer_seconds) = {
-            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             (
                 settings.vision_input_settings.enabled,
                 settings.vision_input_settings.fps,
@@ -2743,7 +2978,9 @@ fn start_vision_stream(
             )
         };
         if !enabled {
-            return Err("Vision input is disabled. Enable module 'input_vision' first.".to_string());
+            return Err(
+                "Vision input is disabled. Enable module 'input_vision' first.".to_string(),
+            );
         }
 
         let already_running = state.vision_stream_running.swap(true, Ordering::AcqRel);
@@ -2752,7 +2989,11 @@ fn start_vision_stream(
             state
                 .vision_stream_started_ms
                 .store(crate::util::now_ms(), Ordering::Release);
-            state.vision_frame_buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
+            state
+                .vision_frame_buffer
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clear();
             let source_scope_for_thread = source_scope.clone();
             let buffer_frame_cap =
                 (usize::from(fps.max(1)) * usize::from(ram_buffer_seconds.max(1))).max(1);
@@ -2769,7 +3010,8 @@ fn start_vision_stream(
                     jpeg_quality,
                 ) {
                     Ok(mut frame) => {
-                        frame.seq = state.vision_stream_frame_seq.fetch_add(1, Ordering::AcqRel) + 1;
+                        frame.seq =
+                            state.vision_stream_frame_seq.fetch_add(1, Ordering::AcqRel) + 1;
                         let meta = state
                             .vision_frame_buffer
                             .lock()
@@ -2800,7 +3042,11 @@ fn start_vision_stream(
             );
         }
 
-        let buffer_stats = state.vision_frame_buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).stats();
+        let buffer_stats = state
+            .vision_frame_buffer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .stats();
         Ok(crate::multimodal_io::VisionStreamHealth {
             running: true,
             fps,
@@ -2813,7 +3059,6 @@ fn start_vision_stream(
             last_frame_width: buffer_stats.last_frame_width,
             last_frame_height: buffer_stats.last_frame_height,
         })
-
     })
 }
 
@@ -2822,17 +3067,23 @@ fn stop_vision_stream(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<crate::multimodal_io::VisionStreamHealth, String> {
-
     guarded_command!("stop_vision_stream", {
         state.vision_stream_running.store(false, Ordering::Release);
         let (fps, source_scope) = {
-            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             (
                 settings.vision_input_settings.fps,
                 settings.vision_input_settings.source_scope.clone(),
             )
         };
-        let buffer_stats = state.vision_frame_buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).stats();
+        let buffer_stats = state
+            .vision_frame_buffer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .stats();
         let health = crate::multimodal_io::VisionStreamHealth {
             running: false,
             fps,
@@ -2845,10 +3096,13 @@ fn stop_vision_stream(
             last_frame_width: buffer_stats.last_frame_width,
             last_frame_height: buffer_stats.last_frame_height,
         };
-        state.vision_frame_buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
+        state
+            .vision_frame_buffer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
         let _ = app.emit("vision:stream-stopped", &health);
         Ok(health)
-
     })
 }
 
@@ -2857,13 +3111,20 @@ fn get_vision_stream_health(
     state: State<'_, AppState>,
 ) -> crate::multimodal_io::VisionStreamHealth {
     let (fps, source_scope) = {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         (
             settings.vision_input_settings.fps,
             settings.vision_input_settings.source_scope.clone(),
         )
     };
-    let buffer_stats = state.vision_frame_buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).stats();
+    let buffer_stats = state
+        .vision_frame_buffer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .stats();
     crate::multimodal_io::VisionStreamHealth {
         running: state.vision_stream_running.load(Ordering::Acquire),
         fps,
@@ -2878,25 +3139,38 @@ fn get_vision_stream_health(
     }
 }
 
-#[tauri::command]
-fn capture_vision_snapshot(
-    app: AppHandle,
-    state: State<'_, AppState>,
+fn capture_vision_snapshot_internal(
+    app: &AppHandle,
+    state: &AppState,
 ) -> Result<crate::multimodal_io::VisionSnapshotResult, String> {
     let source_scope = {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         settings.vision_input_settings.source_scope.clone()
     };
-    if let Some(frame) = state.vision_frame_buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).latest().cloned() {
+    if let Some(frame) = state
+        .vision_frame_buffer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .latest()
+        .cloned()
+    {
         return Ok(crate::multimodal_io::vision_snapshot_from_frame(
             &frame,
             "Snapshot returned from in-memory vision buffer.".to_string(),
         ));
     }
 
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).vision_input_settings.clone();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .vision_input_settings
+        .clone();
     let mut frame = crate::multimodal_io::capture_vision_frame(
-        &app,
+        app,
         &source_scope,
         settings.max_width,
         settings.jpeg_quality,
@@ -2910,6 +3184,14 @@ fn capture_vision_snapshot(
             "Snapshot captured from in-memory vision path without disk persistence.".to_string()
         },
     ))
+}
+
+#[tauri::command]
+fn capture_vision_snapshot(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::multimodal_io::VisionSnapshotResult, String> {
+    capture_vision_snapshot_internal(&app, state.inner())
 }
 
 #[tauri::command]
@@ -2937,126 +3219,151 @@ fn list_tts_voices(
     }
 }
 
+fn speak_tts_internal(
+    app: &AppHandle,
+    state: &AppState,
+    request: crate::multimodal_io::TtsSpeakRequest,
+) -> Result<crate::multimodal_io::TtsSpeakResult, String> {
+    let text = request.text.trim().to_string();
+    if text.is_empty() {
+        return Err("TTS text cannot be empty.".to_string());
+    }
+
+    let voice_settings = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !settings.voice_output_settings.enabled {
+            return Err(
+                "Voice output is disabled. Enable module 'output_voice_tts' first.".to_string(),
+            );
+        }
+        settings.voice_output_settings.clone()
+    };
+
+    let context = request
+        .context
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("manual_user")
+        .to_lowercase();
+    if !crate::multimodal_io::is_tts_policy_allowed(&voice_settings.output_policy, &context) {
+        return Err(format!(
+            "Voice output policy '{}' blocks context '{}'.",
+            voice_settings.output_policy, context
+        ));
+    }
+
+    let preferred_provider = if request.provider.trim().is_empty() {
+        voice_settings.default_provider.clone()
+    } else {
+        request.provider.trim().to_string()
+    };
+    let fallback_provider = voice_settings.fallback_provider.clone();
+    let rate = request.rate.unwrap_or(voice_settings.rate).clamp(0.5, 2.0);
+    let volume = request
+        .volume
+        .unwrap_or(voice_settings.volume)
+        .clamp(0.0, 1.0);
+
+    state.tts_speaking.store(true, Ordering::Release);
+    let _ = app.emit(
+        "tts:speech-started",
+        serde_json::json!({
+            "provider": preferred_provider,
+            "text_len": text.len(),
+            "context": context,
+        }),
+    );
+
+    let piper_binary_path = voice_settings.piper_binary_path.clone();
+    let piper_model_path = voice_settings.piper_model_path.clone();
+
+    let preferred_provider_for_thread = preferred_provider.clone();
+    let fallback_provider_for_thread = fallback_provider.clone();
+    let context_for_thread = context.clone();
+    let app_c = app.clone();
+    crate::util::spawn_guarded("tts_playback", move || {
+        let attempt = |provider: &str| -> Result<(), String> {
+            match provider {
+                "windows_native" => crate::multimodal_io::speak_windows_native(&text, rate, volume),
+                "local_custom" => crate::multimodal_io::speak_piper(
+                    &text,
+                    &piper_binary_path,
+                    &piper_model_path,
+                    rate,
+                    volume,
+                ),
+                _ => Err(format!("Unknown TTS provider '{}'.", provider)),
+            }
+        };
+
+        let (result, used_provider) = match attempt(&preferred_provider_for_thread) {
+            Ok(()) => (Ok(()), preferred_provider_for_thread.clone()),
+            Err(primary_error) => {
+                if preferred_provider_for_thread == fallback_provider_for_thread {
+                    (Err(primary_error), preferred_provider_for_thread.clone())
+                } else {
+                    match attempt(&fallback_provider_for_thread) {
+                        Ok(()) => (Ok(()), fallback_provider_for_thread.clone()),
+                        Err(fallback_error) => (
+                            Err(format!(
+                                "Primary provider '{}' failed: {} | Fallback '{}' failed: {}",
+                                preferred_provider_for_thread,
+                                primary_error,
+                                fallback_provider_for_thread,
+                                fallback_error
+                            )),
+                            preferred_provider_for_thread.clone(),
+                        ),
+                    }
+                }
+            }
+        };
+
+        let state = app_c.state::<AppState>();
+        state.tts_speaking.store(false, Ordering::Release);
+        match result {
+            Ok(()) => {
+                let _ = app_c.emit(
+                    "tts:speech-finished",
+                    serde_json::json!({
+                        "provider_used": used_provider,
+                        "context": context_for_thread,
+                        "timestamp_ms": crate::util::now_ms(),
+                    }),
+                );
+            }
+            Err(error) => {
+                let _ = app_c.emit(
+                    "tts:speech-error",
+                    serde_json::json!({
+                        "provider": preferred_provider_for_thread,
+                        "context": context_for_thread,
+                        "error": error,
+                    }),
+                );
+            }
+        }
+    });
+
+    Ok(crate::multimodal_io::TtsSpeakResult {
+        provider_used: preferred_provider,
+        accepted: true,
+        message: "TTS request accepted.".to_string(),
+    })
+}
+
 #[tauri::command]
 fn speak_tts(
     app: AppHandle,
     state: State<'_, AppState>,
     request: crate::multimodal_io::TtsSpeakRequest,
 ) -> Result<crate::multimodal_io::TtsSpeakResult, String> {
-
     guarded_command!("speak_tts", {
-        let text = request.text.trim().to_string();
-        if text.is_empty() {
-            return Err("TTS text cannot be empty.".to_string());
-        }
-
-        let voice_settings = {
-            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
-            if !settings.voice_output_settings.enabled {
-                return Err(
-                    "Voice output is disabled. Enable module 'output_voice_tts' first.".to_string(),
-                );
-            }
-            settings.voice_output_settings.clone()
-        };
-
-        let preferred_provider = if request.provider.trim().is_empty() {
-            voice_settings.default_provider.clone()
-        } else {
-            request.provider.trim().to_string()
-        };
-        let fallback_provider = voice_settings.fallback_provider.clone();
-        let rate = request.rate.unwrap_or(voice_settings.rate).clamp(0.5, 2.0);
-        let volume = request
-            .volume
-            .unwrap_or(voice_settings.volume)
-            .clamp(0.0, 1.0);
-
-        state.tts_speaking.store(true, Ordering::Release);
-        let _ = app.emit(
-            "tts:speech-started",
-            serde_json::json!({
-                "provider": preferred_provider,
-                "text_len": text.len(),
-            }),
-        );
-
-        // Capture piper settings before entering the thread.
-        let piper_binary_path = voice_settings.piper_binary_path.clone();
-        let piper_model_path = voice_settings.piper_model_path.clone();
-
-        let preferred_provider_for_thread = preferred_provider.clone();
-        let fallback_provider_for_thread = fallback_provider.clone();
-        let app_c = app.clone();
-        crate::util::spawn_guarded("tts_playback", move || {
-            let attempt = |provider: &str| -> Result<(), String> {
-                match provider {
-                    "windows_native" => crate::multimodal_io::speak_windows_native(&text, rate, volume),
-                    "local_custom" => crate::multimodal_io::speak_piper(
-                        &text,
-                        &piper_binary_path,
-                        &piper_model_path,
-                        rate,
-                        volume,
-                    ),
-                    _ => Err(format!("Unknown TTS provider '{}'.", provider)),
-                }
-            };
-
-            // Track which provider actually succeeded (primary or fallback).
-            let (result, used_provider) = match attempt(&preferred_provider_for_thread) {
-                Ok(()) => (Ok(()), preferred_provider_for_thread.clone()),
-                Err(primary_error) => {
-                    if preferred_provider_for_thread == fallback_provider_for_thread {
-                        (Err(primary_error), preferred_provider_for_thread.clone())
-                    } else {
-                        match attempt(&fallback_provider_for_thread) {
-                            Ok(()) => (Ok(()), fallback_provider_for_thread.clone()),
-                            Err(fallback_error) => (
-                                Err(format!(
-                                    "Primary provider '{}' failed: {} | Fallback '{}' failed: {}",
-                                    preferred_provider_for_thread,
-                                    primary_error,
-                                    fallback_provider_for_thread,
-                                    fallback_error
-                                )),
-                                preferred_provider_for_thread.clone(),
-                            ),
-                        }
-                    }
-                }
-            };
-
-            let state = app_c.state::<AppState>();
-            state.tts_speaking.store(false, Ordering::Release);
-            match result {
-                Ok(()) => {
-                    let _ = app_c.emit(
-                        "tts:speech-finished",
-                        serde_json::json!({
-                            "provider_used": used_provider,
-                            "timestamp_ms": crate::util::now_ms(),
-                        }),
-                    );
-                }
-                Err(error) => {
-                    let _ = app_c.emit(
-                        "tts:speech-error",
-                        serde_json::json!({
-                            "provider": preferred_provider_for_thread,
-                            "error": error,
-                        }),
-                    );
-                }
-            }
-        });
-
-        Ok(crate::multimodal_io::TtsSpeakResult {
-            provider_used: preferred_provider,
-            accepted: true,
-            message: "TTS request accepted.".to_string(),
-        })
-
+        speak_tts_internal(&app, state.inner(), request)
     })
 }
 
@@ -3079,7 +3386,6 @@ fn test_tts_provider(
     state: State<'_, AppState>,
     provider: Option<String>,
 ) -> Result<crate::multimodal_io::TtsSpeakResult, String> {
-
     guarded_command!("test_tts_provider", {
         let provider = provider.unwrap_or_else(|| "windows_native".to_string());
         speak_tts(
@@ -3090,15 +3396,18 @@ fn test_tts_provider(
                 text: "Trisper Flow voice output test.".to_string(),
                 rate: None,
                 volume: None,
+                context: Some("manual_test".to_string()),
             },
         )
-
     })
 }
 
 #[tauri::command]
 fn list_gdd_presets(state: State<'_, AppState>) -> Vec<crate::gdd::GddPreset> {
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     crate::gdd::list_presets(&settings.gdd_module_settings.preset_clones)
 }
 
@@ -3121,7 +3430,10 @@ fn save_gdd_preset_clone(
         }
 
         let snapshot = {
-            let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut settings = state
+                .settings
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(existing) = settings
                 .gdd_module_settings
                 .preset_clones
@@ -3150,7 +3462,10 @@ fn detect_gdd_preset(
     state: State<'_, AppState>,
     request: crate::gdd::DetectGddPresetRequest,
 ) -> crate::gdd::GddRecognitionResult {
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let presets = crate::gdd::list_presets(&settings.gdd_module_settings.preset_clones);
     crate::gdd::detect_preset(&request.transcript, &presets)
 }
@@ -3167,7 +3482,10 @@ fn generate_gdd_draft(
             serde_json::json!({ "preset": request.preset_id }),
         );
         let draft = {
-            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             crate::gdd::generate_draft(&request, &settings.gdd_module_settings.preset_clones)
         };
         let markdown_preview = crate::gdd::render_storage::render_markdown(&draft);
@@ -3207,7 +3525,10 @@ fn test_confluence_connection(
     state: State<'_, AppState>,
 ) -> Result<crate::gdd::confluence::ConfluenceConnectionResult, String> {
     guarded_command!("test_confluence_connection", {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         crate::gdd::confluence::test_connection(&app, &settings.confluence_settings)
     })
 }
@@ -3227,12 +3548,18 @@ fn confluence_oauth_exchange(
 ) -> Result<serde_json::Value, String> {
     guarded_command!("confluence_oauth_exchange", {
         let exchange_result = {
-            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             crate::gdd::confluence::oauth_exchange(&app, &settings.confluence_settings, &code)?
         };
 
         let snapshot = {
-            let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut settings = state
+                .settings
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             settings.confluence_settings.enabled = true;
             settings.confluence_settings.auth_mode = "oauth".to_string();
             settings.confluence_settings.site_base_url = exchange_result.selected_site_url.clone();
@@ -3254,7 +3581,10 @@ fn confluence_list_spaces(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::gdd::confluence::ConfluenceSpace>, String> {
     guarded_command!("confluence_list_spaces", {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         crate::gdd::confluence::list_spaces(&app, &settings.confluence_settings)
     })
 }
@@ -3263,10 +3593,8 @@ fn confluence_list_spaces(
 fn load_gdd_template_from_file(
     file_path: String,
 ) -> Result<crate::gdd::GddTemplateSourceResult, String> {
-
     guarded_command!("load_gdd_template_from_file", {
         crate::gdd::load_template_from_file(&file_path)
-
     })
 }
 
@@ -3276,9 +3604,11 @@ fn load_gdd_template_from_confluence(
     state: State<'_, AppState>,
     source_url: String,
 ) -> Result<crate::gdd::GddTemplateSourceResult, String> {
-
     guarded_command!("load_gdd_template_from_confluence", {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let page = crate::gdd::confluence::load_page_template_from_url(
             &app,
             &settings.confluence_settings,
@@ -3289,7 +3619,6 @@ fn load_gdd_template_from_confluence(
             page.page_title,
             page.text,
         ))
-
     })
 }
 
@@ -3299,11 +3628,12 @@ fn suggest_confluence_target(
     state: State<'_, AppState>,
     request: crate::gdd::confluence::ConfluenceTargetSuggestionRequest,
 ) -> Result<crate::gdd::confluence::ConfluenceTargetSuggestion, String> {
-
     guarded_command!("suggest_confluence_target", {
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         crate::gdd::confluence::suggest_target(&app, &settings.confluence_settings, &request)
-
     })
 }
 
@@ -3313,21 +3643,27 @@ fn publish_gdd_to_confluence(
     state: State<'_, AppState>,
     request: crate::gdd::confluence::ConfluencePublishRequest,
 ) -> Result<crate::gdd::confluence::ConfluencePublishResult, String> {
-
     guarded_command!("publish_gdd_to_confluence", {
         let _ = app.emit(
             "gdd:publish-started",
             serde_json::json!({ "title": request.title }),
         );
 
-        let settings_snapshot = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        let settings_snapshot = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let result =
             crate::gdd::confluence::publish(&app, &settings_snapshot.confluence_settings, &request);
 
         match result {
             Ok(publish) => {
                 {
-                    let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let mut settings = state
+                        .settings
+                        .write()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                     let route_key =
                         crate::gdd::confluence::routing_key_for(&request.space_key, &request.title);
                     settings
@@ -3349,7 +3685,6 @@ fn publish_gdd_to_confluence(
                 Err(error)
             }
         }
-
     })
 }
 
@@ -3359,14 +3694,17 @@ fn publish_or_queue_gdd_to_confluence(
     state: State<'_, AppState>,
     request: crate::gdd::publish_queue::GddPublishOrQueueRequest,
 ) -> Result<crate::gdd::publish_queue::GddPublishAttemptResult, String> {
-
     guarded_command!("publish_or_queue_gdd_to_confluence", {
         let _ = app.emit(
             "gdd:publish-started",
             serde_json::json!({ "title": request.publish_request.title }),
         );
 
-        let settings_snapshot = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        let settings_snapshot = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let publish_result = crate::gdd::confluence::publish(
             &app,
             &settings_snapshot.confluence_settings,
@@ -3376,7 +3714,10 @@ fn publish_or_queue_gdd_to_confluence(
         match publish_result {
             Ok(publish) => {
                 {
-                    let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let mut settings = state
+                        .settings
+                        .write()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                     let route_key = crate::gdd::confluence::routing_key_for(
                         &request.publish_request.space_key,
                         &request.publish_request.title,
@@ -3433,7 +3774,6 @@ fn publish_or_queue_gdd_to_confluence(
                 })
             }
         }
-
     })
 }
 
@@ -3441,10 +3781,8 @@ fn publish_or_queue_gdd_to_confluence(
 fn list_pending_gdd_publishes(
     app: AppHandle,
 ) -> Result<Vec<crate::gdd::publish_queue::GddPendingPublishJob>, String> {
-
     guarded_command!("list_pending_gdd_publishes", {
         crate::gdd::publish_queue::list_pending_jobs(&app)
-
     })
 }
 
@@ -3454,7 +3792,6 @@ fn retry_pending_gdd_publish(
     state: State<'_, AppState>,
     job_id: String,
 ) -> Result<crate::gdd::publish_queue::GddPublishAttemptResult, String> {
-
     guarded_command!("retry_pending_gdd_publish", {
         let job_id = job_id.trim().to_string();
         if job_id.is_empty() {
@@ -3469,7 +3806,11 @@ fn retry_pending_gdd_publish(
             serde_json::json!({ "title": publish_request.title, "job_id": job.job_id }),
         );
 
-        let settings_snapshot = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        let settings_snapshot = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let publish_result = crate::gdd::confluence::publish(
             &app,
             &settings_snapshot.confluence_settings,
@@ -3480,7 +3821,10 @@ fn retry_pending_gdd_publish(
             Ok(publish) => {
                 let _ = crate::gdd::publish_queue::consume_pending_job(&app, &job.job_id)?;
                 {
-                    let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let mut settings = state
+                        .settings
+                        .write()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                     let route_key = crate::gdd::confluence::routing_key_for(
                         &publish_request.space_key,
                         &publish_request.title,
@@ -3524,20 +3868,17 @@ fn retry_pending_gdd_publish(
                 })
             }
         }
-
     })
 }
 
 #[tauri::command]
 fn delete_pending_gdd_publish(app: AppHandle, job_id: String) -> Result<bool, String> {
-
     guarded_command!("delete_pending_gdd_publish", {
         let job_id = job_id.trim();
         if job_id.is_empty() {
             return Err("job_id is required.".to_string());
         }
         crate::gdd::publish_queue::delete_pending_job(&app, job_id)
-
     })
 }
 
@@ -3548,13 +3889,15 @@ fn save_confluence_secret(
     secret_id: String,
     secret_value: String,
 ) -> Result<serde_json::Value, String> {
-
     guarded_command!("save_confluence_secret", {
         let secret_id = secret_id.trim().to_lowercase();
         confluence::keyring::store_secret(&app, &secret_id, &secret_value)?;
 
         let snapshot = {
-            let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut settings = state
+                .settings
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             settings.confluence_settings.enabled = true;
             settings.clone()
         };
@@ -3565,13 +3908,11 @@ fn save_confluence_secret(
             "status": "success",
             "secret_id": secret_id
         }))
-
     })
 }
 
 #[tauri::command]
 fn clear_confluence_secret(app: AppHandle, secret_id: String) -> Result<serde_json::Value, String> {
-
     guarded_command!("clear_confluence_secret", {
         let secret_id = secret_id.trim().to_lowercase();
         confluence::keyring::clear_secret(&app, &secret_id)?;
@@ -3579,7 +3920,6 @@ fn clear_confluence_secret(app: AppHandle, secret_id: String) -> Result<serde_js
             "status": "success",
             "secret_id": secret_id
         }))
-
     })
 }
 
@@ -3625,7 +3965,10 @@ fn save_window_state(
         None
     };
 
-    let mut current = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut current = state
+        .settings
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     match window_label.as_str() {
         "main" => {
@@ -3688,7 +4031,10 @@ fn clear_active_transcript_history(
     state: State<'_, AppState>,
 ) -> Result<u64, String> {
     let mic_deleted = {
-        let mut history = state.history.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut history = state
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let deleted = history.active.len() as u64;
         history.active.clear();
         history.flush_to_disk()?;
@@ -3699,7 +4045,10 @@ fn clear_active_transcript_history(
     };
 
     let system_deleted = {
-        let mut history = state.history_transcribe.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut history = state
+            .history_transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let deleted = history.active.len() as u64;
         history.active.clear();
         history.flush_to_disk()?;
@@ -3724,7 +4073,10 @@ fn delete_active_transcript_entry(
     }
 
     let mic_deleted = {
-        let mut history = state.history.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut history = state
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let before = history.active.len();
         history.active.retain(|entry| entry.id != entry_id);
         let deleted = before.saturating_sub(history.active.len()) as u64;
@@ -3738,7 +4090,10 @@ fn delete_active_transcript_entry(
     };
 
     let system_deleted = {
-        let mut history = state.history_transcribe.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut history = state
+            .history_transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let before = history.active.len();
         history.active.retain(|entry| entry.id != entry_id);
         let deleted = before.saturating_sub(history.active.len()) as u64;
@@ -3761,8 +4116,16 @@ fn list_history_partitions(
 ) -> Result<Vec<crate::history_partition::PartitionInfo>, String> {
     let state = app.state::<AppState>();
     match kind.as_str() {
-        "mic" => Ok(state.history.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).list_partitions()),
-        "system" => Ok(state.history_transcribe.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).list_partitions()),
+        "mic" => Ok(state
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .list_partitions()),
+        "system" => Ok(state
+            .history_transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .list_partitions()),
         _ => Err(format!("Unknown history kind: {}", kind)),
     }
 }
@@ -3776,8 +4139,16 @@ fn load_history_partition(
     let state = app.state::<AppState>();
     let pk = crate::history_partition::PartitionKey::parse(&key)?;
     match kind.as_str() {
-        "mic" => Ok(state.history.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).load_partition(&pk)),
-        "system" => Ok(state.history_transcribe.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).load_partition(&pk)),
+        "mic" => Ok(state
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .load_partition(&pk)),
+        "system" => Ok(state
+            .history_transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .load_partition(&pk)),
         _ => Err(format!("Unknown history kind: {}", kind)),
     }
 }
@@ -3825,25 +4196,47 @@ fn paste_transcript_text(text: String) -> Result<(), String> {
 async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut settings = state
+            .settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let old_model = settings.model.clone();
         settings.model = model_id.clone();
         drop(settings);
 
         // Save the new model setting
-        save_settings_file(&app, &state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()))?;
+        save_settings_file(
+            &app,
+            &state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )?;
 
         // If transcription is active or Whisper server is running, restart with new model
         // to clear old model from VRAM and load new model
         if state.transcribe_active.load(Ordering::Relaxed) {
             stop_transcribe_monitor(&app, &state);
-            let new_settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+            let new_settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
             if let Err(err) = start_transcribe_monitor(&app, &state, &new_settings) {
                 // Restore old model if restart fails
-                let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut settings = state
+                    .settings
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 settings.model = old_model;
                 drop(settings);
-                let _ = save_settings_file(&app, &state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()));
+                let _ = save_settings_file(
+                    &app,
+                    &state
+                        .settings
+                        .read()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                );
                 state.transcribe_active.store(false, Ordering::Relaxed);
                 return Err(format!("Failed to apply model: {}", err));
             }
@@ -4080,7 +4473,8 @@ async fn get_gpu_vram_usage() -> Result<String, String> {
 
         let parts: Vec<&str> = result.split(',').map(|s| s.trim()).collect();
         if parts.len() == 2 {
-            if let (Ok(used_mb), Ok(total_mb)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+            if let (Ok(used_mb), Ok(total_mb)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>())
+            {
                 let used_gb = used_mb / 1024.0;
                 let total_gb = total_mb / 1024.0;
                 return Ok(format!("{:.1} GB / {:.1} GB", used_gb, total_gb));
@@ -4098,7 +4492,10 @@ fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String> {
     // Purge GPU memory by unloading all loaded models from both Ollama and Whisper
 
     // Unload current Ollama model if set
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let current_ollama_model = settings.ai_fallback.model.clone();
     drop(settings);
 
@@ -4126,7 +4523,11 @@ async fn stop_ollama_runtime(app: AppHandle) -> Result<(), String> {
         crate::ollama_runtime::clear_ollama_pid_lockfile(&app);
 
         let endpoint = {
-            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
             settings.providers.ollama.endpoint
         };
         let runtime_reachable = ping_ollama_quick(&endpoint).is_ok();
@@ -4190,7 +4591,10 @@ fn test_hotkey(app: AppHandle, key: String) -> Result<(), String> {
 
 #[tauri::command]
 fn get_hotkey_conflicts(state: State<'_, AppState>) -> Vec<hotkeys::ConflictInfo> {
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let hotkeys = vec![
         settings.hotkey_ptt.clone(),
         settings.hotkey_toggle.clone(),
@@ -4366,7 +4770,11 @@ fn build_dependency_preflight_report(
     app: &AppHandle,
     state: &AppState,
 ) -> DependencyPreflightReport {
-    let settings_snapshot = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings_snapshot = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     let mut items: Vec<DependencyPreflightItem> = Vec::new();
 
     let whisper_cli = paths::resolve_whisper_cli_path_for_backend(Some(
@@ -4594,9 +5002,17 @@ fn get_last_recording_path(
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
     let path = if source == "output" || source == "system" {
-        state.last_system_recording_path.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+        state
+            .last_system_recording_path
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     } else {
-        state.last_mic_recording_path.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+        state
+            .last_mic_recording_path
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     };
     Ok(path)
 }
@@ -4782,7 +5198,11 @@ fn lms_daemon_command(action: &str) {
 
         match cmd.spawn() {
             Ok(child) => {
-                info!("lms daemon {} spawned (pid {:?}) — detached", action, child.id());
+                info!(
+                    "lms daemon {} spawned (pid {:?}) — detached",
+                    action,
+                    child.id()
+                );
                 // Do NOT wait — the daemon runs independently
                 return;
             }
@@ -4820,7 +5240,11 @@ fn lms_load_model(model_identifier: &str) {
 
         match cmd.spawn() {
             Ok(mut child) => {
-                info!("lms load '{}' spawned (pid {:?})", model_identifier, child.id());
+                info!(
+                    "lms load '{}' spawned (pid {:?})",
+                    model_identifier,
+                    child.id()
+                );
                 match child.wait() {
                     Ok(status) => info!("lms load '{}' exited: {}", model_identifier, status),
                     Err(e) => warn!("lms load '{}' wait failed: {}", model_identifier, e),
@@ -4830,7 +5254,10 @@ fn lms_load_model(model_identifier: &str) {
             Err(_) => continue,
         }
     }
-    warn!("lms CLI not found — cannot run 'lms load {}'", model_identifier);
+    warn!(
+        "lms CLI not found — cannot run 'lms load {}'",
+        model_identifier
+    );
 }
 
 fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
@@ -5503,7 +5930,10 @@ fn hide_main_window(app: &AppHandle) {
 /// Persist the window visibility state ("normal", "minimized", "tray") to settings
 fn save_window_visibility(app: &AppHandle, visibility: &str) {
     let state = app.state::<AppState>();
-    let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut settings = state
+        .settings
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if settings.main_window_start_state != visibility {
         settings.main_window_start_state = visibility.to_string();
         let s = settings.clone();
@@ -5526,7 +5956,10 @@ pub(crate) fn toggle_activation_words_async(app: AppHandle) {
     crate::util::spawn_guarded("toggle_activation", move || {
         let state = app.state::<AppState>();
         let new_enabled = {
-            let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut settings = state
+                .settings
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             settings.activation_words_enabled = !settings.activation_words_enabled;
             let enabled = settings.activation_words_enabled;
             let _ = save_settings_file(&app, &settings);
@@ -5536,7 +5969,11 @@ pub(crate) fn toggle_activation_words_async(app: AppHandle) {
         let cue = if new_enabled { "start" } else { "stop" };
         let _ = app.emit("audio:cue", cue);
         let _ = app.emit("settings:updated", {
-            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
             settings
         });
         info!("Activation words toggled to: {}", new_enabled);

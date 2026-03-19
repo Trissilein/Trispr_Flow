@@ -21,7 +21,10 @@ impl fmt::Display for AIError {
             }
             AIError::InvalidApiKey(message) => write!(f, "Invalid API key: {}", message),
             AIError::OllamaNotRunning => {
-                write!(f, "Ollama is not running. Please start Ollama before using local AI refinement.")
+                write!(
+                    f,
+                    "Ollama is not running. Please start Ollama before using local AI refinement."
+                )
             }
             AIError::NetworkError(message) => {
                 write!(f, "Network error: {}", message)

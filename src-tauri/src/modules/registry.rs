@@ -92,7 +92,9 @@ pub fn manifests() -> Vec<ModuleManifest> {
 }
 
 pub fn find_manifest(module_id: &str) -> Option<ModuleManifest> {
-    manifests().into_iter().find(|manifest| manifest.id == module_id)
+    manifests()
+        .into_iter()
+        .find(|manifest| manifest.id == module_id)
 }
 
 fn last_error_for(settings: &ModuleSettings, module_id: &str) -> Option<String> {
@@ -181,7 +183,11 @@ pub fn modules_as_descriptors(settings: &ModuleSettings) -> Vec<ModuleDescriptor
                 name: manifest.name.to_string(),
                 version: manifest.version.to_string(),
                 state: state.to_string(),
-                dependencies: manifest.dependencies.iter().map(|v| v.to_string()).collect(),
+                dependencies: manifest
+                    .dependencies
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect(),
                 permissions: manifest.permissions.iter().map(|v| v.to_string()).collect(),
                 restart_required: manifest.restart_required_on_enable,
                 last_error,

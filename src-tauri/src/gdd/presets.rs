@@ -155,5 +155,8 @@ pub fn list_presets(clones: &[GddPresetClone]) -> Vec<GddPreset> {
 }
 
 pub fn preset_by_id(preset_id: &str, presets: &[GddPreset]) -> Option<GddPreset> {
-    presets.iter().find(|preset| preset.id == preset_id).cloned()
+    presets
+        .iter()
+        .find(|preset| preset.id == preset_id)
+        .cloned()
 }

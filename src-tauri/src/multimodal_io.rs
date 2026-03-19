@@ -151,6 +151,13 @@ pub struct TtsSpeakRequest {
     pub text: String,
     pub rate: Option<f32>,
     pub volume: Option<f32>,
+    /// Request context for policy enforcement.
+    /// Supported values:
+    /// - "agent_reply"
+    /// - "agent_event"
+    /// - "manual_user"
+    /// - "manual_test"
+    pub context: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +165,28 @@ pub struct TtsSpeakResult {
     pub provider_used: String,
     pub accepted: bool,
     pub message: String,
+}
+
+pub fn is_tts_policy_allowed(policy: &str, context: &str) -> bool {
+    let normalized_policy = policy.trim().to_lowercase();
+    let normalized_context = context.trim().to_lowercase();
+    match normalized_policy.as_str() {
+        // Default mode: allow spoken agent replies and explicit provider tests.
+        "agent_replies_only" => {
+            normalized_context == "agent_reply" || normalized_context == "manual_test"
+        }
+        // Extended mode: allow both direct replies and event/status narration.
+        "replies_and_events" => {
+            normalized_context == "agent_reply"
+                || normalized_context == "agent_event"
+                || normalized_context == "manual_test"
+        }
+        // Explicit/manual mode: no autonomous agent speech.
+        "explicit_only" => {
+            normalized_context == "manual_user" || normalized_context == "manual_test"
+        }
+        _ => false,
+    }
 }
 
 pub fn vision_snapshot_from_frame(frame: &VisionFrame, note: String) -> VisionSnapshotResult {
@@ -732,7 +761,7 @@ fn play_wav_blocking(path: &std::path::Path, volume: f32) -> Result<(), String> 
 
 #[cfg(test)]
 mod tests {
-    use super::{VisionFrame, VisionFrameBuffer};
+    use super::{is_tts_policy_allowed, VisionFrame, VisionFrameBuffer};
 
     fn frame(seq: u64, bytes: usize) -> VisionFrame {
         VisionFrame {
@@ -774,5 +803,29 @@ mod tests {
         assert_eq!(stats.buffered_bytes, 0);
         assert!(stats.last_frame_timestamp_ms.is_none());
         assert!(buffer.latest().is_none());
+    }
+
+    #[test]
+    fn tts_policy_agent_replies_only_allows_agent_reply_and_manual_test() {
+        assert!(is_tts_policy_allowed("agent_replies_only", "agent_reply"));
+        assert!(is_tts_policy_allowed("agent_replies_only", "manual_test"));
+        assert!(!is_tts_policy_allowed("agent_replies_only", "agent_event"));
+        assert!(!is_tts_policy_allowed("agent_replies_only", "manual_user"));
+    }
+
+    #[test]
+    fn tts_policy_replies_and_events_allows_agent_event_lane() {
+        assert!(is_tts_policy_allowed("replies_and_events", "agent_reply"));
+        assert!(is_tts_policy_allowed("replies_and_events", "agent_event"));
+        assert!(is_tts_policy_allowed("replies_and_events", "manual_test"));
+        assert!(!is_tts_policy_allowed("replies_and_events", "manual_user"));
+    }
+
+    #[test]
+    fn tts_policy_explicit_only_blocks_agent_contexts() {
+        assert!(is_tts_policy_allowed("explicit_only", "manual_user"));
+        assert!(is_tts_policy_allowed("explicit_only", "manual_test"));
+        assert!(!is_tts_policy_allowed("explicit_only", "agent_reply"));
+        assert!(!is_tts_policy_allowed("explicit_only", "agent_event"));
     }
 }

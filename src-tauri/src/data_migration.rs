@@ -47,7 +47,10 @@ pub(crate) fn migrate_legacy_data(app: &AppHandle) {
         if let Err(e) = copy_dir_recursive(&old_base, &new_base) {
             warn!("Data migration failed: {}. Old data left in place.", e);
         } else {
-            info!("Migration complete. Old folder preserved at: {}", old_base.display());
+            info!(
+                "Migration complete. Old folder preserved at: {}",
+                old_base.display()
+            );
         }
         return; // Only one source needed.
     }

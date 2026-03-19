@@ -138,12 +138,10 @@ impl PartitionedHistory {
         if let Some(legacy) = legacy_path {
             if legacy.exists() && !has_json_files {
                 if let Ok(raw) = fs::read_to_string(legacy) {
-                    let entries: Vec<HistoryEntry> =
-                        serde_json::from_str(&raw).unwrap_or_default();
+                    let entries: Vec<HistoryEntry> = serde_json::from_str(&raw).unwrap_or_default();
                     if !entries.is_empty() {
                         // Group entries by month
-                        let mut groups: BTreeMap<PartitionKey, Vec<HistoryEntry>> =
-                            BTreeMap::new();
+                        let mut groups: BTreeMap<PartitionKey, Vec<HistoryEntry>> = BTreeMap::new();
                         for entry in entries {
                             let key = PartitionKey::from_timestamp_ms(entry.timestamp_ms);
                             groups.entry(key).or_default().push(entry);
@@ -163,10 +161,7 @@ impl PartitionedHistory {
                     // Rename legacy file to .migrated
                     let migrated = legacy.with_extension("migrated");
                     if let Err(e) = fs::rename(legacy, &migrated) {
-                        warn!(
-                            "Failed to rename legacy history file to .migrated: {}",
-                            e
-                        );
+                        warn!("Failed to rename legacy history file to .migrated: {}", e);
                     }
                 }
             }
@@ -177,8 +172,7 @@ impl PartitionedHistory {
         let active_path = base_dir.join(active_key.filename());
         let active = match fs::read_to_string(&active_path) {
             Ok(raw) => {
-                let entries: Vec<HistoryEntry> =
-                    serde_json::from_str(&raw).unwrap_or_default();
+                let entries: Vec<HistoryEntry> = serde_json::from_str(&raw).unwrap_or_default();
                 VecDeque::from(entries)
             }
             Err(_) => VecDeque::new(),
@@ -206,8 +200,7 @@ impl PartitionedHistory {
             let path = self.base_dir.join(self.active_key.filename());
             self.active = match fs::read_to_string(&path) {
                 Ok(raw) => {
-                    let entries: Vec<HistoryEntry> =
-                        serde_json::from_str(&raw).unwrap_or_default();
+                    let entries: Vec<HistoryEntry> = serde_json::from_str(&raw).unwrap_or_default();
                     VecDeque::from(entries)
                 }
                 Err(_) => VecDeque::new(),

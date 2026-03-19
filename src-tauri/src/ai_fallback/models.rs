@@ -129,7 +129,8 @@ impl AIFallbackSettings {
         } else {
             self.prompt_profile = normalized_profile.to_string();
         }
-        self.prompt_presets = normalize_user_prompt_presets(std::mem::take(&mut self.prompt_presets));
+        self.prompt_presets =
+            normalize_user_prompt_presets(std::mem::take(&mut self.prompt_presets));
         self.active_prompt_preset_id = normalize_active_prompt_preset_id(
             &self.active_prompt_preset_id,
             &self.prompt_profile,

@@ -64,7 +64,12 @@ fn cleanup_markup_text(input: &str) -> String {
     out
 }
 
-fn finalize_result(source_kind: &str, source_label: String, source_ref: String, text: String) -> GddTemplateSourceResult {
+fn finalize_result(
+    source_kind: &str,
+    source_label: String,
+    source_ref: String,
+    text: String,
+) -> GddTemplateSourceResult {
     let cleaned = cleanup_markup_text(&text);
     let original_chars = cleaned.chars().count();
     let mut truncated = false;
@@ -99,7 +104,8 @@ fn load_plain_text_file(path: &Path) -> Result<String, String> {
 
 fn load_docx_text(path: &Path) -> Result<String, String> {
     let file = File::open(path).map_err(|error| format!("Failed to open DOCX file: {}", error))?;
-    let mut archive = ZipArchive::new(file).map_err(|error| format!("Failed to read DOCX archive: {}", error))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| format!("Failed to read DOCX archive: {}", error))?;
     let mut xml = String::new();
     let mut entry = archive
         .by_name("word/document.xml")
@@ -118,7 +124,8 @@ fn load_docx_text(path: &Path) -> Result<String, String> {
 }
 
 fn load_pdf_text(path: &Path) -> Result<String, String> {
-    let document = lopdf::Document::load(path).map_err(|error| format!("Failed to open PDF file: {}", error))?;
+    let document = lopdf::Document::load(path)
+        .map_err(|error| format!("Failed to open PDF file: {}", error))?;
     let mut pages = document.get_pages().keys().copied().collect::<Vec<_>>();
     pages.sort_unstable();
 

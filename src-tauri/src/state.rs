@@ -1423,11 +1423,16 @@ pub(crate) fn push_history_entry_inner(
 ) -> Result<Vec<HistoryEntry>, String> {
     let speaker_name = {
         let state = app.state::<AppState>();
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         Some(speaker_name_for_source(&settings, &source))
     };
     let lock_started = Instant::now();
-    let mut ph = history.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut ph = history
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let entry = HistoryEntry {
         id: format!("h_{}", crate::util::now_ms()),
         text,
@@ -1454,7 +1459,10 @@ pub(crate) fn push_history_entry_inner(
             std::thread::sleep(std::time::Duration::from_millis(200));
             HISTORY_SAVE_PENDING.store(false, Ordering::Release);
             let state = app_clone.state::<AppState>();
-            let ph = state.history.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let ph = state
+                .history
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Err(e) = ph.flush_to_disk() {
                 warn!("Debounced history save failed: {}", e);
             }
@@ -1471,11 +1479,16 @@ pub(crate) fn push_transcribe_entry_inner(
 ) -> Result<Vec<HistoryEntry>, String> {
     let speaker_name = {
         let state = app.state::<AppState>();
-        let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         Some(speaker_name_for_source(&settings, "output"))
     };
     let lock_started = Instant::now();
-    let mut ph = history.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut ph = history
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let entry = HistoryEntry {
         id: format!("o_{}", crate::util::now_ms()),
         text,
@@ -1502,7 +1515,10 @@ pub(crate) fn push_transcribe_entry_inner(
             std::thread::sleep(std::time::Duration::from_millis(200));
             TRANSCRIBE_HISTORY_SAVE_PENDING.store(false, Ordering::Release);
             let state = app_clone.state::<AppState>();
-            let ph = state.history_transcribe.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let ph = state
+                .history_transcribe
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Err(e) = ph.flush_to_disk() {
                 warn!("Debounced transcribe history save failed: {}", e);
             }
@@ -1529,7 +1545,9 @@ where
     F: FnMut(&mut HistoryEntry),
 {
     let lock_started = Instant::now();
-    let mut ph = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut ph = store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let Some(entry) = ph.active.iter_mut().find(|entry| entry.id == entry_id) else {
         return Ok(false);
     };

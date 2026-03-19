@@ -63,9 +63,9 @@ pub struct GddModuleSettings {
     pub default_preset_id: String,
     pub detect_preset_automatically: bool,
     pub prefer_one_click_publish: bool,
-    pub workflow_mode_default: String,      // "standard" | "advanced"
-    pub transcript_source_default: String,  // "runtime_session"
-    pub target_routing_strategy: String,    // "hybrid_memory" | "fixed" | "fresh_suggest"
+    pub workflow_mode_default: String, // "standard" | "advanced"
+    pub transcript_source_default: String, // "runtime_session"
+    pub target_routing_strategy: String, // "hybrid_memory" | "fixed" | "fresh_suggest"
     pub one_click_confidence_threshold: f32, // 0.0..1.0
     pub preset_clones: Vec<GddPresetClone>,
 }
@@ -95,7 +95,7 @@ pub struct ConfluenceSettings {
     pub default_space_key: String,
     pub api_user_email: String,
     pub default_parent_page_id: String,
-    pub auth_mode: String, // "oauth" | "api_token"
+    pub auth_mode: String,                       // "oauth" | "api_token"
     pub routing_memory: HashMap<String, String>, // key -> page_id
 }
 
@@ -214,8 +214,8 @@ pub struct VoiceOutputSettings {
     pub fallback_provider: String, // "windows_native" | "local_custom"
     pub voice_id_windows: String,
     pub voice_id_local: String,
-    pub rate: f32,   // 0.5..2.0
-    pub volume: f32, // 0.0..1.0
+    pub rate: f32,             // 0.5..2.0
+    pub volume: f32,           // 0.0..1.0
     pub output_policy: String, // "agent_replies_only" | "replies_and_events" | "explicit_only"
     /// Full path to piper.exe. Empty = auto-resolve via PATH or %LOCALAPPDATA%\trispr-flow\piper\
     pub piper_binary_path: String,
@@ -291,11 +291,17 @@ pub fn normalize_gdd_module_settings(settings: &mut GddModuleSettings) {
     }
     settings.one_click_confidence_threshold =
         settings.one_click_confidence_threshold.clamp(0.0, 1.0);
-    settings.preset_clones.retain(|preset| !preset.id.trim().is_empty());
+    settings
+        .preset_clones
+        .retain(|preset| !preset.id.trim().is_empty());
 }
 
 pub fn normalize_confluence_settings(settings: &mut ConfluenceSettings) {
-    settings.site_base_url = settings.site_base_url.trim().trim_end_matches('/').to_string();
+    settings.site_base_url = settings
+        .site_base_url
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
     settings.oauth_cloud_id = settings.oauth_cloud_id.trim().to_string();
     settings.default_space_key = settings.default_space_key.trim().to_string();
     settings.api_user_email = settings.api_user_email.trim().to_string();
@@ -310,9 +316,7 @@ pub fn normalize_confluence_settings(settings: &mut ConfluenceSettings) {
 }
 
 pub fn normalize_workflow_agent_settings(settings: &mut WorkflowAgentSettings) {
-    settings
-        .wakewords
-        .retain(|word| !word.trim().is_empty());
+    settings.wakewords.retain(|word| !word.trim().is_empty());
     if settings.wakewords.is_empty() {
         settings.wakewords = WorkflowAgentSettings::default().wakewords;
     }

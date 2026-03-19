@@ -443,7 +443,11 @@ mod tests {
     }
 
     fn make_keywords() -> Vec<String> {
-        vec!["gdd".to_string(), "game design document".to_string(), "draft".to_string()]
+        vec![
+            "gdd".to_string(),
+            "game design document".to_string(),
+            "draft".to_string(),
+        ]
     }
 
     fn make_entry(id: &str, text: &str, timestamp_ms: u64) -> HistoryEntry {
@@ -598,8 +602,18 @@ mod tests {
         let entries_match = vec![make_entry("e1", "combat mechanics discussion", 0)];
         let entries_no_match = vec![make_entry("e2", "unrelated content here", 0)];
         let sessions = vec![
-            SessionBucket { id: "s1".to_string(), start_ms: 0, end_ms: 0, entries: entries_match },
-            SessionBucket { id: "s2".to_string(), start_ms: 0, end_ms: 0, entries: entries_no_match },
+            SessionBucket {
+                id: "s1".to_string(),
+                start_ms: 0,
+                end_ms: 0,
+                entries: entries_match,
+            },
+            SessionBucket {
+                id: "s2".to_string(),
+                start_ms: 0,
+                end_ms: 0,
+                entries: entries_no_match,
+            },
         ];
         let req = SearchTranscriptSessionsRequest {
             temporal_hint: None,

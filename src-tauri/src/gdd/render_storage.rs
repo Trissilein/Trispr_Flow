@@ -28,7 +28,11 @@ pub fn render_confluence_storage(draft: &GddDraft) -> String {
 
     for section in &draft.sections {
         out.push_str(&format!("<h2>{}</h2>", html_escape(&section.title)));
-        if section.content.lines().any(|line| line.trim_start().starts_with("- ")) {
+        if section
+            .content
+            .lines()
+            .any(|line| line.trim_start().starts_with("- "))
+        {
             out.push_str("<ul>");
             for line in section.content.lines() {
                 let line = line.trim();

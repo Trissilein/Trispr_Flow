@@ -12,7 +12,8 @@ const CONFLUENCE_API_TOKEN_SECRET_ID: &str = "confluence_api_token";
 const CONFLUENCE_OAUTH_ACCESS_SECRET_ID: &str = "confluence_oauth_access_token";
 const CONFLUENCE_OAUTH_REFRESH_SECRET_ID: &str = "confluence_oauth_refresh_token";
 const ATLASSIAN_OAUTH_TOKEN_URL: &str = "https://auth.atlassian.com/oauth/token";
-const ATLASSIAN_OAUTH_RESOURCES_URL: &str = "https://api.atlassian.com/oauth/token/accessible-resources";
+const ATLASSIAN_OAUTH_RESOURCES_URL: &str =
+    "https://api.atlassian.com/oauth/token/accessible-resources";
 const PUBLISH_UPDATE_MAX_ATTEMPTS: usize = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,14 +194,18 @@ fn should_retry_publish_update(attempt: usize, error: &str) -> bool {
     attempt < PUBLISH_UPDATE_MAX_ATTEMPTS && is_publish_update_conflict(error)
 }
 
-fn parse_json_response(response: ureq::Response, context: &str) -> Result<serde_json::Value, String> {
+fn parse_json_response(
+    response: ureq::Response,
+    context: &str,
+) -> Result<serde_json::Value, String> {
     response
         .into_json::<serde_json::Value>()
         .map_err(|err| format!("{}: failed to parse JSON response: {}", context, err))
 }
 
 fn refresh_oauth_access_token(app: &AppHandle) -> Result<bool, String> {
-    let Some(refresh_token) = confluence_keyring::read_secret(app, CONFLUENCE_OAUTH_REFRESH_SECRET_ID)?
+    let Some(refresh_token) =
+        confluence_keyring::read_secret(app, CONFLUENCE_OAUTH_REFRESH_SECRET_ID)?
     else {
         return Ok(false);
     };
@@ -251,7 +256,8 @@ fn auth_header(app: &AppHandle, settings: &ConfluenceSettings) -> Result<String,
         }
         let token = confluence_keyring::read_secret(app, CONFLUENCE_API_TOKEN_SECRET_ID)?
             .ok_or_else(|| "No Confluence API token stored.".to_string())?;
-        let basic = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", email, token));
+        let basic =
+            base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", email, token));
         return Ok(format!("Basic {}", basic));
     }
 
@@ -285,7 +291,10 @@ fn api_base_url(settings: &ConfluenceSettings) -> Result<String, String> {
                     .to_string(),
             );
         }
-        return Ok(format!("https://api.atlassian.com/ex/confluence/{}", cloud_id));
+        return Ok(format!(
+            "https://api.atlassian.com/ex/confluence/{}",
+            cloud_id
+        ));
     }
     normalize_base_url(&settings.site_base_url)
 }
@@ -339,7 +348,10 @@ fn request_json(
             let retry = send_json_request(method, &url, &retry_auth, body).map_err(|error| {
                 map_ureq_error("Confluence request failed after OAuth refresh", error)
             })?;
-            parse_json_response(retry, "Confluence response parse failed after OAuth refresh")
+            parse_json_response(
+                retry,
+                "Confluence response parse failed after OAuth refresh",
+            )
         }
         Err(error) => Err(map_ureq_error("Confluence request failed", error)),
     }
@@ -726,7 +738,10 @@ pub fn publish(
 
                     return Ok(ConfluencePublishResult {
                         page_id: final_id.clone(),
-                        page_url: format!("{}/wiki/pages/viewpage.action?pageId={}", base_url, final_id),
+                        page_url: format!(
+                            "{}/wiki/pages/viewpage.action?pageId={}",
+                            base_url, final_id
+                        ),
                         created: false,
                         version: final_version,
                         message: "Confluence page updated.".to_string(),
@@ -851,7 +866,12 @@ fn fetch_accessible_resources(access_token: &str) -> Result<Vec<ConfluenceOauthR
         .into_iter()
         .filter_map(|resource| {
             let id = resource.get("id")?.as_str()?.trim().to_string();
-            let url = resource.get("url")?.as_str()?.trim().trim_end_matches('/').to_string();
+            let url = resource
+                .get("url")?
+                .as_str()?
+                .trim()
+                .trim_end_matches('/')
+                .to_string();
             let name = resource
                 .get("name")
                 .and_then(|value| value.as_str())
@@ -919,7 +939,8 @@ fn select_resource(
 pub fn oauth_start() -> Result<ConfluenceOauthStartResult, String> {
     let config = oauth_client_config_from_env()?;
 
-    let scope = "read:confluence-content.all write:confluence-content read:confluence-space.summary";
+    let scope =
+        "read:confluence-content.all write:confluence-content read:confluence-space.summary";
     let auth_url = format!(
         "https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id={}&scope={}&redirect_uri={}&state=trispr_flow&response_type=code&prompt=consent",
         url::form_urlencoded::byte_serialize(config.client_id.as_bytes()).collect::<String>(),
@@ -989,7 +1010,10 @@ mod tests {
     fn retries_only_once_for_conflict() {
         let error = "Confluence request failed (HTTP 409): version conflict";
         assert!(should_retry_publish_update(1, error));
-        assert!(!should_retry_publish_update(PUBLISH_UPDATE_MAX_ATTEMPTS, error));
+        assert!(!should_retry_publish_update(
+            PUBLISH_UPDATE_MAX_ATTEMPTS,
+            error
+        ));
     }
 
     #[test]

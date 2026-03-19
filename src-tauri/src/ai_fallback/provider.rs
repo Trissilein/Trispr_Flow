@@ -1,8 +1,8 @@
 use super::error::AIError;
 use super::models::{RefinementOptions, RefinementResult, TokenUsage};
 use std::collections::HashSet;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tauri::Emitter;
 use tracing::warn;
@@ -403,9 +403,7 @@ pub fn ping_lm_studio_quick(endpoint: &str) -> Result<(), AIError> {
     match agent.get(&url).call() {
         Ok(resp) => {
             if let Ok(body) = resp.into_json::<serde_json::Value>() {
-                let has_models = body["data"]
-                    .as_array()
-                    .map_or(false, |arr| !arr.is_empty());
+                let has_models = body["data"].as_array().map_or(false, |arr| !arr.is_empty());
                 if has_models {
                     Ok(())
                 } else {
@@ -419,9 +417,10 @@ pub fn ping_lm_studio_quick(endpoint: &str) -> Result<(), AIError> {
                 ))
             }
         }
-        Err(_) => Err(AIError::NetworkError(
-            format!("LM Studio not reachable at {}", endpoint),
-        )),
+        Err(_) => Err(AIError::NetworkError(format!(
+            "LM Studio not reachable at {}",
+            endpoint
+        ))),
     }
 }
 
@@ -703,8 +702,12 @@ fn build_ollama_options_payload(
         "temperature".to_string(),
         serde_json::json!(options.temperature),
     );
-    let num_predict =
-        adaptive_num_predict(input_text, system_prompt, options.max_tokens, options.low_latency_mode);
+    let num_predict = adaptive_num_predict(
+        input_text,
+        system_prompt,
+        options.max_tokens,
+        options.low_latency_mode,
+    );
     payload.insert("num_predict".to_string(), serde_json::json!(num_predict));
     let num_ctx = parse_env_usize("TRISPR_OLLAMA_NUM_CTX")
         .map(|n| n.clamp(1024, 8192))
@@ -1470,9 +1473,7 @@ impl AIProvider for OpenAICompatProvider {
         let endpoint = normalize_ollama_endpoint(&self.endpoint);
         let url = format!("{}/v1/chat/completions", endpoint);
 
-        let mut request = agent
-            .post(&url)
-            .set("Content-Type", "application/json");
+        let mut request = agent.post(&url).set("Content-Type", "application/json");
 
         if !self.api_key.is_empty() {
             request = request.set("Authorization", &format!("Bearer {}", self.api_key));
@@ -1570,7 +1571,11 @@ pub fn list_openai_compat_models(endpoint: &str, api_key: &str) -> Vec<String> {
         .and_then(|d| d.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|item| item.get("id").and_then(|id| id.as_str()).map(str::to_string))
+                .filter_map(|item| {
+                    item.get("id")
+                        .and_then(|id| id.as_str())
+                        .map(str::to_string)
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -1857,7 +1862,9 @@ mod tests {
         // The language lock prefix is prepended before the base prompt body.
         let prompt = prompt_for_profile("wording", "auto", None, true).unwrap_or_default();
         // The auto base prompt already embeds a strong language guard at the start.
-        assert!(prompt.contains("Detect the language") || prompt.contains("Detect the input language"));
+        assert!(
+            prompt.contains("Detect the language") || prompt.contains("Detect the input language")
+        );
         assert!(prompt.contains("never translate") || prompt.contains("keep it unchanged"));
     }
 

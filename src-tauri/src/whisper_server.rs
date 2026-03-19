@@ -41,7 +41,11 @@ pub fn start_whisper_server(
     let port = state
         .whisper_server_port
         .load(std::sync::atomic::Ordering::Relaxed);
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
 
     // Already running?
     if ping_whisper_server(port) {

@@ -1,7 +1,7 @@
 pub mod confluence;
 pub mod extraction;
-pub mod publish_queue;
 pub mod presets;
+pub mod publish_queue;
 pub mod recognition;
 pub mod render_storage;
 pub mod synthesis;
@@ -10,9 +10,7 @@ pub mod validation;
 
 use serde::{Deserialize, Serialize};
 
-pub use presets::{
-    list_presets, preset_by_id, universal_preset, GddPreset, GddPresetClone,
-};
+pub use presets::{list_presets, preset_by_id, universal_preset, GddPreset, GddPresetClone};
 pub use recognition::detect_preset;
 pub use template_sources::{load_template_from_file, GddTemplateSourceResult};
 pub use validation::validate_draft;

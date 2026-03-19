@@ -74,7 +74,7 @@ impl AppError {
     #[allow(dead_code)]
     pub fn is_recoverable(&self) -> bool {
         match self {
-            AppError::AudioDevice(_) => true,  // Device might reconnect
+            AppError::AudioDevice(_) => true,   // Device might reconnect
             AppError::Transcription(_) => true, // Can retry transcription
             AppError::Hotkey(_) => false,       // Hotkey conflicts need manual fix
             AppError::Storage(_) => true,       // Might be transient disk issue
@@ -89,7 +89,9 @@ impl AppError {
     pub fn suggested_action(&self) -> Option<&str> {
         match self {
             AppError::AudioDevice(_) => Some("Check your microphone connection and try again"),
-            AppError::Transcription(_) => Some("Try recording again or check your model installation"),
+            AppError::Transcription(_) => {
+                Some("Try recording again or check your model installation")
+            }
             AppError::Hotkey(_) => Some("Choose a different hotkey combination"),
             AppError::Storage(_) => Some("Check disk space and permissions"),
             AppError::Network(_) => Some("Check your internet connection"),

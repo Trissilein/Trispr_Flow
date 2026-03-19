@@ -72,7 +72,11 @@ fn now_iso() -> String {
 fn gdd_root_dir(app: &AppHandle) -> PathBuf {
     let root = resolve_data_path(app, "gdd");
     if let Err(error) = fs::create_dir_all(&root) {
-        warn!("Failed to create gdd root directory '{}': {}", root.display(), error);
+        warn!(
+            "Failed to create gdd root directory '{}': {}",
+            root.display(),
+            error
+        );
     }
     root
 }
@@ -90,7 +94,8 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String>
         fs::create_dir_all(parent).map_err(|error| {
             format!(
                 "Failed to create directory '{}' for queue persistence: {}",
-                parent.display(), error
+                parent.display(),
+                error
             )
         })?;
     }
@@ -99,7 +104,8 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String>
     fs::write(&tmp_path, raw).map_err(|error| {
         format!(
             "Failed writing temporary queue file '{}': {}",
-            tmp_path.display(), error
+            tmp_path.display(),
+            error
         )
     })?;
     fs::rename(&tmp_path, path).map_err(|error| {
@@ -122,7 +128,8 @@ fn load_queue_store_from_root(root: &Path) -> Result<GddPublishQueueStore, Strin
     let raw = fs::read_to_string(&queue_path).map_err(|error| {
         format!(
             "Failed reading publish queue file '{}': {}",
-            queue_path.display(), error
+            queue_path.display(),
+            error
         )
     })?;
 
@@ -133,7 +140,8 @@ fn load_queue_store_from_root(root: &Path) -> Result<GddPublishQueueStore, Strin
     serde_json::from_str(&raw).map_err(|error| {
         format!(
             "Failed parsing publish queue file '{}': {}",
-            queue_path.display(), error
+            queue_path.display(),
+            error
         )
     })
 }
@@ -186,7 +194,10 @@ pub fn list_pending_jobs(app: &AppHandle) -> Result<Vec<GddPendingPublishJob>, S
     Ok(jobs)
 }
 
-pub fn load_pending_job(app: &AppHandle, job_id: &str) -> Result<Option<GddPendingPublishJob>, String> {
+pub fn load_pending_job(
+    app: &AppHandle,
+    job_id: &str,
+) -> Result<Option<GddPendingPublishJob>, String> {
     let root = gdd_root_dir(app);
     let store = load_queue_store_from_root(&root)?;
     Ok(store
@@ -225,7 +236,10 @@ pub fn delete_pending_job(app: &AppHandle, job_id: &str) -> Result<bool, String>
     Ok(store.jobs.len() != before)
 }
 
-pub fn consume_pending_job(app: &AppHandle, job_id: &str) -> Result<Option<GddPendingPublishJob>, String> {
+pub fn consume_pending_job(
+    app: &AppHandle,
+    job_id: &str,
+) -> Result<Option<GddPendingPublishJob>, String> {
     let root = gdd_root_dir(app);
     let mut store = load_queue_store_from_root(&root)?;
     let mut removed: Option<GddPendingPublishJob> = None;
@@ -241,18 +255,22 @@ pub fn consume_pending_job(app: &AppHandle, job_id: &str) -> Result<Option<GddPe
     Ok(removed)
 }
 
-pub fn load_publish_request_for_job(job: &GddPendingPublishJob) -> Result<ConfluencePublishRequest, String> {
+pub fn load_publish_request_for_job(
+    job: &GddPendingPublishJob,
+) -> Result<ConfluencePublishRequest, String> {
     let path = PathBuf::from(&job.bundle_dir).join("publish-request.json");
     let raw = fs::read_to_string(&path).map_err(|error| {
         format!(
             "Failed reading queued publish request '{}': {}",
-            path.display(), error
+            path.display(),
+            error
         )
     })?;
     serde_json::from_str(&raw).map_err(|error| {
         format!(
             "Failed parsing queued publish request '{}': {}",
-            path.display(), error
+            path.display(),
+            error
         )
     })
 }
@@ -267,7 +285,8 @@ pub fn queue_publish_request(
     fs::create_dir_all(&bundles_root).map_err(|error| {
         format!(
             "Failed creating bundle root directory '{}': {}",
-            bundles_root.display(), error
+            bundles_root.display(),
+            error
         )
     })?;
 
@@ -276,7 +295,8 @@ pub fn queue_publish_request(
     fs::create_dir_all(&bundle_dir).map_err(|error| {
         format!(
             "Failed creating bundle directory '{}': {}",
-            bundle_dir.display(), error
+            bundle_dir.display(),
+            error
         )
     })?;
 
@@ -295,7 +315,8 @@ pub fn queue_publish_request(
     fs::write(&markdown_path, render_storage::render_markdown(&draft)).map_err(|error| {
         format!(
             "Failed writing markdown bundle '{}': {}",
-            markdown_path.display(), error
+            markdown_path.display(),
+            error
         )
     })?;
     fs::write(
@@ -305,7 +326,8 @@ pub fn queue_publish_request(
     .map_err(|error| {
         format!(
             "Failed writing Confluence storage bundle '{}': {}",
-            confluence_html_path.display(), error
+            confluence_html_path.display(),
+            error
         )
     })?;
     write_json_atomic(&publish_request_path, &request.publish_request)?;
@@ -378,25 +400,55 @@ mod tests {
 
     #[test]
     fn queueable_status_codes_are_detected() {
-        assert!(is_queueable_publish_error("Confluence request failed (HTTP 503)"));
-        assert!(is_queueable_publish_error("Confluence request failed (HTTP 429): rate limited"));
-        assert!(is_queueable_publish_error("Confluence request failed (HTTP 408)"));
-        assert!(is_queueable_publish_error("Confluence request failed (HTTP 500)"));
-        assert!(is_queueable_publish_error("Confluence request failed (HTTP 502): bad gateway"));
-        assert!(is_queueable_publish_error("Confluence request failed (HTTP 504): gateway timeout"));
-        assert!(!is_queueable_publish_error("Confluence request failed (HTTP 401)"));
-        assert!(!is_queueable_publish_error("Confluence request failed (HTTP 403)"));
-        assert!(!is_queueable_publish_error("Confluence request failed (HTTP 404)"));
-        assert!(!is_queueable_publish_error("Confluence request failed (HTTP 422)"));
-        assert!(!is_queueable_publish_error("Confluence request failed (HTTP 400)"));
+        assert!(is_queueable_publish_error(
+            "Confluence request failed (HTTP 503)"
+        ));
+        assert!(is_queueable_publish_error(
+            "Confluence request failed (HTTP 429): rate limited"
+        ));
+        assert!(is_queueable_publish_error(
+            "Confluence request failed (HTTP 408)"
+        ));
+        assert!(is_queueable_publish_error(
+            "Confluence request failed (HTTP 500)"
+        ));
+        assert!(is_queueable_publish_error(
+            "Confluence request failed (HTTP 502): bad gateway"
+        ));
+        assert!(is_queueable_publish_error(
+            "Confluence request failed (HTTP 504): gateway timeout"
+        ));
+        assert!(!is_queueable_publish_error(
+            "Confluence request failed (HTTP 401)"
+        ));
+        assert!(!is_queueable_publish_error(
+            "Confluence request failed (HTTP 403)"
+        ));
+        assert!(!is_queueable_publish_error(
+            "Confluence request failed (HTTP 404)"
+        ));
+        assert!(!is_queueable_publish_error(
+            "Confluence request failed (HTTP 422)"
+        ));
+        assert!(!is_queueable_publish_error(
+            "Confluence request failed (HTTP 400)"
+        ));
     }
 
     #[test]
     fn queueable_transport_failures_are_detected() {
-        assert!(is_queueable_publish_error("Confluence request failed: dns lookup failed"));
-        assert!(is_queueable_publish_error("network timeout while connecting"));
-        assert!(is_queueable_publish_error("connection refused by remote host"));
-        assert!(is_queueable_publish_error("Transport TEMPORARILY unavailable"));
+        assert!(is_queueable_publish_error(
+            "Confluence request failed: dns lookup failed"
+        ));
+        assert!(is_queueable_publish_error(
+            "network timeout while connecting"
+        ));
+        assert!(is_queueable_publish_error(
+            "connection refused by remote host"
+        ));
+        assert!(is_queueable_publish_error(
+            "Transport TEMPORARILY unavailable"
+        ));
     }
 
     #[test]

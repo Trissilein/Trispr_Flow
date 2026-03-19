@@ -78,7 +78,10 @@ pub fn enable_module(
     })
 }
 
-pub fn disable_module(settings: &mut ModuleSettings, module_id: &str) -> Result<ModuleLifecycleResult, String> {
+pub fn disable_module(
+    settings: &mut ModuleSettings,
+    module_id: &str,
+) -> Result<ModuleLifecycleResult, String> {
     let Some(manifest) = registry::find_manifest(module_id) else {
         return Err(format!("Unknown module '{}'.", module_id));
     };

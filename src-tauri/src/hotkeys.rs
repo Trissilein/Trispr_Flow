@@ -34,15 +34,27 @@ pub fn validate_hotkey_format(key: &str) -> ValidationResult {
     if parts.len() < 2 {
         return ValidationResult {
             valid: false,
-            error: Some("Hotkey must include at least one modifier (e.g., Ctrl, Shift, Alt)".to_string()),
+            error: Some(
+                "Hotkey must include at least one modifier (e.g., Ctrl, Shift, Alt)".to_string(),
+            ),
             formatted: None,
         };
     }
 
     // Valid modifiers
     let valid_modifiers = [
-        "CommandOrControl", "CmdOrCtrl", "Command", "Cmd", "Control", "Ctrl",
-        "Alt", "Option", "AltGr", "Shift", "Super", "Meta",
+        "CommandOrControl",
+        "CmdOrCtrl",
+        "Command",
+        "Cmd",
+        "Control",
+        "Ctrl",
+        "Alt",
+        "Option",
+        "AltGr",
+        "Shift",
+        "Super",
+        "Meta",
     ];
 
     // Validate each part except the last (which should be the key)
@@ -50,10 +62,16 @@ pub fn validate_hotkey_format(key: &str) -> ValidationResult {
     let modifier_parts = &parts[..parts.len() - 1];
 
     for modifier in modifier_parts {
-        if !valid_modifiers.iter().any(|m| m.eq_ignore_ascii_case(modifier)) {
+        if !valid_modifiers
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case(modifier))
+        {
             return ValidationResult {
                 valid: false,
-                error: Some(format!("Invalid modifier: '{}'. Valid modifiers: Ctrl, Shift, Alt, Command, etc.", modifier)),
+                error: Some(format!(
+                    "Invalid modifier: '{}'. Valid modifiers: Ctrl, Shift, Alt, Command, etc.",
+                    modifier
+                )),
                 formatted: None,
             };
         }
@@ -82,25 +100,28 @@ pub fn validate_hotkey_format(key: &str) -> ValidationResult {
 fn format_hotkey(key: &str) -> String {
     let parts: Vec<&str> = key.split('+').map(|s| s.trim()).collect();
 
-    let formatted_parts: Vec<String> = parts.iter().map(|part| {
-        // Normalize common modifiers
-        match part.to_lowercase().as_str() {
-            "ctrl" | "control" => "Ctrl".to_string(),
-            "cmdorctrl" | "commandorcontrol" => "CommandOrControl".to_string(),
-            "cmd" | "command" => "Command".to_string(),
-            "alt" | "option" => "Alt".to_string(),
-            "shift" => "Shift".to_string(),
-            "meta" | "super" => "Meta".to_string(),
-            _ => {
-                // Capitalize first letter for key
-                let mut chars = part.chars();
-                match chars.next() {
-                    None => String::new(),
-                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    let formatted_parts: Vec<String> = parts
+        .iter()
+        .map(|part| {
+            // Normalize common modifiers
+            match part.to_lowercase().as_str() {
+                "ctrl" | "control" => "Ctrl".to_string(),
+                "cmdorctrl" | "commandorcontrol" => "CommandOrControl".to_string(),
+                "cmd" | "command" => "Command".to_string(),
+                "alt" | "option" => "Alt".to_string(),
+                "shift" => "Shift".to_string(),
+                "meta" | "super" => "Meta".to_string(),
+                _ => {
+                    // Capitalize first letter for key
+                    let mut chars = part.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    }
                 }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     formatted_parts.join("+")
 }
@@ -146,7 +167,9 @@ pub fn test_hotkey_registration(_app: &AppHandle, key: &str) -> Result<(), Strin
     // First validate format
     let validation = validate_hotkey_format(key);
     if !validation.valid {
-        return Err(validation.error.unwrap_or_else(|| "Invalid hotkey".to_string()));
+        return Err(validation
+            .error
+            .unwrap_or_else(|| "Invalid hotkey".to_string()));
     }
 
     // Try to register (and immediately unregister)

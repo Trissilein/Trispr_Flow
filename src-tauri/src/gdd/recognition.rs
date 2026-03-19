@@ -37,12 +37,16 @@ pub fn detect_preset(transcript: &str, presets: &[GddPreset]) -> GddRecognitionR
         .unwrap_or_else(|| "universal_strict".to_string());
 
     let confidence = match (top, second) {
-        (Some((_preset, top_hits, top_score)), Some((_second_preset, second_hits, second_score))) => {
+        (
+            Some((_preset, top_hits, top_score)),
+            Some((_second_preset, second_hits, second_score)),
+        ) => {
             if *top_hits == 0 {
                 0.2
             } else {
                 let margin = (top_score - second_score).max(0.0);
-                let hit_ratio = (*top_hits as f32 / (*top_hits + *second_hits).max(1) as f32).clamp(0.0, 1.0);
+                let hit_ratio =
+                    (*top_hits as f32 / (*top_hits + *second_hits).max(1) as f32).clamp(0.0, 1.0);
                 (0.45 + margin * 0.35 + hit_ratio * 0.2).clamp(0.0, 1.0)
             }
         }
@@ -73,7 +77,8 @@ pub fn detect_preset(transcript: &str, presets: &[GddPreset]) -> GddRecognitionR
             preset.name, hits, score
         ));
     } else {
-        reasoning_snippets.push("No preset signals found; defaulting to universal preset.".to_string());
+        reasoning_snippets
+            .push("No preset signals found; defaulting to universal preset.".to_string());
     }
 
     if confidence < 0.5 {

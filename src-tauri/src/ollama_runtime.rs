@@ -814,7 +814,10 @@ fn update_runtime_in_settings(
     mark_setup_complete: bool,
 ) -> Result<(), String> {
     let snapshot = {
-        let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut settings = state
+            .settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         settings.providers.ollama.runtime_source = source;
         settings.providers.ollama.runtime_path = runtime_path;
         settings.providers.ollama.runtime_version = runtime_version;
@@ -923,7 +926,11 @@ pub(crate) fn clear_ollama_pid_lockfile(app: &AppHandle) {
 pub fn list_ollama_runtime_versions(
     state: State<'_, AppState>,
 ) -> Result<Vec<OllamaRuntimeVersionInfo>, String> {
-    let snapshot = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let snapshot = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     build_version_list(&snapshot, &[])
 }
 
@@ -935,7 +942,11 @@ pub async fn fetch_ollama_online_versions(
 ) -> Result<Vec<OllamaRuntimeVersionInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let snapshot = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        let snapshot = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let online = list_online_release_versions(20).unwrap_or_default();
         build_version_list(&snapshot, &online)
     })
@@ -991,7 +1002,11 @@ fn build_version_list(
 
 fn detect_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeDetectResult, String> {
     let state = app.state::<AppState>();
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     let (managed_pid, managed_alive) = managed_child_status(state.inner());
     let endpoint = settings.providers.ollama.endpoint.clone();
     let source_hint = settings
@@ -1401,7 +1416,11 @@ pub async fn start_ollama_runtime(app: AppHandle) -> Result<OllamaRuntimeStartRe
 fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult, String> {
     let state = app.state::<AppState>();
     record_runtime_start_attempt(state.inner());
-    let settings_snapshot = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings_snapshot = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     let mark_failure = |stage: &str, message: String| {
         record_runtime_start_failure(state.inner());
         update_startup_status(app, state.inner(), |status| {
@@ -1472,7 +1491,11 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
     let (binary_path, source) = select_runtime_binary(app, &settings_snapshot)
         .map_err(|err| mark_failure("runtime_not_found", err))?;
     let version = parse_ollama_version(&binary_path);
-    let fallback_endpoints = settings_snapshot.providers.ollama.fallback_endpoints.clone();
+    let fallback_endpoints = settings_snapshot
+        .providers
+        .ollama
+        .fallback_endpoints
+        .clone();
     if runtime_endpoint_reachable(&endpoint, &fallback_endpoints) {
         let ts = now_iso();
         let _ = update_runtime_in_settings(
@@ -1651,7 +1674,11 @@ pub async fn verify_ollama_runtime(app: AppHandle) -> Result<OllamaRuntimeVerify
 
 fn verify_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeVerifyResult, String> {
     let state = app.state::<AppState>();
-    let settings_snapshot = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings_snapshot = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     let endpoint = settings_snapshot
         .providers
         .ollama
@@ -1765,7 +1792,11 @@ pub fn import_ollama_model_from_file(
         return Err("Import path must point to a file.".to_string());
     }
 
-    let settings_snapshot = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings_snapshot = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
     check_strict_local_mode(&settings_snapshot)?;
     ping_ollama(&endpoint).map_err(|e| {
@@ -1833,7 +1864,10 @@ pub fn import_ollama_model_from_file(
 
     let models = list_ollama_models(&endpoint);
     let snapshot = {
-        let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut settings = state
+            .settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         settings.providers.ollama.available_models = models.clone();
         if !models.contains(&settings.providers.ollama.preferred_model) {
             settings.providers.ollama.preferred_model = model_name.clone();
@@ -1860,7 +1894,10 @@ pub fn set_strict_local_mode(
     enabled: bool,
 ) -> Result<serde_json::Value, String> {
     let snapshot = {
-        let mut settings = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut settings = state
+            .settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         settings.ai_fallback.strict_local_mode = enabled;
         if enabled && !is_local_ollama_endpoint(&settings.providers.ollama.endpoint) {
             settings.providers.ollama.endpoint = "http://127.0.0.1:11434".to_string();

@@ -34,8 +34,8 @@ fn load_file_store(app: &AppHandle) -> Result<FileKeyStore, String> {
 
 fn save_file_store(app: &AppHandle, store: &FileKeyStore) -> Result<(), String> {
     let path = fallback_file_path(app);
-    let raw =
-        serde_json::to_string_pretty(store).map_err(|e| format!("Failed to serialize key store: {}", e))?;
+    let raw = serde_json::to_string_pretty(store)
+        .map_err(|e| format!("Failed to serialize key store: {}", e))?;
     fs::write(path, raw).map_err(|e| format!("Failed to write key store: {}", e))
 }
 
@@ -103,7 +103,11 @@ pub fn read_api_key(app: &AppHandle, provider: &str) -> Result<Option<String>, S
     }
 
     let store = load_file_store(app)?;
-    Ok(store.keys.get(&provider).cloned().filter(|value| !value.trim().is_empty()))
+    Ok(store
+        .keys
+        .get(&provider)
+        .cloned()
+        .filter(|value| !value.trim().is_empty()))
 }
 
 pub fn clear_api_key(app: &AppHandle, provider: &str) -> Result<(), String> {

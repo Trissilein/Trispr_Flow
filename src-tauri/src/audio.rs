@@ -2,8 +2,7 @@ use crate::constants::{TARGET_SAMPLE_RATE, VAD_MIN_CONSECUTIVE_CHUNKS, VAD_MIN_V
 use crate::continuous_dump::{AdaptiveSegmenter, AdaptiveSegmenterConfig, SegmentFlushReason};
 use crate::overlay::{
     emit_capture_idle_overlay, sync_overlay_level, update_overlay_refining_indicator,
-    update_overlay_state,
-    OverlayState,
+    update_overlay_state, OverlayState,
 };
 use crate::postprocessing::process_transcript;
 use crate::state::{
@@ -472,8 +471,7 @@ pub(crate) async fn list_output_devices() -> Vec<AudioDevice> {
         #[cfg(target_os = "windows")]
         {
             if let Ok(enumerator) = wasapi::DeviceEnumerator::new() {
-                if let Ok(collection) =
-                    enumerator.get_device_collection(&wasapi::Direction::Render)
+                if let Ok(collection) = enumerator.get_device_collection(&wasapi::Direction::Render)
                 {
                     if let Ok(count) = collection.get_nbr_devices() {
                         for index in 0..count {
@@ -481,8 +479,7 @@ pub(crate) async fn list_output_devices() -> Vec<AudioDevice> {
                                 let name = device
                                     .get_friendlyname()
                                     .unwrap_or_else(|_| format!("Output {}", index + 1));
-                                let id =
-                                    device.get_id().unwrap_or_else(|_| format!("idx-{index}"));
+                                let id = device.get_id().unwrap_or_else(|_| format!("idx-{index}"));
                                 devices.push(AudioDevice {
                                     id: format!("wasapi:{id}"),
                                     label: name,
@@ -587,7 +584,10 @@ fn handle_vad_audio(
             runtime.start_ms.store(now, Ordering::Relaxed);
             runtime.pending_flush.store(false, Ordering::Relaxed);
             let warmup = {
-                let mut pre = vad_handle.pre_roll_buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut pre = vad_handle
+                    .pre_roll_buffer
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 pre.take_all_samples()
             };
             let include_pre_roll = warmup.len() >= vad_handle.pre_roll_min_samples
@@ -627,7 +627,9 @@ fn handle_vad_audio(
             if !runtime.pending_flush.swap(true, Ordering::Relaxed) {
                 runtime.recording.store(false, Ordering::Relaxed);
                 let samples = {
-                    let mut buf = buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let mut buf = buffer
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                     buf.drain()
                 };
                 let _ = vad_handle.tx.send(VadEvent::Finalize(samples));
@@ -812,7 +814,10 @@ build_ptt_hot_stream_typed!(build_ptt_hot_stream_u16, u16, |s: &u16| {
 
 fn stop_ptt_hot_standby(state: &State<'_, AppState>) {
     let (stop_tx, join_handle) = {
-        let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut recorder = state
+            .recorder
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
         recorder.ptt_hot_device_id = None;
         (
@@ -836,7 +841,10 @@ fn start_ptt_hot_standby(
     let device_id = settings.input_device.clone();
 
     let (existing_stop_tx, existing_join_handle, buffer, gain_db, recording_flag) = {
-        let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut recorder = state
+            .recorder
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         recorder.input_gain_db.store(
             (settings.mic_input_gain_db * 1000.0) as i64,
             Ordering::Relaxed,
@@ -940,7 +948,10 @@ fn start_ptt_hot_standby(
         return Err(err);
     }
 
-    let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut recorder = state
+        .recorder
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     recorder.ptt_hot_stop_tx = Some(stop_tx);
     recorder.ptt_hot_join_handle = Some(join_handle);
     recorder.ptt_hot_device_id = Some(device_id);
@@ -957,7 +968,10 @@ pub(crate) fn sync_ptt_hot_standby(
         if let Err(err) = start_ptt_hot_standby(app, state, settings) {
             warn!("Failed to start PTT standby stream: {}", err);
         } else {
-            let recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let recorder = state
+                .recorder
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if !recorder.active && !recorder.transcribing {
                 drop(recorder);
                 let _ = emit_capture_idle_overlay(app, settings);
@@ -979,7 +993,10 @@ fn start_ptt_hot_recording(
     }
     start_ptt_hot_standby(app, state, settings)?;
 
-    let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut recorder = state
+        .recorder
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if recorder.active || recorder.transcribing {
         return Ok(());
     }
@@ -1019,7 +1036,10 @@ pub(crate) fn start_recording_with_settings(
     if !settings.capture_enabled {
         return Ok(());
     }
-    let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut recorder = state
+        .recorder
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if recorder.active || recorder.transcribing {
         info!("Recording already active or transcribing, skipping");
         return Ok(());
@@ -1345,7 +1365,10 @@ pub(crate) fn maybe_spawn_ai_refinement(
                 let model = setup.model.clone();
                 let snapshot = {
                     let state = app_handle.state::<AppState>();
-                    let mut live = state.settings.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let mut live = state
+                        .settings
+                        .write()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                     live.ai_fallback.model = model.clone();
                     live.providers.ollama.preferred_model = model.clone();
                     live.postproc_llm_model = model.clone();
@@ -1359,10 +1382,12 @@ pub(crate) fn maybe_spawn_ai_refinement(
                 }
             }
 
-            match setup
-                .provider
-                .refine_transcript(&text, &setup.model, &setup.options, &setup.api_key)
-            {
+            match setup.provider.refine_transcript(
+                &text,
+                &setup.model,
+                &setup.options,
+                &setup.api_key,
+            ) {
                 Ok(result) => {
                     if let Some(entry_id_value) = entry_id.as_deref() {
                         let _ = mark_entry_refinement_success(
@@ -1807,7 +1832,10 @@ fn run_toggle_processor(
         match crate::session_manager::finalize_for("mic") {
             Ok(Some(path)) => {
                 let state = app_handle.state::<AppState>();
-                *state.last_mic_recording_path.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                *state
+                    .last_mic_recording_path
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
                     Some(path.to_string_lossy().to_string());
             }
             Ok(None) => {}
@@ -1824,7 +1852,10 @@ fn start_toggle_recording_with_settings(
     start_recording_with_settings(app, state, settings)?;
 
     let (buffer, stop_rx) = {
-        let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut recorder = state
+            .recorder
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         recorder.continuous_toggle_mode = true;
         recorder.continuous_processor_stop_tx = Some(tx);
@@ -1837,19 +1868,29 @@ fn start_toggle_recording_with_settings(
         run_toggle_processor(app_handle, settings_clone, buffer, stop_rx);
     });
 
-    let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut recorder = state
+        .recorder
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     recorder.continuous_processor_join_handle = Some(handle);
     Ok(())
 }
 
 pub(crate) fn stop_toggle_recording_async(app: AppHandle, state: &State<'_, AppState>) {
     let app_handle = app.clone();
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
 
     crate::util::spawn_guarded("vad_processor", move || {
         let state = app_handle.state::<AppState>();
         let (capture_stop_tx, capture_join_handle, proc_stop_tx, proc_join_handle) = {
-            let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut recorder = state
+                .recorder
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if !recorder.active {
                 return;
             }
@@ -1894,7 +1935,10 @@ pub(crate) fn start_vad_monitor(
     if !settings.capture_enabled {
         return Ok(());
     }
-    let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut recorder = state
+        .recorder
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if recorder.active || recorder.transcribing {
         info!("VAD already active or transcribing, skipping");
         return Ok(());
@@ -2047,7 +2091,10 @@ pub(crate) fn start_vad_monitor(
 
 pub(crate) fn stop_vad_monitor(app: &AppHandle, state: &State<'_, AppState>) {
     let (buffer, stop_tx, join_handle, vad_tx, vad_runtime) = {
-        let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut recorder = state
+            .recorder
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if !recorder.active {
             return;
         }
@@ -2087,7 +2134,9 @@ pub(crate) fn stop_vad_monitor(app: &AppHandle, state: &State<'_, AppState>) {
     if should_flush_on_stop {
         if let (Some(tx), Some(runtime)) = (vad_tx.as_ref(), vad_runtime.as_ref()) {
             let samples = {
-                let mut buf = buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut buf = buffer
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 buf.drain()
             };
             if !samples.is_empty() {
@@ -2105,7 +2154,11 @@ pub(crate) fn stop_vad_monitor(app: &AppHandle, state: &State<'_, AppState>) {
 
     drop(vad_tx);
 
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     let _ = emit_capture_idle_overlay(app, &settings);
 }
 
@@ -2126,7 +2179,11 @@ fn process_vad_segment(
 
     let min_samples = mic_min_samples();
     if samples.len() < min_samples {
-        let runtime_settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        let runtime_settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let _ = emit_capture_idle_overlay(&app_handle, &runtime_settings);
         runtime.processing.store(false, Ordering::Relaxed);
         runtime.pending_flush.store(false, Ordering::Relaxed);
@@ -2164,7 +2221,11 @@ fn process_vad_segment(
         let _ = app_handle.emit("capture:state", "recording");
         let _ = update_overlay_state(&app_handle, OverlayState::Recording);
     } else {
-        let runtime_settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        let runtime_settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let _ = emit_capture_idle_overlay(&app_handle, &runtime_settings);
     }
 
@@ -2174,7 +2235,11 @@ fn process_vad_segment(
 
     match result {
         Ok((text, source)) => {
-            let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
             handle_transcription_ok(&app_handle, &text, &source, &settings, level, duration_ms);
         }
         Err(err) => {
@@ -2185,13 +2250,20 @@ fn process_vad_segment(
 
 pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) {
     let app_handle = app.clone();
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
 
     crate::util::spawn_guarded("async_stop_recording", move || {
         info!("stop_recording_async called");
         let state = app_handle.state::<AppState>();
         let (buffer, stop_tx, join_handle, proc_stop_tx, proc_join_handle) = {
-            let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut recorder = state
+                .recorder
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if !recorder.active {
                 info!("Recording not active, skipping stop");
                 return;
@@ -2232,7 +2304,9 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         }
 
         let samples = {
-            let mut buf = buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut buf = buffer
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             buf.drain()
         };
 
@@ -2246,7 +2320,10 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
                     (samples.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64)
                 ),
             );
-            let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut recorder = state
+                .recorder
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             recorder.transcribing = false;
             return;
         }
@@ -2263,11 +2340,17 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         if duration_ms >= 10_000 {
             if let Ok(opus_path) = crate::save_recording_opus(&app_handle, &samples, "mic", None) {
                 let state_ref = app_handle.state::<crate::state::AppState>();
-                *state_ref.last_mic_recording_path.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(opus_path);
+                *state_ref
+                    .last_mic_recording_path
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(opus_path);
             }
         }
 
-        let mut recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut recorder = state
+            .recorder
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         recorder.transcribing = false;
         drop(recorder);
 
@@ -2279,7 +2362,11 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
 
         match result {
             Ok((text, source)) => {
-                let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+                let settings = state
+                    .settings
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .clone();
                 handle_transcription_ok(&app_handle, &text, &source, &settings, level, duration_ms);
             }
             Err(err) => {
@@ -2291,7 +2378,11 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
 
 pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     if !settings.capture_enabled {
         return Ok(());
     }
@@ -2309,7 +2400,11 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
 pub(crate) fn handle_ptt_release_async(app: AppHandle) {
     let app_handle = app.clone();
     let state = app_handle.state::<AppState>();
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     if settings.mode != "ptt" {
         return;
     }
@@ -2324,7 +2419,11 @@ pub(crate) fn handle_ptt_release_async(app: AppHandle) {
 pub(crate) fn handle_toggle_async(app: AppHandle) {
     let app_handle = app.clone();
     let state = app_handle.state::<AppState>();
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     if !settings.capture_enabled {
         return;
     }
@@ -2333,7 +2432,10 @@ pub(crate) fn handle_toggle_async(app: AppHandle) {
     }
 
     let (active, continuous_toggle_mode) = {
-        let recorder = state.recorder.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let recorder = state
+            .recorder
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         (recorder.active, recorder.continuous_toggle_mode)
     };
     if active {
@@ -2353,7 +2455,11 @@ pub(crate) fn handle_toggle_async(app: AppHandle) {
 
 #[tauri::command]
 pub(crate) fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     start_recording_with_settings(&app, &state, &settings)
 }
 

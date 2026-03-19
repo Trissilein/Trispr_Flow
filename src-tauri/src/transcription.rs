@@ -188,7 +188,10 @@ impl AudioQueue {
 
     #[cfg(any(test, target_os = "windows"))]
     fn push(&self, chunk: Vec<i16>) {
-        let mut queue = self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut queue = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if queue.queue.len() >= queue.max_chunks {
             queue.queue.pop_front();
             queue.dropped_chunks = queue.dropped_chunks.saturating_add(1);
@@ -215,7 +218,10 @@ impl AudioQueue {
 
     #[cfg(any(test, target_os = "windows"))]
     fn pop(&self) -> Option<Vec<i16>> {
-        let mut queue = self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut queue = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         loop {
             if let Some(chunk) = queue.queue.pop_front() {
                 return Some(chunk);
@@ -234,12 +240,18 @@ impl AudioQueue {
 
     #[cfg(any(test, target_os = "windows"))]
     fn status(&self) -> TranscribeBacklogStatus {
-        let queue = self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let queue = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         backlog_status_from_queue(&queue)
     }
 
     fn expand_capacity(&self) -> TranscribeBacklogStatus {
-        let mut queue = self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut queue = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let current = queue.max_chunks;
         let expanded = expanded_capacity(current);
         queue.max_chunks = expanded.max(current + 1);
@@ -365,7 +377,12 @@ fn update_transcribe_overlay(app: &AppHandle, active: bool) {
     let state = if active {
         OverlayState::Transcribing
     } else {
-        let settings = app.state::<AppState>().settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        let settings = app
+            .state::<AppState>()
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let _ = emit_capture_idle_overlay(app, &settings);
         return;
     };
@@ -388,7 +405,10 @@ pub(crate) fn expand_transcribe_backlog(
 ) -> Result<TranscribeBacklogStatus, String> {
     let queue = {
         let state = app.state::<AppState>();
-        let recorder = state.transcribe.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let recorder = state
+            .transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         recorder.queue.clone()
     };
     let queue = queue.ok_or_else(|| "Output transcription is not active.".to_string())?;
@@ -406,7 +426,10 @@ pub(crate) fn start_transcribe_monitor(
         return Err("Transcription is disabled in settings".to_string());
     }
 
-    let mut recorder = state.transcribe.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut recorder = state
+        .transcribe
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if recorder.active {
         return Ok(());
     }
@@ -482,7 +505,10 @@ pub(crate) fn start_transcribe_monitor(
 
 pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppState>) {
     let (stop_tx, join_handle, queue) = {
-        let mut recorder = state.transcribe.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut recorder = state
+            .transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         recorder.active = false;
         (
             recorder.stop_tx.take(),
@@ -519,7 +545,11 @@ pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppStat
 
 pub(crate) fn toggle_transcribe_state(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     if !settings.transcribe_enabled {
         let _ = app.emit("transcribe:state", "idle");
         emit_transcribe_idle(app);
@@ -874,7 +904,10 @@ fn transcribe_worker(
                         if let Some(new_entry) = updated.first() {
                             let now = crate::util::now_ms();
                             let flush_entries = {
-                                let mut cluster = state.system_cluster_buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                                let mut cluster = state
+                                    .system_cluster_buffer
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                                 const CLUSTER_GAP_MS: u64 = 8_000;
                                 let should_flush = cluster.last_chunk_ms > 0
                                     && now.saturating_sub(cluster.last_chunk_ms) > CLUSTER_GAP_MS
@@ -914,7 +947,10 @@ fn transcribe_worker(
     {
         let state = app.state::<AppState>();
         let remaining = {
-            let mut cluster = state.system_cluster_buffer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut cluster = state
+                .system_cluster_buffer
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if cluster.entries.len() >= 2 {
                 Some(std::mem::take(&mut cluster.entries))
             } else {
@@ -933,7 +969,10 @@ fn transcribe_worker(
         match crate::session_manager::finalize_for("output") {
             Ok(Some(path)) => {
                 let state = app.state::<AppState>();
-                *state.last_system_recording_path.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                *state
+                    .last_system_recording_path
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
                     Some(path.to_string_lossy().to_string());
                 info!("System audio session finalized");
             }
@@ -968,14 +1007,20 @@ fn flush_system_cluster(
     let state = app.state::<crate::state::AppState>();
     {
         let speaker_name = {
-            let current_settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let current_settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             Some(crate::state::speaker_name_for_source(
                 &current_settings,
                 "output",
             ))
         };
         let cluster_ids: HashSet<&str> = entries.iter().map(|(id, _, _)| id.as_str()).collect();
-        let mut ph = state.history_transcribe.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut ph = state
+            .history_transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         ph.retain_active(|e| !cluster_ids.contains(e.id.as_str()));
         ph.push_entry(crate::state::HistoryEntry {
             id: merged_id.clone(),
@@ -1118,7 +1163,9 @@ fn run_transcribe_loopback(
         let settings = settings.clone();
         let queue = queue.clone();
         let transcribing = transcribing.clone();
-        crate::util::spawn_guarded("transcribe_worker", move || transcribe_worker(app, settings, queue, transcribing))
+        crate::util::spawn_guarded("transcribe_worker", move || {
+            transcribe_worker(app, settings, queue, transcribing)
+        })
     };
 
     // Reconnect loop: re-initialises the WASAPI session on device invalidation.

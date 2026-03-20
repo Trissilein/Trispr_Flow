@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Installer Runtime Packaging**:
   - NSIS post-install no longer prunes `bin/cuda` or `bin/vulkan`.
   - Both Whisper runtime folders now remain installed, with backend chosen at runtime.
+- **FFmpeg Packaging Workflow**:
+  - Replaced committed `src-tauri/bin/ffmpeg/ffmpeg.exe` with build-time provisioning via `scripts/setup-ffmpeg.ps1`.
+  - Installer build scripts now auto-fetch pinned FFmpeg 7.1.1, validate SHA256, and enforce `libopus` encoder availability.
+  - Added `bin/ffmpeg/ffmpeg.exe` to Tauri bundle resources so installed apps resolve FFmpeg from `resources/ffmpeg/ffmpeg.exe`.
 
 ### Fixed
 
@@ -92,8 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added friendly labels for whisper Q5/Q8 German and English models for VRAM-constrained GPUs.
   - Local model scan recognizes ggml-large-v3-turbo-german-q5_0.bin automatically.
 - **FFmpeg Binary Bundling**:
-  - FFmpeg 7.1.1 essentials bundled at `src-tauri/bin/ffmpeg/ffmpeg.exe` for OPUS encoding pipeline.
-  - Bundled copy included in release resources for guaranteed availability across installations.
+  - Runtime FFmpeg lookup now resolves bundled, repo-local, and PATH variants in a stable order.
+  - OPUS paths now require `libopus` support explicitly (`find_ffmpeg_for_opus`) before encoding.
 - **Performance Instrumentation**:
   - [TIMING] logs added to transcription pipeline (wav_write, whisper_spawn, whisper_process, handle_transcription_ok, segment_total) for latency diagnosis.
   - File-based logging to `%APPDATA%\com.trispr.flow\logs\trispr-flow.log.YYYY-MM-DD` (daily rotation, tracing-appender).

@@ -1,6 +1,6 @@
 # Trispr Flow - Status
 
-Last updated: 2026-03-19
+Last updated: 2026-03-20
 
 ## Snapshot
 
@@ -11,6 +11,11 @@ Last updated: 2026-03-19
 ## Working State
 
 - Contributor process now enforces a pre-push housekeeping gate in `CONTRIBUTING.md` ("Housekeeping (Required Before Push)").
+- **Recent (2026-03-20)**:
+  - Overlay startup hardening: transparent WebView create now retries once with safe non-transparent fallback before disabling overlay for the session.
+  - New startup kill-switch `TRISPR_DISABLE_OVERLAY=1` skips overlay initialization for crash triage and recovery runs.
+  - FFmpeg packaging cleanup: committed `src-tauri/bin/ffmpeg/ffmpeg.exe` removed from git tracking; installer build now auto-fetches pinned FFmpeg 7.1.1 (`scripts/setup-ffmpeg.ps1`) with SHA256 + OPUS capability validation.
+  - Runtime FFmpeg checks now require `libopus` support for OPUS encode paths and dependency preflight reporting.
 - **Recent (2026-03-18)**:
   - UI: Prompt Style section promoted to top of AI Refinement tab (was buried 3 levels deep in collapsed expander).
   - Logging: daily log files now use `.txt` extension (`trispr-flow.YYYY-MM-DD.txt`); shutdown log entry added before `ExitProcess(0)` — normal exits now distinguishable from crashes.
@@ -37,7 +42,7 @@ Last updated: 2026-03-19
   - Benchmarked latency (PTT release → paste): **~7.5-8s on NVIDIA T500 + Q5 model** (Whisper + CUDA inference).
     - Baseline: ~55s on CPU alone (not viable for interactive use).
     - GPU speedup: **7x faster than CPU** (6.6s GPU vs 55s CPU for longer audio).
-  - FFmpeg bundled for OPUS encoding pipeline.
+  - FFmpeg for OPUS encoding is now provisioned at build-time (pinned download) and bundled into installer resources.
   - Direct Windows API exit to prevent WebView2 teardown hang on quit.
 - Mainline installer bundles both CUDA and Vulkan Whisper runtimes; backend selection happens in-app at runtime.
 

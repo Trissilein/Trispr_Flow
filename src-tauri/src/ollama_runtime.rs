@@ -957,11 +957,12 @@ pub(crate) fn kill_stale_ollama_pid(app: &AppHandle) {
 
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
+        let mut cmd = std::process::Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string(), "/T", "/F"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .status();
+            .creation_flags(CREATE_NO_WINDOW);
+        let _ = cmd.status();
     }
 
     #[cfg(not(target_os = "windows"))]

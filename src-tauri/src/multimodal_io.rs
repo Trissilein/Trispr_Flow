@@ -1,11 +1,25 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 #[cfg(target_os = "windows")]
 use tauri::{AppHandle, Manager};
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(target_os = "windows")]
+fn apply_hidden_creation_flags(cmd: &mut Command) {
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
+fn apply_hidden_creation_flags(_cmd: &mut Command) {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionSourceInfo {
@@ -319,8 +333,10 @@ $bitmap.Dispose()
         max_width = max_width,
         jpeg_quality = jpeg_quality
     );
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", &script])
+    let mut cmd = Command::new("powershell.exe");
+    cmd.args(["-NoProfile", "-Command", &script]);
+    apply_hidden_creation_flags(&mut cmd);
+    let output = cmd
         .output()
         .map_err(|error| format!("Failed to start vision capture: {error}"))?;
 
@@ -389,13 +405,14 @@ pub fn list_tts_providers() -> Vec<TtsProviderInfo> {
 
 #[cfg(target_os = "windows")]
 fn list_windows_voices() -> Vec<TtsVoiceInfo> {
-    let output = Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name }",
-        ])
-        .output();
+    let mut cmd = Command::new("powershell.exe");
+    cmd.args([
+        "-NoProfile",
+        "-Command",
+        "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name }",
+    ]);
+    apply_hidden_creation_flags(&mut cmd);
+    let output = cmd.output();
 
     match output {
         Ok(out) if out.status.success() => {
@@ -495,8 +512,10 @@ pub fn speak_windows_native(text: &str, rate: f32, volume: f32) -> Result<(), St
     let script = format!(
         "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = {sapi_rate}; $s.Volume = {sapi_volume}; $s.Speak('{escaped_text}')"
     );
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", &script])
+    let mut cmd = Command::new("powershell.exe");
+    cmd.args(["-NoProfile", "-Command", &script]);
+    apply_hidden_creation_flags(&mut cmd);
+    let output = cmd
         .output()
         .map_err(|error| format!("Failed to start Windows TTS: {}", error))?;
     if !output.status.success() {

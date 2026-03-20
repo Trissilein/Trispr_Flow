@@ -845,15 +845,30 @@ export interface WhisperRuntimeDiagnostics {
   last_error: string;
 }
 
+export interface FrontendWatchdogDiagnostics {
+  recovery_count: number;
+  restart_count: number;
+  last_recovery_reason: string;
+  last_degraded_reason: string;
+}
+
 export interface RuntimeDiagnostics {
   ollama: OllamaRuntimeDiagnostics;
   whisper: WhisperRuntimeDiagnostics;
+  frontend_watchdog?: FrontendWatchdogDiagnostics;
 }
 
 export interface OverlayHealthEvent {
   status: "recovering" | "failed";
   attempt: number;
   reason: string;
+}
+
+export interface StabilityDegradedEvent {
+  reason: string;
+  recoveries_in_window: number;
+  restarts_in_window: number;
+  restart_blocked: boolean;
 }
 
 export interface StartupStatus {

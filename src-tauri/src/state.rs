@@ -18,7 +18,7 @@ use crate::overlay::OverlayController;
 use crate::paths::resolve_config_path;
 use crate::transcription::TranscribeRecorder;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, RwLock};
@@ -513,7 +513,7 @@ impl Default for Settings {
       main_window_width: None,
       main_window_height: None,
       main_window_monitor: None,
-      main_window_start_state: "normal".to_string(),
+      main_window_start_state: "tray".to_string(),
       whisper_gpu_layers: default_whisper_gpu_layers(),
     }
     }
@@ -659,6 +659,37 @@ impl Default for WhisperRuntimeDiagnostics {
 pub(crate) struct RuntimeDiagnostics {
     pub(crate) ollama: OllamaRuntimeDiagnostics,
     pub(crate) whisper: WhisperRuntimeDiagnostics,
+    pub(crate) frontend_watchdog: FrontendWatchdogDiagnostics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct FrontendWatchdogDiagnostics {
+    pub(crate) recovery_count: u64,
+    pub(crate) restart_count: u64,
+    pub(crate) last_recovery_reason: String,
+    pub(crate) last_degraded_reason: String,
+}
+
+impl Default for FrontendWatchdogDiagnostics {
+    fn default() -> Self {
+        Self {
+            recovery_count: 0,
+            restart_count: 0,
+            last_recovery_reason: String::new(),
+            last_degraded_reason: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct FrontendWatchdogState {
+    pub(crate) recovery_timestamps_ms: VecDeque<u64>,
+    pub(crate) restart_timestamps_ms: VecDeque<u64>,
+    pub(crate) recovery_count: u64,
+    pub(crate) restart_count: u64,
+    pub(crate) last_recovery_reason: String,
+    pub(crate) last_degraded_reason: String,
 }
 
 pub(crate) struct AppState {
@@ -699,6 +730,7 @@ pub(crate) struct AppState {
     pub(crate) frontend_last_heartbeat_ms: AtomicU64,
     pub(crate) frontend_watchdog_last_reload_ms: AtomicU64,
     pub(crate) frontend_watchdog_reload_count: AtomicU64,
+    pub(crate) frontend_watchdog_state: Mutex<FrontendWatchdogState>,
     pub(crate) tts_speaking: AtomicBool,
     #[cfg(target_os = "windows")]
     pub(crate) system_cluster_buffer: Mutex<SystemClusterBuffer>,

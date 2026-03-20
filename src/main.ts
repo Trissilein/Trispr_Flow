@@ -42,6 +42,7 @@ import type {
   TranscriptionResultEvent,
   TranscriptionRawResultEvent,
   DependencyPreflightReport,
+  StabilityDegradedEvent,
   StartupStatus,
 } from "./types";
 import {
@@ -143,6 +144,54 @@ let frontendHeartbeatReloadIssued = false;
 
 const FRONTEND_HEARTBEAT_INTERVAL_MS = 2_500;
 const FRONTEND_HEARTBEAT_RELOAD_THRESHOLD = 5;
+const AUTO_RELOAD_WINDOW_MS = 10 * 60_000;
+const AUTO_RELOAD_MAX_PER_WINDOW = 3;
+const AUTO_RELOAD_LEDGER_KEY = "trispr_flow_auto_reload_ledger_v1";
+
+function loadAutoReloadLedger(): number[] {
+  try {
+    const raw = window.sessionStorage.getItem(AUTO_RELOAD_LEDGER_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.timestamps_ms)) return [];
+    return parsed.timestamps_ms
+      .map((value: unknown) => Number(value))
+      .filter((value: number) => Number.isFinite(value) && value > 0);
+  } catch {
+    return [];
+  }
+}
+
+function saveAutoReloadLedger(timestamps: number[]): void {
+  try {
+    window.sessionStorage.setItem(AUTO_RELOAD_LEDGER_KEY, JSON.stringify({ timestamps_ms: timestamps }));
+  } catch {
+    // Ignore storage errors; watchdog still works without persistence.
+  }
+}
+
+function tryAutoReloadWithBudget(context: string): boolean {
+  const now = Date.now();
+  const timestamps = loadAutoReloadLedger().filter((ts) => now - ts <= AUTO_RELOAD_WINDOW_MS);
+  if (timestamps.length >= AUTO_RELOAD_MAX_PER_WINDOW) {
+    traceFrontendError("frontend.watchdog", "auto-reload suppressed (budget exhausted)", {
+      context,
+      budget: AUTO_RELOAD_MAX_PER_WINDOW,
+      window_ms: AUTO_RELOAD_WINDOW_MS,
+    });
+    showToast({
+      type: "warning",
+      title: "Auto-recovery paused",
+      message: "Too many automatic reload attempts. Please reopen Trispr Flow manually.",
+      duration: 9000,
+    });
+    return false;
+  }
+  timestamps.push(now);
+  saveAutoReloadLedger(timestamps);
+  window.location.reload();
+  return true;
+}
 
 type PendingDeferredPasteJob = {
   rawText: string;
@@ -335,7 +384,7 @@ async function sendFrontendHeartbeat(source: "startup" | "interval"): Promise<vo
       traceFrontendError("frontend.watchdog", "backend IPC heartbeat unavailable — reloading window", {
         failures: frontendHeartbeatFailureCount,
       });
-      window.location.reload();
+      tryAutoReloadWithBudget("heartbeat_ipc_unavailable");
     }
   }
 }
@@ -499,7 +548,13 @@ async function bootstrap() {
   const bootstrapWatchdog = setTimeout(() => {
     if (bootstrapWatchdogCleared) return;
     traceFrontendError("bootstrap", "startup timed out after 18 s — reloading window");
-    window.location.reload();
+    const reloaded = tryAutoReloadWithBudget("bootstrap_timeout");
+    if (!reloaded) {
+      if (dom.bootstrapLabel) {
+        dom.bootstrapLabel.textContent = "Startup recovery paused. Please reopen Trispr Flow.";
+      }
+      dom.bootstrapOverlay?.setAttribute("hidden", "");
+    }
   }, BOOTSTRAP_TIMEOUT_MS);
 
   // Phase 1: Load data from backend in parallel
@@ -967,6 +1022,27 @@ async function bootstrap() {
       setRuntimeDiagnostics(event.payload ?? null);
       renderHero();
       renderAIFallbackSettingsUi();
+    }),
+    listen<boolean>("app:instance-activated", () => {
+      traceFrontendInfo("app.single_instance", "existing instance activated from second launch");
+      showToast({
+        type: "info",
+        title: "Already running",
+        message: "Trispr Flow was already running and has been brought to the foreground.",
+        duration: 3500,
+      });
+    }),
+    listen<StabilityDegradedEvent>("app:stability-degraded", (event) => {
+      const payload = event.payload;
+      if (!payload) return;
+      const title = payload.restart_blocked ? "Stability degraded" : "Stability recovery";
+      showToast({
+        type: payload.restart_blocked ? "warning" : "info",
+        title,
+        message: payload.reason,
+        duration: 7000,
+      });
+      traceFrontendWarn("frontend.watchdog", "stability event", payload);
     }),
     listen<OverlayHealthEvent>("overlay:health", (event) => {
       const payload = event.payload ?? null;

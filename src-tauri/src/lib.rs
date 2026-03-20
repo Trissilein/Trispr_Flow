@@ -45,7 +45,7 @@ use std::sync::Mutex;
 static OLLAMA_DIAG_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
 static OLLAMA_DIAG_NEXT_MS: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_os = "windows")]
-use std::sync::OnceLock;
+use std::os::windows::process::CommandExt;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::{CheckMenuItem, MenuItem};
@@ -105,20 +105,20 @@ use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, last_transcription_accelerator,
     start_transcribe_monitor, stop_transcribe_monitor, toggle_transcribe_state, transcribe_audio,
 };
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::System::Threading::CreateMutexW;
-
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
 const TRAY_PULSE_FRAMES: usize = 6;
 const TRAY_PULSE_CYCLE_MS: u64 = 1600;
 const BACKLOG_AUTOEXPAND_TIMEOUT_MS: u64 = 5_000;
-const FRONTEND_HEARTBEAT_STALE_MS: u64 = 45_000;
+const FRONTEND_HEARTBEAT_STALE_MS: u64 = 30_000;
 const FRONTEND_WATCHDOG_CHECK_MS: u64 = 10_000;
 const FRONTEND_WATCHDOG_COOLDOWN_MS: u64 = 90_000;
-const FRONTEND_WATCHDOG_STARTUP_GRACE_MS: u64 = 30_000;
+const FRONTEND_WATCHDOG_STARTUP_GRACE_MS: u64 = 15_000;
+const FRONTEND_WATCHDOG_RECOVERY_WINDOW_MS: u64 = 10 * 60_000;
+const FRONTEND_WATCHDOG_RECOVERY_RESTART_THRESHOLD: usize = 3;
+const FRONTEND_WATCHDOG_RESTART_WINDOW_MS: u64 = 60 * 60_000;
+const FRONTEND_WATCHDOG_RESTART_MAX_PER_WINDOW: usize = 2;
+const FRONTEND_WATCHDOG_RESTART_LEDGER_FILE: &str = "frontend_watchdog_restarts.json";
 const CLIPBOARD_RETRY_INTERVAL_MS: u64 = 50;
 const CLIPBOARD_CAPTURE_TIMEOUT_MS: u64 = 1_000;
 const CLIPBOARD_RESTORE_DELAY_MS: u64 = 350;
@@ -133,48 +133,67 @@ static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
 static MAIN_WINDOW_RESTORED: AtomicBool = AtomicBool::new(false);
 static CLIPBOARD_PASTE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static LAST_GEOMETRY_SAVE_MS: AtomicU64 = AtomicU64::new(0);
-#[cfg(target_os = "windows")]
-static SINGLE_INSTANCE_MUTEX_HANDLE: OnceLock<isize> = OnceLock::new();
 
-fn show_already_running_dialog() {
-    eprintln!("Trispr Flow is already running. Please close the existing instance first.");
-    let _ = rfd::MessageDialog::new()
-        .set_level(rfd::MessageLevel::Error)
-        .set_title("Trispr Flow läuft bereits")
-        .set_description(
-            "Trispr Flow ist bereits gestartet.\nBitte schließe die laufende Instanz zuerst.",
-        )
-        .show();
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+struct FrontendRestartLedger {
+    timestamps_ms: Vec<u64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct StabilityDegradedEvent {
+    reason: String,
+    recoveries_in_window: u64,
+    restarts_in_window: u64,
+    restart_blocked: bool,
 }
 
 #[cfg(target_os = "windows")]
-fn acquire_single_instance_guard() -> bool {
-    let mutex_name: Vec<u16> = "Global\\com.trispr.flow.single_instance"
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
-    if handle.is_null() {
-        warn!("Failed to create single-instance mutex; continuing without lock.");
-        return true;
-    }
-
-    let last_error = unsafe { GetLastError() };
-    if last_error == ERROR_ALREADY_EXISTS {
-        unsafe {
-            let _ = CloseHandle(handle);
-        }
-        return false;
-    }
-
-    let _ = SINGLE_INSTANCE_MUTEX_HANDLE.set(handle as isize);
-    true
+#[cfg(target_os = "windows")]
+fn apply_hidden_creation_flags(cmd: &mut std::process::Command) {
+    cmd.creation_flags(CREATE_NO_WINDOW);
 }
 
 #[cfg(not(target_os = "windows"))]
-fn acquire_single_instance_guard() -> bool {
-    true
+fn apply_hidden_creation_flags(_cmd: &mut std::process::Command) {}
+
+fn load_frontend_restart_ledger(app: &AppHandle) -> FrontendRestartLedger {
+    let path = crate::paths::resolve_base_dir(app).join(FRONTEND_WATCHDOG_RESTART_LEDGER_FILE);
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return FrontendRestartLedger::default();
+    };
+    serde_json::from_str::<FrontendRestartLedger>(&raw).unwrap_or_default()
+}
+
+fn save_frontend_restart_ledger(app: &AppHandle, ledger: &FrontendRestartLedger) {
+    let path = crate::paths::resolve_base_dir(app).join(FRONTEND_WATCHDOG_RESTART_LEDGER_FILE);
+    let Ok(json) = serde_json::to_string(ledger) else {
+        return;
+    };
+    let _ = std::fs::write(path, json);
+}
+
+fn prune_timestamps_window(timestamps: &mut Vec<u64>, now_ms: u64, window_ms: u64) {
+    timestamps.retain(|ts| now_ms.saturating_sub(*ts) <= window_ms);
+}
+
+fn request_controlled_self_restart(app: &AppHandle, reason: &str) -> Result<(), String> {
+    let current_exe =
+        std::env::current_exe().map_err(|err| format!("current_exe failed: {}", err))?;
+    let mut cmd = std::process::Command::new(&current_exe);
+    for arg in std::env::args_os().skip(1) {
+        cmd.arg(arg);
+    }
+    apply_hidden_creation_flags(&mut cmd);
+    cmd.spawn()
+        .map_err(|err| format!("Failed to spawn replacement process: {}", err))?;
+    warn!(
+        "Frontend watchdog requested controlled self-restart (reason={})",
+        reason
+    );
+    app.exit(0);
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -184,10 +203,12 @@ fn apply_local_dump_registry_value(
     value_type: &str,
     value_data: &str,
 ) -> Result<(), String> {
-    let status = std::process::Command::new("reg")
-        .args([
-            "add", key_path, "/v", value_name, "/t", value_type, "/d", value_data, "/f",
-        ])
+    let mut cmd = std::process::Command::new("reg");
+    cmd.args([
+        "add", key_path, "/v", value_name, "/t", value_type, "/d", value_data, "/f",
+    ]);
+    apply_hidden_creation_flags(&mut cmd);
+    let status = cmd
         .status()
         .map_err(|err| format!("reg add failed: {}", err))?;
     if status.success() {
@@ -427,6 +448,10 @@ pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> 
     }
 
     update_runtime_diagnostics(app, state, |diagnostics| {
+        let watchdog_snapshot = state
+            .frontend_watchdog_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         diagnostics.ollama.configured_path = settings.providers.ollama.runtime_path.clone();
         diagnostics.ollama.detected = !settings.providers.ollama.runtime_path.trim().is_empty();
         diagnostics.ollama.managed_pid = managed_pid;
@@ -447,6 +472,12 @@ pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> 
         if diagnostics.whisper.mode == "idle" && settings.capture_enabled {
             diagnostics.whisper.mode = "cli".to_string();
         }
+        diagnostics.frontend_watchdog.recovery_count = watchdog_snapshot.recovery_count;
+        diagnostics.frontend_watchdog.restart_count = watchdog_snapshot.restart_count;
+        diagnostics.frontend_watchdog.last_recovery_reason =
+            watchdog_snapshot.last_recovery_reason.clone();
+        diagnostics.frontend_watchdog.last_degraded_reason =
+            watchdog_snapshot.last_degraded_reason.clone();
     })
 }
 
@@ -578,11 +609,12 @@ fn terminate_child_process(label: &str, child: &mut std::process::Child) {
     #[cfg(target_os = "windows")]
     {
         let pid_string = pid.to_string();
-        let forced = std::process::Command::new("taskkill")
-            .args(["/PID", pid_string.as_str(), "/T", "/F"])
+        let mut cmd = std::process::Command::new("taskkill");
+        cmd.args(["/PID", pid_string.as_str(), "/T", "/F"])
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+            .stderr(std::process::Stdio::null());
+        apply_hidden_creation_flags(&mut cmd);
+        let forced = cmd.status();
         match forced {
             Ok(status) if !status.success() => {
                 warn!("Forced taskkill returned non-zero exit for {label} (pid {pid}): {status}");
@@ -4844,9 +4876,10 @@ struct DependencyPreflightReport {
 
 #[cfg(target_os = "windows")]
 fn check_powershell_available() -> bool {
-    std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", "$PSVersionTable.PSVersion.Major"])
-        .output()
+    let mut cmd = std::process::Command::new("powershell.exe");
+    cmd.args(["-NoProfile", "-Command", "$PSVersionTable.PSVersion.Major"]);
+    apply_hidden_creation_flags(&mut cmd);
+    cmd.output()
         .map(|output| output.status.success())
         .unwrap_or(false)
 }
@@ -5994,7 +6027,11 @@ fn restore_window_geometry(window: &tauri::WebviewWindow, settings: &Settings) {
     }
 }
 
-fn recreate_main_window_from_config(app: &AppHandle, reason: &str) -> Result<(), String> {
+fn recreate_main_window_from_config(
+    app: &AppHandle,
+    reason: &str,
+    should_show: bool,
+) -> Result<(), String> {
     let app_config = app.config();
     let window_config = app_config
         .app
@@ -6011,9 +6048,14 @@ fn recreate_main_window_from_config(app: &AppHandle, reason: &str) -> Result<(),
 
     let settings = load_settings(app);
     restore_window_geometry(&window, &settings);
-    let _ = window.show();
-    let _ = window.set_skip_taskbar(false);
-    let _ = window.set_focus();
+    if should_show {
+        let _ = window.show();
+        let _ = window.set_skip_taskbar(false);
+        let _ = window.set_focus();
+    } else {
+        let _ = window.hide();
+        let _ = window.set_skip_taskbar(true);
+    }
     info!(
         "Main webview window recreated after watchdog recovery ({})",
         reason
@@ -6023,12 +6065,15 @@ fn recreate_main_window_from_config(app: &AppHandle, reason: &str) -> Result<(),
 
 fn recover_main_window_webview(app: &AppHandle, reason: &str) -> Result<(), String> {
     let mut attempts: Vec<String> = Vec::new();
+    let mut was_visible = load_settings(app).main_window_start_state != "tray";
 
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
+        was_visible = window.is_visible().unwrap_or(true);
         match window.reload() {
             Ok(_) => {
-                let _ = window.set_focus();
+                if was_visible {
+                    let _ = window.set_focus();
+                }
                 return Ok(());
             }
             Err(err) => {
@@ -6039,7 +6084,9 @@ fn recover_main_window_webview(app: &AppHandle, reason: &str) -> Result<(), Stri
         std::thread::sleep(Duration::from_millis(250));
         match window.reload() {
             Ok(_) => {
-                let _ = window.set_focus();
+                if was_visible {
+                    let _ = window.set_focus();
+                }
                 return Ok(());
             }
             Err(err) => {
@@ -6056,7 +6103,7 @@ fn recover_main_window_webview(app: &AppHandle, reason: &str) -> Result<(), Stri
         attempts.push("main window handle missing".to_string());
     }
 
-    recreate_main_window_from_config(app, reason).map_err(|err| {
+    recreate_main_window_from_config(app, reason, was_visible).map_err(|err| {
         attempts.push(err);
         format!(
             "Main webview recovery failed during {}: {}",
@@ -6199,15 +6246,14 @@ pub fn run() {
         default_hook(info);
     }));
 
-    if !acquire_single_instance_guard() {
-        warn!("Second instance launch blocked: Trispr Flow is already running.");
-        show_already_running_dialog();
-        return;
-    }
-
     info!("Starting Trispr Flow application");
-    let builder =
-        tauri::Builder::default().plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            warn!("Second instance launch blocked: focusing existing Trispr Flow window.");
+            show_main_window(app);
+            let _ = app.emit("app:instance-activated", true);
+        }));
     with_dialog_plugin(builder)
         .setup(|app| {
             // Cold-start buffer: suppress Ollama pings for the first 10 s so the
@@ -6289,12 +6335,32 @@ pub fn run() {
                 frontend_last_heartbeat_ms: AtomicU64::new(crate::util::now_ms()),
                 frontend_watchdog_last_reload_ms: AtomicU64::new(0),
                 frontend_watchdog_reload_count: AtomicU64::new(0),
+                frontend_watchdog_state: Mutex::new(state::FrontendWatchdogState::default()),
                 tts_speaking: AtomicBool::new(false),
                 #[cfg(target_os = "windows")]
                 system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
                 #[cfg(target_os = "windows")]
                 managed_process_job: create_managed_process_job(),
             });
+
+            {
+                let state = app.state::<AppState>();
+                let now = crate::util::now_ms();
+                let mut ledger = load_frontend_restart_ledger(app.handle());
+                prune_timestamps_window(
+                    &mut ledger.timestamps_ms,
+                    now,
+                    FRONTEND_WATCHDOG_RESTART_WINDOW_MS,
+                );
+                save_frontend_restart_ledger(app.handle(), &ledger);
+                let mut watchdog_state = state
+                    .frontend_watchdog_state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                watchdog_state.restart_count = ledger.timestamps_ms.len() as u64;
+                watchdog_state.restart_timestamps_ms =
+                    ledger.timestamps_ms.iter().copied().collect();
+            }
 
             configure_windows_local_dumps(app.handle());
 
@@ -6424,7 +6490,7 @@ pub fn run() {
             });
 
             // Frontend watchdog: if renderer heartbeats stop for too long while the
-            // main window is visible, attempt webview reload/recreation.
+            // app is running, attempt webview reload/recreation.
             {
                 let app_handle = app.handle().clone();
                 let started_ms = crate::util::now_ms();
@@ -6455,10 +6521,7 @@ pub fn run() {
                         let Some(main_window) = app_handle.get_webview_window("main") else {
                             continue;
                         };
-
-                        if !main_window.is_visible().unwrap_or(true) {
-                            continue;
-                        }
+                        drop(main_window);
 
                         warn!(
                             "Frontend heartbeat stale ({} ms). Triggering main webview recovery.",
@@ -6475,10 +6538,145 @@ pub fn run() {
                                 let recovery_count =
                                     state.frontend_watchdog_reload_count.fetch_add(1, Ordering::Relaxed)
                                         + 1;
+                                let (
+                                    should_restart,
+                                    recoveries_in_window,
+                                    restarts_in_window,
+                                    degraded_event,
+                                ) = {
+                                    let mut should_restart_local = false;
+                                    let mut restarts_in_window_local = 0usize;
+                                    let mut degraded_event_local: Option<StabilityDegradedEvent> = None;
+                                    let recoveries_in_window_local: usize;
+
+                                    {
+                                        let mut watchdog_state = state
+                                            .frontend_watchdog_state
+                                            .lock()
+                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                        watchdog_state.recovery_count = recovery_count;
+                                        watchdog_state.last_recovery_reason = format!(
+                                            "heartbeat_stale (stale_ms={})",
+                                            heartbeat_age_ms
+                                        );
+                                        watchdog_state.recovery_timestamps_ms.push_back(now);
+                                        while let Some(oldest) =
+                                            watchdog_state.recovery_timestamps_ms.front().copied()
+                                        {
+                                            if now.saturating_sub(oldest)
+                                                > FRONTEND_WATCHDOG_RECOVERY_WINDOW_MS
+                                            {
+                                                let _ =
+                                                    watchdog_state.recovery_timestamps_ms.pop_front();
+                                            } else {
+                                                break;
+                                            }
+                                        }
+                                        let recoveries_now =
+                                            watchdog_state.recovery_timestamps_ms.len();
+                                        recoveries_in_window_local = recoveries_now;
+
+                                        if recoveries_now
+                                            >= FRONTEND_WATCHDOG_RECOVERY_RESTART_THRESHOLD
+                                        {
+                                            let mut ledger =
+                                                load_frontend_restart_ledger(&app_handle);
+                                            prune_timestamps_window(
+                                                &mut ledger.timestamps_ms,
+                                                now,
+                                                FRONTEND_WATCHDOG_RESTART_WINDOW_MS,
+                                            );
+                                            restarts_in_window_local = ledger.timestamps_ms.len();
+
+                                            if restarts_in_window_local
+                                                < FRONTEND_WATCHDOG_RESTART_MAX_PER_WINDOW
+                                            {
+                                                ledger.timestamps_ms.push(now);
+                                                restarts_in_window_local =
+                                                    ledger.timestamps_ms.len();
+                                                save_frontend_restart_ledger(&app_handle, &ledger);
+
+                                                watchdog_state.restart_timestamps_ms.push_back(now);
+                                                while let Some(oldest) = watchdog_state
+                                                    .restart_timestamps_ms
+                                                    .front()
+                                                    .copied()
+                                                {
+                                                    if now.saturating_sub(oldest)
+                                                        > FRONTEND_WATCHDOG_RESTART_WINDOW_MS
+                                                    {
+                                                        let _ = watchdog_state
+                                                            .restart_timestamps_ms
+                                                            .pop_front();
+                                                    } else {
+                                                        break;
+                                                    }
+                                                }
+                                                watchdog_state.restart_count =
+                                                    watchdog_state.restart_count.saturating_add(1);
+                                                should_restart_local = true;
+                                            } else {
+                                                let reason = format!(
+                                                    "Frontend stability degraded: {} recoveries in {} min, restart budget exhausted ({}/{}) in the last 60 min.",
+                                                    recoveries_now,
+                                                    FRONTEND_WATCHDOG_RECOVERY_WINDOW_MS / 60_000,
+                                                    restarts_in_window_local,
+                                                    FRONTEND_WATCHDOG_RESTART_MAX_PER_WINDOW
+                                                );
+                                                let changed =
+                                                    watchdog_state.last_degraded_reason != reason;
+                                                watchdog_state.last_degraded_reason =
+                                                    reason.clone();
+                                                if changed {
+                                                    degraded_event_local =
+                                                        Some(StabilityDegradedEvent {
+                                                            reason,
+                                                            recoveries_in_window:
+                                                                recoveries_now as u64,
+                                                            restarts_in_window:
+                                                                restarts_in_window_local as u64,
+                                                            restart_blocked: true,
+                                                        });
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    (
+                                        should_restart_local,
+                                        recoveries_in_window_local,
+                                        restarts_in_window_local,
+                                        degraded_event_local,
+                                    )
+                                };
+
                                 warn!(
                                     "Main webview recovery completed (count={}, stale_ms={})",
                                     recovery_count, heartbeat_age_ms
                                 );
+                                refresh_runtime_diagnostics(&app_handle, state.inner());
+
+                                if let Some(event) = degraded_event {
+                                    warn!("{}", event.reason);
+                                    let _ = app_handle.emit("app:stability-degraded", &event);
+                                    continue;
+                                }
+
+                                if should_restart {
+                                    let event = StabilityDegradedEvent {
+                                        reason: "Repeated frontend recoveries detected; restarting app to restore stability.".to_string(),
+                                        recoveries_in_window: recoveries_in_window as u64,
+                                        restarts_in_window: restarts_in_window as u64,
+                                        restart_blocked: false,
+                                    };
+                                    let _ = app_handle.emit("app:stability-degraded", &event);
+                                    if let Err(err) =
+                                        request_controlled_self_restart(&app_handle, "frontend_watchdog")
+                                    {
+                                        warn!("Automatic self-restart failed: {}", err);
+                                    }
+                                    return;
+                                }
                             }
                             Err(err) => {
                                 warn!("Main webview recovery failed: {}", err);
@@ -6526,7 +6724,7 @@ pub fn run() {
             }
             info!("[DIAG] setup: sync_ptt_hot_standby...");
             crate::audio::sync_ptt_hot_standby(app.handle(), &app.state::<AppState>(), &settings);
-            info!("[DIAG] setup: ptt done, creating overlay...");
+            info!("[DIAG] setup: ptt done, priming overlay state...");
 
             let overlay_app = app.handle().clone();
             app.listen("overlay:ready", move |_| {
@@ -6537,17 +6735,13 @@ pub fn run() {
             if env_flag("TRISPR_DISABLE_OVERLAY") {
                 warn!("Overlay initialization skipped via TRISPR_DISABLE_OVERLAY=1");
             } else {
-                if let Err(err) = overlay::create_overlay_window(&app.handle()) {
-                    eprintln!("⚠ Failed to create overlay window: {}", err);
-                }
-                info!("[DIAG] setup: overlay window created, applying settings...");
                 let overlay_settings = build_overlay_settings(&settings);
-                if let Err(err) = overlay::apply_overlay_settings(&app.handle(), &overlay_settings)
-                {
-                    eprintln!("⚠ Failed to apply overlay settings: {}", err);
-                }
-                let _ = overlay::emit_capture_idle_overlay(&app.handle(), &settings);
-                info!("[DIAG] setup: overlay fully configured, building tray...");
+                overlay::prime_overlay_controller(
+                    &app.handle(),
+                    Some(overlay_settings),
+                    overlay::idle_overlay_state_for_settings(&settings),
+                );
+                info!("[DIAG] setup: overlay state primed (lazy create), building tray...");
             }
 
             let icon = {
@@ -6739,6 +6933,7 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let window_settings = load_settings(app.handle());
                 restore_window_geometry(&window, &window_settings);
+                MAIN_WINDOW_RESTORED.store(true, Ordering::Release);
 
                 // Restore window visibility state from last session
                 match window_settings.main_window_start_state.as_str() {
@@ -6751,10 +6946,14 @@ pub fn run() {
                     "minimized" => {
                         // Start minimized
                         info!("Restoring window state: minimized");
+                        let _ = window.show();
+                        let _ = window.set_skip_taskbar(false);
                         let _ = window.minimize();
                     }
                     _ => {
-                        // "normal" — default behavior, window shows normally
+                        // "normal" — explicitly show from hidden startup config.
+                        let _ = window.show();
+                        let _ = window.set_skip_taskbar(false);
                     }
                 }
             }

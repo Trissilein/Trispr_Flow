@@ -16,6 +16,7 @@
         "title": "Trispr Flow",
         "width": 1120,
         "height": 820,
+        "visible": false,
         "resizable": true,
         "minWidth": 1020,
         "minHeight": 700

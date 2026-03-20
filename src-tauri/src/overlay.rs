@@ -96,6 +96,20 @@ fn emit_overlay_health(app: &AppHandle, status: &str, attempt: u32, reason: impl
     );
 }
 
+pub fn prime_overlay_controller(
+    app: &AppHandle,
+    desired_settings: Option<OverlaySettings>,
+    desired_state: OverlayState,
+) {
+    with_overlay_controller(app, |controller| {
+        controller.desired_settings = desired_settings;
+        controller.desired_state = desired_state.clone();
+        if !matches!(desired_state, OverlayState::Recording) {
+            controller.last_level = 0.0;
+        }
+    });
+}
+
 /// Called when the overlay webview signals readiness.
 /// Settings, state and last level are replayed from the cached desired state.
 pub fn mark_overlay_ready(app: &AppHandle) {
@@ -402,6 +416,11 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
             controller.last_level = 0.0;
         }
     });
+    if app.get_webview_window("overlay").is_none()
+        && !matches!(state, OverlayState::Recording | OverlayState::Transcribing)
+    {
+        return Ok(());
+    }
     let window = ensure_overlay_window(app, "state_update")?;
     apply_overlay_state_to_window(app, &window, state)
 }
@@ -410,6 +429,9 @@ pub fn update_overlay_refining_indicator(app: &AppHandle, active: bool) -> Resul
     with_overlay_controller(app, |controller| {
         controller.refining_active = active;
     });
+    if app.get_webview_window("overlay").is_none() && !active {
+        return Ok(());
+    }
     let window = ensure_overlay_window(app, "refining_update")?;
     apply_overlay_refining_to_window(app, &window, active)
 }
@@ -425,6 +447,9 @@ pub fn sync_overlay_level(app: &AppHandle, level: f64) -> Result<(), String> {
     });
     if !matches!(desired_state, OverlayState::Recording) {
         if matches!(desired_state, OverlayState::Hidden) {
+            return Ok(());
+        }
+        if app.get_webview_window("overlay").is_none() {
             return Ok(());
         }
         let window = ensure_overlay_window(app, "level_reset")?;
@@ -603,6 +628,9 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
     with_overlay_controller(app, |controller| {
         controller.desired_settings = Some(settings.clone());
     });
+    if app.get_webview_window("overlay").is_none() {
+        return Ok(());
+    }
     let window = ensure_overlay_window(app, "settings_update")?;
     let settings_clone = settings.clone();
     app.run_on_main_thread(move || {

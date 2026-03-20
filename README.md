@@ -2,7 +2,7 @@
 
 > GPU-first offline dictation + system audio transcription with optional AI refinement, privacy-first by default
 
-[![Version](https://img.shields.io/badge/version-0.7.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.1-blue.svg)](CHANGELOG.md)
 [![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
 [![macOS](https://img.shields.io/badge/macOS-000000?style=flat&logo=apple&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

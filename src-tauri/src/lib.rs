@@ -110,8 +110,8 @@ const TRAY_ICON_ID: &str = "main-tray";
 const TRAY_PULSE_FRAMES: usize = 6;
 const TRAY_PULSE_CYCLE_MS: u64 = 1600;
 const BACKLOG_AUTOEXPAND_TIMEOUT_MS: u64 = 5_000;
-const FRONTEND_HEARTBEAT_STALE_MS: u64 = 30_000;
-const FRONTEND_WATCHDOG_CHECK_MS: u64 = 10_000;
+const FRONTEND_HEARTBEAT_STALE_MS: u64 = 15_000;
+const FRONTEND_WATCHDOG_CHECK_MS: u64 = 5_000;
 const FRONTEND_WATCHDOG_COOLDOWN_MS: u64 = 90_000;
 const FRONTEND_WATCHDOG_STARTUP_GRACE_MS: u64 = 15_000;
 const FRONTEND_WATCHDOG_RECOVERY_WINDOW_MS: u64 = 10 * 60_000;
@@ -133,6 +133,8 @@ static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
 static MAIN_WINDOW_RESTORED: AtomicBool = AtomicBool::new(false);
 static CLIPBOARD_PASTE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static LAST_GEOMETRY_SAVE_MS: AtomicU64 = AtomicU64::new(0);
+static PTT_KEY_HELD: AtomicBool = AtomicBool::new(false);
+static PTT_PRESS_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 struct FrontendRestartLedger {
@@ -912,9 +914,45 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         match manager.on_shortcut(ptt, |app, _shortcut, event| {
             let app = app.clone();
             if event.state == ShortcutState::Pressed {
+                PTT_KEY_HELD.store(true, Ordering::Release);
                 info!("PTT hotkey pressed");
-                let _ = crate::audio::handle_ptt_press(&app);
+                if PTT_PRESS_IN_FLIGHT
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    crate::util::spawn_guarded("ptt_hotkey_press", move || {
+                        struct InFlightReset;
+                        impl Drop for InFlightReset {
+                            fn drop(&mut self) {
+                                PTT_PRESS_IN_FLIGHT.store(false, Ordering::Release);
+                            }
+                        }
+                        let _in_flight_reset = InFlightReset;
+
+                        if let Err(err) = crate::audio::handle_ptt_press(&app) {
+                            error!("PTT hotkey press handler failed: {}", err);
+                            emit_error(
+                                &app,
+                                AppError::AudioDevice(format!(
+                                    "PTT startup failed: {}",
+                                    err.trim()
+                                )),
+                                Some("PTT"),
+                            );
+                            return;
+                        }
+
+                        // Release can arrive while press-handling work is still in flight.
+                        // If so, complete the pending stop after press initialization.
+                        if !PTT_KEY_HELD.load(Ordering::Acquire) {
+                            crate::audio::handle_ptt_release_async(app.clone());
+                        }
+                    });
+                } else {
+                    warn!("PTT press ignored while previous press handling is still active");
+                }
             } else {
+                PTT_KEY_HELD.store(false, Ordering::Release);
                 info!("PTT hotkey released");
                 crate::audio::handle_ptt_release_async(app);
             }

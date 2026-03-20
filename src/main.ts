@@ -144,6 +144,7 @@ let frontendHeartbeatReloadIssued = false;
 
 const FRONTEND_HEARTBEAT_INTERVAL_MS = 2_500;
 const FRONTEND_HEARTBEAT_RELOAD_THRESHOLD = 5;
+const FRONTEND_HEARTBEAT_IPC_TIMEOUT_MS = 1_500;
 const AUTO_RELOAD_WINDOW_MS = 10 * 60_000;
 const AUTO_RELOAD_MAX_PER_WINDOW = 3;
 const AUTO_RELOAD_LEDGER_KEY = "trispr_flow_auto_reload_ledger_v1";
@@ -358,7 +359,17 @@ function handleDeferredPasteTimeout(jobId: string): void {
 
 async function sendFrontendHeartbeat(source: "startup" | "interval"): Promise<void> {
   try {
-    await invoke("frontend_heartbeat");
+    await new Promise<void>((resolve, reject) => {
+      const timeoutHandle = window.setTimeout(() => {
+        reject(new Error(`frontend_heartbeat timed out after ${FRONTEND_HEARTBEAT_IPC_TIMEOUT_MS}ms`));
+      }, FRONTEND_HEARTBEAT_IPC_TIMEOUT_MS);
+      void invoke("frontend_heartbeat")
+        .then(() => resolve())
+        .catch((error) => reject(error))
+        .finally(() => {
+          window.clearTimeout(timeoutHandle);
+        });
+    });
     if (frontendHeartbeatFailureCount > 0) {
       traceFrontendInfo("frontend.watchdog", "frontend heartbeat recovered", {
         source,

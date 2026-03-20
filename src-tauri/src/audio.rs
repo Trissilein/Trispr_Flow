@@ -2377,6 +2377,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
 }
 
 pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
+    info!("handle_ptt_press: enter");
     let state = app.state::<AppState>();
     let settings = state
         .settings
@@ -2384,16 +2385,33 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
     if !settings.capture_enabled {
+        info!("handle_ptt_press: capture disabled -> no-op");
         return Ok(());
     }
     if settings.mode != "ptt" {
+        info!("handle_ptt_press: mode is '{}' -> no-op", settings.mode);
         return Ok(());
     }
 
     if settings.ptt_use_vad {
-        start_vad_monitor(app, &state, &settings)
+        let result = start_vad_monitor(app, &state, &settings);
+        if let Err(err) = &result {
+            warn!("handle_ptt_press: start_vad_monitor failed: {}", err);
+        } else {
+            info!("handle_ptt_press: start_vad_monitor ok");
+        }
+        result
     } else {
-        start_recording_with_settings(app, &state, &settings)
+        let result = start_recording_with_settings(app, &state, &settings);
+        if let Err(err) = &result {
+            warn!(
+                "handle_ptt_press: start_recording_with_settings failed: {}",
+                err
+            );
+        } else {
+            info!("handle_ptt_press: start_recording_with_settings ok");
+        }
+        result
     }
 }
 

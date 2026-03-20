@@ -9,6 +9,7 @@ use tracing::warn;
 /// retrying and blocking threads.  The overlay is cosmetic — the app must
 /// never freeze because of it.
 static OVERLAY_CREATION_FAILED: AtomicBool = AtomicBool::new(false);
+static OVERLAY_CREATE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -408,6 +409,40 @@ pub fn ensure_overlay_window(app: &AppHandle, reason: &str) -> Result<WebviewWin
     Err(last_error.unwrap_or_else(|| "Overlay recovery failed".to_string()))
 }
 
+fn schedule_overlay_window_creation(app: &AppHandle, reason: &str) {
+    if OVERLAY_CREATION_FAILED.load(Ordering::Relaxed) {
+        return;
+    }
+    if app.get_webview_window("overlay").is_some() {
+        return;
+    }
+    if OVERLAY_CREATE_IN_FLIGHT
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+
+    let app_handle = app.clone();
+    let reason_owned = reason.to_string();
+    crate::util::spawn_guarded("overlay_create_async", move || {
+        struct InFlightReset;
+        impl Drop for InFlightReset {
+            fn drop(&mut self) {
+                OVERLAY_CREATE_IN_FLIGHT.store(false, Ordering::Release);
+            }
+        }
+        let _in_flight_reset = InFlightReset;
+
+        if let Err(err) = ensure_overlay_window(&app_handle, &reason_owned) {
+            warn!(
+                "Async overlay creation failed during {}: {}",
+                reason_owned, err
+            );
+        }
+    });
+}
+
 /// Updates the overlay state and shows/hides it accordingly
 pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), String> {
     with_overlay_controller(app, |controller| {
@@ -416,12 +451,12 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
             controller.last_level = 0.0;
         }
     });
-    if app.get_webview_window("overlay").is_none()
-        && !matches!(state, OverlayState::Recording | OverlayState::Transcribing)
-    {
+    let Some(window) = app.get_webview_window("overlay") else {
+        if matches!(state, OverlayState::Recording | OverlayState::Transcribing) {
+            schedule_overlay_window_creation(app, "state_update");
+        }
         return Ok(());
-    }
-    let window = ensure_overlay_window(app, "state_update")?;
+    };
     apply_overlay_state_to_window(app, &window, state)
 }
 
@@ -429,10 +464,12 @@ pub fn update_overlay_refining_indicator(app: &AppHandle, active: bool) -> Resul
     with_overlay_controller(app, |controller| {
         controller.refining_active = active;
     });
-    if app.get_webview_window("overlay").is_none() && !active {
+    let Some(window) = app.get_webview_window("overlay") else {
+        if active {
+            schedule_overlay_window_creation(app, "refining_update");
+        }
         return Ok(());
-    }
-    let window = ensure_overlay_window(app, "refining_update")?;
+    };
     apply_overlay_refining_to_window(app, &window, active)
 }
 
@@ -445,20 +482,23 @@ pub fn sync_overlay_level(app: &AppHandle, level: f64) -> Result<(), String> {
         }
         controller.desired_state.clone()
     });
+
+    let Some(window) = app.get_webview_window("overlay") else {
+        if matches!(desired_state, OverlayState::Recording) {
+            schedule_overlay_window_creation(app, "level_update");
+        }
+        return Ok(());
+    };
+
     if !matches!(desired_state, OverlayState::Recording) {
         if matches!(desired_state, OverlayState::Hidden) {
             return Ok(());
         }
-        if app.get_webview_window("overlay").is_none() {
-            return Ok(());
-        }
-        let window = ensure_overlay_window(app, "level_reset")?;
         return apply_overlay_level_to_window(&window, 0.0);
     }
     if matches!(desired_state, OverlayState::Hidden) {
         return Ok(());
     }
-    let window = ensure_overlay_window(app, "level_update")?;
     apply_overlay_level_to_window(&window, level)
 }
 

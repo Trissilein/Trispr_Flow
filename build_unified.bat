@@ -46,7 +46,16 @@ if not "!ERRORLEVEL!"=="0" goto :fail
 echo   OK: Frontend build successful
 echo.
 
-echo [4/5] Building Unified Installer...
+echo [4/6] Ensuring FFmpeg runtime...
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\setup-ffmpeg.ps1"
+if not "!ERRORLEVEL!"=="0" (
+    echo ERROR: FFmpeg setup failed.
+    goto :fail
+)
+echo   OK: FFmpeg ready
+echo.
+
+echo [5/6] Building Unified Installer...
 set "SOURCE=src-tauri\target\release\bundle\nsis\Trispr Flow_%VERSION%_x64-setup.exe"
 set "TARGET_NAME=TrsprFlw.v%VERSION%.unified-%BUILDSTAMP%.exe"
 
@@ -80,7 +89,7 @@ set "LAST_TARGET=installers\!TARGET_NAME!"
 echo   OK: UNIFIED -^> !LAST_TARGET!
 echo.
 
-echo [5/5] Build summary...
+echo [6/6] Build summary...
 if exist "!LAST_TARGET!" (
     for %%A in ("!LAST_TARGET!") do (
         set SIZE=%%~zA

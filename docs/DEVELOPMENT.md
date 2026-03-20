@@ -24,7 +24,8 @@ What it does:
   - `%LOCALAPPDATA%\Programs\Trispr Flow\resources\bin\cuda`
   - `%LOCALAPPDATA%\Programs\Trispr Flow\resources\bin\vulkan`
   - `%LOCALAPPDATA%\Programs\Trispr Flow\resources\bin\quantize.exe`
-- prints runtime readiness summary for transcription and quantization
+  - `%LOCALAPPDATA%\Programs\Trispr Flow\resources\bin\ffmpeg\ffmpeg.exe`
+- prints runtime readiness summary for transcription, quantization, and FFmpeg
 
 Optional flags:
 - `FIRST_RUN.bat -SkipNpmInstall`
@@ -46,7 +47,20 @@ rebuild-installer.bat
 
 Notes:
 - The script anchors to the repo root, so it works regardless of the current working directory.
+- The script now auto-runs `scripts/setup-ffmpeg.ps1` to fetch a pinned FFmpeg binary with `libopus` encoder support.
 - If Vite complains about HTML asset paths, confirm `vite.config.ts` keeps `root` and HTML inputs inside the repo root.
+
+## FFmpeg for OPUS (Windows)
+Installer builds require an OPUS-capable FFmpeg binary at `src-tauri/bin/ffmpeg/ffmpeg.exe`.
+
+Use:
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-ffmpeg.ps1
+```
+
+The setup script validates:
+- pinned SHA256 of the downloaded `ffmpeg.exe`
+- `encoder=libopus` availability (required by the OPUS pipeline)
 
 ## Test workflow
 ### Unit tests

@@ -128,25 +128,64 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         return Err("Overlay creation previously failed; skipping retry".to_string());
     }
 
-    let window =
-        tauri::WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("overlay.html".into()))
+    let window = match tauri::WebviewWindowBuilder::new(
+        app,
+        "overlay",
+        WebviewUrl::App("overlay.html".into()),
+    )
+    .title("Trispr Flow Overlay")
+    .inner_size(64.0, 64.0)
+    .resizable(false)
+    .decorations(false)
+    .shadow(false)
+    .transparent(true)
+    .focusable(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(false)
+    .build()
+    {
+        Ok(window) => window,
+        Err(primary_error) => {
+            // WebView2 can reject transparent/overlay-style windows on some systems.
+            // Retry once with a conservative non-transparent config before disabling overlay.
+            warn!(
+                "Overlay primary window create failed (transparent mode): {}. Retrying safe fallback.",
+                primary_error
+            );
+            match tauri::WebviewWindowBuilder::new(
+                app,
+                "overlay",
+                WebviewUrl::App("overlay.html".into()),
+            )
             .title("Trispr Flow Overlay")
             .inner_size(64.0, 64.0)
             .resizable(false)
             .decorations(false)
             .shadow(false)
-            .transparent(true)
+            .transparent(false)
             .focusable(false)
             .always_on_top(true)
             .skip_taskbar(true)
             .visible(false)
             .build()
-            .map_err(|e| {
-                let msg = format!("Failed to create overlay window: {}", e);
-                warn!("{} — overlay disabled for this session", msg);
-                OVERLAY_CREATION_FAILED.store(true, Ordering::Relaxed);
-                msg
-            })?;
+            {
+                Ok(window) => {
+                    warn!("Overlay created via safe fallback (non-transparent mode).");
+                    window
+                }
+                Err(fallback_error) => {
+                    let msg = format!(
+                        "Failed to create overlay window. primary='{}' fallback='{}'",
+                        primary_error, fallback_error
+                    );
+                    warn!("{} — overlay disabled for this session", msg);
+                    OVERLAY_CREATION_FAILED.store(true, Ordering::Relaxed);
+                    return Err(msg);
+                }
+            }
+        }
+    };
 
     // Park the window off-screen until apply_overlay_settings repositions it.
     // Previously (12, 12) caused a "ghost overlay" in the upper-left corner when

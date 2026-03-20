@@ -4836,19 +4836,19 @@ fn build_dependency_preflight_report(
         });
     }
 
-    match opus::find_ffmpeg() {
+    match opus::find_ffmpeg_for_opus() {
         Ok(path) => items.push(DependencyPreflightItem {
             id: "ffmpeg".to_string(),
             status: "ok".to_string(),
             required: false,
-            message: format!("FFmpeg found: {}", path.display()),
+            message: format!("FFmpeg with libopus found: {}", path.display()),
             hint: None,
         }),
         Err(error) => items.push(DependencyPreflightItem {
             id: "ffmpeg".to_string(),
             status: "warning".to_string(),
             required: false,
-            message: "FFmpeg is not available.".to_string(),
+            message: "FFmpeg with libopus encoder is not available.".to_string(),
             hint: Some(format!(
                 "{} OPUS encode/merge features may not work until FFmpeg is available.",
                 error
@@ -6293,16 +6293,21 @@ pub fn run() {
                 overlay::mark_overlay_ready(&overlay_app);
                 info!("[DIAG] overlay:ready handled");
             });
-            if let Err(err) = overlay::create_overlay_window(&app.handle()) {
-                eprintln!("⚠ Failed to create overlay window: {}", err);
+            if env_flag("TRISPR_DISABLE_OVERLAY") {
+                warn!("Overlay initialization skipped via TRISPR_DISABLE_OVERLAY=1");
+            } else {
+                if let Err(err) = overlay::create_overlay_window(&app.handle()) {
+                    eprintln!("⚠ Failed to create overlay window: {}", err);
+                }
+                info!("[DIAG] setup: overlay window created, applying settings...");
+                let overlay_settings = build_overlay_settings(&settings);
+                if let Err(err) = overlay::apply_overlay_settings(&app.handle(), &overlay_settings)
+                {
+                    eprintln!("⚠ Failed to apply overlay settings: {}", err);
+                }
+                let _ = overlay::emit_capture_idle_overlay(&app.handle(), &settings);
+                info!("[DIAG] setup: overlay fully configured, building tray...");
             }
-            info!("[DIAG] setup: overlay window created, applying settings...");
-            let overlay_settings = build_overlay_settings(&settings);
-            if let Err(err) = overlay::apply_overlay_settings(&app.handle(), &overlay_settings) {
-                eprintln!("⚠ Failed to apply overlay settings: {}", err);
-            }
-            let _ = overlay::emit_capture_idle_overlay(&app.handle(), &settings);
-            info!("[DIAG] setup: overlay fully configured, building tray...");
 
             let icon = {
                 let paths = [

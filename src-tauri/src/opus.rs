@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Result of OPUS encoding operation
 #[derive(Serialize, Clone)]
@@ -55,37 +55,108 @@ impl OpusApplication {
     }
 }
 
-/// Find FFmpeg executable
-pub fn find_ffmpeg() -> Result<PathBuf, String> {
-    // Try bundled FFmpeg first (Windows)
-    #[cfg(target_os = "windows")]
-    {
-        let exe_dir = std::env::current_exe()
-            .map_err(|e| format!("Failed to get exe dir: {}", e))?
-            .parent()
-            .ok_or("No parent directory")?
-            .to_path_buf();
-
-        let bundled_ffmpeg = exe_dir.join("resources").join("ffmpeg").join("ffmpeg.exe");
-        if bundled_ffmpeg.exists() {
-            info!("Using bundled FFmpeg: {:?}", bundled_ffmpeg);
-            return Ok(bundled_ffmpeg);
-        }
-    }
-
-    // Try system FFmpeg
-    let ffmpeg_name = if cfg!(windows) {
+fn ffmpeg_name() -> &'static str {
+    if cfg!(windows) {
         "ffmpeg.exe"
     } else {
         "ffmpeg"
+    }
+}
+
+fn ffmpeg_supports_libopus(ffmpeg_path: &Path) -> bool {
+    let mut probe = Command::new(ffmpeg_path);
+    probe
+        .arg("-hide_banner")
+        .arg("-h")
+        .arg("encoder=libopus")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        probe.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let output = match probe.output() {
+        Ok(output) => output,
+        Err(err) => {
+            warn!(
+                "Failed to probe FFmpeg encoder support at {}: {}",
+                ffmpeg_path.display(),
+                err
+            );
+            return false;
+        }
     };
+
+    if !output.status.success() {
+        return false;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    stdout.contains("Encoder libopus") || stderr.contains("Encoder libopus")
+}
+
+fn find_local_ffmpeg() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let ffmpeg = ffmpeg_name();
+
+    #[cfg(target_os = "windows")]
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join("resources").join("ffmpeg").join(ffmpeg));
+        }
+    }
+
+    // Cargo builds resolve this to <repo>/src-tauri, useful for local dev.
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin").join("ffmpeg").join(ffmpeg));
+
+    // Also support invoking from repo root or src-tauri working directories.
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("src-tauri").join("bin").join("ffmpeg").join(ffmpeg));
+        candidates.push(cwd.join("bin").join("ffmpeg").join(ffmpeg));
+    }
+
+    for candidate in candidates {
+        if candidate.exists() {
+            return Some(candidate.canonicalize().unwrap_or(candidate));
+        }
+    }
+
+    None
+}
+
+/// Find FFmpeg executable
+pub fn find_ffmpeg() -> Result<PathBuf, String> {
+    if let Some(local_ffmpeg) = find_local_ffmpeg() {
+        info!("Using local/bundled FFmpeg: {:?}", local_ffmpeg);
+        return Ok(local_ffmpeg);
+    }
+
+    // Try system FFmpeg
+    let ffmpeg_name = ffmpeg_name();
 
     which::which(ffmpeg_name).map_err(|_| {
         format!(
-            "FFmpeg not found. Please install FFmpeg or place it in resources/ffmpeg/{}",
+            "FFmpeg not found. Install FFmpeg (with libopus) or place {} in resources/ffmpeg/ or src-tauri/bin/ffmpeg/.",
             ffmpeg_name
         )
     })
+}
+
+/// Find FFmpeg and ensure libopus encoder support is available.
+pub fn find_ffmpeg_for_opus() -> Result<PathBuf, String> {
+    let ffmpeg_path = find_ffmpeg()?;
+    if ffmpeg_supports_libopus(&ffmpeg_path) {
+        Ok(ffmpeg_path)
+    } else {
+        Err(format!(
+            "FFmpeg found at '{}' but encoder 'libopus' is unavailable.",
+            ffmpeg_path.display()
+        ))
+    }
 }
 
 /// Encode WAV file to OPUS format
@@ -112,7 +183,7 @@ pub fn encode_wav_to_opus(
     );
 
     // Find FFmpeg
-    let ffmpeg_path = find_ffmpeg()?;
+    let ffmpeg_path = find_ffmpeg_for_opus()?;
 
     // Build FFmpeg command
     let mut cmd = Command::new(&ffmpeg_path);
@@ -200,7 +271,7 @@ pub fn encode_wav_to_opus_default(
 
 /// Check if FFmpeg is available
 pub fn check_ffmpeg_available() -> bool {
-    find_ffmpeg().is_ok()
+    find_ffmpeg_for_opus().is_ok()
 }
 
 /// Get FFmpeg version string

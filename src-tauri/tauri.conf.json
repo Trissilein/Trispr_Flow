@@ -52,6 +52,7 @@
       "bin/vulkan/ggml-cpu.dll": "bin/vulkan/ggml-cpu.dll",
       "bin/vulkan/ggml-vulkan.dll": "bin/vulkan/ggml-vulkan.dll",
       "bin/quantize.exe": "bin/quantize.exe",
+      "bin/ffmpeg/ffmpeg.exe": "bin/ffmpeg/ffmpeg.exe",
       "bin/piper/piper.exe": "bin/piper/piper.exe",
       "bin/piper/onnxruntime.dll": "bin/piper/onnxruntime.dll",
       "bin/piper/onnxruntime_providers_shared.dll": "bin/piper/onnxruntime_providers_shared.dll",

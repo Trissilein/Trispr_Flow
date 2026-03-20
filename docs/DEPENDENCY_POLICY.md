@@ -1,6 +1,6 @@
 # Dependency Policy and Install-Check Matrix
 
-Last updated: 2026-03-13
+Last updated: 2026-03-20
 
 This document defines how runtime dependencies are handled in Trispr Flow and what is validated at app startup.
 
@@ -24,7 +24,7 @@ This document defines how runtime dependencies are handled in Trispr Flow and wh
 | Whisper transcription runtime | `whisper-cli` + `ggml*` + backend DLLs | Bundled | Unified installer bundles both CUDA/Vulkan runtime folders; backend selected at runtime | `error` if missing |
 | Whisper model inference | selected `.bin` model file | Managed (user download/import) | Not bundled by design | `error` if selected model missing |
 | Model optimization | `quantize.exe` | Bundled (best effort) | Bundled in current installers | `warning` if missing |
-| OPUS encode/merge | `ffmpeg` | External/Bundled fallback | currently external unless user provides/bundles | `warning` if missing |
+| OPUS encode/merge | `ffmpeg` (`libopus`) | Bundled (build-time download) with External fallback | installer build auto-fetches pinned FFmpeg via `scripts/setup-ffmpeg.ps1`; system FFmpeg still accepted if `libopus` is available | `warning` if missing/incompatible |
 | Local AI runtime | Ollama binary + runtime tree | Managed | Installed per user on demand | `warning` if endpoint unreachable when local AI enabled |
 | GDD publish | Confluence connectivity/auth | External service | Optional; user-configured | handled by publish flow and queue fallback |
 | Workflow agent | command parsing/session search | Internal | Available; module gated | module health/dependency warnings |

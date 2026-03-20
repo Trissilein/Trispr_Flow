@@ -82,6 +82,16 @@ if defined QUANTIZE_SRC (
     echo WARNING: quantize.exe not found. Optimize button will be unavailable in installer.
 )
 
+echo.
+echo Ensuring FFmpeg runtime (libopus-enabled)...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\setup-ffmpeg.ps1"
+if %ERRORLEVEL% neq 0 (
+    echo ERROR: FFmpeg setup failed. Aborting installer build.
+    pause
+    popd
+    exit /b %ERRORLEVEL%
+)
+
 REM Run the build command
 call npm run tauri build
 

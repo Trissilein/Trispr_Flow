@@ -108,8 +108,8 @@ impl ActiveSession {
         write_wav_i16(&wav_path, samples)?;
 
         // Encode WAV → OPUS
-        let ffmpeg = crate::opus::find_ffmpeg()
-            .map_err(|e| format!("FFmpeg not found for chunk encoding: {}", e))?;
+        let ffmpeg = crate::opus::find_ffmpeg_for_opus()
+            .map_err(|e| format!("FFmpeg unavailable for chunk encoding: {}", e))?;
 
         let encode_ok = std::process::Command::new(&ffmpeg)
             .args(&[

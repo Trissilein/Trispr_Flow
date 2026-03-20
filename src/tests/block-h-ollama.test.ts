@@ -26,7 +26,7 @@ describe("Block H S1 — Ollama settings defaults", () => {
       runtime_source: "manual",
       runtime_path: "",
       runtime_version: "",
-      runtime_target_version: "0.17.5",
+      runtime_target_version: "0.17.7",
       last_health_check: null,
     };
     expect(ollama.endpoint).toBe("http://localhost:11434");
@@ -90,7 +90,7 @@ describe("Block H S1 — Ollama settings defaults", () => {
         runtime_source: "manual",
         runtime_path: "",
         runtime_version: "",
-        runtime_target_version: "0.17.5",
+        runtime_target_version: "0.17.7",
         last_health_check: null,
       },
     };
@@ -113,7 +113,7 @@ describe("Block H S2 — Offline model refresh", () => {
       runtime_source: "manual",
       runtime_path: "",
       runtime_version: "",
-      runtime_target_version: "0.17.5",
+      runtime_target_version: "0.17.7",
       last_health_check: null,
     };
     const models: string[] = []; // returned when Ollama is unreachable
@@ -135,7 +135,7 @@ describe("Block H S2 — Offline model refresh", () => {
       runtime_source: "manual",
       runtime_path: "",
       runtime_version: "",
-      runtime_target_version: "0.17.5",
+      runtime_target_version: "0.17.7",
       last_health_check: null,
     };
     const fallback: AIFallbackSettings = {
@@ -176,7 +176,7 @@ describe("Block H S2 — Offline model refresh", () => {
       runtime_source: "manual",
       runtime_path: "",
       runtime_version: "",
-      runtime_target_version: "0.17.5",
+      runtime_target_version: "0.17.7",
       last_health_check: null,
     };
 
@@ -197,7 +197,7 @@ describe("Block H S2 — Offline model refresh", () => {
       runtime_source: "manual",
       runtime_path: "",
       runtime_version: "",
-      runtime_target_version: "0.17.5",
+      runtime_target_version: "0.17.7",
       last_health_check: null,
     };
 

@@ -82,6 +82,15 @@ pub struct OllamaRuntimeVersionInfo {
     pub selected: bool,
     pub installed: bool,
     pub recommended: bool,
+    pub installable: bool,
+    pub installable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct OnlineRuntimeVersionCandidate {
+    version: String,
+    installable: bool,
+    installable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -308,7 +317,46 @@ fn resolve_manifest(version: Option<&str>) -> Result<RuntimeManifestResolved, St
     })
 }
 
-fn list_online_release_versions(limit: usize) -> Result<Vec<String>, String> {
+fn classify_online_release_installability(assets: &[serde_json::Value]) -> (bool, Option<String>) {
+    let mut has_windows_archive = false;
+    let mut has_checksum_asset = false;
+
+    for asset in assets {
+        let Some(name) = asset.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("ollama-windows-amd64.zip") {
+            has_windows_archive = true;
+            continue;
+        }
+        let lower = name.to_ascii_lowercase();
+        if lower.ends_with(".sha256")
+            || lower.contains("sha256sum")
+            || lower.contains("checksums")
+            || lower.contains("sha256")
+        {
+            has_checksum_asset = true;
+        }
+    }
+
+    if !has_windows_archive {
+        return (
+            false,
+            Some("Missing ollama-windows-amd64.zip asset.".to_string()),
+        );
+    }
+    if !has_checksum_asset {
+        return (
+            false,
+            Some("Missing checksum asset for runtime verification.".to_string()),
+        );
+    }
+    (true, None)
+}
+
+fn list_online_release_versions(
+    limit: usize,
+) -> Result<Vec<OnlineRuntimeVersionCandidate>, String> {
     let url = format!("{}?per_page={}", GITHUB_RELEASES_API, limit.max(1));
     let agent = ureq::builder()
         .timeout_connect(Duration::from_secs(3))
@@ -322,7 +370,7 @@ fn list_online_release_versions(limit: usize) -> Result<Vec<String>, String> {
         .map_err(|e| format!("Failed to fetch online runtime versions: {}", e))?
         .into_json::<serde_json::Value>()
         .map_err(|e| format!("Failed to parse online runtime versions: {}", e))?;
-    let mut versions = Vec::new();
+    let mut versions: Vec<OnlineRuntimeVersionCandidate> = Vec::new();
     let Some(items) = releases.as_array() else {
         return Ok(versions);
     };
@@ -334,10 +382,20 @@ fn list_online_release_versions(limit: usize) -> Result<Vec<String>, String> {
             continue;
         };
         let normalized = tag_name.trim().trim_start_matches('v').to_string();
-        if normalized.is_empty() || versions.iter().any(|v| v == &normalized) {
+        if normalized.is_empty() || versions.iter().any(|v| v.version == normalized) {
             continue;
         }
-        versions.push(normalized);
+        let assets = item
+            .get("assets")
+            .and_then(|v| v.as_array())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let (installable, installable_reason) = classify_online_release_installability(assets);
+        versions.push(OnlineRuntimeVersionCandidate {
+            version: normalized,
+            installable,
+            installable_reason,
+        });
     }
     Ok(versions)
 }
@@ -956,45 +1014,106 @@ pub async fn fetch_ollama_online_versions(
 
 fn build_version_list(
     snapshot: &crate::state::Settings,
-    online: &[String],
+    online: &[OnlineRuntimeVersionCandidate],
 ) -> Result<Vec<OllamaRuntimeVersionInfo>, String> {
-    let selected = snapshot.providers.ollama.runtime_target_version.clone();
-    let installed_version = snapshot.providers.ollama.runtime_version.clone();
+    let selected = snapshot
+        .providers
+        .ollama
+        .runtime_target_version
+        .trim()
+        .to_string();
+    let installed_version = snapshot.providers.ollama.runtime_version.trim().to_string();
 
-    let mut merged: Vec<String> = WINDOWS_MANIFESTS
-        .iter()
-        .map(|m| m.version.to_string())
-        .collect();
-    for version in online {
-        if !merged.iter().any(|v| v == version) {
-            merged.push(version.clone());
+    let mut merged: HashMap<String, OllamaRuntimeVersionInfo> = HashMap::new();
+
+    for manifest in WINDOWS_MANIFESTS {
+        merged.insert(
+            manifest.version.to_string(),
+            OllamaRuntimeVersionInfo {
+                version: manifest.version.to_string(),
+                source: "pinned".to_string(),
+                selected: selected == manifest.version,
+                installed: !installed_version.is_empty() && installed_version == manifest.version,
+                recommended: manifest.version == DEFAULT_RUNTIME_VERSION,
+                installable: true,
+                installable_reason: None,
+            },
+        );
+    }
+
+    let mut non_installable_reasons: HashMap<String, String> = HashMap::new();
+    for candidate in online {
+        if candidate.installable {
+            merged
+                .entry(candidate.version.clone())
+                .or_insert_with(|| OllamaRuntimeVersionInfo {
+                    version: candidate.version.clone(),
+                    source: "online".to_string(),
+                    selected: selected == candidate.version,
+                    installed: !installed_version.is_empty()
+                        && installed_version == candidate.version,
+                    recommended: candidate.version == DEFAULT_RUNTIME_VERSION,
+                    installable: true,
+                    installable_reason: None,
+                });
+            continue;
+        }
+        if let Some(reason) = candidate.installable_reason.clone() {
+            non_installable_reasons.insert(candidate.version.clone(), reason);
         }
     }
-    if !installed_version.trim().is_empty() && !merged.iter().any(|v| v == &installed_version) {
-        merged.push(installed_version.clone());
+
+    if !selected.is_empty() && !merged.contains_key(&selected) {
+        let selected_reason = non_installable_reasons
+            .get(&selected)
+            .cloned()
+            .unwrap_or_else(|| {
+                "Selected target is outside the verified installable version catalog.".to_string()
+            });
+        merged.insert(
+            selected.clone(),
+            OllamaRuntimeVersionInfo {
+                version: selected.clone(),
+                source: "online".to_string(),
+                selected: true,
+                installed: !installed_version.is_empty() && installed_version == selected,
+                recommended: selected == DEFAULT_RUNTIME_VERSION,
+                installable: false,
+                installable_reason: Some(selected_reason),
+            },
+        );
     }
 
-    let mut out = merged
-        .into_iter()
-        .map(|version| OllamaRuntimeVersionInfo {
-            version: version.clone(),
-            source: if WINDOWS_MANIFESTS.iter().any(|m| m.version == version) {
-                "pinned".to_string()
-            } else {
-                "online".to_string()
+    if !installed_version.is_empty() && !merged.contains_key(&installed_version) {
+        let installed_reason = non_installable_reasons
+            .get(&installed_version)
+            .cloned()
+            .unwrap_or_else(|| {
+                "Installed runtime is outside the verified installable version catalog.".to_string()
+            });
+        merged.insert(
+            installed_version.clone(),
+            OllamaRuntimeVersionInfo {
+                version: installed_version.clone(),
+                source: "online".to_string(),
+                selected: selected == installed_version,
+                installed: true,
+                recommended: installed_version == DEFAULT_RUNTIME_VERSION,
+                installable: false,
+                installable_reason: Some(installed_reason),
             },
-            selected: selected == version,
-            installed: !installed_version.is_empty() && installed_version == version,
-            recommended: version == DEFAULT_RUNTIME_VERSION,
-        })
-        .collect::<Vec<_>>();
+        );
+    }
+
+    let mut out = merged.into_values().collect::<Vec<_>>();
 
     out.sort_by(|a, b| {
         b.selected
             .cmp(&a.selected)
             .then_with(|| b.installed.cmp(&a.installed))
             .then_with(|| b.recommended.cmp(&a.recommended))
-            .then_with(|| b.version.cmp(&a.version))
+            .then_with(|| b.installable.cmp(&a.installable))
+            .then_with(|| compare_runtime_versions_desc(&a.version, &b.version))
     });
 
     Ok(out)
@@ -1911,4 +2030,115 @@ pub fn set_strict_local_mode(
         "strict_local_mode": snapshot.ai_fallback.strict_local_mode,
         "endpoint": snapshot.providers.ollama.endpoint,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn base_settings() -> crate::state::Settings {
+        let mut settings = crate::state::Settings::default();
+        settings.providers.ollama.runtime_target_version = DEFAULT_RUNTIME_VERSION.to_string();
+        settings.providers.ollama.runtime_version = String::new();
+        settings
+    }
+
+    #[test]
+    fn build_version_list_filters_non_installable_online_versions() {
+        let settings = base_settings();
+        let online = vec![
+            OnlineRuntimeVersionCandidate {
+                version: "0.18.0".to_string(),
+                installable: true,
+                installable_reason: None,
+            },
+            OnlineRuntimeVersionCandidate {
+                version: "0.18.1".to_string(),
+                installable: false,
+                installable_reason: Some("Missing ollama-windows-amd64.zip asset.".to_string()),
+            },
+        ];
+
+        let versions = build_version_list(&settings, &online).expect("version list");
+
+        assert!(versions.iter().any(|entry| entry.version == "0.18.0"));
+        assert!(!versions.iter().any(|entry| entry.version == "0.18.1"));
+    }
+
+    #[test]
+    fn build_version_list_keeps_selected_non_installable_with_reason() {
+        let mut settings = base_settings();
+        settings.providers.ollama.runtime_target_version = "0.18.1".to_string();
+        let online = vec![OnlineRuntimeVersionCandidate {
+            version: "0.18.1".to_string(),
+            installable: false,
+            installable_reason: Some(
+                "Missing checksum asset for runtime verification.".to_string(),
+            ),
+        }];
+
+        let versions = build_version_list(&settings, &online).expect("version list");
+        let selected = versions
+            .iter()
+            .find(|entry| entry.version == "0.18.1")
+            .expect("selected version should remain visible");
+
+        assert!(selected.selected);
+        assert!(!selected.installable);
+        assert_eq!(
+            selected.installable_reason.as_deref(),
+            Some("Missing checksum asset for runtime verification.")
+        );
+    }
+
+    #[test]
+    fn build_version_list_keeps_installed_non_installable_entry() {
+        let mut settings = base_settings();
+        settings.providers.ollama.runtime_version = "0.19.2".to_string();
+
+        let versions = build_version_list(&settings, &[]).expect("version list");
+        let installed = versions
+            .iter()
+            .find(|entry| entry.version == "0.19.2")
+            .expect("installed version should remain visible");
+
+        assert!(installed.installed);
+        assert!(!installed.installable);
+        assert!(installed
+            .installable_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("outside the verified installable version catalog"));
+    }
+
+    #[test]
+    fn classify_online_release_installability_requires_archive_and_checksum() {
+        let installable_assets = vec![
+            json!({ "name": "ollama-windows-amd64.zip" }),
+            json!({ "name": "checksums.sha256" }),
+        ];
+        let missing_archive = vec![json!({ "name": "checksums.sha256" })];
+        let missing_checksum = vec![json!({ "name": "ollama-windows-amd64.zip" })];
+
+        let (ok_installable, ok_reason) =
+            classify_online_release_installability(&installable_assets);
+        let (archive_installable, archive_reason) =
+            classify_online_release_installability(&missing_archive);
+        let (checksum_installable, checksum_reason) =
+            classify_online_release_installability(&missing_checksum);
+
+        assert!(ok_installable);
+        assert!(ok_reason.is_none());
+        assert!(!archive_installable);
+        assert!(archive_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("ollama-windows-amd64.zip"));
+        assert!(!checksum_installable);
+        assert!(checksum_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("checksum"));
+    }
 }

@@ -30,7 +30,7 @@
 - **Why**: Random spacing (11px, 13px, 19px) creates visual noise.
 - **Pattern**: Use 4px base unit. Scale: 4, 6, 8, 10, 12, 14, 16, 20, 24, 32, 48, 64.
 - **Result**: Visual rhythm. Everything feels intentional.
-- **Apply**: Define spacing scale in DESIGN_SYSTEM.md. Reference tokens only.
+- **Apply**: Define spacing scale in FRONTEND_GUIDELINES.md. Reference tokens only.
 
 **Lesson**: Toggle switches > Checkboxes for boolean settings
 - **Why**: Toggles feel modern. Checkboxes feel like forms.
@@ -224,12 +224,12 @@
 2. Add to AppState in state.ts
 3. Add persistence logic in settings.ts
 4. Add UI in index.html
-5. Add to DESIGN_SYSTEM.md if new tokens needed
+5. Add to FRONTEND_GUIDELINES.md if new tokens needed
 6. Test edge cases (validation, conflicts, errors)
 
 ### When Adding New Components
-1. Reference DESIGN_SYSTEM.md tokens (no hardcoded values)
-2. Add to component patterns section of DESIGN_SYSTEM.md
+1. Reference FRONTEND_GUIDELINES.md tokens (no hardcoded values)
+2. Add to component patterns section of FRONTEND_GUIDELINES.md
 3. Include all 5 states: default, hover, active, focus, disabled
 4. Test keyboard navigation
 5. Test screen reader

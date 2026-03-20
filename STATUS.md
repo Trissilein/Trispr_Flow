@@ -4,8 +4,8 @@ Last updated: 2026-03-20
 
 ## Snapshot
 
-- Current release: `v0.7.1`
-- Current planning phase: `v0.7.1 stabilization execution`
+- Current release: `v0.7.2`
+- Current planning phase: `v0.7.2 release hardening`
 - Canonical next steps: `ROADMAP.md`
 
 ## Working State
@@ -28,7 +28,7 @@ Last updated: 2026-03-20
   - `N12` multimodal integration test packet is present (`src/tests/n12-multimodal-integration.test.ts`, 16 tests).
 - Ollama runtime IPC paths used by model refresh/verify/info/pull-delete are hardened with non-blocking worker dispatch; UI stays interactive during background runtime activity.
 - Mainline installer/runtime packaging now keeps both Whisper backends (`bin/cuda` + `bin/vulkan`) and resolves backend at runtime (`local_backend_preference`).
-- First-run developer bootstrap is available via `FIRST_RUN.bat` (`npm install` + runtime hydration from installed app resources).
+- First-run developer bootstrap is available via `scripts/windows/FIRST_RUN.bat` (root `FIRST_RUN.bat` wrapper remains compatible).
 - Core capture/transcription pipeline is stable (PTT/VAD + system audio + export).
 - Adaptive continuous dump is unified across mic Toggle mode and system loopback.
 - Continuous dump profiles and per-source overrides are available in Settings.

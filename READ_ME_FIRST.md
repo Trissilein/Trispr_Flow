@@ -1,6 +1,6 @@
 # Read Me First - Documentation Rules
 
-Last updated: 2026-03-13
+Last updated: 2026-03-20
 
 This file defines where information belongs.
 Rule: write each topic once, in one canonical file.
@@ -19,8 +19,9 @@ Rule: write each topic once, in one canonical file.
 | Project overview, quick setup, entry links | `README.md` | High-level intro only, no deep implementation details |
 | Planning, priorities, done/open work | `ROADMAP.md` | Milestones, next steps, priority ordering, status by phase |
 | Current health snapshot | `STATUS.md` | Short operational status and known gaps (if kept separate) |
-| App behavior and user flows | `APP_FLOW.md` | UI flows, panel behavior, user journeys |
+| App behavior and user flows | `docs/APP_FLOW.md` | UI flows, panel behavior, user journeys |
 | Architecture and module boundaries | `docs/ARCHITECTURE.md` | Frontend/backend structure, data flow, runtime events |
+| Frontend architecture + design rules | `docs/FRONTEND_GUIDELINES.md` | Frontend conventions, design tokens, simplify quality gates |
 | State semantics and UI states | `docs/STATE_MANAGEMENT.md` | State model, loading/error/empty state conventions |
 | Dev setup and test commands | `docs/DEVELOPMENT.md` | Prereqs, local run, smoke/unit test workflow, platform deps |
 | Technical decisions (ADR-lite) | `docs/DECISIONS.md` | Decision, status, rationale, open questions |
@@ -28,7 +29,7 @@ Rule: write each topic once, in one canonical file.
 | Release history | `CHANGELOG.md` | User-visible changes per version/release |
 | Contributor process | `CONTRIBUTING.md` | PR process, commit standards, workflow expectations |
 | Licenses and third-party notices | `THIRD_PARTY_NOTICES.md` | License text, attribution, legal notices |
-| Legacy/transitional plan docs | `TRANSCRIBE_PLAN.md` | Historical plan context; do not add new roadmap items here |
+| Legacy/transitional plan docs | `docs/TRANSCRIBE_PLAN.md` | Historical plan context; do not add new roadmap items here |
 | Wiki navigation pages | `docs/wiki/*.md` | Link hub only; no canonical technical content |
 
 ## 3) Anti-duplication rules

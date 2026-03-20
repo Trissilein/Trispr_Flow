@@ -362,7 +362,7 @@ function ensureAIFallbackSettingsDefaults() {
         runtime_source: "manual",
         runtime_path: "",
         runtime_version: "",
-        runtime_target_version: "0.17.5",
+        runtime_target_version: "0.17.7",
         last_health_check: null,
       },
     };
@@ -375,7 +375,7 @@ function ensureAIFallbackSettingsDefaults() {
       runtime_source: "manual",
       runtime_path: "",
       runtime_version: "",
-      runtime_target_version: "0.17.5",
+      runtime_target_version: "0.17.7",
       last_health_check: null,
     };
   }
@@ -425,7 +425,7 @@ function ensureAIFallbackSettingsDefaults() {
   settings.providers.ollama.runtime_source ??= "manual";
   settings.providers.ollama.runtime_path ??= "";
   settings.providers.ollama.runtime_version ??= "";
-  settings.providers.ollama.runtime_target_version ??= "0.17.5";
+  settings.providers.ollama.runtime_target_version ??= "0.17.7";
   settings.providers.ollama.last_health_check ??= null;
   CLOUD_PROVIDER_IDS.forEach((provider) => {
     const providerSettings = getAIFallbackProviderSettings(provider);

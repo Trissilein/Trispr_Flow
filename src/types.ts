@@ -766,6 +766,8 @@ export interface OllamaRuntimeVersionInfo {
   selected: boolean;
   installed: boolean;
   recommended: boolean;
+  installable: boolean;
+  installable_reason?: string | null;
 }
 
 export interface OllamaRuntimeDownloadResult {

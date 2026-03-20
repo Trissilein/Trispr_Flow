@@ -260,8 +260,8 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
     consequence: "Model is stored locally and can be activated after download.",
   },
   ollama_action_set_active: {
-    title: "Set Active Model",
-    description: "Marks this model as the single refinement model.",
+    title: "Activate Model",
+    description: "Activates this model as the refinement model.",
     consequence: "New refinements use this tag until changed.",
   },
   ollama_action_delete: {

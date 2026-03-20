@@ -2337,6 +2337,12 @@ button.refinement-chip:focus-visible {
   color: var(--ink);
 }
 
+.model-quant-hint {
+  margin-top: 8px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
 .model-quantize-progress {
   margin-top: 8px;
 }
@@ -4130,6 +4136,25 @@ input[type="range"]:focus-visible {
   background: rgba(76, 224, 212, 0.11);
   border-color: rgba(76, 224, 212, 0.33);
   color: #9cf6ef;
+}
+
+.runtime-version-chip--installable {
+  background: rgba(74, 222, 128, 0.14);
+  border-color: rgba(74, 222, 128, 0.4);
+  color: #86efac;
+}
+
+.runtime-version-chip--not-installable {
+  background: rgba(255, 184, 77, 0.14);
+  border-color: rgba(255, 184, 77, 0.42);
+  color: #ffb84d;
+}
+
+.runtime-version-reason {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #ffb84d;
 }
 
 .ai-refine-section--coming-soon {

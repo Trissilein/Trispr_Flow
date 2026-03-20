@@ -400,7 +400,7 @@ impl Default for Settings {
       input_device: "default".to_string(),
       language_mode: "auto".to_string(),
       language_pinned: false,
-      model: "whisper-large-v3".to_string(),
+      model: "whisper-large-v3-turbo".to_string(),
       cloud_fallback: false,
       ai_fallback: AIFallbackSettings::default(),
       providers: AIProvidersSettings::default(),
@@ -696,6 +696,9 @@ pub(crate) struct AppState {
     pub(crate) startup_status: Mutex<StartupStatus>,
     pub(crate) runtime_diagnostics: Mutex<RuntimeDiagnostics>,
     pub(crate) overlay_controller: Mutex<OverlayController>,
+    pub(crate) frontend_last_heartbeat_ms: AtomicU64,
+    pub(crate) frontend_watchdog_last_reload_ms: AtomicU64,
+    pub(crate) frontend_watchdog_reload_count: AtomicU64,
     pub(crate) tts_speaking: AtomicBool,
     #[cfg(target_os = "windows")]
     pub(crate) system_cluster_buffer: Mutex<SystemClusterBuffer>,

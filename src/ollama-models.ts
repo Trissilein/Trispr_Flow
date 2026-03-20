@@ -683,6 +683,8 @@ export function getOllamaRuntimeVersionCatalog(): OllamaRuntimeVersionInfo[] {
       selected: true,
       installed: false,
       recommended: true,
+      installable: true,
+      installable_reason: null,
     },
   ];
 }
@@ -708,6 +710,8 @@ export async function refreshOllamaRuntimeVersionCatalog(force = false): Promise
           selected: true,
           installed: false,
           recommended: true,
+          installable: true,
+          installable_reason: null,
         },
       ];
     }
@@ -1212,7 +1216,7 @@ export async function importOllamaModelFromLocalFile(): Promise<void> {
   await handleImportModelFromFile();
 }
 
-async function handleSetActiveModel(modelName: string): Promise<void> {
+export async function activateOllamaModel(modelName: string): Promise<void> {
   if (!settings) return;
   const normalized = normalizeModelTag(modelName);
   const previousModel = settings.ai_fallback.model;
@@ -1231,7 +1235,7 @@ async function handleSetActiveModel(modelName: string): Promise<void> {
 
   showToast({
     type: "success",
-    title: "Model selected",
+    title: "Model activated",
     message: `${modelName} is now active for AI refinement.`,
     duration: 3000,
   });
@@ -1260,7 +1264,7 @@ function renderModelsSection(container: HTMLElement): void {
   const hint = document.createElement("p");
   hint.className = "field-hint";
   hint.textContent =
-    "Qwen3 + Qwen3.5 local refinement lineup. Start with Qwen3:8b or Qwen3.5:4b for balance, then scale up for quality. Model files are downloaded separately via this UI.";
+    "Qwen3 + Qwen3.5 local refinement lineup. Start with Qwen3:8b or Qwen3.5:4b for balance, then scale up for quality. Download model, then Activate.";
   section.appendChild(hint);
 
   const list = document.createElement("div");
@@ -1333,7 +1337,7 @@ function renderModelsSection(container: HTMLElement): void {
       } else if (status === "available") {
         const pullBtn = document.createElement("button");
         pullBtn.className = "btn-sm btn-primary";
-        pullBtn.textContent = "Download";
+        pullBtn.textContent = "Download model";
         pullBtn.title = `Pull ${spec.name} via Ollama`;
         applyHelpTooltip(pullBtn, "ollama_action_download");
         pullBtn.addEventListener("click", () => {
@@ -1344,11 +1348,11 @@ function renderModelsSection(container: HTMLElement): void {
         if (!active) {
           const activateBtn = document.createElement("button");
           activateBtn.className = "btn-sm btn-primary";
-          activateBtn.textContent = "Set active";
-          activateBtn.title = `Use ${spec.name} for AI refinement`;
+          activateBtn.textContent = "Activate";
+          activateBtn.title = `Activate ${spec.name} for AI refinement`;
           applyHelpTooltip(activateBtn, "ollama_action_set_active");
           activateBtn.addEventListener("click", () => {
-            void handleSetActiveModel(spec.name);
+            void activateOllamaModel(spec.name);
           });
           actionsEl.appendChild(activateBtn);
         }
@@ -1553,7 +1557,7 @@ async function handleOllamaPull(modelName: string): Promise<void> {
   } catch (error) {
     showToast({
       type: "error",
-      title: "Pull Failed",
+      title: "Download failed",
       message: String(error),
     });
   } finally {

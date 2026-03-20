@@ -45,8 +45,9 @@ npm run benchmark:latency:live   # Live transcription benchmark
 ```
 
 ### Building Installers
-- `build-both-installers.bat`: Builds both CUDA and Vulkan editions.
-- `rebuild-installer.bat`: Rebuilds the NSIS installer.
+- `scripts/windows/build_unified.bat`: Builds the unified installer package.
+- `scripts/windows/rebuild-installer.bat`: Rebuilds the NSIS installer.
+- Root wrappers (`build_unified.bat`, `rebuild-installer.bat`) remain for compatibility.
 
 ## Development Conventions
 
@@ -77,6 +78,6 @@ npm run benchmark:latency:live   # Live transcription benchmark
 - `src/main.ts`: Frontend entry point and initialization sequence.
 - `src/dom-refs.ts`: Centralized DOM element references.
 - `index.html`: Main application UI structure.
-- `APP_FLOW.md`: Detailed description of the application's logical flow.
+- `docs/APP_FLOW.md`: Detailed description of the application's logical flow.
 - `ROADMAP.md`: Canonical source for project priorities and task status.
 - `docs/TASK_SCHEDULE.md`: Detailed execution log and block-level task table.

@@ -252,7 +252,7 @@ impl Default for OllamaSettings {
             runtime_source: "manual".to_string(),
             runtime_path: String::new(),
             runtime_version: String::new(),
-            runtime_target_version: "0.17.5".to_string(),
+            runtime_target_version: "0.17.7".to_string(),
             last_health_check: None,
         }
     }
@@ -280,7 +280,7 @@ impl OllamaSettings {
             self.runtime_source = "manual".to_string();
         }
         if self.runtime_target_version.trim().is_empty() {
-            self.runtime_target_version = "0.17.5".to_string();
+            self.runtime_target_version = "0.17.7".to_string();
         }
     }
 }

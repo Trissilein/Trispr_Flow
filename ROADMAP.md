@@ -1,14 +1,14 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-19 (N5d/N7/N8/N12 completed; Block N shifted to remaining hardening gates N9-N14)
+Last updated: 2026-03-20 (v0.7.2 release packaging; Block N shifted to remaining hardening gates N9-N14)
 
 This file is the canonical source for priorities and execution order.
 
 ## Canonical Current State
 
-- Released: `v0.7.0`
-- Current phase: `v0.7.1` stabilization execution
-- **Next version bump**: After next major feature completion (target: v0.7.1 release). Update `package.json` version, `Cargo.toml` version, create CHANGELOG entry, build installer, push GitHub release.
+- Released: `v0.7.0`, `v0.7.1`
+- Current phase: `v0.7.2` release hardening
+- **Next version bump**: After next major feature completion (target: v0.7.3 release). Update `package.json` version, `Cargo.toml` version, create CHANGELOG entry, build installer, push GitHub release.
 - Foundation complete: Blocks F + G + H
 - Active execution blocks: Multimodal delivery hardening (Block N) + Local AI provider hardening (Block R)
 

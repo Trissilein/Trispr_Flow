@@ -111,11 +111,21 @@ fn find_local_ffmpeg() -> Option<PathBuf> {
     }
 
     // Cargo builds resolve this to <repo>/src-tauri, useful for local dev.
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin").join("ffmpeg").join(ffmpeg));
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("bin")
+            .join("ffmpeg")
+            .join(ffmpeg),
+    );
 
     // Also support invoking from repo root or src-tauri working directories.
     if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("src-tauri").join("bin").join("ffmpeg").join(ffmpeg));
+        candidates.push(
+            cwd.join("src-tauri")
+                .join("bin")
+                .join("ffmpeg")
+                .join(ffmpeg),
+        );
         candidates.push(cwd.join("bin").join("ffmpeg").join(ffmpeg));
     }
 

@@ -12,11 +12,14 @@ npm run tauri dev
 ```
 
 ## First run (Windows)
-Use the repo-root bootstrap entrypoint after cloning:
+Use the canonical bootstrap script after cloning:
 
 ```bat
-FIRST_RUN.bat
+scripts\windows\FIRST_RUN.bat
 ```
+
+Compatibility wrapper:
+- `FIRST_RUN.bat` (repo root)
 
 What it does:
 - runs `npm install`
@@ -28,9 +31,9 @@ What it does:
 - prints runtime readiness summary for transcription, quantization, and FFmpeg
 
 Optional flags:
-- `FIRST_RUN.bat -SkipNpmInstall`
-- `FIRST_RUN.bat -SkipRuntimeHydration`
-- `FIRST_RUN.bat -RequireWhisperRuntime` (fail with exit code 2 if no local Whisper runtime is detected)
+- `scripts\windows\FIRST_RUN.bat -SkipNpmInstall`
+- `scripts\windows\FIRST_RUN.bat -SkipRuntimeHydration`
+- `scripts\windows\FIRST_RUN.bat -RequireWhisperRuntime` (fail with exit code 2 if no local Whisper runtime is detected)
 
 If no runtime is found, the script prints actionable instructions and continues by default.
 
@@ -39,11 +42,14 @@ Notes:
 - `npm run dev:web` starts only the Vite frontend dev server (web preview).
 
 ## Installer rebuild (Windows)
-Use the repo-root batch script to build the NSIS installer:
+Use the canonical batch script to build the NSIS installer:
 
 ```bat
-rebuild-installer.bat
+scripts\windows\rebuild-installer.bat
 ```
+
+Compatibility wrapper:
+- `rebuild-installer.bat` (repo root)
 
 Notes:
 - The script anchors to the repo root, so it works regardless of the current working directory.
@@ -118,7 +124,7 @@ See `.env.example` for runtime configuration. You can override the default model
 - Model pulls stay in-app and are not bundled with installers.
 - Runtime dependency policy:
   - Whisper keeps its own CUDA DLL set in `src-tauri/bin/cuda`.
-  - Ollama keeps its own dependency tree under `%LOCALAPPDATA%\TrisprFlow\ollama-runtime\...`.
+  - Ollama keeps its own dependency tree under `%LOCALAPPDATA%\Trispr Flow\ollama-runtime\...`.
   - Do not copy/mix DLLs between Whisper and Ollama runtime folders.
 
 ## Notes for WSL/Linux builds

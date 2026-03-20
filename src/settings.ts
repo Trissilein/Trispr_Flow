@@ -537,7 +537,7 @@ function renderCompatModelCards(
     if (actionsEl && !isActive) {
       const activateBtn = document.createElement("button");
       activateBtn.className = "btn-sm btn-primary";
-      activateBtn.textContent = "Set active";
+      activateBtn.textContent = "Activate";
       activateBtn.title = `Use ${modelName} for AI refinement`;
       activateBtn.addEventListener("click", () => {
         if (!settings || !compatSettings) return;
@@ -1015,6 +1015,9 @@ export function renderAIFallbackSettingsUi() {
         selected: version === selectedVersion,
         installed: version === runtimeCardState.version,
         recommended: version === "0.17.7",
+        installable: false,
+        installable_reason:
+          "This version is not in the verified installable runtime catalog.",
       });
     };
     appendIfMissing(selectedVersion);
@@ -1032,7 +1035,10 @@ export function renderAIFallbackSettingsUi() {
     limited.forEach((entry) => {
       const option = document.createElement("option");
       option.value = entry.version;
-      option.textContent = entry.version;
+      option.textContent = entry.installable
+        ? entry.version
+        : `${entry.version} (not installable)`;
+      option.disabled = !entry.installable && !entry.selected;
       dom.aiFallbackLocalRuntimeVersion?.appendChild(option);
     });
     dom.aiFallbackLocalRuntimeVersion.size = 1;
@@ -1066,9 +1072,28 @@ export function renderAIFallbackSettingsUi() {
     if (selectedRuntimeEntry?.selected) addBadge("Active", "runtime-version-chip--selected");
     if (selectedRuntimeEntry?.installed) addBadge("Installed", "runtime-version-chip--installed");
     if (selectedRuntimeEntry?.recommended) addBadge("Recommended", "runtime-version-chip--recommended");
-    addBadge(selectedRuntimeEntry?.source === "online" ? "Online" : "Pinned", "runtime-version-chip--source");
+    if (selectedRuntimeEntry) {
+      if (selectedRuntimeEntry.installable) {
+        addBadge("Installable", "runtime-version-chip--installable");
+      } else {
+        addBadge("Not installable", "runtime-version-chip--not-installable");
+      }
+      addBadge(
+        selectedRuntimeEntry.source === "online" ? "Online" : "Pinned",
+        "runtime-version-chip--source"
+      );
+    } else {
+      addBadge("Not installable", "runtime-version-chip--not-installable");
+      addBadge("Pinned", "runtime-version-chip--source");
+    }
 
     dom.aiFallbackLocalRuntimeVersionNote.appendChild(badges);
+    if (selectedRuntimeEntry?.installable_reason?.trim()) {
+      const reason = document.createElement("span");
+      reason.className = "runtime-version-reason";
+      reason.textContent = selectedRuntimeEntry.installable_reason.trim();
+      dom.aiFallbackLocalRuntimeVersionNote.appendChild(reason);
+    }
   }
 
   if (dom.aiFallbackLocalBackendSelect) {

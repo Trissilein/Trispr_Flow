@@ -1608,6 +1608,84 @@ pub struct OllamaPullError {
     pub error: String,
 }
 
+const OLLAMA_REGISTRY_MODEL_BASE: &str = "https://ollama.com/library";
+
+fn map_ollama_registry_precheck_error(
+    model: &str,
+    status_code: Option<u16>,
+    transport_error: Option<&str>,
+) -> String {
+    if let Some(code) = status_code {
+        if code == 404 {
+            return format!(
+                "Model tag '{}' is not available in the Ollama registry. Check name/tag and retry.",
+                model
+            );
+        }
+        if code >= 500 {
+            return format!(
+                "Ollama registry is currently unavailable (HTTP {}). Please retry later.",
+                code
+            );
+        }
+        return format!(
+            "Ollama registry precheck failed for '{}' (HTTP {}).",
+            model, code
+        );
+    }
+
+    let transport = transport_error.unwrap_or_default().trim();
+    if !transport.is_empty() {
+        let lower = transport.to_ascii_lowercase();
+        if lower.contains("timed out") || lower.contains("timeout") {
+            return format!(
+                "Ollama registry precheck timed out for '{}'. Check network connectivity and retry.",
+                model
+            );
+        }
+        return format!(
+            "Ollama registry precheck could not reach the endpoint for '{}': {}",
+            model, transport
+        );
+    }
+
+    format!("Ollama registry precheck failed for '{}'.", model)
+}
+
+pub fn precheck_ollama_registry_model_tag(model: &str) -> Result<(), String> {
+    let normalized = model.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Err("Model name cannot be empty".to_string());
+    }
+
+    let url = format!("{}/{}", OLLAMA_REGISTRY_MODEL_BASE, normalized);
+    let agent = ureq::builder()
+        .timeout_connect(Duration::from_secs(4))
+        .timeout_read(Duration::from_secs(6))
+        .build();
+
+    match agent
+        .get(&url)
+        .set("User-Agent", "TrisprFlow/OllamaRegistryPrecheck")
+        .call()
+    {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(code, _)) => Err(map_ollama_registry_precheck_error(
+            &normalized,
+            Some(code),
+            None,
+        )),
+        Err(ureq::Error::Transport(transport)) => {
+            let message = transport.to_string();
+            Err(map_ollama_registry_precheck_error(
+                &normalized,
+                None,
+                Some(&message),
+            ))
+        }
+    }
+}
+
 /// Validate an Ollama model name against known safe characters.
 /// Allowed: alphanumeric, ':' (for tags), '.' (for versions), '-', '_'
 pub fn validate_ollama_model_name(name: &str) -> Result<(), String> {
@@ -1825,6 +1903,30 @@ mod tests {
             "expected OllamaNotRunning for unreachable endpoint, got: {:?}",
             result
         );
+    }
+
+    #[test]
+    fn registry_precheck_maps_tag_missing() {
+        let message = map_ollama_registry_precheck_error("qwen3:999b", Some(404), None);
+        assert!(message.contains("not available"));
+        assert!(message.contains("qwen3:999b"));
+    }
+
+    #[test]
+    fn registry_precheck_maps_endpoint_down() {
+        let message = map_ollama_registry_precheck_error("qwen3:4b", Some(503), None);
+        assert!(message.contains("currently unavailable"));
+        assert!(message.contains("503"));
+    }
+
+    #[test]
+    fn registry_precheck_maps_timeout_transport() {
+        let message = map_ollama_registry_precheck_error(
+            "qwen3:4b",
+            None,
+            Some("operation timed out while connecting"),
+        );
+        assert!(message.contains("timed out"));
     }
 
     // --- Prompt selection by language ---

@@ -115,6 +115,10 @@ const TRAY_ICON_ID: &str = "main-tray";
 const TRAY_PULSE_FRAMES: usize = 6;
 const TRAY_PULSE_CYCLE_MS: u64 = 1600;
 const BACKLOG_AUTOEXPAND_TIMEOUT_MS: u64 = 5_000;
+const FRONTEND_HEARTBEAT_STALE_MS: u64 = 45_000;
+const FRONTEND_WATCHDOG_CHECK_MS: u64 = 10_000;
+const FRONTEND_WATCHDOG_COOLDOWN_MS: u64 = 90_000;
+const FRONTEND_WATCHDOG_STARTUP_GRACE_MS: u64 = 30_000;
 const CLIPBOARD_RETRY_INTERVAL_MS: u64 = 50;
 const CLIPBOARD_CAPTURE_TIMEOUT_MS: u64 = 1_000;
 const CLIPBOARD_RESTORE_DELAY_MS: u64 = 350;
@@ -172,6 +176,76 @@ fn acquire_single_instance_guard() -> bool {
 fn acquire_single_instance_guard() -> bool {
     true
 }
+
+#[cfg(target_os = "windows")]
+fn apply_local_dump_registry_value(
+    key_path: &str,
+    value_name: &str,
+    value_type: &str,
+    value_data: &str,
+) -> Result<(), String> {
+    let status = std::process::Command::new("reg")
+        .args([
+            "add", key_path, "/v", value_name, "/t", value_type, "/d", value_data, "/f",
+        ])
+        .status()
+        .map_err(|err| format!("reg add failed: {}", err))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "reg add exited with code {:?} for {}\\{}",
+            status.code(),
+            key_path,
+            value_name
+        ))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn configure_windows_local_dumps(app: &AppHandle) {
+    let dump_dir = crate::paths::resolve_base_dir(app).join("crashdumps");
+    if let Err(err) = std::fs::create_dir_all(&dump_dir) {
+        warn!(
+            "Failed to create crash dump directory '{}': {}",
+            dump_dir.display(),
+            err
+        );
+        return;
+    }
+    let dump_dir_value = dump_dir.to_string_lossy().to_string();
+    for exe_name in [
+        "trispr-flow.exe",
+        "Trispr Flow.exe",
+        "com.trispr.flow.exe",
+        "msedgewebview2.exe",
+    ] {
+        let key = format!(
+            r"HKCU\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\{}",
+            exe_name
+        );
+        let result = (|| -> Result<(), String> {
+            apply_local_dump_registry_value(&key, "DumpType", "REG_DWORD", "2")?;
+            apply_local_dump_registry_value(&key, "DumpCount", "REG_DWORD", "10")?;
+            apply_local_dump_registry_value(&key, "DumpFolder", "REG_EXPAND_SZ", &dump_dir_value)?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => info!(
+                "Crash dump capture configured for {} (folder: {})",
+                exe_name,
+                dump_dir.display()
+            ),
+            Err(err) => warn!(
+                "Failed to configure crash dump capture for {}: {}",
+                exe_name, err
+            ),
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_windows_local_dumps(_app: &AppHandle) {}
 
 pub(crate) fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -1816,6 +1890,13 @@ fn record_runtime_metric(state: State<'_, AppState>, metric: String) -> Result<(
 }
 
 #[tauri::command]
+fn frontend_heartbeat(state: State<'_, AppState>) {
+    state
+        .frontend_last_heartbeat_ms
+        .store(crate::util::now_ms(), Ordering::Relaxed);
+}
+
+#[tauri::command]
 fn log_frontend_event(level: String, context: String, message: String) -> Result<(), String> {
     let normalized_context = context.trim();
     let normalized_message = message.trim();
@@ -1897,7 +1978,9 @@ fn pull_ollama_model(
     state: State<'_, AppState>,
     model: String,
 ) -> Result<(), String> {
-    use crate::ai_fallback::provider::{pull_ollama_model_inner, validate_ollama_model_name};
+    use crate::ai_fallback::provider::{
+        precheck_ollama_registry_model_tag, pull_ollama_model_inner, validate_ollama_model_name,
+    };
 
     validate_ollama_model_name(&model)?;
 
@@ -1928,6 +2011,15 @@ fn pull_ollama_model(
         }
         settings.providers.ollama.endpoint.clone()
     };
+
+    if let Err(error) = precheck_ollama_registry_model_tag(&model) {
+        let mut pulls = state
+            .ollama_pulls
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        pulls.remove(&model);
+        return Err(error);
+    }
 
     // Drop-Guard ensures the model is removed from ollama_pulls even if the
     // thread panics (e.g. due to a bug in pull_ollama_model_inner).
@@ -4547,27 +4639,34 @@ async fn stop_ollama_runtime(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn install_lm_studio() -> Result<(), String> {
-    // Opens a new PowerShell console window running the official LM Studio install script.
-    // Uses `cmd /C start` to ensure a visible window is spawned even from a windowless
-    // Tauri process. CREATE_NO_WINDOW on the cmd.exe wrapper avoids a brief flash.
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    #[cfg(target_os = "windows")]
+    {
+        // Opens a new PowerShell console window running the official LM Studio install script.
+        // Uses `cmd /C start` to ensure a visible window is spawned even from a windowless
+        // Tauri process. CREATE_NO_WINDOW on the cmd.exe wrapper avoids a brief flash.
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    std::process::Command::new("cmd")
-        .args([
-            "/C",
-            "start",
-            "powershell",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-NoExit",
-            "-Command",
-            "Write-Host 'Trispr Flow: Installing LM Studio...' -ForegroundColor Cyan; irm 'https://lmstudio.ai/install.ps1' | iex",
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|e| format!("Failed to launch LM Studio installer: {e}"))?;
-    Ok(())
+        std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "start",
+                "powershell",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-NoExit",
+                "-Command",
+                "Write-Host 'Trispr Flow: Installing LM Studio...' -ForegroundColor Cyan; irm 'https://lmstudio.ai/install.ps1' | iex",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("Failed to launch LM Studio installer: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("LM Studio installer helper is only supported on Windows.".to_string())
+    }
 }
 
 #[tauri::command]
@@ -5895,6 +5994,78 @@ fn restore_window_geometry(window: &tauri::WebviewWindow, settings: &Settings) {
     }
 }
 
+fn recreate_main_window_from_config(app: &AppHandle, reason: &str) -> Result<(), String> {
+    let app_config = app.config();
+    let window_config = app_config
+        .app
+        .windows
+        .iter()
+        .find(|cfg| cfg.label == "main")
+        .or_else(|| app_config.app.windows.first())
+        .ok_or_else(|| "Main window configuration missing".to_string())?;
+
+    let window = tauri::WebviewWindowBuilder::from_config(app, window_config)
+        .map_err(|err| format!("Main window config build failed: {}", err))?
+        .build()
+        .map_err(|err| format!("Main window recreation failed: {}", err))?;
+
+    let settings = load_settings(app);
+    restore_window_geometry(&window, &settings);
+    let _ = window.show();
+    let _ = window.set_skip_taskbar(false);
+    let _ = window.set_focus();
+    info!(
+        "Main webview window recreated after watchdog recovery ({})",
+        reason
+    );
+    Ok(())
+}
+
+fn recover_main_window_webview(app: &AppHandle, reason: &str) -> Result<(), String> {
+    let mut attempts: Vec<String> = Vec::new();
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        match window.reload() {
+            Ok(_) => {
+                let _ = window.set_focus();
+                return Ok(());
+            }
+            Err(err) => {
+                attempts.push(format!("reload#1 failed: {}", err));
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(250));
+        match window.reload() {
+            Ok(_) => {
+                let _ = window.set_focus();
+                return Ok(());
+            }
+            Err(err) => {
+                attempts.push(format!("reload#2 failed: {}", err));
+            }
+        }
+
+        match window.destroy() {
+            Ok(_) => attempts.push("destroyed stale main window".to_string()),
+            Err(err) => attempts.push(format!("destroy failed: {}", err)),
+        }
+        std::thread::sleep(Duration::from_millis(350));
+    } else {
+        attempts.push("main window handle missing".to_string());
+    }
+
+    recreate_main_window_from_config(app, reason).map_err(|err| {
+        attempts.push(err);
+        format!(
+            "Main webview recovery failed during {}: {}",
+            reason,
+            attempts.join("; ")
+        )
+    })
+}
+
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         // Restore window geometry on first show
@@ -6115,12 +6286,17 @@ pub fn run() {
                 startup_status: Mutex::new(StartupStatus::default()),
                 runtime_diagnostics: Mutex::new(RuntimeDiagnostics::default()),
                 overlay_controller: Mutex::new(crate::overlay::OverlayController::default()),
+                frontend_last_heartbeat_ms: AtomicU64::new(crate::util::now_ms()),
+                frontend_watchdog_last_reload_ms: AtomicU64::new(0),
+                frontend_watchdog_reload_count: AtomicU64::new(0),
                 tts_speaking: AtomicBool::new(false),
                 #[cfg(target_os = "windows")]
                 system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
                 #[cfg(target_os = "windows")]
                 managed_process_job: create_managed_process_job(),
             });
+
+            configure_windows_local_dumps(app.handle());
 
             {
                 let state = app.state::<AppState>();
@@ -6246,6 +6422,71 @@ pub fn run() {
                     info!("[HEARTBEAT] main process alive");
                 }
             });
+
+            // Frontend watchdog: if renderer heartbeats stop for too long while the
+            // main window is visible, attempt webview reload/recreation.
+            {
+                let app_handle = app.handle().clone();
+                let started_ms = crate::util::now_ms();
+                crate::util::spawn_guarded("frontend_watchdog", move || {
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            FRONTEND_WATCHDOG_CHECK_MS,
+                        ));
+                        let now = crate::util::now_ms();
+                        if now.saturating_sub(started_ms) < FRONTEND_WATCHDOG_STARTUP_GRACE_MS {
+                            continue;
+                        }
+
+                        let state = app_handle.state::<AppState>();
+                        let last_heartbeat = state.frontend_last_heartbeat_ms.load(Ordering::Relaxed);
+                        let heartbeat_age_ms = now.saturating_sub(last_heartbeat);
+                        if heartbeat_age_ms < FRONTEND_HEARTBEAT_STALE_MS {
+                            continue;
+                        }
+
+                        let last_reload = state
+                            .frontend_watchdog_last_reload_ms
+                            .load(Ordering::Relaxed);
+                        if now.saturating_sub(last_reload) < FRONTEND_WATCHDOG_COOLDOWN_MS {
+                            continue;
+                        }
+
+                        let Some(main_window) = app_handle.get_webview_window("main") else {
+                            continue;
+                        };
+
+                        if !main_window.is_visible().unwrap_or(true) {
+                            continue;
+                        }
+
+                        warn!(
+                            "Frontend heartbeat stale ({} ms). Triggering main webview recovery.",
+                            heartbeat_age_ms
+                        );
+                        state
+                            .frontend_watchdog_last_reload_ms
+                            .store(now, Ordering::Relaxed);
+                        match recover_main_window_webview(&app_handle, "heartbeat_stale") {
+                            Ok(()) => {
+                                state
+                                    .frontend_last_heartbeat_ms
+                                    .store(now, Ordering::Relaxed);
+                                let recovery_count =
+                                    state.frontend_watchdog_reload_count.fetch_add(1, Ordering::Relaxed)
+                                        + 1;
+                                warn!(
+                                    "Main webview recovery completed (count={}, stale_ms={})",
+                                    recovery_count, heartbeat_age_ms
+                                );
+                            }
+                            Err(err) => {
+                                warn!("Main webview recovery failed: {}", err);
+                            }
+                        }
+                    }
+                });
+            }
 
             // LM Studio daemon auto-start: if lm_studio was the active provider when the
             // app was last closed, the provider-switch event never fires at next launch.
@@ -6677,6 +6918,7 @@ pub fn run() {
             run_latency_benchmark,
             get_runtime_metrics_snapshot,
             record_runtime_metric,
+            frontend_heartbeat,
             log_frontend_event,
             pull_ollama_model,
             delete_ollama_model,

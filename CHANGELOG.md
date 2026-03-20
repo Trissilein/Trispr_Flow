@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-03-20
+
+### Added
+
+- **Frontend/Renderer watchdog**:
+  - New frontend heartbeat lane (`frontend_heartbeat`) with automatic reload escalation when IPC heartbeat repeatedly fails.
+  - New backend stale-heartbeat watchdog that attempts layered WebView recovery (reload/reload/destroy+recreate).
+- **Windows crash triage hardening**:
+  - Automatic WER LocalDumps setup at startup for `trispr-flow.exe`, `Trispr Flow.exe`, `com.trispr.flow.exe`, and `msedgewebview2.exe`.
+  - Crash dumps now target `%LOCALAPPDATA%\\Trispr Flow\\crashdumps`.
+
+### Changed
+
+- **Repository housekeeping pass**:
+  - Root docs reduced to the canonical set; planning/archive material moved under `docs/`.
+  - Windows utility `.bat` scripts moved to `scripts/windows/` with root compatibility wrappers retained.
+- **Ollama hardening + UX**:
+  - Curated model pull flow now pre-validates tags against installable registry entries.
+  - Runtime version surfacing is filtered for installable targets and normalized around runtime `0.17.7`.
+  - Updated manager wording and pull-complete CTA for direct model activation.
+- **Whisper/Quant policy defaults**:
+  - Default transcription model is now `whisper-large-v3-turbo`.
+  - Quantization UI default now prefers `q8_0` with explicit `q5_0` guidance for low-VRAM systems.
+
+### Fixed
+
+- **White-window/no-response resilience**:
+  - App no longer relies on manual restarts when the renderer becomes stale; watchdog recovery path now self-heals in-session.
+
 ## [0.7.1] - 2026-03-20
 
 ### Added

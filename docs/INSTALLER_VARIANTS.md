@@ -25,8 +25,11 @@ The installer no longer prunes CUDA/Vulkan folders post-install.
 ## Build Command
 
 ```bat
-rebuild-installer.bat
+scripts\windows\rebuild-installer.bat
 ```
+
+Compatibility wrapper:
+- `rebuild-installer.bat` (repo root)
 
 Output is written to the NSIS bundle output folder (and copied to `installers/` by helper scripts where configured).
 

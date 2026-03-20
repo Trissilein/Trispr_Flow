@@ -7,6 +7,7 @@ import {
   installGlobalFrontendErrorLogging,
   traceFrontendError,
   traceFrontendInfo,
+  traceFrontendWarn,
 } from "./frontend-trace";
 import { initWindowStatePersistence } from "./window-state";
 
@@ -116,6 +117,7 @@ import {
   handlePipelineTranscriptionResult,
 } from "./refinement-pipeline-graph";
 import {
+  activateOllamaModel,
   autoStartLocalRuntimeIfNeeded,
   clearActiveOllamaPull,
   getOllamaRuntimeCardState,
@@ -135,6 +137,12 @@ let eventUnlisteners: Array<() => void> = [];
 let backlogWarningToastId: string | null = null;
 let overlayHealthToastId: string | null = null;
 let pasteQueue: Promise<void> = Promise.resolve();
+let frontendHeartbeatTimer: number | null = null;
+let frontendHeartbeatFailureCount = 0;
+let frontendHeartbeatReloadIssued = false;
+
+const FRONTEND_HEARTBEAT_INTERVAL_MS = 2_500;
+const FRONTEND_HEARTBEAT_RELOAD_THRESHOLD = 5;
 
 type PendingDeferredPasteJob = {
   rawText: string;
@@ -299,7 +307,58 @@ function handleDeferredPasteTimeout(jobId: string): void {
   queueTranscriptPaste(pending.rawText, `timeout:${jobId}`);
 }
 
+async function sendFrontendHeartbeat(source: "startup" | "interval"): Promise<void> {
+  try {
+    await invoke("frontend_heartbeat");
+    if (frontendHeartbeatFailureCount > 0) {
+      traceFrontendInfo("frontend.watchdog", "frontend heartbeat recovered", {
+        source,
+        previousFailures: frontendHeartbeatFailureCount,
+      });
+    }
+    frontendHeartbeatFailureCount = 0;
+    frontendHeartbeatReloadIssued = false;
+  } catch (error) {
+    frontendHeartbeatFailureCount += 1;
+    if (frontendHeartbeatFailureCount === 1 || frontendHeartbeatFailureCount % 5 === 0) {
+      traceFrontendWarn("frontend.watchdog", "frontend heartbeat failed", {
+        source,
+        failures: frontendHeartbeatFailureCount,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (
+      frontendHeartbeatFailureCount >= FRONTEND_HEARTBEAT_RELOAD_THRESHOLD
+      && !frontendHeartbeatReloadIssued
+    ) {
+      frontendHeartbeatReloadIssued = true;
+      traceFrontendError("frontend.watchdog", "backend IPC heartbeat unavailable — reloading window", {
+        failures: frontendHeartbeatFailureCount,
+      });
+      window.location.reload();
+    }
+  }
+}
+
+function stopFrontendHeartbeatWatchdog(): void {
+  if (frontendHeartbeatTimer !== null) {
+    window.clearInterval(frontendHeartbeatTimer);
+    frontendHeartbeatTimer = null;
+  }
+}
+
+function startFrontendHeartbeatWatchdog(): void {
+  stopFrontendHeartbeatWatchdog();
+  frontendHeartbeatFailureCount = 0;
+  frontendHeartbeatReloadIssued = false;
+  void sendFrontendHeartbeat("startup");
+  frontendHeartbeatTimer = window.setInterval(() => {
+    void sendFrontendHeartbeat("interval");
+  }, FRONTEND_HEARTBEAT_INTERVAL_MS);
+}
+
 function cleanupEventListeners() {
+  stopFrontendHeartbeatWatchdog();
   clearPendingDeferredPasteJobs();
   resetTrackedRefinementJobs();
   cancelPendingRenderFrames();
@@ -426,6 +485,7 @@ async function bootstrap() {
   traceFrontendInfo("bootstrap", "bootstrap start");
   // Clean up old listeners if re-bootstrapping to prevent memory leaks
   cleanupEventListeners();
+  startFrontendHeartbeatWatchdog();
   // Reset the paste queue to prevent accumulation across re-bootstrap cycles
   pasteQueue = Promise.resolve();
 
@@ -860,8 +920,13 @@ async function bootstrap() {
       ollamaPullProgress.delete(event.payload.model);
       showToast({
         type: "success",
-        title: "Model Downloaded",
-        message: `${event.payload.model} is ready to use.`,
+        title: "Model downloaded",
+        message: `${event.payload.model} is installed locally.`,
+        actionLabel: "Activate now",
+        onAction: async () => {
+          await activateOllamaModel(event.payload.model);
+          renderAIFallbackSettingsUi();
+        },
       });
       await refreshOllamaRuntimeState({ force: true });
       if (getOllamaRuntimeCardState().healthy) {

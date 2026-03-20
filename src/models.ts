@@ -91,6 +91,7 @@ export function renderModels() {
       const actions = document.createElement("div");
       actions.className = "model-actions";
       let optimizeProgressElement: HTMLDivElement | null = null;
+      let quantHintElement: HTMLDivElement | null = null;
 
       if (model.installed) {
         // Add Apply button if model is not currently active
@@ -180,21 +181,21 @@ export function renderModels() {
           const quantizeState = quantizeProgress.get(model.file_name);
           const quantSelect = document.createElement("select");
           quantSelect.className = "model-quant-select";
-          const quantChoice = selectedQuantByModel.get(model.id) ?? "q5_0";
+          const quantChoice = selectedQuantByModel.get(model.id) ?? "q8_0";
           quantSelect.innerHTML = `
-            <option value="q5_0">Q5 (faster, smaller)</option>
-            <option value="q8_0">Q8 (higher quality)</option>
+            <option value="q8_0">Q8_0 (recommended)</option>
+            <option value="q5_0">Q5_0 (low VRAM)</option>
           `;
           quantSelect.value = quantChoice;
           const isOptimizing = optimizingModels.has(model.id) || Boolean(quantizeState);
           quantSelect.disabled = isOptimizing;
-          quantSelect.title = "Quantization target used by Optimize";
+          quantSelect.title = "Quantization target used by Optimize (Q8 recommended; Q5 for low VRAM)";
           quantSelect.addEventListener("click", (event) => {
             event.stopPropagation();
           });
           quantSelect.addEventListener("change", (event) => {
             event.stopPropagation();
-            const value = quantSelect.value === "q8_0" ? "q8_0" : "q5_0";
+            const value = quantSelect.value === "q5_0" ? "q5_0" : "q8_0";
             selectedQuantByModel.set(model.id, value);
           });
           actions.appendChild(quantSelect);
@@ -213,14 +214,14 @@ export function renderModels() {
             optimizingModels.add(model.id);
             quantizeProgress.set(model.file_name, {
               file_name: model.file_name,
-              quant: selectedQuantByModel.get(model.id) ?? "q5_0",
+              quant: selectedQuantByModel.get(model.id) ?? "q8_0",
               phase: "starting",
               percent: 0,
               message: "Preparing quantizer...",
             });
             renderModels();
             try {
-              const quant = selectedQuantByModel.get(model.id) ?? "q5_0";
+              const quant = selectedQuantByModel.get(model.id) ?? "q8_0";
               await invoke("quantize_model", { fileName: model.file_name, quant });
               showToast({
                 title: "Optimized",
@@ -269,6 +270,10 @@ export function renderModels() {
             progressWrap.appendChild(bar);
             optimizeProgressElement = progressWrap;
           }
+
+          quantHintElement = document.createElement("div");
+          quantHintElement.className = "model-quant-hint";
+          quantHintElement.textContent = "Recommended: Q8_0. Use Q5_0 on low VRAM.";
         }
 
         const removeBtn = document.createElement("button");
@@ -345,6 +350,9 @@ export function renderModels() {
       }
       if (optimizeProgressElement) {
         item.appendChild(optimizeProgressElement);
+      }
+      if (quantHintElement) {
+        item.appendChild(quantHintElement);
       }
       item.appendChild(progress);
       item.appendChild(actions);

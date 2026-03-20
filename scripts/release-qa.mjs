@@ -45,9 +45,14 @@ runOrExit(steps, "test", "npm test");
 runOrExit(
   steps,
   "cargo-test-no-default-features",
-  "bash -lc \"cargo test --manifest-path src-tauri/Cargo.toml --no-default-features\""
+  "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --lib --no-run"
 );
-runOrExit(steps, "cargo-build", "bash -lc \"cargo build --manifest-path src-tauri/Cargo.toml\"");
+runOrExit(
+  steps,
+  "cargo-test-bins-no-default-features",
+  "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --bins"
+);
+runOrExit(steps, "cargo-build", "cargo build --manifest-path src-tauri/Cargo.toml");
 runOrExit(steps, "audit-rust", "npm run audit:rust");
 runOrExit(
   steps,

@@ -8,11 +8,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import type {
   ModuleHealthStatus,
+  OllamaRuntimeDiagnostics,
   OverlayHealthEvent,
   RuntimeDiagnostics,
   StartupStatus,
   VisionSnapshotResult,
   VisionStreamHealth,
+  WhisperRuntimeDiagnostics,
 } from "../types";
 
 function makeStartupStatus(overrides: Partial<StartupStatus> = {}): StartupStatus {
@@ -27,7 +29,12 @@ function makeStartupStatus(overrides: Partial<StartupStatus> = {}): StartupStatu
   };
 }
 
-function makeRuntimeDiagnostics(overrides: Partial<RuntimeDiagnostics> = {}): RuntimeDiagnostics {
+type RuntimeDiagnosticsOverrides = {
+  whisper?: Partial<WhisperRuntimeDiagnostics>;
+  ollama?: Partial<OllamaRuntimeDiagnostics>;
+};
+
+function makeRuntimeDiagnostics(overrides: RuntimeDiagnosticsOverrides = {}): RuntimeDiagnostics {
   return {
     whisper: {
       cli_path: "/path/to/whisper-cli",
@@ -298,6 +305,6 @@ describe("Block N N5d-S6 — Vision buffer and snapshot contracts", () => {
     expect(snapshot.captured).toBe(true);
     expect(snapshot.note.toLowerCase()).toContain("in-memory");
     expect(snapshot.jpeg_base64?.length).toBeGreaterThan(0);
-    expect("file_path" in (snapshot as Record<string, unknown>)).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(snapshot, "file_path")).toBe(false);
   });
 });

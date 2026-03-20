@@ -355,6 +355,12 @@ export interface TtsVoiceInfo {
   provider: "windows_native" | "local_custom";
 }
 
+export interface TtsSpeakResult {
+  provider_used: "windows_native" | "local_custom" | string;
+  accepted: boolean;
+  message: string;
+}
+
 export interface AIFallbackSettings {
   enabled: boolean;
   provider: AIFallbackProvider;

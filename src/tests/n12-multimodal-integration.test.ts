@@ -137,7 +137,7 @@ describe("Block N N12-S1 — Vision command contracts", () => {
     expect(snapshot.captured).toBe(true);
     expect(snapshot.note.toLowerCase()).toContain("in-memory");
     expect(snapshot.jpeg_base64?.length).toBeGreaterThan(0);
-    expect("file_path" in (snapshot as Record<string, unknown>)).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(snapshot, "file_path")).toBe(false);
   });
 });
 

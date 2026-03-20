@@ -223,23 +223,7 @@ fn apply_overlay_state_to_window(
         let _ = window.hide();
     }
 
-    let state_str = match state_clone {
-        OverlayState::Hidden => "hidden",
-        OverlayState::Armed => "armed",
-        OverlayState::Recording => "recording",
-        OverlayState::Transcribing => "transcribing",
-    };
-    let js = if matches!(state_clone, OverlayState::Recording) {
-        format!(
-            "if(window.setOverlayState){{window.setOverlayState('{}');}}",
-            state_str
-        )
-    } else {
-        format!(
-            "if(window.setOverlayState){{window.setOverlayState('{}');}}if(window.setOverlayLevel){{window.setOverlayLevel(0);}}",
-            state_str
-        )
-    };
+    let js = overlay_state_eval_js(&state_clone);
     let _ = window.eval(&js);
 
     // Re-emit after a short delay to ensure the overlay webview is ready.
@@ -585,7 +569,38 @@ pub fn apply_overlay_settings(app: &AppHandle, settings: &OverlaySettings) -> Re
     app.run_on_main_thread(move || {
         let _ = apply_overlay_settings_to_window(&window, &settings_clone);
     })
-    .map_err(|e| format!("apply_overlay_settings: run_on_main_thread failed: {:?}", e))
+    .map_err(|e| format!("apply_overlay_settings: run_on_main_thread failed: {:?}", e))?;
+
+    // Backup path for webview-load races: deliver settings via events too.
+    let _ = app.emit("overlay:settings", settings.clone());
+    let app_handle = app.clone();
+    let delayed_settings = settings.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        std::thread::sleep(Duration::from_millis(180));
+        let _ = app_handle.emit("overlay:settings", delayed_settings);
+    });
+
+    Ok(())
+}
+
+fn overlay_state_eval_js(state: &OverlayState) -> String {
+    let state_str = match state {
+        OverlayState::Hidden => "hidden",
+        OverlayState::Armed => "armed",
+        OverlayState::Recording => "recording",
+        OverlayState::Transcribing => "transcribing",
+    };
+    if matches!(state, OverlayState::Recording) {
+        format!(
+            "if(window.setOverlayState){{window.setOverlayState('{}');}}",
+            state_str
+        )
+    } else {
+        format!(
+            "if(window.setOverlayState){{window.setOverlayState('{}');}}if(window.setOverlayLevel){{window.setOverlayLevel(0);}}",
+            state_str
+        )
+    }
 }
 
 /// Get current overlay position (for settings persistence)

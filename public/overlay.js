@@ -11,6 +11,7 @@ const refineIndicator = document.getElementById("refine-indicator");
 
 // State
 let isActive = false;
+let currentState = "idle";
 let opacityActive = 1.0;
 let opacityInactive = 0.25;
 let baseColor = "#ff3d2e";
@@ -32,7 +33,9 @@ let dotMinRadius = 8;
 let dotMaxRadius = 24;
 
 function updateOpacity() {
-  const opacity = isActive ? opacityActive : opacityInactive;
+  const kittArmed = currentStyle === "kitt" && currentState === "armed";
+  const kittArmedOpacity = Math.max(opacityInactive, Math.min(opacityActive, 0.35));
+  const opacity = isActive ? opacityActive : (kittArmed ? kittArmedOpacity : opacityInactive);
   dot.style.opacity = opacity;
   kitt.style.opacity = opacity;
 }
@@ -125,6 +128,7 @@ function resetOverlayGeometryToMinimum() {
 // --- Public API called from Rust via window.eval() ---
 
 window.setOverlayState = function(state) {
+  currentState = state;
   isActive = (state === "recording" || state === "transcribing");
   container.dataset.state = state;
   if (state !== "recording") {
@@ -154,6 +158,7 @@ window.setOverlayStyle = function(style) {
   if (!isActive || container.dataset.state !== "recording") {
     resetOverlayGeometryToMinimum();
   }
+  updateOpacity();
 };
 
 window.setOverlayRefining = function(active) {

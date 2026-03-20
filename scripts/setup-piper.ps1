@@ -146,4 +146,4 @@ Get-ChildItem -Path $VoicesDir -Filter "*.onnx" -ErrorAction SilentlyContinue |
     ForEach-Object { Write-Host "  - $($_.Name)" }
 
 Write-Host ""
-Write-Host "Next: npm run tauri build (or build-both-installers.bat)" -ForegroundColor Green
+Write-Host 'Next: npm run tauri build (or build-both-installers.bat)' -ForegroundColor Green

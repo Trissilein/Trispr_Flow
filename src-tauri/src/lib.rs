@@ -746,11 +746,8 @@ pub(crate) fn prepare_refinement(
     })
 }
 
-fn cancel_backlog_auto_expand(app: &AppHandle) {
+fn cancel_backlog_auto_expand(_app: &AppHandle) {
     BACKLOG_PROMPT_CANCELLED.store(true, Ordering::Release);
-    if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
-        let _ = tray.set_show_menu_on_left_click(false);
-    }
 }
 
 fn schedule_backlog_auto_expand(app: AppHandle, cancel_item: MenuItem<Wry>) {
@@ -758,9 +755,6 @@ fn schedule_backlog_auto_expand(app: AppHandle, cancel_item: MenuItem<Wry>) {
         return;
     }
     BACKLOG_PROMPT_CANCELLED.store(false, Ordering::Release);
-    if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
-        let _ = tray.set_show_menu_on_left_click(true);
-    }
     let _ = cancel_item.set_enabled(true);
     let _ = cancel_item.set_text(format!(
         "Cancel Auto-Expand ({}s)",
@@ -783,9 +777,6 @@ fn schedule_backlog_auto_expand(app: AppHandle, cancel_item: MenuItem<Wry>) {
 
         let _ = cancel_item.set_enabled(false);
         let _ = cancel_item.set_text("Cancel Auto-Expand");
-        if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
-            let _ = tray.set_show_menu_on_left_click(false);
-        }
         BACKLOG_PROMPT_ACTIVE.store(false, Ordering::Release);
     });
 }
@@ -6346,10 +6337,11 @@ pub fn run() {
                 .icon(icon)
                 .tooltip("Trispr Flow")
                 .on_tray_icon_event(|tray, event| {
-                    use tauri::tray::{MouseButton, TrayIconEvent};
+                    use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
                     match event {
                         TrayIconEvent::Click {
                             button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
                             ..
                         } => {
                             if BACKLOG_PROMPT_ACTIVE.load(Ordering::Acquire) {

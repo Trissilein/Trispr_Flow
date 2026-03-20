@@ -12,7 +12,7 @@
     "tauri": "tauri",
     "test": "vitest run",
     "audit:rust": "node scripts/run-rust-audit.mjs",
-    "test:smoke": "npm run build && bash -lc \"cargo test --manifest-path src-tauri/Cargo.toml --no-default-features\" && bash -lc \"cargo build --manifest-path src-tauri/Cargo.toml\"",
+    "test:smoke": "npm run build && cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --lib --no-run && cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --bins && cargo build --manifest-path src-tauri/Cargo.toml",
     "benchmark:latency": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1",
     "benchmark:latency:live": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1 -Live",
     "benchmark:latency:strict": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1 -FailOnSloMiss",

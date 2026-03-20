@@ -4,7 +4,7 @@ Last updated: 2026-03-20
 
 ## Snapshot
 
-- Current release: `v0.7.0`
+- Current release: `v0.7.1`
 - Current planning phase: `v0.7.1 stabilization execution`
 - Canonical next steps: `ROADMAP.md`
 

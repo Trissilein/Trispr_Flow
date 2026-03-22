@@ -2559,25 +2559,24 @@ button.refinement-chip:focus-visible {
 .model-manager .model-item {
   align-self: stretch;
   min-height: 272px;
-  height: 272px;
-  overflow: hidden;
+  height: auto;
+  overflow: visible;
 }
 
 .model-manager .model-name,
 .model-manager .model-size,
 .model-manager .model-meta {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
 }
 
 .model-manager .model-desc {
-  min-height: 36px;
-  max-height: 36px;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
+  min-height: 0;
+  max-height: none;
+  display: block;
+  overflow: visible;
 }
 
 .model-manager .model-actions {

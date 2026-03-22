@@ -187,10 +187,17 @@ pub fn transcribe_via_server(
         .into_json()
         .map_err(|e| format!("Failed to parse JSON response: {}", e))?;
 
-    json["result"]
-        .as_str()
+    json.get("result")
+        .and_then(|v| v.as_str())
+        .or_else(|| json.get("text").and_then(|v| v.as_str()))
+        .or_else(|| json.get("transcript").and_then(|v| v.as_str()))
         .map(|t| t.trim().to_string())
-        .ok_or_else(|| "No 'result' field in server response".to_string())
+        .ok_or_else(|| {
+            format!(
+                "No transcript field in server response (expected result/text/transcript): {}",
+                json
+            )
+        })
 }
 
 /// Restart the Whisper-Server if it's running.

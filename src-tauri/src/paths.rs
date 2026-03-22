@@ -100,33 +100,39 @@ pub(crate) fn resolve_whisper_cli_path_for_backend(preference: Option<&str>) -> 
     }
 
     let mut candidates = Vec::new();
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|parent| parent.to_path_buf()));
+    let cwd = std::env::current_dir().ok();
 
-    // 2. Next to our own executable (installed app)
-    //    Installer places binaries in bin/cuda/ or bin/vulkan/ based on GPU choice.
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            // Backend subdirectories (installed app)
-            for backend in preferred_backend_order(preference) {
-                candidates.push(exe_dir.join(format!("bin/{}/whisper-cli.exe", backend)));
-                candidates.push(exe_dir.join(format!("bin/{}/whisper-cli", backend)));
-            }
-            // Flat layout fallback
-            candidates.push(exe_dir.join("bin/whisper-cli.exe"));
-            candidates.push(exe_dir.join("bin/whisper-cli"));
-            candidates.push(exe_dir.join("whisper-cli.exe"));
-            candidates.push(exe_dir.join("whisper-cli"));
+    // 2. Search backend-first across all locations.
+    //    This preserves backend preference in dev mode even when one location
+    //    (e.g. target/release/bin) is incomplete.
+    for backend in preferred_backend_order(preference) {
+        if let Some(exe_dir) = &exe_dir {
+            candidates.push(exe_dir.join(format!("bin/{}/whisper-cli.exe", backend)));
+            candidates.push(exe_dir.join(format!("bin/{}/whisper-cli", backend)));
         }
-    }
-
-    // 3. Relative to CWD (dev mode)
-    if let Ok(cwd) = std::env::current_dir() {
-        // Preferred dev locations in this repository.
-        for backend in preferred_backend_order(preference) {
+        if let Some(cwd) = &cwd {
             candidates.push(cwd.join(format!("src-tauri/bin/{}/whisper-cli.exe", backend)));
             candidates.push(cwd.join(format!("src-tauri/bin/{}/whisper-cli", backend)));
             candidates.push(cwd.join(format!("bin/{}/whisper-cli.exe", backend)));
             candidates.push(cwd.join(format!("bin/{}/whisper-cli", backend)));
         }
+    }
+
+    // 3. Flat layout fallback
+    if let Some(exe_dir) = &exe_dir {
+        candidates.push(exe_dir.join("bin/whisper-cli.exe"));
+        candidates.push(exe_dir.join("bin/whisper-cli"));
+        candidates.push(exe_dir.join("whisper-cli.exe"));
+        candidates.push(exe_dir.join("whisper-cli"));
+    }
+    if let Some(cwd) = &cwd {
+        candidates.push(cwd.join("src-tauri/bin/whisper-cli.exe"));
+        candidates.push(cwd.join("src-tauri/bin/whisper-cli"));
+        candidates.push(cwd.join("bin/whisper-cli.exe"));
+        candidates.push(cwd.join("bin/whisper-cli"));
     }
 
     for path in candidates {
@@ -149,31 +155,37 @@ pub(crate) fn resolve_whisper_server_path_for_backend(preference: Option<&str>) 
     }
 
     let mut candidates = Vec::new();
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|parent| parent.to_path_buf()));
+    let cwd = std::env::current_dir().ok();
 
-    // 2. Next to our own executable (installed app)
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            // Backend subdirectories
-            for backend in preferred_backend_order(preference) {
-                candidates.push(exe_dir.join(format!("bin/{}/whisper-server.exe", backend)));
-                candidates.push(exe_dir.join(format!("bin/{}/whisper-server", backend)));
-            }
-            // Flat layout fallback
-            candidates.push(exe_dir.join("bin/whisper-server.exe"));
-            candidates.push(exe_dir.join("bin/whisper-server"));
-            candidates.push(exe_dir.join("whisper-server.exe"));
-            candidates.push(exe_dir.join("whisper-server"));
+    // 2. Search backend-first across all locations.
+    for backend in preferred_backend_order(preference) {
+        if let Some(exe_dir) = &exe_dir {
+            candidates.push(exe_dir.join(format!("bin/{}/whisper-server.exe", backend)));
+            candidates.push(exe_dir.join(format!("bin/{}/whisper-server", backend)));
         }
-    }
-
-    // 3. Relative to CWD (dev mode)
-    if let Ok(cwd) = std::env::current_dir() {
-        for backend in preferred_backend_order(preference) {
+        if let Some(cwd) = &cwd {
             candidates.push(cwd.join(format!("src-tauri/bin/{}/whisper-server.exe", backend)));
             candidates.push(cwd.join(format!("src-tauri/bin/{}/whisper-server", backend)));
             candidates.push(cwd.join(format!("bin/{}/whisper-server.exe", backend)));
             candidates.push(cwd.join(format!("bin/{}/whisper-server", backend)));
         }
+    }
+
+    // 3. Flat layout fallback
+    if let Some(exe_dir) = &exe_dir {
+        candidates.push(exe_dir.join("bin/whisper-server.exe"));
+        candidates.push(exe_dir.join("bin/whisper-server"));
+        candidates.push(exe_dir.join("whisper-server.exe"));
+        candidates.push(exe_dir.join("whisper-server"));
+    }
+    if let Some(cwd) = &cwd {
+        candidates.push(cwd.join("src-tauri/bin/whisper-server.exe"));
+        candidates.push(cwd.join("src-tauri/bin/whisper-server"));
+        candidates.push(cwd.join("bin/whisper-server.exe"));
+        candidates.push(cwd.join("bin/whisper-server"));
     }
 
     for path in candidates {

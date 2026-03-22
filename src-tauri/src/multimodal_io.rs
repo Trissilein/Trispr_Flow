@@ -21,6 +21,33 @@ fn apply_hidden_creation_flags(cmd: &mut Command) {
 #[allow(dead_code)]
 fn apply_hidden_creation_flags(_cmd: &mut Command) {}
 
+fn file_is_non_empty(path: &std::path::Path) -> bool {
+    path.is_file()
+        && std::fs::metadata(path)
+            .map(|meta| meta.len() > 0)
+            .unwrap_or(false)
+}
+
+fn windows_voice_matches_natural_profile(name: &str) -> bool {
+    let normalized = name.trim().to_ascii_lowercase();
+    normalized.contains("natural")
+        || normalized.contains("multilingual")
+        || normalized.contains("online")
+}
+
+fn windows_natural_voice_priority(name: &str) -> u8 {
+    let normalized = name.trim().to_ascii_lowercase();
+    if normalized.contains("multilingual") {
+        0
+    } else if normalized.contains("natural") {
+        1
+    } else if normalized.contains("online") {
+        2
+    } else {
+        3
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionSourceInfo {
     pub id: String,
@@ -150,6 +177,8 @@ pub struct TtsProviderInfo {
     pub id: String,
     pub label: String,
     pub available: bool,
+    pub surface: String, // "runtime_stable" | "benchmark_experimental"
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +208,57 @@ pub struct TtsSpeakResult {
     pub provider_used: String,
     pub accepted: bool,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used_fallback: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TtsFallbackOutcome {
+    pub provider_used: String,
+    pub used_fallback: bool,
+    pub primary_error: Option<String>,
+}
+
+pub fn execute_tts_with_fallback<F>(
+    preferred_provider: &str,
+    fallback_provider: &str,
+    mut attempt: F,
+) -> Result<TtsFallbackOutcome, String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    match attempt(preferred_provider) {
+        Ok(()) => Ok(TtsFallbackOutcome {
+            provider_used: preferred_provider.to_string(),
+            used_fallback: false,
+            primary_error: None,
+        }),
+        Err(primary_error) => {
+            if preferred_provider == fallback_provider {
+                return Err(format!(
+                    "[tts_fallback_no_alternative] Preferred provider '{}' failed and no distinct fallback is configured: {}",
+                    preferred_provider, primary_error
+                ));
+            }
+            match attempt(fallback_provider) {
+                Ok(()) => Ok(TtsFallbackOutcome {
+                    provider_used: fallback_provider.to_string(),
+                    used_fallback: true,
+                    primary_error: Some(primary_error),
+                }),
+                Err(fallback_error) => Err(format!(
+                    "[tts_fallback_both_failed] Preferred provider '{}' failed: {} | Fallback '{}' failed: {}",
+                    preferred_provider, primary_error, fallback_provider, fallback_error
+                )),
+            }
+        }
+    }
 }
 
 pub fn is_tts_policy_allowed(policy: &str, context: &str) -> bool {
@@ -394,66 +474,169 @@ pub fn list_tts_providers() -> Vec<TtsProviderInfo> {
             id: "windows_native".to_string(),
             label: "Windows Native TTS".to_string(),
             available: cfg!(target_os = "windows"),
+            surface: "runtime_stable".to_string(),
+            reason: None,
+        },
+        TtsProviderInfo {
+            id: "windows_natural".to_string(),
+            label: "Windows Natural Language (SAPI Adapter)".to_string(),
+            available: windows_natural_voice_available(),
+            surface: "runtime_stable".to_string(),
+            reason: Some(
+                "Requires NaturalVoiceSAPIAdapter (or equivalent SAPI natural voices) and at least one installed Natural voice."
+                    .to_string(),
+            ),
         },
         TtsProviderInfo {
             id: "local_custom".to_string(),
             label: "Local Custom TTS (Piper)".to_string(),
             available: resolve_piper_binary("").is_some(),
+            surface: "runtime_stable".to_string(),
+            reason: None,
+        },
+        TtsProviderInfo {
+            id: "qwen3_tts".to_string(),
+            label: "Qwen3-TTS (OpenAI-compatible endpoint)".to_string(),
+            available: true,
+            surface: "benchmark_experimental".to_string(),
+            reason: Some(
+                "Experimental runtime provider. Requires a running OpenAI-compatible /v1/audio/speech endpoint."
+                    .to_string(),
+            ),
         },
     ]
 }
 
 #[cfg(target_os = "windows")]
-fn list_windows_voices() -> Vec<TtsVoiceInfo> {
+fn run_hidden_powershell(script: &str, action_label: &str) -> Result<String, String> {
     let mut cmd = Command::new("powershell.exe");
-    cmd.args([
-        "-NoProfile",
-        "-Command",
-        "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name }",
-    ]);
+    cmd.args(["-NoProfile", "-Command", script]);
     apply_hidden_creation_flags(&mut cmd);
-    let output = cmd.output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            let text = String::from_utf8_lossy(&out.stdout);
-            let mut voices = Vec::new();
-            for line in text.lines() {
-                let label = line.trim();
-                if label.is_empty() {
-                    continue;
-                }
-                voices.push(TtsVoiceInfo {
-                    id: label.to_string(),
-                    label: label.to_string(),
-                    provider: "windows_native".to_string(),
-                });
-            }
-            if voices.is_empty() {
-                voices.push(TtsVoiceInfo {
-                    id: "windows_default".to_string(),
-                    label: "Windows Default Voice".to_string(),
-                    provider: "windows_native".to_string(),
-                });
-            }
-            voices
-        }
-        _ => vec![TtsVoiceInfo {
-            id: "windows_default".to_string(),
-            label: "Windows Default Voice".to_string(),
-            provider: "windows_native".to_string(),
-        }],
+    let output = cmd
+        .output()
+        .map_err(|error| format!("Failed to start {}: {}", action_label, error))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{} failed with status {:?}: {}",
+            action_label,
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn list_windows_voice_names() -> Result<Vec<String>, String> {
+    let script = "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; try { $s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name } } finally { $s.Dispose() }";
+    let stdout = run_hidden_powershell(script, "Windows voice list")?;
+    let mut names: Vec<String> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
 }
 
 #[cfg(not(target_os = "windows"))]
+fn list_windows_voice_names() -> Result<Vec<String>, String> {
+    Err("Windows voices are only available on Windows.".to_string())
+}
+
+fn list_windows_voices_filtered(provider: &str, natural_only: bool) -> Vec<TtsVoiceInfo> {
+    let Ok(names) = list_windows_voice_names() else {
+        return Vec::new();
+    };
+
+    let mut filtered = if natural_only {
+        names
+            .into_iter()
+            .filter(|name| windows_voice_matches_natural_profile(name))
+            .collect::<Vec<_>>()
+    } else {
+        names
+    };
+
+    if natural_only {
+        filtered.sort_by(|a, b| {
+            windows_natural_voice_priority(a)
+                .cmp(&windows_natural_voice_priority(b))
+                .then_with(|| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()))
+        });
+    }
+
+    filtered
+        .into_iter()
+        .map(|name| TtsVoiceInfo {
+            id: name.clone(),
+            label: name,
+            provider: provider.to_string(),
+        })
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+pub fn windows_natural_voice_available() -> bool {
+    !list_windows_voices_filtered("windows_natural", true).is_empty()
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn windows_natural_voice_available() -> bool {
+    false
+}
+
 fn list_windows_voices() -> Vec<TtsVoiceInfo> {
-    Vec::new()
+    if !cfg!(target_os = "windows") {
+        return Vec::new();
+    }
+    let mut voices = list_windows_voices_filtered("windows_native", false);
+    if voices.is_empty() {
+        voices.push(TtsVoiceInfo {
+            id: "windows_default".to_string(),
+            label: "Windows Default Voice".to_string(),
+            provider: "windows_native".to_string(),
+        });
+    }
+    voices
+}
+
+fn list_windows_natural_voices() -> Vec<TtsVoiceInfo> {
+    if !cfg!(target_os = "windows") {
+        return Vec::new();
+    }
+    let mut voices = list_windows_voices_filtered("windows_natural", true);
+    if voices.is_empty() {
+        voices.push(TtsVoiceInfo {
+            id: "windows_natural_unavailable".to_string(),
+            label: "No Natural voices detected".to_string(),
+            provider: "windows_natural".to_string(),
+        });
+    }
+    voices
+}
+
+fn list_qwen3_tts_voices() -> Vec<TtsVoiceInfo> {
+    const QWEN_CUSTOM_VOICES: &[&str] = &[
+        "vivian", "serena", "dylan", "eric", "ryan", "aiden", "sohee", "ono_anna", "uncle_fu",
+    ];
+    QWEN_CUSTOM_VOICES
+        .iter()
+        .map(|voice| TtsVoiceInfo {
+            id: (*voice).to_string(),
+            label: (*voice).to_string(),
+            provider: "qwen3_tts".to_string(),
+        })
+        .collect()
 }
 
 pub fn list_tts_voices(provider: &str) -> Vec<TtsVoiceInfo> {
     match provider {
         "windows_native" => list_windows_voices(),
+        "windows_natural" => list_windows_natural_voices(),
+        "qwen3_tts" => list_qwen3_tts_voices(),
         _ => Vec::new(),
     }
 }
@@ -498,39 +681,114 @@ pub fn list_piper_voices(model_dir: &str) -> Vec<TtsVoiceInfo> {
 }
 
 #[cfg(target_os = "windows")]
-pub fn speak_windows_native(text: &str, rate: f32, volume: f32) -> Result<(), String> {
+fn build_windows_sapi_speech_script(
+    text: &str,
+    rate: f32,
+    volume: f32,
+    natural_only: bool,
+    benchmark_to_file: bool,
+) -> String {
     let text = text.trim();
-    if text.is_empty() {
-        return Err("TTS text is empty.".to_string());
-    }
-
     let rate = rate.clamp(0.5, 2.0);
     let volume = volume.clamp(0.0, 1.0);
     let sapi_rate = (((rate - 1.0) * 10.0).round() as i32).clamp(-10, 10);
     let sapi_volume = ((volume * 100.0).round() as i32).clamp(0, 100);
     let escaped_text = text.replace('\'', "''");
-    let script = format!(
-        "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = {sapi_rate}; $s.Volume = {sapi_volume}; $s.Speak('{escaped_text}')"
-    );
-    let mut cmd = Command::new("powershell.exe");
-    cmd.args(["-NoProfile", "-Command", &script]);
-    apply_hidden_creation_flags(&mut cmd);
-    let output = cmd
-        .output()
-        .map_err(|error| format!("Failed to start Windows TTS: {}", error))?;
-    if !output.status.success() {
-        return Err(format!(
-            "Windows TTS failed with status {:?}: {}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    let natural_selection = if natural_only {
+        "$voice = $s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name } | Where-Object { $_ -match 'Natural|Multilingual|Online' } | Sort-Object @{Expression={ if ($_ -match 'Multilingual') { 0 } elseif ($_ -match 'Natural') { 1 } else { 2 } }}, @{Expression={ $_ }} | Select-Object -First 1; if ([string]::IsNullOrWhiteSpace($voice)) { throw 'No Windows Natural voice found. Install NaturalVoiceSAPIAdapter and at least one natural voice.' }; $s.SelectVoice($voice);"
+    } else {
+        ""
+    };
+    if benchmark_to_file {
+        format!(
+            "$wav=[System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(),'wav'); Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; try {{ {natural_selection} $s.Rate = {sapi_rate}; $s.Volume = {sapi_volume}; $s.SetOutputToWaveFile($wav); $s.Speak('{escaped_text}'); $s.SetOutputToNull(); }} finally {{ $s.Dispose(); Remove-Item $wav -Force -ErrorAction SilentlyContinue }}"
+        )
+    } else {
+        format!(
+            "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; try {{ {natural_selection} $s.Rate = {sapi_rate}; $s.Volume = {sapi_volume}; $s.Speak('{escaped_text}'); }} finally {{ $s.Dispose() }}"
+        )
     }
-    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn speak_windows_sapi(text: &str, rate: f32, volume: f32, natural_only: bool) -> Result<(), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("TTS text is empty.".to_string());
+    }
+    let script = build_windows_sapi_speech_script(text, rate, volume, natural_only, false);
+    run_hidden_powershell(&script, "Windows TTS").map(|_| ())
+}
+
+#[cfg(target_os = "windows")]
+fn benchmark_windows_sapi_synthesis(
+    text: &str,
+    rate: f32,
+    volume: f32,
+    natural_only: bool,
+) -> Result<(), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("TTS text is empty.".to_string());
+    }
+    let script = build_windows_sapi_speech_script(text, rate, volume, natural_only, true);
+    run_hidden_powershell(&script, "Windows TTS benchmark synthesis").map(|_| ())
+}
+
+#[cfg(target_os = "windows")]
+pub fn speak_windows_native(text: &str, rate: f32, volume: f32) -> Result<(), String> {
+    speak_windows_sapi(text, rate, volume, false)
 }
 
 #[cfg(not(target_os = "windows"))]
 pub fn speak_windows_native(_text: &str, _rate: f32, _volume: f32) -> Result<(), String> {
     Err("Windows native TTS is only available on Windows.".to_string())
+}
+
+#[cfg(target_os = "windows")]
+pub fn speak_windows_natural(text: &str, rate: f32, volume: f32) -> Result<(), String> {
+    speak_windows_sapi(text, rate, volume, true)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn speak_windows_natural(_text: &str, _rate: f32, _volume: f32) -> Result<(), String> {
+    Err("Windows natural TTS is only available on Windows.".to_string())
+}
+
+#[cfg(target_os = "windows")]
+pub fn benchmark_windows_native_synthesis(
+    text: &str,
+    rate: f32,
+    volume: f32,
+) -> Result<(), String> {
+    benchmark_windows_sapi_synthesis(text, rate, volume, false)
+}
+
+#[cfg(target_os = "windows")]
+pub fn benchmark_windows_natural_synthesis(
+    text: &str,
+    rate: f32,
+    volume: f32,
+) -> Result<(), String> {
+    benchmark_windows_sapi_synthesis(text, rate, volume, true)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn benchmark_windows_native_synthesis(
+    _text: &str,
+    _rate: f32,
+    _volume: f32,
+) -> Result<(), String> {
+    Err("Windows native TTS is only available on Windows.".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn benchmark_windows_natural_synthesis(
+    _text: &str,
+    _rate: f32,
+    _volume: f32,
+) -> Result<(), String> {
+    Err("Windows natural TTS is only available on Windows.".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -546,15 +804,50 @@ pub fn speak_windows_native(_text: &str, _rate: f32, _volume: f32) -> Result<(),
 fn resolve_piper_binary(configured: &str) -> Option<std::path::PathBuf> {
     if !configured.is_empty() {
         let p = std::path::PathBuf::from(configured);
-        if p.is_file() {
+        if file_is_non_empty(&p) {
             return Some(p);
         }
     }
     if let Ok(p) = which::which("piper") {
-        return Some(p);
+        if file_is_non_empty(&p) {
+            return Some(p);
+        }
     }
     if let Ok(p) = which::which("piper.exe") {
-        return Some(p);
+        if file_is_non_empty(&p) {
+            return Some(p);
+        }
+    }
+    // Local source checkout paths while developing from repository root or src-tauri/.
+    if let Ok(cwd) = std::env::current_dir() {
+        for ancestor in cwd.ancestors().take(6) {
+            let candidates = [
+                ancestor.join("bin").join("piper").join("piper.exe"),
+                ancestor
+                    .join("src-tauri")
+                    .join("bin")
+                    .join("piper")
+                    .join("piper.exe"),
+                ancestor.join("piper").join("piper.exe"),
+                ancestor.join("piper").join("build").join("piper.exe"),
+            ];
+            for candidate in candidates {
+                if file_is_non_empty(&candidate) {
+                    return Some(candidate);
+                }
+            }
+            if let Some(parent) = ancestor.parent() {
+                let sibling_candidates = [
+                    parent.join("piper").join("piper.exe"),
+                    parent.join("piper").join("build").join("piper.exe"),
+                ];
+                for candidate in sibling_candidates {
+                    if file_is_non_empty(&candidate) {
+                        return Some(candidate);
+                    }
+                }
+            }
+        }
     }
     // Bundled with installer: <exe_dir>/resources/bin/piper/piper.exe
     if let Ok(exe_path) = std::env::current_exe() {
@@ -564,7 +857,7 @@ fn resolve_piper_binary(configured: &str) -> Option<std::path::PathBuf> {
                 .join("bin")
                 .join("piper")
                 .join("piper.exe");
-            if bundled.is_file() {
+            if file_is_non_empty(&bundled) {
                 return Some(bundled);
             }
         }
@@ -574,7 +867,7 @@ fn resolve_piper_binary(configured: &str) -> Option<std::path::PathBuf> {
             .join("trispr-flow")
             .join("piper")
             .join("piper.exe");
-        if p.is_file() {
+        if file_is_non_empty(&p) {
             return Some(p);
         }
     }
@@ -591,6 +884,36 @@ fn resolve_piper_model_dir(configured: &str) -> Option<std::path::PathBuf> {
         let p = std::path::PathBuf::from(configured);
         if p.is_dir() {
             return Some(p);
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        for ancestor in cwd.ancestors().take(6) {
+            let candidates = [
+                ancestor.join("bin").join("piper").join("voices"),
+                ancestor
+                    .join("src-tauri")
+                    .join("bin")
+                    .join("piper")
+                    .join("voices"),
+                ancestor.join("piper").join("voices"),
+                ancestor.join("piper").join("models"),
+            ];
+            for candidate in candidates {
+                if candidate.is_dir() {
+                    return Some(candidate);
+                }
+            }
+            if let Some(parent) = ancestor.parent() {
+                let sibling_candidates = [
+                    parent.join("piper").join("voices"),
+                    parent.join("piper").join("models"),
+                ];
+                for candidate in sibling_candidates {
+                    if candidate.is_dir() {
+                        return Some(candidate);
+                    }
+                }
+            }
         }
     }
     if let Ok(exe_path) = std::env::current_exe() {
@@ -617,17 +940,28 @@ fn resolve_piper_model_dir(configured: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+pub fn piper_binary_available(configured: &str) -> bool {
+    resolve_piper_binary(configured).is_some()
+}
+
+pub fn piper_model_available(model_path: &str, model_dir: &str) -> bool {
+    if !model_path.trim().is_empty() {
+        return std::path::Path::new(model_path.trim()).is_file();
+    }
+    !list_piper_voices(model_dir).is_empty()
+}
+
 /// Synthesise `text` with Piper and play the result synchronously.
 ///
 /// `rate` controls speech speed (0.5 = half speed, 2.0 = double speed).
 /// Piper maps this to `--length_scale` (inverse: 1/rate).
 /// `volume` scales WAV samples before playback (0.0..1.0).
-pub fn speak_piper(
+fn synthesize_piper_to_wav(
     text: &str,
     binary_path: &str,
     model_path: &str,
     rate: f32,
-    volume: f32,
+    output_path: &std::path::Path,
 ) -> Result<(), String> {
     use std::io::Write;
     use std::process::Stdio;
@@ -657,27 +991,22 @@ pub fn speak_piper(
     };
     let model_path = resolved_model.as_str();
 
-    // Unique temp file per call to avoid collisions when called concurrently.
-    let temp_path = std::env::temp_dir().join(format!(
-        "trispr_tts_{}.wav",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-    ));
-
     // Piper's --length_scale is the inverse of speed rate.
     let length_scale = format!("{:.3}", (1.0_f32 / rate.clamp(0.25, 4.0)));
 
-    let mut child = Command::new(&binary)
-        .args([
-            "--model",
-            model_path,
-            "--output_file",
-            temp_path.to_str().unwrap_or(""),
-            "--length_scale",
-            &length_scale,
-        ])
+    let mut cmd = Command::new(&binary);
+    cmd.args([
+        "--model",
+        model_path,
+        "--output_file",
+        output_path.to_str().unwrap_or(""),
+        "--length_scale",
+        &length_scale,
+    ]);
+    if let Some(binary_dir) = binary.parent() {
+        cmd.current_dir(binary_dir);
+    }
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -693,17 +1022,73 @@ pub fn speak_piper(
         .map_err(|e| format!("Piper process error: {e}"))?;
 
     if !status.success() {
-        let _ = std::fs::remove_file(&temp_path);
         return Err(format!("Piper exited with status {status}"));
     }
 
-    if !temp_path.is_file() {
+    if !output_path.is_file() {
         return Err("Piper produced no output file.".to_string());
     }
 
+    Ok(())
+}
+
+pub fn speak_piper(
+    text: &str,
+    binary_path: &str,
+    model_path: &str,
+    rate: f32,
+    volume: f32,
+) -> Result<(), String> {
+    // Unique temp file per call to avoid collisions when called concurrently.
+    let temp_path = std::env::temp_dir().join(format!(
+        "trispr_tts_{}.wav",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    ));
+
+    synthesize_piper_to_wav(text, binary_path, model_path, rate, &temp_path)?;
     let play_result = play_wav_blocking(&temp_path, volume);
     let _ = std::fs::remove_file(&temp_path);
     play_result
+}
+
+pub fn play_wav_bytes(bytes: &[u8], volume: f32) -> Result<(), String> {
+    if bytes.is_empty() {
+        return Err("WAV payload is empty.".to_string());
+    }
+    let temp_path = std::env::temp_dir().join(format!(
+        "trispr_tts_qwen_{}.wav",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    ));
+    std::fs::write(&temp_path, bytes)
+        .map_err(|error| format!("Failed to write temporary WAV file: {error}"))?;
+    let play_result = play_wav_blocking(&temp_path, volume);
+    let _ = std::fs::remove_file(&temp_path);
+    play_result
+}
+
+pub fn benchmark_piper_synthesis(
+    text: &str,
+    binary_path: &str,
+    model_path: &str,
+    rate: f32,
+) -> Result<(), String> {
+    let temp_path = std::env::temp_dir().join(format!(
+        "trispr_tts_bench_{}.wav",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    ));
+
+    let result = synthesize_piper_to_wav(text, binary_path, model_path, rate, &temp_path);
+    let _ = std::fs::remove_file(&temp_path);
+    result
 }
 
 /// Read a WAV file and play it synchronously via cpal.
@@ -780,7 +1165,10 @@ fn play_wav_blocking(path: &std::path::Path, volume: f32) -> Result<(), String> 
 
 #[cfg(test)]
 mod tests {
-    use super::{is_tts_policy_allowed, VisionFrame, VisionFrameBuffer};
+    use super::{
+        execute_tts_with_fallback, is_tts_policy_allowed, windows_natural_voice_priority,
+        windows_voice_matches_natural_profile, VisionFrame, VisionFrameBuffer,
+    };
 
     fn frame(seq: u64, bytes: usize) -> VisionFrame {
         VisionFrame {
@@ -846,5 +1234,92 @@ mod tests {
         assert!(is_tts_policy_allowed("explicit_only", "manual_test"));
         assert!(!is_tts_policy_allowed("explicit_only", "agent_reply"));
         assert!(!is_tts_policy_allowed("explicit_only", "agent_event"));
+    }
+
+    #[test]
+    fn tts_fallback_matrix_uses_primary_when_available() {
+        let outcome = execute_tts_with_fallback("windows_native", "local_custom", |provider| {
+            if provider == "windows_native" {
+                Ok(())
+            } else {
+                Err("unexpected fallback".to_string())
+            }
+        })
+        .expect("primary provider should succeed");
+
+        assert_eq!(outcome.provider_used, "windows_native");
+        assert!(!outcome.used_fallback);
+        assert!(outcome.primary_error.is_none());
+    }
+
+    #[test]
+    fn tts_fallback_matrix_uses_fallback_when_primary_fails() {
+        let outcome = execute_tts_with_fallback("windows_native", "local_custom", |provider| {
+            if provider == "windows_native" {
+                Err("powershell unavailable".to_string())
+            } else {
+                Ok(())
+            }
+        })
+        .expect("fallback provider should succeed");
+
+        assert_eq!(outcome.provider_used, "local_custom");
+        assert!(outcome.used_fallback);
+        assert_eq!(
+            outcome.primary_error.as_deref(),
+            Some("powershell unavailable")
+        );
+    }
+
+    #[test]
+    fn tts_fallback_matrix_reports_both_failures() {
+        let error = execute_tts_with_fallback("windows_native", "local_custom", |provider| {
+            if provider == "windows_native" {
+                Err("primary failed".to_string())
+            } else {
+                Err("fallback failed".to_string())
+            }
+        })
+        .expect_err("both providers should fail");
+
+        assert!(error.contains("tts_fallback_both_failed"));
+        assert!(error.contains("primary failed"));
+        assert!(error.contains("fallback failed"));
+    }
+
+    #[test]
+    fn tts_fallback_matrix_reports_missing_alternative_fallback() {
+        let error = execute_tts_with_fallback("windows_native", "windows_native", |_provider| {
+            Err("primary failed".to_string())
+        })
+        .expect_err("no alternative fallback configured");
+
+        assert!(error.contains("tts_fallback_no_alternative"));
+        assert!(error.contains("primary failed"));
+    }
+
+    #[test]
+    fn natural_voice_profile_detects_multilingual_and_natural_markers() {
+        assert!(windows_voice_matches_natural_profile(
+            "Microsoft AvaMultilingual"
+        ));
+        assert!(windows_voice_matches_natural_profile(
+            "Microsoft Aria (Natural)"
+        ));
+        assert!(windows_voice_matches_natural_profile("Edge Online Voice"));
+        assert!(!windows_voice_matches_natural_profile("Microsoft Zira"));
+    }
+
+    #[test]
+    fn natural_voice_priority_prefers_multilingual_then_natural_then_online() {
+        assert!(
+            windows_natural_voice_priority("Microsoft AvaMultilingual")
+                < windows_natural_voice_priority("Microsoft Aria (Natural)")
+        );
+        assert!(
+            windows_natural_voice_priority("Microsoft Aria (Natural)")
+                < windows_natural_voice_priority("Edge Online Voice")
+        );
+        assert_eq!(windows_natural_voice_priority("Microsoft Zira"), 3);
     }
 }

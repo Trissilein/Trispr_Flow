@@ -929,7 +929,9 @@ fn likely_mixed_en_de(text: &str) -> bool {
 fn detect_language_drift_reason(original: &str, refined: &str) -> Option<String> {
     // Skip language-drift check for very short texts — too few words to detect
     // language reliably, and false positives are common in mixed-language environments.
-    if original.len() < 80 {
+    let original_words = tokenize_language_words(original);
+    let refined_words = tokenize_language_words(refined);
+    if original_words.len() < 8 || refined_words.len() < 8 {
         return None;
     }
     if likely_mixed_en_de(original) {

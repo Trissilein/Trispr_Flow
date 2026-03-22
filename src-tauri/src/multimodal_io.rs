@@ -1,6 +1,6 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::process::Command;
@@ -28,11 +28,18 @@ fn file_is_non_empty(path: &std::path::Path) -> bool {
             .unwrap_or(false)
 }
 
+const WINDOWS_NATURAL_NAME_HINTS: &[&str] = &[
+    "aria", "conrad", "jenny", "guy", "ava", "libby", "sonia", "ryan",
+];
+
 fn windows_voice_matches_natural_profile(name: &str) -> bool {
     let normalized = name.trim().to_ascii_lowercase();
     normalized.contains("natural")
         || normalized.contains("multilingual")
         || normalized.contains("online")
+        || WINDOWS_NATURAL_NAME_HINTS
+            .iter()
+            .any(|hint| normalized.contains(hint))
 }
 
 fn windows_natural_voice_priority(name: &str) -> u8 {
@@ -43,8 +50,13 @@ fn windows_natural_voice_priority(name: &str) -> u8 {
         1
     } else if normalized.contains("online") {
         2
-    } else {
+    } else if WINDOWS_NATURAL_NAME_HINTS
+        .iter()
+        .any(|hint| normalized.contains(hint))
+    {
         3
+    } else {
+        4
     }
 }
 
@@ -186,6 +198,10 @@ pub struct TtsVoiceInfo {
     pub id: String,
     pub label: String,
     pub provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -567,54 +583,119 @@ fn run_hidden_powershell(script: &str, action_label: &str) -> Result<String, Str
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct WindowsVoiceRecord {
+    name: String,
+    locale: Option<String>,
+}
+
 #[cfg(target_os = "windows")]
-fn list_windows_voice_names() -> Result<Vec<String>, String> {
-    let script = "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; try { $s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name } } finally { $s.Dispose() }";
-    let stdout = run_hidden_powershell(script, "Windows voice list")?;
-    let mut names: Vec<String> = stdout
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_string)
-        .collect();
-    names.sort();
-    names.dedup();
-    Ok(names)
+fn windows_voice_profile(name: &str) -> &'static str {
+    let normalized = name.trim().to_ascii_lowercase();
+    if normalized.contains("multilingual") {
+        "multilingual"
+    } else if normalized.contains("natural") {
+        "natural"
+    } else if normalized.contains("online") {
+        "online"
+    } else if WINDOWS_NATURAL_NAME_HINTS
+        .iter()
+        .any(|hint| normalized.contains(hint))
+    {
+        "natural"
+    } else {
+        "standard"
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
-fn list_windows_voice_names() -> Result<Vec<String>, String> {
+fn windows_voice_profile(_name: &str) -> &'static str {
+    "standard"
+}
+
+#[cfg(target_os = "windows")]
+fn list_windows_voice_records() -> Result<Vec<WindowsVoiceRecord>, String> {
+    let script = "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; try { $voices = @($s.GetInstalledVoices() | ForEach-Object { $info = $_.VoiceInfo; [PSCustomObject]@{ name = $info.Name; locale = if ($info.Culture -ne $null) { $info.Culture.Name } else { '' } } }); $voices | ConvertTo-Json -Compress } finally { $s.Dispose() }";
+    let stdout = run_hidden_powershell(script, "Windows voice list")?;
+    let payload = stdout.trim();
+    if payload.is_empty() {
+        return Ok(Vec::new());
+    }
+    let parsed: serde_json::Value = serde_json::from_str(payload).map_err(|error| {
+        format!(
+            "Failed to parse Windows voice metadata payload: {} | payload={}",
+            error, payload
+        )
+    })?;
+    let mut records: Vec<WindowsVoiceRecord> = match parsed {
+        serde_json::Value::Array(items) => items
+            .into_iter()
+            .filter_map(|item| serde_json::from_value::<WindowsVoiceRecord>(item).ok())
+            .collect(),
+        serde_json::Value::Object(_) => vec![serde_json::from_value::<WindowsVoiceRecord>(parsed)
+            .map_err(|error| {
+                format!(
+                    "Failed to parse single Windows voice metadata payload: {} | payload={}",
+                    error, payload
+                )
+            })?],
+        _ => Vec::new(),
+    };
+    records.retain(|record| !record.name.trim().is_empty());
+    records.sort_by(|a, b| {
+        a.name
+            .to_ascii_lowercase()
+            .cmp(&b.name.to_ascii_lowercase())
+            .then_with(|| a.locale.cmp(&b.locale))
+    });
+    records.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
+    Ok(records)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn list_windows_voice_records() -> Result<Vec<WindowsVoiceRecord>, String> {
     Err("Windows voices are only available on Windows.".to_string())
 }
 
 fn list_windows_voices_filtered(provider: &str, natural_only: bool) -> Vec<TtsVoiceInfo> {
-    let Ok(names) = list_windows_voice_names() else {
+    let Ok(records) = list_windows_voice_records() else {
         return Vec::new();
     };
 
     let mut filtered = if natural_only {
-        names
+        records
             .into_iter()
-            .filter(|name| windows_voice_matches_natural_profile(name))
+            .filter(|record| windows_voice_matches_natural_profile(&record.name))
             .collect::<Vec<_>>()
     } else {
-        names
+        records
     };
 
     if natural_only {
         filtered.sort_by(|a, b| {
-            windows_natural_voice_priority(a)
-                .cmp(&windows_natural_voice_priority(b))
-                .then_with(|| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()))
+            windows_natural_voice_priority(&a.name)
+                .cmp(&windows_natural_voice_priority(&b.name))
+                .then_with(|| {
+                    a.name
+                        .to_ascii_lowercase()
+                        .cmp(&b.name.to_ascii_lowercase())
+                })
         });
     }
 
     filtered
         .into_iter()
-        .map(|name| TtsVoiceInfo {
-            id: name.clone(),
-            label: name,
+        .map(|record| TtsVoiceInfo {
+            id: record.name.clone(),
+            label: record.name.clone(),
             provider: provider.to_string(),
+            locale: record
+                .locale
+                .as_deref()
+                .map(str::trim)
+                .filter(|locale| !locale.is_empty())
+                .map(|locale| locale.to_string()),
+            profile: Some(windows_voice_profile(&record.name).to_string()),
         })
         .collect()
 }
@@ -639,6 +720,8 @@ fn list_windows_voices() -> Vec<TtsVoiceInfo> {
             id: "windows_default".to_string(),
             label: "Windows Default Voice".to_string(),
             provider: "windows_native".to_string(),
+            locale: None,
+            profile: None,
         });
     }
     voices
@@ -654,6 +737,8 @@ fn list_windows_natural_voices() -> Vec<TtsVoiceInfo> {
             id: "windows_natural_unavailable".to_string(),
             label: "No Natural voices detected".to_string(),
             provider: "windows_natural".to_string(),
+            locale: None,
+            profile: Some("missing".to_string()),
         });
     }
     voices
@@ -669,6 +754,8 @@ fn list_qwen3_tts_voices() -> Vec<TtsVoiceInfo> {
             id: (*voice).to_string(),
             label: (*voice).to_string(),
             provider: "qwen3_tts".to_string(),
+            locale: None,
+            profile: None,
         })
         .collect()
 }
@@ -680,6 +767,101 @@ pub fn list_tts_voices(provider: &str) -> Vec<TtsVoiceInfo> {
         "qwen3_tts" => list_qwen3_tts_voices(),
         _ => Vec::new(),
     }
+}
+
+fn normalize_language_hint(language_hint: &str) -> Option<(String, Option<String>)> {
+    let normalized = language_hint.trim().to_ascii_lowercase().replace('_', "-");
+    if normalized.is_empty() {
+        return None;
+    }
+    let mut parts = normalized.split('-');
+    let language = parts.next()?.trim().to_string();
+    if language.len() < 2 {
+        return None;
+    }
+    let language = language.chars().take(2).collect::<String>();
+    if language.is_empty() {
+        return None;
+    }
+    let region = parts
+        .next()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| part.chars().take(2).collect::<String>());
+    Some((language, region))
+}
+
+fn select_voice_from_candidates_for_language(
+    candidates: &[TtsVoiceInfo],
+    language_hint: &str,
+) -> Option<String> {
+    let (language, region) = normalize_language_hint(language_hint)?;
+    let exact = region
+        .as_ref()
+        .map(|value| format!("{}-{}", language, value));
+
+    let mut best: Option<(i32, String)> = None;
+    for voice in candidates {
+        let mut score = 0_i32;
+        let locale = voice
+            .locale
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase()
+            .replace('_', "-");
+        if let Some(exact_locale) = exact.as_ref() {
+            if !locale.is_empty() && locale == *exact_locale {
+                score = 120;
+            }
+        }
+        if score == 0
+            && !locale.is_empty()
+            && (locale.starts_with(&format!("{}-", language)) || locale == language)
+        {
+            score = 90;
+        }
+        if score == 0 {
+            let id = voice.id.to_ascii_lowercase();
+            if id.contains(&format!("{}-", language))
+                || id.contains(&format!("_{}_", language))
+                || id.contains(&format!(" {}", language))
+            {
+                score = 55;
+            }
+        }
+        if score == 0 {
+            continue;
+        }
+        match voice.profile.as_deref().unwrap_or_default() {
+            "multilingual" => score += 4,
+            "natural" => score += 2,
+            "online" => score += 1,
+            _ => {}
+        }
+        let current = (score, voice.id.clone());
+        if let Some(existing) = &best {
+            if current.0 > existing.0
+                || (current.0 == existing.0
+                    && current.1.to_ascii_lowercase() < existing.1.to_ascii_lowercase())
+            {
+                best = Some(current);
+            }
+        } else {
+            best = Some(current);
+        }
+    }
+
+    best.map(|(_, id)| id)
+}
+
+pub fn select_windows_voice_for_language(provider: &str, language_hint: &str) -> Option<String> {
+    if provider != "windows_native" && provider != "windows_natural" {
+        return None;
+    }
+    let natural_only = provider == "windows_natural";
+    let candidates = list_windows_voices_filtered(provider, natural_only);
+    select_voice_from_candidates_for_language(&candidates, language_hint)
 }
 
 /// Scan the resolved piper voice model directory for `.onnx` files.
@@ -713,6 +895,8 @@ pub fn list_piper_voices(model_dir: &str) -> Vec<TtsVoiceInfo> {
                 id: path.to_string_lossy().to_string(), // full path used as ID
                 label,
                 provider: "local_custom".to_string(),
+                locale: None,
+                profile: None,
             }
         })
         .collect();
@@ -727,6 +911,7 @@ fn build_windows_sapi_speech_script(
     rate: f32,
     volume: f32,
     natural_only: bool,
+    selected_voice: Option<&str>,
     benchmark_to_file: bool,
 ) -> String {
     let text = text.trim();
@@ -735,38 +920,178 @@ fn build_windows_sapi_speech_script(
     let sapi_rate = (((rate - 1.0) * 10.0).round() as i32).clamp(-10, 10);
     let sapi_volume = ((volume * 100.0).round() as i32).clamp(0, 100);
     let escaped_text = text.replace('\'', "''");
-    let natural_selection = if natural_only {
-        "$voice = $s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name } | Where-Object { $_ -match 'Natural|Multilingual|Online' } | Sort-Object @{Expression={ if ($_ -match 'Multilingual') { 0 } elseif ($_ -match 'Natural') { 1 } else { 2 } }}, @{Expression={ $_ }} | Select-Object -First 1; if ([string]::IsNullOrWhiteSpace($voice)) { throw 'No Windows Natural voice found. Install NaturalVoiceSAPIAdapter and at least one natural voice.' }; $s.SelectVoice($voice);"
-    } else {
-        ""
-    };
-    if benchmark_to_file {
+    let selected_voice = selected_voice
+        .map(str::trim)
+        .filter(|voice| !voice.is_empty())
+        .unwrap_or("");
+    let escaped_selected_voice = selected_voice.replace('\'', "''");
+    let voice_selection = if natural_only {
         format!(
-            "$wav=[System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(),'wav'); Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; try {{ {natural_selection} $s.Rate = {sapi_rate}; $s.Volume = {sapi_volume}; $s.SetOutputToWaveFile($wav); $s.Speak('{escaped_text}'); $s.SetOutputToNull(); }} finally {{ $s.Dispose(); Remove-Item $wav -Force -ErrorAction SilentlyContinue }}"
+            "$preferred = '{escaped_selected_voice}'; \
+             $installed = @($s.GetInstalledVoices() | ForEach-Object {{ $_.VoiceInfo.Name }}); \
+             if (-not [string]::IsNullOrWhiteSpace($preferred)) {{ \
+               if ($installed -contains $preferred) {{ $voice = $preferred }} \
+               else {{ throw \"Configured Windows voice '$preferred' is not installed.\" }} \
+             }} else {{ \
+               $candidates = $installed | Where-Object {{ $_ -match 'Natural|Multilingual|Online|Aria|Conrad|Jenny|Guy|Ava|Libby|Sonia|Ryan' }}; \
+               $voice = $candidates | Sort-Object \
+                 @{{Expression={{ if ($_ -match 'Multilingual') {{ 0 }} elseif ($_ -match 'Natural') {{ 1 }} elseif ($_ -match 'Online') {{ 2 }} else {{ 3 }} }}}}, \
+                 @{{Expression={{ $_ }}}} | Select-Object -First 1; \
+             }} \
+             if ([string]::IsNullOrWhiteSpace($voice)) {{ \
+               throw 'No Windows Natural voice found. Install NaturalVoiceSAPIAdapter and at least one natural voice.' \
+             }}; \
+             $s.SelectVoice($voice);"
         )
     } else {
         format!(
-            "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; try {{ {natural_selection} $s.Rate = {sapi_rate}; $s.Volume = {sapi_volume}; $s.Speak('{escaped_text}'); }} finally {{ $s.Dispose() }}"
+            "$preferred = '{escaped_selected_voice}'; if (-not [string]::IsNullOrWhiteSpace($preferred)) {{ $installed = @($s.GetInstalledVoices() | ForEach-Object {{ $_.VoiceInfo.Name }}); if ($installed -contains $preferred) {{ $s.SelectVoice($preferred) }} else {{ throw \"Configured Windows voice '$preferred' is not installed.\" }} }}"
+        )
+    };
+    if benchmark_to_file {
+        format!(
+            "$wav=[System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(),'wav'); Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; try {{ {voice_selection} $s.Rate = {sapi_rate}; $s.Volume = {sapi_volume}; $s.SetOutputToWaveFile($wav); $s.Speak('{escaped_text}'); $s.SetOutputToNull(); }} finally {{ $s.Dispose(); Remove-Item $wav -Force -ErrorAction SilentlyContinue }}"
+        )
+    } else {
+        format!(
+            "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; try {{ {voice_selection} $s.Rate = {sapi_rate}; $s.Volume = {sapi_volume}; $s.Speak('{escaped_text}'); }} finally {{ $s.Dispose() }}"
         )
     }
 }
 
 #[cfg(target_os = "windows")]
-fn speak_windows_sapi(text: &str, rate: f32, volume: f32, natural_only: bool) -> Result<(), String> {
+fn build_windows_sapi_wave_export_script(
+    text: &str,
+    rate: f32,
+    volume: f32,
+    natural_only: bool,
+    selected_voice: Option<&str>,
+) -> String {
+    let text = text.trim();
+    let rate = rate.clamp(0.5, 2.0);
+    let volume = volume.clamp(0.0, 1.0);
+    let sapi_rate = (((rate - 1.0) * 10.0).round() as i32).clamp(-10, 10);
+    let sapi_volume = ((volume * 100.0).round() as i32).clamp(0, 100);
+    let escaped_text = text.replace('\'', "''");
+    let selected_voice = selected_voice
+        .map(str::trim)
+        .filter(|voice| !voice.is_empty())
+        .unwrap_or("");
+    let escaped_selected_voice = selected_voice.replace('\'', "''");
+    let voice_selection = if natural_only {
+        format!(
+            "$preferred = '{escaped_selected_voice}'; \
+             $installed = @($s.GetInstalledVoices() | ForEach-Object {{ $_.VoiceInfo.Name }}); \
+             if (-not [string]::IsNullOrWhiteSpace($preferred)) {{ \
+               if ($installed -contains $preferred) {{ $voice = $preferred }} \
+               else {{ throw \"Configured Windows voice '$preferred' is not installed.\" }} \
+             }} else {{ \
+               $candidates = $installed | Where-Object {{ $_ -match 'Natural|Multilingual|Online|Aria|Conrad|Jenny|Guy|Ava|Libby|Sonia|Ryan' }}; \
+               $voice = $candidates | Sort-Object \
+                 @{{Expression={{ if ($_ -match 'Multilingual') {{ 0 }} elseif ($_ -match 'Natural') {{ 1 }} elseif ($_ -match 'Online') {{ 2 }} else {{ 3 }} }}}}, \
+                 @{{Expression={{ $_ }}}} | Select-Object -First 1; \
+             }} \
+             if ([string]::IsNullOrWhiteSpace($voice)) {{ \
+               throw 'No Windows Natural voice found. Install NaturalVoiceSAPIAdapter and at least one natural voice.' \
+             }}; \
+             $s.SelectVoice($voice);"
+        )
+    } else {
+        format!(
+            "$preferred = '{escaped_selected_voice}'; if (-not [string]::IsNullOrWhiteSpace($preferred)) {{ $installed = @($s.GetInstalledVoices() | ForEach-Object {{ $_.VoiceInfo.Name }}); if ($installed -contains $preferred) {{ $s.SelectVoice($preferred) }} else {{ throw \"Configured Windows voice '$preferred' is not installed.\" }} }}"
+        )
+    };
+    format!(
+        "$wav=[System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(),'wav'); Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; try {{ {voice_selection} $s.Rate = {sapi_rate}; $s.Volume = {sapi_volume}; $s.SetOutputToWaveFile($wav); $s.Speak('{escaped_text}'); $s.SetOutputToNull(); Write-Output $wav; }} finally {{ $s.Dispose() }}"
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn synthesize_windows_sapi_to_wav(
+    text: &str,
+    rate: f32,
+    volume: f32,
+    natural_only: bool,
+    selected_voice: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
+    let script =
+        build_windows_sapi_wave_export_script(text, rate, volume, natural_only, selected_voice);
+    let stdout = run_hidden_powershell(&script, "Windows TTS WAV synthesis")?;
+    let wav_path = stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .ok_or_else(|| "Windows TTS WAV synthesis produced no output path.".to_string())?;
+    let path = std::path::PathBuf::from(wav_path);
+    if !file_is_non_empty(&path) {
+        return Err(format!(
+            "Windows TTS WAV synthesis produced no playable file at '{}'.",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+#[cfg(target_os = "windows")]
+fn speak_windows_sapi(
+    text: &str,
+    rate: f32,
+    volume: f32,
+    natural_only: bool,
+    output_device_id: &str,
+    selected_voice: Option<&str>,
+) -> Result<(), String> {
     let text = text.trim();
     if text.is_empty() {
         return Err("TTS text is empty.".to_string());
     }
-    let script = build_windows_sapi_speech_script(text, rate, volume, natural_only, false);
-    run_hidden_powershell(&script, "Windows TTS")
-        .map(|_| ())
-        .map_err(|error| {
-            if is_windows_audio_device_error(&error) {
-                windows_audio_device_error_hint(&error)
-            } else {
-                error
+    let output_device_id = {
+        let trimmed = output_device_id.trim();
+        if trimmed.is_empty() {
+            "default"
+        } else {
+            trimmed
+        }
+    };
+    if output_device_id != "default" {
+        let wav_path =
+            synthesize_windows_sapi_to_wav(text, rate, volume, natural_only, selected_voice)?;
+        let play_result = play_wav_blocking(&wav_path, volume, output_device_id);
+        let _ = std::fs::remove_file(&wav_path);
+        return play_result.map_err(|play_error| {
+            format!(
+                "Windows TTS playback via selected device '{}' failed: {}",
+                output_device_id, play_error
+            )
+        });
+    }
+    let script =
+        build_windows_sapi_speech_script(text, rate, volume, natural_only, selected_voice, false);
+    match run_hidden_powershell(&script, "Windows TTS") {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            if !is_windows_audio_device_error(&error) {
+                return Err(error);
             }
-        })
+            let hinted = windows_audio_device_error_hint(&error);
+            match synthesize_windows_sapi_to_wav(text, rate, volume, natural_only, selected_voice) {
+                Ok(wav_path) => {
+                    let play_result = play_wav_blocking(&wav_path, volume, output_device_id);
+                    let _ = std::fs::remove_file(&wav_path);
+                    play_result.map_err(|play_error| {
+                        format!(
+                            "{} | Secondary fallback (SAPI->WAV playback) failed: {}",
+                            hinted, play_error
+                        )
+                    })
+                }
+                Err(synth_error) => Err(format!(
+                    "{} | Secondary fallback (SAPI->WAV synthesis) failed: {}",
+                    hinted, synth_error
+                )),
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -775,32 +1100,58 @@ fn benchmark_windows_sapi_synthesis(
     rate: f32,
     volume: f32,
     natural_only: bool,
+    selected_voice: Option<&str>,
 ) -> Result<(), String> {
     let text = text.trim();
     if text.is_empty() {
         return Err("TTS text is empty.".to_string());
     }
-    let script = build_windows_sapi_speech_script(text, rate, volume, natural_only, true);
+    let script =
+        build_windows_sapi_speech_script(text, rate, volume, natural_only, selected_voice, true);
     run_hidden_powershell(&script, "Windows TTS benchmark synthesis").map(|_| ())
 }
 
 #[cfg(target_os = "windows")]
-pub fn speak_windows_native(text: &str, rate: f32, volume: f32) -> Result<(), String> {
-    speak_windows_sapi(text, rate, volume, false)
+pub fn speak_windows_native(
+    text: &str,
+    rate: f32,
+    volume: f32,
+    output_device_id: &str,
+    selected_voice: Option<&str>,
+) -> Result<(), String> {
+    speak_windows_sapi(text, rate, volume, false, output_device_id, selected_voice)
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn speak_windows_native(_text: &str, _rate: f32, _volume: f32) -> Result<(), String> {
+pub fn speak_windows_native(
+    _text: &str,
+    _rate: f32,
+    _volume: f32,
+    _output_device_id: &str,
+    _selected_voice: Option<&str>,
+) -> Result<(), String> {
     Err("Windows native TTS is only available on Windows.".to_string())
 }
 
 #[cfg(target_os = "windows")]
-pub fn speak_windows_natural(text: &str, rate: f32, volume: f32) -> Result<(), String> {
-    speak_windows_sapi(text, rate, volume, true)
+pub fn speak_windows_natural(
+    text: &str,
+    rate: f32,
+    volume: f32,
+    output_device_id: &str,
+    selected_voice: Option<&str>,
+) -> Result<(), String> {
+    speak_windows_sapi(text, rate, volume, true, output_device_id, selected_voice)
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn speak_windows_natural(_text: &str, _rate: f32, _volume: f32) -> Result<(), String> {
+pub fn speak_windows_natural(
+    _text: &str,
+    _rate: f32,
+    _volume: f32,
+    _output_device_id: &str,
+    _selected_voice: Option<&str>,
+) -> Result<(), String> {
     Err("Windows natural TTS is only available on Windows.".to_string())
 }
 
@@ -809,8 +1160,9 @@ pub fn benchmark_windows_native_synthesis(
     text: &str,
     rate: f32,
     volume: f32,
+    selected_voice: Option<&str>,
 ) -> Result<(), String> {
-    benchmark_windows_sapi_synthesis(text, rate, volume, false)
+    benchmark_windows_sapi_synthesis(text, rate, volume, false, selected_voice)
 }
 
 #[cfg(target_os = "windows")]
@@ -818,8 +1170,9 @@ pub fn benchmark_windows_natural_synthesis(
     text: &str,
     rate: f32,
     volume: f32,
+    selected_voice: Option<&str>,
 ) -> Result<(), String> {
-    benchmark_windows_sapi_synthesis(text, rate, volume, true)
+    benchmark_windows_sapi_synthesis(text, rate, volume, true, selected_voice)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -827,6 +1180,7 @@ pub fn benchmark_windows_native_synthesis(
     _text: &str,
     _rate: f32,
     _volume: f32,
+    _selected_voice: Option<&str>,
 ) -> Result<(), String> {
     Err("Windows native TTS is only available on Windows.".to_string())
 }
@@ -836,6 +1190,7 @@ pub fn benchmark_windows_natural_synthesis(
     _text: &str,
     _rate: f32,
     _volume: f32,
+    _selected_voice: Option<&str>,
 ) -> Result<(), String> {
     Err("Windows natural TTS is only available on Windows.".to_string())
 }
@@ -1087,6 +1442,7 @@ pub fn speak_piper(
     model_path: &str,
     rate: f32,
     volume: f32,
+    output_device_id: &str,
 ) -> Result<(), String> {
     // Unique temp file per call to avoid collisions when called concurrently.
     let temp_path = std::env::temp_dir().join(format!(
@@ -1098,12 +1454,12 @@ pub fn speak_piper(
     ));
 
     synthesize_piper_to_wav(text, binary_path, model_path, rate, &temp_path)?;
-    let play_result = play_wav_blocking(&temp_path, volume);
+    let play_result = play_wav_blocking(&temp_path, volume, output_device_id);
     let _ = std::fs::remove_file(&temp_path);
     play_result
 }
 
-pub fn play_wav_bytes(bytes: &[u8], volume: f32) -> Result<(), String> {
+pub fn play_wav_bytes(bytes: &[u8], volume: f32, output_device_id: &str) -> Result<(), String> {
     if bytes.is_empty() {
         return Err("WAV payload is empty.".to_string());
     }
@@ -1116,7 +1472,7 @@ pub fn play_wav_bytes(bytes: &[u8], volume: f32) -> Result<(), String> {
     ));
     std::fs::write(&temp_path, bytes)
         .map_err(|error| format!("Failed to write temporary WAV file: {error}"))?;
-    let play_result = play_wav_blocking(&temp_path, volume);
+    let play_result = play_wav_blocking(&temp_path, volume, output_device_id);
     let _ = std::fs::remove_file(&temp_path);
     play_result
 }
@@ -1144,80 +1500,534 @@ pub fn benchmark_piper_synthesis(
 ///
 /// WASAPI shared mode performs internal SRC so no manual resampling is needed
 /// for common Piper output rates (16 000 / 22 050 Hz).
-fn play_wav_blocking(path: &std::path::Path, volume: f32) -> Result<(), String> {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+fn resolve_playback_output_device(output_device_id: &str) -> Result<cpal::Device, String> {
+    use cpal::traits::{DeviceTrait, HostTrait};
 
-    let reader = hound::WavReader::open(path).map_err(|e| format!("Cannot read WAV: {e}"))?;
-    let spec = reader.spec();
+    let requested = {
+        let trimmed = output_device_id.trim();
+        if trimmed.is_empty() {
+            "default"
+        } else {
+            trimmed
+        }
+    };
+    let host = cpal::default_host();
+    if requested == "default" {
+        return host
+            .default_output_device()
+            .ok_or_else(|| "No audio output device found".to_string());
+    }
 
-    let vol = volume.clamp(0.0, 1.0);
-    let samples: Vec<f32> = reader
-        .into_samples::<i16>()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("WAV decode error: {e}"))?
-        .into_iter()
-        .map(|s| (s as f32 / i16::MAX as f32) * vol)
-        .collect();
+    #[cfg(target_os = "windows")]
+    let preferred_name = requested
+        .strip_prefix("wasapi:")
+        .and_then(|wasapi_id| {
+            wasapi::DeviceEnumerator::new()
+                .ok()?
+                .get_device(wasapi_id)
+                .ok()?
+                .get_friendlyname()
+                .ok()
+        })
+        .or_else(|| {
+            requested
+                .strip_prefix("output-")
+                .and_then(|rest| rest.find('-').map(|pos| rest[pos + 1..].to_string()))
+        });
+
+    #[cfg(not(target_os = "windows"))]
+    let preferred_name = requested
+        .strip_prefix("output-")
+        .and_then(|rest| rest.find('-').map(|pos| rest[pos + 1..].to_string()));
+
+    let mut name_match: Option<cpal::Device> = None;
+    if let Ok(outputs) = host.output_devices() {
+        for (index, device) in outputs.enumerate() {
+            let name = device
+                .name()
+                .unwrap_or_else(|_| format!("Output {}", index + 1));
+            let generated_id = format!("output-{}-{}", index, name);
+            if generated_id == requested {
+                return Ok(device);
+            }
+            if name_match.is_none()
+                && preferred_name
+                    .as_deref()
+                    .map(|preferred| name.eq_ignore_ascii_case(preferred))
+                    .unwrap_or(false)
+            {
+                name_match = Some(device);
+            }
+        }
+    }
+
+    if let Some(device) = name_match {
+        tracing::warn!(
+            "TTS output device '{}' not matched by exact ID; matched by device name.",
+            requested
+        );
+        return Ok(device);
+    }
+
+    Err(format!(
+        "[tts_output_device_unavailable] Requested TTS output device '{}' is not available. Re-select a valid output device in Voice Output settings.",
+        requested
+    ))
+}
+
+#[derive(Debug, Clone)]
+struct OutputStreamCandidate {
+    stream_config: cpal::StreamConfig,
+    sample_format: cpal::SampleFormat,
+    source: &'static str,
+}
+
+fn sample_format_label(sample_format: cpal::SampleFormat) -> &'static str {
+    match sample_format {
+        cpal::SampleFormat::F32 => "f32",
+        cpal::SampleFormat::I16 => "i16",
+        cpal::SampleFormat::U16 => "u16",
+        _ => "unknown",
+    }
+}
+
+fn sample_format_rank(sample_format: cpal::SampleFormat) -> u8 {
+    match sample_format {
+        cpal::SampleFormat::F32 => 0,
+        cpal::SampleFormat::I16 => 1,
+        cpal::SampleFormat::U16 => 2,
+        _ => 3,
+    }
+}
+
+fn append_stream_candidate(
+    candidates: &mut Vec<OutputStreamCandidate>,
+    dedupe: &mut HashSet<String>,
+    stream_config: cpal::StreamConfig,
+    sample_format: cpal::SampleFormat,
+    source: &'static str,
+) {
+    let key = format!(
+        "{}:{}:{:?}",
+        stream_config.channels, stream_config.sample_rate.0, sample_format
+    );
+    if dedupe.insert(key) {
+        candidates.push(OutputStreamCandidate {
+            stream_config,
+            sample_format,
+            source,
+        });
+    }
+}
+
+fn collect_output_stream_candidates(
+    device: &cpal::Device,
+    wav_spec: &hound::WavSpec,
+) -> Result<Vec<OutputStreamCandidate>, String> {
+    use cpal::traits::DeviceTrait;
+
+    let mut candidates = Vec::<OutputStreamCandidate>::new();
+    let mut dedupe = HashSet::<String>::new();
+
+    if let Ok(default_config) = device.default_output_config() {
+        append_stream_candidate(
+            &mut candidates,
+            &mut dedupe,
+            default_config.config(),
+            default_config.sample_format(),
+            "default_output_config",
+        );
+    }
+
+    if let Ok(ranges) = device.supported_output_configs() {
+        for range in ranges {
+            let min_rate = range.min_sample_rate().0;
+            let max_rate = range.max_sample_rate().0;
+            let target_rate = wav_spec.sample_rate.clamp(min_rate, max_rate);
+            let supported = range.with_sample_rate(cpal::SampleRate(target_rate));
+            append_stream_candidate(
+                &mut candidates,
+                &mut dedupe,
+                supported.config(),
+                supported.sample_format(),
+                "supported_output_configs",
+            );
+        }
+    }
+
+    if candidates.is_empty() {
+        return Err(
+            "No supported audio output stream configuration was found for the selected device."
+                .to_string(),
+        );
+    }
+
+    if candidates.len() > 1 {
+        let preferred_rate = wav_spec.sample_rate;
+        let preferred_channels = wav_spec.channels;
+        candidates[1..].sort_by_key(|candidate| {
+            let rate_delta = candidate
+                .stream_config
+                .sample_rate
+                .0
+                .abs_diff(preferred_rate);
+            let channel_delta = candidate
+                .stream_config
+                .channels
+                .abs_diff(preferred_channels);
+            (
+                rate_delta,
+                channel_delta,
+                sample_format_rank(candidate.sample_format),
+            )
+        });
+    }
+
+    Ok(candidates)
+}
+
+fn decode_wav_to_f32(
+    reader: hound::WavReader<std::io::BufReader<std::fs::File>>,
+    spec: hound::WavSpec,
+) -> Result<Vec<f32>, String> {
+    match spec.sample_format {
+        hound::SampleFormat::Float => {
+            if spec.bits_per_sample != 32 {
+                return Err(format!(
+                    "Unsupported float WAV bit depth: {} (expected 32).",
+                    spec.bits_per_sample
+                ));
+            }
+            reader
+                .into_samples::<f32>()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("WAV decode error: {e}"))
+        }
+        hound::SampleFormat::Int => {
+            let bits = u32::from(spec.bits_per_sample.clamp(1, 32));
+            let scale = if bits <= 1 {
+                1.0
+            } else if bits >= 32 {
+                i32::MAX as f32
+            } else {
+                ((1_i64 << (bits - 1)) - 1) as f32
+            };
+            let decoded = reader
+                .into_samples::<i32>()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("WAV decode error: {e}"))?;
+            Ok(decoded
+                .into_iter()
+                .map(|sample| (sample as f32 / scale).clamp(-1.0, 1.0))
+                .collect::<Vec<_>>())
+        }
+    }
+}
+
+fn remap_channels_interleaved(input: &[f32], src_channels: usize, dst_channels: usize) -> Vec<f32> {
+    if src_channels == 0 || dst_channels == 0 || input.is_empty() {
+        return Vec::new();
+    }
+    if src_channels == dst_channels {
+        return input.to_vec();
+    }
+
+    let frame_count = input.len() / src_channels;
+    let mut output = vec![0.0; frame_count * dst_channels];
+    for frame in 0..frame_count {
+        let src_base = frame * src_channels;
+        let dst_base = frame * dst_channels;
+        if src_channels == 1 {
+            let value = input[src_base];
+            for channel in 0..dst_channels {
+                output[dst_base + channel] = value;
+            }
+        } else if dst_channels == 1 {
+            let mut sum = 0.0;
+            for channel in 0..src_channels {
+                sum += input[src_base + channel];
+            }
+            output[dst_base] = sum / src_channels as f32;
+        } else {
+            for channel in 0..dst_channels {
+                let src_channel = channel.min(src_channels - 1);
+                output[dst_base + channel] = input[src_base + src_channel];
+            }
+        }
+    }
+    output
+}
+
+fn resample_interleaved_linear(
+    input: &[f32],
+    channels: usize,
+    src_rate: u32,
+    dst_rate: u32,
+) -> Vec<f32> {
+    if channels == 0 || input.is_empty() {
+        return Vec::new();
+    }
+    if src_rate == dst_rate {
+        return input.to_vec();
+    }
+
+    let src_frames = input.len() / channels;
+    if src_frames == 0 {
+        return Vec::new();
+    }
+    if src_frames == 1 {
+        return input.to_vec();
+    }
+
+    let dst_frames = (((src_frames as u128 * dst_rate as u128) + (src_rate as u128 / 2))
+        / src_rate as u128) as usize;
+    let dst_frames = dst_frames.max(1);
+
+    if dst_frames == src_frames {
+        return input.to_vec();
+    }
+
+    let mut output = vec![0.0; dst_frames * channels];
+    for dst_frame in 0..dst_frames {
+        let src_pos = if dst_frames == 1 {
+            0.0
+        } else {
+            dst_frame as f32 * (src_frames - 1) as f32 / (dst_frames - 1) as f32
+        };
+        let src_idx0 = src_pos.floor() as usize;
+        let src_idx1 = (src_idx0 + 1).min(src_frames - 1);
+        let frac = src_pos - src_idx0 as f32;
+
+        for channel in 0..channels {
+            let left = input[src_idx0 * channels + channel];
+            let right = input[src_idx1 * channels + channel];
+            output[dst_frame * channels + channel] = left + (right - left) * frac;
+        }
+    }
+    output
+}
+
+fn convert_f32_to_i16(samples: &[f32]) -> Vec<i16> {
+    samples
+        .iter()
+        .map(|sample| {
+            let clamped = sample.clamp(-1.0, 1.0);
+            if clamped <= -1.0 {
+                i16::MIN
+            } else {
+                (clamped * i16::MAX as f32).round() as i16
+            }
+        })
+        .collect()
+}
+
+fn convert_f32_to_u16(samples: &[f32]) -> Vec<u16> {
+    samples
+        .iter()
+        .map(|sample| {
+            let clamped = sample.clamp(-1.0, 1.0);
+            ((((clamped + 1.0) * 0.5) * u16::MAX as f32).round() as i32).clamp(0, u16::MAX as i32)
+                as u16
+        })
+        .collect()
+}
+
+fn wav_spec_label(spec: &hound::WavSpec) -> String {
+    let sample_kind = match spec.sample_format {
+        hound::SampleFormat::Float => "float",
+        hound::SampleFormat::Int => "int",
+    };
+    format!(
+        "{}Hz/{}ch/{}{}",
+        spec.sample_rate, spec.channels, sample_kind, spec.bits_per_sample
+    )
+}
+
+fn format_stream_config_mismatch_error(
+    requested_device_id: &str,
+    source_spec: &hound::WavSpec,
+    candidate: &OutputStreamCandidate,
+    reason: &str,
+) -> String {
+    format!(
+        "[tts_output_stream_config_unsupported] device='{}' wav={} -> target={}Hz/{}ch/{} ({}) reason={}",
+        requested_device_id,
+        wav_spec_label(source_spec),
+        candidate.stream_config.sample_rate.0,
+        candidate.stream_config.channels,
+        sample_format_label(candidate.sample_format),
+        candidate.source,
+        reason
+    )
+}
+
+fn play_interleaved_samples<T: cpal::SizedSample + Copy + Send + Sync + 'static>(
+    device: &cpal::Device,
+    stream_config: &cpal::StreamConfig,
+    samples: Vec<T>,
+    silence: T,
+    stream_label: &'static str,
+) -> Result<(), String> {
+    use cpal::traits::{DeviceTrait, StreamTrait};
 
     if samples.is_empty() {
         return Ok(());
     }
 
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .ok_or_else(|| "No audio output device found".to_string())?;
+    let total_samples = samples.len();
+    let channels = usize::from(stream_config.channels.max(1));
+    let sample_rate = stream_config.sample_rate.0.max(1);
 
-    let config = cpal::StreamConfig {
-        channels: spec.channels,
-        sample_rate: cpal::SampleRate(spec.sample_rate),
-        buffer_size: cpal::BufferSize::Default,
-    };
-
-    let total = samples.len();
     let samples = Arc::new(samples);
-    let pos = Arc::new(AtomicUsize::new(0));
+    let position = Arc::new(AtomicUsize::new(0));
     let (done_tx, done_rx) = std::sync::mpsc::sync_channel::<()>(1);
 
-    let samples_c = samples.clone();
-    let pos_c = pos.clone();
+    let callback_samples = Arc::clone(&samples);
+    let callback_pos = Arc::clone(&position);
     let mut notified = false;
 
     let stream = device
         .build_output_stream(
-            &config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            stream_config,
+            move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
                 for out in data.iter_mut() {
-                    let p = pos_c.fetch_add(1, Ordering::Relaxed);
-                    *out = if p < total { samples_c[p] } else { 0.0 };
+                    let sample_index = callback_pos.fetch_add(1, Ordering::Relaxed);
+                    *out = if sample_index < total_samples {
+                        callback_samples[sample_index]
+                    } else {
+                        silence
+                    };
                 }
-                if !notified && pos_c.load(Ordering::Relaxed) >= total {
+                if !notified && callback_pos.load(Ordering::Relaxed) >= total_samples {
                     notified = true;
                     let _ = done_tx.try_send(());
                 }
             },
-            |err| tracing::error!("Piper cpal playback error: {err}"),
+            move |error| tracing::error!("TTS playback stream error ({}): {}", stream_label, error),
             None,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| error.to_string())?;
 
-    stream.play().map_err(|e| e.to_string())?;
+    stream.play().map_err(|error| error.to_string())?;
 
-    // Timeout = audio duration + 2 s grace, minimum 5 s.
-    let duration_secs = total as u64 / spec.sample_rate as u64 / spec.channels as u64;
-    let timeout = std::time::Duration::from_secs(duration_secs.max(3) + 2);
+    let frame_count = total_samples / channels;
+    let timeout = std::time::Duration::from_secs_f64(
+        ((frame_count as f64 / sample_rate as f64).max(3.0)) + 2.0,
+    );
     let _ = done_rx.recv_timeout(timeout);
-
     drop(stream);
     Ok(())
+}
+
+fn play_wav_blocking(
+    path: &std::path::Path,
+    volume: f32,
+    output_device_id: &str,
+) -> Result<(), String> {
+    let reader = hound::WavReader::open(path).map_err(|e| format!("Cannot read WAV: {e}"))?;
+    let spec = reader.spec();
+    let decoded_samples = decode_wav_to_f32(reader, spec)?;
+    if decoded_samples.is_empty() {
+        return Ok(());
+    }
+
+    let device = resolve_playback_output_device(output_device_id)?;
+    let candidates = collect_output_stream_candidates(&device, &spec)?;
+    let requested = {
+        let trimmed = output_device_id.trim();
+        if trimmed.is_empty() {
+            "default"
+        } else {
+            trimmed
+        }
+    };
+    let mut attempt_errors = Vec::<String>::new();
+
+    for candidate in &candidates {
+        let remapped = remap_channels_interleaved(
+            &decoded_samples,
+            usize::from(spec.channels.max(1)),
+            usize::from(candidate.stream_config.channels.max(1)),
+        );
+        let mut prepared = resample_interleaved_linear(
+            &remapped,
+            usize::from(candidate.stream_config.channels.max(1)),
+            spec.sample_rate.max(1),
+            candidate.stream_config.sample_rate.0.max(1),
+        );
+        let vol = volume.clamp(0.0, 1.0);
+        if (vol - 1.0).abs() > f32::EPSILON {
+            for sample in &mut prepared {
+                *sample = (*sample * vol).clamp(-1.0, 1.0);
+            }
+        }
+
+        let result = match candidate.sample_format {
+            cpal::SampleFormat::F32 => play_interleaved_samples(
+                &device,
+                &candidate.stream_config,
+                prepared,
+                0.0_f32,
+                "f32",
+            ),
+            cpal::SampleFormat::I16 => play_interleaved_samples(
+                &device,
+                &candidate.stream_config,
+                convert_f32_to_i16(&prepared),
+                0_i16,
+                "i16",
+            ),
+            cpal::SampleFormat::U16 => play_interleaved_samples(
+                &device,
+                &candidate.stream_config,
+                convert_f32_to_u16(&prepared),
+                u16::MAX / 2,
+                "u16",
+            ),
+            unsupported => Err(format!(
+                "Unsupported output sample format '{}'.",
+                sample_format_label(unsupported)
+            )),
+        };
+
+        match result {
+            Ok(()) => return Ok(()),
+            Err(reason) => {
+                let diagnostic =
+                    format_stream_config_mismatch_error(requested, &spec, candidate, &reason);
+                let reason_lower = reason.to_ascii_lowercase();
+                if reason_lower.contains("stream configuration is not supported")
+                    || reason_lower.contains("streamconfignotsupported")
+                {
+                    attempt_errors.push(diagnostic);
+                    continue;
+                }
+                return Err(diagnostic);
+            }
+        }
+    }
+
+    if attempt_errors.is_empty() {
+        return Err("[tts_output_stream_config_unsupported] Unable to open a compatible output stream for the selected device.".to_string());
+    }
+    if attempt_errors.len() == 1 {
+        return Err(attempt_errors.remove(0));
+    }
+    Err(format!(
+        "[tts_output_stream_config_unsupported] All candidate stream configs failed: {}",
+        attempt_errors.join(" | ")
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_tts_with_fallback, is_tts_audio_device_unavailable_tagged, is_tts_policy_allowed,
-        windows_audio_device_error_hint, windows_natural_voice_priority,
-        windows_voice_matches_natural_profile, VisionFrame, VisionFrameBuffer,
+        convert_f32_to_i16, convert_f32_to_u16, execute_tts_with_fallback,
+        format_stream_config_mismatch_error, is_tts_audio_device_unavailable_tagged,
+        is_tts_policy_allowed, remap_channels_interleaved, resample_interleaved_linear,
+        select_voice_from_candidates_for_language, windows_audio_device_error_hint,
+        windows_natural_voice_priority, windows_voice_matches_natural_profile,
+        OutputStreamCandidate, TtsVoiceInfo, VisionFrame, VisionFrameBuffer,
     };
 
     fn frame(seq: u64, bytes: usize) -> VisionFrame {
@@ -1375,6 +2185,76 @@ mod tests {
     }
 
     #[test]
+    fn tts_audio_device_error_detector_matches_known_signatures() {
+        assert!(super::is_windows_audio_device_error(
+            "Windows TTS failed with status Some(1): AudioException Error Code: 0x2 at Speak"
+        ));
+        assert!(super::is_windows_audio_device_error(
+            "Ausnahme ... Es wurde ein Audiogeraetefehler entdeckt ... Speak"
+        ));
+        assert!(!super::is_windows_audio_device_error(
+            "No Windows Natural voice found."
+        ));
+    }
+
+    #[test]
+    fn channel_remap_and_resample_produce_expected_shape() {
+        let mono = vec![0.0_f32, 0.5, 1.0, 0.5];
+        let stereo = remap_channels_interleaved(&mono, 1, 2);
+        assert_eq!(stereo.len(), mono.len() * 2);
+        assert_eq!(stereo[0], 0.0);
+        assert_eq!(stereo[1], 0.0);
+        assert_eq!(stereo[2], 0.5);
+        assert_eq!(stereo[3], 0.5);
+
+        let resampled = resample_interleaved_linear(&stereo, 2, 22_050, 44_100);
+        assert_eq!(resampled.len(), stereo.len() * 2);
+    }
+
+    #[test]
+    fn sample_format_converters_clamp_values() {
+        let input = vec![-2.0_f32, -1.0, 0.0, 1.0, 2.0];
+        let as_i16 = convert_f32_to_i16(&input);
+        assert_eq!(as_i16.first().copied(), Some(i16::MIN));
+        assert_eq!(as_i16[2], 0);
+        assert_eq!(as_i16.last().copied(), Some(i16::MAX));
+
+        let as_u16 = convert_f32_to_u16(&input);
+        assert_eq!(as_u16.first().copied(), Some(0));
+        assert_eq!(as_u16[2], 32768);
+        assert_eq!(as_u16.last().copied(), Some(u16::MAX));
+    }
+
+    #[test]
+    fn stream_config_mismatch_error_uses_stable_reason_code_and_diag() {
+        let candidate = OutputStreamCandidate {
+            stream_config: cpal::StreamConfig {
+                channels: 2,
+                sample_rate: cpal::SampleRate(48_000),
+                buffer_size: cpal::BufferSize::Default,
+            },
+            sample_format: cpal::SampleFormat::F32,
+            source: "default_output_config",
+        };
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 22_050,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+
+        let error = format_stream_config_mismatch_error(
+            "wasapi:{device-id}",
+            &spec,
+            &candidate,
+            "The requested stream configuration is not supported by the device.",
+        );
+        assert!(error.contains("[tts_output_stream_config_unsupported]"));
+        assert!(error.contains("wav=22050Hz/1ch/int16"));
+        assert!(error.contains("target=48000Hz/2ch/f32"));
+    }
+
+    #[test]
     fn natural_voice_profile_detects_multilingual_and_natural_markers() {
         assert!(windows_voice_matches_natural_profile(
             "Microsoft AvaMultilingual"
@@ -1383,6 +2263,8 @@ mod tests {
             "Microsoft Aria (Natural)"
         ));
         assert!(windows_voice_matches_natural_profile("Edge Online Voice"));
+        assert!(windows_voice_matches_natural_profile("Microsoft Aria"));
+        assert!(windows_voice_matches_natural_profile("Microsoft Conrad"));
         assert!(!windows_voice_matches_natural_profile("Microsoft Zira"));
     }
 
@@ -1396,6 +2278,45 @@ mod tests {
             windows_natural_voice_priority("Microsoft Aria (Natural)")
                 < windows_natural_voice_priority("Edge Online Voice")
         );
-        assert_eq!(windows_natural_voice_priority("Microsoft Zira"), 3);
+        assert!(
+            windows_natural_voice_priority("Edge Online Voice")
+                < windows_natural_voice_priority("Microsoft Aria")
+        );
+        assert_eq!(windows_natural_voice_priority("Microsoft Zira"), 4);
+    }
+
+    #[test]
+    fn language_voice_selector_prefers_exact_locale_match() {
+        let voices = vec![
+            TtsVoiceInfo {
+                id: "Microsoft Conrad".to_string(),
+                label: "Microsoft Conrad".to_string(),
+                provider: "windows_native".to_string(),
+                locale: Some("de-DE".to_string()),
+                profile: Some("natural".to_string()),
+            },
+            TtsVoiceInfo {
+                id: "Microsoft Aria".to_string(),
+                label: "Microsoft Aria".to_string(),
+                provider: "windows_native".to_string(),
+                locale: Some("en-US".to_string()),
+                profile: Some("multilingual".to_string()),
+            },
+        ];
+        let selected = select_voice_from_candidates_for_language(&voices, "de-DE");
+        assert_eq!(selected.as_deref(), Some("Microsoft Conrad"));
+    }
+
+    #[test]
+    fn language_voice_selector_returns_none_for_unmatched_language() {
+        let voices = vec![TtsVoiceInfo {
+            id: "Microsoft Aria".to_string(),
+            label: "Microsoft Aria".to_string(),
+            provider: "windows_native".to_string(),
+            locale: Some("en-US".to_string()),
+            profile: Some("multilingual".to_string()),
+        }];
+        let selected = select_voice_from_candidates_for_language(&voices, "ja-JP");
+        assert!(selected.is_none());
     }
 }

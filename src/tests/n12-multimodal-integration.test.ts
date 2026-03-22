@@ -66,6 +66,7 @@ function makeVoiceSettings(enabled: boolean, moduleEnabled = enabled): Settings 
       rate: 1.0,
       volume: 1.0,
       output_policy: "agent_replies_only",
+      output_device: "default",
       piper_binary_path: "",
       piper_model_path: "",
       piper_model_dir: "",

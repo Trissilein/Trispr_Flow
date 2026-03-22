@@ -213,10 +213,12 @@ pub struct VoiceOutputSettings {
     pub default_provider: String, // "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts"
     pub fallback_provider: String, // "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts"
     pub voice_id_windows: String,
+    pub auto_voice_by_detected_language: bool,
     pub voice_id_local: String,
     pub rate: f32,             // 0.5..2.0
     pub volume: f32,           // 0.0..1.0
     pub output_policy: String, // "agent_replies_only" | "replies_and_events" | "explicit_only"
+    pub output_device: String, // "default" | "wasapi:<id>" (windows) | "output-<idx>-<name>" (non-windows)
     /// Full path to piper.exe. Empty = auto-resolve via PATH or %LOCALAPPDATA%\trispr-flow\piper\
     pub piper_binary_path: String,
     /// Full path to the active Piper voice model (.onnx file).
@@ -242,10 +244,12 @@ impl Default for VoiceOutputSettings {
             default_provider: "windows_native".to_string(),
             fallback_provider: "local_custom".to_string(),
             voice_id_windows: String::new(),
+            auto_voice_by_detected_language: false,
             voice_id_local: String::new(),
             rate: 1.0,
             volume: 1.0,
             output_policy: "agent_replies_only".to_string(),
+            output_device: "default".to_string(),
             piper_binary_path: String::new(),
             piper_model_path: String::new(),
             piper_model_dir: String::new(),
@@ -403,6 +407,18 @@ pub fn normalize_voice_output_settings(settings: &mut VoiceOutputSettings) {
         "explicit_only" => "explicit_only".to_string(),
         _ => "agent_replies_only".to_string(),
     };
+    settings.output_device = settings.output_device.trim().to_string();
+    if settings.output_device.is_empty() {
+        settings.output_device = "default".to_string();
+    }
+    #[cfg(target_os = "windows")]
+    if settings.output_device != "default" && !settings.output_device.starts_with("wasapi:") {
+        settings.output_device = "default".to_string();
+    }
+    #[cfg(not(target_os = "windows"))]
+    if settings.output_device != "default" && !settings.output_device.starts_with("output-") {
+        settings.output_device = "default".to_string();
+    }
 
     settings.qwen3_tts_endpoint = settings.qwen3_tts_endpoint.trim().to_string();
     if settings.qwen3_tts_endpoint.is_empty() {

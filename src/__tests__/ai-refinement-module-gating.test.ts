@@ -84,6 +84,7 @@ function makeSettings(
     postproc_llm_enabled: aiEnabled,
     voice_output_settings: {
       enabled: ttsModuleEnabled,
+      output_device: "default",
     },
   } as unknown as Settings;
 }

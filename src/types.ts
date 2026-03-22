@@ -247,10 +247,12 @@ export interface VoiceOutputSettings {
   default_provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
   fallback_provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
   voice_id_windows: string;
+  auto_voice_by_detected_language?: boolean;
   voice_id_local: string;
   rate: number;
   volume: number;
   output_policy: "agent_replies_only" | "replies_and_events" | "explicit_only";
+  output_device: string;
   piper_binary_path?: string;
   piper_model_path?: string;
   piper_model_dir?: string;
@@ -362,6 +364,8 @@ export interface TtsVoiceInfo {
   id: string;
   label: string;
   provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
+  locale?: string | null;
+  profile?: string | null;
 }
 
 export interface TtsSpeakResult {

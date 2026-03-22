@@ -1,6 +1,6 @@
 // Settings persistence and UI rendering
 import { invoke } from "@tauri-apps/api/core";
-import { overlayHealth, runtimeDiagnostics, settings, startupStatus } from "./state";
+import { overlayHealth, outputDevices, runtimeDiagnostics, settings, startupStatus } from "./state";
 import * as dom from "./dom-refs";
 import { thresholdToDb, VAD_DB_FLOOR } from "./ui-helpers";
 import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "./utils";
@@ -33,6 +33,7 @@ import type {
   AIExecutionMode,
   AIProviderAuthMethodPreference,
   OverlayRefiningIndicatorPreset,
+  TtsVoiceInfo,
   UserRefinementPromptPreset,
 } from "./types";
 import {
@@ -1708,10 +1709,179 @@ export async function renderTopicKeywords(): Promise<void> {
 /**
  * Render Voice Output Settings from settings.voice_output_settings to the UI.
  */
+let voiceOutputWindowsVoiceRequestSeq = 0;
+
+function isWindowsVoiceProvider(
+  provider: string | null | undefined
+): provider is "windows_native" | "windows_natural" {
+  return provider === "windows_native" || provider === "windows_natural";
+}
+
+function toDisplayLanguage(locale: string): string {
+  const [languagePart, regionPart] = locale.split("-");
+  const language = languagePart?.trim().toLowerCase() ?? "";
+  const region = regionPart?.trim().toUpperCase() ?? "";
+  if (!language) return locale;
+  const languageName = (() => {
+    try {
+      if (typeof Intl !== "undefined" && typeof Intl.DisplayNames === "function") {
+        const names = new Intl.DisplayNames(["en"], { type: "language" });
+        return names.of(language) ?? language;
+      }
+    } catch {
+      // ignore and fall back to locale token
+    }
+    return language;
+  })();
+  return region ? `${languageName} (${region})` : languageName;
+}
+
+function toProfileLabel(profile: string | null | undefined): string | null {
+  switch ((profile ?? "").trim().toLowerCase()) {
+    case "multilingual":
+      return "Multilingual";
+    case "natural":
+      return "Natural";
+    case "online":
+      return "Online";
+    case "standard":
+      return "Standard";
+    default:
+      return null;
+  }
+}
+
+function formatWindowsVoiceLabel(voice: TtsVoiceInfo): string {
+  const parts: string[] = [];
+  const locale = (voice.locale ?? "").trim();
+  if (locale.length > 0) {
+    parts.push(toDisplayLanguage(locale));
+  }
+  const profileLabel = toProfileLabel(voice.profile);
+  if (profileLabel) {
+    parts.push(profileLabel);
+  }
+  return parts.length > 0 ? `${voice.label} (${parts.join(", ")})` : voice.label;
+}
+
+export async function refreshVoiceOutputWindowsVoices(): Promise<void> {
+  if (!settings?.voice_output_settings || !dom.voiceOutputWindowsVoiceSelect) return;
+
+  const provider = settings.voice_output_settings.default_provider;
+  const field = dom.voiceOutputWindowsVoiceField;
+  const select = dom.voiceOutputWindowsVoiceSelect;
+  const hint = dom.voiceOutputWindowsVoiceHint;
+  const autoField = dom.voiceOutputAutoLanguageVoiceField;
+
+  if (!isWindowsVoiceProvider(provider)) {
+    if (field) field.hidden = true;
+    if (autoField) autoField.hidden = true;
+    if (hint) hint.textContent = "Voice selection is available for Windows providers.";
+    select.innerHTML = "";
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Auto (provider default)";
+    select.appendChild(option);
+    select.value = "";
+    select.disabled = true;
+    return;
+  }
+
+  if (field) field.hidden = false;
+  if (autoField) autoField.hidden = false;
+  select.disabled = true;
+  select.innerHTML = "";
+  const loadingOption = document.createElement("option");
+  loadingOption.value = "";
+  loadingOption.textContent = "Loading voices...";
+  select.appendChild(loadingOption);
+  if (hint) hint.textContent = "Loading installed Windows voices...";
+
+  const requestSeq = ++voiceOutputWindowsVoiceRequestSeq;
+  try {
+    const voices = await invoke<TtsVoiceInfo[]>("list_tts_voices", { provider });
+    if (requestSeq !== voiceOutputWindowsVoiceRequestSeq) {
+      return;
+    }
+
+    const filteredVoices = voices.filter((voice) => voice.provider === provider);
+    const selectedVoiceId = (settings.voice_output_settings.voice_id_windows ?? "").trim();
+    const availableIds = new Set(filteredVoices.map((voice) => voice.id));
+    const effectiveVoiceId = selectedVoiceId.length > 0 && availableIds.has(selectedVoiceId)
+      ? selectedVoiceId
+      : "";
+    settings.voice_output_settings.voice_id_windows = effectiveVoiceId;
+
+    select.innerHTML = "";
+    const autoOption = document.createElement("option");
+    autoOption.value = "";
+    autoOption.textContent = "Auto (provider default)";
+    select.appendChild(autoOption);
+
+    filteredVoices.forEach((voice) => {
+      const option = document.createElement("option");
+      option.value = voice.id;
+      option.textContent = formatWindowsVoiceLabel(voice);
+      select.appendChild(option);
+    });
+
+    select.value = effectiveVoiceId;
+    select.disabled = filteredVoices.length === 0;
+    if (hint) {
+      hint.textContent = filteredVoices.length > 0
+        ? `${filteredVoices.length} Windows voice(s) detected.`
+        : "No Windows voices detected for the selected provider.";
+    }
+  } catch (error) {
+    if (requestSeq !== voiceOutputWindowsVoiceRequestSeq) {
+      return;
+    }
+    select.innerHTML = "";
+    const errorOption = document.createElement("option");
+    errorOption.value = "";
+    errorOption.textContent = "Auto (provider default)";
+    select.appendChild(errorOption);
+    select.value = "";
+    select.disabled = false;
+    if (hint) {
+      hint.textContent = `Voice list unavailable: ${String(error).replace(/^Error:\s*/i, "").trim()}`;
+    }
+  }
+}
+
 export function renderVoiceOutputSettings(): void {
   if (!settings?.voice_output_settings) return;
 
   const vo = settings.voice_output_settings;
+  vo.auto_voice_by_detected_language = vo.auto_voice_by_detected_language === true;
+  const normalizedOutputDevice = typeof vo.output_device === "string" && vo.output_device.trim().length > 0
+    ? vo.output_device.trim()
+    : "default";
+  vo.output_device = normalizedOutputDevice;
+
+  if (dom.voiceOutputDeviceSelect) {
+    dom.voiceOutputDeviceSelect.innerHTML = "";
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "default";
+    defaultOption.textContent = "Default (System)";
+    dom.voiceOutputDeviceSelect.appendChild(defaultOption);
+
+    outputDevices
+      .filter((device) => device.id !== "default")
+      .forEach((device) => {
+        const option = document.createElement("option");
+        option.value = device.id;
+        option.textContent = device.label;
+        dom.voiceOutputDeviceSelect?.appendChild(option);
+      });
+
+    dom.voiceOutputDeviceSelect.value = normalizedOutputDevice;
+    if (dom.voiceOutputDeviceSelect.value !== normalizedOutputDevice) {
+      vo.output_device = "default";
+      dom.voiceOutputDeviceSelect.value = "default";
+    }
+  }
+
   const normalizeProvider = (
     select: HTMLSelectElement | null,
     preferred: string | undefined,
@@ -1792,4 +1962,9 @@ export function renderVoiceOutputSettings(): void {
       : 45;
     dom.voiceOutputQwenTimeoutSec.value = String(timeout);
   }
+  if (dom.voiceOutputAutoLanguageVoice) {
+    dom.voiceOutputAutoLanguageVoice.checked = vo.auto_voice_by_detected_language;
+  }
+
+  void refreshVoiceOutputWindowsVoices();
 }

@@ -1869,6 +1869,7 @@ const TTS_FAILURE_MISSING_BINARY: &str = "missing_binary";
 const TTS_FAILURE_MISSING_MODEL: &str = "missing_model";
 const TTS_FAILURE_ENDPOINT_UNREACHABLE: &str = "endpoint_unreachable";
 const TTS_FAILURE_AUTH_MISSING: &str = "auth_missing";
+const TTS_FAILURE_STREAM_CONFIG_UNSUPPORTED: &str = "stream_config_unsupported";
 const TTS_FAILURE_RUNTIME_ERROR: &str = "runtime_error";
 
 fn default_tts_benchmark_gates() -> TtsBenchmarkGateConfig {
@@ -1930,6 +1931,12 @@ fn classify_tts_failure(error: &str) -> String {
         || normalized.contains("authorization")
     {
         return TTS_FAILURE_AUTH_MISSING.to_string();
+    }
+    if normalized.contains("[tts_output_stream_config_unsupported]")
+        || normalized.contains("stream configuration is not supported")
+        || normalized.contains("streamconfignotsupported")
+    {
+        return TTS_FAILURE_STREAM_CONFIG_UNSUPPORTED.to_string();
     }
     if normalized.contains("endpoint")
         || normalized.contains("timed out")
@@ -2205,6 +2212,7 @@ fn speak_qwen3_tts(
     text: &str,
     rate: f32,
     volume: f32,
+    output_device_id: &str,
     config: &Qwen3TtsBenchmarkConfig,
 ) -> Result<(), String> {
     let (bytes, content_type) = request_qwen3_tts_audio_bytes(text, rate, config)?;
@@ -2224,7 +2232,7 @@ fn speak_qwen3_tts(
             content_type
         ));
     }
-    crate::multimodal_io::play_wav_bytes(&bytes, volume)
+    crate::multimodal_io::play_wav_bytes(&bytes, volume, output_device_id)
 }
 
 fn normalize_tts_benchmark_scenarios(
@@ -2281,17 +2289,30 @@ fn run_tts_provider_once(
     text: &str,
     rate: f32,
     volume: f32,
+    windows_voice_id: &str,
     piper_binary_path: &str,
     piper_model_path: &str,
     qwen3_config: &Qwen3TtsBenchmarkConfig,
 ) -> Result<(), String> {
+    let selected_windows_voice = windows_voice_id.trim();
+    let selected_windows_voice = if selected_windows_voice.is_empty() {
+        None
+    } else {
+        Some(selected_windows_voice)
+    };
     match provider {
-        "windows_native" => {
-            crate::multimodal_io::benchmark_windows_native_synthesis(text, rate, volume)
-        }
-        "windows_natural" => {
-            crate::multimodal_io::benchmark_windows_natural_synthesis(text, rate, volume)
-        }
+        "windows_native" => crate::multimodal_io::benchmark_windows_native_synthesis(
+            text,
+            rate,
+            volume,
+            selected_windows_voice,
+        ),
+        "windows_natural" => crate::multimodal_io::benchmark_windows_natural_synthesis(
+            text,
+            rate,
+            volume,
+            selected_windows_voice,
+        ),
         "local_custom" => crate::multimodal_io::benchmark_piper_synthesis(
             text,
             piper_binary_path,
@@ -2309,19 +2330,40 @@ fn run_tts_provider_once(
 fn run_tts_runtime_smoke_once(
     provider: &str,
     rate: f32,
+    windows_voice_id: &str,
     piper_binary_path: &str,
     piper_model_path: &str,
+    output_device_id: &str,
 ) -> Result<(), String> {
     let smoke_text = "Trispr Flow runtime smoke test.";
+    let selected_windows_voice = windows_voice_id.trim();
+    let selected_windows_voice = if selected_windows_voice.is_empty() {
+        None
+    } else {
+        Some(selected_windows_voice)
+    };
     match provider {
-        "windows_native" => crate::multimodal_io::speak_windows_native(smoke_text, rate, 0.0),
-        "windows_natural" => crate::multimodal_io::speak_windows_natural(smoke_text, rate, 0.0),
+        "windows_native" => crate::multimodal_io::speak_windows_native(
+            smoke_text,
+            rate,
+            0.0,
+            output_device_id,
+            selected_windows_voice,
+        ),
+        "windows_natural" => crate::multimodal_io::speak_windows_natural(
+            smoke_text,
+            rate,
+            0.0,
+            output_device_id,
+            selected_windows_voice,
+        ),
         "local_custom" => crate::multimodal_io::speak_piper(
             smoke_text,
             piper_binary_path,
             piper_model_path,
             rate,
             0.0,
+            output_device_id,
         ),
         _ => Err(format!(
             "Runtime smoke is unsupported for benchmark-only provider '{}'.",
@@ -2485,6 +2527,7 @@ mod tts_benchmark_tests {
         build_tts_fallback_order, classify_tts_failure, normalize_tts_benchmark_providers,
         TtsBenchmarkProviderSummary, TTS_FAILURE_AUTH_MISSING, TTS_FAILURE_ENDPOINT_UNREACHABLE,
         TTS_FAILURE_MISSING_BINARY, TTS_FAILURE_MISSING_MODEL, TTS_FAILURE_RUNTIME_ERROR,
+        TTS_FAILURE_STREAM_CONFIG_UNSUPPORTED,
     };
 
     #[test]
@@ -2565,6 +2608,12 @@ mod tts_benchmark_tests {
         assert_eq!(
             classify_tts_failure("Qwen3-TTS benchmark request failed with HTTP 401"),
             TTS_FAILURE_AUTH_MISSING.to_string()
+        );
+        assert_eq!(
+            classify_tts_failure(
+                "[tts_output_stream_config_unsupported] device='wasapi:xyz' wav=22050Hz/1ch/int16 -> target=48000Hz/2ch/f32 reason=The requested stream configuration is not supported by the device."
+            ),
+            TTS_FAILURE_STREAM_CONFIG_UNSUPPORTED.to_string()
         );
         assert_eq!(
             classify_tts_failure("unexpected panic in voice backend"),
@@ -2981,8 +3030,10 @@ fn run_tts_benchmark_inner(
                     match run_tts_runtime_smoke_once(
                         provider,
                         rate,
+                        &voice_settings.voice_id_windows,
                         &piper_binary_path,
                         &piper_model_path,
+                        &voice_settings.output_device,
                     ) {
                         Ok(()) => runtime_smoke_checks.push(TtsRuntimeSmokeCheck {
                             provider: provider.clone(),
@@ -3074,6 +3125,7 @@ fn run_tts_benchmark_inner(
                     &scenario.text,
                     rate,
                     volume,
+                    &voice_settings.voice_id_windows,
                     &piper_binary_path,
                     &piper_model_path,
                     &qwen3_config,
@@ -5262,6 +5314,96 @@ fn list_tts_voices(
     }
 }
 
+fn pinned_tts_language_hint(language_mode: &str, language_pinned: bool) -> Option<String> {
+    if !language_pinned {
+        return None;
+    }
+    let normalized = language_mode.trim().to_ascii_lowercase();
+    if normalized.is_empty() || normalized == "auto" {
+        return None;
+    }
+    if normalized.starts_with("de") {
+        return Some("de".to_string());
+    }
+    if normalized.starts_with("en") {
+        return Some("en".to_string());
+    }
+    Some(normalized.chars().take(2).collect())
+}
+
+fn infer_tts_language_hint(
+    text: &str,
+    language_mode: &str,
+    language_pinned: bool,
+) -> Option<String> {
+    if let Some(pinned) = pinned_tts_language_hint(language_mode, language_pinned) {
+        return Some(pinned);
+    }
+
+    let lowered = text.trim().to_lowercase();
+    if lowered.is_empty() {
+        return None;
+    }
+    if lowered.contains('ä')
+        || lowered.contains('ö')
+        || lowered.contains('ü')
+        || lowered.contains('ß')
+    {
+        return Some("de".to_string());
+    }
+
+    let mut de_score = 0_u32;
+    let mut en_score = 0_u32;
+    for token in lowered.split(|ch: char| !ch.is_alphabetic()) {
+        if token.is_empty() {
+            continue;
+        }
+        match token {
+            "der" | "die" | "das" | "und" | "nicht" | "ich" | "ist" | "mit" | "für" | "den"
+            | "dem" | "ein" | "eine" => de_score += 1,
+            "the" | "and" | "not" | "you" | "is" | "are" | "with" | "for" | "this" | "that"
+            | "a" | "an" | "to" | "of" => en_score += 1,
+            _ => {}
+        }
+    }
+
+    if de_score > en_score && de_score >= 2 {
+        return Some("de".to_string());
+    }
+    if en_score > de_score && en_score >= 2 {
+        return Some("en".to_string());
+    }
+    None
+}
+
+fn resolve_windows_voice_for_provider(
+    provider: &str,
+    manual_voice_id: &str,
+    auto_by_language_enabled: bool,
+    language_hint: Option<&str>,
+) -> Option<String> {
+    if provider != "windows_native" && provider != "windows_natural" {
+        return None;
+    }
+
+    if auto_by_language_enabled {
+        if let Some(language) = language_hint {
+            if let Some(auto_voice) =
+                crate::multimodal_io::select_windows_voice_for_language(provider, language)
+            {
+                return Some(auto_voice);
+            }
+        }
+    }
+
+    let manual = manual_voice_id.trim();
+    if manual.is_empty() {
+        None
+    } else {
+        Some(manual.to_string())
+    }
+}
+
 fn speak_tts_internal(
     app: &AppHandle,
     state: &AppState,
@@ -5272,13 +5414,17 @@ fn speak_tts_internal(
         return Err("TTS text cannot be empty.".to_string());
     }
 
-    let voice_settings = {
+    let (voice_settings, language_mode, language_pinned) = {
         let settings = state
             .settings
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         require_capability_enabled(&settings, RuntimeCapability::VoiceOutputTts)?;
-        settings.voice_output_settings.clone()
+        (
+            settings.voice_output_settings.clone(),
+            settings.language_mode.clone(),
+            settings.language_pinned,
+        )
     };
 
     let context = request
@@ -5320,6 +5466,14 @@ fn speak_tts_internal(
     let piper_binary_path = voice_settings.piper_binary_path.clone();
     let piper_model_path = voice_settings.piper_model_path.clone();
     let qwen3_runtime_config = resolve_qwen3_tts_runtime_config(&voice_settings);
+    let output_device_id = voice_settings.output_device.clone();
+    let windows_voice_id = voice_settings.voice_id_windows.clone();
+    let auto_voice_by_language_enabled = voice_settings.auto_voice_by_detected_language;
+    let auto_voice_language_hint = if auto_voice_by_language_enabled {
+        infer_tts_language_hint(&text, &language_mode, language_pinned)
+    } else {
+        None
+    };
 
     let preferred_provider_for_thread = preferred_provider.clone();
     let fallback_provider_for_thread = fallback_provider.clone();
@@ -5330,18 +5484,47 @@ fn speak_tts_internal(
             &preferred_provider_for_thread,
             &fallback_provider_for_thread,
             |provider| match provider {
-                "windows_native" => crate::multimodal_io::speak_windows_native(&text, rate, volume),
-                "windows_natural" => {
-                    crate::multimodal_io::speak_windows_natural(&text, rate, volume)
-                }
+                "windows_native" => crate::multimodal_io::speak_windows_native(
+                    &text,
+                    rate,
+                    volume,
+                    &output_device_id,
+                    resolve_windows_voice_for_provider(
+                        "windows_native",
+                        &windows_voice_id,
+                        auto_voice_by_language_enabled,
+                        auto_voice_language_hint.as_deref(),
+                    )
+                    .as_deref(),
+                ),
+                "windows_natural" => crate::multimodal_io::speak_windows_natural(
+                    &text,
+                    rate,
+                    volume,
+                    &output_device_id,
+                    resolve_windows_voice_for_provider(
+                        "windows_natural",
+                        &windows_voice_id,
+                        auto_voice_by_language_enabled,
+                        auto_voice_language_hint.as_deref(),
+                    )
+                    .as_deref(),
+                ),
                 "local_custom" => crate::multimodal_io::speak_piper(
                     &text,
                     &piper_binary_path,
                     &piper_model_path,
                     rate,
                     volume,
+                    &output_device_id,
                 ),
-                "qwen3_tts" => speak_qwen3_tts(&text, rate, volume, &qwen3_runtime_config),
+                "qwen3_tts" => speak_qwen3_tts(
+                    &text,
+                    rate,
+                    volume,
+                    &output_device_id,
+                    &qwen3_runtime_config,
+                ),
                 _ => Err(format!("Unknown TTS provider '{}'.", provider)),
             },
         );
@@ -5438,13 +5621,17 @@ fn test_tts_provider(
             .unwrap_or_else(|| "windows_native".to_string())
             .trim()
             .to_string();
-        let voice_settings = {
+        let (voice_settings, language_mode, language_pinned) = {
             let settings = state
                 .settings
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             require_capability_enabled(&settings, RuntimeCapability::VoiceOutputTts)?;
-            settings.voice_output_settings.clone()
+            (
+                settings.voice_output_settings.clone(),
+                settings.language_mode.clone(),
+                settings.language_pinned,
+            )
         };
 
         let fallback_provider = voice_settings.fallback_provider.clone();
@@ -5453,29 +5640,87 @@ fn test_tts_provider(
         let piper_binary_path = voice_settings.piper_binary_path.clone();
         let piper_model_path = voice_settings.piper_model_path.clone();
         let qwen3_runtime_config = resolve_qwen3_tts_runtime_config(&voice_settings);
+        let output_device_id = voice_settings.output_device.clone();
+        let windows_voice_id = voice_settings.voice_id_windows.clone();
+        let auto_voice_by_language_enabled = voice_settings.auto_voice_by_detected_language;
         let sample_text = "Trisper Flow voice output test.";
+        let auto_voice_language_hint = if auto_voice_by_language_enabled {
+            infer_tts_language_hint(sample_text, &language_mode, language_pinned)
+        } else {
+            None
+        };
 
-        let outcome = crate::multimodal_io::execute_tts_with_fallback(
+        let outcome = match crate::multimodal_io::execute_tts_with_fallback(
             &preferred_provider,
             &fallback_provider,
             |lane| match lane {
-                "windows_native" => {
-                    crate::multimodal_io::speak_windows_native(sample_text, rate, volume)
-                }
-                "windows_natural" => {
-                    crate::multimodal_io::speak_windows_natural(sample_text, rate, volume)
-                }
+                "windows_native" => crate::multimodal_io::speak_windows_native(
+                    sample_text,
+                    rate,
+                    volume,
+                    &output_device_id,
+                    resolve_windows_voice_for_provider(
+                        "windows_native",
+                        &windows_voice_id,
+                        auto_voice_by_language_enabled,
+                        auto_voice_language_hint.as_deref(),
+                    )
+                    .as_deref(),
+                ),
+                "windows_natural" => crate::multimodal_io::speak_windows_natural(
+                    sample_text,
+                    rate,
+                    volume,
+                    &output_device_id,
+                    resolve_windows_voice_for_provider(
+                        "windows_natural",
+                        &windows_voice_id,
+                        auto_voice_by_language_enabled,
+                        auto_voice_language_hint.as_deref(),
+                    )
+                    .as_deref(),
+                ),
                 "local_custom" => crate::multimodal_io::speak_piper(
                     sample_text,
                     &piper_binary_path,
                     &piper_model_path,
                     rate,
                     volume,
+                    &output_device_id,
                 ),
-                "qwen3_tts" => speak_qwen3_tts(sample_text, rate, volume, &qwen3_runtime_config),
+                "qwen3_tts" => speak_qwen3_tts(
+                    sample_text,
+                    rate,
+                    volume,
+                    &output_device_id,
+                    &qwen3_runtime_config,
+                ),
                 _ => Err(format!("Unknown TTS provider '{}'.", lane)),
             },
-        )?;
+        ) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                tracing::error!(
+                    "test_tts_provider failed preferred='{}' fallback='{}' device='{}': {}",
+                    preferred_provider,
+                    fallback_provider,
+                    output_device_id,
+                    error
+                );
+                let _ = app.emit(
+                    "tts:speech-error",
+                    serde_json::json!({
+                        "provider": preferred_provider.clone(),
+                        "preferred_provider": preferred_provider.clone(),
+                        "fallback_provider": fallback_provider.clone(),
+                        "context": "manual_test",
+                        "error": error.clone(),
+                        "timestamp_ms": crate::util::now_ms(),
+                    }),
+                );
+                return Err(error);
+            }
+        };
 
         let provider_used = outcome.provider_used.clone();
         let primary_error = outcome.primary_error.clone();

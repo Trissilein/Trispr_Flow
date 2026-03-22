@@ -1728,6 +1728,21 @@
                           <option value="qwen3_tts">Qwen3-TTS (OpenAI-compatible endpoint)</option>
                         </select>
                       </label>
+                      <label class="field" id="voice-output-windows-voice-field">
+                        <span class="field-label">Windows voice</span>
+                        <select id="voice-output-windows-voice-select" title="Select a Windows speaker voice">
+                          <option value="">Auto (provider default)</option>
+                        </select>
+                        <span class="field-hint" id="voice-output-windows-voice-hint">Choose a specific Windows speaker voice when multiple voices are installed.</span>
+                      </label>
+                      <div class="field toggle span-2" id="voice-output-auto-language-voice-field">
+                        <label class="toggle-row">
+                          <span class="field-label">Auto voice by detected language</span>
+                          <input id="voice-output-auto-language-voice" type="checkbox" title="Automatically switch Windows voice per detected transcript language" />
+                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span class="toggle-hint">When enabled, Trispr picks a matching Windows voice (for example de/en) per utterance. Manual voice remains fallback.</span>
+                      </div>
                       <label class="field">
                         <span class="field-label">Fallback provider</span>
                         <select id="voice-output-fallback-provider" title="Used if default provider fails">
@@ -1746,6 +1761,13 @@
                           <option value="explicit_only">Explicit calls only</option>
                         </select>
                         <span class="field-hint">Agent replies only = TTS fires only for workflow-agent responses.</span>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">TTS output device</span>
+                        <select id="voice-output-device-select" title="Audio output target for TTS playback">
+                          <option value="default">Default (System)</option>
+                        </select>
+                        <span class="field-hint">Uses app-local routing. Windows default playback device is not changed.</span>
                       </label>
                       <label class="field range">
                         <span class="field-label">Speech rate</span>

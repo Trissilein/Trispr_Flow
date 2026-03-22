@@ -33,6 +33,7 @@ import {
   derivePostprocLanguageFromAsr,
   syncCaptureModeVisibility,
   syncDerivedLanguageSettings,
+  refreshVoiceOutputWindowsVoices,
 } from "./settings";
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
@@ -110,6 +111,12 @@ function refreshAIUi(): void {
   renderAIFallbackSettingsUi();
   renderOllamaModelManager();
   renderHero();
+}
+
+function formatTtsTestError(error: unknown): string {
+  const raw = String(error ?? "Unknown error");
+  const normalized = raw.replace(/^Error:\s*/i, "").trim();
+  return normalized;
 }
 
 function getCredentialTargetProvider(): CloudAIFallbackProvider | null {
@@ -2844,6 +2851,7 @@ export function wireEvents() {
     if (!settings?.voice_output_settings) return;
     settings.voice_output_settings.default_provider = dom.voiceOutputDefaultProvider!
       .value as "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
+    await refreshVoiceOutputWindowsVoices();
     await persistSettings();
   });
 
@@ -2858,6 +2866,24 @@ export function wireEvents() {
     if (!settings?.voice_output_settings) return;
     settings.voice_output_settings.output_policy = dom.voiceOutputPolicy!
       .value as "agent_replies_only" | "replies_and_events" | "explicit_only";
+    await persistSettings();
+  });
+
+  dom.voiceOutputDeviceSelect?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputDeviceSelect) return;
+    settings.voice_output_settings.output_device = dom.voiceOutputDeviceSelect.value || "default";
+    await persistSettings();
+  });
+
+  dom.voiceOutputWindowsVoiceSelect?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputWindowsVoiceSelect) return;
+    settings.voice_output_settings.voice_id_windows = dom.voiceOutputWindowsVoiceSelect.value.trim();
+    await persistSettings();
+  });
+
+  dom.voiceOutputAutoLanguageVoice?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputAutoLanguageVoice) return;
+    settings.voice_output_settings.auto_voice_by_detected_language = dom.voiceOutputAutoLanguageVoice.checked;
     await persistSettings();
   });
 
@@ -2909,7 +2935,10 @@ export function wireEvents() {
         dom.voiceOutputTestStatus.textContent = `✓ ${result.provider_used} responded.`;
       }
     } catch (e) {
-      dom.voiceOutputTestStatus.textContent = `Error: ${e}`;
+      const formatted = formatTtsTestError(e);
+      dom.voiceOutputTestStatus.textContent = `Error: ${formatted}`;
+      dom.voiceOutputTestStatus.title = formatted;
+      console.error("Voice output test failed:", formatted);
     }
   });
 

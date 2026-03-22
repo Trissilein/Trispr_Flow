@@ -43,9 +43,13 @@ function ensureWorkflowAgentDefaults(): void {
   };
 }
 
+function isModuleEnabled(moduleId: string): boolean {
+  return settings?.module_settings?.enabled_modules?.includes(moduleId) ?? false;
+}
+
 function isWorkflowAgentEnabled(): boolean {
   ensureWorkflowAgentDefaults();
-  return Boolean(settings?.workflow_agent?.enabled);
+  return isModuleEnabled("workflow_agent") && Boolean(settings?.workflow_agent?.enabled);
 }
 
 function appendLog(line: string): void {

@@ -20,11 +20,11 @@ import type {
 } from "../types";
 
 function resolveTtsProvider(
-  preferred: "windows_native" | "local_custom",
-  fallback: "windows_native" | "local_custom",
+  preferred: "windows_native" | "windows_natural" | "local_custom",
+  fallback: "windows_native" | "windows_natural" | "local_custom",
   preferredOk: boolean,
   fallbackOk: boolean
-): { ok: boolean; provider_used: "windows_native" | "local_custom"; used_fallback: boolean } {
+): { ok: boolean; provider_used: "windows_native" | "windows_natural" | "local_custom"; used_fallback: boolean } {
   if (preferredOk) {
     return { ok: true, provider_used: preferred, used_fallback: false };
   }
@@ -50,8 +50,13 @@ function isTtsPolicyAllowed(
   return context === "manual_user" || context === "manual_test";
 }
 
-function makeVoiceSettings(enabled: boolean): Settings {
+function makeVoiceSettings(enabled: boolean, moduleEnabled = enabled): Settings {
   return {
+    module_settings: {
+      enabled_modules: moduleEnabled ? ["output_voice_tts"] : [],
+      consented_permissions: {},
+      module_overrides: {},
+    },
     voice_output_settings: {
       enabled,
       default_provider: "windows_native",
@@ -145,16 +150,50 @@ describe("Block N N12-S1 — Vision command contracts", () => {
 // N12-S2: TTS command contracts and fallback
 // ---------------------------------------------------------------------------
 describe("Block N N12-S2 — TTS command contracts and fallback", () => {
-  it("models list_tts_providers with dual lane ids", () => {
+  it("models list_tts_providers with runtime + experimental surfaces", () => {
     const providers: TtsProviderInfo[] = [
-      { id: "windows_native", label: "Windows Native TTS", available: true },
-      { id: "local_custom", label: "Local Custom TTS (Piper)", available: true },
+      {
+        id: "windows_native",
+        label: "Windows Native TTS",
+        available: true,
+        surface: "runtime_stable",
+        reason: null,
+      },
+      {
+        id: "windows_natural",
+        label: "Windows Natural Language (SAPI Adapter)",
+        available: false,
+        surface: "runtime_stable",
+        reason: "Requires NaturalVoiceSAPIAdapter (or equivalent SAPI natural voices) and at least one installed Natural voice.",
+      },
+      {
+        id: "local_custom",
+        label: "Local Custom TTS (Piper)",
+        available: true,
+        surface: "runtime_stable",
+        reason: null,
+      },
+      {
+        id: "qwen3_tts",
+        label: "Qwen3-TTS (OpenAI-compatible endpoint)",
+        available: true,
+        surface: "benchmark_experimental",
+        reason: "Experimental runtime provider. Requires a running OpenAI-compatible /v1/audio/speech endpoint.",
+      },
     ];
 
     expect(providers.map((provider) => provider.id)).toEqual([
       "windows_native",
+      "windows_natural",
       "local_custom",
+      "qwen3_tts",
     ]);
+    expect(
+      providers.filter((provider) => provider.surface === "runtime_stable").length
+    ).toBe(3);
+    expect(
+      providers.find((provider) => provider.id === "qwen3_tts")?.surface
+    ).toBe("benchmark_experimental");
   });
 
   it("models list_tts_voices payload for selected provider", () => {
@@ -188,7 +227,7 @@ describe("Block N N12-S2 — TTS command contracts and fallback", () => {
     };
 
     expect(speakResult.accepted).toBe(true);
-    expect(["windows_native", "local_custom"]).toContain(speakResult.provider_used);
+    expect(["windows_native", "windows_natural", "local_custom"]).toContain(speakResult.provider_used);
   });
 
   it("enforces output policy: agent_replies_only", () => {
@@ -253,6 +292,7 @@ describe("Block N N12-S4 — Voice output UI integration", () => {
       </section>
       <select id="voice-output-default-provider">
         <option value="windows_native">Windows Native</option>
+        <option value="windows_natural">Windows Natural</option>
         <option value="local_custom">Local Custom</option>
       </select>
     `;
@@ -290,6 +330,20 @@ describe("Block N N12-S4 — Voice output UI integration", () => {
 
     expect(consoleRoot.hidden).toBe(false);
     expect(status.textContent).toBe("Voice output active.");
+  });
+
+  it("hides console when module is disabled even if voice setting is enabled", async () => {
+    const state = await import("../state");
+    const voiceOutput = await import("../voice-output-console");
+
+    state.setSettings(makeVoiceSettings(true, false));
+    voiceOutput.syncVoiceOutputConsoleState();
+
+    const consoleRoot = document.getElementById("voice-output-console") as HTMLElement;
+    const status = document.getElementById("voice-output-console-status") as HTMLElement;
+
+    expect(consoleRoot.hidden).toBe(true);
+    expect(status.textContent).toBe("Module disabled.");
   });
 
   it("focusVoiceOutputConsole scrolls and focuses provider selector", async () => {

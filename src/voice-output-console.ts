@@ -1,8 +1,12 @@
 import * as dom from "./dom-refs";
 import { settings } from "./state";
 
+function isModuleEnabled(moduleId: string): boolean {
+  return settings?.module_settings?.enabled_modules?.includes(moduleId) ?? false;
+}
+
 function isVoiceOutputEnabled(): boolean {
-  return settings?.voice_output_settings?.enabled ?? false;
+  return isModuleEnabled("output_voice_tts") && (settings?.voice_output_settings?.enabled ?? false);
 }
 
 function renderStatus(): void {

@@ -31,8 +31,9 @@ use enigo::{Enigo, Key, KeyboardControllable};
 use errors::{AppError, ErrorEvent};
 use overlay::emit_capture_idle_overlay;
 use state::{AppState, HistoryEntry, RuntimeDiagnostics, Settings, StartupStatus};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{
     AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering,
@@ -1650,6 +1651,915 @@ struct LatencyBenchmarkResult {
     warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+struct TtsBenchmarkScenario {
+    id: String,
+    text: String,
+    length_bucket: String, // "short" | "long"
+    language: String,      // "de" | "en"
+    thermal: String,       // "cold" | "warm"
+}
+
+impl Default for TtsBenchmarkScenario {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            text: String::new(),
+            length_bucket: String::new(),
+            language: String::new(),
+            thermal: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default)]
+struct TtsBenchmarkRequest {
+    providers: Vec<String>,
+    scenarios: Vec<TtsBenchmarkScenario>,
+    warmup_runs: u32,
+    measure_runs: u32,
+    rate: f32,
+    volume: f32,
+    piper_binary_path: Option<String>,
+    piper_model_path: Option<String>,
+    qwen3_tts_endpoint: Option<String>,
+    qwen3_tts_model: Option<String>,
+    qwen3_tts_voice: Option<String>,
+    qwen3_tts_api_key: Option<String>,
+    qwen3_tts_timeout_sec: Option<u64>,
+    lock_matrix: bool,
+    run_runtime_smoke: bool,
+}
+
+impl Default for TtsBenchmarkRequest {
+    fn default() -> Self {
+        Self {
+            providers: vec![
+                "windows_native".to_string(),
+                "local_custom".to_string(),
+                "qwen3_tts".to_string(),
+            ],
+            scenarios: Vec::new(),
+            warmup_runs: 1,
+            measure_runs: 3,
+            rate: 1.0,
+            volume: 1.0,
+            piper_binary_path: None,
+            piper_model_path: None,
+            qwen3_tts_endpoint: None,
+            qwen3_tts_model: None,
+            qwen3_tts_voice: None,
+            qwen3_tts_api_key: None,
+            qwen3_tts_timeout_sec: None,
+            lock_matrix: true,
+            run_runtime_smoke: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct TtsBenchmarkSample {
+    provider: String,
+    scenario: String,
+    run: u32,
+    elapsed_ms: u64,
+    success: bool,
+    error: Option<String>,
+    failure_category: Option<String>, // missing_binary | missing_model | endpoint_unreachable | auth_missing | runtime_error
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct TtsBenchmarkProviderSummary {
+    provider: String,
+    attempts: u32,
+    success_count: u32,
+    failure_count: u32,
+    success_rate: f32,
+    p50_ms: Option<u64>,
+    p95_ms: Option<u64>,
+    avg_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct TtsBenchmarkGateConfig {
+    reliability_min_success_rate: f32,
+    latency_target_p50_ms: u64,
+    latency_target_p95_ms: u64,
+    min_success_per_scenario: u32,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct TtsProviderProfile {
+    provider: String,
+    surface: String, // "runtime_stable" | "benchmark_experimental"
+    experimental_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct TtsPreflightCheck {
+    provider: String,
+    check: String,
+    passed: bool,
+    category: Option<String>,
+    detail: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct TtsRuntimeSmokeCheck {
+    provider: String,
+    passed: bool,
+    category: Option<String>,
+    detail: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct TtsProviderGateEvaluation {
+    provider: String,
+    evaluated_for_release: bool,
+    passes_release_gate: bool,
+    preflight_ok: bool,
+    runtime_smoke_ok: bool,
+    reliability_ok: bool,
+    latency_ok: bool,
+    scenario_success_ok: bool,
+    success_rate: f32,
+    p50_ms: Option<u64>,
+    p95_ms: Option<u64>,
+    min_success_in_any_scenario: u32,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct TtsBenchmarkResult {
+    artifact_version: String,
+    generated_at: String,
+    warmup_runs: u32,
+    measure_runs: u32,
+    providers: Vec<String>,
+    scenarios: Vec<String>,
+    scenario_matrix_locked: bool,
+    gates: TtsBenchmarkGateConfig,
+    provider_profiles: Vec<TtsProviderProfile>,
+    preflight_checks: Vec<TtsPreflightCheck>,
+    runtime_smoke_checks: Vec<TtsRuntimeSmokeCheck>,
+    samples: Vec<TtsBenchmarkSample>,
+    provider_summaries: Vec<TtsBenchmarkProviderSummary>,
+    provider_gate_evaluations: Vec<TtsProviderGateEvaluation>,
+    provider_consistency_ok: bool,
+    provider_consistency_detail: String,
+    fallback_order: Vec<String>,
+    release_gate_pass: bool,
+    release_gate_reason: String,
+    recommended_default_provider: Option<String>,
+    recommendation_reason: String,
+    uncategorized_failure_count: u32,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct Qwen3TtsBenchmarkConfig {
+    endpoint: String,
+    model: String,
+    voice: String,
+    api_key: Option<String>,
+    timeout_sec: u64,
+}
+
+const TTS_PROVIDER_SURFACE_RUNTIME_STABLE: &str = "runtime_stable";
+const TTS_PROVIDER_SURFACE_BENCHMARK_EXPERIMENTAL: &str = "benchmark_experimental";
+const TTS_FAILURE_MISSING_BINARY: &str = "missing_binary";
+const TTS_FAILURE_MISSING_MODEL: &str = "missing_model";
+const TTS_FAILURE_ENDPOINT_UNREACHABLE: &str = "endpoint_unreachable";
+const TTS_FAILURE_AUTH_MISSING: &str = "auth_missing";
+const TTS_FAILURE_RUNTIME_ERROR: &str = "runtime_error";
+
+fn default_tts_benchmark_gates() -> TtsBenchmarkGateConfig {
+    TtsBenchmarkGateConfig {
+        reliability_min_success_rate: 0.95,
+        latency_target_p50_ms: 700,
+        latency_target_p95_ms: 1500,
+        min_success_per_scenario: 2,
+    }
+}
+
+fn tts_provider_profile(provider: &str) -> TtsProviderProfile {
+    match provider {
+        "qwen3_tts" => TtsProviderProfile {
+            provider: provider.to_string(),
+            surface: TTS_PROVIDER_SURFACE_BENCHMARK_EXPERIMENTAL.to_string(),
+            experimental_reason: Some(
+                "Endpoint-backed runtime provider treated as experimental for release-gating."
+                    .to_string(),
+            ),
+        },
+        _ => TtsProviderProfile {
+            provider: provider.to_string(),
+            surface: TTS_PROVIDER_SURFACE_RUNTIME_STABLE.to_string(),
+            experimental_reason: None,
+        },
+    }
+}
+
+fn is_runtime_stable_provider(provider: &str) -> bool {
+    tts_provider_profile(provider).surface == TTS_PROVIDER_SURFACE_RUNTIME_STABLE
+}
+
+fn classify_tts_failure(error: &str) -> String {
+    let normalized = error.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return TTS_FAILURE_RUNTIME_ERROR.to_string();
+    }
+
+    if normalized.contains("binary not found")
+        || normalized.contains("npm.cmd not found")
+        || normalized.contains("failed to start piper")
+        || normalized.contains("no such file")
+    {
+        return TTS_FAILURE_MISSING_BINARY.to_string();
+    }
+    if normalized.contains("model not found")
+        || normalized.contains("no piper voice model found")
+        || normalized.contains("set piper_model_path")
+        || normalized.contains("onnx")
+    {
+        return TTS_FAILURE_MISSING_MODEL.to_string();
+    }
+    if normalized.contains("http 401")
+        || normalized.contains("http 403")
+        || normalized.contains("unauthorized")
+        || normalized.contains("forbidden")
+        || normalized.contains("api key")
+        || normalized.contains("authorization")
+    {
+        return TTS_FAILURE_AUTH_MISSING.to_string();
+    }
+    if normalized.contains("endpoint")
+        || normalized.contains("timed out")
+        || normalized.contains("connection")
+        || normalized.contains("refused")
+        || normalized.contains("dns")
+        || normalized.contains("transport")
+        || normalized.contains("failed to connect")
+    {
+        return TTS_FAILURE_ENDPOINT_UNREACHABLE.to_string();
+    }
+    TTS_FAILURE_RUNTIME_ERROR.to_string()
+}
+
+fn default_tts_benchmark_scenarios() -> Vec<TtsBenchmarkScenario> {
+    vec![
+        TtsBenchmarkScenario {
+            id: "short_de_cold".to_string(),
+            text: "Kurzer Benchmark-Check.".to_string(),
+            length_bucket: "short".to_string(),
+            language: "de".to_string(),
+            thermal: "cold".to_string(),
+        },
+        TtsBenchmarkScenario {
+            id: "short_de_warm".to_string(),
+            text: "Kurzer Benchmark-Check.".to_string(),
+            length_bucket: "short".to_string(),
+            language: "de".to_string(),
+            thermal: "warm".to_string(),
+        },
+        TtsBenchmarkScenario {
+            id: "short_en_cold".to_string(),
+            text: "Short benchmark check.".to_string(),
+            length_bucket: "short".to_string(),
+            language: "en".to_string(),
+            thermal: "cold".to_string(),
+        },
+        TtsBenchmarkScenario {
+            id: "short_en_warm".to_string(),
+            text: "Short benchmark check.".to_string(),
+            length_bucket: "short".to_string(),
+            language: "en".to_string(),
+            thermal: "warm".to_string(),
+        },
+        TtsBenchmarkScenario {
+            id: "long_de_cold".to_string(),
+            text: "Dies ist ein längerer deutscher Benchmark-Satz, der Antworttempo und Stabilität unter praxisnahen Bedingungen vergleicht."
+                .to_string(),
+            length_bucket: "long".to_string(),
+            language: "de".to_string(),
+            thermal: "cold".to_string(),
+        },
+        TtsBenchmarkScenario {
+            id: "long_de_warm".to_string(),
+            text: "Dies ist ein längerer deutscher Benchmark-Satz, der Antworttempo und Stabilität unter praxisnahen Bedingungen vergleicht."
+                .to_string(),
+            length_bucket: "long".to_string(),
+            language: "de".to_string(),
+            thermal: "warm".to_string(),
+        },
+        TtsBenchmarkScenario {
+            id: "long_en_cold".to_string(),
+            text: "This is a longer benchmark sentence to compare synthesis latency and stability under realistic assistant output conditions."
+                .to_string(),
+            length_bucket: "long".to_string(),
+            language: "en".to_string(),
+            thermal: "cold".to_string(),
+        },
+        TtsBenchmarkScenario {
+            id: "long_en_warm".to_string(),
+            text: "This is a longer benchmark sentence to compare synthesis latency and stability under realistic assistant output conditions."
+                .to_string(),
+            length_bucket: "long".to_string(),
+            language: "en".to_string(),
+            thermal: "warm".to_string(),
+        },
+    ]
+}
+
+fn normalize_tts_benchmark_providers(requested: &[String]) -> Vec<String> {
+    let mut providers = Vec::<String>::new();
+    for value in requested {
+        let normalized = value.trim().to_lowercase();
+        if normalized != "windows_native"
+            && normalized != "windows_natural"
+            && normalized != "local_custom"
+            && normalized != "qwen3_tts"
+        {
+            continue;
+        }
+        if !providers.contains(&normalized) {
+            providers.push(normalized);
+        }
+    }
+    if providers.is_empty() {
+        vec![
+            "windows_native".to_string(),
+            "local_custom".to_string(),
+            "qwen3_tts".to_string(),
+        ]
+    } else {
+        providers
+    }
+}
+
+fn resolve_qwen3_tts_benchmark_config(request: &TtsBenchmarkRequest) -> Qwen3TtsBenchmarkConfig {
+    let endpoint = request
+        .qwen3_tts_endpoint
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("http://127.0.0.1:8000/v1/audio/speech")
+        .to_string();
+    let model = request
+        .qwen3_tts_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+        .to_string();
+    let voice = request
+        .qwen3_tts_voice
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("vivian")
+        .to_string();
+    let api_key = request
+        .qwen3_tts_api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+    let timeout_sec = request.qwen3_tts_timeout_sec.unwrap_or(45).clamp(3, 180);
+
+    Qwen3TtsBenchmarkConfig {
+        endpoint,
+        model,
+        voice,
+        api_key,
+        timeout_sec,
+    }
+}
+
+fn resolve_qwen3_tts_runtime_config(
+    settings: &crate::modules::VoiceOutputSettings,
+) -> Qwen3TtsBenchmarkConfig {
+    let endpoint = settings.qwen3_tts_endpoint.trim();
+    let model = settings.qwen3_tts_model.trim();
+    let voice = settings.qwen3_tts_voice.trim();
+    let api_key = settings.qwen3_tts_api_key.trim();
+    Qwen3TtsBenchmarkConfig {
+        endpoint: if endpoint.is_empty() {
+            "http://127.0.0.1:8000/v1/audio/speech".to_string()
+        } else {
+            endpoint.to_string()
+        },
+        model: if model.is_empty() {
+            "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice".to_string()
+        } else {
+            model.to_string()
+        },
+        voice: if voice.is_empty() {
+            "vivian".to_string()
+        } else {
+            voice.to_string()
+        },
+        api_key: if api_key.is_empty() {
+            None
+        } else {
+            Some(api_key.to_string())
+        },
+        timeout_sec: settings.qwen3_tts_timeout_sec.clamp(3, 180),
+    }
+}
+
+fn format_ureq_status_error(context: &str, code: u16, response: ureq::Response) -> String {
+    let mut body = response.into_string().unwrap_or_default();
+    body = body.replace('\n', " ").replace('\r', " ");
+    let body = body.trim();
+    if body.is_empty() {
+        format!("{} failed with HTTP {}", context, code)
+    } else {
+        format!("{} failed with HTTP {}: {}", context, code, body)
+    }
+}
+
+fn request_qwen3_tts_audio_bytes(
+    text: &str,
+    rate: f32,
+    config: &Qwen3TtsBenchmarkConfig,
+) -> Result<(Vec<u8>, String), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("TTS text is empty.".to_string());
+    }
+
+    let agent = ureq::builder()
+        .timeout(Duration::from_secs(config.timeout_sec))
+        .build();
+    let mut request = agent
+        .post(&config.endpoint)
+        .set("Content-Type", "application/json")
+        .set(
+            "Accept",
+            "audio/wav, audio/mpeg, application/octet-stream, application/json",
+        );
+    if let Some(api_key) = config.api_key.as_ref() {
+        request = request.set("Authorization", &format!("Bearer {}", api_key));
+    }
+
+    let body = serde_json::json!({
+        "model": config.model,
+        "input": text,
+        "voice": config.voice,
+        "response_format": "wav",
+        "stream": false,
+        "speed": rate.clamp(0.5, 2.0),
+    });
+
+    let response = match request.send_json(body) {
+        Ok(response) => response,
+        Err(ureq::Error::Status(code, response)) => {
+            return Err(format_ureq_status_error(
+                "Qwen3-TTS benchmark request",
+                code,
+                response,
+            ));
+        }
+        Err(ureq::Error::Transport(transport)) => {
+            return Err(format!(
+                "Qwen3-TTS benchmark request failed: {} (endpoint={})",
+                transport, config.endpoint
+            ));
+        }
+    };
+
+    let content_type = response
+        .header("Content-Type")
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mut reader = response.into_reader();
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|err| format!("Qwen3-TTS response read failed: {}", err))?;
+
+    Ok((bytes, content_type))
+}
+
+fn benchmark_qwen3_tts_synthesis(
+    text: &str,
+    rate: f32,
+    config: &Qwen3TtsBenchmarkConfig,
+) -> Result<(), String> {
+    let (bytes, content_type) = request_qwen3_tts_audio_bytes(text, rate, config)?;
+
+    if bytes.is_empty() {
+        return Err("Qwen3-TTS returned an empty response body.".to_string());
+    }
+    if content_type.contains("application/json") {
+        let text = String::from_utf8_lossy(&bytes).trim().to_string();
+        return Err(format!(
+            "Qwen3-TTS returned JSON instead of audio: {}",
+            text
+        ));
+    }
+
+    Ok(())
+}
+
+fn speak_qwen3_tts(
+    text: &str,
+    rate: f32,
+    volume: f32,
+    config: &Qwen3TtsBenchmarkConfig,
+) -> Result<(), String> {
+    let (bytes, content_type) = request_qwen3_tts_audio_bytes(text, rate, config)?;
+    if bytes.is_empty() {
+        return Err("Qwen3-TTS returned an empty response body.".to_string());
+    }
+    if content_type.contains("application/json") {
+        let body = String::from_utf8_lossy(&bytes).trim().to_string();
+        return Err(format!(
+            "Qwen3-TTS returned JSON instead of audio: {}",
+            body
+        ));
+    }
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err(format!(
+            "Qwen3-TTS response is not WAV audio (content-type='{}').",
+            content_type
+        ));
+    }
+    crate::multimodal_io::play_wav_bytes(&bytes, volume)
+}
+
+fn normalize_tts_benchmark_scenarios(
+    requested: &[TtsBenchmarkScenario],
+    lock_matrix: bool,
+) -> Vec<TtsBenchmarkScenario> {
+    if lock_matrix {
+        return default_tts_benchmark_scenarios();
+    }
+
+    let mut scenarios = Vec::<TtsBenchmarkScenario>::new();
+    for (idx, scenario) in requested.iter().enumerate() {
+        let text = scenario.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let id = if scenario.id.trim().is_empty() {
+            format!("scenario_{}", idx + 1)
+        } else {
+            scenario.id.trim().to_lowercase().replace(' ', "_")
+        };
+        let length_bucket = match scenario.length_bucket.trim().to_ascii_lowercase().as_str() {
+            "short" => "short".to_string(),
+            "long" => "long".to_string(),
+            _ => "short".to_string(),
+        };
+        let language = match scenario.language.trim().to_ascii_lowercase().as_str() {
+            "de" => "de".to_string(),
+            "en" => "en".to_string(),
+            _ => "en".to_string(),
+        };
+        let thermal = match scenario.thermal.trim().to_ascii_lowercase().as_str() {
+            "cold" => "cold".to_string(),
+            "warm" => "warm".to_string(),
+            _ => "warm".to_string(),
+        };
+        scenarios.push(TtsBenchmarkScenario {
+            id,
+            text: text.to_string(),
+            length_bucket,
+            language,
+            thermal,
+        });
+    }
+    if scenarios.is_empty() {
+        default_tts_benchmark_scenarios()
+    } else {
+        scenarios
+    }
+}
+
+fn run_tts_provider_once(
+    provider: &str,
+    text: &str,
+    rate: f32,
+    volume: f32,
+    piper_binary_path: &str,
+    piper_model_path: &str,
+    qwen3_config: &Qwen3TtsBenchmarkConfig,
+) -> Result<(), String> {
+    match provider {
+        "windows_native" => {
+            crate::multimodal_io::benchmark_windows_native_synthesis(text, rate, volume)
+        }
+        "windows_natural" => {
+            crate::multimodal_io::benchmark_windows_natural_synthesis(text, rate, volume)
+        }
+        "local_custom" => crate::multimodal_io::benchmark_piper_synthesis(
+            text,
+            piper_binary_path,
+            piper_model_path,
+            rate,
+        ),
+        "qwen3_tts" => benchmark_qwen3_tts_synthesis(text, rate, qwen3_config),
+        _ => Err(format!(
+            "Unsupported TTS benchmark provider '{}'.",
+            provider
+        )),
+    }
+}
+
+fn run_tts_runtime_smoke_once(
+    provider: &str,
+    rate: f32,
+    piper_binary_path: &str,
+    piper_model_path: &str,
+) -> Result<(), String> {
+    let smoke_text = "Trispr Flow runtime smoke test.";
+    match provider {
+        "windows_native" => crate::multimodal_io::speak_windows_native(smoke_text, rate, 0.0),
+        "windows_natural" => {
+            crate::multimodal_io::speak_windows_natural(smoke_text, rate, 0.0)
+        }
+        "local_custom" => crate::multimodal_io::speak_piper(
+            smoke_text,
+            piper_binary_path,
+            piper_model_path,
+            rate,
+            0.0,
+        ),
+        _ => Err(format!(
+            "Runtime smoke is unsupported for benchmark-only provider '{}'.",
+            provider
+        )),
+    }
+}
+
+fn summarize_tts_provider(
+    provider: &str,
+    samples: &[TtsBenchmarkSample],
+) -> TtsBenchmarkProviderSummary {
+    let mut latencies: Vec<u64> = samples
+        .iter()
+        .filter(|sample| sample.success)
+        .map(|sample| sample.elapsed_ms)
+        .collect();
+    latencies.sort_unstable();
+    let attempts = samples.len() as u32;
+    let success_count = latencies.len() as u32;
+    let failure_count = attempts.saturating_sub(success_count);
+    let success_rate = if attempts == 0 {
+        0.0
+    } else {
+        success_count as f32 / attempts as f32
+    };
+    let avg_ms = if latencies.is_empty() {
+        None
+    } else {
+        Some(latencies.iter().sum::<u64>() / latencies.len() as u64)
+    };
+
+    TtsBenchmarkProviderSummary {
+        provider: provider.to_string(),
+        attempts,
+        success_count,
+        failure_count,
+        success_rate,
+        p50_ms: if latencies.is_empty() {
+            None
+        } else {
+            Some(percentile(&latencies, 0.50))
+        },
+        p95_ms: if latencies.is_empty() {
+            None
+        } else {
+            Some(percentile(&latencies, 0.95))
+        },
+        avg_ms,
+    }
+}
+
+fn build_tts_fallback_order(
+    summaries: &[TtsBenchmarkProviderSummary],
+    reliability_gate: f32,
+) -> Vec<String> {
+    let mut eligible: Vec<&TtsBenchmarkProviderSummary> = summaries
+        .iter()
+        .filter(|summary| summary.success_rate >= reliability_gate && summary.p95_ms.is_some())
+        .collect();
+    eligible.sort_by(|a, b| {
+        a.p95_ms
+            .unwrap_or(u64::MAX)
+            .cmp(&b.p95_ms.unwrap_or(u64::MAX))
+            .then_with(|| {
+                a.p50_ms
+                    .unwrap_or(u64::MAX)
+                    .cmp(&b.p50_ms.unwrap_or(u64::MAX))
+            })
+            .then_with(|| a.provider.cmp(&b.provider))
+    });
+
+    let mut fallback_sorted: Vec<&TtsBenchmarkProviderSummary> = summaries.iter().collect();
+    fallback_sorted.sort_by(|a, b| {
+        b.success_rate
+            .partial_cmp(&a.success_rate)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.failure_count.cmp(&b.failure_count))
+            .then_with(|| {
+                a.p95_ms
+                    .unwrap_or(u64::MAX)
+                    .cmp(&b.p95_ms.unwrap_or(u64::MAX))
+            })
+            .then_with(|| {
+                a.p50_ms
+                    .unwrap_or(u64::MAX)
+                    .cmp(&b.p50_ms.unwrap_or(u64::MAX))
+            })
+            .then_with(|| a.provider.cmp(&b.provider))
+    });
+
+    let mut order: Vec<String> = Vec::new();
+    for item in eligible.into_iter().chain(fallback_sorted.into_iter()) {
+        if !order.iter().any(|provider| provider == &item.provider) {
+            order.push(item.provider.clone());
+        }
+    }
+    order
+}
+
+fn scenario_success_counts_for_provider(
+    provider: &str,
+    scenarios: &[TtsBenchmarkScenario],
+    samples: &[TtsBenchmarkSample],
+) -> HashMap<String, u32> {
+    let mut out = HashMap::<String, u32>::new();
+    for scenario in scenarios {
+        let success = samples
+            .iter()
+            .filter(|sample| {
+                sample.provider == provider && sample.scenario == scenario.id && sample.success
+            })
+            .count() as u32;
+        out.insert(scenario.id.clone(), success);
+    }
+    out
+}
+
+fn provider_consistency_from_runtime_surface(providers: &[String]) -> (bool, String) {
+    let runtime_surface = crate::multimodal_io::list_tts_providers()
+        .into_iter()
+        .map(|info| (info.id, info.surface))
+        .collect::<HashMap<_, _>>();
+
+    let mut mismatches: Vec<String> = Vec::new();
+    for provider in providers {
+        if let Some(surface) = runtime_surface.get(provider) {
+            if provider == "qwen3_tts" && surface != TTS_PROVIDER_SURFACE_BENCHMARK_EXPERIMENTAL {
+                mismatches.push(format!(
+                    "{} should be '{}' in runtime surface, got '{}'",
+                    provider, TTS_PROVIDER_SURFACE_BENCHMARK_EXPERIMENTAL, surface
+                ));
+            }
+            if provider != "qwen3_tts" && surface != TTS_PROVIDER_SURFACE_RUNTIME_STABLE {
+                mismatches.push(format!(
+                    "{} should be '{}' in runtime surface, got '{}'",
+                    provider, TTS_PROVIDER_SURFACE_RUNTIME_STABLE, surface
+                ));
+            }
+        } else {
+            mismatches.push(format!(
+                "{} missing from runtime provider exposure list",
+                provider
+            ));
+        }
+    }
+
+    if mismatches.is_empty() {
+        (
+            true,
+            "Benchmark scope and runtime provider surface are consistent.".to_string(),
+        )
+    } else {
+        (false, mismatches.join(" | "))
+    }
+}
+
+#[cfg(test)]
+mod tts_benchmark_tests {
+    use super::{
+        build_tts_fallback_order, classify_tts_failure, normalize_tts_benchmark_providers,
+        TtsBenchmarkProviderSummary, TTS_FAILURE_AUTH_MISSING, TTS_FAILURE_ENDPOINT_UNREACHABLE,
+        TTS_FAILURE_MISSING_BINARY, TTS_FAILURE_MISSING_MODEL, TTS_FAILURE_RUNTIME_ERROR,
+    };
+
+    #[test]
+    fn fallback_order_prefers_reliability_gate_then_latency() {
+        let summaries = vec![
+            TtsBenchmarkProviderSummary {
+                provider: "windows_native".to_string(),
+                attempts: 9,
+                success_count: 9,
+                failure_count: 0,
+                success_rate: 1.0,
+                p50_ms: Some(190),
+                p95_ms: Some(290),
+                avg_ms: Some(210),
+            },
+            TtsBenchmarkProviderSummary {
+                provider: "local_custom".to_string(),
+                attempts: 9,
+                success_count: 9,
+                failure_count: 0,
+                success_rate: 1.0,
+                p50_ms: Some(170),
+                p95_ms: Some(240),
+                avg_ms: Some(185),
+            },
+        ];
+
+        let order = build_tts_fallback_order(&summaries, 0.95);
+        assert_eq!(
+            order,
+            vec!["local_custom".to_string(), "windows_native".to_string()]
+        );
+    }
+
+    #[test]
+    fn fallback_order_still_returns_best_available_when_gate_not_met() {
+        let summaries = vec![
+            TtsBenchmarkProviderSummary {
+                provider: "windows_native".to_string(),
+                attempts: 9,
+                success_count: 7,
+                failure_count: 2,
+                success_rate: 7.0 / 9.0,
+                p50_ms: Some(210),
+                p95_ms: Some(330),
+                avg_ms: Some(230),
+            },
+            TtsBenchmarkProviderSummary {
+                provider: "local_custom".to_string(),
+                attempts: 9,
+                success_count: 5,
+                failure_count: 4,
+                success_rate: 5.0 / 9.0,
+                p50_ms: Some(260),
+                p95_ms: Some(390),
+                avg_ms: Some(280),
+            },
+        ];
+
+        let order = build_tts_fallback_order(&summaries, 0.95);
+        assert_eq!(order.first().map(String::as_str), Some("windows_native"));
+    }
+
+    #[test]
+    fn classifies_tts_failures_into_fixed_categories() {
+        assert_eq!(
+            classify_tts_failure("Piper TTS binary not found."),
+            TTS_FAILURE_MISSING_BINARY.to_string()
+        );
+        assert_eq!(
+            classify_tts_failure("Piper model not found: D:\\voices\\de.onnx"),
+            TTS_FAILURE_MISSING_MODEL.to_string()
+        );
+        assert_eq!(
+            classify_tts_failure("Qwen3-TTS benchmark request failed: connection refused"),
+            TTS_FAILURE_ENDPOINT_UNREACHABLE.to_string()
+        );
+        assert_eq!(
+            classify_tts_failure("Qwen3-TTS benchmark request failed with HTTP 401"),
+            TTS_FAILURE_AUTH_MISSING.to_string()
+        );
+        assert_eq!(
+            classify_tts_failure("unexpected panic in voice backend"),
+            TTS_FAILURE_RUNTIME_ERROR.to_string()
+        );
+    }
+
+    #[test]
+    fn provider_normalization_accepts_windows_natural_qwen3_and_deduplicates() {
+        let input = vec![
+            " windows_native ".to_string(),
+            "windows_natural".to_string(),
+            "qwen3_tts".to_string(),
+            "local_custom".to_string(),
+            "QWEN3_TTS".to_string(),
+            "unsupported".to_string(),
+        ];
+        let providers = normalize_tts_benchmark_providers(&input);
+        assert_eq!(
+            providers,
+            vec![
+                "windows_native".to_string(),
+                "windows_natural".to_string(),
+                "qwen3_tts".to_string(),
+                "local_custom".to_string(),
+            ]
+        );
+    }
+}
+
 fn run_latency_benchmark_inner(
     app: &AppHandle,
     state: &AppState,
@@ -1808,6 +2718,606 @@ fn write_latency_benchmark_report(result: &LatencyBenchmarkResult) -> Result<Pat
     Ok(out_path)
 }
 
+fn run_tts_benchmark_inner(
+    state: &AppState,
+    request: &TtsBenchmarkRequest,
+) -> Result<TtsBenchmarkResult, String> {
+    let warmup_runs = request.warmup_runs.min(5);
+    let measure_runs = request.measure_runs.clamp(3, 100);
+    let gates = default_tts_benchmark_gates();
+    let providers = normalize_tts_benchmark_providers(&request.providers);
+    let scenarios = normalize_tts_benchmark_scenarios(&request.scenarios, request.lock_matrix);
+    let qwen3_config = resolve_qwen3_tts_benchmark_config(request);
+    let rate = if request.rate.is_finite() {
+        request.rate.clamp(0.5, 2.0)
+    } else {
+        1.0
+    };
+    let volume = if request.volume.is_finite() {
+        request.volume.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+
+    let voice_settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .voice_output_settings
+        .clone();
+    let piper_binary_path = request
+        .piper_binary_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| voice_settings.piper_binary_path.clone());
+    let piper_model_path = request
+        .piper_model_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| voice_settings.piper_model_path.clone());
+    let piper_model_dir = voice_settings.piper_model_dir.clone();
+
+    let mut samples: Vec<TtsBenchmarkSample> = Vec::new();
+    let mut preflight_checks: Vec<TtsPreflightCheck> = Vec::new();
+    let mut runtime_smoke_checks: Vec<TtsRuntimeSmokeCheck> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let provider_profiles = providers
+        .iter()
+        .map(|provider| tts_provider_profile(provider))
+        .collect::<Vec<_>>();
+
+    for provider in &providers {
+        let mut provider_preflight: Vec<TtsPreflightCheck> = Vec::new();
+        if is_runtime_stable_provider(provider) {
+            let module_enabled = voice_settings.enabled;
+            provider_preflight.push(TtsPreflightCheck {
+                provider: provider.clone(),
+                check: "module_enabled".to_string(),
+                passed: module_enabled,
+                category: if module_enabled {
+                    None
+                } else {
+                    Some(TTS_FAILURE_RUNTIME_ERROR.to_string())
+                },
+                detail: if module_enabled {
+                    "Voice output module is enabled.".to_string()
+                } else {
+                    "Voice output module is disabled. Enable module 'output_voice_tts' before release benchmarking."
+                        .to_string()
+                },
+            });
+        }
+        match provider.as_str() {
+            "windows_native" => {
+                let passed = cfg!(target_os = "windows");
+                provider_preflight.push(TtsPreflightCheck {
+                    provider: provider.clone(),
+                    check: "platform".to_string(),
+                    passed,
+                    category: if passed {
+                        None
+                    } else {
+                        Some(TTS_FAILURE_RUNTIME_ERROR.to_string())
+                    },
+                    detail: if passed {
+                        "Windows runtime detected for windows_native provider.".to_string()
+                    } else {
+                        "windows_native provider requires Windows runtime.".to_string()
+                    },
+                });
+            }
+            "windows_natural" => {
+                let platform_ok = cfg!(target_os = "windows");
+                provider_preflight.push(TtsPreflightCheck {
+                    provider: provider.clone(),
+                    check: "platform".to_string(),
+                    passed: platform_ok,
+                    category: if platform_ok {
+                        None
+                    } else {
+                        Some(TTS_FAILURE_RUNTIME_ERROR.to_string())
+                    },
+                    detail: if platform_ok {
+                        "Windows runtime detected for windows_natural provider.".to_string()
+                    } else {
+                        "windows_natural provider requires Windows runtime.".to_string()
+                    },
+                });
+
+                let natural_voices_ok = crate::multimodal_io::windows_natural_voice_available();
+                provider_preflight.push(TtsPreflightCheck {
+                    provider: provider.clone(),
+                    check: "natural_voice".to_string(),
+                    passed: natural_voices_ok,
+                    category: if natural_voices_ok {
+                        None
+                    } else {
+                        Some(TTS_FAILURE_RUNTIME_ERROR.to_string())
+                    },
+                    detail: if natural_voices_ok {
+                        "Detected Windows Natural voice(s) via SAPI.".to_string()
+                    } else {
+                        "No Windows Natural voice detected. Install NaturalVoiceSAPIAdapter and a Natural voice pack."
+                            .to_string()
+                    },
+                });
+            }
+            "local_custom" => {
+                let binary_ok = crate::multimodal_io::piper_binary_available(&piper_binary_path);
+                provider_preflight.push(TtsPreflightCheck {
+                    provider: provider.clone(),
+                    check: "binary".to_string(),
+                    passed: binary_ok,
+                    category: if binary_ok {
+                        None
+                    } else {
+                        Some(TTS_FAILURE_MISSING_BINARY.to_string())
+                    },
+                    detail: if binary_ok {
+                        "Piper binary resolved.".to_string()
+                    } else {
+                        "Piper binary not found. Configure piper_binary_path or install Piper."
+                            .to_string()
+                    },
+                });
+
+                let model_ok = crate::multimodal_io::piper_model_available(
+                    &piper_model_path,
+                    &piper_model_dir,
+                );
+                provider_preflight.push(TtsPreflightCheck {
+                    provider: provider.clone(),
+                    check: "model".to_string(),
+                    passed: model_ok,
+                    category: if model_ok {
+                        None
+                    } else {
+                        Some(TTS_FAILURE_MISSING_MODEL.to_string())
+                    },
+                    detail: if model_ok {
+                        "Piper model resolved.".to_string()
+                    } else {
+                        "Piper model not found. Configure piper_model_path or provide a voices directory."
+                            .to_string()
+                    },
+                });
+            }
+            "qwen3_tts" => {
+                let endpoint_ok = qwen3_config.endpoint.starts_with("http://")
+                    || qwen3_config.endpoint.starts_with("https://");
+                provider_preflight.push(TtsPreflightCheck {
+                    provider: provider.clone(),
+                    check: "endpoint_format".to_string(),
+                    passed: endpoint_ok,
+                    category: if endpoint_ok {
+                        None
+                    } else {
+                        Some(TTS_FAILURE_ENDPOINT_UNREACHABLE.to_string())
+                    },
+                    detail: if endpoint_ok {
+                        "Qwen3 endpoint format accepted.".to_string()
+                    } else {
+                        format!(
+                            "Qwen3 endpoint '{}' is invalid. Expected http:// or https:// URL.",
+                            qwen3_config.endpoint
+                        )
+                    },
+                });
+
+                if endpoint_ok {
+                    let probe =
+                        benchmark_qwen3_tts_synthesis("Preflight ping.", 1.0, &qwen3_config);
+                    provider_preflight.push(TtsPreflightCheck {
+                        provider: provider.clone(),
+                        check: "endpoint_auth_probe".to_string(),
+                        passed: probe.is_ok(),
+                        category: probe
+                            .as_ref()
+                            .err()
+                            .map(|error| classify_tts_failure(error)),
+                        detail: match probe {
+                            Ok(()) => "Qwen3 endpoint/auth probe succeeded.".to_string(),
+                            Err(error) => format!("Qwen3 probe failed: {}", error),
+                        },
+                    });
+                }
+            }
+            _ => {
+                provider_preflight.push(TtsPreflightCheck {
+                    provider: provider.clone(),
+                    check: "provider".to_string(),
+                    passed: false,
+                    category: Some(TTS_FAILURE_RUNTIME_ERROR.to_string()),
+                    detail: format!("Unsupported benchmark provider '{}'.", provider),
+                });
+            }
+        }
+
+        let preflight_ok = provider_preflight.iter().all(|check| check.passed);
+        preflight_checks.extend(provider_preflight.clone());
+
+        if is_runtime_stable_provider(provider) {
+            if request.run_runtime_smoke {
+                if preflight_ok {
+                    match run_tts_runtime_smoke_once(
+                        provider,
+                        rate,
+                        &piper_binary_path,
+                        &piper_model_path,
+                    ) {
+                        Ok(()) => runtime_smoke_checks.push(TtsRuntimeSmokeCheck {
+                            provider: provider.clone(),
+                            passed: true,
+                            category: None,
+                            detail: "Runtime smoke speak path succeeded.".to_string(),
+                        }),
+                        Err(error) => runtime_smoke_checks.push(TtsRuntimeSmokeCheck {
+                            provider: provider.clone(),
+                            passed: false,
+                            category: Some(classify_tts_failure(&error)),
+                            detail: format!("Runtime smoke speak path failed: {}", error),
+                        }),
+                    }
+                } else {
+                    runtime_smoke_checks.push(TtsRuntimeSmokeCheck {
+                        provider: provider.clone(),
+                        passed: false,
+                        category: Some(TTS_FAILURE_RUNTIME_ERROR.to_string()),
+                        detail: "Runtime smoke skipped due to preflight failure.".to_string(),
+                    });
+                }
+            } else {
+                runtime_smoke_checks.push(TtsRuntimeSmokeCheck {
+                    provider: provider.clone(),
+                    passed: true,
+                    category: None,
+                    detail: "Runtime smoke disabled by request.".to_string(),
+                });
+            }
+        }
+
+        if !preflight_ok {
+            let first_failed = provider_preflight
+                .iter()
+                .find(|check| !check.passed)
+                .cloned()
+                .unwrap_or(TtsPreflightCheck {
+                    provider: provider.clone(),
+                    check: "unknown".to_string(),
+                    passed: false,
+                    category: Some(TTS_FAILURE_RUNTIME_ERROR.to_string()),
+                    detail: "Unknown preflight failure.".to_string(),
+                });
+            warnings.push(format!(
+                "provider={} preflight failed check={} category={} detail={}",
+                provider,
+                first_failed.check,
+                first_failed
+                    .category
+                    .clone()
+                    .unwrap_or_else(|| TTS_FAILURE_RUNTIME_ERROR.to_string()),
+                first_failed.detail
+            ));
+            for scenario in &scenarios {
+                for run in 1..=measure_runs {
+                    samples.push(TtsBenchmarkSample {
+                        provider: provider.clone(),
+                        scenario: scenario.id.clone(),
+                        run,
+                        elapsed_ms: 0,
+                        success: false,
+                        error: Some(format!(
+                            "Preflight failed ({}): {}",
+                            first_failed.check, first_failed.detail
+                        )),
+                        failure_category: Some(
+                            first_failed
+                                .category
+                                .clone()
+                                .unwrap_or_else(|| TTS_FAILURE_RUNTIME_ERROR.to_string()),
+                        ),
+                    });
+                }
+            }
+            continue;
+        }
+
+        for scenario in &scenarios {
+            let scenario_warmup = if scenario.thermal == "warm" {
+                warmup_runs
+            } else {
+                0
+            };
+            for run_idx in 0..(scenario_warmup + measure_runs) {
+                let started = Instant::now();
+                let outcome = run_tts_provider_once(
+                    provider,
+                    &scenario.text,
+                    rate,
+                    volume,
+                    &piper_binary_path,
+                    &piper_model_path,
+                    &qwen3_config,
+                );
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+
+                if run_idx < scenario_warmup {
+                    continue;
+                }
+
+                let run = run_idx - scenario_warmup + 1;
+                match outcome {
+                    Ok(()) => samples.push(TtsBenchmarkSample {
+                        provider: provider.clone(),
+                        scenario: scenario.id.clone(),
+                        run,
+                        elapsed_ms,
+                        success: true,
+                        error: None,
+                        failure_category: None,
+                    }),
+                    Err(error) => {
+                        let category = classify_tts_failure(&error);
+                        warnings.push(format!(
+                            "provider={} scenario={} run={} category={} error={}",
+                            provider, scenario.id, run, category, error
+                        ));
+                        samples.push(TtsBenchmarkSample {
+                            provider: provider.clone(),
+                            scenario: scenario.id.clone(),
+                            run,
+                            elapsed_ms,
+                            success: false,
+                            error: Some(error),
+                            failure_category: Some(category),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let mut grouped: HashMap<String, Vec<TtsBenchmarkSample>> = HashMap::new();
+    for sample in &samples {
+        grouped
+            .entry(sample.provider.clone())
+            .or_default()
+            .push(sample.clone());
+    }
+
+    if providers.iter().any(|provider| provider == "qwen3_tts") {
+        warnings.push(format!(
+            "provider=qwen3_tts config endpoint={} model={} voice={} timeout_sec={}",
+            qwen3_config.endpoint, qwen3_config.model, qwen3_config.voice, qwen3_config.timeout_sec
+        ));
+    }
+    if providers.iter().any(|provider| provider == "local_custom") {
+        warnings.push(format!(
+            "provider=local_custom config piper_binary_path={} piper_model_path={}",
+            if piper_binary_path.trim().is_empty() {
+                "<auto-resolve>"
+            } else {
+                piper_binary_path.as_str()
+            },
+            if piper_model_path.trim().is_empty() {
+                "<auto-resolve>"
+            } else {
+                piper_model_path.as_str()
+            }
+        ));
+    }
+
+    let provider_summaries = providers
+        .iter()
+        .map(|provider| {
+            let provider_samples = grouped.get(provider).cloned().unwrap_or_default();
+            summarize_tts_provider(provider, &provider_samples)
+        })
+        .collect::<Vec<_>>();
+
+    let preflight_ok_by_provider = providers
+        .iter()
+        .map(|provider| {
+            let ok = preflight_checks
+                .iter()
+                .filter(|check| check.provider == *provider)
+                .all(|check| check.passed);
+            (provider.clone(), ok)
+        })
+        .collect::<HashMap<_, _>>();
+    let smoke_ok_by_provider = runtime_smoke_checks
+        .iter()
+        .map(|check| (check.provider.clone(), check.passed))
+        .collect::<HashMap<_, _>>();
+
+    let provider_gate_evaluations = providers
+        .iter()
+        .map(|provider| {
+            let summary = provider_summaries
+                .iter()
+                .find(|summary| summary.provider == *provider)
+                .cloned()
+                .unwrap_or(TtsBenchmarkProviderSummary {
+                    provider: provider.clone(),
+                    attempts: 0,
+                    success_count: 0,
+                    failure_count: 0,
+                    success_rate: 0.0,
+                    p50_ms: None,
+                    p95_ms: None,
+                    avg_ms: None,
+                });
+            let scenario_success =
+                scenario_success_counts_for_provider(provider, &scenarios, &samples);
+            let min_success_in_any_scenario = scenario_success.values().copied().min().unwrap_or(0);
+            let evaluated_for_release = is_runtime_stable_provider(provider);
+            let preflight_ok = *preflight_ok_by_provider.get(provider).unwrap_or(&false);
+            let runtime_smoke_ok = if evaluated_for_release {
+                *smoke_ok_by_provider.get(provider).unwrap_or(&false)
+            } else {
+                true
+            };
+            let reliability_ok = summary.success_rate >= gates.reliability_min_success_rate;
+            let latency_ok = summary
+                .p50_ms
+                .map(|value| value <= gates.latency_target_p50_ms)
+                .unwrap_or(false)
+                && summary
+                    .p95_ms
+                    .map(|value| value <= gates.latency_target_p95_ms)
+                    .unwrap_or(false);
+            let scenario_success_ok = min_success_in_any_scenario >= gates.min_success_per_scenario;
+            let passes_release_gate = evaluated_for_release
+                && preflight_ok
+                && runtime_smoke_ok
+                && reliability_ok
+                && latency_ok
+                && scenario_success_ok;
+            TtsProviderGateEvaluation {
+                provider: provider.clone(),
+                evaluated_for_release,
+                passes_release_gate,
+                preflight_ok,
+                runtime_smoke_ok,
+                reliability_ok,
+                latency_ok,
+                scenario_success_ok,
+                success_rate: summary.success_rate,
+                p50_ms: summary.p50_ms,
+                p95_ms: summary.p95_ms,
+                min_success_in_any_scenario,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let (provider_consistency_ok, provider_consistency_detail) =
+        provider_consistency_from_runtime_surface(&providers);
+
+    let release_evaluations = provider_gate_evaluations
+        .iter()
+        .filter(|evaluation| evaluation.evaluated_for_release)
+        .collect::<Vec<_>>();
+    let release_gate_pass = !release_evaluations.is_empty()
+        && release_evaluations
+            .iter()
+            .all(|evaluation| evaluation.passes_release_gate);
+    let release_gate_reason = if release_gate_pass {
+        "All runtime-stable providers passed release gates.".to_string()
+    } else if release_evaluations.is_empty() {
+        "No runtime-stable providers available for release gate evaluation.".to_string()
+    } else {
+        let failed = release_evaluations
+            .iter()
+            .filter(|evaluation| !evaluation.passes_release_gate)
+            .map(|evaluation| evaluation.provider.clone())
+            .collect::<Vec<_>>();
+        format!("Release gate failed for providers: {}", failed.join(", "))
+    };
+
+    let runtime_summaries = provider_summaries
+        .iter()
+        .filter(|summary| is_runtime_stable_provider(&summary.provider))
+        .cloned()
+        .collect::<Vec<_>>();
+    let fallback_order =
+        build_tts_fallback_order(&runtime_summaries, gates.reliability_min_success_rate);
+
+    let recommended_default_provider = if release_gate_pass {
+        fallback_order.first().cloned()
+    } else {
+        fallback_order
+            .iter()
+            .find(|provider| {
+                provider_gate_evaluations
+                    .iter()
+                    .find(|evaluation| &evaluation.provider == *provider)
+                    .map(|evaluation| {
+                        evaluation.preflight_ok
+                            && evaluation.runtime_smoke_ok
+                            && evaluation.success_rate > 0.0
+                    })
+                    .unwrap_or(false)
+            })
+            .cloned()
+    };
+    let recommendation_reason = if let Some(provider) = recommended_default_provider.as_ref() {
+        if release_gate_pass {
+            format!(
+                "Selected '{}' as default (release gate pass; deterministic fallback order applied).",
+                provider
+            )
+        } else {
+            format!(
+                "Selected '{}' as best available runtime fallback while release gate is failing.",
+                provider
+            )
+        }
+    } else {
+        "No runtime provider recommendation available. Resolve preflight/smoke failures first."
+            .to_string()
+    };
+
+    let uncategorized_failure_count = samples
+        .iter()
+        .filter(|sample| !sample.success && sample.failure_category.is_none())
+        .count() as u32;
+
+    Ok(TtsBenchmarkResult {
+        artifact_version: "tts-benchmark-v2".to_string(),
+        generated_at: now_iso(),
+        warmup_runs,
+        measure_runs,
+        providers,
+        scenarios: scenarios
+            .iter()
+            .map(|scenario| scenario.id.clone())
+            .collect(),
+        scenario_matrix_locked: request.lock_matrix,
+        gates,
+        provider_profiles,
+        preflight_checks,
+        runtime_smoke_checks,
+        samples,
+        provider_summaries,
+        provider_gate_evaluations,
+        provider_consistency_ok,
+        provider_consistency_detail,
+        fallback_order,
+        release_gate_pass,
+        release_gate_reason,
+        recommended_default_provider,
+        recommendation_reason,
+        uncategorized_failure_count,
+        warnings,
+    })
+}
+
+fn write_tts_benchmark_report(result: &TtsBenchmarkResult) -> Result<PathBuf, String> {
+    let root = resolve_benchmark_root_dir();
+    let out_dir = root.join("bench").join("results");
+    std::fs::create_dir_all(&out_dir).map_err(|e| {
+        format!(
+            "Failed creating benchmark output dir '{}': {}",
+            out_dir.display(),
+            e
+        )
+    })?;
+    let out_path = out_dir.join("tts.latest.json");
+    let serialized = serde_json::to_string_pretty(result).map_err(|e| e.to_string())?;
+    std::fs::write(&out_path, serialized).map_err(|e| {
+        format!(
+            "Failed writing TTS benchmark report '{}': {}",
+            out_path.display(),
+            e
+        )
+    })?;
+    Ok(out_path)
+}
+
 fn default_latency_fixture_paths() -> Vec<PathBuf> {
     let root = resolve_benchmark_root_dir();
     let fixture_dir = root.join("bench").join("fixtures").join("short");
@@ -1938,6 +3448,15 @@ fn run_latency_benchmark(
 ) -> Result<LatencyBenchmarkResult, String> {
     let request = request.unwrap_or_default();
     run_latency_benchmark_inner(&app, state.inner(), &request)
+}
+
+#[tauri::command]
+fn run_tts_benchmark(
+    state: State<'_, AppState>,
+    request: Option<TtsBenchmarkRequest>,
+) -> Result<TtsBenchmarkResult, String> {
+    let request = request.unwrap_or_default();
+    run_tts_benchmark_inner(state.inner(), &request)
 }
 
 #[tauri::command]
@@ -2551,6 +4070,18 @@ fn disable_module(
             (result, settings.clone(), descriptors)
         };
 
+        if result.is_ok() {
+            match module_id.as_str() {
+                "input_vision" => {
+                    let _ = stop_vision_stream_internal(&app, state.inner());
+                }
+                "output_voice_tts" => {
+                    let _ = stop_tts_internal(&app, state.inner());
+                }
+                _ => {}
+            }
+        }
+
         save_settings_file(&app, &snapshot)?;
         let _ = app.emit("settings-changed", snapshot);
         let _ = app.emit("module:state-changed", descriptors);
@@ -2631,6 +4162,146 @@ fn module_enabled(settings: &Settings, module_id: &str) -> bool {
     settings.module_settings.enabled_modules.contains(module_id)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeCapability {
+    WorkflowAgent,
+    VisionInput,
+    VoiceOutputTts,
+}
+
+impl RuntimeCapability {
+    fn module_id(self) -> &'static str {
+        match self {
+            Self::WorkflowAgent => "workflow_agent",
+            Self::VisionInput => "input_vision",
+            Self::VoiceOutputTts => "output_voice_tts",
+        }
+    }
+
+    fn setting_enabled(self, settings: &Settings) -> bool {
+        match self {
+            Self::WorkflowAgent => settings.workflow_agent.enabled,
+            Self::VisionInput => settings.vision_input_settings.enabled,
+            Self::VoiceOutputTts => settings.voice_output_settings.enabled,
+        }
+    }
+
+    fn module_disabled_message(self) -> &'static str {
+        match self {
+            Self::WorkflowAgent => {
+                "Workflow Agent module is disabled. Enable module 'workflow_agent' first."
+            }
+            Self::VisionInput => {
+                "Vision input module is disabled. Enable module 'input_vision' first."
+            }
+            Self::VoiceOutputTts => {
+                "Voice output module is disabled. Enable module 'output_voice_tts' first."
+            }
+        }
+    }
+
+    fn setting_disabled_message(self) -> &'static str {
+        match self {
+            Self::WorkflowAgent => "Workflow Agent is disabled in settings.",
+            Self::VisionInput => "Vision input is disabled in settings.",
+            Self::VoiceOutputTts => "Voice output is disabled in settings.",
+        }
+    }
+}
+
+fn capability_enabled(settings: &Settings, capability: RuntimeCapability) -> bool {
+    module_enabled(settings, capability.module_id()) && capability.setting_enabled(settings)
+}
+
+fn require_capability_enabled(
+    settings: &Settings,
+    capability: RuntimeCapability,
+) -> Result<(), String> {
+    if !module_enabled(settings, capability.module_id()) {
+        return Err(capability.module_disabled_message().to_string());
+    }
+    if !capability.setting_enabled(settings) {
+        return Err(capability.setting_disabled_message().to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod runtime_capability_gate_tests {
+    use super::{capability_enabled, require_capability_enabled, RuntimeCapability};
+    use crate::state::Settings;
+
+    fn settings_for_capability(
+        capability: RuntimeCapability,
+        module_enabled: bool,
+        setting_enabled: bool,
+    ) -> Settings {
+        let mut settings = Settings::default();
+        if module_enabled {
+            settings
+                .module_settings
+                .enabled_modules
+                .insert(capability.module_id().to_string());
+        }
+        match capability {
+            RuntimeCapability::WorkflowAgent => settings.workflow_agent.enabled = setting_enabled,
+            RuntimeCapability::VisionInput => settings.vision_input_settings.enabled = setting_enabled,
+            RuntimeCapability::VoiceOutputTts => {
+                settings.voice_output_settings.enabled = setting_enabled
+            }
+        }
+        settings
+    }
+
+    #[test]
+    fn capability_enabled_requires_module_and_setting_flag() {
+        let both_enabled =
+            settings_for_capability(RuntimeCapability::VisionInput, true, true);
+        assert!(capability_enabled(
+            &both_enabled,
+            RuntimeCapability::VisionInput
+        ));
+
+        let missing_module =
+            settings_for_capability(RuntimeCapability::VisionInput, false, true);
+        assert!(!capability_enabled(
+            &missing_module,
+            RuntimeCapability::VisionInput
+        ));
+
+        let missing_setting =
+            settings_for_capability(RuntimeCapability::VisionInput, true, false);
+        assert!(!capability_enabled(
+            &missing_setting,
+            RuntimeCapability::VisionInput
+        ));
+    }
+
+    #[test]
+    fn require_capability_reports_module_and_setting_failures() {
+        let module_disabled =
+            settings_for_capability(RuntimeCapability::VoiceOutputTts, false, true);
+        let module_error = require_capability_enabled(
+            &module_disabled,
+            RuntimeCapability::VoiceOutputTts,
+        )
+        .unwrap_err();
+        assert_eq!(
+            module_error,
+            "Voice output module is disabled. Enable module 'output_voice_tts' first."
+        );
+
+        let setting_disabled =
+            settings_for_capability(RuntimeCapability::VoiceOutputTts, true, false);
+        let setting_error = require_capability_enabled(
+            &setting_disabled,
+            RuntimeCapability::VoiceOutputTts,
+        )
+        .unwrap_err();
+        assert_eq!(setting_error, "Voice output is disabled in settings.");
+    }
+}
+
 #[tauri::command]
 fn agent_list_supported_actions() -> Vec<String> {
     vec!["gdd_generate_publish".to_string()]
@@ -2648,6 +4319,7 @@ fn agent_parse_command(
                 .settings
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
             settings.workflow_agent.clone()
         };
         let intent_keywords = workflow_settings
@@ -2678,6 +4350,7 @@ fn search_transcript_sessions(
                 .settings
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
             (
                 settings.workflow_agent.session_gap_minutes,
                 settings.workflow_agent.max_candidates,
@@ -2702,9 +4375,17 @@ fn search_transcript_sessions(
 #[tauri::command]
 fn agent_build_execution_plan(
     app: AppHandle,
+    state: State<'_, AppState>,
     request: crate::workflow_agent::AgentBuildExecutionPlanRequest,
 ) -> Result<crate::workflow_agent::AgentExecutionPlan, String> {
     guarded_command!("agent_build_execution_plan", {
+        {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
+        }
         if request.intent.trim().is_empty() {
             return Err("Intent is required.".to_string());
         }
@@ -2768,19 +4449,14 @@ fn agent_execute_gdd_plan(
                 .settings
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let workflow_agent_active =
-                module_enabled(&settings, "workflow_agent") && settings.workflow_agent.enabled;
-            let vision_active =
-                module_enabled(&settings, "input_vision") && settings.vision_input_settings.enabled;
-            let tts_active = module_enabled(&settings, "output_voice_tts")
-                && settings.voice_output_settings.enabled;
+            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
             (
                 settings.workflow_agent.session_gap_minutes,
                 settings.gdd_module_settings.preset_clones.clone(),
                 settings.confluence_settings.clone(),
                 settings.gdd_module_settings.one_click_confidence_threshold,
-                workflow_agent_active && vision_active,
-                workflow_agent_active && tts_active,
+                capability_enabled(&settings, RuntimeCapability::VisionInput),
+                capability_enabled(&settings, RuntimeCapability::VoiceOutputTts),
             )
         };
         let maybe_agent_speak = |context: &str, message: &str| {
@@ -3116,13 +4792,13 @@ fn start_vision_stream(
     state: State<'_, AppState>,
 ) -> Result<crate::multimodal_io::VisionStreamHealth, String> {
     guarded_command!("start_vision_stream", {
-        let (enabled, fps, source_scope, max_width, jpeg_quality, ram_buffer_seconds) = {
+        let (fps, source_scope, max_width, jpeg_quality, ram_buffer_seconds) = {
             let settings = state
                 .settings
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::VisionInput)?;
             (
-                settings.vision_input_settings.enabled,
                 settings.vision_input_settings.fps,
                 settings.vision_input_settings.source_scope.clone(),
                 settings.vision_input_settings.max_width,
@@ -3130,11 +4806,6 @@ fn start_vision_stream(
                 settings.vision_input_settings.ram_buffer_seconds,
             )
         };
-        if !enabled {
-            return Err(
-                "Vision input is disabled. Enable module 'input_vision' first.".to_string(),
-            );
-        }
 
         let already_running = state.vision_stream_running.swap(true, Ordering::AcqRel);
         if !already_running {
@@ -3221,42 +4892,49 @@ fn stop_vision_stream(
     state: State<'_, AppState>,
 ) -> Result<crate::multimodal_io::VisionStreamHealth, String> {
     guarded_command!("stop_vision_stream", {
-        state.vision_stream_running.store(false, Ordering::Release);
-        let (fps, source_scope) = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            (
-                settings.vision_input_settings.fps,
-                settings.vision_input_settings.source_scope.clone(),
-            )
-        };
-        let buffer_stats = state
-            .vision_frame_buffer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .stats();
-        let health = crate::multimodal_io::VisionStreamHealth {
-            running: false,
-            fps,
-            source_scope,
-            started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
-            frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
-            buffered_frames: buffer_stats.buffered_frames,
-            buffered_bytes: buffer_stats.buffered_bytes,
-            last_frame_timestamp_ms: buffer_stats.last_frame_timestamp_ms,
-            last_frame_width: buffer_stats.last_frame_width,
-            last_frame_height: buffer_stats.last_frame_height,
-        };
-        state
-            .vision_frame_buffer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clear();
-        let _ = app.emit("vision:stream-stopped", &health);
-        Ok(health)
+        Ok(stop_vision_stream_internal(&app, state.inner()))
     })
+}
+
+fn stop_vision_stream_internal(
+    app: &AppHandle,
+    state: &AppState,
+) -> crate::multimodal_io::VisionStreamHealth {
+    state.vision_stream_running.store(false, Ordering::Release);
+    let (fps, source_scope) = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (
+            settings.vision_input_settings.fps,
+            settings.vision_input_settings.source_scope.clone(),
+        )
+    };
+    let buffer_stats = state
+        .vision_frame_buffer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .stats();
+    let health = crate::multimodal_io::VisionStreamHealth {
+        running: false,
+        fps,
+        source_scope,
+        started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
+        frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
+        buffered_frames: buffer_stats.buffered_frames,
+        buffered_bytes: buffer_stats.buffered_bytes,
+        last_frame_timestamp_ms: buffer_stats.last_frame_timestamp_ms,
+        last_frame_width: buffer_stats.last_frame_width,
+        last_frame_height: buffer_stats.last_frame_height,
+    };
+    state
+        .vision_frame_buffer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+    let _ = app.emit("vision:stream-stopped", &health);
+    health
 }
 
 #[tauri::command]
@@ -3296,13 +4974,15 @@ fn capture_vision_snapshot_internal(
     app: &AppHandle,
     state: &AppState,
 ) -> Result<crate::multimodal_io::VisionSnapshotResult, String> {
-    let source_scope = {
+    let vision_settings = {
         let settings = state
             .settings
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        settings.vision_input_settings.source_scope.clone()
+        require_capability_enabled(&settings, RuntimeCapability::VisionInput)?;
+        settings.vision_input_settings.clone()
     };
+    let source_scope = vision_settings.source_scope.clone();
     if let Some(frame) = state
         .vision_frame_buffer
         .lock()
@@ -3316,17 +4996,11 @@ fn capture_vision_snapshot_internal(
         ));
     }
 
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .vision_input_settings
-        .clone();
     let mut frame = crate::multimodal_io::capture_vision_frame(
         app,
         &source_scope,
-        settings.max_width,
-        settings.jpeg_quality,
+        vision_settings.max_width,
+        vision_settings.jpeg_quality,
     )?;
     frame.seq = state.vision_stream_frame_seq.load(Ordering::Acquire);
     Ok(crate::multimodal_io::vision_snapshot_from_frame(
@@ -3387,11 +5061,7 @@ fn speak_tts_internal(
             .settings
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !settings.voice_output_settings.enabled {
-            return Err(
-                "Voice output is disabled. Enable module 'output_voice_tts' first.".to_string(),
-            );
-        }
+        require_capability_enabled(&settings, RuntimeCapability::VoiceOutputTts)?;
         settings.voice_output_settings.clone()
     };
 
@@ -3425,23 +5095,29 @@ fn speak_tts_internal(
     let _ = app.emit(
         "tts:speech-started",
         serde_json::json!({
-            "provider": preferred_provider,
+            "provider": preferred_provider.clone(),
             "text_len": text.len(),
-            "context": context,
+            "context": context.clone(),
         }),
     );
 
     let piper_binary_path = voice_settings.piper_binary_path.clone();
     let piper_model_path = voice_settings.piper_model_path.clone();
+    let qwen3_runtime_config = resolve_qwen3_tts_runtime_config(&voice_settings);
 
     let preferred_provider_for_thread = preferred_provider.clone();
     let fallback_provider_for_thread = fallback_provider.clone();
     let context_for_thread = context.clone();
     let app_c = app.clone();
     crate::util::spawn_guarded("tts_playback", move || {
-        let attempt = |provider: &str| -> Result<(), String> {
-            match provider {
+        let result = crate::multimodal_io::execute_tts_with_fallback(
+            &preferred_provider_for_thread,
+            &fallback_provider_for_thread,
+            |provider| match provider {
                 "windows_native" => crate::multimodal_io::speak_windows_native(&text, rate, volume),
+                "windows_natural" => {
+                    crate::multimodal_io::speak_windows_natural(&text, rate, volume)
+                }
                 "local_custom" => crate::multimodal_io::speak_piper(
                     &text,
                     &piper_binary_path,
@@ -3449,41 +5125,23 @@ fn speak_tts_internal(
                     rate,
                     volume,
                 ),
+                "qwen3_tts" => speak_qwen3_tts(&text, rate, volume, &qwen3_runtime_config),
                 _ => Err(format!("Unknown TTS provider '{}'.", provider)),
-            }
-        };
-
-        let (result, used_provider) = match attempt(&preferred_provider_for_thread) {
-            Ok(()) => (Ok(()), preferred_provider_for_thread.clone()),
-            Err(primary_error) => {
-                if preferred_provider_for_thread == fallback_provider_for_thread {
-                    (Err(primary_error), preferred_provider_for_thread.clone())
-                } else {
-                    match attempt(&fallback_provider_for_thread) {
-                        Ok(()) => (Ok(()), fallback_provider_for_thread.clone()),
-                        Err(fallback_error) => (
-                            Err(format!(
-                                "Primary provider '{}' failed: {} | Fallback '{}' failed: {}",
-                                preferred_provider_for_thread,
-                                primary_error,
-                                fallback_provider_for_thread,
-                                fallback_error
-                            )),
-                            preferred_provider_for_thread.clone(),
-                        ),
-                    }
-                }
-            }
-        };
+            },
+        );
 
         let state = app_c.state::<AppState>();
         state.tts_speaking.store(false, Ordering::Release);
         match result {
-            Ok(()) => {
+            Ok(outcome) => {
                 let _ = app_c.emit(
                     "tts:speech-finished",
                     serde_json::json!({
-                        "provider_used": used_provider,
+                        "provider_used": outcome.provider_used,
+                        "preferred_provider": preferred_provider_for_thread,
+                        "fallback_provider": fallback_provider_for_thread,
+                        "used_fallback": outcome.used_fallback,
+                        "primary_error": outcome.primary_error,
                         "context": context_for_thread,
                         "timestamp_ms": crate::util::now_ms(),
                     }),
@@ -3493,19 +5151,35 @@ fn speak_tts_internal(
                 let _ = app_c.emit(
                     "tts:speech-error",
                     serde_json::json!({
-                        "provider": preferred_provider_for_thread,
-                        "context": context_for_thread,
+                        "provider": preferred_provider_for_thread.clone(),
+                        "preferred_provider": preferred_provider_for_thread.clone(),
+                        "fallback_provider": fallback_provider_for_thread.clone(),
+                        "context": context_for_thread.clone(),
                         "error": error,
+                        "timestamp_ms": crate::util::now_ms(),
                     }),
                 );
             }
         }
     });
 
+    let accepted_message = if preferred_provider == fallback_provider {
+        format!("TTS request accepted (provider: {}).", preferred_provider)
+    } else {
+        format!(
+            "TTS request accepted (fallback chain: {} -> {}).",
+            preferred_provider, fallback_provider
+        )
+    };
+
     Ok(crate::multimodal_io::TtsSpeakResult {
-        provider_used: preferred_provider,
+        provider_used: preferred_provider.clone(),
         accepted: true,
-        message: "TTS request accepted.".to_string(),
+        message: accepted_message,
+        used_fallback: None,
+        preferred_provider: Some(preferred_provider),
+        fallback_provider: Some(fallback_provider),
+        primary_error: None,
     })
 }
 
@@ -3522,6 +5196,10 @@ fn speak_tts(
 
 #[tauri::command]
 fn stop_tts(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(stop_tts_internal(&app, state.inner()))
+}
+
+fn stop_tts_internal(app: &AppHandle, state: &AppState) -> bool {
     let was_speaking = state.tts_speaking.swap(false, Ordering::AcqRel);
     let _ = app.emit(
         "tts:speech-finished",
@@ -3530,7 +5208,7 @@ fn stop_tts(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> 
             "timestamp_ms": crate::util::now_ms(),
         }),
     );
-    Ok(was_speaking)
+    was_speaking
 }
 
 #[tauri::command]
@@ -3540,18 +5218,84 @@ fn test_tts_provider(
     provider: Option<String>,
 ) -> Result<crate::multimodal_io::TtsSpeakResult, String> {
     guarded_command!("test_tts_provider", {
-        let provider = provider.unwrap_or_else(|| "windows_native".to_string());
-        speak_tts(
-            app,
-            state,
-            crate::multimodal_io::TtsSpeakRequest {
-                provider,
-                text: "Trisper Flow voice output test.".to_string(),
-                rate: None,
-                volume: None,
-                context: Some("manual_test".to_string()),
+        let preferred_provider = provider
+            .unwrap_or_else(|| "windows_native".to_string())
+            .trim()
+            .to_string();
+        let voice_settings = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::VoiceOutputTts)?;
+            settings.voice_output_settings.clone()
+        };
+
+        let fallback_provider = voice_settings.fallback_provider.clone();
+        let rate = voice_settings.rate.clamp(0.5, 2.0);
+        let volume = voice_settings.volume.clamp(0.0, 1.0);
+        let piper_binary_path = voice_settings.piper_binary_path.clone();
+        let piper_model_path = voice_settings.piper_model_path.clone();
+        let qwen3_runtime_config = resolve_qwen3_tts_runtime_config(&voice_settings);
+        let sample_text = "Trisper Flow voice output test.";
+
+        let outcome = crate::multimodal_io::execute_tts_with_fallback(
+            &preferred_provider,
+            &fallback_provider,
+            |lane| match lane {
+                "windows_native" => {
+                    crate::multimodal_io::speak_windows_native(sample_text, rate, volume)
+                }
+                "windows_natural" => {
+                    crate::multimodal_io::speak_windows_natural(sample_text, rate, volume)
+                }
+                "local_custom" => crate::multimodal_io::speak_piper(
+                    sample_text,
+                    &piper_binary_path,
+                    &piper_model_path,
+                    rate,
+                    volume,
+                ),
+                "qwen3_tts" => speak_qwen3_tts(sample_text, rate, volume, &qwen3_runtime_config),
+                _ => Err(format!("Unknown TTS provider '{}'.", lane)),
             },
-        )
+        )?;
+
+        let provider_used = outcome.provider_used.clone();
+        let primary_error = outcome.primary_error.clone();
+        let used_fallback = outcome.used_fallback;
+
+        if used_fallback {
+            let _ = app.emit(
+                "tts:speech-finished",
+                serde_json::json!({
+                    "provider_used": provider_used.clone(),
+                    "preferred_provider": preferred_provider.clone(),
+                    "fallback_provider": fallback_provider.clone(),
+                    "used_fallback": true,
+                    "primary_error": primary_error.clone(),
+                    "context": "manual_test",
+                    "timestamp_ms": crate::util::now_ms(),
+                }),
+            );
+        }
+
+        Ok(crate::multimodal_io::TtsSpeakResult {
+            provider_used: provider_used.clone(),
+            accepted: true,
+            message: if used_fallback {
+                format!(
+                    "Fallback used: {} -> {}.",
+                    preferred_provider, provider_used
+                )
+            } else {
+                format!("Provider '{}' responded.", provider_used)
+            },
+            used_fallback: Some(used_fallback),
+            preferred_provider: Some(preferred_provider),
+            fallback_provider: Some(fallback_provider),
+            primary_error,
+        })
     })
 }
 
@@ -5027,7 +6771,7 @@ fn build_dependency_preflight_report(
     }
 
     let powershell_ok = check_powershell_available();
-    let tts_enabled = settings_snapshot.voice_output_settings.enabled;
+    let tts_enabled = capability_enabled(&settings_snapshot, RuntimeCapability::VoiceOutputTts);
     if powershell_ok {
         items.push(DependencyPreflightItem {
             id: "powershell_tts".to_string(),
@@ -5052,8 +6796,7 @@ fn build_dependency_preflight_report(
         });
     }
 
-    if settings_snapshot.voice_output_settings.enabled
-        && settings_snapshot.voice_output_settings.default_provider == "local_custom"
+    if tts_enabled && settings_snapshot.voice_output_settings.default_provider == "local_custom"
     {
         items.push(DependencyPreflightItem {
             id: "tts_local_custom".to_string(),
@@ -5601,6 +7344,97 @@ fn latency_benchmark_request_from_env() -> LatencyBenchmarkRequest {
         if !model.is_empty() {
             request.refinement_model = Some(model.to_string());
         }
+    }
+
+    request
+}
+
+fn tts_benchmark_request_from_env() -> TtsBenchmarkRequest {
+    let mut request = TtsBenchmarkRequest::default();
+
+    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_WARMUP_RUNS") {
+        if let Ok(parsed) = value.trim().parse::<u32>() {
+            request.warmup_runs = parsed;
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_MEASURE_RUNS") {
+        if let Ok(parsed) = value.trim().parse::<u32>() {
+            request.measure_runs = parsed;
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_RATE") {
+        if let Ok(parsed) = value.trim().parse::<f32>() {
+            request.rate = parsed;
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_VOLUME") {
+        if let Ok(parsed) = value.trim().parse::<f32>() {
+            request.volume = parsed;
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_PROVIDERS") {
+        let providers = value
+            .split(';')
+            .map(|part| part.trim())
+            .filter(|part| !part.is_empty())
+            .map(|part| part.to_string())
+            .collect::<Vec<_>>();
+        if !providers.is_empty() {
+            request.providers = providers;
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_PIPER_BINARY_PATH") {
+        let path = value.trim();
+        if !path.is_empty() {
+            request.piper_binary_path = Some(path.to_string());
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_PIPER_MODEL_PATH") {
+        let path = value.trim();
+        if !path.is_empty() {
+            request.piper_model_path = Some(path.to_string());
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_QWEN3_ENDPOINT") {
+        let endpoint = value.trim();
+        if !endpoint.is_empty() {
+            request.qwen3_tts_endpoint = Some(endpoint.to_string());
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_QWEN3_MODEL") {
+        let model = value.trim();
+        if !model.is_empty() {
+            request.qwen3_tts_model = Some(model.to_string());
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_QWEN3_VOICE") {
+        let voice = value.trim();
+        if !voice.is_empty() {
+            request.qwen3_tts_voice = Some(voice.to_string());
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_QWEN3_API_KEY") {
+        let key = value.trim();
+        if !key.is_empty() {
+            request.qwen3_tts_api_key = Some(key.to_string());
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_QWEN3_TIMEOUT_SEC") {
+        if let Ok(parsed) = value.trim().parse::<u64>() {
+            request.qwen3_tts_timeout_sec = Some(parsed);
+        }
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_LOCK_MATRIX") {
+        request.lock_matrix = !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        );
+    }
+    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_RUNTIME_SMOKE") {
+        request.run_runtime_smoke = matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
     }
 
     request
@@ -6493,6 +8327,64 @@ pub fn run() {
                 });
             }
 
+            if env_flag("TRISPR_RUN_TTS_BENCHMARK") {
+                let app_handle = app.handle().clone();
+                crate::util::spawn_guarded("tts_benchmark", move || {
+                    let request = tts_benchmark_request_from_env();
+                    let result = {
+                        let state = app_handle.state::<AppState>();
+                        run_tts_benchmark_inner(state.inner(), &request)
+                    };
+
+                    match result {
+                        Ok(report) => match write_tts_benchmark_report(&report) {
+                            Ok(path) => {
+                                info!(
+                                    "TTS benchmark complete: recommended_default={:?} release_gate_pass={} (report: {})",
+                                    report.recommended_default_provider,
+                                    report.release_gate_pass,
+                                    path.display()
+                                );
+                                if let Some(provider) = report.recommended_default_provider.as_ref()
+                                {
+                                    info!(
+                                        "TTS benchmark recommendation: provider='{}' reason='{}'",
+                                        provider, report.recommendation_reason
+                                    );
+                                } else {
+                                    warn!(
+                                        "TTS benchmark produced no recommendation: {}",
+                                        report.recommendation_reason
+                                    );
+                                }
+                                if !report.release_gate_pass {
+                                    warn!(
+                                        "TTS release gate failed: {}",
+                                        report.release_gate_reason
+                                    );
+                                }
+                                if report.uncategorized_failure_count > 0 {
+                                    warn!(
+                                        "TTS benchmark uncategorized failures: {}",
+                                        report.uncategorized_failure_count
+                                    );
+                                }
+                            }
+                            Err(err) => {
+                                error!("Failed to write TTS benchmark report: {}", err);
+                            }
+                        },
+                        Err(err) => {
+                            error!("TTS benchmark failed: {}", err);
+                        }
+                    }
+
+                    if env_flag("TRISPR_RUN_TTS_BENCHMARK_EXIT") {
+                        app_handle.exit(0);
+                    }
+                });
+            }
+
             let _ = app.emit("transcribe:state", "idle");
 
             // Initialise session manager with the recordings directory
@@ -7153,6 +9045,7 @@ pub fn run() {
             set_strict_local_mode,
             refine_transcript,
             run_latency_benchmark,
+            run_tts_benchmark,
             get_runtime_metrics_snapshot,
             record_runtime_metric,
             frontend_heartbeat,

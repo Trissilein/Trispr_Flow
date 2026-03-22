@@ -305,7 +305,12 @@ fn backlog_status_from_queue(queue: &AudioQueueState) -> TranscribeBacklogStatus
 
 #[cfg(test)]
 mod tests {
-    use super::{backlog_capacity_for_batch_ms, should_drop_transcript, AudioQueue};
+    use super::{
+        backlog_capacity_for_batch_ms, gpu_backend_attempt_order, should_drop_transcript,
+        AudioQueue, CUDA_BACKEND_UNSTABLE,
+    };
+    use crate::state::Settings;
+    use std::sync::atomic::Ordering;
 
     #[test]
     fn audio_queue_drops_oldest_when_full() {
@@ -360,6 +365,20 @@ mod tests {
     fn common_short_hallucination_is_dropped() {
         assert!(should_drop_transcript("thank you", 0.002, 500, false));
         assert!(should_drop_transcript("uh", 0.001, 400, false));
+    }
+
+    #[test]
+    fn gpu_backend_attempt_order_default_is_cuda_then_vulkan() {
+        CUDA_BACKEND_UNSTABLE.store(false, Ordering::Relaxed);
+        let settings = Settings::default();
+        assert_eq!(gpu_backend_attempt_order(&settings), vec!["cuda", "vulkan"]);
+    }
+
+    #[test]
+    fn gpu_backend_attempt_order_vulkan_stays_vulkan_only() {
+        let mut settings = Settings::default();
+        settings.local_backend_preference = "vulkan".to_string();
+        assert_eq!(gpu_backend_attempt_order(&settings), vec!["vulkan"]);
     }
 }
 
@@ -1718,12 +1737,99 @@ fn whisper_error_indicates_cuda_runtime_failure(message: &str) -> bool {
 }
 
 fn effective_cli_backend_preference(settings: &Settings) -> String {
-    let configured = settings.local_backend_preference.trim().to_ascii_lowercase();
+    let configured = settings
+        .local_backend_preference
+        .trim()
+        .to_ascii_lowercase();
     if configured == "auto" && CUDA_BACKEND_UNSTABLE.load(Ordering::Relaxed) {
         "vulkan".to_string()
     } else {
         settings.local_backend_preference.clone()
     }
+}
+
+fn strict_backend_from_preference(settings: &Settings) -> Option<&'static str> {
+    match settings
+        .local_backend_preference
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "cuda" => Some("cuda"),
+        "vulkan" => Some("vulkan"),
+        _ => None,
+    }
+}
+
+fn resolve_whisper_cli_path_for_exact_backend(backend: &str) -> Option<PathBuf> {
+    let resolved = resolve_whisper_cli_path_for_backend(Some(backend))?;
+    if whisper_backend_from_cli_path(resolved.as_path()).eq_ignore_ascii_case(backend) {
+        Some(resolved)
+    } else {
+        None
+    }
+}
+
+fn resolve_whisper_server_path_for_exact_backend(backend: &str) -> Option<PathBuf> {
+    let resolved = resolve_whisper_server_path_for_backend(Some(backend))?;
+    if whisper_backend_from_cli_path(resolved.as_path()).eq_ignore_ascii_case(backend) {
+        Some(resolved)
+    } else {
+        None
+    }
+}
+
+fn gpu_backend_attempt_order(settings: &Settings) -> Vec<&'static str> {
+    match settings
+        .local_backend_preference
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        // Explicit Vulkan means "no hidden switch back to CUDA".
+        "vulkan" => vec!["vulkan"],
+        "cuda" => vec!["cuda", "vulkan"],
+        // Auto/default: stable chain CUDA -> Vulkan.
+        _ => {
+            if CUDA_BACKEND_UNSTABLE.load(Ordering::Relaxed) {
+                vec!["vulkan", "cuda"]
+            } else {
+                vec!["cuda", "vulkan"]
+            }
+        }
+    }
+}
+
+fn resolve_gpu_cli_fallback_paths(settings: &Settings) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for backend in gpu_backend_attempt_order(settings) {
+        if let Some(path) = resolve_whisper_cli_path_for_exact_backend(backend) {
+            push_unique_path(&mut paths, path);
+        }
+    }
+    paths
+}
+
+fn resolve_cpu_cli_fallback_path(settings: &Settings, attempted: &[PathBuf]) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for path in attempted {
+        push_unique_path(&mut candidates, path.clone());
+    }
+    if let Some(path) = resolve_whisper_cli_path_for_exact_backend("cuda") {
+        push_unique_path(&mut candidates, path);
+    }
+    if let Some(path) = resolve_whisper_cli_path_for_exact_backend("vulkan") {
+        push_unique_path(&mut candidates, path);
+    }
+    if let Some(path) =
+        resolve_whisper_cli_path_for_backend(Some(settings.local_backend_preference.as_str()))
+    {
+        push_unique_path(&mut candidates, path);
+    }
+    if let Some(path) = resolve_whisper_cli_path_for_backend(Some("auto")) {
+        push_unique_path(&mut candidates, path);
+    }
+    candidates.into_iter().find(|candidate| candidate.exists())
 }
 
 fn emit_transcription_gpu_activity(
@@ -1760,20 +1866,31 @@ fn update_whisper_runtime_diagnostics(
     gpu_layers_applied: Option<usize>,
     last_error: Option<String>,
 ) {
-    let cli_path =
-        resolve_whisper_cli_path_for_backend(Some(settings.local_backend_preference.as_str()));
-    let server_path =
-        resolve_whisper_server_path_for_backend(Some(settings.local_backend_preference.as_str()));
+    let strict_backend = strict_backend_from_preference(settings);
+    let cli_path = strict_backend
+        .and_then(resolve_whisper_cli_path_for_exact_backend)
+        .or_else(|| {
+            resolve_whisper_cli_path_for_backend(Some(settings.local_backend_preference.as_str()))
+        });
+    let server_path = strict_backend
+        .and_then(resolve_whisper_server_path_for_exact_backend)
+        .or_else(|| {
+            resolve_whisper_server_path_for_backend(Some(
+                settings.local_backend_preference.as_str(),
+            ))
+        });
     let backend_selected = if mode == "server" {
         server_path
             .as_deref()
             .map(whisper_backend_from_cli_path)
             .or_else(|| cli_path.as_deref().map(whisper_backend_from_cli_path))
+            .or(strict_backend)
             .unwrap_or("unknown")
     } else {
         cli_path
             .as_deref()
             .map(whisper_backend_from_cli_path)
+            .or(strict_backend)
             .unwrap_or("unknown")
     };
 
@@ -1977,28 +2094,62 @@ fn transcribe_local(
     }
 
     let cli_backend_preference = effective_cli_backend_preference(settings);
-    let cli_path = resolve_whisper_cli_path_for_backend(Some(cli_backend_preference.as_str()))
-            .ok_or_else(|| {
-                update_whisper_runtime_diagnostics(
-                    app,
-                    settings,
-                    "cli",
-                    "cpu",
-                    resolve_whisper_gpu_layers(settings),
-                    None,
-                    Some(whisper_runtime_missing_message(
-                        "whisper-cli executable could not be located",
-                    )),
-                );
-                whisper_runtime_missing_message(&format!(
-                    "whisper-cli executable could not be located (backend preference '{}')",
-                    cli_backend_preference
-                ))
-            })?;
-    if !cli_path.exists() {
+    let gpu_cli_paths = resolve_gpu_cli_fallback_paths(settings);
+    let mut errors: Vec<String> = Vec::new();
+
+    for cli_path in &gpu_cli_paths {
+        let backend = whisper_backend_from_cli_path(cli_path.as_path());
+        match run_whisper_cli(
+            app,
+            settings,
+            cli_path.as_path(),
+            model_path.as_path(),
+            wav_path.as_path(),
+            output_base.as_path(),
+            false,
+        ) {
+            Ok(text) => return Ok(text),
+            Err(err) => {
+                if backend == "cuda" && whisper_error_indicates_cuda_runtime_failure(&err) {
+                    CUDA_BACKEND_UNSTABLE.store(true, Ordering::Relaxed);
+                }
+                errors.push(format!(
+                    "GPU backend '{}' failed ('{}'): {}",
+                    backend,
+                    cli_path.display(),
+                    err
+                ));
+            }
+        }
+    }
+
+    if let Some(cpu_cli_path) = resolve_cpu_cli_fallback_path(settings, &gpu_cli_paths) {
+        warn!(
+            "All GPU attempts failed; trying CLI CPU fallback via '{}'",
+            cpu_cli_path.display()
+        );
+        match run_whisper_cli(
+            app,
+            settings,
+            cpu_cli_path.as_path(),
+            model_path.as_path(),
+            wav_path.as_path(),
+            output_base.as_path(),
+            true,
+        ) {
+            Ok(text) => return Ok(text),
+            Err(err) => {
+                errors.push(format!(
+                    "CLI CPU fallback failed ('{}'): {}",
+                    cpu_cli_path.display(),
+                    err
+                ));
+            }
+        }
+    } else {
         let message = whisper_runtime_missing_message(&format!(
-            "whisper-cli not found at '{}'",
-            cli_path.display()
+            "whisper-cli executable could not be located (backend preference '{}')",
+            cli_backend_preference
         ));
         update_whisper_runtime_diagnostics(
             app,
@@ -2012,62 +2163,10 @@ fn transcribe_local(
         return Err(message);
     }
 
-    let primary_error = match run_whisper_cli(
-        app,
-        settings,
-        cli_path.as_path(),
-        model_path.as_path(),
-        wav_path.as_path(),
-        output_base.as_path(),
-    ) {
-        Ok(text) => return Ok(text),
-        Err(err) => err,
-    };
-
-    let using_auto_backend = settings
-        .local_backend_preference
-        .trim()
-        .eq_ignore_ascii_case("auto");
-    let used_backend = whisper_backend_from_cli_path(cli_path.as_path());
-    let should_retry_with_vulkan = using_auto_backend
-        && used_backend == "cuda"
-        && whisper_error_indicates_cuda_runtime_failure(&primary_error);
-
-    if should_retry_with_vulkan {
-        if let Some(vulkan_cli_path) = resolve_whisper_cli_path_for_backend(Some("vulkan")) {
-            if vulkan_cli_path.exists() && vulkan_cli_path != cli_path {
-                warn!(
-                    "CUDA whisper-cli failed; retrying with Vulkan backend. cuda='{}' vulkan='{}' error='{}'",
-                    cli_path.display(),
-                    vulkan_cli_path.display(),
-                    primary_error
-                );
-                match run_whisper_cli(
-                    app,
-                    settings,
-                    vulkan_cli_path.as_path(),
-                    model_path.as_path(),
-                    wav_path.as_path(),
-                    output_base.as_path(),
-                ) {
-                    Ok(text) => {
-                        CUDA_BACKEND_UNSTABLE.store(true, Ordering::Relaxed);
-                        return Ok(text);
-                    }
-                    Err(vulkan_error) => {
-                        return Err(format!(
-                            "{}\nVulkan fallback failed ('{}'): {}",
-                            primary_error,
-                            vulkan_cli_path.display(),
-                            vulkan_error
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    Err(primary_error)
+    Err(format!(
+        "Whisper transcription failed after fallback chain (CUDA -> Vulkan -> CLI CPU): {}",
+        errors.join(" | ")
+    ))
 }
 
 fn run_whisper_cli(
@@ -2077,6 +2176,7 @@ fn run_whisper_cli(
     model_path: &Path,
     wav_path: &Path,
     output_base: &Path,
+    force_cpu: bool,
 ) -> Result<String, String> {
     // Ensure each run starts clean and always cleans side effects on return.
     cleanup_whisper_output_files(output_base, wav_path);
@@ -2084,11 +2184,19 @@ fn run_whisper_cli(
 
     let mut command = Command::new(cli_path);
 
-    let gpu_layers = resolve_whisper_gpu_layers(settings);
+    let gpu_layers = if force_cpu {
+        None
+    } else {
+        resolve_whisper_gpu_layers(settings)
+    };
     let backend_gpu_capable = whisper_cli_looks_gpu_capable(Some(cli_path));
-    let gpu_hint = gpu_layers
-        .map(|layers| layers > 0)
-        .unwrap_or(backend_gpu_capable);
+    let gpu_hint = if force_cpu {
+        false
+    } else {
+        gpu_layers
+            .map(|layers| layers > 0)
+            .unwrap_or(backend_gpu_capable)
+    };
     let threads = resolve_whisper_threads(gpu_hint).to_string();
 
     // Hide console window on Windows
@@ -2131,12 +2239,15 @@ fn run_whisper_cli(
         }
     }
 
-    // Explicitly enable GPU on CUDA/Vulkan builds if detected
-    if backend_gpu_capable {
+    // Explicitly enable GPU on CUDA/Vulkan builds if detected.
+    // CPU fallback mode intentionally skips this.
+    if backend_gpu_capable && !force_cpu {
         command.arg("-dev").arg("0");
     }
 
-    let expected_gpu = if requested_gpu_layers.is_some() {
+    let expected_gpu = if force_cpu {
+        false
+    } else if requested_gpu_layers.is_some() {
         applied_gpu_layers.is_some() || backend_gpu_capable
     } else {
         backend_gpu_capable
@@ -2146,10 +2257,11 @@ fn run_whisper_cli(
         WhisperGpuActivityGuard::new(app, if expected_gpu { "gpu" } else { "cpu" }, backend);
 
     info!(
-        "[TIMING] whisper_spawn: model={}, gpu_layers={:?}, backend_gpu={}, threads={}",
+        "[TIMING] whisper_spawn: model={}, gpu_layers={:?}, backend_gpu={}, force_cpu={}, threads={}",
         model_path.display(),
         gpu_layers,
         backend_gpu_capable,
+        force_cpu,
         &threads
     );
     let t_spawn = std::time::Instant::now();
@@ -2329,7 +2441,7 @@ fn run_whisper_cli(
         },
     );
 
-    if accelerator == "gpu" || backend != "cpu" {
+    if !force_cpu && (accelerator == "gpu" || backend != "cpu") {
         // Warm up server only when it resolves to the same backend we just used.
         // Avoids repeatedly starting CUDA server when CLI has already switched to Vulkan.
         let server_backend_matches = resolve_whisper_server_path_for_backend(Some(backend))

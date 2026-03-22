@@ -7,7 +7,7 @@ use crate::state::{AppState, Settings};
 use crate::terminate_managed_child_slot;
 use crate::update_runtime_diagnostics;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -27,6 +27,39 @@ pub fn ping_whisper_server(port: u16) -> bool {
         .get(&format!("http://127.0.0.1:{port}/"))
         .call()
         .is_ok()
+}
+
+fn resolve_preferred_server_path(settings: &Settings) -> Option<PathBuf> {
+    let preference = settings
+        .local_backend_preference
+        .trim()
+        .to_ascii_lowercase();
+    let resolved =
+        resolve_whisper_server_path_for_backend(Some(settings.local_backend_preference.as_str()));
+    if preference == "cuda" || preference == "vulkan" {
+        if let Some(path) = resolved {
+            let resolved_backend = crate::transcription::whisper_backend_from_cli_path(&path);
+            if resolved_backend.eq_ignore_ascii_case(preference.as_str()) {
+                return Some(path);
+            }
+            return None;
+        }
+        return None;
+    }
+    resolved
+}
+
+fn strict_backend_from_preference(settings: &Settings) -> Option<&'static str> {
+    match settings
+        .local_backend_preference
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "cuda" => Some("cuda"),
+        "vulkan" => Some("vulkan"),
+        _ => None,
+    }
 }
 
 /// Start the Whisper-Server process and wait for it to be ready.
@@ -54,14 +87,18 @@ pub fn start_whisper_server(
         return Ok(());
     }
 
-    let server_path =
-        resolve_whisper_server_path_for_backend(Some(settings.local_backend_preference.as_str()))
-            .ok_or_else(|| {
-            let message = "whisper-server.exe not found (Phase 0 incomplete — binary not sourced)"
-                .to_string();
-            update_whisper_server_diagnostics(app, &settings, "cli", "cpu", Some(message.clone()));
-            message
-        })?;
+    let server_path = resolve_preferred_server_path(&settings).ok_or_else(|| {
+        let message = if let Some(strict_backend) = strict_backend_from_preference(&settings) {
+            format!(
+                "whisper-server runtime for preferred backend '{}' not found; staying on CLI path.",
+                strict_backend
+            )
+        } else {
+            "whisper-server.exe not found (Phase 0 incomplete — binary not sourced)".to_string()
+        };
+        update_whisper_server_diagnostics(app, &settings, "cli", "cpu", Some(message.clone()));
+        message
+    })?;
 
     info!(
         "Starting whisper-server: {} -m {} --port {}",
@@ -291,19 +328,20 @@ fn update_whisper_server_diagnostics(
     accelerator: &str,
     last_error: Option<String>,
 ) {
-    let server_path =
-        resolve_whisper_server_path_for_backend(Some(settings.local_backend_preference.as_str()));
+    let server_path = resolve_preferred_server_path(settings);
     let backend = server_path
         .as_deref()
         .map(crate::transcription::whisper_backend_from_cli_path)
-        .unwrap_or("unknown");
+        .map(|value| value.to_string())
+        .or_else(|| strict_backend_from_preference(settings).map(|value| value.to_string()))
+        .unwrap_or_else(|| "unknown".to_string());
     let state = app.state::<AppState>();
     update_runtime_diagnostics(app, state.inner(), |diagnostics| {
         diagnostics.whisper.server_path = server_path
             .as_ref()
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
-        diagnostics.whisper.backend_selected = backend.to_string();
+        diagnostics.whisper.backend_selected = backend.clone();
         diagnostics.whisper.mode = mode.to_string();
         diagnostics.whisper.accelerator = accelerator.to_string();
         diagnostics.whisper.last_error = last_error.unwrap_or_default();
@@ -354,4 +392,24 @@ fn optimal_thread_count() -> usize {
         .map(|n| n.get())
         .unwrap_or(4);
     (cores.saturating_sub(1)).max(2).min(12)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strict_backend_from_preference;
+    use crate::state::Settings;
+
+    #[test]
+    fn strict_backend_preference_only_for_explicit_gpu_backends() {
+        let mut settings = Settings::default();
+
+        settings.local_backend_preference = "cuda".to_string();
+        assert_eq!(strict_backend_from_preference(&settings), Some("cuda"));
+
+        settings.local_backend_preference = "vulkan".to_string();
+        assert_eq!(strict_backend_from_preference(&settings), Some("vulkan"));
+
+        settings.local_backend_preference = "auto".to_string();
+        assert_eq!(strict_backend_from_preference(&settings), None);
+    }
 }

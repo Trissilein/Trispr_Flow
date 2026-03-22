@@ -101,8 +101,7 @@ use crate::state::{
     normalize_ai_fallback_fields, normalize_ai_refinement_module_binding,
     normalize_continuous_dump_fields, normalize_history_alias_fields, normalize_product_mode_field,
     push_history_entry_inner, push_transcribe_entry_inner, record_refinement_fallback_timed_out,
-    record_refinement_timeout, save_settings_file, sync_model_dir_env,
-    AI_REFINEMENT_MODULE_ID,
+    record_refinement_timeout, save_settings_file, sync_model_dir_env, AI_REFINEMENT_MODULE_ID,
 };
 use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, last_transcription_accelerator,
@@ -400,15 +399,50 @@ pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> 
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
-    let whisper_cli = crate::paths::resolve_whisper_cli_path_for_backend(Some(
-        settings.local_backend_preference.as_str(),
-    ));
-    let whisper_server = crate::paths::resolve_whisper_server_path_for_backend(Some(
-        settings.local_backend_preference.as_str(),
-    ));
+    let strict_backend = match settings
+        .local_backend_preference
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "cuda" => Some("cuda"),
+        "vulkan" => Some("vulkan"),
+        _ => None,
+    };
+    let whisper_cli = strict_backend
+        .and_then(|backend| {
+            crate::paths::resolve_whisper_cli_path_for_backend(Some(backend)).and_then(|path| {
+                if crate::transcription::whisper_backend_from_cli_path(path.as_path()) == backend {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+        })
+        .or_else(|| {
+            crate::paths::resolve_whisper_cli_path_for_backend(Some(
+                settings.local_backend_preference.as_str(),
+            ))
+        });
+    let whisper_server = strict_backend
+        .and_then(|backend| {
+            crate::paths::resolve_whisper_server_path_for_backend(Some(backend)).and_then(|path| {
+                if crate::transcription::whisper_backend_from_cli_path(path.as_path()) == backend {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+        })
+        .or_else(|| {
+            crate::paths::resolve_whisper_server_path_for_backend(Some(
+                settings.local_backend_preference.as_str(),
+            ))
+        });
     let whisper_backend = whisper_cli
         .as_deref()
         .map(crate::transcription::whisper_backend_from_cli_path)
+        .or(strict_backend)
         .unwrap_or("unknown")
         .to_string();
     let (managed_pid, _) = managed_child_slot_status(&state.managed_ollama_child);
@@ -417,9 +451,8 @@ pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> 
     // localhost-DNS stall on every save_settings call when the user is on LM Studio
     // or Oobabooga.  The reachability field stays false until Ollama is re-selected
     // and the frontend explicitly calls refreshOllamaRuntimeState.
-    let ollama_is_active_provider =
-        capability_enabled(&settings, RuntimeCapability::AiRefinement)
-            && settings.ai_fallback.provider == "ollama";
+    let ollama_is_active_provider = capability_enabled(&settings, RuntimeCapability::AiRefinement)
+        && settings.ai_fallback.provider == "ollama";
     let reachable = if ollama_is_active_provider {
         let now = crate::util::now_ms();
         let next_ms = OLLAMA_DIAG_NEXT_MS.load(Ordering::Relaxed);
@@ -2282,9 +2315,7 @@ fn run_tts_runtime_smoke_once(
     let smoke_text = "Trispr Flow runtime smoke test.";
     match provider {
         "windows_native" => crate::multimodal_io::speak_windows_native(smoke_text, rate, 0.0),
-        "windows_natural" => {
-            crate::multimodal_io::speak_windows_natural(smoke_text, rate, 0.0)
-        }
+        "windows_natural" => crate::multimodal_io::speak_windows_natural(smoke_text, rate, 0.0),
         "local_custom" => crate::multimodal_io::speak_piper(
             smoke_text,
             piper_binary_path,
@@ -3919,14 +3950,16 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
     if local_backend_changed {
         info!(
             "Whisper backend preference changed: '{}' -> '{}'",
-            prev_local_backend_preference,
-            settings.local_backend_preference
+            prev_local_backend_preference, settings.local_backend_preference
         );
         if let Some(model_path) = crate::models::resolve_model_path(app, &settings.model) {
             if let Err(err) =
                 crate::whisper_server::restart_whisper_server_if_running(app, &state, &model_path)
             {
-                warn!("Failed to restart whisper-server after backend switch: {}", err);
+                warn!(
+                    "Failed to restart whisper-server after backend switch: {}",
+                    err
+                );
             }
             crate::whisper_server::schedule_whisper_server_warmup(
                 app,
@@ -4050,7 +4083,10 @@ fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
         }
 
         if let Err(error) = tauri::async_runtime::block_on(verify_ollama_runtime(app.clone())) {
-            warn!("AI refinement runtime verify after re-enable failed: {}", error);
+            warn!(
+                "AI refinement runtime verify after re-enable failed: {}",
+                error
+            );
         }
 
         let state = app.state::<AppState>();
@@ -4392,7 +4428,9 @@ mod runtime_capability_gate_tests {
         match capability {
             RuntimeCapability::AiRefinement => settings.ai_fallback.enabled = setting_enabled,
             RuntimeCapability::WorkflowAgent => settings.workflow_agent.enabled = setting_enabled,
-            RuntimeCapability::VisionInput => settings.vision_input_settings.enabled = setting_enabled,
+            RuntimeCapability::VisionInput => {
+                settings.vision_input_settings.enabled = setting_enabled
+            }
             RuntimeCapability::VoiceOutputTts => {
                 settings.voice_output_settings.enabled = setting_enabled
             }
@@ -4423,22 +4461,19 @@ mod runtime_capability_gate_tests {
             RuntimeCapability::AiRefinement
         ));
 
-        let both_enabled =
-            settings_for_capability(RuntimeCapability::VisionInput, true, true);
+        let both_enabled = settings_for_capability(RuntimeCapability::VisionInput, true, true);
         assert!(capability_enabled(
             &both_enabled,
             RuntimeCapability::VisionInput
         ));
 
-        let missing_module =
-            settings_for_capability(RuntimeCapability::VisionInput, false, true);
+        let missing_module = settings_for_capability(RuntimeCapability::VisionInput, false, true);
         assert!(!capability_enabled(
             &missing_module,
             RuntimeCapability::VisionInput
         ));
 
-        let missing_setting =
-            settings_for_capability(RuntimeCapability::VisionInput, true, false);
+        let missing_setting = settings_for_capability(RuntimeCapability::VisionInput, true, false);
         assert!(!capability_enabled(
             &missing_setting,
             RuntimeCapability::VisionInput
@@ -4449,11 +4484,9 @@ mod runtime_capability_gate_tests {
     fn require_capability_reports_module_and_setting_failures() {
         let ai_module_disabled =
             settings_for_capability(RuntimeCapability::AiRefinement, false, true);
-        let ai_module_error = require_capability_enabled(
-            &ai_module_disabled,
-            RuntimeCapability::AiRefinement,
-        )
-        .unwrap_err();
+        let ai_module_error =
+            require_capability_enabled(&ai_module_disabled, RuntimeCapability::AiRefinement)
+                .unwrap_err();
         assert_eq!(
             ai_module_error,
             "AI Refinement module is disabled. Enable module 'ai_refinement' first."
@@ -4461,20 +4494,16 @@ mod runtime_capability_gate_tests {
 
         let ai_setting_disabled =
             settings_for_capability(RuntimeCapability::AiRefinement, true, false);
-        let ai_setting_error = require_capability_enabled(
-            &ai_setting_disabled,
-            RuntimeCapability::AiRefinement,
-        )
-        .unwrap_err();
+        let ai_setting_error =
+            require_capability_enabled(&ai_setting_disabled, RuntimeCapability::AiRefinement)
+                .unwrap_err();
         assert_eq!(ai_setting_error, "AI refinement is disabled in settings.");
 
         let module_disabled =
             settings_for_capability(RuntimeCapability::VoiceOutputTts, false, true);
-        let module_error = require_capability_enabled(
-            &module_disabled,
-            RuntimeCapability::VoiceOutputTts,
-        )
-        .unwrap_err();
+        let module_error =
+            require_capability_enabled(&module_disabled, RuntimeCapability::VoiceOutputTts)
+                .unwrap_err();
         assert_eq!(
             module_error,
             "Voice output module is disabled. Enable module 'output_voice_tts' first."
@@ -4482,11 +4511,9 @@ mod runtime_capability_gate_tests {
 
         let setting_disabled =
             settings_for_capability(RuntimeCapability::VoiceOutputTts, true, false);
-        let setting_error = require_capability_enabled(
-            &setting_disabled,
-            RuntimeCapability::VoiceOutputTts,
-        )
-        .unwrap_err();
+        let setting_error =
+            require_capability_enabled(&setting_disabled, RuntimeCapability::VoiceOutputTts)
+                .unwrap_err();
         assert_eq!(setting_error, "Voice output is disabled in settings.");
     }
 }
@@ -6985,8 +7012,7 @@ fn build_dependency_preflight_report(
         });
     }
 
-    if tts_enabled && settings_snapshot.voice_output_settings.default_provider == "local_custom"
-    {
+    if tts_enabled && settings_snapshot.voice_output_settings.default_provider == "local_custom" {
         items.push(DependencyPreflightItem {
             id: "tts_local_custom".to_string(),
             status: "warning".to_string(),

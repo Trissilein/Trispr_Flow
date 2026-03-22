@@ -225,6 +225,34 @@ pub struct TtsFallbackOutcome {
     pub primary_error: Option<String>,
 }
 
+fn is_windows_tts_provider(provider: &str) -> bool {
+    provider == "windows_native" || provider == "windows_natural"
+}
+
+fn is_windows_audio_device_error(message: &str) -> bool {
+    let lowered = message.to_ascii_lowercase();
+    (lowered.contains("error code: 0x2")
+        || lowered.contains("audioger")
+        || lowered.contains("audio device error"))
+        && lowered.contains("speak")
+}
+
+fn is_tts_audio_device_unavailable_tagged(message: &str) -> bool {
+    message
+        .to_ascii_lowercase()
+        .contains("[tts_audio_device_unavailable]")
+}
+
+fn windows_audio_device_error_hint(primary_error: &str) -> String {
+    if is_tts_audio_device_unavailable_tagged(primary_error) {
+        return primary_error.to_string();
+    }
+    format!(
+        "[tts_audio_device_unavailable] {}. No default Windows playback device is currently available for SAPI output. Check default playback device / VoiceMeeter route / Windows Audio service, then retry.",
+        primary_error
+    )
+}
+
 pub fn execute_tts_with_fallback<F>(
     preferred_provider: &str,
     fallback_provider: &str,
@@ -240,10 +268,23 @@ where
             primary_error: None,
         }),
         Err(primary_error) => {
+            if is_windows_audio_device_error(&primary_error)
+                && is_windows_tts_provider(preferred_provider)
+                && is_windows_tts_provider(fallback_provider)
+            {
+                return Err(windows_audio_device_error_hint(&primary_error));
+            }
+
             if preferred_provider == fallback_provider {
                 return Err(format!(
                     "[tts_fallback_no_alternative] Preferred provider '{}' failed and no distinct fallback is configured: {}",
                     preferred_provider, primary_error
+                ));
+            }
+            if fallback_provider == "windows_natural" && !windows_natural_voice_available() {
+                return Err(format!(
+                    "[tts_fallback_unavailable] Preferred provider '{}' failed: {} | Fallback '{}' is unavailable (no Natural voice installed).",
+                    preferred_provider, primary_error, fallback_provider
                 ));
             }
             match attempt(fallback_provider) {
@@ -717,7 +758,15 @@ fn speak_windows_sapi(text: &str, rate: f32, volume: f32, natural_only: bool) ->
         return Err("TTS text is empty.".to_string());
     }
     let script = build_windows_sapi_speech_script(text, rate, volume, natural_only, false);
-    run_hidden_powershell(&script, "Windows TTS").map(|_| ())
+    run_hidden_powershell(&script, "Windows TTS")
+        .map(|_| ())
+        .map_err(|error| {
+            if is_windows_audio_device_error(&error) {
+                windows_audio_device_error_hint(&error)
+            } else {
+                error
+            }
+        })
 }
 
 #[cfg(target_os = "windows")]
@@ -1166,7 +1215,8 @@ fn play_wav_blocking(path: &std::path::Path, volume: f32) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_tts_with_fallback, is_tts_policy_allowed, windows_natural_voice_priority,
+        execute_tts_with_fallback, is_tts_audio_device_unavailable_tagged, is_tts_policy_allowed,
+        windows_audio_device_error_hint, windows_natural_voice_priority,
         windows_voice_matches_natural_profile, VisionFrame, VisionFrameBuffer,
     };
 
@@ -1296,6 +1346,32 @@ mod tests {
 
         assert!(error.contains("tts_fallback_no_alternative"));
         assert!(error.contains("primary failed"));
+    }
+
+    #[test]
+    fn tts_fallback_audio_device_error_short_circuits_windows_chain() {
+        let error = execute_tts_with_fallback("windows_native", "windows_natural", |provider| {
+            if provider == "windows_native" {
+                Err("Windows TTS failed: Speak AudioException - Error Code: 0x2".to_string())
+            } else {
+                Err("fallback should not be attempted".to_string())
+            }
+        })
+        .expect_err("audio device error should be surfaced directly");
+
+        assert!(error.contains("tts_audio_device_unavailable"));
+        assert!(!error.contains("fallback should not be attempted"));
+    }
+
+    #[test]
+    fn tts_audio_device_hint_is_idempotent() {
+        let first = windows_audio_device_error_hint(
+            "Windows TTS failed: Speak AudioException - Error Code: 0x2",
+        );
+        let second = windows_audio_device_error_hint(&first);
+
+        assert!(is_tts_audio_device_unavailable_tagged(&first));
+        assert_eq!(first, second);
     }
 
     #[test]

@@ -48,6 +48,7 @@ const TRANSCRIPTION_ACCEL_UNKNOWN: u8 = 0;
 const TRANSCRIPTION_ACCEL_CPU: u8 = 1;
 const TRANSCRIPTION_ACCEL_GPU: u8 = 2;
 static LAST_TRANSCRIPTION_ACCELERATOR: AtomicU8 = AtomicU8::new(TRANSCRIPTION_ACCEL_UNKNOWN);
+static CUDA_BACKEND_UNSTABLE: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn last_transcription_accelerator() -> &'static str {
     match LAST_TRANSCRIPTION_ACCELERATOR.load(Ordering::Relaxed) {
@@ -1706,6 +1707,24 @@ fn whisper_stderr_indicates_gpu(stderr: &str) -> bool {
         || lowered.contains("ggml_vulkan")
 }
 
+fn whisper_error_indicates_cuda_runtime_failure(message: &str) -> bool {
+    let lowered = message.to_ascii_lowercase();
+    lowered.contains("ggml_cuda_init")
+        || lowered.contains("cuda error")
+        || lowered.contains("dll dependency issue")
+        || lowered.contains("cublas")
+        || lowered.contains("cudart")
+}
+
+fn effective_cli_backend_preference(settings: &Settings) -> String {
+    let configured = settings.local_backend_preference.trim().to_ascii_lowercase();
+    if configured == "auto" && CUDA_BACKEND_UNSTABLE.load(Ordering::Relaxed) {
+        "vulkan".to_string()
+    } else {
+        settings.local_backend_preference.clone()
+    }
+}
+
 fn emit_transcription_gpu_activity(
     app: &AppHandle,
     state: &'static str,
@@ -1845,6 +1864,28 @@ impl Drop for TempFileGuard {
     }
 }
 
+/// RAII guard that cleans whisper side-effect files for a given output base.
+/// Keeps retry attempts isolated and prevents stale transcript reuse.
+struct WhisperOutputGuard {
+    output_base: std::path::PathBuf,
+    wav_path: std::path::PathBuf,
+}
+
+impl WhisperOutputGuard {
+    fn new(output_base: std::path::PathBuf, wav_path: std::path::PathBuf) -> Self {
+        Self {
+            output_base,
+            wav_path,
+        }
+    }
+}
+
+impl Drop for WhisperOutputGuard {
+    fn drop(&mut self) {
+        cleanup_whisper_output_files(&self.output_base, &self.wav_path);
+    }
+}
+
 fn transcribe_local(
     app: &AppHandle,
     settings: &Settings,
@@ -1934,8 +1975,8 @@ fn transcribe_local(
         }
     }
 
-    let cli_path =
-        resolve_whisper_cli_path_for_backend(Some(settings.local_backend_preference.as_str()))
+    let cli_backend_preference = effective_cli_backend_preference(settings);
+    let cli_path = resolve_whisper_cli_path_for_backend(Some(cli_backend_preference.as_str()))
             .ok_or_else(|| {
                 update_whisper_runtime_diagnostics(
                     app,
@@ -1948,7 +1989,10 @@ fn transcribe_local(
                         "whisper-cli executable could not be located",
                     )),
                 );
-                whisper_runtime_missing_message("whisper-cli executable could not be located")
+                whisper_runtime_missing_message(&format!(
+                    "whisper-cli executable could not be located (backend preference '{}')",
+                    cli_backend_preference
+                ))
             })?;
     if !cli_path.exists() {
         let message = whisper_runtime_missing_message(&format!(
@@ -1967,10 +2011,80 @@ fn transcribe_local(
         return Err(message);
     }
 
-    let mut command = Command::new(&cli_path);
+    let primary_error = match run_whisper_cli(
+        app,
+        settings,
+        cli_path.as_path(),
+        model_path.as_path(),
+        wav_path.as_path(),
+        output_base.as_path(),
+    ) {
+        Ok(text) => return Ok(text),
+        Err(err) => err,
+    };
+
+    let using_auto_backend = settings
+        .local_backend_preference
+        .trim()
+        .eq_ignore_ascii_case("auto");
+    let used_backend = whisper_backend_from_cli_path(cli_path.as_path());
+    let should_retry_with_vulkan = using_auto_backend
+        && used_backend == "cuda"
+        && whisper_error_indicates_cuda_runtime_failure(&primary_error);
+
+    if should_retry_with_vulkan {
+        if let Some(vulkan_cli_path) = resolve_whisper_cli_path_for_backend(Some("vulkan")) {
+            if vulkan_cli_path.exists() && vulkan_cli_path != cli_path {
+                warn!(
+                    "CUDA whisper-cli failed; retrying with Vulkan backend. cuda='{}' vulkan='{}' error='{}'",
+                    cli_path.display(),
+                    vulkan_cli_path.display(),
+                    primary_error
+                );
+                match run_whisper_cli(
+                    app,
+                    settings,
+                    vulkan_cli_path.as_path(),
+                    model_path.as_path(),
+                    wav_path.as_path(),
+                    output_base.as_path(),
+                ) {
+                    Ok(text) => {
+                        CUDA_BACKEND_UNSTABLE.store(true, Ordering::Relaxed);
+                        return Ok(text);
+                    }
+                    Err(vulkan_error) => {
+                        return Err(format!(
+                            "{}\nVulkan fallback failed ('{}'): {}",
+                            primary_error,
+                            vulkan_cli_path.display(),
+                            vulkan_error
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    Err(primary_error)
+}
+
+fn run_whisper_cli(
+    app: &AppHandle,
+    settings: &Settings,
+    cli_path: &Path,
+    model_path: &Path,
+    wav_path: &Path,
+    output_base: &Path,
+) -> Result<String, String> {
+    // Ensure each run starts clean and always cleans side effects on return.
+    cleanup_whisper_output_files(output_base, wav_path);
+    let _output_guard = WhisperOutputGuard::new(output_base.to_path_buf(), wav_path.to_path_buf());
+
+    let mut command = Command::new(cli_path);
 
     let gpu_layers = resolve_whisper_gpu_layers(settings);
-    let backend_gpu_capable = whisper_cli_looks_gpu_capable(Some(cli_path.as_path()));
+    let backend_gpu_capable = whisper_cli_looks_gpu_capable(Some(cli_path));
     let gpu_hint = gpu_layers
         .map(|layers| layers > 0)
         .unwrap_or(backend_gpu_capable);
@@ -1982,9 +2096,9 @@ fn transcribe_local(
 
     command
         .arg("-m")
-        .arg(&model_path)
+        .arg(model_path)
         .arg("-f")
-        .arg(&wav_path)
+        .arg(wav_path)
         .arg("-t")
         .arg(&threads)
         .arg("-l")
@@ -1996,7 +2110,7 @@ fn transcribe_local(
         .arg("-nt")
         .arg("-otxt")
         .arg("-of")
-        .arg(&output_base)
+        .arg(output_base)
         .arg("-np")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -2004,7 +2118,7 @@ fn transcribe_local(
     let requested_gpu_layers = gpu_layers.filter(|layers| *layers > 0);
     let mut applied_gpu_layers: Option<usize> = None;
     if let Some(layers) = requested_gpu_layers {
-        if whisper_cli_supports_gpu_layers(cli_path.as_path()) {
+        if whisper_cli_supports_gpu_layers(cli_path) {
             command.arg("-ngl").arg(layers.to_string());
             applied_gpu_layers = Some(layers);
         } else {
@@ -2016,7 +2130,7 @@ fn transcribe_local(
         }
     }
 
-    // Explicitly enable GPU on CUDA builds if detected
+    // Explicitly enable GPU on CUDA/Vulkan builds if detected
     if backend_gpu_capable {
         command.arg("-dev").arg("0");
     }
@@ -2026,7 +2140,7 @@ fn transcribe_local(
     } else {
         backend_gpu_capable
     };
-    let backend = whisper_backend_from_cli_path(cli_path.as_path());
+    let backend = whisper_backend_from_cli_path(cli_path);
     let mut gpu_activity_guard =
         WhisperGpuActivityGuard::new(app, if expected_gpu { "gpu" } else { "cpu" }, backend);
 
@@ -2041,7 +2155,7 @@ fn transcribe_local(
     // Use spawn + polling instead of output() to enforce a hard timeout.
     // command.output() blocks forever if whisper-cli hangs (e.g. GPU deadlock).
     let mut child = command.spawn().map_err(|e| {
-        let message = map_whisper_spawn_error(cli_path.as_path(), e);
+        let message = map_whisper_spawn_error(cli_path, e);
         update_whisper_runtime_diagnostics(
             app,
             settings,
@@ -2160,11 +2274,9 @@ fn transcribe_local(
         }
     }
 
-    let mut transcript_path: Option<PathBuf> = None;
     let mut text: Option<String> = None;
     for _ in 0..20 {
-        if let Some((path, value)) = read_first_existing_text_file(&transcript_candidates) {
-            transcript_path = Some(path);
+        if let Some((_, value)) = read_first_existing_text_file(&transcript_candidates) {
             text = Some(value);
             break;
         }
@@ -2201,20 +2313,6 @@ fn transcribe_local(
         return Err(message);
     };
 
-    let _ = fs::remove_file(&wav_path);
-    for path in &transcript_candidates {
-        let _ = fs::remove_file(path);
-    }
-    if let Some(path) = transcript_path {
-        let _ = fs::remove_file(path);
-    }
-
-    // Clean up additional side-effect files whisper may produce alongside the .txt output
-    for ext in &["srt", "vtt", "json", "lrc", "tsv"] {
-        let _ = fs::remove_file(output_base.with_extension(ext));
-        let _ = fs::remove_file(wav_path.with_extension(ext));
-    }
-
     let accelerator = if stderr_gpu { "gpu" } else { "cpu" };
     update_whisper_runtime_diagnostics(
         app,
@@ -2231,12 +2329,26 @@ fn transcribe_local(
     );
 
     if accelerator == "gpu" || backend != "cpu" {
-        crate::whisper_server::schedule_whisper_server_warmup(
-            app,
-            app.state::<crate::state::AppState>().inner(),
-            &model_path,
-            settings,
-        );
+        // Warm up server only when it resolves to the same backend we just used.
+        // Avoids repeatedly starting CUDA server when CLI has already switched to Vulkan.
+        let server_backend_matches = resolve_whisper_server_path_for_backend(Some(backend))
+            .as_deref()
+            .map(whisper_backend_from_cli_path)
+            .map(|server_backend| server_backend == backend)
+            .unwrap_or(false);
+        if server_backend_matches {
+            crate::whisper_server::schedule_whisper_server_warmup(
+                app,
+                app.state::<crate::state::AppState>().inner(),
+                model_path,
+                settings,
+            );
+        } else {
+            info!(
+                "Skipping whisper-server warmup: active backend '{}' has no matching server runtime.",
+                backend
+            );
+        }
     }
 
     Ok(text.trim().to_string())
@@ -2245,6 +2357,37 @@ fn transcribe_local(
 fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
     if !paths.iter().any(|existing| existing == &candidate) {
         paths.push(candidate);
+    }
+}
+
+fn cleanup_whisper_output_files(output_base: &Path, wav_path: &Path) {
+    let mut transcript_candidates: Vec<PathBuf> = Vec::new();
+    push_unique_path(
+        &mut transcript_candidates,
+        output_base.with_extension("txt"),
+    );
+    push_unique_path(
+        &mut transcript_candidates,
+        Path::new(&format!("{}.txt", wav_path.display())).to_path_buf(),
+    );
+    push_unique_path(&mut transcript_candidates, wav_path.with_extension("txt"));
+
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(name) = output_base.file_name().and_then(|name| name.to_str()) {
+            push_unique_path(&mut transcript_candidates, cwd.join(format!("{name}.txt")));
+        }
+        if let Some(name) = wav_path.file_name().and_then(|name| name.to_str()) {
+            push_unique_path(&mut transcript_candidates, cwd.join(format!("{name}.txt")));
+        }
+    }
+
+    for path in &transcript_candidates {
+        let _ = fs::remove_file(path);
+    }
+
+    for ext in &["srt", "vtt", "json", "lrc", "tsv"] {
+        let _ = fs::remove_file(output_base.with_extension(ext));
+        let _ = fs::remove_file(wav_path.with_extension(ext));
     }
 }
 

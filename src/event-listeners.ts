@@ -2783,33 +2783,86 @@ export function wireEvents() {
     await persistSettings();
   });
 
+  let backendSwitchBusy = false;
+  const setWhisperBackendPreference = async (backend: "cuda" | "vulkan") => {
+    if (!settings || backendSwitchBusy) return;
+    const normalizedCurrent = (settings.local_backend_preference ?? "auto").trim().toLowerCase();
+    if (normalizedCurrent === backend) return;
+    backendSwitchBusy = true;
+    if (dom.gpuBackendCudaBtn) dom.gpuBackendCudaBtn.disabled = true;
+    if (dom.gpuBackendVulkanBtn) dom.gpuBackendVulkanBtn.disabled = true;
+    try {
+      settings.local_backend_preference = backend;
+      renderHero();
+      await persistSettings();
+      renderHero();
+      showToast({
+        type: "success",
+        title: "Backend updated",
+        message: `Whisper backend preference set to ${backend.toUpperCase()}.`,
+        duration: 2200,
+      });
+    } finally {
+      backendSwitchBusy = false;
+      if (dom.gpuBackendCudaBtn) dom.gpuBackendCudaBtn.disabled = false;
+      if (dom.gpuBackendVulkanBtn) dom.gpuBackendVulkanBtn.disabled = false;
+    }
+  };
+
+  dom.gpuBackendCudaBtn?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void setWhisperBackendPreference("cuda");
+  });
+
+  dom.gpuBackendVulkanBtn?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void setWhisperBackendPreference("vulkan");
+  });
+
   // GPU VRAM Purge on click
-  dom.gpuStatusItem?.addEventListener("click", async () => {
-    if (!dom.gpuStatusItem || !dom.gpuVramLabel) return;
+  const purgeTrigger = dom.gpuPurgeBtn ?? dom.gpuStatusItem;
+  purgeTrigger?.addEventListener("click", async () => {
+    if (!dom.gpuVramLabel) return;
     const originalVramText = dom.gpuVramLabel.textContent;
-    dom.gpuStatusItem.style.pointerEvents = "none";
+    if (dom.gpuPurgeBtn) {
+      dom.gpuPurgeBtn.disabled = true;
+    } else if (dom.gpuStatusItem) {
+      dom.gpuStatusItem.style.pointerEvents = "none";
+    }
     dom.gpuVramLabel.textContent = "Purging...";
     try {
       await invoke("purge_gpu_memory");
       dom.gpuVramLabel.textContent = "Purged ✓";
       setTimeout(() => {
         dom.gpuVramLabel!.textContent = originalVramText;
-        dom.gpuStatusItem!.style.pointerEvents = "auto";
+        if (dom.gpuPurgeBtn) {
+          dom.gpuPurgeBtn.disabled = false;
+        } else if (dom.gpuStatusItem) {
+          dom.gpuStatusItem.style.pointerEvents = "auto";
+        }
       }, 2000);
     } catch (error) {
-      dom.gpuVramLabel.textContent = `Error`;
-      dom.gpuStatusItem.style.pointerEvents = "auto";
+      dom.gpuVramLabel.textContent = "Error";
+      if (dom.gpuPurgeBtn) {
+        dom.gpuPurgeBtn.disabled = false;
+      } else if (dom.gpuStatusItem) {
+        dom.gpuStatusItem.style.pointerEvents = "auto";
+      }
       setTimeout(() => {
         dom.gpuVramLabel!.textContent = originalVramText;
       }, 3000);
     }
   });
 
-  // Also support keyboard access (Enter/Space)
-  dom.gpuStatusItem?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      dom.gpuStatusItem?.click();
-    }
-  });
+  // Keyboard fallback for legacy clickable GPU item only.
+  if (!dom.gpuPurgeBtn) {
+    dom.gpuStatusItem?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        dom.gpuStatusItem?.click();
+      }
+    });
+  }
 }

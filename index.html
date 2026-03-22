@@ -59,7 +59,7 @@
                 <span id="transcribe-label" class="status-label">Transcribing: Idle</span>
               </div>
             </div>
-            <!-- Row 2: Refining + GPU (clickable to purge VRAM) -->
+            <!-- Row 2: Refining + GPU -->
             <div class="status-row">
               <div class="status-item">
                 <span id="refining-pill" class="status-pill status-pill--disabled">Refining</span>
@@ -67,12 +67,17 @@
                       aria-label="Refining status: idle"></span>
                 <span id="refining-label" class="status-label">Refining: Idle</span>
               </div>
-              <div id="gpu-status-item" class="status-item gpu-item gpu-item--clickable" role="button" tabindex="0" title="Click to purge GPU VRAM">
+              <div id="gpu-status-item" class="status-item gpu-item">
                 <span id="gpu-pill" class="status-pill status-pill--disabled">GPU</span>
                 <span class="status-dot" id="gpu-dot" data-state="idle"
                       aria-label="GPU status: idle"></span>
                 <div class="gpu-status-group">
                   <span id="gpu-label" class="status-label">GPU: Idle</span>
+                  <div id="gpu-backend-switch" class="gpu-backend-switch" role="group" aria-label="Whisper backend preference">
+                    <button id="gpu-backend-cuda" type="button" class="gpu-backend-btn" aria-pressed="false">CUDA</button>
+                    <button id="gpu-backend-vulkan" type="button" class="gpu-backend-btn" aria-pressed="false">Vulkan</button>
+                    <button id="gpu-purge-btn" type="button" class="gpu-purge-btn" title="Purge GPU VRAM cache">Purge</button>
+                  </div>
                   <span id="gpu-vram" class="gpu-vram-label"></span>
                 </div>
               </div>

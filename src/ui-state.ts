@@ -98,8 +98,21 @@ function whisperRuntimeLabel(): string | null {
   return null;
 }
 
+function selectedWhisperBackendPreference(): "cuda" | "vulkan" {
+  const configured = (settings?.local_backend_preference ?? "").trim().toLowerCase();
+  if (configured === "cuda" || configured === "vulkan") {
+    return configured;
+  }
+  const runtime = (runtimeDiagnostics?.whisper?.backend_selected ?? gpuBackend).trim().toLowerCase();
+  if (runtime === "vulkan") {
+    return "vulkan";
+  }
+  return "cuda";
+}
+
 function renderFeedbackIndicators() {
   const { capture, transcribe } = getFeedbackView();
+  const selectedBackend = selectedWhisperBackendPreference();
 
   if (dom.statusDot) {
     dom.statusDot.dataset.state = capture.activityState;
@@ -173,7 +186,7 @@ function renderFeedbackIndicators() {
     if (diagnosticsLabel) {
       dom.gpuStatusLabel.textContent = diagnosticsLabel;
     } else if (!gpuKnown && gpuRuntimeState === "idle") {
-      dom.gpuStatusLabel.textContent = "GPU: Waiting for first run";
+      dom.gpuStatusLabel.textContent = `GPU: Waiting for first run (${prettifyGpuBackend(selectedBackend)})`;
     } else if (gpuRuntimeState === "active") {
       dom.gpuStatusLabel.textContent = `GPU: Active (${prettifyGpuBackend(gpuBackend)})`;
     } else if (gpuRuntimeState === "cpu") {
@@ -195,6 +208,13 @@ function renderFeedbackIndicators() {
       diagnosticsGpuReady || (gpuKnown && (gpuAccelerator === "gpu" || gpuRuntimeState === "active"));
     dom.gpuPill.classList.toggle("status-pill--enabled", gpuEnabled);
     dom.gpuPill.classList.toggle("status-pill--disabled", !gpuEnabled);
+  }
+  if (dom.gpuBackendCudaBtn && dom.gpuBackendVulkanBtn) {
+    const cudaActive = selectedBackend === "cuda";
+    dom.gpuBackendCudaBtn.classList.toggle("is-active", cudaActive);
+    dom.gpuBackendVulkanBtn.classList.toggle("is-active", !cudaActive);
+    dom.gpuBackendCudaBtn.setAttribute("aria-pressed", cudaActive ? "true" : "false");
+    dom.gpuBackendVulkanBtn.setAttribute("aria-pressed", !cudaActive ? "true" : "false");
   }
 }
 

@@ -1,6 +1,6 @@
 # Task Schedule - Trispr Flow
 
-Last updated: 2026-03-13
+Last updated: 2026-03-22
 
 ## Overview
 
@@ -354,9 +354,9 @@ Goal: Ensure a smooth, robust first-time user experience and fix critical startu
 ---
 
 
-### Block N: Multimodal I/O Modules --- PLANNED
+### Block N: Multimodal I/O Modules --- FOUNDATION COMPLETE
 
-**Duration**: 5-6 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block M + Block L | **Status**: Planned
+**Duration**: 5-6 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block M + Block L | **Status**: Foundations complete (`N1-N12`), tail work rescheduled
 
 Goal: Add optional capability modules `input_vision` and `output_voice_tts` and bridge them to `workflow_agent`.
 
@@ -374,44 +374,91 @@ Goal: Add optional capability modules `input_vision` and `output_voice_tts` and 
 | N6 | Local custom TTS backend hardening | High | N4 | DONE | Piper TTS integrated: `speak_piper()` + `play_wav_blocking()` in `multimodal_io.rs`; 4-level binary/model auto-discovery; `VoiceOutputSettings` extended; NSIS installer bundles `piper.exe`, DLLs, `espeak-ng-data/`, `de_DE-thorsten-medium` + `en_US-amy-medium` models; `scripts/setup-piper.ps1` downloads assets. |
 | N7 | Agent capability bridge | Medium | M8, N3, N4 | DONE | `agent_execute_gdd_plan` now consumes multimodal capabilities via workflow-agent: optional vision snapshot context injection (`vision_context*` progress stages) and agent-driven TTS feedback when capability modules are active. |
 | N8 | Voice output policy enforcement | Medium | N4 | DONE | `speak_tts` now enforces `voice_output_settings.output_policy` using request context (`agent_reply`, `agent_event`, `manual_user`, `manual_test`); `test_tts_provider` uses explicit `manual_test` context. |
-| N9 | Privacy + consent UX hardening | Medium | N5 | PLANNED | Improve consent and in-app status messaging for screen capture and voice output. |
-| N10 | TTS provider fallback matrix | Medium | N6 | PLANNED | Deterministic provider fallback policy and error reporting matrix. |
-| N11 | Benchmark track (>=3 runs/provider/scenario) | Medium | N6, N10 | PLANNED | Record latency/quality/resource metrics and choose default provider with evidence. |
+| N9 | Privacy + consent UX hardening | Medium | N5 | DONE | Modules UX now uses module-specific Vision/TTS consent messaging, richer enable-confirmation details with privacy scope notes, and a pending-consent summary in Modules header status. |
+| N10 | TTS provider fallback matrix | Medium | N6 | DONE | Added deterministic fallback executor (`primary -> fallback`) with explicit matrix error codes, structured `tts:speech-*` diagnostics payloads, and fallback-visible `test_tts_provider` results in UI. |
+| N11 | Benchmark track (>=3 runs/provider/scenario) | Medium | N6, N10 | DONE | Benchmark harness delivered (`run_tts_benchmark` + `scripts/tts-benchmark.ps1`) and validated with Windows evidence run (`measure_runs=3`): `windows_native` recommended (`success_rate=100%`, `p50=245ms`, `p95=282ms`); `local_custom` failed in run due missing Piper binary. |
 | N12 | Vision/TTS integration tests | High | N7, N8 | DONE | Added `src/tests/n12-multimodal-integration.test.ts` covering vision command contracts, TTS fallback behavior, policy matrix, multimodal module health scenarios, and voice-output UI integration (16 tests). |
-| N13 | E2E agent automation with multimodal IO | High | N11, N12 | PLANNED | Validate end-to-end voice command -> resolve -> confirm -> publish/queue -> spoken response. |
-| N14 | v0.8.2 release hardening | High | N13 | PLANNED | Final QA packet and rollout notes for multimodal milestone. |
+| N13 | E2E agent automation with multimodal IO | High | N11, N12 | MOVED -> S | Rescheduled into `Block S` as part of stabilization + decoupling acceptance. |
+| N14 | v0.8.2 release hardening | High | N13 | MOVED -> S | Rescheduled into `Block S` release gating path. |
 
 ---
 
-### Block O: Voice Confirmation Loop --- PLANNED
+### Block S: Build Recovery + Module Decoupling (`v0.7.3`) --- DONE
 
-**Duration**: 3-4 weeks | **Model**: Claude Sonnet | **Depends on**: Block M (M8) + Block N (N6) | **Status**: Planned
+**Duration**: 1-2 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block N + Block Q | **Status**: Done
+
+Goal: Restore hard-green build baseline, then enforce strict module decoupling semantics (module disabled = capability disabled).
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| S1 | Build compile fix (Windows/TTS path) | High | N | DONE | Fixed Windows TTS compile/runtime mismatch in `multimodal_io` and restored green build gate. |
+| S2 | Rust lib test fix (language guard) | Medium | S1 | DONE | Fixed deterministic language-guard behavior in `ai_fallback` and restored `cargo test --lib` green. |
+| S3 | Hard capability gates | High | S1, S2 | DONE | Centralized module+settings capability gates and enforced them across vision/TTS/workflow-agent command paths. |
+| S4 | Disable lifecycle effects | High | S3 | DONE | Module disable now enforces immediate runtime side-effects (`vision` stream stop, `tts` stop) with no lingering active path. |
+| S5 | Module UI state consistency | Medium | S3, S4 | DONE | UI consoles now reflect effective capability state (module + setting), avoiding pseudo-active behavior when modules are disabled. |
+
+---
+
+### Block T: Assistant Pivot Foundation (`v0.8.0`) --- PLANNED
+
+**Duration**: 2-4 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block S + Block M | **Status**: Planned
+
+Goal: Introduce explicit product-mode split and assistant orchestration baseline without regressing transcription-first flow.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| T1 | Product mode types/settings (`transcribe` vs `assistant`) | High | S | PLANNED | Add persistent mode model in backend/frontend settings + migration defaults. |
+| T2 | Backend assistant orchestrator state | High | T1 | PLANNED | Introduce deterministic assistant pipeline states and transition handling. |
+| T3 | Frontend mode switch UX | Medium | T1 | PLANNED | Add mode switch controls and mode-aware shell behavior without startup disruption. |
+| T4 | Graceful degradation policy | High | T2, T3 | PLANNED | Ensure assistant stays usable when TTS/Vision modules are unavailable or disabled. |
+| T5 | Assistant state events | Medium | T2, T3 | PLANNED | Expose consistent state/event surface for assistant runtime diagnostics and UI sync. |
+
+---
+
+### Block U: Assistant UX + Soak + Release Gate (`v0.8.x`) --- PLANNED
+
+**Duration**: 2-3 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block T | **Status**: Planned
+
+Goal: Stabilize assistant UX and enforce long-run release gates before assistant-focused rollout.
+
+| Task | Name | Complexity | Dependencies | Status | Description |
+| --- | --- | --- | --- | --- | --- |
+| U1 | Assistant UX hardening | High | T | PLANNED | Tighten mode-specific UX copy, feedback, and error surfaces for daily usage. |
+| U2 | Soak: 8h stability run | High | U1 | PLANNED | Validate no manual restart requirement under continuous tray/assistant operation. |
+| U3 | Soak: 24h release soak | High | U2 | PLANNED | Validate bounded-recovery behavior and no restart loops over a full-day run. |
+| U4 | Release gate + evidence packet | High | U2, U3 | PLANNED | Gate release on soak evidence + smoke pass + benchmark-linked diagnostics. |
+
+---
+
+### Block O: Voice Confirmation Loop --- POST-T/U BACKLOG
+
+**Duration**: 3-4 weeks | **Model**: Claude Sonnet | **Depends on**: Block T + Block U | **Status**: Planned (deferred)
 
 Goal: Enable a voice-driven confirmation dialog — Agent speaks a question, user responds with "bestätigen"/"abbrechen" via activation word, Agent executes or cancels.
 
 | Task | Name | Complexity | Dependencies | Status | Description |
 | --- | --- | --- | --- | --- | --- |
-| O1 | `awaiting_confirmation` State im Workflow-Agent | High | M8, N6 | PLANNED | New backend state machine entry; pending action stored with TTL and unique token. |
-| O2 | Activation-Word-Matching für confirm/cancel | Medium | O1 | PLANNED | Recognize "bestätigen" / "abbrechen" (+ EN synonyms) as confirmation tokens in `transcription:raw-result` handler. |
+| O1 | `awaiting_confirmation` State im Workflow-Agent | High | T2 | PLANNED | New backend state machine entry; pending action stored with TTL and unique token. |
+| O2 | Activation-Word-Matching für confirm/cancel | Medium | O1, T5 | PLANNED | Recognize "bestätigen" / "abbrechen" (+ EN synonyms) as confirmation tokens in `transcription:raw-result` handler. |
 | O3 | `confirm_pending_action` / `cancel_pending_action` Commands | High | O1 | PLANNED | Tauri commands to resolve pending action; emit `agent:confirmed` / `agent:cancelled` events. |
-| O4 | TTS Confirmation Prompt + Timeout | Medium | O1, N6 | PLANNED | Agent speaks confirmation request via TTS; auto-cancels pending action after configurable timeout. |
-| O5 | KITT-Overlay: "Awaiting confirmation" Visual | Low | O4 | PLANNED | Overlay shows distinct "waiting" state while confirmation is pending. |
+| O4 | TTS Confirmation Prompt + Timeout | Medium | O1, T4 | PLANNED | Agent speaks confirmation request via TTS; auto-cancels pending action after configurable timeout. |
+| O5 | KITT-Overlay: "Awaiting confirmation" Visual | Low | O4, T3 | PLANNED | Overlay shows distinct "waiting" state while confirmation is pending. |
 | O6 | Integration Tests für Confirmation Loop | High | O1–O5 | PLANNED | Unit + integration tests for state machine transitions, token matching, and timeout behavior. |
 
 ---
 
-### Block P: Hands-Free Screen Interaction --- PLANNED
+### Block P: Hands-Free Screen Interaction --- POST-T/U BACKLOG
 
-**Duration**: 4-5 weeks | **Model**: Claude Opus | **Depends on**: Block N (N5) + Block O (O3) | **Status**: Planned
+**Duration**: 4-5 weeks | **Model**: Claude Opus | **Depends on**: Block O (O3) + Block T/U stabilization | **Status**: Planned (deferred)
 
 Goal: Agent detects the active window, injects text into focused input fields via `enigo` (already in Cargo.toml), and confirms via TTS — fully keyboard-free workflow.
 
 | Task | Name | Complexity | Dependencies | Status | Description |
 | --- | --- | --- | --- | --- | --- |
-| P1 | `enigo`-Command-Surface: `type_text`, `key_combo` | High | N5 | PLANNED | Expose `enigo::Enigo` as Tauri commands `inject_text` and `send_key_combo`. |
+| P1 | `enigo`-Command-Surface: `type_text`, `key_combo` | High | T2 | PLANNED | Expose `enigo::Enigo` as Tauri commands `inject_text` and `send_key_combo`. |
 | P2 | Active Window Detection (WinAPI) | Medium | P1 | PLANNED | Detect foreground window title and class via WinAPI or `tauri-plugin-os`; return to agent as context. |
-| P3 | Agent-Step-Type: `inject_text` in Execution Plan | High | P1, M5 | PLANNED | New step variant in `AgentExecutionPlan`; runner delegates to `inject_text` command. |
-| P4 | Window-Switch + Focus: `focus_window_by_title` | Medium | P2 | PLANNED | Raise and focus a window by title match before text injection. |
+| P3 | Agent-Step-Type: `inject_text` in Execution Plan | High | P1, T2 | PLANNED | New step variant in `AgentExecutionPlan`; runner delegates to `inject_text` command. |
+| P4 | Window-Switch + Focus: `focus_window_by_title` | Medium | P2, T3 | PLANNED | Raise and focus a window by title match before text injection. |
 | P5 | E2E Test: Voice → Screen-Insert | High | P1–P4 | PLANNED | Validate full path: voice command → agent plan → window focus → text inject → TTS confirmation. |
 
 ---

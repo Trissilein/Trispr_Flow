@@ -1046,6 +1046,7 @@ fn flush_system_cluster(
             job_id,
             Some(merged_id),
             settings,
+            false,
         );
     }
 }

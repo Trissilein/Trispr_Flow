@@ -1,16 +1,16 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-20 (v0.7.2 release packaging; Block N shifted to remaining hardening gates N9-N14)
+Last updated: 2026-03-22 (Block S reopened for strict module-UX + overlay stabilization packet)
 
 This file is the canonical source for priorities and execution order.
 
 ## Canonical Current State
 
-- Released: `v0.7.0`, `v0.7.1`
-- Current phase: `v0.7.2` release hardening
-- **Next version bump**: After next major feature completion (target: v0.7.3 release). Update `package.json` version, `Cargo.toml` version, create CHANGELOG entry, build installer, push GitHub release.
-- Foundation complete: Blocks F + G + H
-- Active execution blocks: Multimodal delivery hardening (Block N) + Local AI provider hardening (Block R)
+- Released: `v0.7.0`, `v0.7.1`, `v0.7.2`
+- Current phase: `v0.7.3` stabilization follow-through (`Block S` reopened: S10-S13 active, TTS free-config/testing follows immediately after acceptance).
+- **Next version bump**: `v0.7.3` after Block S stabilization gate (`S10-S13`) plus TTS free-config/testing acceptance.
+- Foundation complete: Blocks F + G + H + L + M
+- Active execution blocks: Block S stabilization packet (`S10-S13`), then TTS free-config/testing, plus Block R follow-up hardening (non-blocking)
 
 ## Analysis De-Scope Decision
 
@@ -31,9 +31,12 @@ This file is the canonical source for priorities and execution order.
 | K | Expert Mode UX Overhaul (standard/expert toggle, hide technical settings) | Medium | E | Planned |
 | L | Module Platform + GDD Automation + Confluence Cloud publishing | Extra High | E, F, K | Complete ✅ |
 | M | Workflow-Agent voice automation for GDD (wakeword -> confirm -> execute) | Extra High | L, F | Complete ✅ |
-| N | Multimodal I/O modules (screen vision input + TTS voice output) | Extra High | M, L | In Progress (N1-N8 + N12 done) |
+| N | Multimodal I/O modules (screen vision input + TTS voice output) | Extra High | M, L | Foundations complete ✅ (`N1-N12` + benchmark track) |
 | Q | Onboarding refinement and startup stability | Medium | D | Complete ✅ |
-| R | Local AI provider hardening (Input Truncation + LM Studio integration) | Low | Q, D | Planned |
+| R | Local AI provider hardening (Input Truncation + LM Studio integration) | Low | Q, D | Planned / partial ✅ |
+| S | Build Recovery + Module Decoupling (`v0.7.3`) | High | N, Q | Active ♻️ (`S1-S9` done, `S10-S13` active) |
+| T | Assistant Pivot Foundation (`v0.8.0`) | Extra High | S, M | Planned |
+| U | Assistant UX + Soak + Release Gate (`v0.8.x`) | Extra High | T | Planned |
 
 ## v0.7 Task Ledger
 
@@ -64,11 +67,13 @@ This file is the canonical source for priorities and execution order.
 - GDD generation is now treated as core workflow capability; autonomous orchestration is handled by `workflow_agent`.
 - Multimodal modules (`input_vision`, `output_voice_tts`) are capability modules consumed by `workflow_agent` when enabled.
 
-## Upcoming Blocks (Post-N)
+## Upcoming Blocks (Post-S)
 
-**Block O — Voice Confirmation Loop** (after N6, N8): Agent speaks a confirmation question via TTS; user answers "bestätigen"/"abbrechen" via activation word. Requires `awaiting_confirmation` state, token matching, `confirm/cancel_pending_action` commands, and KITT visual hint. See `docs/TASK_SCHEDULE.md` Block O.
+**Block T — Assistant Pivot Foundation (`v0.8.0`)**: Introduce explicit product mode switch (`transcribe` vs `assistant`), assistant orchestration state/events, and graceful degradation when TTS/Vision capabilities are unavailable.
 
-**Block P — Hands-Free Screen Interaction** (after N5, Block O): Agent detects active window, injects text via `enigo` (already in `Cargo.toml`), and confirms via TTS. Closes the keyboard-free voice loop. See `docs/TASK_SCHEDULE.md` Block P.
+**Block U — Assistant UX + Soak + Release Gate (`v0.8.x`)**: Ship assistant-facing UX hardening and enforce long-run stability gates (soak + bounded-recovery behavior) before release.
+
+**Block O / Block P** are explicitly reclassified as post-foundation assistant expansions (after T/U), not immediate next-step execution items.
 
 ## Block Q Task Details
 
@@ -86,7 +91,7 @@ This file is the canonical source for priorities and execution order.
 | P2 | All 31 `thread::spawn` → `spawn_guarded` (catch_unwind wrapper) | Done ✅ |
 | P3 | All remaining `.lock().unwrap()` → `.unwrap_or_else(\|p\| p.into_inner())` — zero poison-cascade risk | Done ✅ |
 | P4 | 26 module Tauri commands wrapped with `guarded_command!` macro | Done ✅ |
-| P5 | Overlay WebView2 failure guard: `OVERLAY_CREATION_FAILED` flag prevents infinite retry loops | Done ✅ |
+| P5 | Overlay failure guard evolved to bounded supervisor retries + cooldown (no permanent session lockout) | Done ✅ |
 | P6 | `register_hotkeys` moved to background thread (cross-thread deadlock with Windows event loop) | Done ✅ |
 | P7 | `save_settings` IPC calls: 3 s timeout via `Promise.race` (prevents frontend freeze if backend blocks) | Done ✅ |
 | P8 | Event-driven Ollama init: wait for `ollama:runtime-health` instead of immediate ping-storm at startup | Done ✅ |
@@ -110,13 +115,27 @@ This file is the canonical source for priorities and execution order.
 | R5 | **Model Picker UX Unification**: Ollama and LM Studio use different UI patterns for model selection — LM Studio models shown inside provider card, Ollama shows them in a separate model section below. Same models, same UX. Both should use the bottom model-category section. | E | Medium priority; UX consistency issue. |
 | R6 | **LM Studio Thinking Disable** (future): `chat_template_kwargs` in request body is ignored by llmster (llama.cpp backend). True disable requires `model.yaml` with `enable_thinking: false`. Investigate: automated `model.yaml` provisioning on first `lms load`, or LM Studio Config Preset API. | R2 | Blocked on llmster API limitation. Track LM Studio changelog for per-request thinking control. |
 
+## Block S Task Details (Current Window)
+
+| Task | Title | Depends on | Status |
+| --- | --- | --- | --- |
+| S6 | AI Refinement as optional module (`ai_refinement`) | S3-S5 | Done ✅ |
+| S7 | AI Refinement runtime capability gate + disable side-effects | S6 | Done ✅ |
+| S8 | Frontend tab gating + effective refinement state (`module && setting`) | S6, S7 | Done ✅ |
+| S9 | Regression/docs closure + handoff to TTS free-config/testing | S6-S8 | Done ✅ |
+| S10 | Strict module-UX decoupling + dedicated TTS main tab (`voice-output`) | S9 | Done ✅ |
+| S11 | AI-Refinement re-enable speed path (autostart + warmup + runtime-ready defer policy) | S10 | Done ✅ |
+| S12 | Overlay deep refactor (bounded recovery supervisor, off-screen fallback, pulse reliability, recovered health signal) | S10 | Done ✅ |
+| S13 | Regression + soak/manual gate (`50 cycles + 10 restarts`) and closure handoff to TTS free-config/testing | S10-S12 | In progress ⏳ (manual acceptance run pending) |
+
 ## Immediate Next Actions
 
-1. Execute remaining Block N gates in order: `N9` (privacy/consent UX), `N10` (fallback/error matrix), `N11` (benchmark evidence), then `N13` E2E and `N14` release hardening.
-2. Keep GDD Core + Confluence path stable; Block M behavior remains locked while multimodal layers are hardened.
-3. Continue Block R follow-up items (`R4`-`R6`) without regressing current local-provider stability.
-4. Keep Block J and Block G as lower-priority backlog until Block N hardening gates are complete.
-5. Keep quantization configurability (Task 45) deferred until dedicated benchmark iteration.
+1. Close `S13` manual acceptance (overlay `50 cycles + 10 restarts`, module toggle/re-enable checks).
+2. Immediately continue with `TTS freikonfigurierbar + testbar` (provider-agnostic config + forced verification flow).
+3. Keep GDD Core + Confluence path stable while TTS free-config work is implemented.
+4. Use `docs/N11_TTS_BENCHMARK.md` as supporting evidence guidance for TTS runtime/provider decisions.
+5. Start Block T (`v0.8.0`) only after S13 + TTS acceptance criteria are met and regression baseline remains green.
+6. Carry Block R follow-up (`R4`-`R6`) only as non-blocking parallel work that cannot regress current priorities.
 
 ## References
 
@@ -129,3 +148,4 @@ This file is the canonical source for priorities and execution order.
 - `docs/V0.8.0_BLOCK_L_ROLLOUT_PACKET.md`
 - `docs/V0.8.1_WORKFLOW_AGENT_PLAN.md`
 - `docs/V0.8.2_MULTIMODAL_IO_PLAN.md`
+- `docs/N11_TTS_BENCHMARK.md`

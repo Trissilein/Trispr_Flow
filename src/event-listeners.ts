@@ -7,6 +7,7 @@ import type {
   AIExecutionMode,
   AIProviderAuthStatus,
   Settings,
+  TtsSpeakResult,
 } from "./types";
 import {
   CLOUD_PROVIDER_IDS,
@@ -73,6 +74,7 @@ import {
 } from "./ollama-models";
 import { openExportDialog } from "./export-dialog";
 import { openArchiveBrowser } from "./archive-browser";
+import { normalizeModelTag } from "./ollama-tag-utils";
 
 // Cleanup registry for window-level listeners added by wireEvents()
 const _windowCleanups: Array<() => void> = [];
@@ -129,6 +131,48 @@ function isProviderVerified(provider: CloudAIFallbackProvider | null): boolean {
 }
 
 const LOCAL_BACKENDS = ["ollama", "lm_studio", "oobabooga"] as const;
+const AI_REFINEMENT_MODULE_ID = "ai_refinement";
+const AI_REFINEMENT_MIGRATION_FLAG_KEY = "ai_refinement.migrated_legacy";
+
+function isModuleEnabled(moduleId: string): boolean {
+  return settings?.module_settings?.enabled_modules?.includes(moduleId) ?? false;
+}
+
+function isAiRefinementModuleEnabled(): boolean {
+  return isModuleEnabled(AI_REFINEMENT_MODULE_ID);
+}
+
+function normalizeAiRefinementModuleBindingInSettings(): void {
+  if (!settings) return;
+  settings.module_settings ??= {
+    enabled_modules: [],
+    consented_permissions: {},
+    module_overrides: {},
+  };
+  settings.module_settings.enabled_modules ??= [];
+  settings.module_settings.consented_permissions ??= {};
+  settings.module_settings.module_overrides ??= {};
+  settings.module_settings.enabled_modules = Array.from(
+    new Set(settings.module_settings.enabled_modules)
+  );
+
+  const overrides = settings.module_settings.module_overrides;
+  const migrationDone = overrides[AI_REFINEMENT_MIGRATION_FLAG_KEY] === true;
+  if (
+    settings.ai_fallback.enabled
+    && !settings.module_settings.enabled_modules.includes(AI_REFINEMENT_MODULE_ID)
+    && !migrationDone
+  ) {
+    settings.module_settings.enabled_modules.push(AI_REFINEMENT_MODULE_ID);
+  }
+
+  const moduleEnabledNow = settings.module_settings.enabled_modules.includes(AI_REFINEMENT_MODULE_ID);
+  if (!moduleEnabledNow) {
+    settings.ai_fallback.enabled = false;
+    settings.postproc_llm_enabled = false;
+  }
+  overrides[AI_REFINEMENT_MIGRATION_FLAG_KEY] = true;
+}
 
 function applyExecutionModeInSettings(mode: AIExecutionMode): void {
   if (!settings) return;
@@ -448,14 +492,8 @@ function ensureAIFallbackSettingsDefaults() {
     ollama_remote_expert_opt_in: false,
   };
   settings.setup.ollama_remote_expert_opt_in ??= false;
-  settings.module_settings ??= {
-    enabled_modules: [],
-    consented_permissions: {},
-    module_overrides: {},
-  };
-  settings.module_settings.enabled_modules ??= [];
-  settings.module_settings.consented_permissions ??= {};
-  settings.module_settings.module_overrides ??= {};
+  settings.product_mode = settings.product_mode === "assistant" ? "assistant" : "transcribe";
+  normalizeAiRefinementModuleBindingInSettings();
   settings.gdd_module_settings ??= {
     enabled: false,
     default_preset_id: "universal_strict",
@@ -572,7 +610,14 @@ async function refreshAIFallbackModels(provider: AIFallbackProvider) {
 
   if (provider === "ollama") {
     ensureAIFallbackSettingsDefaults();
-    settings.providers.ollama.available_models = models;
+    const mergedModels = Array.from(
+      new Set(
+        [...(settings.providers.ollama.available_models ?? []), ...models]
+          .map((name) => normalizeModelTag(name))
+          .filter((name) => name.length > 0)
+      )
+    );
+    settings.providers.ollama.available_models = mergedModels;
     if (!models.includes(settings.providers.ollama.preferred_model)) {
       settings.providers.ollama.preferred_model = models[0] ?? "";
     }
@@ -795,8 +840,71 @@ function addVocabRow(original: string, replacement: string) {
 }
 
 // Main tab switching
-type MainTab = "transcription" | "settings" | "ai-refinement" | "modules";
+type MainTab = "transcription" | "settings" | "ai-refinement" | "voice-output" | "modules";
 let aiRefinementTabRefreshInFlight: Promise<void> | null = null;
+
+function aiRefinementTabAvailable(): boolean {
+  return isAiRefinementModuleEnabled();
+}
+
+function voiceOutputTabAvailable(): boolean {
+  return settings?.module_settings?.enabled_modules?.includes("output_voice_tts") ?? false;
+}
+
+function syncMainTabAvailability(): void {
+  const aiAvailable = aiRefinementTabAvailable();
+  const voiceAvailable = voiceOutputTabAvailable();
+  if (dom.tabBtnAiRefinement) {
+    dom.tabBtnAiRefinement.hidden = !aiAvailable;
+    dom.tabBtnAiRefinement.setAttribute("aria-hidden", (!aiAvailable).toString());
+    if (aiAvailable) {
+      dom.tabBtnAiRefinement.removeAttribute("tabindex");
+    } else {
+      dom.tabBtnAiRefinement.setAttribute("tabindex", "-1");
+    }
+  }
+  if (dom.tabAiRefinement) {
+    dom.tabAiRefinement.hidden = !aiAvailable;
+    if (!aiAvailable) {
+      dom.tabAiRefinement.classList.remove("active");
+    }
+  }
+  if (dom.tabBtnVoiceOutput) {
+    dom.tabBtnVoiceOutput.hidden = !voiceAvailable;
+    dom.tabBtnVoiceOutput.setAttribute("aria-hidden", (!voiceAvailable).toString());
+    if (voiceAvailable) {
+      dom.tabBtnVoiceOutput.removeAttribute("tabindex");
+    } else {
+      dom.tabBtnVoiceOutput.setAttribute("tabindex", "-1");
+    }
+  }
+  if (dom.tabVoiceOutput) {
+    dom.tabVoiceOutput.hidden = !voiceAvailable;
+    if (!voiceAvailable) {
+      dom.tabVoiceOutput.classList.remove("active");
+    }
+  }
+}
+
+function getActiveMainTabFromDom(): MainTab {
+  if (dom.tabBtnSettings?.classList.contains("active")) return "settings";
+  if (dom.tabBtnAiRefinement?.classList.contains("active")) return "ai-refinement";
+  if (dom.tabBtnVoiceOutput?.classList.contains("active")) return "voice-output";
+  if (dom.tabBtnModules?.classList.contains("active")) return "modules";
+  return "transcription";
+}
+
+export function reconcileMainTabVisibility(): void {
+  syncMainTabAvailability();
+  const activeTab = getActiveMainTabFromDom();
+  if (!aiRefinementTabAvailable() && activeTab === "ai-refinement") {
+    switchMainTab("transcription");
+    return;
+  }
+  if (!voiceOutputTabAvailable() && activeTab === "voice-output") {
+    switchMainTab("transcription");
+  }
+}
 
 async function refreshAiRefinementTabState(): Promise<void> {
   if (aiRefinementTabRefreshInFlight) {
@@ -828,19 +936,31 @@ export function openMainTab(tab: MainTab) {
 }
 
 function switchMainTab(tab: MainTab) {
-  const isTranscription = tab === "transcription";
-  const isSettings = tab === "settings";
-  const isAiRefinement = tab === "ai-refinement";
-  const isModules = tab === "modules";
+  syncMainTabAvailability();
+  let resolvedTab: MainTab = tab;
+  if (resolvedTab === "ai-refinement" && !aiRefinementTabAvailable()) {
+    resolvedTab = "transcription";
+  }
+  if (resolvedTab === "voice-output" && !voiceOutputTabAvailable()) {
+    resolvedTab = "transcription";
+  }
+
+  const isTranscription = resolvedTab === "transcription";
+  const isSettings = resolvedTab === "settings";
+  const isAiRefinement = resolvedTab === "ai-refinement";
+  const isVoiceOutput = resolvedTab === "voice-output";
+  const isModules = resolvedTab === "modules";
 
   dom.tabBtnTranscription?.classList.toggle("active", isTranscription);
   dom.tabBtnSettings?.classList.toggle("active", isSettings);
   dom.tabBtnAiRefinement?.classList.toggle("active", isAiRefinement);
+  dom.tabBtnVoiceOutput?.classList.toggle("active", isVoiceOutput);
   dom.tabBtnModules?.classList.toggle("active", isModules);
 
   dom.tabBtnTranscription?.setAttribute("aria-selected", isTranscription.toString());
   dom.tabBtnSettings?.setAttribute("aria-selected", isSettings.toString());
   dom.tabBtnAiRefinement?.setAttribute("aria-selected", isAiRefinement.toString());
+  dom.tabBtnVoiceOutput?.setAttribute("aria-selected", isVoiceOutput.toString());
   dom.tabBtnModules?.setAttribute("aria-selected", isModules.toString());
 
   // Update tab content visibility — clear any inline display styles first
@@ -856,6 +976,10 @@ function switchMainTab(tab: MainTab) {
     dom.tabAiRefinement.style.removeProperty("display");
     dom.tabAiRefinement.classList.toggle("active", isAiRefinement);
   }
+  if (dom.tabVoiceOutput) {
+    dom.tabVoiceOutput.style.removeProperty("display");
+    dom.tabVoiceOutput.classList.toggle("active", isVoiceOutput);
+  }
   if (dom.tabModules) {
     dom.tabModules.style.removeProperty("display");
     dom.tabModules.classList.toggle("active", isModules);
@@ -863,7 +987,7 @@ function switchMainTab(tab: MainTab) {
 
   // Persist to localStorage
   try {
-    localStorage.setItem("trispr-active-tab", tab);
+    localStorage.setItem("trispr-active-tab", resolvedTab);
   } catch (error) {
     console.error("Failed to persist active tab", error);
   }
@@ -881,12 +1005,14 @@ function switchMainTab(tab: MainTab) {
 
 // Initialize tab state from localStorage
 export function initMainTab() {
+  syncMainTabAvailability();
   try {
     const savedTab = localStorage.getItem("trispr-active-tab") as MainTab | null;
     if (
       savedTab === "settings" ||
       savedTab === "transcription" ||
       savedTab === "ai-refinement" ||
+      savedTab === "voice-output" ||
       savedTab === "modules"
     ) {
       switchMainTab(savedTab);
@@ -955,6 +1081,9 @@ export function wireEvents() {
 
   dom.tabBtnAiRefinement?.addEventListener("click", () => {
     switchMainTab("ai-refinement");
+  });
+  dom.tabBtnVoiceOutput?.addEventListener("click", () => {
+    switchMainTab("voice-output");
   });
   dom.tabBtnModules?.addEventListener("click", () => {
     switchMainTab("modules");
@@ -1592,6 +1721,21 @@ export function wireEvents() {
   dom.aiFallbackEnabled?.addEventListener("change", async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
+    if (!isAiRefinementModuleEnabled()) {
+      dom.aiFallbackEnabled!.checked = false;
+      settings.ai_fallback.enabled = false;
+      settings.postproc_llm_enabled = false;
+      await persistSettings();
+      renderAIFallbackSettingsUi();
+      renderHero();
+      showToast({
+        type: "warning",
+        title: "Module disabled",
+        message: "Enable module 'ai_refinement' first.",
+        duration: 3200,
+      });
+      return;
+    }
     const enabling = dom.aiFallbackEnabled!.checked;
 
     if (enabling) {
@@ -2699,14 +2843,14 @@ export function wireEvents() {
   dom.voiceOutputDefaultProvider?.addEventListener("change", async () => {
     if (!settings?.voice_output_settings) return;
     settings.voice_output_settings.default_provider = dom.voiceOutputDefaultProvider!
-      .value as "windows_native" | "local_custom";
+      .value as "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
     await persistSettings();
   });
 
   dom.voiceOutputFallbackProvider?.addEventListener("change", async () => {
     if (!settings?.voice_output_settings) return;
     settings.voice_output_settings.fallback_provider = dom.voiceOutputFallbackProvider!
-      .value as "windows_native" | "local_custom";
+      .value as "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
     await persistSettings();
   });
 
@@ -2757,8 +2901,13 @@ export function wireEvents() {
     const provider = settings.voice_output_settings.default_provider;
     dom.voiceOutputTestStatus.textContent = "Testing…";
     try {
-      await invoke("test_tts_provider", { provider });
-      dom.voiceOutputTestStatus.textContent = "✓ Provider responded.";
+      const result = await invoke<TtsSpeakResult>("test_tts_provider", { provider });
+      if (result.used_fallback) {
+        const preferred = result.preferred_provider || provider;
+        dom.voiceOutputTestStatus.textContent = `⚠ Fallback used: ${preferred} -> ${result.provider_used}`;
+      } else {
+        dom.voiceOutputTestStatus.textContent = `✓ ${result.provider_used} responded.`;
+      }
     } catch (e) {
       dom.voiceOutputTestStatus.textContent = `Error: ${e}`;
     }
@@ -2780,6 +2929,41 @@ export function wireEvents() {
   dom.voiceOutputPiperModelDir?.addEventListener("change", async () => {
     if (!settings?.voice_output_settings || !dom.voiceOutputPiperModelDir) return;
     settings.voice_output_settings.piper_model_dir = dom.voiceOutputPiperModelDir.value;
+    await persistSettings();
+  });
+
+  // Voice Output Qwen3 endpoint/model settings
+  dom.voiceOutputQwenEndpoint?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputQwenEndpoint) return;
+    settings.voice_output_settings.qwen3_tts_endpoint = dom.voiceOutputQwenEndpoint.value;
+    await persistSettings();
+  });
+
+  dom.voiceOutputQwenModel?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputQwenModel) return;
+    settings.voice_output_settings.qwen3_tts_model = dom.voiceOutputQwenModel.value;
+    await persistSettings();
+  });
+
+  dom.voiceOutputQwenVoice?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputQwenVoice) return;
+    settings.voice_output_settings.qwen3_tts_voice = dom.voiceOutputQwenVoice.value;
+    await persistSettings();
+  });
+
+  dom.voiceOutputQwenApiKey?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputQwenApiKey) return;
+    settings.voice_output_settings.qwen3_tts_api_key = dom.voiceOutputQwenApiKey.value;
+    await persistSettings();
+  });
+
+  dom.voiceOutputQwenTimeoutSec?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputQwenTimeoutSec) return;
+    const parsed = Number.parseInt(dom.voiceOutputQwenTimeoutSec.value, 10);
+    settings.voice_output_settings.qwen3_tts_timeout_sec = Number.isFinite(parsed)
+      ? Math.max(3, Math.min(180, parsed))
+      : 45;
+    dom.voiceOutputQwenTimeoutSec.value = String(settings.voice_output_settings.qwen3_tts_timeout_sec);
     await persistSettings();
   });
 

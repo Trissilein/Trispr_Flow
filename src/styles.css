@@ -538,6 +538,15 @@ html.expert-mode details[data-expert-only="true"] > summary {
   display: block;
 }
 
+/* Voice Output Tab */
+#tab-voice-output {
+  display: none;
+}
+
+#tab-voice-output.active {
+  display: block;
+}
+
 /* Modules Tab */
 #tab-modules {
   display: none;
@@ -4353,6 +4362,18 @@ input[type="range"]:focus-visible {
 
 .ollama-models-section {
   padding-top: 0;
+}
+
+.ollama-custom-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+
+.ollama-custom-model-input {
+  min-width: 0;
 }
 
 .ollama-model-list {

@@ -59,6 +59,11 @@ runOrExit(
   "benchmark-latency",
   "npm run benchmark:latency -- -Warmup 1 -Runs 3 -NoRefinement -FailOnSloMiss"
 );
+runOrExit(
+  steps,
+  "benchmark-tts",
+  "npm run benchmark:tts:strict -- -Warmup 1 -Runs 3"
+);
 
 const endedAtIso = new Date().toISOString();
 const report = {
@@ -67,6 +72,7 @@ const report = {
   duration_ms: Date.now() - startedAtMs,
   steps,
   latency_report: readJsonIfExists(path.join(resultsDir, "latest.json")),
+  tts_report: readJsonIfExists(path.join(resultsDir, "tts.latest.json")),
 };
 
 fs.mkdirSync(resultsDir, { recursive: true });

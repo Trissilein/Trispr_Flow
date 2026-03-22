@@ -383,9 +383,9 @@ Goal: Add optional capability modules `input_vision` and `output_voice_tts` and 
 
 ---
 
-### Block S: Build Recovery + Module Decoupling (`v0.7.3`) --- DONE
+### Block S: Build Recovery + Module Decoupling (`v0.7.3`) --- ACTIVE ♻️
 
-**Duration**: 1-2 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block N + Block Q | **Status**: Done
+**Duration**: 1-2 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block N + Block Q | **Status**: S1-S12 done, S13 acceptance in progress (then TTS free-config/testing)
 
 Goal: Restore hard-green build baseline, then enforce strict module decoupling semantics (module disabled = capability disabled).
 
@@ -396,6 +396,21 @@ Goal: Restore hard-green build baseline, then enforce strict module decoupling s
 | S3 | Hard capability gates | High | S1, S2 | DONE | Centralized module+settings capability gates and enforced them across vision/TTS/workflow-agent command paths. |
 | S4 | Disable lifecycle effects | High | S3 | DONE | Module disable now enforces immediate runtime side-effects (`vision` stream stop, `tts` stop) with no lingering active path. |
 | S5 | Module UI state consistency | Medium | S3, S4 | DONE | UI consoles now reflect effective capability state (module + setting), avoiding pseudo-active behavior when modules are disabled. |
+| S6 | AI Refinement als optionales Modul (`ai_refinement`) | High | S3-S5 | DONE | Added module manifest + lifecycle wiring (`enable` => `ai_fallback.enabled=true`, `disable` => hard-off) with migration-safe binding to legacy settings. |
+| S7 | AI Refinement capability hard-gates + disable side-effects | High | S6 | DONE | Added runtime capability gate (`module + setting`) for auto-refinement/manual refine paths; disable now resets refinement activity and stops managed local runtime/daemon paths. |
+| S8 | Frontend tab gating + effective refinement state | Medium | S6, S7 | DONE | AI Refinement tab is hidden unless module active; active-tab fallback to `transcription`; effective refinement checks now require `module_enabled && ai_fallback.enabled`; onboarding Step 4 now toggles module state. |
+| S9 | Regression + docs + handoff to TTS free-config/testing | Medium | S6-S8 | DONE | Automated gates confirmed green (`cargo test --lib`, `npm test`, `npm run build`); roadmap/status/schedule synchronized; next execution focus set to `TTS freikonfigurierbar + testbar`. |
+| S10 | Strict module-UX decoupling + own TTS main tab (`voice-output`) | High | S9 | DONE | `output_voice_tts` moved to dedicated main-tab with hard module-gating, localStorage fallback, active-tab fallback, and Configure routing from Modules Hub into the tab. |
+| S11 | AI-Refinement re-enable speed path (`autostart + warmup + no false defer`) | High | S10 | DONE | Re-enable now autostarts managed Ollama in `local_primary`, performs warmup, and defer policy only activates when runtime is truly ready; runtime-not-ready emits stable refinement-failed reason. |
+| S12 | Overlay deep refactor (supervisor/recovery/pulse/off-screen) | High | S10 | DONE | Replaced permanent create-fail lockout with bounded retry/cooldown supervisor, added explicit `recovered` health signal, heartbeat sync channel, off-screen fallback anchor, and deterministic replay hardening. |
+| S13 | Regression + soak gate for S10-S12 (`50 cycles + 10 restarts`) | Medium | S10-S12 | IN PROGRESS | Automated gates are green; manual soak/acceptance run is the remaining closeout step before full TTS free-config focus. |
+
+#### Block S Acceptance Criteria (`S10-S13`)
+
+- `S10` accepted when TTS configuration is isolated to `voice-output` main-tab, the tab is shown only when module-enabled, and Configure action routes directly there.
+- `S11` accepted when Ollama `local_primary` defer is runtime-ready only, non-ready path emits deterministic `transcription:refinement-failed` reason code, and re-enable path autostarts + warms runtime.
+- `S12` accepted when overlay creation no longer permanently locks out after first failure, recovery emits `recovering/failed/recovered`, and refinement pulse/off-screen recovery are deterministic.
+- `S13` accepted when automated gates (`cargo test --lib`, `npm test`, `npm run build`) stay green and manual soak gate (`50 cycles + 10 restarts`) passes without visibility/pulse regressions.
 
 ---
 
@@ -407,7 +422,7 @@ Goal: Introduce explicit product-mode split and assistant orchestration baseline
 
 | Task | Name | Complexity | Dependencies | Status | Description |
 | --- | --- | --- | --- | --- | --- |
-| T1 | Product mode types/settings (`transcribe` vs `assistant`) | High | S | PLANNED | Add persistent mode model in backend/frontend settings + migration defaults. |
+| T1 | Product mode types/settings (`transcribe` vs `assistant`) | High | S | DONE | Added persistent `product_mode` schema (`transcribe`/`assistant`) in Rust + TypeScript settings with migration-safe normalization defaults for legacy configs. |
 | T2 | Backend assistant orchestrator state | High | T1 | PLANNED | Introduce deterministic assistant pipeline states and transition handling. |
 | T3 | Frontend mode switch UX | Medium | T1 | PLANNED | Add mode switch controls and mode-aware shell behavior without startup disruption. |
 | T4 | Graceful degradation policy | High | T2, T3 | PLANNED | Ensure assistant stays usable when TTS/Vision modules are unavailable or disabled. |

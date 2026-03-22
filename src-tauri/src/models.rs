@@ -876,6 +876,30 @@ pub(crate) struct DownloadError {
     error: String,
 }
 
+fn model_listing_aliases(model_id: &str) -> &'static [&'static str] {
+    match model_id {
+        // Recognize quantized local variants as "installed" for the base model cards.
+        "whisper-large-v3-turbo" => &[
+            "ggml-large-v3-turbo-q8_0.bin",
+            "ggml-large-v3-turbo-q5_0.bin",
+        ],
+        "whisper-large-v3" => &["ggml-large-v3-q8_0.bin", "ggml-large-v3-q5_0.bin"],
+        _ => &[],
+    }
+}
+
+fn resolve_model_path_for_listing(app: &AppHandle, model: &SourceModel) -> Option<PathBuf> {
+    if let Some(path) = resolve_model_path_by_file(app, &model.file_name) {
+        return Some(path);
+    }
+    for alias in model_listing_aliases(&model.id) {
+        if let Some(path) = resolve_model_path_by_file(app, alias) {
+            return Some(path);
+        }
+    }
+    None
+}
+
 #[tauri::command]
 pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<ModelInfo> {
     let downloads = state
@@ -936,21 +960,6 @@ pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<Mod
             });
         }
 
-        // German-optimized large-v3-turbo (fine-tuned by cstr for German speech)
-        let german_url = "https://huggingface.co/cstr/whisper-large-v3-turbo-german-ggml/resolve/main/ggml-model.bin?download=true";
-        if let Err(err) = is_url_safe(german_url, UrlSafety::Basic) {
-            warn!("Skipping unsafe German model URL: {}", err);
-        } else {
-            defaults.push(SourceModel {
-                id: "whisper-large-v3-turbo-german".to_string(),
-                label: "Whisper large-v3-turbo (DE)".to_string(),
-                file_name: "ggml-large-v3-turbo-german.bin".to_string(),
-                size_mb: 1650,
-                download_url: german_url.to_string(),
-                source: "german".to_string(),
-            });
-        }
-
         defaults
     };
 
@@ -958,11 +967,7 @@ pub(crate) fn list_models(app: AppHandle, state: State<'_, AppState>) -> Vec<Mod
     let mut models: Vec<ModelInfo> = source_models
         .into_iter()
         .map(|model| {
-            let mut path = if settings.model_source == "default" {
-                resolve_model_path(&app, &model.id)
-            } else {
-                resolve_model_path_by_file(&app, &model.file_name)
-            };
+            let mut path = resolve_model_path_for_listing(&app, &model);
             if !model.file_name.is_empty() {
                 seen_files.insert(model.file_name.clone());
             }

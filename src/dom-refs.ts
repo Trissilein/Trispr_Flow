@@ -14,10 +14,12 @@ export const bootstrapLabel = $("bootstrap-label") as HTMLSpanElement | null;
 export const tabBtnTranscription = $("tab-btn-transcription") as HTMLButtonElement | null;
 export const tabBtnSettings = $("tab-btn-settings") as HTMLButtonElement | null;
 export const tabBtnAiRefinement = $("tab-btn-ai-refinement") as HTMLButtonElement | null;
+export const tabBtnVoiceOutput = $("tab-btn-voice-output") as HTMLButtonElement | null;
 export const tabBtnModules = $("tab-btn-modules") as HTMLButtonElement | null;
 export const tabTranscription = $("tab-transcription") as HTMLDivElement | null;
 export const tabSettings = $("tab-settings") as HTMLDivElement | null;
 export const tabAiRefinement = $("tab-ai-refinement") as HTMLDivElement | null;
+export const tabVoiceOutput = $("tab-voice-output") as HTMLDivElement | null;
 export const tabModules = $("tab-modules") as HTMLDivElement | null;
 export const expertModeToggle = $("expert-mode-toggle") as HTMLInputElement | null;
 export const expertModeLabel = $("expert-mode-label") as HTMLSpanElement | null;
@@ -399,7 +401,7 @@ export const modelList = $("model-list");
 // Overlay controls (button not reachable via id helper above)
 export const applyOverlayBtn = $("apply-overlay-btn") as HTMLButtonElement | null;
 
-// Voice Output Console (Module config modal)
+// Voice Output Console
 export const voiceOutputConsole = $("voice-output-console") as HTMLElement | null;
 export const voiceOutputConsoleStatus = $("voice-output-console-status") as HTMLSpanElement | null;
 
@@ -427,6 +429,11 @@ export const voiceOutputTestStatus = $("voice-output-test-status") as HTMLSpanEl
 export const voiceOutputPiperBinary = $("voice-output-piper-binary") as HTMLInputElement | null;
 export const voiceOutputPiperModel = $("voice-output-piper-model") as HTMLInputElement | null;
 export const voiceOutputPiperModelDir = $("voice-output-piper-model-dir") as HTMLInputElement | null;
+export const voiceOutputQwenEndpoint = $("voice-output-qwen-endpoint") as HTMLInputElement | null;
+export const voiceOutputQwenModel = $("voice-output-qwen-model") as HTMLInputElement | null;
+export const voiceOutputQwenVoice = $("voice-output-qwen-voice") as HTMLInputElement | null;
+export const voiceOutputQwenApiKey = $("voice-output-qwen-api-key") as HTMLInputElement | null;
+export const voiceOutputQwenTimeoutSec = $("voice-output-qwen-timeout-sec") as HTMLInputElement | null;
 
 // Model panel (queried by data attribute, not id)
 export const modelPanel =

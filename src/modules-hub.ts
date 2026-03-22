@@ -3,8 +3,9 @@ import * as dom from "./dom-refs";
 import { settings } from "./state";
 import { showToast } from "./toast";
 import { openGddFlow } from "./gdd-flow";
-import { syncWorkflowAgentConsoleState } from "./workflow-agent-console";
-import { syncVoiceOutputConsoleState } from "./voice-output-console";
+import { openMainTab } from "./event-listeners";
+import { focusWorkflowAgentConsole, syncWorkflowAgentConsoleState } from "./workflow-agent-console";
+import { focusVoiceOutputConsole, syncVoiceOutputConsoleState } from "./voice-output-console";
 import { focusFirstElement } from "./modal-focus";
 import type { ModuleDescriptor, ModuleHealthStatus, ModuleUpdateInfo } from "./types";
 
@@ -26,6 +27,90 @@ function moduleStateLabel(moduleState: ModuleDescriptor["state"]): string {
   if (moduleState === "enabled") return "Enabled";
   if (moduleState === "not_installed") return "Not installed";
   return "Error";
+}
+
+type PermissionCopy = {
+  label: string;
+  detail: string;
+};
+
+function permissionCopy(permission: string): PermissionCopy {
+  if (permission === "screen_capture") {
+    return {
+      label: "Screen capture",
+      detail: "Low-FPS context frames stay in RAM and are not written to disk.",
+    };
+  }
+  if (permission === "audio_output") {
+    return {
+      label: "Audio output",
+      detail: "Allows spoken replies via TTS playback only (no microphone capture).",
+    };
+  }
+  if (permission === "filesystem_history") {
+    return {
+      label: "Transcript history",
+      detail: "Allows module access to existing local transcript entries.",
+    };
+  }
+  if (permission === "filesystem_exports") {
+    return {
+      label: "Export files",
+      detail: "Allows module access to generated local export files.",
+    };
+  }
+  if (permission === "network_confluence") {
+    return {
+      label: "Confluence network",
+      detail: "Allows calls to configured Confluence Cloud endpoints.",
+    };
+  }
+  if (permission === "keyring_access") {
+    return {
+      label: "Credential storage",
+      detail: "Allows secure credential read/write via keyring storage.",
+    };
+  }
+  return {
+    label: permission,
+    detail: "Permission required by this module.",
+  };
+}
+
+function moduleScopeHint(moduleId: string): string {
+  if (moduleId === "input_vision") {
+    return "Privacy scope: in-memory vision context only; no automatic image file persistence.";
+  }
+  if (moduleId === "output_voice_tts") {
+    return "Privacy scope: TTS playback only; no microphone recording.";
+  }
+  return "";
+}
+
+function consentFeedback(moduleInfo: ModuleDescriptor, missing: string[]): string {
+  if (!missing.length) return "";
+  if (moduleInfo.id === "input_vision") {
+    return "Screen capture consent missing. Vision context remains disabled until granted.";
+  }
+  if (moduleInfo.id === "output_voice_tts") {
+    return "Audio output consent missing. Spoken replies remain disabled until granted.";
+  }
+  const labels = missing.map((permission) => permissionCopy(permission).label).join(", ");
+  return `Consent required: ${labels}`;
+}
+
+function consentDialogMessage(moduleInfo: ModuleDescriptor, missing: string[]): string {
+  const details = missing.map((permission) => {
+    const copy = permissionCopy(permission);
+    return `- ${copy.label}: ${copy.detail}`;
+  });
+  const scopeHint = moduleScopeHint(moduleInfo.id);
+  const lines = [`Enable module "${moduleInfo.name}"?`, "", "This grants:", ...details];
+  if (scopeHint) {
+    lines.push("", scopeHint);
+  }
+  lines.push("", "Continue?");
+  return lines.join("\n");
 }
 
 function moduleGuide(moduleId: string): { description: string; usage: string } {
@@ -53,6 +138,12 @@ function moduleGuide(moduleId: string): { description: string; usage: string } {
       usage: "Use: Enable module, then launch Analysis Flow from this page.",
     };
   }
+  if (moduleId === "ai_refinement") {
+    return {
+      description: "Adds optional local AI transcript refinement and prompt/runtime controls.",
+      usage: "Use: Enable module, then open the AI Refinement tab to configure provider and prompts.",
+    };
+  }
   if (moduleId === "input_vision") {
     return {
       description: "Adds low-FPS screen context capture for agent-driven workflows.",
@@ -72,6 +163,7 @@ function moduleGuide(moduleId: string): { description: string; usage: string } {
 }
 
 function missingConsents(moduleInfo: ModuleDescriptor): string[] {
+  if (moduleInfo.state === "not_installed") return [];
   const consented = settings?.module_settings?.consented_permissions?.[moduleInfo.id] || [];
   return moduleInfo.permissions.filter((permission) => !consented.includes(permission));
 }
@@ -94,12 +186,63 @@ function moduleStatusClass(moduleInfo: ModuleDescriptor): string {
 
 function openModuleConfig(moduleId: string): void {
   const moduleInfo = moduleSnapshot.find((m) => m.id === moduleId);
-  if (!moduleInfo || !dom.moduleConfigModal) return;
+  if (!moduleInfo) return;
+
+  if (moduleId === "output_voice_tts") {
+    const enabled = settings?.module_settings?.enabled_modules?.includes("output_voice_tts") ?? false;
+    if (!enabled) {
+      showToast({
+        type: "info",
+        title: "Enable module first",
+        message: "Enable Voice Output to open its configuration tab.",
+        duration: 3200,
+      });
+      return;
+    }
+    openMainTab("voice-output");
+    focusVoiceOutputConsole();
+    return;
+  }
+
+  if (moduleId === "ai_refinement") {
+    const enabled = settings?.module_settings?.enabled_modules?.includes("ai_refinement") ?? false;
+    if (!enabled) {
+      showToast({
+        type: "info",
+        title: "Enable module first",
+        message: "Enable AI Refinement to open its configuration tab.",
+        duration: 3200,
+      });
+      return;
+    }
+    openMainTab("ai-refinement");
+    return;
+  }
+
+  if (moduleId === "workflow_agent") {
+    const enabled = settings?.module_settings?.enabled_modules?.includes("workflow_agent") ?? false;
+    if (!enabled) {
+      showToast({
+        type: "info",
+        title: "Enable module first",
+        message: "Enable Workflow Agent to open its console.",
+        duration: 3200,
+      });
+      return;
+    }
+    openMainTab("modules");
+    focusWorkflowAgentConsole();
+    return;
+  }
+
+  if (!dom.moduleConfigModal) return;
 
   const guide = moduleGuide(moduleId);
   const missing = missingConsents(moduleInfo);
+  const scopeHint = moduleScopeHint(moduleId);
   const feedbackParts: string[] = [];
-  if (missing.length) feedbackParts.push(`Consent required: ${missing.join(", ")}`);
+  const consentMessage = consentFeedback(moduleInfo, missing);
+  if (consentMessage) feedbackParts.push(consentMessage);
   if (moduleInfo.last_error) feedbackParts.push(moduleInfo.last_error);
 
   if (dom.moduleConfigModalName)
@@ -109,27 +252,21 @@ function openModuleConfig(moduleId: string): void {
   if (dom.moduleConfigModalDesc)
     dom.moduleConfigModalDesc.textContent = guide.description;
   if (dom.moduleConfigModalUsage)
-    dom.moduleConfigModalUsage.textContent = guide.usage;
+    dom.moduleConfigModalUsage.textContent = scopeHint
+      ? `${guide.usage} ${scopeHint}`
+      : guide.usage;
   if (dom.moduleConfigModalDeps)
     dom.moduleConfigModalDeps.textContent = moduleInfo.dependencies.length
       ? `Deps: ${moduleInfo.dependencies.join(", ")}`
       : "";
   if (dom.moduleConfigModalFeedback)
     dom.moduleConfigModalFeedback.textContent = feedbackParts.join(" · ") || "Ready";
-
-  if (dom.workflowAgentConsole)
-    dom.workflowAgentConsole.hidden = moduleId !== "workflow_agent";
-  if (dom.voiceOutputConsole)
-    dom.voiceOutputConsole.hidden = moduleId !== "output_voice_tts";
-
   dom.moduleConfigModal.removeAttribute("hidden");
   focusFirstElement(dom.moduleConfigModal);
 }
 
 function closeModuleConfig(): void {
   dom.moduleConfigModal?.setAttribute("hidden", "");
-  syncWorkflowAgentConsoleState();
-  syncVoiceOutputConsoleState();
 }
 
 function cardActions(moduleInfo: ModuleDescriptor): string {
@@ -166,18 +303,26 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
       const summaryTitle = escapeHtml(`Dependencies: ${moduleInfo.dependencies.join(", ") || "none"}\nPermissions: ${moduleInfo.permissions.join(", ") || "none"}`);
       const guide = moduleGuide(moduleInfo.id);
       const missing = missingConsents(moduleInfo);
+      const scopeHint = moduleScopeHint(moduleInfo.id);
+      const consentMessage = consentFeedback(moduleInfo, missing);
       const feedbackParts: string[] = [];
-      if (missing.length) {
-        feedbackParts.push(`Consent required: ${missing.join(", ")}`);
+      if (consentMessage) {
+        feedbackParts.push(consentMessage);
       }
       if (moduleInfo.last_error) {
         feedbackParts.push(moduleInfo.last_error);
       }
       const feedbackText = feedbackParts.length ? feedbackParts.join(" · ") : "Ready";
-      const feedbackTitle = escapeHtml(feedbackParts.join("\n"));
+      const consentDetails = missing
+        .map((permission) => {
+          const copy = permissionCopy(permission);
+          return `${copy.label}: ${copy.detail}`;
+        })
+        .join("\n");
+      const feedbackTitle = escapeHtml([feedbackParts.join("\n"), consentDetails].filter(Boolean).join("\n"));
       const feedbackClass = moduleInfo.last_error
         ? "module-card-feedback is-error"
-        : missing.length
+        : consentMessage
           ? "module-card-feedback is-warning"
           : "module-card-feedback is-ok";
       const launch = moduleInfo.id === "gdd"
@@ -198,7 +343,7 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
         </div>
         <div class="model-meta" title="${summaryTitle}">${summary}</div>
         <div class="module-card-desc">${escapeHtml(guide.description)}</div>
-        <div class="module-card-usage">${escapeHtml(guide.usage)}</div>
+        <div class="module-card-usage">${escapeHtml(scopeHint ? `${guide.usage} ${scopeHint}` : guide.usage)}</div>
         <div class="${feedbackClass}" title="${feedbackTitle}">${feedbackText}</div>
         <div class="module-card-actions model-actions">${cardActions(moduleInfo)} ${launch}</div>
       </article>`;
@@ -219,7 +364,11 @@ async function refreshModuleState(): Promise<void> {
   syncVoiceOutputConsoleState();
   if (dom.modulesStatus) {
     const active = modules.filter((moduleInfo) => moduleInfo.state === "active").length;
-    dom.modulesStatus.textContent = `${active}/${modules.length} active`;
+    const pendingConsents = modules.filter((moduleInfo) => missingConsents(moduleInfo).length > 0)
+      .length;
+    dom.modulesStatus.textContent = pendingConsents > 0
+      ? `${active}/${modules.length} active · ${pendingConsents} consent pending`
+      : `${active}/${modules.length} active`;
   }
 }
 
@@ -239,9 +388,7 @@ async function handleEnable(moduleId: string): Promise<void> {
   const missing = missingConsents(moduleInfo);
   const grants = [...missing];
   if (missing.length > 0) {
-    const confirmed = window.confirm(
-      `Enable module '${moduleInfo.name}' and grant permissions: ${missing.join(", ")}?`
-    );
+    const confirmed = window.confirm(consentDialogMessage(moduleInfo, missing));
     if (!confirmed) return;
   }
 

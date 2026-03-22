@@ -776,6 +776,24 @@ macro_rules! build_ptt_hot_stream_typed {
                         if recording_now {
                             if !was_recording {
                                 let warmup = pre_roll.take_all_samples();
+                                let warmup_ms = (warmup.len() as u64 * 1000) / TARGET_SAMPLE_RATE as u64;
+                                let expected_ms =
+                                    (pre_roll_samples as u64 * 1000) / TARGET_SAMPLE_RATE as u64;
+                                if pre_roll_samples > 0 {
+                                    if warmup.len()
+                                        < ((pre_roll_samples as f64 * 0.75).round() as usize)
+                                    {
+                                        warn!(
+                                            "PTT pre-roll underfilled: expected up to {} ms, got {} ms",
+                                            expected_ms, warmup_ms
+                                        );
+                                    } else {
+                                        info!(
+                                            "PTT pre-roll applied: {} ms (target {} ms)",
+                                            warmup_ms, expected_ms
+                                        );
+                                    }
+                                }
                                 if let Ok(mut guard) = buffer.lock() {
                                     guard.reset();
                                     if !warmup.is_empty() {
@@ -837,7 +855,7 @@ fn start_ptt_hot_standby(
     app: &AppHandle,
     state: &State<'_, AppState>,
     settings: &Settings,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let device_id = settings.input_device.clone();
 
     let (existing_stop_tx, existing_join_handle, buffer, gain_db, recording_flag) = {
@@ -852,7 +870,7 @@ fn start_ptt_hot_standby(
 
         let same_device = recorder.ptt_hot_device_id.as_deref() == Some(device_id.as_str());
         if recorder.ptt_hot_join_handle.is_some() && same_device {
-            return Ok(());
+            return Ok(false);
         }
 
         recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
@@ -955,7 +973,7 @@ fn start_ptt_hot_standby(
     recorder.ptt_hot_stop_tx = Some(stop_tx);
     recorder.ptt_hot_join_handle = Some(join_handle);
     recorder.ptt_hot_device_id = Some(device_id);
-    Ok(())
+    Ok(true)
 }
 
 pub(crate) fn sync_ptt_hot_standby(
@@ -991,7 +1009,14 @@ fn start_ptt_hot_recording(
     if !settings.capture_enabled {
         return Ok(());
     }
-    start_ptt_hot_standby(app, state, settings)?;
+    let standby_started_fresh = start_ptt_hot_standby(app, state, settings)?;
+    if standby_started_fresh {
+        // Cold standby start means pre-roll has not accumulated yet; recording still
+        // works, but the very first syllable can be clipped in this edge case.
+        warn!(
+            "PTT standby started on key press (cold start); pre-roll may be limited for this press"
+        );
+    }
 
     let mut recorder = state
         .recorder
@@ -1200,7 +1225,7 @@ fn handle_transcription_ok(
         entry_id = updated.first().map(|entry| entry.id.clone());
         let _ = app_handle.emit("history:updated", updated);
     }
-    let paste_deferred = should_defer_paste_for_refinement(settings);
+    let paste_deferred = should_defer_paste_for_refinement(&app_handle, settings);
     let _ = app_handle.emit(
         "transcription:result",
         TranscriptionResult {
@@ -1223,23 +1248,37 @@ fn handle_transcription_ok(
         job_id,
         entry_id,
         settings,
+        paste_deferred,
     );
 
     Some(processed_text.len())
 }
 
-fn should_defer_paste_for_refinement(settings: &Settings) -> bool {
-    if !settings.ai_fallback.enabled {
+fn ai_refinement_capability_enabled(settings: &Settings) -> bool {
+    settings
+        .module_settings
+        .enabled_modules
+        .contains(crate::state::AI_REFINEMENT_MODULE_ID)
+        && settings.ai_fallback.enabled
+}
+
+fn should_defer_paste_for_refinement_inner(settings: &Settings, ollama_ready: bool) -> bool {
+    if !ai_refinement_capability_enabled(settings) {
         return false;
     }
     let provider = settings.ai_fallback.provider.as_str();
-    // Ollama: defer only in local_primary mode (runtime managed by Trispr Flow).
+    // Ollama: defer only in local_primary mode and only once runtime is actually ready.
     if provider == "ollama" {
-        return settings.ai_fallback.execution_mode == "local_primary";
+        return settings.ai_fallback.execution_mode == "local_primary" && ollama_ready;
     }
     // LM Studio / Oobabooga: external local servers — always defer so refined
     // output replaces raw paste instead of both appearing in sequence.
     provider == "lm_studio" || provider == "oobabooga"
+}
+
+fn should_defer_paste_for_refinement(app_handle: &AppHandle, settings: &Settings) -> bool {
+    let startup_status = crate::startup_status_snapshot(app_handle.state::<AppState>().inner());
+    should_defer_paste_for_refinement_inner(settings, startup_status.ollama_ready)
 }
 
 fn next_transcription_job_id(source: &str) -> String {
@@ -1258,8 +1297,9 @@ pub(crate) fn maybe_spawn_ai_refinement(
     job_id: String,
     entry_id: Option<String>,
     settings: &Settings,
+    defer_announced: bool,
 ) {
-    if !settings.ai_fallback.enabled {
+    if !ai_refinement_capability_enabled(settings) {
         return;
     }
     let provider = settings.ai_fallback.provider.as_str();
@@ -1271,6 +1311,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
     // Ollama requires its local runtime to be ready before spawning refinement.
     // LM Studio / Oobabooga are external servers managed by the user — skip this check.
     if provider == "ollama"
+        && settings.ai_fallback.execution_mode == "local_primary"
         && !app_handle
             .state::<AppState>()
             .startup_status
@@ -1278,6 +1319,31 @@ pub(crate) fn maybe_spawn_ai_refinement(
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .ollama_ready
     {
+        let error_message =
+            "Ollama runtime not ready; refinement skipped and raw fallback is active.";
+        if let Some(entry_id_value) = entry_id.as_deref() {
+            let _ = mark_entry_refinement_failed(
+                &app_handle,
+                entry_id_value,
+                &job_id,
+                &text,
+                error_message,
+            );
+        }
+        let _ = app_handle.emit(
+            "transcription:refinement-failed",
+            serde_json::json!({
+                "job_id": job_id,
+                "entry_id": entry_id,
+                "source": source,
+                "original": text,
+                "error": error_message,
+                "reason": "runtime_not_ready",
+            }),
+        );
+        if defer_announced {
+            warn!("Refinement skipped after defer announcement because runtime is not ready");
+        }
         return;
     }
 
@@ -1301,6 +1367,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
                 "source": source,
                 "original": text,
                 "error": "Refinement queue full — previous refinement still running.",
+                "reason": "queue_full",
             }),
         );
         return;
@@ -1318,6 +1385,11 @@ pub(crate) fn maybe_spawn_ai_refinement(
                 Ok(s) => s,
                 Err(error) => {
                     error!("AI refinement skipped: {}", error);
+                    let reason_code = if error.to_ascii_lowercase().contains("not ready") {
+                        "runtime_not_ready"
+                    } else {
+                        "prepare_failed"
+                    };
                     record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
                     if let Some(entry_id_value) = entry_id.as_deref() {
                         let _ = mark_entry_refinement_failed(
@@ -1336,6 +1408,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             "source": source.clone(),
                             "original": text.clone(),
                             "error": error,
+                            "reason": reason_code,
                         }),
                     );
                     return;
@@ -1433,6 +1506,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             "source": source,
                             "original": text,
                             "error": e.to_string(),
+                            "reason": "provider_error",
                         }),
                     );
                 }
@@ -2485,4 +2559,55 @@ pub(crate) fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Res
 pub(crate) fn stop_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     stop_recording_async(app, &state);
     Ok(())
+}
+
+#[cfg(test)]
+mod refinement_defer_policy_tests {
+    use super::should_defer_paste_for_refinement_inner;
+    use crate::state::{Settings, AI_REFINEMENT_MODULE_ID};
+
+    fn settings_for_policy(module_enabled: bool, setting_enabled: bool) -> Settings {
+        let mut settings = Settings::default();
+        if module_enabled {
+            settings
+                .module_settings
+                .enabled_modules
+                .insert(AI_REFINEMENT_MODULE_ID.to_string());
+        }
+        settings.ai_fallback.enabled = setting_enabled;
+        settings.ai_fallback.provider = "ollama".to_string();
+        settings.ai_fallback.execution_mode = "local_primary".to_string();
+        settings
+    }
+
+    #[test]
+    fn ollama_not_ready_disables_deferred_paste() {
+        let settings = settings_for_policy(true, true);
+        assert!(!should_defer_paste_for_refinement_inner(&settings, false));
+    }
+
+    #[test]
+    fn ollama_ready_enables_deferred_paste() {
+        let settings = settings_for_policy(true, true);
+        assert!(should_defer_paste_for_refinement_inner(&settings, true));
+    }
+
+    #[test]
+    fn module_or_setting_disabled_forces_no_defer() {
+        let module_disabled = settings_for_policy(false, true);
+        assert!(!should_defer_paste_for_refinement_inner(&module_disabled, true));
+
+        let setting_disabled = settings_for_policy(true, false);
+        assert!(!should_defer_paste_for_refinement_inner(&setting_disabled, true));
+    }
+
+    #[test]
+    fn compat_local_provider_still_defers_when_capability_on() {
+        let mut settings = settings_for_policy(true, true);
+        settings.ai_fallback.provider = "lm_studio".to_string();
+        assert!(should_defer_paste_for_refinement_inner(&settings, false));
+
+        settings.ai_fallback.provider = "oobabooga".to_string();
+        assert!(should_defer_paste_for_refinement_inner(&settings, false));
+    }
 }

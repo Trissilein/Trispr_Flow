@@ -40,7 +40,8 @@ export function setSettings(newSettings: Settings | null) {
 
 /** Returns true only when AI refinement is explicitly enabled in settings. */
 export function isRefinementEnabled(): boolean {
-  return settings?.ai_fallback?.enabled === true;
+  const moduleEnabled = settings?.module_settings?.enabled_modules?.includes("ai_refinement") ?? false;
+  return moduleEnabled && settings?.ai_fallback?.enabled === true;
 }
 
 export function updateSettings(newSettings: Partial<Settings>) {

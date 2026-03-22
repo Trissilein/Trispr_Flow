@@ -17,17 +17,17 @@
     and end up in <install_dir>/resources/bin/piper/ after the NSIS installer runs.
 
 .PARAMETER PiperVersion
-    Piper release tag to download (default: v1.2.0).
+    Piper release tag to download (default: 2023.11.14-2).
 
 .PARAMETER SkipVoices
     Skip voice model downloads (e.g. when only refreshing the binary).
 
 .EXAMPLE
     .\scripts\setup-piper.ps1
-    .\scripts\setup-piper.ps1 -PiperVersion v1.2.0 -SkipVoices
+    .\scripts\setup-piper.ps1 -PiperVersion 2023.11.14-2 -SkipVoices
 #>
 param(
-    [string]$PiperVersion = "v1.2.0",
+    [string]$PiperVersion = "2023.11.14-2",
     [switch]$SkipVoices
 )
 
@@ -43,9 +43,13 @@ function Confirm-File($path, $desc) {
     if (-not (Test-Path $path)) { throw "Expected $desc not found at: $path" }
     Write-Host "  OK: $desc"
 }
+function Test-NonEmptyFile($path) {
+    if (-not (Test-Path $path)) { return $false }
+    return (Get-Item $path).Length -gt 0
+}
 
 # ---------------------------------------------------------------------------
-Write-Section "Piper TTS setup — $PiperVersion"
+Write-Section "Piper TTS setup - $PiperVersion"
 Write-Host "Piper dir : $PiperDir"
 Write-Host "Voices dir: $VoicesDir"
 
@@ -77,7 +81,10 @@ if (-not (Test-Path $PiperExtracted)) {
 $FilesToCopy = @(
     "piper.exe",
     "onnxruntime.dll",
-    "onnxruntime_providers_shared.dll"
+    "onnxruntime_providers_shared.dll",
+    "espeak-ng.dll",
+    "piper_phonemize.dll",
+    "libtashkeel_model.ort"
 )
 foreach ($f in $FilesToCopy) {
     $src = Join-Path $PiperExtracted $f
@@ -120,7 +127,7 @@ if (-not $SkipVoices) {
         $OnnxDst     = Join-Path $VoicesDir "$($v.Name).onnx"
         $OnnxCfgDst  = Join-Path $VoicesDir "$($v.Name).onnx.json"
 
-        if (Test-Path $OnnxDst) {
+        if (Test-NonEmptyFile $OnnxDst) {
             Write-Host "  Skipping $($v.Name).onnx (already exists)"
         } else {
             Write-Host "  Fetching: $($v.Name).onnx (~50-70 MB)..."
@@ -128,7 +135,7 @@ if (-not $SkipVoices) {
             Write-Host "  OK: $($v.Name).onnx"
         }
 
-        if (Test-Path $OnnxCfgDst) {
+        if (Test-NonEmptyFile $OnnxCfgDst) {
             Write-Host "  Skipping $($v.Name).onnx.json (already exists)"
         } else {
             Write-Host "  Fetching: $($v.Name).onnx.json..."
@@ -143,7 +150,7 @@ Write-Section "Summary"
 Write-Host "Binary : $(Join-Path $PiperDir 'piper.exe')"
 Write-Host "Voices : $VoicesDir"
 Get-ChildItem -Path $VoicesDir -Filter "*.onnx" -ErrorAction SilentlyContinue |
-    ForEach-Object { Write-Host "  - $($_.Name)" }
+    ForEach-Object { Write-Host ("  - {0}" -f $_.Name) }
 
 Write-Host ""
 Write-Host 'Next: npm run tauri build (or build-both-installers.bat)' -ForegroundColor Green

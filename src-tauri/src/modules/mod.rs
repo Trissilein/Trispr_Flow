@@ -210,8 +210,8 @@ impl Default for VisionInputSettings {
 #[serde(default)]
 pub struct VoiceOutputSettings {
     pub enabled: bool,
-    pub default_provider: String,  // "windows_native" | "local_custom"
-    pub fallback_provider: String, // "windows_native" | "local_custom"
+    pub default_provider: String, // "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts"
+    pub fallback_provider: String, // "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts"
     pub voice_id_windows: String,
     pub voice_id_local: String,
     pub rate: f32,             // 0.5..2.0
@@ -223,6 +223,16 @@ pub struct VoiceOutputSettings {
     pub piper_model_path: String,
     /// Directory to scan for available Piper voice models (.onnx files).
     pub piper_model_dir: String,
+    /// OpenAI-compatible speech endpoint used by qwen3_tts runtime provider.
+    pub qwen3_tts_endpoint: String,
+    /// Qwen model id consumed by the qwen3_tts endpoint.
+    pub qwen3_tts_model: String,
+    /// Voice/speaker id for qwen3_tts endpoint.
+    pub qwen3_tts_voice: String,
+    /// Optional bearer token for qwen3_tts endpoint.
+    pub qwen3_tts_api_key: String,
+    /// Request timeout for qwen3_tts endpoint.
+    pub qwen3_tts_timeout_sec: u64,
 }
 
 impl Default for VoiceOutputSettings {
@@ -239,6 +249,11 @@ impl Default for VoiceOutputSettings {
             piper_binary_path: String::new(),
             piper_model_path: String::new(),
             piper_model_dir: String::new(),
+            qwen3_tts_endpoint: "http://127.0.0.1:8000/v1/audio/speech".to_string(),
+            qwen3_tts_model: "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice".to_string(),
+            qwen3_tts_voice: "vivian".to_string(),
+            qwen3_tts_api_key: String::new(),
+            qwen3_tts_timeout_sec: 45,
         }
     }
 }
@@ -364,11 +379,15 @@ pub fn normalize_vision_input_settings(settings: &mut VisionInputSettings) {
 
 pub fn normalize_voice_output_settings(settings: &mut VoiceOutputSettings) {
     settings.default_provider = match settings.default_provider.as_str() {
+        "windows_natural" => "windows_natural".to_string(),
         "local_custom" => "local_custom".to_string(),
+        "qwen3_tts" => "qwen3_tts".to_string(),
         _ => "windows_native".to_string(),
     };
     settings.fallback_provider = match settings.fallback_provider.as_str() {
+        "windows_natural" => "windows_natural".to_string(),
         "local_custom" => "local_custom".to_string(),
+        "qwen3_tts" => "qwen3_tts".to_string(),
         _ => "windows_native".to_string(),
     };
     if !settings.rate.is_finite() {
@@ -384,4 +403,19 @@ pub fn normalize_voice_output_settings(settings: &mut VoiceOutputSettings) {
         "explicit_only" => "explicit_only".to_string(),
         _ => "agent_replies_only".to_string(),
     };
+
+    settings.qwen3_tts_endpoint = settings.qwen3_tts_endpoint.trim().to_string();
+    if settings.qwen3_tts_endpoint.is_empty() {
+        settings.qwen3_tts_endpoint = "http://127.0.0.1:8000/v1/audio/speech".to_string();
+    }
+    settings.qwen3_tts_model = settings.qwen3_tts_model.trim().to_string();
+    if settings.qwen3_tts_model.is_empty() {
+        settings.qwen3_tts_model = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice".to_string();
+    }
+    settings.qwen3_tts_voice = settings.qwen3_tts_voice.trim().to_string();
+    if settings.qwen3_tts_voice.is_empty() {
+        settings.qwen3_tts_voice = "vivian".to_string();
+    }
+    settings.qwen3_tts_api_key = settings.qwen3_tts_api_key.trim().to_string();
+    settings.qwen3_tts_timeout_sec = settings.qwen3_tts_timeout_sec.clamp(3, 180);
 }

@@ -124,8 +124,12 @@ function setAiNodeCopy(summary: string): void {
   }
 }
 
+function isAiRefinementModuleEnabled(): boolean {
+  return settings?.module_settings?.enabled_modules?.includes("ai_refinement") ?? false;
+}
+
 function isLocalAiPathEnabled(): boolean {
-  if (!settings?.ai_fallback?.enabled) return false;
+  if (!isAiRefinementModuleEnabled() || !settings?.ai_fallback?.enabled) return false;
   return (
     settings.ai_fallback.provider === "ollama"
     && settings.ai_fallback.execution_mode === "local_primary"
@@ -133,7 +137,7 @@ function isLocalAiPathEnabled(): boolean {
 }
 
 function isCompatLocalPathEnabled(): boolean {
-  if (!settings?.ai_fallback?.enabled) return false;
+  if (!isAiRefinementModuleEnabled() || !settings?.ai_fallback?.enabled) return false;
   const p = settings.ai_fallback.provider;
   return p === "lm_studio" || p === "oobabooga";
 }
@@ -208,7 +212,7 @@ function updateLiveSummary(
 export function renderRefinementPipelineGraph(): void {
   if (!dom.refinementPipelineGraph) return;
 
-  const aiEnabled = Boolean(settings?.ai_fallback?.enabled);
+  const aiEnabled = isAiRefinementModuleEnabled() && Boolean(settings?.ai_fallback?.enabled);
   const rulesEnabled = Boolean(settings?.postproc_enabled);
   const rulesReady = startupStatus?.rules_ready ?? true;
   const ollamaReady = Boolean(startupStatus?.ollama_ready);
@@ -411,10 +415,14 @@ export function handlePipelineRefined(payload: TranscriptionRefinedEvent): void 
 export function handlePipelineRefinementFailed(payload: TranscriptionRefinementFailedEvent): void {
   const jobId = (payload?.job_id || "").trim();
   if (!jobId) return;
+  const reason = (payload.reason || "").trim();
+  const reasonLabel = reason === "runtime_not_ready" ? "runtime_not_ready" : "";
   pipelineJobState.jobId = jobId;
   pipelineJobState.source = payload.source || pipelineJobState.source;
   pipelineJobState.phase = "failed";
-  pipelineJobState.error = payload.error || "";
+  pipelineJobState.error = reasonLabel
+    ? `${reasonLabel}: ${payload.error || ""}`.trim()
+    : (payload.error || "");
   renderRefinementPipelineGraph();
   schedulePipelineTerminalReset(jobId);
 }

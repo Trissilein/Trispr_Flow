@@ -238,14 +238,30 @@ fn default_whisper_gpu_layers() -> Option<usize> {
     Some(35)
 }
 
+fn default_product_mode() -> String {
+    "transcribe".to_string()
+}
+
 fn default_local_backend_preference() -> String {
     "auto".to_string()
+}
+
+pub(crate) const AI_REFINEMENT_MODULE_ID: &str = "ai_refinement";
+const AI_REFINEMENT_MIGRATION_FLAG_KEY: &str = "ai_refinement.migrated_legacy";
+
+fn normalize_product_mode_value(value: &str) -> String {
+    match value.trim().to_lowercase().as_str() {
+        "assistant" | "agent" | "workflow_agent" => "assistant".to_string(),
+        _ => "transcribe".to_string(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
     pub(crate) mode: String,
+    #[serde(default = "default_product_mode")]
+    pub(crate) product_mode: String,
     pub(crate) hotkey_ptt: String,
     pub(crate) hotkey_toggle: String,
     pub(crate) input_device: String,
@@ -395,6 +411,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
       mode: "ptt".to_string(),
+      product_mode: default_product_mode(),
       hotkey_ptt: "CommandOrControl+Shift+Space".to_string(),
       hotkey_toggle: "CommandOrControl+Shift+M".to_string(),
       input_device: "default".to_string(),
@@ -805,6 +822,7 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if settings.mode != "ptt" && settings.mode != "vad" {
                 settings.mode = "ptt".to_string();
             }
+            settings.product_mode = normalize_product_mode_value(&settings.product_mode);
             // Migrate legacy vad_threshold to new dual-threshold system
             if settings.vad_threshold_start <= 0.0 {
                 settings.vad_threshold_start = if settings.vad_threshold > 0.0 {
@@ -1084,6 +1102,7 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             // Normalize v0.7 AI fallback settings and legacy compatibility fields.
             normalize_ai_fallback_fields(&mut settings);
             normalize_module_settings(&mut settings.module_settings);
+            normalize_ai_refinement_module_binding(&mut settings);
             normalize_gdd_module_settings(&mut settings.gdd_module_settings);
             normalize_confluence_settings(&mut settings.confluence_settings);
             normalize_workflow_agent_settings(&mut settings.workflow_agent);
@@ -1284,6 +1303,42 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
     }
 }
 
+pub(crate) fn normalize_ai_refinement_module_binding(settings: &mut Settings) {
+    let migration_done = settings
+        .module_settings
+        .module_overrides
+        .get(AI_REFINEMENT_MIGRATION_FLAG_KEY)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+
+    if settings.ai_fallback.enabled
+        && !settings
+            .module_settings
+            .enabled_modules
+            .contains(AI_REFINEMENT_MODULE_ID)
+        && !migration_done
+    {
+        settings
+            .module_settings
+            .enabled_modules
+            .insert(AI_REFINEMENT_MODULE_ID.to_string());
+    }
+
+    if !settings
+        .module_settings
+        .enabled_modules
+        .contains(AI_REFINEMENT_MODULE_ID)
+    {
+        settings.ai_fallback.enabled = false;
+        settings.postproc_llm_enabled = false;
+    }
+
+    settings.module_settings.module_overrides.insert(
+        AI_REFINEMENT_MIGRATION_FLAG_KEY.to_string(),
+        serde_json::Value::Bool(true),
+    );
+}
+
 pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
     // Default values for legacy migration comparisons — avoids constructing a full
     // Settings::default() on every call.
@@ -1393,6 +1448,10 @@ pub(crate) fn normalize_history_alias_fields(settings: &mut Settings) {
     );
 }
 
+pub(crate) fn normalize_product_mode_field(settings: &mut Settings) {
+    settings.product_mode = normalize_product_mode_value(&settings.product_mode);
+}
+
 pub(crate) fn speaker_name_for_source(settings: &Settings, source: &str) -> String {
     match source {
         "mic" => settings.history_alias_mic.clone(),
@@ -1406,8 +1465,10 @@ pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result
     let mut persisted = settings.clone();
     // Do not persist session-only transcribe enablement.
     persisted.transcribe_enabled = false;
+    normalize_product_mode_field(&mut persisted);
     normalize_history_alias_fields(&mut persisted);
     normalize_module_settings(&mut persisted.module_settings);
+    normalize_ai_refinement_module_binding(&mut persisted);
     normalize_gdd_module_settings(&mut persisted.gdd_module_settings);
     normalize_confluence_settings(&mut persisted.confluence_settings);
     normalize_workflow_agent_settings(&mut persisted.workflow_agent);
@@ -1713,6 +1774,60 @@ pub(crate) fn mark_entry_refinement_failed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn product_mode_normalization_accepts_assistant_and_defaults_to_transcribe() {
+        assert_eq!(normalize_product_mode_value("assistant"), "assistant");
+        assert_eq!(normalize_product_mode_value("agent"), "assistant");
+        assert_eq!(normalize_product_mode_value("workflow_agent"), "assistant");
+        assert_eq!(normalize_product_mode_value("transcribe"), "transcribe");
+        assert_eq!(normalize_product_mode_value(""), "transcribe");
+        assert_eq!(normalize_product_mode_value("unexpected"), "transcribe");
+    }
+
+    #[test]
+    fn ai_refinement_module_migration_preserves_legacy_enabled_state() {
+        let mut settings = Settings::default();
+        settings.ai_fallback.enabled = true;
+        settings.postproc_llm_enabled = true;
+
+        normalize_ai_fallback_fields(&mut settings);
+        normalize_module_settings(&mut settings.module_settings);
+        normalize_ai_refinement_module_binding(&mut settings);
+
+        assert!(settings.ai_fallback.enabled);
+        assert!(settings.postproc_llm_enabled);
+        assert!(
+            settings
+                .module_settings
+                .enabled_modules
+                .contains(AI_REFINEMENT_MODULE_ID)
+        );
+    }
+
+    #[test]
+    fn ai_refinement_module_disabled_forces_hard_off() {
+        let mut settings = Settings::default();
+        settings.ai_fallback.enabled = true;
+        settings.postproc_llm_enabled = true;
+        settings.module_settings.module_overrides.insert(
+            "ai_refinement.migrated_legacy".to_string(),
+            serde_json::Value::Bool(true),
+        );
+
+        normalize_ai_fallback_fields(&mut settings);
+        normalize_module_settings(&mut settings.module_settings);
+        normalize_ai_refinement_module_binding(&mut settings);
+
+        assert!(!settings.ai_fallback.enabled);
+        assert!(!settings.postproc_llm_enabled);
+        assert!(
+            !settings
+                .module_settings
+                .enabled_modules
+                .contains(AI_REFINEMENT_MODULE_ID)
+        );
+    }
 
     fn sample_history_entry(id: &str, status: &str, refined: &str, error: &str) -> HistoryEntry {
         HistoryEntry {

@@ -64,6 +64,7 @@ import {
   setRuntimeDiagnostics,
   setOverlayHealth,
   setStartupStatus,
+  isRefinementEnabled,
 } from "./state";
 import * as dom from "./dom-refs";
 import { renderAIFallbackSettingsUi, renderSettings } from "./settings";
@@ -79,7 +80,13 @@ import {
 import { scheduleHistoryRender, setHistoryTab, initHistoryDelegation } from "./history";
 import { initPanelState, isPanelCollapsed, setPanelCollapsed } from "./panels";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
-import { wireEvents, initMainTab, cleanupWindowListeners, scheduleSettingsRender } from "./event-listeners";
+import {
+  wireEvents,
+  initMainTab,
+  cleanupWindowListeners,
+  scheduleSettingsRender,
+  reconcileMainTabVisibility,
+} from "./event-listeners";
 import { initUnifiedTooltips, cleanupUnifiedTooltips } from "./custom-tooltips";
 import { dismissToast, showToast, showErrorToast } from "./toast";
 import { playAudioCue } from "./audio-cues";
@@ -687,7 +694,7 @@ async function bootstrap() {
       // init anyway in case the event never arrives (Ollama disabled, etc.).
       // This replaces the old "ping immediately at startup" pattern that
       // caused timeout-storms and IPC freezes.
-      if (settings?.ai_fallback?.provider === "ollama") {
+      if (isRefinementEnabled() && settings?.ai_fallback?.provider === "ollama") {
         const OLLAMA_FALLBACK_MS = 30_000;
         let ollamaInitDone = false;
 
@@ -769,10 +776,12 @@ async function bootstrap() {
   const _newListeners = await Promise.all([
     listen<Settings>("settings-changed", (event) => {
       setSettings(event.payload ?? null);
+      const settingsSnapshot = settings;
+      reconcileMainTabVisibility();
       if (
-        !settings?.ai_fallback?.enabled
-        || settings.ai_fallback.provider !== "ollama"
-        || settings.ai_fallback.execution_mode !== "local_primary"
+        !isRefinementEnabled()
+        || settingsSnapshot?.ai_fallback?.provider !== "ollama"
+        || settingsSnapshot?.ai_fallback?.execution_mode !== "local_primary"
       ) {
         resetTrackedRefinementJobs();
       }
@@ -782,7 +791,7 @@ async function bootstrap() {
       refreshModulesHub();
       syncWorkflowAgentConsoleState();
       void refreshModelsDir().catch((e) => console.error("refreshModelsDir failed:", e));
-      if (settings?.ai_fallback?.provider === "ollama") {
+      if (isRefinementEnabled() && settings?.ai_fallback?.provider === "ollama") {
         if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshInstalledModels) {
           void refreshOllamaInstalledModels();
         }
@@ -818,13 +827,40 @@ async function bootstrap() {
     listen<HistoryEntry[]>("history:updated", makeHistoryUpdateHandler(setHistory)),
     listen<HistoryEntry[]>("transcribe:history-updated", makeHistoryUpdateHandler(setTranscribeHistory)),
     listen("module:state-changed", () => {
+      reconcileMainTabVisibility();
       refreshModulesHub();
     }),
-    listen<{ provider: string; error: string }>("tts:speech-error", (event) => {
+    listen<{
+      provider?: string;
+      preferred_provider?: string;
+      fallback_provider?: string;
+      context?: string;
+      error: string;
+    }>("tts:speech-error", (event) => {
+      const preferred = event.payload.preferred_provider || event.payload.provider || "unknown";
+      const fallback = event.payload.fallback_provider || "none";
       showToast({
         type: "error",
         title: "Voice output failed",
-        message: event.payload.error,
+        message: `${event.payload.error} (preferred: ${preferred}, fallback: ${fallback})`,
+      });
+    }),
+    listen<{
+      provider_used: string;
+      preferred_provider?: string;
+      fallback_provider?: string;
+      used_fallback?: boolean;
+      primary_error?: string;
+      context?: string;
+    }>("tts:speech-finished", (event) => {
+      if (!event.payload.used_fallback || event.payload.context !== "manual_test") return;
+      const preferred = event.payload.preferred_provider || "unknown";
+      const used = event.payload.provider_used || "unknown";
+      const primaryError = event.payload.primary_error ? ` (${event.payload.primary_error})` : "";
+      showToast({
+        type: "warning",
+        title: "Voice output fallback used",
+        message: `${preferred} failed${primaryError}. Switched to ${used}.`,
       });
     }),
     // Re-check Ollama health when a timeout or connection error occurs during
@@ -927,7 +963,10 @@ async function bootstrap() {
       } else {
         rememberDeferredPasteOutcome(payload.job_id, "failed");
       }
-      console.warn(`[AI] Refinement failed (${payload.source}):`, payload.error);
+      console.warn(
+        `[AI] Refinement failed (${payload.source}, ${payload.reason || "unknown"}):`,
+        payload.error
+      );
     }),
     listen<TranscriptionRefinementActivityEvent>("transcription:refinement-activity", (event) => {
       const payload = event.payload;
@@ -1063,8 +1102,15 @@ async function bootstrap() {
         return;
       }
       if (payload.status === "recovering") {
+        setOverlayHealth(payload);
+        renderSettings();
+        return;
+      }
+      if (payload.status === "recovered") {
         setOverlayHealth(null);
         renderSettings();
+        dismissToast(overlayHealthToastId);
+        overlayHealthToastId = null;
         return;
       }
       setOverlayHealth(payload);
@@ -1235,6 +1281,7 @@ async function checkDependencyPreflightOnStartup() {
         // Avoid noisy warning toasts in that short window.
         if (
           item.id === "ollama_runtime" &&
+          isRefinementEnabled() &&
           settings?.ai_fallback?.provider === "ollama" &&
           (runtimeCard.busy || runtimeCard.backgroundStarting)
         ) {

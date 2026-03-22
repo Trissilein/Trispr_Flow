@@ -1,14 +1,18 @@
 use crate::state::{AppState, Settings};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WindowEvent};
 use tracing::warn;
 
-/// Set to `true` after the very first WebView2 creation failure so we stop
-/// retrying and blocking threads.  The overlay is cosmetic — the app must
-/// never freeze because of it.
-static OVERLAY_CREATION_FAILED: AtomicBool = AtomicBool::new(false);
+const OVERLAY_RECOVERY_MAX_ATTEMPTS: u32 = 4;
+const OVERLAY_RECOVERY_BACKOFF_MS: u64 = 140;
+const OVERLAY_CREATE_COOLDOWN_MS: u64 = 1_200;
+const OVERLAY_HEARTBEAT_STALE_MS: u64 = 6_000;
+
+/// Throttles repeated create attempts after hard WebView failures.
+/// Unlike the legacy lockout, this is a short cooldown and never permanent.
+static OVERLAY_CREATE_COOLDOWN_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
 static OVERLAY_CREATE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +59,7 @@ pub struct OverlayController {
     pub desired_settings: Option<OverlaySettings>,
     pub refining_active: bool,
     pub last_level: f64,
+    pub last_heartbeat_ms: u64,
     pub recovery_attempt: u32,
 }
 
@@ -65,6 +70,7 @@ impl Default for OverlayController {
             desired_settings: None,
             refining_active: false,
             last_level: 0.0,
+            last_heartbeat_ms: 0,
             recovery_attempt: 0,
         }
     }
@@ -97,6 +103,36 @@ fn emit_overlay_health(app: &AppHandle, status: &str, attempt: u32, reason: impl
     );
 }
 
+fn now_ms() -> u64 {
+    crate::util::now_ms()
+}
+
+fn overlay_create_cooldown_active() -> bool {
+    let until = OVERLAY_CREATE_COOLDOWN_UNTIL_MS.load(Ordering::Acquire);
+    until > now_ms()
+}
+
+fn set_overlay_create_cooldown(duration_ms: u64) {
+    let until = now_ms().saturating_add(duration_ms);
+    OVERLAY_CREATE_COOLDOWN_UNTIL_MS.store(until, Ordering::Release);
+}
+
+pub fn mark_overlay_heartbeat(app: &AppHandle) {
+    with_overlay_controller(app, |controller| {
+        controller.last_heartbeat_ms = now_ms();
+    });
+}
+
+fn overlay_heartbeat_stale(controller: &OverlayController) -> bool {
+    if matches!(controller.desired_state, OverlayState::Hidden) {
+        return false;
+    }
+    if controller.last_heartbeat_ms == 0 {
+        return false;
+    }
+    now_ms().saturating_sub(controller.last_heartbeat_ms) > OVERLAY_HEARTBEAT_STALE_MS
+}
+
 pub fn prime_overlay_controller(
     app: &AppHandle,
     desired_settings: Option<OverlaySettings>,
@@ -114,6 +150,7 @@ pub fn prime_overlay_controller(
 /// Called when the overlay webview signals readiness.
 /// Settings, state and last level are replayed from the cached desired state.
 pub fn mark_overlay_ready(app: &AppHandle) {
+    mark_overlay_heartbeat(app);
     let _ = ensure_overlay_window(app, "ready");
 }
 
@@ -137,10 +174,9 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         return Ok(existing);
     }
 
-    // If a previous creation attempt failed (e.g. WebView2 E_INVALIDARG),
-    // don't retry — it will fail again and block the calling thread.
-    if OVERLAY_CREATION_FAILED.load(Ordering::Relaxed) {
-        return Err("Overlay creation previously failed; skipping retry".to_string());
+    // Cooldown after hard create failure to prevent tight retry loops.
+    if overlay_create_cooldown_active() {
+        return Err("Overlay create retry is cooling down".to_string());
     }
 
     let window = match tauri::WebviewWindowBuilder::new(
@@ -194,8 +230,8 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
                         "Failed to create overlay window. primary='{}' fallback='{}'",
                         primary_error, fallback_error
                     );
-                    warn!("{} — overlay disabled for this session", msg);
-                    OVERLAY_CREATION_FAILED.store(true, Ordering::Relaxed);
+                    warn!("{} — scheduling bounded overlay retry cooldown", msg);
+                    set_overlay_create_cooldown(OVERLAY_CREATE_COOLDOWN_MS);
                     return Err(msg);
                 }
             }
@@ -244,6 +280,76 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     Ok(window)
 }
 
+fn window_position_invalid(window: &WebviewWindow) -> bool {
+    let Some(monitor) = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())
+    else {
+        return false;
+    };
+
+    let outer_pos = match window.outer_position() {
+        Ok(pos) => pos,
+        Err(_) => return false,
+    };
+    let outer_size = match window.outer_size() {
+        Ok(size) => size,
+        Err(_) => return false,
+    };
+
+    let scale = monitor.scale_factor();
+    let monitor_size = monitor.size();
+    let monitor_pos = monitor.position();
+
+    let monitor_x = monitor_pos.x as f64 / scale;
+    let monitor_y = monitor_pos.y as f64 / scale;
+    let monitor_w = monitor_size.width as f64 / scale;
+    let monitor_h = monitor_size.height as f64 / scale;
+
+    let window_x = outer_pos.x as f64;
+    let window_y = outer_pos.y as f64;
+    let window_w = outer_size.width as f64;
+    let window_h = outer_size.height as f64;
+
+    let overlap_w = (window_x + window_w).min(monitor_x + monitor_w) - window_x.max(monitor_x);
+    let overlap_h = (window_y + window_h).min(monitor_y + monitor_h) - window_y.max(monitor_y);
+    overlap_w < 4.0 || overlap_h < 4.0
+}
+
+fn fallback_overlay_to_safe_anchor(window: &WebviewWindow) -> Result<(), String> {
+    let Some(monitor) = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())
+    else {
+        return Ok(());
+    };
+
+    let scale = monitor.scale_factor();
+    let monitor_size = monitor.size();
+    let monitor_pos = monitor.position();
+    let monitor_w = monitor_size.width as f64 / scale;
+    let monitor_h = monitor_size.height as f64 / scale;
+    let origin_x = monitor_pos.x as f64 / scale;
+    let origin_y = monitor_pos.y as f64 / scale;
+
+    let outer_size = window.outer_size().ok();
+    let width = outer_size.map(|size| size.width as f64).unwrap_or(64.0).max(32.0);
+    let height = outer_size
+        .map(|size| size.height as f64)
+        .unwrap_or(64.0)
+        .max(32.0);
+
+    let pos_x = origin_x + monitor_w * 0.5 - width * 0.5;
+    let pos_y = origin_y + monitor_h * 0.5 - height * 0.5;
+    window
+        .set_position(tauri::Position::Logical(tauri::LogicalPosition { x: pos_x, y: pos_y }))
+        .map_err(|e| format!("Failed to fallback overlay position to safe anchor: {}", e))
+}
+
 fn apply_overlay_state_to_window(
     app: &AppHandle,
     window: &WebviewWindow,
@@ -267,6 +373,15 @@ fn apply_overlay_state_to_window(
             let controller = overlay_controller_snapshot(app);
             if let Some(ref settings) = controller.desired_settings {
                 let _ = apply_overlay_settings_to_window(window, settings);
+            }
+        }
+        if window_position_invalid(window) {
+            let controller = overlay_controller_snapshot(app);
+            if let Some(ref settings) = controller.desired_settings {
+                let _ = apply_overlay_settings_to_window(window, settings);
+            }
+            if window_position_invalid(window) {
+                let _ = fallback_overlay_to_safe_anchor(window);
             }
         }
         window
@@ -352,8 +467,18 @@ fn replay_overlay_controller_to_window(
 
 pub fn ensure_overlay_window(app: &AppHandle, reason: &str) -> Result<WebviewWindow, String> {
     let mut last_error = None;
-    for attempt in 1..=2 {
+    for attempt in 1..=OVERLAY_RECOVERY_MAX_ATTEMPTS {
         let controller = overlay_controller_snapshot(app);
+        let stale_heartbeat = overlay_heartbeat_stale(&controller);
+        if stale_heartbeat {
+            let next_attempt = controller.recovery_attempt.saturating_add(1);
+            emit_overlay_health(
+                app,
+                "recovering",
+                next_attempt,
+                "Overlay heartbeat stale; replaying state",
+            );
+        }
         let window = match app.get_webview_window("overlay") {
             Some(existing) => existing,
             None => match create_overlay_window(app) {
@@ -368,10 +493,14 @@ pub fn ensure_overlay_window(app: &AppHandle, reason: &str) -> Result<WebviewWin
                         cached.recovery_attempt = cached.recovery_attempt.saturating_add(1);
                         cached.recovery_attempt
                     });
-                    if recovery_attempt <= 1 {
-                        emit_overlay_health(app, "recovering", recovery_attempt, err.clone());
-                    } else {
+                    if recovery_attempt >= OVERLAY_RECOVERY_MAX_ATTEMPTS {
                         emit_overlay_health(app, "failed", recovery_attempt, err.clone());
+                        set_overlay_create_cooldown(OVERLAY_CREATE_COOLDOWN_MS);
+                    } else {
+                        emit_overlay_health(app, "recovering", recovery_attempt, err.clone());
+                        std::thread::sleep(Duration::from_millis(
+                            OVERLAY_RECOVERY_BACKOFF_MS * attempt as u64,
+                        ));
                     }
                     continue;
                 }
@@ -380,10 +509,19 @@ pub fn ensure_overlay_window(app: &AppHandle, reason: &str) -> Result<WebviewWin
         match replay_overlay_controller_to_window(app, &window, &controller) {
             Ok(()) => {
                 if controller.recovery_attempt > 0 {
-                    emit_overlay_health(app, "recovering", 0, "Overlay recovered");
-                    with_overlay_controller(app, |cached| {
+                    let recovered_attempt = with_overlay_controller(app, |cached| {
+                        let previous = cached.recovery_attempt;
                         cached.recovery_attempt = 0;
+                        previous
                     });
+                    emit_overlay_health(
+                        app,
+                        "recovered",
+                        recovered_attempt,
+                        "Overlay recovered and synchronized",
+                    );
+                } else if stale_heartbeat {
+                    emit_overlay_health(app, "recovered", 0, "Overlay synchronized");
                 }
                 return Ok(window);
             }
@@ -397,10 +535,14 @@ pub fn ensure_overlay_window(app: &AppHandle, reason: &str) -> Result<WebviewWin
                     cached.recovery_attempt = cached.recovery_attempt.saturating_add(1);
                     cached.recovery_attempt
                 });
-                if recovery_attempt <= 1 {
-                    emit_overlay_health(app, "recovering", recovery_attempt, err.clone());
-                } else {
+                if recovery_attempt >= OVERLAY_RECOVERY_MAX_ATTEMPTS {
                     emit_overlay_health(app, "failed", recovery_attempt, err.clone());
+                    set_overlay_create_cooldown(OVERLAY_CREATE_COOLDOWN_MS);
+                } else {
+                    emit_overlay_health(app, "recovering", recovery_attempt, err.clone());
+                    std::thread::sleep(Duration::from_millis(
+                        OVERLAY_RECOVERY_BACKOFF_MS * attempt as u64,
+                    ));
                 }
             }
         }
@@ -410,7 +552,7 @@ pub fn ensure_overlay_window(app: &AppHandle, reason: &str) -> Result<WebviewWin
 }
 
 fn schedule_overlay_window_creation(app: &AppHandle, reason: &str) {
-    if OVERLAY_CREATION_FAILED.load(Ordering::Relaxed) {
+    if overlay_create_cooldown_active() {
         return;
     }
     if app.get_webview_window("overlay").is_some() {

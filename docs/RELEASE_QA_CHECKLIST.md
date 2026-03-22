@@ -1,6 +1,6 @@
 # Release QA Checklist (Block F)
 
-Last updated: 2026-03-06
+Last updated: 2026-03-21
 
 ## 1. Build and Test Gate
 
@@ -10,9 +10,11 @@ Last updated: 2026-03-06
 - `cargo test --manifest-path src-tauri/Cargo.toml --no-default-features`
 - `npm run audit:rust`
 - `npm run benchmark:latency:strict`
+- `npm run benchmark:tts:strict`
 
 Notes:
 - Rust gate runs unit tests with `--no-default-features` and validates default-feature build separately.
+- TTS strict gate enforces: recommendation present, release gate pass, and zero uncategorized benchmark failures.
 
 ### Automated Gate Runner
 
@@ -50,6 +52,14 @@ Notes:
 - AI refinement triggers and updates entries in-place.
 - System-audio clustering flushes after >8s gap and on worker exit.
 - Cluster merge replaces chunk entries and preserves chronology.
+
+## 6b. Voice Output Benchmark Gate
+
+- `bench/results/tts.latest.json` exists and is fresh for current release run.
+- `release_gate_pass = true` in TTS report.
+- `provider_consistency_ok = true` in TTS report.
+- `uncategorized_failure_count = 0` in TTS report.
+- `recommended_default_provider` is present and matches expected runtime-stable provider.
 
 ## 7. Regression and UX
 

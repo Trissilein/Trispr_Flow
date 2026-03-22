@@ -144,9 +144,22 @@ async function finishWizard(): Promise<void> {
     enabled: ollamaEnabled,
   };
 
+  const moduleSettings = {
+    enabled_modules: Array.from(
+      new Set(settings.module_settings?.enabled_modules ?? [])
+    ).filter((moduleId) => moduleId !== "ai_refinement"),
+    consented_permissions: { ...(settings.module_settings?.consented_permissions ?? {}) },
+    module_overrides: { ...(settings.module_settings?.module_overrides ?? {}) },
+  };
+  if (ollamaEnabled) {
+    moduleSettings.enabled_modules.push("ai_refinement");
+  }
+  moduleSettings.module_overrides["ai_refinement.migrated_legacy"] = true;
+
   updateSettings({ 
     setup, 
     ai_fallback,
+    module_settings: moduleSettings,
     hotkey_ptt: hotkey,
     local_backend_preference: detectedBackendRecommendation,
   });

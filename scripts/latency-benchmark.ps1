@@ -84,7 +84,7 @@ $devPort = Get-FreeTcpPort
 $npmCmd = Resolve-NpmCmd
 $overrideConfig = @{
   build = @{
-    beforeDevCommand = "npm run dev -- --port $devPort --strictPort"
+    beforeDevCommand = "npm run dev:web -- --port $devPort --strictPort"
     devUrl = "http://localhost:$devPort"
   }
 }

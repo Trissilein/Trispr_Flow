@@ -4,12 +4,14 @@ export type LocalAIFallbackProvider = "ollama" | "lm_studio" | "oobabooga";
 export type AIFallbackProvider = "claude" | "openai" | "gemini" | LocalAIFallbackProvider;
 export type CloudAIFallbackProvider = Exclude<AIFallbackProvider, LocalAIFallbackProvider>;
 export type AIExecutionMode = "local_primary" | "online_fallback";
+export type ProductMode = "transcribe" | "assistant";
 export type AIProviderAuthStatus = "locked" | "verified_api_key" | "verified_oauth";
 export type AIProviderAuthMethodPreference = "api_key" | "oauth";
 export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
 export type ModuleId =
   | "gdd"
   | "analysis"
+  | "ai_refinement"
   | "integrations_confluence"
   | "workflow_agent"
   | "input_vision"
@@ -242,8 +244,8 @@ export interface VisionInputSettings {
 
 export interface VoiceOutputSettings {
   enabled: boolean;
-  default_provider: "windows_native" | "local_custom";
-  fallback_provider: "windows_native" | "local_custom";
+  default_provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
+  fallback_provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
   voice_id_windows: string;
   voice_id_local: string;
   rate: number;
@@ -252,6 +254,11 @@ export interface VoiceOutputSettings {
   piper_binary_path?: string;
   piper_model_path?: string;
   piper_model_dir?: string;
+  qwen3_tts_endpoint?: string;
+  qwen3_tts_model?: string;
+  qwen3_tts_voice?: string;
+  qwen3_tts_api_key?: string;
+  qwen3_tts_timeout_sec?: number;
 }
 
 export interface AgentCommandParseResult {
@@ -344,21 +351,27 @@ export interface VisionSnapshotResult {
 }
 
 export interface TtsProviderInfo {
-  id: "windows_native" | "local_custom";
+  id: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
   label: string;
   available: boolean;
+  surface: "runtime_stable" | "benchmark_experimental";
+  reason?: string | null;
 }
 
 export interface TtsVoiceInfo {
   id: string;
   label: string;
-  provider: "windows_native" | "local_custom";
+  provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
 }
 
 export interface TtsSpeakResult {
-  provider_used: "windows_native" | "local_custom" | string;
+  provider_used: "windows_native" | "windows_natural" | "local_custom" | string;
   accepted: boolean;
   message: string;
+  used_fallback?: boolean | null;
+  preferred_provider?: "windows_native" | "windows_natural" | "local_custom" | string | null;
+  fallback_provider?: "windows_native" | "windows_natural" | "local_custom" | string | null;
+  primary_error?: string | null;
 }
 
 export interface AIFallbackSettings {
@@ -425,6 +438,7 @@ export interface SetupSettings {
 
 export interface Settings {
   mode: "ptt" | "vad";
+  product_mode: ProductMode;
   hotkey_ptt: string;
   hotkey_toggle: string;
   input_device: string;
@@ -707,12 +721,19 @@ export interface TranscriptionRefinedEvent {
   execution_time_ms: number;
 }
 
+export type RefinementFailureReason =
+  | "runtime_not_ready"
+  | "queue_full"
+  | "prepare_failed"
+  | "provider_error";
+
 export interface TranscriptionRefinementFailedEvent {
   job_id: string;
   entry_id?: string;
   source: string;
   original?: string;
   error: string;
+  reason?: RefinementFailureReason | string;
 }
 
 export interface TranscriptionRefinementActivityEvent {
@@ -859,7 +880,7 @@ export interface RuntimeDiagnostics {
 }
 
 export interface OverlayHealthEvent {
-  status: "recovering" | "failed";
+  status: "recovering" | "recovered" | "failed";
   attempt: number;
   reason: string;
 }

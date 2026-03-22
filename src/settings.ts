@@ -703,9 +703,10 @@ function renderOverlayHealthNote() {
     return;
   }
   dom.overlayHealthNote.hidden = false;
-  dom.overlayHealthNote.textContent =
-    health.status === "failed"
-      ? `Overlay degraded after ${health.attempt} recovery attempts: ${health.reason}`
+  dom.overlayHealthNote.textContent = health.status === "failed"
+    ? `Overlay degraded after ${health.attempt} recovery attempts: ${health.reason}`
+    : health.status === "recovered"
+      ? `Overlay recovered: ${health.reason}`
       : `Overlay recovering (${health.attempt}): ${health.reason}`;
 }
 
@@ -1035,9 +1036,7 @@ export function renderAIFallbackSettingsUi() {
     limited.forEach((entry) => {
       const option = document.createElement("option");
       option.value = entry.version;
-      option.textContent = entry.installable
-        ? entry.version
-        : `${entry.version} (not installable)`;
+      option.textContent = `${entry.version} (${entry.installable ? "installable" : "not installable"})`;
       option.disabled = !entry.installable && !entry.selected;
       dom.aiFallbackLocalRuntimeVersion?.appendChild(option);
     });
@@ -1713,12 +1712,35 @@ export function renderVoiceOutputSettings(): void {
   if (!settings?.voice_output_settings) return;
 
   const vo = settings.voice_output_settings;
+  const normalizeProvider = (
+    select: HTMLSelectElement | null,
+    preferred: string | undefined,
+    fallback: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts"
+  ): "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts" => {
+    if (!select) return fallback;
+    const candidate = (preferred ?? "").trim();
+    const optionExists = candidate.length > 0
+      && Array.from(select.options).some((option) => option.value === candidate && !option.disabled);
+    return optionExists ? (candidate as "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts") : fallback;
+  };
+  const normalizedDefault = normalizeProvider(
+    dom.voiceOutputDefaultProvider,
+    vo.default_provider as string | undefined,
+    "windows_native"
+  );
+  const normalizedFallback = normalizeProvider(
+    dom.voiceOutputFallbackProvider,
+    vo.fallback_provider as string | undefined,
+    "windows_native"
+  );
+  vo.default_provider = normalizedDefault;
+  vo.fallback_provider = normalizedFallback;
 
   if (dom.voiceOutputDefaultProvider) {
-    dom.voiceOutputDefaultProvider.value = vo.default_provider ?? "windows_native";
+    dom.voiceOutputDefaultProvider.value = normalizedDefault;
   }
   if (dom.voiceOutputFallbackProvider) {
-    dom.voiceOutputFallbackProvider.value = vo.fallback_provider ?? "windows_native";
+    dom.voiceOutputFallbackProvider.value = normalizedFallback;
   }
   if (dom.voiceOutputPolicy) {
     dom.voiceOutputPolicy.value = vo.output_policy ?? "agent_replies_only";
@@ -1751,5 +1773,23 @@ export function renderVoiceOutputSettings(): void {
   }
   if (dom.voiceOutputPiperModelDir) {
     dom.voiceOutputPiperModelDir.value = vo.piper_model_dir ?? "";
+  }
+  if (dom.voiceOutputQwenEndpoint) {
+    dom.voiceOutputQwenEndpoint.value = vo.qwen3_tts_endpoint ?? "http://127.0.0.1:8000/v1/audio/speech";
+  }
+  if (dom.voiceOutputQwenModel) {
+    dom.voiceOutputQwenModel.value = vo.qwen3_tts_model ?? "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice";
+  }
+  if (dom.voiceOutputQwenVoice) {
+    dom.voiceOutputQwenVoice.value = vo.qwen3_tts_voice ?? "vivian";
+  }
+  if (dom.voiceOutputQwenApiKey) {
+    dom.voiceOutputQwenApiKey.value = vo.qwen3_tts_api_key ?? "";
+  }
+  if (dom.voiceOutputQwenTimeoutSec) {
+    const timeout = Number.isFinite(vo.qwen3_tts_timeout_sec as number)
+      ? Math.max(3, Math.min(180, Number(vo.qwen3_tts_timeout_sec)))
+      : 45;
+    dom.voiceOutputQwenTimeoutSec.value = String(timeout);
   }
 }

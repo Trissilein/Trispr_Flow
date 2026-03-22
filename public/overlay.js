@@ -22,6 +22,7 @@ let refiningPreset = "standard";
 let refiningColor = "#6ec8ff";
 let refiningSpeedMs = 1150;
 let refiningRangePercent = 100;
+let lastHeartbeatSentAt = 0;
 
 // KITT settings
 let kittMinWidth = 20;
@@ -42,9 +43,21 @@ function updateOpacity() {
 
 function updateRefiningIndicator() {
   if (!container || !refineIndicator) return;
+  const wasActive = container.dataset.refining === "on";
   container.dataset.refining = refiningActive ? "on" : "off";
   container.dataset.refiningEnabled = refiningEnabled ? "true" : "false";
   container.dataset.refiningPreset = refiningPreset;
+  if (refiningActive && !wasActive) {
+    restartRefiningPulse();
+  }
+}
+
+function restartRefiningPulse() {
+  if (!refineIndicator) return;
+  // Force pseudo-element animation restart on transition to active.
+  refineIndicator.style.display = "none";
+  void refineIndicator.offsetHeight;
+  refineIndicator.style.display = "";
 }
 
 function normalizeRefiningPreset(value) {
@@ -248,6 +261,16 @@ updateRefiningAppearance();
 // Signal readiness to Rust backend
 if (window.__TAURI__?.event?.emit) {
   window.__TAURI__.event.emit("overlay:ready").catch(() => {});
+  window.setInterval(() => {
+    const now = Date.now();
+    if (now - lastHeartbeatSentAt < 1200) return;
+    lastHeartbeatSentAt = now;
+    window.__TAURI__.event.emit("overlay:heartbeat", {
+      state: currentState,
+      refining: refiningActive,
+      ts: now,
+    }).catch(() => {});
+  }, 1500);
 }
 
 // Apply full settings payload from app settings object

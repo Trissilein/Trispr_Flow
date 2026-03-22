@@ -9,6 +9,7 @@ import {
   dynamicSustainThreshold,
   runtimeDiagnostics,
   startupStatus,
+  isRefinementEnabled,
 } from "./state";
 import * as dom from "./dom-refs";
 import { updateRecordingStatus, updateRefiningStatus, updateTranscribeStatus } from "./accessibility";
@@ -244,7 +245,7 @@ export function setGpuActivity(event: TranscriptionGpuActivityEvent) {
 
 export function renderHero() {
   if (!settings) return;
-  const aiFallbackOn = Boolean(settings.ai_fallback?.enabled);
+  const aiFallbackOn = isRefinementEnabled();
   const provider = settings.ai_fallback?.provider ?? "ollama";
   const executionMode = settings.ai_fallback?.execution_mode ?? "local_primary";
   const isOnlineRefinement = aiFallbackOn && executionMode === "online_fallback" && provider !== "ollama";

@@ -130,6 +130,9 @@
         <button id="tab-btn-ai-refinement" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-ai-refinement">
           AI Refinement
         </button>
+        <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output">
+          Voice Output
+        </button>
         <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules">
           Modules
         </button>
@@ -1697,6 +1700,147 @@
 
         </div>
 
+        <!-- Voice Output Tab -->
+        <div id="tab-voice-output" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-voice-output">
+          <section class="panel" data-panel="voice-output" style="--delay: 0.12s">
+            <div class="panel-header">
+              <div class="panel-title">
+                <h2>Voice Output</h2>
+                <p>Provider configuration and test controls for TTS output.</p>
+              </div>
+            </div>
+            <div class="panel-body">
+              <section id="voice-output-console" class="module-agent-console" hidden>
+                <div class="module-agent-console-header">
+                  <h3>Voice Output Settings</h3>
+                  <span id="voice-output-console-status" class="field-hint">Module disabled.</span>
+                </div>
+                <details class="expander" open>
+                  <summary><h4 class="ai-refine-section-title">Provider &amp; Policy</h4></summary>
+                  <div class="expander-body">
+                    <div class="panel-grid">
+                      <label class="field">
+                        <span class="field-label">Default provider</span>
+                        <select id="voice-output-default-provider" title="Primary TTS engine">
+                          <option value="windows_native">Windows Native TTS</option>
+                          <option value="windows_natural">Windows Natural Language (SAPI Adapter)</option>
+                          <option value="local_custom">Local Custom (Piper)</option>
+                          <option value="qwen3_tts">Qwen3-TTS (OpenAI-compatible endpoint)</option>
+                        </select>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Fallback provider</span>
+                        <select id="voice-output-fallback-provider" title="Used if default provider fails">
+                          <option value="windows_native">Windows Native TTS</option>
+                          <option value="windows_natural">Windows Natural Language (SAPI Adapter)</option>
+                          <option value="local_custom">Local Custom (Piper)</option>
+                          <option value="qwen3_tts">Qwen3-TTS (OpenAI-compatible endpoint)</option>
+                        </select>
+                        <span class="field-hint">Used automatically if the default provider fails. Qwen3-TTS needs a running OpenAI-compatible `/v1/audio/speech` endpoint.</span>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Output policy</span>
+                        <select id="voice-output-policy" title="Controls when voice output is triggered">
+                          <option value="agent_replies_only">Agent replies only</option>
+                          <option value="replies_and_events">Replies and system events</option>
+                          <option value="explicit_only">Explicit calls only</option>
+                        </select>
+                        <span class="field-hint">Agent replies only = TTS fires only for workflow-agent responses.</span>
+                      </label>
+                      <label class="field range">
+                        <span class="field-label">Speech rate</span>
+                        <div class="range-row">
+                          <input id="voice-output-rate" type="range" min="0.5" max="2.0" step="0.05"
+                                title="0.5 = half speed · 2.0 = double speed"
+                                aria-valuemin="0.5" aria-valuemax="2.0" aria-valuenow="1.0"
+                                aria-label="Voice output speech rate"
+                                aria-describedby="voice-output-rate-value" />
+                          <span id="voice-output-rate-value" class="range-value" aria-live="polite">1.00</span>
+                        </div>
+                      </label>
+                      <label class="field range">
+                        <span class="field-label">Volume</span>
+                        <div class="range-row">
+                          <input id="voice-output-volume" type="range" min="0" max="1" step="0.05"
+                                title="0 = muted · 1 = full"
+                                aria-valuemin="0" aria-valuemax="1" aria-valuenow="1.0"
+                                aria-label="Voice output volume"
+                                aria-describedby="voice-output-volume-value" />
+                          <span id="voice-output-volume-value" class="range-value" aria-live="polite">1.00</span>
+                        </div>
+                      </label>
+                      <div class="field">
+                        <button id="voice-output-test-btn" type="button" class="hotkey-record-btn">
+                          Test provider
+                        </button>
+                        <span class="field-hint" id="voice-output-test-status"></span>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+                <details class="expander">
+                  <summary><h4 class="ai-refine-section-title">Advanced (Piper paths)</h4></summary>
+                  <div class="expander-body">
+                    <div class="panel-grid">
+                      <label class="field">
+                        <span class="field-label">Piper binary path</span>
+                        <input id="voice-output-piper-binary" type="text"
+                              placeholder="Auto-detected (leave empty)" title="Full path to piper.exe" />
+                        <span class="field-hint">Leave empty to auto-detect from PATH or bundled resources.</span>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Piper model path</span>
+                        <input id="voice-output-piper-model" type="text"
+                              placeholder="Auto-selected (leave empty)" title="Full path to .onnx voice model" />
+                        <span class="field-hint">Leave empty to auto-select the first available voice model.</span>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Voice model directory</span>
+                        <input id="voice-output-piper-model-dir" type="text"
+                              placeholder="Auto-detected (leave empty)" title="Directory containing .onnx voice models" />
+                        <span class="field-hint">Directory scanned for available Piper voice models.</span>
+                      </label>
+                    </div>
+                  </div>
+                </details>
+                <details class="expander">
+                  <summary><h4 class="ai-refine-section-title">Advanced (Qwen3-TTS endpoint)</h4></summary>
+                  <div class="expander-body">
+                    <div class="panel-grid">
+                      <label class="field span-2">
+                        <span class="field-label">Qwen endpoint</span>
+                        <input id="voice-output-qwen-endpoint" type="text"
+                              placeholder="http://127.0.0.1:8000/v1/audio/speech" title="OpenAI-compatible speech endpoint" />
+                        <span class="field-hint">Expected API: `POST /v1/audio/speech` returning WAV audio.</span>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Qwen model</span>
+                        <input id="voice-output-qwen-model" type="text"
+                              placeholder="Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice" title="Model id sent to endpoint" />
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Qwen voice</span>
+                        <input id="voice-output-qwen-voice" type="text"
+                              placeholder="vivian" title="Speaker/voice id sent to endpoint" />
+                      </label>
+                      <label class="field">
+                        <span class="field-label">API key (optional)</span>
+                        <input id="voice-output-qwen-api-key" type="password"
+                              placeholder="Bearer token (optional)" title="Optional bearer token for endpoint" />
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Timeout (seconds)</span>
+                        <input id="voice-output-qwen-timeout-sec" type="number" min="3" max="180" step="1"
+                              value="45" title="Request timeout for Qwen endpoint" />
+                      </label>
+                    </div>
+                  </div>
+                </details>
+              </section>
+            </div>
+          </section>
+        </div>
+
         <!-- Modules Tab -->
         <div id="tab-modules" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-modules">
           <section class="panel modules-panel" style="--delay: 0.12s">
@@ -1711,6 +1855,49 @@
             </div>
             <div class="panel-body">
               <div id="modules-list" class="modules-list"></div>
+              <section id="workflow-agent-console" class="module-agent-console" hidden>
+                <div class="module-agent-console-header">
+                  <h3>Workflow Agent Console</h3>
+                  <span id="workflow-agent-status" class="field-hint">Agent disabled.</span>
+                </div>
+                <label class="field">
+                  <span class="field-label">Test command</span>
+                  <textarea
+                    id="workflow-agent-command-input"
+                    rows="3"
+                    placeholder="Hey Trispr, create a GDD from yesterday's meeting about combat and publish to Confluence."
+                  ></textarea>
+                </label>
+                <div class="auth-modal-actions">
+                  <button id="workflow-agent-parse-btn" type="button" class="hotkey-record-btn">Parse Command</button>
+                  <button id="workflow-agent-refresh-candidates-btn" type="button" class="hotkey-record-btn">Find Sessions</button>
+                </div>
+                <div id="workflow-agent-candidates" class="module-agent-candidates"></div>
+                <label class="field">
+                  <span class="field-label">Target language <strong>(required — select before building plan)</strong></span>
+                  <select id="workflow-agent-target-language">
+                    <option value="" disabled selected>— select language —</option>
+                    <option value="source">Source language (keep original)</option>
+                    <option value="en">English</option>
+                    <option value="de">Deutsch</option>
+                    <option value="fr">Français</option>
+                    <option value="es">Español</option>
+                  </select>
+                  <span class="field-hint">You must explicitly choose a language for each command. This resets with each new parse.</span>
+                </label>
+                <div class="auth-modal-actions">
+                  <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn">Build Plan</button>
+                  <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn">Confirm & Execute</button>
+                </div>
+                <label class="field">
+                  <span class="field-label">Plan preview</span>
+                  <textarea id="workflow-agent-plan-preview" rows="5" readonly placeholder="Execution plan appears here..."></textarea>
+                </label>
+                <label class="field">
+                  <span class="field-label">Execution log</span>
+                  <textarea id="workflow-agent-execution-log" rows="6" readonly placeholder="Agent events and execution output appear here..."></textarea>
+                </label>
+              </section>
             </div>
           </section>
         </div>
@@ -1883,142 +2070,6 @@
           <div id="module-config-modal-feedback" class="field-hint"></div>
         </div>
 
-        <!-- Workflow Agent Console (shown when workflow_agent module is configured) -->
-        <section id="workflow-agent-console" class="module-agent-console" hidden>
-          <div class="module-agent-console-header">
-            <h3>Workflow Agent Console</h3>
-            <span id="workflow-agent-status" class="field-hint">Agent disabled.</span>
-          </div>
-          <label class="field">
-            <span class="field-label">Test command</span>
-            <textarea
-              id="workflow-agent-command-input"
-              rows="3"
-              placeholder="Hey Trispr, create a GDD from yesterday's meeting about combat and publish to Confluence."
-            ></textarea>
-          </label>
-          <div class="auth-modal-actions">
-            <button id="workflow-agent-parse-btn" type="button" class="hotkey-record-btn">Parse Command</button>
-            <button id="workflow-agent-refresh-candidates-btn" type="button" class="hotkey-record-btn">Find Sessions</button>
-          </div>
-          <div id="workflow-agent-candidates" class="module-agent-candidates"></div>
-          <label class="field">
-            <span class="field-label">Target language <strong>(required — select before building plan)</strong></span>
-            <select id="workflow-agent-target-language">
-              <option value="" disabled selected>— select language —</option>
-              <option value="source">Source language (keep original)</option>
-              <option value="en">English</option>
-              <option value="de">Deutsch</option>
-              <option value="fr">Français</option>
-              <option value="es">Español</option>
-            </select>
-            <span class="field-hint">You must explicitly choose a language for each command. This resets with each new parse.</span>
-          </label>
-          <div class="auth-modal-actions">
-            <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn">Build Plan</button>
-            <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn">Confirm & Execute</button>
-          </div>
-          <label class="field">
-            <span class="field-label">Plan preview</span>
-            <textarea id="workflow-agent-plan-preview" rows="5" readonly placeholder="Execution plan appears here..."></textarea>
-          </label>
-          <label class="field">
-            <span class="field-label">Execution log</span>
-            <textarea id="workflow-agent-execution-log" rows="6" readonly placeholder="Agent events and execution output appear here..."></textarea>
-          </label>
-        </section>
-
-        <!-- Voice Output Console (shown when output_voice_tts module is configured) -->
-        <section id="voice-output-console" class="module-agent-console" hidden>
-          <div class="module-agent-console-header">
-            <h3>Voice Output Settings</h3>
-            <span id="voice-output-console-status" class="field-hint">Module disabled.</span>
-          </div>
-          <details class="expander" open>
-            <summary><h4 class="ai-refine-section-title">Provider &amp; Policy</h4></summary>
-            <div class="expander-body">
-              <div class="panel-grid">
-                <label class="field">
-                  <span class="field-label">Default provider</span>
-                  <select id="voice-output-default-provider" title="Primary TTS engine">
-                    <option value="windows_native">Windows Native TTS</option>
-                    <option value="local_custom">Local Custom (Piper)</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span class="field-label">Fallback provider</span>
-                  <select id="voice-output-fallback-provider" title="Used if default provider fails">
-                    <option value="windows_native">Windows Native TTS</option>
-                    <option value="local_custom">Local Custom (Piper)</option>
-                  </select>
-                  <span class="field-hint">Used automatically if the default provider fails.</span>
-                </label>
-                <label class="field">
-                  <span class="field-label">Output policy</span>
-                  <select id="voice-output-policy" title="Controls when voice output is triggered">
-                    <option value="agent_replies_only">Agent replies only</option>
-                    <option value="replies_and_events">Replies and system events</option>
-                    <option value="explicit_only">Explicit calls only</option>
-                  </select>
-                  <span class="field-hint">Agent replies only = TTS fires only for workflow-agent responses.</span>
-                </label>
-                <label class="field range">
-                  <span class="field-label">Speech rate</span>
-                  <div class="range-row">
-                    <input id="voice-output-rate" type="range" min="0.5" max="2.0" step="0.05"
-                           title="0.5 = half speed · 2.0 = double speed"
-                           aria-valuemin="0.5" aria-valuemax="2.0" aria-valuenow="1.0"
-                           aria-label="Voice output speech rate"
-                           aria-describedby="voice-output-rate-value" />
-                    <span id="voice-output-rate-value" class="range-value" aria-live="polite">1.00</span>
-                  </div>
-                </label>
-                <label class="field range">
-                  <span class="field-label">Volume</span>
-                  <div class="range-row">
-                    <input id="voice-output-volume" type="range" min="0" max="1" step="0.05"
-                           title="0 = muted · 1 = full"
-                           aria-valuemin="0" aria-valuemax="1" aria-valuenow="1.0"
-                           aria-label="Voice output volume"
-                           aria-describedby="voice-output-volume-value" />
-                    <span id="voice-output-volume-value" class="range-value" aria-live="polite">1.00</span>
-                  </div>
-                </label>
-                <div class="field">
-                  <button id="voice-output-test-btn" type="button" class="hotkey-record-btn">
-                    Test provider
-                  </button>
-                  <span class="field-hint" id="voice-output-test-status"></span>
-                </div>
-              </div>
-            </div>
-          </details>
-          <details class="expander">
-            <summary><h4 class="ai-refine-section-title">Advanced (Piper paths)</h4></summary>
-            <div class="expander-body">
-              <div class="panel-grid">
-                <label class="field">
-                  <span class="field-label">Piper binary path</span>
-                  <input id="voice-output-piper-binary" type="text"
-                         placeholder="Auto-detected (leave empty)" title="Full path to piper.exe" />
-                  <span class="field-hint">Leave empty to auto-detect from PATH or bundled resources.</span>
-                </label>
-                <label class="field">
-                  <span class="field-label">Piper model path</span>
-                  <input id="voice-output-piper-model" type="text"
-                         placeholder="Auto-selected (leave empty)" title="Full path to .onnx voice model" />
-                  <span class="field-hint">Leave empty to auto-select the first available voice model.</span>
-                </label>
-                <label class="field">
-                  <span class="field-label">Voice model directory</span>
-                  <input id="voice-output-piper-model-dir" type="text"
-                         placeholder="Auto-detected (leave empty)" title="Directory containing .onnx voice models" />
-                  <span class="field-hint">Directory scanned for available Piper voice models.</span>
-                </label>
-              </div>
-            </div>
-          </details>
-        </section>
       </div>
     </div>
 

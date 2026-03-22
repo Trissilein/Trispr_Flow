@@ -50,6 +50,16 @@ type WizardStage =
   | "ready";
 
 type CardStatus = "available" | "downloaded" | "active";
+type OllamaModelSource = "recommended" | "custom" | "installed" | "active";
+type OllamaModelSpec = {
+  name: string;
+  label: string;
+  size_gb: number | null;
+  profile: string;
+  description: string;
+  source: OllamaModelSource;
+  isCustom: boolean;
+};
 
 export const OLLAMA_RECOMMENDED_MODELS = [
   {
@@ -239,6 +249,9 @@ function isLocalEndpoint(endpoint: string): boolean {
 
 function shouldAutoStartLocalRuntime(): boolean {
   if (!settings?.ai_fallback || !settings.providers?.ollama) return false;
+
+  const moduleEnabled = settings.module_settings?.enabled_modules?.includes("ai_refinement") ?? false;
+  if (!moduleEnabled) return false;
 
   const aiFallback = settings.ai_fallback;
   if (!aiFallback.enabled) return false;
@@ -768,6 +781,199 @@ function resolveCardStatus(modelName: string): CardStatus {
   return isModelActive(modelName) ? "active" : "downloaded";
 }
 
+function normalizeUniqueModelTags(values: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  values.forEach((value) => {
+    const normalized = normalizeModelTag(value);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  });
+  return out;
+}
+
+function isRecommendedOllamaModel(modelName: string): boolean {
+  return OLLAMA_RECOMMENDED_MODELS.some((spec) => isExactModelTagMatch(spec.name, modelName));
+}
+
+function ensureOllamaAvailableModelsShape(): void {
+  if (!settings) return;
+  settings.providers.ollama.available_models ??= [];
+}
+
+function getCustomOllamaModelTags(): string[] {
+  if (!settings) return [];
+  ensureOllamaAvailableModelsShape();
+  return normalizeUniqueModelTags(settings.providers.ollama.available_models).filter(
+    (name) => !isRecommendedOllamaModel(name)
+  );
+}
+
+function setCustomOllamaModelTags(tags: string[]): void {
+  if (!settings) return;
+  ensureOllamaAvailableModelsShape();
+  settings.providers.ollama.available_models = normalizeUniqueModelTags(tags).filter(
+    (name) => !isRecommendedOllamaModel(name)
+  );
+}
+
+function isModelTagInputValid(value: string): boolean {
+  const normalized = normalizeModelTag(value);
+  if (!normalized) return false;
+  if (normalized.length > 160) return false;
+  return !/\s/.test(normalized);
+}
+
+function buildOllamaModelSpecs(): OllamaModelSpec[] {
+  const byName = new Map<string, OllamaModelSpec>();
+  const add = (spec: OllamaModelSpec): void => {
+    const normalized = normalizeModelTag(spec.name);
+    if (!normalized) return;
+    const existing = byName.get(normalized);
+    if (!existing) {
+      byName.set(normalized, { ...spec, name: normalized });
+      return;
+    }
+    const merged: OllamaModelSpec = { ...existing };
+    if (existing.source !== "recommended" && spec.source === "recommended") {
+      merged.label = spec.label;
+      merged.size_gb = spec.size_gb;
+      merged.profile = spec.profile;
+      merged.description = spec.description;
+      merged.source = "recommended";
+    }
+    merged.isCustom = existing.isCustom || spec.isCustom;
+    byName.set(normalized, merged);
+  };
+
+  OLLAMA_RECOMMENDED_MODELS.forEach((spec) => {
+    add({
+      name: spec.name,
+      label: spec.label,
+      size_gb: spec.size_gb,
+      profile: spec.profile,
+      description: spec.description,
+      source: "recommended",
+      isCustom: false,
+    });
+  });
+
+  getCustomOllamaModelTags().forEach((name) => {
+    add({
+      name,
+      label: name,
+      size_gb: null,
+      profile: "Custom tag",
+      description: "User-defined model tag. Download model to install it locally.",
+      source: "custom",
+      isCustom: true,
+    });
+  });
+
+  installedOllamaModels.forEach((model) => {
+    add({
+      name: model.name,
+      label: model.name,
+      size_gb: null,
+      profile: "Installed model",
+      description: "Discovered in local Ollama runtime.",
+      source: "installed",
+      isCustom: false,
+    });
+  });
+
+  const active = normalizeModelTag(settings?.ai_fallback?.model);
+  if (active) {
+    add({
+      name: active,
+      label: active,
+      size_gb: null,
+      profile: "Active selection",
+      description: "Currently selected model for refinement.",
+      source: "active",
+      isCustom: false,
+    });
+  }
+
+  return Array.from(byName.values());
+}
+
+async function handleOllamaAddCustomModel(rawName: string): Promise<boolean> {
+  if (!settings) {
+    showToast({
+      type: "warning",
+      title: "Settings not ready",
+      message: "Try again in a moment.",
+      duration: 2500,
+    });
+    return false;
+  }
+  const normalized = normalizeModelTag(rawName);
+  if (!isModelTagInputValid(normalized)) {
+    showToast({
+      type: "warning",
+      title: "Invalid model tag",
+      message: "Enter a valid Ollama model tag (no spaces), e.g. qwen3:32b.",
+      duration: 3500,
+    });
+    return false;
+  }
+
+  if (isRecommendedOllamaModel(normalized)) {
+    showToast({
+      type: "info",
+      title: "Already in curated list",
+      message: `${normalized} is already available in the default cards.`,
+      duration: 2800,
+    });
+    return false;
+  }
+
+  const current = getCustomOllamaModelTags();
+  if (current.some((name) => isExactModelTagMatch(name, normalized))) {
+    showToast({
+      type: "info",
+      title: "Already added",
+      message: `${normalized} is already in your custom model list.`,
+      duration: 2800,
+    });
+    return false;
+  }
+
+  setCustomOllamaModelTags([...current, normalized]);
+  await persistCurrentSettings();
+  renderOllamaModelManager();
+  showToast({
+    type: "success",
+    title: "Custom model added",
+    message: `${normalized} added. You can now download or activate it from the card list.`,
+    duration: 3200,
+  });
+  return true;
+}
+
+async function handleOllamaRemoveCustomModel(modelName: string): Promise<void> {
+  if (!settings) {
+    return;
+  }
+  const normalized = normalizeModelTag(modelName);
+  const current = getCustomOllamaModelTags();
+  const next = current.filter((name) => !isExactModelTagMatch(name, normalized));
+  if (next.length === current.length) {
+    return;
+  }
+  setCustomOllamaModelTags(next);
+  await persistCurrentSettings();
+  renderOllamaModelManager();
+  showToast({
+    type: "success",
+    title: "Removed from custom list",
+    message: `${normalized} was removed from your custom model cards.`,
+    duration: 2800,
+  });
+}
+
 
 /**
  * Persist current settings to the backend — fire-and-forget.
@@ -1264,13 +1470,40 @@ function renderModelsSection(container: HTMLElement): void {
   const hint = document.createElement("p");
   hint.className = "field-hint";
   hint.textContent =
-    "Qwen3 + Qwen3.5 local refinement lineup. Start with Qwen3:8b or Qwen3.5:4b for balance, then scale up for quality. Download model, then Activate.";
+    "Download curated models or add any custom Ollama tag. This section manages Ollama text-refinement models (not TTS voices). Delete removes local blobs; Remove from list only removes the custom card.";
   section.appendChild(hint);
+
+  const customRow = document.createElement("div");
+  customRow.className = "ollama-custom-model-row";
+  const customInput = document.createElement("input");
+  customInput.type = "text";
+  customInput.className = "ollama-custom-model-input";
+  customInput.placeholder = "Add model tag (e.g. qwen3:32b)";
+  customInput.autocomplete = "off";
+  customInput.spellcheck = false;
+  const addCustomBtn = document.createElement("button");
+  addCustomBtn.className = "btn-sm btn-primary";
+  addCustomBtn.textContent = "Add model";
+  addCustomBtn.addEventListener("click", () => {
+    void handleOllamaAddCustomModel(customInput.value).then((added) => {
+      if (added) {
+        customInput.value = "";
+      }
+    });
+  });
+  customInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    addCustomBtn.click();
+  });
+  customRow.appendChild(customInput);
+  customRow.appendChild(addCustomBtn);
+  section.appendChild(customRow);
 
   const list = document.createElement("div");
   list.className = "model-list ollama-model-list";
 
-  const orderedModels = OLLAMA_RECOMMENDED_MODELS
+  const orderedModels = buildOllamaModelSpecs()
     .map((spec, index) => {
       const active = isModelActive(spec.name);
       const installed = isModelInstalled(spec.name);
@@ -1302,7 +1535,9 @@ function renderModelsSection(container: HTMLElement): void {
 
     const sizeDisplay = installed
       ? formatBytesGb(getInstalledSize(spec.name))
-      : `~${spec.size_gb.toFixed(1)} GB`;
+      : spec.size_gb !== null
+        ? `~${spec.size_gb.toFixed(1)} GB`
+        : "Unknown size";
 
     card.innerHTML = `
       <div class="model-header">
@@ -1344,6 +1579,16 @@ function renderModelsSection(container: HTMLElement): void {
           void handleOllamaPull(spec.name);
         });
         actionsEl.appendChild(pullBtn);
+        if (spec.isCustom) {
+          const removeBtn = document.createElement("button");
+          removeBtn.className = "btn-sm";
+          removeBtn.textContent = "Remove from list";
+          removeBtn.title = `Remove ${spec.name} from custom cards`;
+          removeBtn.addEventListener("click", () => {
+            void handleOllamaRemoveCustomModel(spec.name);
+          });
+          actionsEl.appendChild(removeBtn);
+        }
       } else {
         if (!active) {
           const activateBtn = document.createElement("button");
@@ -1366,6 +1611,16 @@ function renderModelsSection(container: HTMLElement): void {
           void handleOllamaDelete(spec.name);
         });
         actionsEl.appendChild(deleteBtn);
+        if (spec.isCustom) {
+          const removeBtn = document.createElement("button");
+          removeBtn.className = "btn-sm";
+          removeBtn.textContent = "Remove from list";
+          removeBtn.title = `Remove ${spec.name} from custom cards`;
+          removeBtn.addEventListener("click", () => {
+            void handleOllamaRemoveCustomModel(spec.name);
+          });
+          actionsEl.appendChild(removeBtn);
+        }
       }
     }
 

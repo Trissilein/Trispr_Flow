@@ -98,9 +98,11 @@ use crate::ollama_runtime::{
 };
 use crate::state::{
     get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
-    normalize_ai_fallback_fields, normalize_continuous_dump_fields, normalize_history_alias_fields,
+    normalize_ai_fallback_fields, normalize_ai_refinement_module_binding,
+    normalize_continuous_dump_fields, normalize_history_alias_fields, normalize_product_mode_field,
     push_history_entry_inner, push_transcribe_entry_inner, record_refinement_fallback_timed_out,
     record_refinement_timeout, save_settings_file, sync_model_dir_env,
+    AI_REFINEMENT_MODULE_ID,
 };
 use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, last_transcription_accelerator,
@@ -292,7 +294,9 @@ fn build_startup_degraded_reasons(
             settings.model
         ));
     }
-    if settings.ai_fallback.enabled && settings.ai_fallback.provider == "ollama" {
+    if capability_enabled(settings, RuntimeCapability::AiRefinement)
+        && settings.ai_fallback.provider == "ollama"
+    {
         if status.ollama_starting {
             degraded_reasons.push("Ollama is starting in background.".to_string());
         } else if !status.ollama_ready {
@@ -414,7 +418,8 @@ pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> 
     // or Oobabooga.  The reachability field stays false until Ollama is re-selected
     // and the frontend explicitly calls refreshOllamaRuntimeState.
     let ollama_is_active_provider =
-        settings.ai_fallback.enabled && settings.ai_fallback.provider == "ollama";
+        capability_enabled(&settings, RuntimeCapability::AiRefinement)
+            && settings.ai_fallback.provider == "ollama";
     let reachable = if ollama_is_active_provider {
         let now = crate::util::now_ms();
         let next_ms = OLLAMA_DIAG_NEXT_MS.load(Ordering::Relaxed);
@@ -711,10 +716,9 @@ pub(crate) fn prepare_refinement(
     app: &AppHandle,
     settings: &Settings,
 ) -> Result<RefinementSetup, String> {
+    require_capability_enabled(settings, RuntimeCapability::AiRefinement)?;
+
     let ai = &settings.ai_fallback;
-    if !ai.enabled {
-        return Err("AI Fallback is disabled.".to_string());
-    }
 
     let is_ollama = ai.provider == "ollama";
     let is_lm_studio = ai.provider == "lm_studio";
@@ -3794,7 +3798,9 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
     normalize_ai_fallback_fields(settings);
     normalize_continuous_dump_fields(settings);
     normalize_history_alias_fields(settings);
+    normalize_product_mode_field(settings);
     normalize_module_settings(&mut settings.module_settings);
+    normalize_ai_refinement_module_binding(settings);
     normalize_gdd_module_settings(&mut settings.gdd_module_settings);
     normalize_confluence_settings(&mut settings.confluence_settings);
     normalize_workflow_agent_settings(&mut settings.workflow_agent);
@@ -3943,6 +3949,8 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
 
     if prev_ai_refinement_enabled && !settings.ai_fallback.enabled {
         crate::audio::force_reset_refinement_activity(app, "forced_reset");
+    } else if !prev_ai_refinement_enabled && settings.ai_fallback.enabled {
+        schedule_ai_refinement_reenable_bootstrap(app.clone());
     }
 
     info!("[DIAG] save_settings_inner: acquiring recorder lock (2nd)");
@@ -4002,6 +4010,78 @@ fn list_modules(state: State<'_, AppState>) -> Vec<crate::modules::ModuleDescrip
     module_registry::modules_as_descriptors(&settings.module_settings)
 }
 
+fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
+    capability_enabled(settings, RuntimeCapability::AiRefinement)
+        && settings.ai_fallback.provider == "ollama"
+        && settings.ai_fallback.execution_mode == "local_primary"
+}
+
+fn warmup_ai_refinement_model_once(app: &AppHandle, settings: &Settings) -> Result<(), String> {
+    let setup = prepare_refinement(app, settings)?;
+    let warmup_text = "Warmup: local AI refinement runtime.";
+    setup
+        .provider
+        .refine_transcript(warmup_text, &setup.model, &setup.options, &setup.api_key)
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
+fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
+    crate::util::spawn_guarded("ai_refinement_reenable_bootstrap", move || {
+        let initial_settings = {
+            let state = app.state::<AppState>();
+            let snapshot = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            snapshot
+        };
+        if !should_autostart_ai_refinement_runtime(&initial_settings) {
+            return;
+        }
+
+        if let Err(error) = tauri::async_runtime::block_on(start_ollama_runtime(app.clone())) {
+            warn!(
+                "AI refinement re-enable autostart failed (continuing with raw fallback): {}",
+                error
+            );
+            return;
+        }
+
+        if let Err(error) = tauri::async_runtime::block_on(verify_ollama_runtime(app.clone())) {
+            warn!("AI refinement runtime verify after re-enable failed: {}", error);
+        }
+
+        let state = app.state::<AppState>();
+        let startup = startup_status_snapshot(state.inner());
+        if !startup.ollama_ready {
+            warn!("AI refinement runtime warmup skipped: Ollama still not ready after autostart");
+            return;
+        }
+
+        let latest_settings = {
+            let snapshot = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            snapshot
+        };
+        if !should_autostart_ai_refinement_runtime(&latest_settings) {
+            return;
+        }
+
+        match warmup_ai_refinement_model_once(&app, &latest_settings) {
+            Ok(()) => info!("AI refinement warmup completed after module re-enable"),
+            Err(error) => warn!(
+                "AI refinement warmup failed after module re-enable (non-fatal): {}",
+                error
+            ),
+        }
+    });
+}
+
 #[tauri::command]
 fn enable_module(
     app: AppHandle,
@@ -4033,8 +4113,13 @@ fn enable_module(
                 if module_id == "output_voice_tts" {
                     settings.voice_output_settings.enabled = true;
                 }
+                if module_id == AI_REFINEMENT_MODULE_ID {
+                    settings.ai_fallback.enabled = true;
+                    settings.postproc_llm_enabled = true;
+                }
             }
             normalize_module_settings(&mut settings.module_settings);
+            normalize_ai_refinement_module_binding(&mut settings);
             normalize_gdd_module_settings(&mut settings.gdd_module_settings);
             normalize_confluence_settings(&mut settings.confluence_settings);
             normalize_workflow_agent_settings(&mut settings.workflow_agent);
@@ -4047,6 +4132,9 @@ fn enable_module(
         save_settings_file(&app, &snapshot)?;
         let _ = app.emit("settings-changed", snapshot);
         let _ = app.emit("module:state-changed", descriptors);
+        if result.is_ok() && module_id == AI_REFINEMENT_MODULE_ID {
+            schedule_ai_refinement_reenable_bootstrap(app.clone());
+        }
 
         match result {
             Ok(lifecycle) => Ok(serde_json::json!(lifecycle)),
@@ -4090,8 +4178,13 @@ fn disable_module(
                 if module_id == "output_voice_tts" {
                     settings.voice_output_settings.enabled = false;
                 }
+                if module_id == AI_REFINEMENT_MODULE_ID {
+                    settings.ai_fallback.enabled = false;
+                    settings.postproc_llm_enabled = false;
+                }
             }
             normalize_module_settings(&mut settings.module_settings);
+            normalize_ai_refinement_module_binding(&mut settings);
             normalize_gdd_module_settings(&mut settings.gdd_module_settings);
             normalize_confluence_settings(&mut settings.confluence_settings);
             normalize_workflow_agent_settings(&mut settings.workflow_agent);
@@ -4108,6 +4201,21 @@ fn disable_module(
                 }
                 "output_voice_tts" => {
                     let _ = stop_tts_internal(&app, state.inner());
+                }
+                "ai_refinement" => {
+                    crate::audio::force_reset_refinement_activity(&app, "forced_reset");
+
+                    let provider = snapshot.ai_fallback.provider.clone();
+                    if provider == "ollama" {
+                        let app_clone = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let _ = stop_ollama_runtime(app_clone).await;
+                        });
+                    } else if provider == "lm_studio" {
+                        crate::util::spawn_guarded("lms_daemon_stop_module_disable", || {
+                            lms_daemon_command("stop");
+                        });
+                    }
                 }
                 _ => {}
             }
@@ -4195,6 +4303,7 @@ fn module_enabled(settings: &Settings, module_id: &str) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeCapability {
+    AiRefinement,
     WorkflowAgent,
     VisionInput,
     VoiceOutputTts,
@@ -4203,6 +4312,7 @@ enum RuntimeCapability {
 impl RuntimeCapability {
     fn module_id(self) -> &'static str {
         match self {
+            Self::AiRefinement => AI_REFINEMENT_MODULE_ID,
             Self::WorkflowAgent => "workflow_agent",
             Self::VisionInput => "input_vision",
             Self::VoiceOutputTts => "output_voice_tts",
@@ -4211,6 +4321,7 @@ impl RuntimeCapability {
 
     fn setting_enabled(self, settings: &Settings) -> bool {
         match self {
+            Self::AiRefinement => settings.ai_fallback.enabled,
             Self::WorkflowAgent => settings.workflow_agent.enabled,
             Self::VisionInput => settings.vision_input_settings.enabled,
             Self::VoiceOutputTts => settings.voice_output_settings.enabled,
@@ -4219,6 +4330,9 @@ impl RuntimeCapability {
 
     fn module_disabled_message(self) -> &'static str {
         match self {
+            Self::AiRefinement => {
+                "AI Refinement module is disabled. Enable module 'ai_refinement' first."
+            }
             Self::WorkflowAgent => {
                 "Workflow Agent module is disabled. Enable module 'workflow_agent' first."
             }
@@ -4233,6 +4347,7 @@ impl RuntimeCapability {
 
     fn setting_disabled_message(self) -> &'static str {
         match self {
+            Self::AiRefinement => "AI refinement is disabled in settings.",
             Self::WorkflowAgent => "Workflow Agent is disabled in settings.",
             Self::VisionInput => "Vision input is disabled in settings.",
             Self::VoiceOutputTts => "Voice output is disabled in settings.",
@@ -4275,6 +4390,7 @@ mod runtime_capability_gate_tests {
                 .insert(capability.module_id().to_string());
         }
         match capability {
+            RuntimeCapability::AiRefinement => settings.ai_fallback.enabled = setting_enabled,
             RuntimeCapability::WorkflowAgent => settings.workflow_agent.enabled = setting_enabled,
             RuntimeCapability::VisionInput => settings.vision_input_settings.enabled = setting_enabled,
             RuntimeCapability::VoiceOutputTts => {
@@ -4286,6 +4402,27 @@ mod runtime_capability_gate_tests {
 
     #[test]
     fn capability_enabled_requires_module_and_setting_flag() {
+        let refinement_enabled =
+            settings_for_capability(RuntimeCapability::AiRefinement, true, true);
+        assert!(capability_enabled(
+            &refinement_enabled,
+            RuntimeCapability::AiRefinement
+        ));
+
+        let refinement_missing_module =
+            settings_for_capability(RuntimeCapability::AiRefinement, false, true);
+        assert!(!capability_enabled(
+            &refinement_missing_module,
+            RuntimeCapability::AiRefinement
+        ));
+
+        let refinement_missing_setting =
+            settings_for_capability(RuntimeCapability::AiRefinement, true, false);
+        assert!(!capability_enabled(
+            &refinement_missing_setting,
+            RuntimeCapability::AiRefinement
+        ));
+
         let both_enabled =
             settings_for_capability(RuntimeCapability::VisionInput, true, true);
         assert!(capability_enabled(
@@ -4310,6 +4447,27 @@ mod runtime_capability_gate_tests {
 
     #[test]
     fn require_capability_reports_module_and_setting_failures() {
+        let ai_module_disabled =
+            settings_for_capability(RuntimeCapability::AiRefinement, false, true);
+        let ai_module_error = require_capability_enabled(
+            &ai_module_disabled,
+            RuntimeCapability::AiRefinement,
+        )
+        .unwrap_err();
+        assert_eq!(
+            ai_module_error,
+            "AI Refinement module is disabled. Enable module 'ai_refinement' first."
+        );
+
+        let ai_setting_disabled =
+            settings_for_capability(RuntimeCapability::AiRefinement, true, false);
+        let ai_setting_error = require_capability_enabled(
+            &ai_setting_disabled,
+            RuntimeCapability::AiRefinement,
+        )
+        .unwrap_err();
+        assert_eq!(ai_setting_error, "AI refinement is disabled in settings.");
+
         let module_disabled =
             settings_for_capability(RuntimeCapability::VoiceOutputTts, false, true);
         let module_error = require_capability_enabled(
@@ -6841,7 +6999,9 @@ fn build_dependency_preflight_report(
         });
     }
 
-    if settings_snapshot.ai_fallback.enabled && settings_snapshot.ai_fallback.provider == "ollama" {
+    if capability_enabled(&settings_snapshot, RuntimeCapability::AiRefinement)
+        && settings_snapshot.ai_fallback.provider == "ollama"
+    {
         let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
         let local_mode = settings_snapshot.ai_fallback.strict_local_mode;
         let reachable = ping_ollama_quick(&endpoint).is_ok();
@@ -8651,7 +8811,9 @@ pub fn run() {
             // app was last closed, the provider-switch event never fires at next launch.
             // We ping first — if the daemon is already running (e.g. user keeps it open),
             // we leave it alone. Only start if unreachable.
-            if settings.ai_fallback.enabled && settings.ai_fallback.provider == "lm_studio" {
+            if capability_enabled(&settings, RuntimeCapability::AiRefinement)
+                && settings.ai_fallback.provider == "lm_studio"
+            {
                 let endpoint = settings.providers.lm_studio.endpoint.clone();
                 let preferred_model = settings.providers.lm_studio.preferred_model.trim().to_string();
                 crate::util::spawn_guarded("lms_daemon_startup", move || {
@@ -8692,6 +8854,10 @@ pub fn run() {
                 info!("[DIAG] overlay:ready event received");
                 overlay::mark_overlay_ready(&overlay_app);
                 info!("[DIAG] overlay:ready handled");
+            });
+            let overlay_heartbeat_app = app.handle().clone();
+            app.listen("overlay:heartbeat", move |_| {
+                overlay::mark_overlay_heartbeat(&overlay_heartbeat_app);
             });
             if env_flag("TRISPR_DISABLE_OVERLAY") {
                 warn!("Overlay initialization skipped via TRISPR_DISABLE_OVERLAY=1");

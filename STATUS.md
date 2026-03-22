@@ -1,12 +1,26 @@
 # Trispr Flow - Status
 
-Last updated: 2026-03-20
+Last updated: 2026-03-22
 
 ## Snapshot
 
 - Current release: `v0.7.2`
-- Current planning phase: `v0.7.2 release hardening`
+- Current planning phase: `v0.7.3 stabilization follow-through (Block S reopened: S10-S13 active, then TTS free-config/testing)`
 - Canonical next steps: `ROADMAP.md`
+- Current readiness: development-ready, not release-ready
+
+## Current Blockers
+
+1. No hard compile/test blockers in current S10-S12 baseline as of 2026-03-22 (`cargo test --lib`, `npm test`, `npm run build` green).
+2. Remaining stabilization blocker: `S13` manual acceptance gate (overlay `50 cycles + 10 restarts` + module toggle soak) is still pending.
+3. Remaining milestone blocker after S13: `TTS freikonfigurierbar + testbar` completion (forced verification flow finalization).
+
+## Tomorrow's Objective (Execution Order)
+
+1. Close `S13` acceptance with overlay soak gate and re-enable performance validation.
+2. Continue directly with `TTS freikonfigurierbar + testbar` (provider-agnostic configuration + explicit forced-test path).
+3. Keep baseline gates green while iterating (`cargo test --lib`, `npm test`, `npm run build`).
+4. Hold Block T start until S13 + TTS acceptance pass.
 
 ## Working State
 
@@ -16,6 +30,18 @@ Last updated: 2026-03-20
   - New startup kill-switch `TRISPR_DISABLE_OVERLAY=1` skips overlay initialization for crash triage and recovery runs.
   - FFmpeg packaging cleanup: committed `src-tauri/bin/ffmpeg/ffmpeg.exe` removed from git tracking; installer build now auto-fetches pinned FFmpeg 7.1.1 (`scripts/setup-ffmpeg.ps1`) with SHA256 + OPUS capability validation.
   - Runtime FFmpeg checks now require `libopus` support for OPUS encode paths and dependency preflight reporting.
+  - Block N `N9` privacy/consent UX hardening landed in `modules-hub`: module-specific consent copy for Vision/TTS, richer enable-confirmation details, and pending-consent status summary in Modules header.
+  - Block N `N10` fallback/error matrix landed: deterministic TTS fallback executor (`primary -> fallback`), explicit fallback error codes, richer `tts:speech-*` diagnostics payloads, and synchronous `test_tts_provider` status with fallback visibility.
+  - Block N `N11` benchmark harness landed: new `run_tts_benchmark` backend command, `scripts/tts-benchmark.ps1` runner, and provider recommendation policy/reporting (`bench/results/tts.latest.json`).
+  - Block N `N11` evidence run completed on 2026-03-20/21: `windows_native` recommended (`success_rate=100%`, `p50=245ms`, `p95=282ms`); `local_custom` failed in this environment due missing Piper binary.
+- **Recent (2026-03-22)**:
+  - Block S `S6-S8` landed: AI Refinement is now a toggleable `ai_refinement` module with hard runtime gating (`module && setting`) and lifecycle side-effects on disable.
+  - Frontend tab-gating is active: AI Refinement tab/panel are hidden when module is disabled; active-tab fallback and localStorage guard are in place.
+  - Legacy compatibility migration is active: existing configs with `ai_fallback.enabled=true` are preserved by auto-enabling `ai_refinement` when module status was previously missing.
+  - Block S `S9` closure done: `ROADMAP.md`, `STATUS.md`, `docs/TASK_SCHEDULE.md` synchronized and regression gates reconfirmed green.
+  - Block S `S10` landed: strict module-UX decoupling for TTS (`output_voice_tts`) with dedicated `voice-output` main tab, hard module gating, active-tab fallback, and Configure routing from Modules Hub to tab.
+  - Block S `S11` landed: AI refinement re-enable path now autostarts managed Ollama (`local_primary`) and performs model warmup; defer policy now requires runtime-ready state and emits deterministic runtime-not-ready fallback reasons.
+  - Block S `S12` landed: overlay lifecycle moved to bounded retry/cooldown supervisor (no permanent lockout), explicit `overlay:health` recovered status, heartbeat sync path, off-screen safe-anchor fallback, and refinement pulse restart hardening.
 - **Recent (2026-03-18)**:
   - UI: Prompt Style section promoted to top of AI Refinement tab (was buried 3 levels deep in collapsed expander).
   - Logging: daily log files now use `.txt` extension (`trispr-flow.YYYY-MM-DD.txt`); shutdown log entry added before `ExitProcess(0)` — normal exits now distinguishable from crashes.
@@ -66,7 +92,8 @@ Last updated: 2026-03-20
 
 ## Next Focus
 
-1. Continue Block N privacy/consent hardening (`N9`) with updated in-app status messaging.
-2. Implement deterministic TTS fallback/error matrix (`N10`) and align UX diagnostics surface.
-3. Execute benchmark track (`N11`) with >=3 runs/provider/scenario and lock default TTS provider by evidence.
-4. Prepare `N13` end-to-end agent automation validation (voice command -> resolve -> publish/queue -> spoken response).
+1. Close `S13` manual acceptance (`50 cycles + 10 restarts` overlay/module soak gate).
+2. Prioritize `TTS freikonfigurierbar + testbar` (configuration flexibility + forced end-to-end verification).
+3. Use `docs/N11_TTS_BENCHMARK.md` as supporting evidence for TTS provider/runtime defaults while implementing free-config mode.
+4. Start Block T (`v0.8.0` assistant foundation) only after S13 + TTS acceptance gates are green.
+5. Keep Block R follow-up (`R4`-`R6`) non-blocking and regression-safe.

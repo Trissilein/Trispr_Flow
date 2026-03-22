@@ -109,15 +109,15 @@ pub(crate) fn resolve_whisper_cli_path_for_backend(preference: Option<&str>) -> 
     //    This preserves backend preference in dev mode even when one location
     //    (e.g. target/release/bin) is incomplete.
     for backend in preferred_backend_order(preference) {
-        if let Some(exe_dir) = &exe_dir {
-            candidates.push(exe_dir.join(format!("bin/{}/whisper-cli.exe", backend)));
-            candidates.push(exe_dir.join(format!("bin/{}/whisper-cli", backend)));
-        }
         if let Some(cwd) = &cwd {
             candidates.push(cwd.join(format!("src-tauri/bin/{}/whisper-cli.exe", backend)));
             candidates.push(cwd.join(format!("src-tauri/bin/{}/whisper-cli", backend)));
             candidates.push(cwd.join(format!("bin/{}/whisper-cli.exe", backend)));
             candidates.push(cwd.join(format!("bin/{}/whisper-cli", backend)));
+        }
+        if let Some(exe_dir) = &exe_dir {
+            candidates.push(exe_dir.join(format!("bin/{}/whisper-cli.exe", backend)));
+            candidates.push(exe_dir.join(format!("bin/{}/whisper-cli", backend)));
         }
     }
 
@@ -162,15 +162,15 @@ pub(crate) fn resolve_whisper_server_path_for_backend(preference: Option<&str>) 
 
     // 2. Search backend-first across all locations.
     for backend in preferred_backend_order(preference) {
-        if let Some(exe_dir) = &exe_dir {
-            candidates.push(exe_dir.join(format!("bin/{}/whisper-server.exe", backend)));
-            candidates.push(exe_dir.join(format!("bin/{}/whisper-server", backend)));
-        }
         if let Some(cwd) = &cwd {
             candidates.push(cwd.join(format!("src-tauri/bin/{}/whisper-server.exe", backend)));
             candidates.push(cwd.join(format!("src-tauri/bin/{}/whisper-server", backend)));
             candidates.push(cwd.join(format!("bin/{}/whisper-server.exe", backend)));
             candidates.push(cwd.join(format!("bin/{}/whisper-server", backend)));
+        }
+        if let Some(exe_dir) = &exe_dir {
+            candidates.push(exe_dir.join(format!("bin/{}/whisper-server.exe", backend)));
+            candidates.push(exe_dir.join(format!("bin/{}/whisper-server", backend)));
         }
     }
 

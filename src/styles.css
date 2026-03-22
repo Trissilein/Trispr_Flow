@@ -146,6 +146,44 @@ h1 {
   gap: 2px;
 }
 
+.gpu-backend-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.gpu-backend-btn,
+.gpu-purge-btn {
+  border: 1px solid var(--stroke-strong);
+  background: rgba(17, 24, 39, 0.45);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.gpu-backend-btn:hover,
+.gpu-purge-btn:hover {
+  border-color: rgba(var(--accent-rgb), 0.45);
+}
+
+.gpu-backend-btn.is-active {
+  color: var(--ink);
+  background: rgba(var(--accent-rgb), 0.25);
+  border-color: rgba(var(--accent-rgb), 0.5);
+}
+
+.gpu-backend-btn:disabled,
+.gpu-purge-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .gpu-vram-label {
   font-size: 0.75rem;
   color: var(--ink-softer);

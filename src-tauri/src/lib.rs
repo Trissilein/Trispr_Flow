@@ -2252,6 +2252,7 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         prev_capture_enabled,
         prev_transcribe_enabled,
         prev_transcribe_output_device,
+        prev_local_backend_preference,
         prev_ai_refinement_enabled,
         prev_provider,
     ) = {
@@ -2265,6 +2266,7 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
             current.capture_enabled,
             current.transcribe_enabled,
             current.transcribe_output_device.clone(),
+            current.local_backend_preference.clone(),
             current.ai_fallback.enabled,
             current.ai_fallback.provider.clone(),
         )
@@ -2384,6 +2386,35 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
     } else if transcribe_device_changed && settings.transcribe_enabled {
         stop_transcribe_monitor(app, &state);
         let _ = start_transcribe_monitor(app, &state, settings);
+    }
+
+    let local_backend_changed = !prev_local_backend_preference
+        .trim()
+        .eq_ignore_ascii_case(settings.local_backend_preference.trim());
+    if local_backend_changed {
+        info!(
+            "Whisper backend preference changed: '{}' -> '{}'",
+            prev_local_backend_preference,
+            settings.local_backend_preference
+        );
+        if let Some(model_path) = crate::models::resolve_model_path(app, &settings.model) {
+            if let Err(err) =
+                crate::whisper_server::restart_whisper_server_if_running(app, &state, &model_path)
+            {
+                warn!("Failed to restart whisper-server after backend switch: {}", err);
+            }
+            crate::whisper_server::schedule_whisper_server_warmup(
+                app,
+                state.inner(),
+                &model_path,
+                settings,
+            );
+        } else {
+            warn!(
+                "Skipping immediate backend switch warmup: model '{}' could not be resolved.",
+                settings.model
+            );
+        }
     }
 
     info!("[DIAG] save_settings_inner: applying overlay settings");

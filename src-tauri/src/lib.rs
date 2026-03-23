@@ -1262,6 +1262,34 @@ async fn fetch_available_models(
         .map_err(|e| format!("Fetch available models task failed: {}", e))?
 }
 
+#[tauri::command]
+fn open_log_directory() -> Result<(), String> {
+    let log_dir = std::env::var("LOCALAPPDATA")
+        .map(|d| std::path::PathBuf::from(d).join("Trispr Flow").join("logs"))
+        .map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        Command::new("explorer.exe")
+            .arg(&log_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open log directory: {}", e))?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // On macOS and Linux, use the `open` command
+        use std::process::Command;
+        Command::new("open")
+            .arg(&log_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open log directory: {}", e))?;
+        Ok(())
+    }
+}
+
 fn fetch_available_models_ollama_impl(endpoint: String) -> Result<Vec<String>, String> {
     let models = list_ollama_models(&endpoint);
     if models.is_empty() {
@@ -7147,13 +7175,48 @@ fn build_dependency_preflight_report(
         settings_snapshot.local_backend_preference.as_str(),
     ));
     if let Some(path) = whisper_cli {
-        items.push(DependencyPreflightItem {
-            id: "whisper_runtime".to_string(),
-            status: "ok".to_string(),
-            required: true,
-            message: format!("Whisper runtime found: {}", path.display()),
-            hint: None,
-        });
+        if let Some(issue) = crate::transcription::whisper_runtime_preflight_issue(path.as_path()) {
+            let selected_backend =
+                crate::transcription::whisper_backend_from_cli_path(path.as_path());
+            let vulkan_ready = paths::resolve_whisper_cli_path_for_backend(Some("vulkan"))
+                .filter(|candidate| {
+                    crate::transcription::whisper_backend_from_cli_path(candidate.as_path())
+                        == "vulkan"
+                })
+                .and_then(|candidate| {
+                    if crate::transcription::whisper_runtime_preflight_issue(candidate.as_path())
+                        .is_none()
+                    {
+                        Some(candidate)
+                    } else {
+                        None
+                    }
+                });
+            let has_working_fallback = selected_backend == "cuda" && vulkan_ready.is_some();
+            items.push(DependencyPreflightItem {
+                id: "whisper_runtime".to_string(),
+                status: if has_working_fallback {
+                    "warning".to_string()
+                } else {
+                    "error".to_string()
+                },
+                required: true,
+                message: issue,
+                hint: Some(if has_working_fallback {
+                    "CUDA runtime is incomplete; app will fall back to Vulkan. Reinstall/update Trispr Flow CUDA runtime to restore CUDA path.".to_string()
+                } else {
+                    "Reinstall Trispr Flow and ensure complete CUDA/VULKAN runtime files are bundled (including CUDA runtime DLLs).".to_string()
+                }),
+            });
+        } else {
+            items.push(DependencyPreflightItem {
+                id: "whisper_runtime".to_string(),
+                status: "ok".to_string(),
+                required: true,
+                message: format!("Whisper runtime found: {}", path.display()),
+                hint: None,
+            });
+        }
     } else {
         items.push(DependencyPreflightItem {
             id: "whisper_runtime".to_string(),
@@ -9139,7 +9202,8 @@ pub fn run() {
                     Some(overlay_settings),
                     overlay::idle_overlay_state_for_settings(&settings),
                 );
-                info!("[DIAG] setup: overlay state primed (lazy create), building tray...");
+                overlay::preload_overlay_window(&app.handle());
+                info!("[DIAG] setup: overlay state primed + window pre-warmed, building tray...");
             }
 
             let icon = {

@@ -8,7 +8,7 @@ import {
 import { settings, ollamaPullProgress, runtimeDiagnostics, startupStatus } from "./state";
 import { showToast } from "./toast";
 import { isExactModelTagMatch, normalizeModelTag } from "./ollama-tag-utils";
-import { applyHelpTooltip } from "./ai-refinement-help";
+// applyHelpTooltip removed — simplified model dropdown doesn't use tooltips
 import {
   normalizePersistedRefinementPromptPresetId,
   normalizeUserRefinementPromptPresets,
@@ -49,67 +49,29 @@ type WizardStage =
   | "select_model_source"
   | "ready";
 
-type CardStatus = "available" | "downloaded" | "active";
-type OllamaModelSource = "recommended" | "custom" | "installed" | "active";
-type OllamaModelSpec = {
-  name: string;
-  label: string;
-  size_gb: number | null;
-  profile: string;
-  description: string;
-  source: OllamaModelSource;
-  isCustom: boolean;
-};
+// OllamaModelSpec type removed — simplified model list uses inline object shape
 
 export const OLLAMA_RECOMMENDED_MODELS = [
   {
-    name: "qwen3:4b",
-    label: "Qwen3 4B",
-    size_gb: 2.6,
-    profile: "Balanced (Qwen3)",
-    description: "Strong fallback option to Qwen3.5 with lower VRAM demand and stable multilingual refinement.",
-  },
-  {
-    name: "qwen3:8b",
-    label: "Qwen3 8B",
-    size_gb: 5.2,
-    profile: "Quality (Qwen3)",
-    description: "Good quality/speed tradeoff when you prefer Qwen3 behavior over Qwen3.5.",
-  },
-  {
-    name: "qwen3:14b",
-    label: "Qwen3 14B",
-    size_gb: 9.0,
-    profile: "Max Quality (Qwen3)",
-    description: "Highest-quality Qwen3 option for local refinement on larger GPUs.",
-  },
-  {
-    name: "qwen3.5:0.8b",
-    label: "Qwen3.5 0.8B",
-    size_gb: 1.0,
-    profile: "Ultra Fast",
-    description: "Smallest footprint. Best for low VRAM and minimal latency.",
-  },
-  {
     name: "qwen3.5:2b",
-    label: "Qwen3.5 2B",
-    size_gb: 2.7,
-    profile: "Fast",
-    description: "Reliable speed/quality profile for everyday dictation cleanup.",
+    label: "Qwen 3.5 2B — Leicht",
+    size_gb: 1.5,
+    profile: "Grundlegend",
+    description: "Minimaler RAM-Verbrauch, gut bei schwacher Hardware",
   },
   {
     name: "qwen3.5:4b",
-    label: "Qwen3.5 4B",
-    size_gb: 3.4,
-    profile: "Balanced",
-    description: "Recommended default. Strong quality with low local resource usage.",
+    label: "Qwen 3.5 4B — Standard",
+    size_gb: 2.5,
+    profile: "Empfohlen",
+    description: "Guter Kompromiss aus Qualität und Geschwindigkeit",
   },
   {
     name: "qwen3.5:9b",
-    label: "Qwen3.5 9B",
-    size_gb: 6.6,
-    profile: "Quality",
-    description: "Highest local quality in the Qwen3.5 lineup; still practical on modern GPUs.",
+    label: "Qwen 3.5 9B — Beste Qualität",
+    size_gb: 5.5,
+    profile: "Hohe Qualität",
+    description: "Beste Verfeinerung, braucht 8+ GB RAM frei",
   },
 ];
 
@@ -774,205 +736,9 @@ function getInstalledSize(name: string): number {
   return found ? found.size_bytes : 0;
 }
 
-function resolveCardStatus(modelName: string): CardStatus {
-  if (!isModelInstalled(modelName)) {
-    return "available";
-  }
-  return isModelActive(modelName) ? "active" : "downloaded";
-}
+// resolveCardStatus removed — dropdown UI uses direct isModelActive/isModelInstalled checks
 
-function normalizeUniqueModelTags(values: string[]): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  values.forEach((value) => {
-    const normalized = normalizeModelTag(value);
-    if (!normalized || seen.has(normalized)) return;
-    seen.add(normalized);
-    out.push(normalized);
-  });
-  return out;
-}
-
-function isRecommendedOllamaModel(modelName: string): boolean {
-  return OLLAMA_RECOMMENDED_MODELS.some((spec) => isExactModelTagMatch(spec.name, modelName));
-}
-
-function ensureOllamaAvailableModelsShape(): void {
-  if (!settings) return;
-  settings.providers.ollama.available_models ??= [];
-}
-
-function getCustomOllamaModelTags(): string[] {
-  if (!settings) return [];
-  ensureOllamaAvailableModelsShape();
-  return normalizeUniqueModelTags(settings.providers.ollama.available_models).filter(
-    (name) => !isRecommendedOllamaModel(name)
-  );
-}
-
-function setCustomOllamaModelTags(tags: string[]): void {
-  if (!settings) return;
-  ensureOllamaAvailableModelsShape();
-  settings.providers.ollama.available_models = normalizeUniqueModelTags(tags).filter(
-    (name) => !isRecommendedOllamaModel(name)
-  );
-}
-
-function isModelTagInputValid(value: string): boolean {
-  const normalized = normalizeModelTag(value);
-  if (!normalized) return false;
-  if (normalized.length > 160) return false;
-  return !/\s/.test(normalized);
-}
-
-function buildOllamaModelSpecs(): OllamaModelSpec[] {
-  const byName = new Map<string, OllamaModelSpec>();
-  const add = (spec: OllamaModelSpec): void => {
-    const normalized = normalizeModelTag(spec.name);
-    if (!normalized) return;
-    const existing = byName.get(normalized);
-    if (!existing) {
-      byName.set(normalized, { ...spec, name: normalized });
-      return;
-    }
-    const merged: OllamaModelSpec = { ...existing };
-    if (existing.source !== "recommended" && spec.source === "recommended") {
-      merged.label = spec.label;
-      merged.size_gb = spec.size_gb;
-      merged.profile = spec.profile;
-      merged.description = spec.description;
-      merged.source = "recommended";
-    }
-    merged.isCustom = existing.isCustom || spec.isCustom;
-    byName.set(normalized, merged);
-  };
-
-  OLLAMA_RECOMMENDED_MODELS.forEach((spec) => {
-    add({
-      name: spec.name,
-      label: spec.label,
-      size_gb: spec.size_gb,
-      profile: spec.profile,
-      description: spec.description,
-      source: "recommended",
-      isCustom: false,
-    });
-  });
-
-  getCustomOllamaModelTags().forEach((name) => {
-    add({
-      name,
-      label: name,
-      size_gb: null,
-      profile: "Custom tag",
-      description: "User-defined model tag. Download model to install it locally.",
-      source: "custom",
-      isCustom: true,
-    });
-  });
-
-  installedOllamaModels.forEach((model) => {
-    add({
-      name: model.name,
-      label: model.name,
-      size_gb: null,
-      profile: "Installed model",
-      description: "Discovered in local Ollama runtime.",
-      source: "installed",
-      isCustom: false,
-    });
-  });
-
-  const active = normalizeModelTag(settings?.ai_fallback?.model);
-  if (active) {
-    add({
-      name: active,
-      label: active,
-      size_gb: null,
-      profile: "Active selection",
-      description: "Currently selected model for refinement.",
-      source: "active",
-      isCustom: false,
-    });
-  }
-
-  return Array.from(byName.values());
-}
-
-async function handleOllamaAddCustomModel(rawName: string): Promise<boolean> {
-  if (!settings) {
-    showToast({
-      type: "warning",
-      title: "Settings not ready",
-      message: "Try again in a moment.",
-      duration: 2500,
-    });
-    return false;
-  }
-  const normalized = normalizeModelTag(rawName);
-  if (!isModelTagInputValid(normalized)) {
-    showToast({
-      type: "warning",
-      title: "Invalid model tag",
-      message: "Enter a valid Ollama model tag (no spaces), e.g. qwen3:32b.",
-      duration: 3500,
-    });
-    return false;
-  }
-
-  if (isRecommendedOllamaModel(normalized)) {
-    showToast({
-      type: "info",
-      title: "Already in curated list",
-      message: `${normalized} is already available in the default cards.`,
-      duration: 2800,
-    });
-    return false;
-  }
-
-  const current = getCustomOllamaModelTags();
-  if (current.some((name) => isExactModelTagMatch(name, normalized))) {
-    showToast({
-      type: "info",
-      title: "Already added",
-      message: `${normalized} is already in your custom model list.`,
-      duration: 2800,
-    });
-    return false;
-  }
-
-  setCustomOllamaModelTags([...current, normalized]);
-  await persistCurrentSettings();
-  renderOllamaModelManager();
-  showToast({
-    type: "success",
-    title: "Custom model added",
-    message: `${normalized} added. You can now download or activate it from the card list.`,
-    duration: 3200,
-  });
-  return true;
-}
-
-async function handleOllamaRemoveCustomModel(modelName: string): Promise<void> {
-  if (!settings) {
-    return;
-  }
-  const normalized = normalizeModelTag(modelName);
-  const current = getCustomOllamaModelTags();
-  const next = current.filter((name) => !isExactModelTagMatch(name, normalized));
-  if (next.length === current.length) {
-    return;
-  }
-  setCustomOllamaModelTags(next);
-  await persistCurrentSettings();
-  renderOllamaModelManager();
-  showToast({
-    type: "success",
-    title: "Removed from custom list",
-    message: `${normalized} was removed from your custom model cards.`,
-    duration: 2800,
-  });
-}
+// Helper functions for custom model management removed — simplified dropdown uses curated list only
 
 
 /**
@@ -1470,164 +1236,121 @@ function renderModelsSection(container: HTMLElement): void {
   const hint = document.createElement("p");
   hint.className = "field-hint";
   hint.textContent =
-    "Download curated models or add any custom Ollama tag. This section manages Ollama text-refinement models (not TTS voices). Delete removes local blobs; Remove from list only removes the custom card.";
+    "Wähle ein KI-Modell für die Transkriptions-Verfeinerung. Größere Modelle liefern bessere Ergebnisse, brauchen aber mehr RAM.";
   section.appendChild(hint);
 
-  const customRow = document.createElement("div");
-  customRow.className = "ollama-custom-model-row";
-  const customInput = document.createElement("input");
-  customInput.type = "text";
-  customInput.className = "ollama-custom-model-input";
-  customInput.placeholder = "Add model tag (e.g. qwen3:32b)";
-  customInput.autocomplete = "off";
-  customInput.spellcheck = false;
-  const addCustomBtn = document.createElement("button");
-  addCustomBtn.className = "btn-sm btn-primary";
-  addCustomBtn.textContent = "Add model";
-  addCustomBtn.addEventListener("click", () => {
-    void handleOllamaAddCustomModel(customInput.value).then((added) => {
-      if (added) {
-        customInput.value = "";
-      }
-    });
-  });
-  customInput.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    addCustomBtn.click();
-  });
-  customRow.appendChild(customInput);
-  customRow.appendChild(addCustomBtn);
-  section.appendChild(customRow);
+  // --- Dropdown + Status + Action button row ---
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "ollama-model-selector";
 
-  const list = document.createElement("div");
-  list.className = "model-list ollama-model-list";
+  const label = document.createElement("label");
+  label.textContent = "KI-Modell:";
+  label.htmlFor = "ollama-model-select";
+  selectorRow.appendChild(label);
 
-  const orderedModels = buildOllamaModelSpecs()
-    .map((spec, index) => {
-      const active = isModelActive(spec.name);
-      const installed = isModelInstalled(spec.name);
-      const rank = active ? 0 : installed ? 1 : 2;
-      return { spec, index, rank };
-    })
-    .sort((a, b) => a.rank - b.rank || a.index - b.index)
-    .map((entry) => entry.spec);
+  const select = document.createElement("select");
+  select.id = "ollama-model-select";
+  select.className = "ollama-model-select";
 
-  orderedModels.forEach((spec) => {
+  const activeModel = settings?.ai_fallback?.model
+    ? normalizeModelTag(settings.ai_fallback.model)
+    : "qwen3.5:4b";
+
+  OLLAMA_RECOMMENDED_MODELS.forEach((spec) => {
+    const option = document.createElement("option");
+    option.value = spec.name;
     const installed = isModelInstalled(spec.name);
-    const active = isModelActive(spec.name);
-    const isPulling = ollamaPullProgress.has(spec.name) || activeOllamaPulls.has(spec.name);
-    const progress = ollamaPullProgress.get(spec.name);
-
-    const status = resolveCardStatus(spec.name);
-    const statusText = isPulling
-      ? "Downloading"
-      : status === "active"
-        ? "Active"
-        : status === "downloaded"
-          ? "Installed"
-          : "Available";
-
-    const card = document.createElement("article");
-    card.className = `model-item ollama-model-item${
-      status === "active" ? " selected" : ""
-    }${status === "available" ? " model-item--available" : ""}${isPulling ? " is-loading" : ""}`;
-
-    const sizeDisplay = installed
+    const sizeLabel = installed
       ? formatBytesGb(getInstalledSize(spec.name))
-      : spec.size_gb !== null
-        ? `~${spec.size_gb.toFixed(1)} GB`
-        : "Unknown size";
-
-    card.innerHTML = `
-      <div class="model-header">
-        <div class="model-name">${spec.label}</div>
-        <div class="model-size">${sizeDisplay}</div>
-      </div>
-      <div class="model-meta">${spec.profile}</div>
-      <div class="model-desc">${spec.description}</div>
-      <div class="model-status ${isPulling ? "downloaded" : status}">${statusText}</div>
-      ${
-        isPulling && progress
-          ? `
-        <div class="model-progress ollama-model-progress">
-          <div class="ollama-progress-bar">
-            <div class="ollama-progress-fill" style="width: ${computeOllamaPercent(progress)}%"></div>
-          </div>
-          <span class="ollama-progress-text">${formatOllamaProgress(progress)}</span>
-        </div>
-      `
-          : ""
-      }
-      <div class="model-actions ollama-model-actions"></div>
-    `;
-
-    const actionsEl = card.querySelector(".ollama-model-actions") as HTMLDivElement | null;
-    if (actionsEl) {
-      if (isPulling) {
-        const note = document.createElement("span");
-        note.className = "ollama-cancel-note";
-        note.textContent = "Pull in progress...";
-        actionsEl.appendChild(note);
-      } else if (status === "available") {
-        const pullBtn = document.createElement("button");
-        pullBtn.className = "btn-sm btn-primary";
-        pullBtn.textContent = "Download model";
-        pullBtn.title = `Pull ${spec.name} via Ollama`;
-        applyHelpTooltip(pullBtn, "ollama_action_download");
-        pullBtn.addEventListener("click", () => {
-          void handleOllamaPull(spec.name);
-        });
-        actionsEl.appendChild(pullBtn);
-        if (spec.isCustom) {
-          const removeBtn = document.createElement("button");
-          removeBtn.className = "btn-sm";
-          removeBtn.textContent = "Remove from list";
-          removeBtn.title = `Remove ${spec.name} from custom cards`;
-          removeBtn.addEventListener("click", () => {
-            void handleOllamaRemoveCustomModel(spec.name);
-          });
-          actionsEl.appendChild(removeBtn);
-        }
-      } else {
-        if (!active) {
-          const activateBtn = document.createElement("button");
-          activateBtn.className = "btn-sm btn-primary";
-          activateBtn.textContent = "Activate";
-          activateBtn.title = `Activate ${spec.name} for AI refinement`;
-          applyHelpTooltip(activateBtn, "ollama_action_set_active");
-          activateBtn.addEventListener("click", () => {
-            void activateOllamaModel(spec.name);
-          });
-          actionsEl.appendChild(activateBtn);
-        }
-
-        const deleteBtn = document.createElement("button");
-        deleteBtn.className = "btn-sm btn-danger";
-        deleteBtn.textContent = "Delete";
-        deleteBtn.title = `Remove ${spec.name} from Ollama`;
-        applyHelpTooltip(deleteBtn, "ollama_action_delete");
-        deleteBtn.addEventListener("click", () => {
-          void handleOllamaDelete(spec.name);
-        });
-        actionsEl.appendChild(deleteBtn);
-        if (spec.isCustom) {
-          const removeBtn = document.createElement("button");
-          removeBtn.className = "btn-sm";
-          removeBtn.textContent = "Remove from list";
-          removeBtn.title = `Remove ${spec.name} from custom cards`;
-          removeBtn.addEventListener("click", () => {
-            void handleOllamaRemoveCustomModel(spec.name);
-          });
-          actionsEl.appendChild(removeBtn);
-        }
-      }
+      : `~${spec.size_gb?.toFixed(1) ?? "?"} GB`;
+    option.textContent = `${spec.label} (${sizeLabel})`;
+    if (isExactModelTagMatch(spec.name, activeModel)) {
+      option.selected = true;
     }
+    select.appendChild(option);
+  });
+  selectorRow.appendChild(select);
 
-    list.appendChild(card);
+  const statusSpan = document.createElement("span");
+  statusSpan.className = "ollama-model-status-badge";
+  selectorRow.appendChild(statusSpan);
+
+  const actionBtn = document.createElement("button");
+  actionBtn.className = "btn-sm btn-primary ollama-model-action-btn";
+  selectorRow.appendChild(actionBtn);
+
+  section.appendChild(selectorRow);
+
+  // --- Progress bar ---
+  const progressRow = document.createElement("div");
+  progressRow.className = "ollama-download-progress";
+  progressRow.style.display = "none";
+  progressRow.innerHTML = `
+    <div class="ollama-progress-bar">
+      <div class="ollama-progress-fill" style="width: 0%"></div>
+    </div>
+    <span class="ollama-progress-text"></span>
+  `;
+  section.appendChild(progressRow);
+
+  // --- Update status/action based on selected model ---
+  function updateModelState(): void {
+    const selectedName = select.value;
+    const installed = isModelInstalled(selectedName);
+    const active = isModelActive(selectedName);
+    const isPulling =
+      ollamaPullProgress.has(selectedName) || activeOllamaPulls.has(selectedName);
+    const progress = ollamaPullProgress.get(selectedName);
+
+    if (isPulling) {
+      statusSpan.textContent = "Wird geladen...";
+      statusSpan.className = "ollama-model-status-badge status-downloading";
+      actionBtn.textContent = "Download läuft...";
+      actionBtn.disabled = true;
+      progressRow.style.display = "";
+      if (progress) {
+        const pct = computeOllamaPercent(progress);
+        const fill = progressRow.querySelector(".ollama-progress-fill") as HTMLElement | null;
+        const text = progressRow.querySelector(".ollama-progress-text") as HTMLElement | null;
+        if (fill) fill.style.width = `${pct}%`;
+        if (text) text.textContent = formatOllamaProgress(progress);
+      }
+    } else if (active) {
+      statusSpan.textContent = "Aktiv ✓";
+      statusSpan.className = "ollama-model-status-badge status-active";
+      actionBtn.textContent = "Aktiv";
+      actionBtn.disabled = true;
+      progressRow.style.display = "none";
+    } else if (installed) {
+      statusSpan.textContent = "Installiert";
+      statusSpan.className = "ollama-model-status-badge status-installed";
+      actionBtn.textContent = "Aktivieren";
+      actionBtn.disabled = false;
+      progressRow.style.display = "none";
+    } else {
+      statusSpan.textContent = "Nicht installiert";
+      statusSpan.className = "ollama-model-status-badge status-available";
+      actionBtn.textContent = "Herunterladen";
+      actionBtn.disabled = false;
+      progressRow.style.display = "none";
+    }
+  }
+
+  select.addEventListener("change", updateModelState);
+
+  actionBtn.addEventListener("click", () => {
+    const selectedName = select.value;
+    const installed = isModelInstalled(selectedName);
+
+    if (installed) {
+      void activateOllamaModel(selectedName);
+    } else {
+      void handleOllamaPull(selectedName);
+    }
   });
 
-  section.appendChild(list);
+  updateModelState();
+
   container.appendChild(section);
 }
 
@@ -1821,34 +1544,7 @@ async function handleOllamaPull(modelName: string): Promise<void> {
   }
 }
 
-async function handleOllamaDelete(modelName: string): Promise<void> {
-  try {
-    await invoke("delete_ollama_model", { model: modelName });
-    await refreshOllamaInstalledModels();
-
-    if (settings && normalizeModelTag(settings.ai_fallback.model) === normalizeModelTag(modelName)) {
-      const fallbackModel = installedOllamaModels[0]?.name ?? "";
-      settings.ai_fallback.model = normalizeModelTag(fallbackModel);
-      settings.providers.ollama.preferred_model = normalizeModelTag(fallbackModel);
-      settings.postproc_llm_model = normalizeModelTag(fallbackModel);
-      await persistCurrentSettings();
-    }
-
-    await maybePersistWizardState();
-    showToast({
-      type: "success",
-      title: "Model Deleted",
-      message: `${modelName} has been removed from Ollama.`,
-    });
-    renderOllamaModelManager();
-  } catch (error) {
-    showToast({
-      type: "error",
-      title: "Delete Failed",
-      message: String(error),
-    });
-  }
-}
+// handleOllamaDelete removed — simplified dropdown UI; delete via ollama CLI if needed
 
 function computeOllamaPercent(progress: OllamaPullProgressType): number {
   if (progress.total && progress.total > 0 && progress.completed) {

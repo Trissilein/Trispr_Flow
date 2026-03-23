@@ -49,6 +49,25 @@ const TRANSCRIPTION_ACCEL_CPU: u8 = 1;
 const TRANSCRIPTION_ACCEL_GPU: u8 = 2;
 static LAST_TRANSCRIPTION_ACCELERATOR: AtomicU8 = AtomicU8::new(TRANSCRIPTION_ACCEL_UNKNOWN);
 static CUDA_BACKEND_UNSTABLE: AtomicBool = AtomicBool::new(false);
+const CUDA_RUNTIME_REQUIRED_FILES: &[&str] = &[
+    "whisper-cli.exe",
+    "whisper.dll",
+    "ggml.dll",
+    "ggml-base.dll",
+    "ggml-cpu.dll",
+    "ggml-cuda.dll",
+    "cublas64_13.dll",
+    "cublasLt64_13.dll",
+    "cudart64_13.dll",
+];
+const VULKAN_RUNTIME_REQUIRED_FILES: &[&str] = &[
+    "whisper-cli.exe",
+    "whisper.dll",
+    "ggml.dll",
+    "ggml-base.dll",
+    "ggml-cpu.dll",
+    "ggml-vulkan.dll",
+];
 
 pub(crate) fn last_transcription_accelerator() -> &'static str {
     match LAST_TRANSCRIPTION_ACCELERATOR.load(Ordering::Relaxed) {
@@ -307,10 +326,13 @@ fn backlog_status_from_queue(queue: &AudioQueueState) -> TranscribeBacklogStatus
 mod tests {
     use super::{
         backlog_capacity_for_batch_ms, gpu_backend_attempt_order, should_drop_transcript,
-        AudioQueue, CUDA_BACKEND_UNSTABLE,
+        whisper_runtime_preflight_issue, AudioQueue, CUDA_BACKEND_UNSTABLE,
+        CUDA_RUNTIME_REQUIRED_FILES,
     };
     use crate::state::Settings;
+    use std::fs;
     use std::sync::atomic::Ordering;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn audio_queue_drops_oldest_when_full() {
@@ -379,6 +401,54 @@ mod tests {
         let mut settings = Settings::default();
         settings.local_backend_preference = "vulkan".to_string();
         assert_eq!(gpu_backend_attempt_order(&settings), vec!["vulkan"]);
+    }
+
+    #[test]
+    fn cuda_runtime_preflight_detects_missing_cublaslt() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let base = std::env::temp_dir().join(format!("trispr-flow-cuda-preflight-{unique}"));
+        let cuda_dir = base.join("cuda");
+        fs::create_dir_all(&cuda_dir).expect("create cuda test dir");
+
+        for file in CUDA_RUNTIME_REQUIRED_FILES {
+            if *file == "cublasLt64_13.dll" {
+                continue;
+            }
+            fs::write(cuda_dir.join(file), b"").expect("write placeholder runtime file");
+        }
+
+        let issue = whisper_runtime_preflight_issue(&cuda_dir.join("whisper-cli.exe"));
+        assert!(issue.is_some(), "expected missing CUDA runtime issue");
+        let message = issue.unwrap_or_default();
+        assert!(
+            message.contains("cublasLt64_13.dll"),
+            "expected missing cublasLt64_13.dll in preflight issue, got: {message}"
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cuda_runtime_preflight_passes_when_required_files_exist() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let base = std::env::temp_dir().join(format!("trispr-flow-cuda-preflight-ok-{unique}"));
+        let cuda_dir = base.join("cuda");
+        fs::create_dir_all(&cuda_dir).expect("create cuda test dir");
+
+        for file in CUDA_RUNTIME_REQUIRED_FILES {
+            fs::write(cuda_dir.join(file), b"").expect("write placeholder runtime file");
+        }
+
+        let issue = whisper_runtime_preflight_issue(&cuda_dir.join("whisper-cli.exe"));
+        assert!(issue.is_none(), "expected no CUDA runtime preflight issue");
+
+        let _ = fs::remove_dir_all(&base);
     }
 }
 
@@ -1636,6 +1706,15 @@ fn whisper_cli_supports_gpu_layers(cli_path: &Path) -> bool {
 }
 
 fn whisper_cli_probe_gpu_layers(cli_path: &Path) -> bool {
+    if let Some(issue) = whisper_runtime_preflight_issue(cli_path) {
+        warn!(
+            "Skipping whisper-cli GPU layer probe for '{}' due to runtime preflight issue: {}",
+            cli_path.display(),
+            issue
+        );
+        return false;
+    }
+
     let mut probe = Command::new(cli_path);
     #[cfg(target_os = "windows")]
     probe.creation_flags(0x08000000); // CREATE_NO_WINDOW
@@ -1679,6 +1758,34 @@ fn whisper_runtime_dependency_message(cli_path: &Path, err: &std::io::Error) -> 
         cli_path.display(),
         err
     )
+}
+
+pub(crate) fn whisper_runtime_preflight_issue(cli_path: &Path) -> Option<String> {
+    let backend = whisper_backend_from_cli_path(cli_path);
+    let required_files = match backend {
+        "cuda" => CUDA_RUNTIME_REQUIRED_FILES,
+        "vulkan" => VULKAN_RUNTIME_REQUIRED_FILES,
+        _ => return None,
+    };
+
+    let runtime_dir = cli_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut missing_files: Vec<&str> = Vec::new();
+    for file in required_files {
+        if !runtime_dir.join(file).exists() {
+            missing_files.push(*file);
+        }
+    }
+
+    if missing_files.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "Whisper {} runtime is incomplete for '{}'; missing: {}",
+            backend.to_uppercase(),
+            cli_path.display(),
+            missing_files.join(", ")
+        ))
+    }
 }
 
 fn map_whisper_spawn_error(cli_path: &Path, err: std::io::Error) -> String {
@@ -1804,6 +1911,16 @@ fn resolve_gpu_cli_fallback_paths(settings: &Settings) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = Vec::new();
     for backend in gpu_backend_attempt_order(settings) {
         if let Some(path) = resolve_whisper_cli_path_for_exact_backend(backend) {
+            if let Some(issue) = whisper_runtime_preflight_issue(path.as_path()) {
+                if backend == "cuda" {
+                    CUDA_BACKEND_UNSTABLE.store(true, Ordering::Relaxed);
+                }
+                warn!(
+                    "Skipping whisper backend '{}' due to runtime preflight issue: {}",
+                    backend, issue
+                );
+                continue;
+            }
             push_unique_path(&mut paths, path);
         }
     }
@@ -2178,6 +2295,19 @@ fn run_whisper_cli(
     output_base: &Path,
     force_cpu: bool,
 ) -> Result<String, String> {
+    if let Some(issue) = whisper_runtime_preflight_issue(cli_path) {
+        update_whisper_runtime_diagnostics(
+            app,
+            settings,
+            "cli",
+            "cpu",
+            resolve_whisper_gpu_layers(settings),
+            None,
+            Some(issue.clone()),
+        );
+        return Err(issue);
+    }
+
     // Ensure each run starts clean and always cleans side effects on return.
     cleanup_whisper_output_files(output_base, wav_path);
     let _output_guard = WhisperOutputGuard::new(output_base.to_path_buf(), wav_path.to_path_buf());

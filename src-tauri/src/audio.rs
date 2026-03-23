@@ -2595,10 +2595,16 @@ mod refinement_defer_policy_tests {
     #[test]
     fn module_or_setting_disabled_forces_no_defer() {
         let module_disabled = settings_for_policy(false, true);
-        assert!(!should_defer_paste_for_refinement_inner(&module_disabled, true));
+        assert!(!should_defer_paste_for_refinement_inner(
+            &module_disabled,
+            true
+        ));
 
         let setting_disabled = settings_for_policy(true, false);
-        assert!(!should_defer_paste_for_refinement_inner(&setting_disabled, true));
+        assert!(!should_defer_paste_for_refinement_inner(
+            &setting_disabled,
+            true
+        ));
     }
 
     #[test]

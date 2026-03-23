@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Installer variant matrix (Windows)**:
+  - New multi-variant build pipeline (`scripts/windows/build-installers.bat`) for:
+    - `vulkan-only`
+    - `cuda-lite`
+    - `cuda-complete`
+  - New Tauri variant config generator (`scripts/generate-tauri-variant-config.mjs`).
+  - New manual release asset uploader (`scripts/windows/upload-release-assets.ps1`, wrapper: `upload_release_assets.bat`).
+  - New GitHub Actions workflow for Windows installer build/upload: `.github/workflows/windows-release-installers.yml`.
+
+### Fixed
+
+- **CUDA runtime dependency hardening**:
+  - Added explicit CUDA runtime preflight for Whisper CLI (`cublas64_13.dll`, `cublasLt64_13.dll`, `cudart64_13.dll`) before probe/spawn.
+  - Prevents Windows loader popups from incomplete CUDA payloads by skipping broken CUDA runtime and falling back to Vulkan/CPU chain.
+  - Installer build scripts now validate Whisper runtime payload completeness before `tauri build`.
+
 ## [0.7.2] - 2026-03-20
 
 ### Added

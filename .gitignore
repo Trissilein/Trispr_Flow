@@ -40,6 +40,7 @@ src-tauri/bin/
 !src-tauri/bin/quantize.exe
 src-tauri/bin/cuda/
 src-tauri/bin/vulkan/
+src-tauri/tauri.conf.variant.*.json
 
 # Bundled Piper TTS binaries + voice models (downloaded via scripts/setup-piper.ps1)
 src-tauri/bin/piper/
@@ -62,3 +63,6 @@ src-tauri/.vibe-coding/
 
 # Rust-analyzer build artifacts (flycheck builds, not production)
 target/rust-analyzer/
+
+# Generated per-variant NSIS compile-time define (created by build-installers.bat)
+src-tauri/nsis/variant-define.nsh

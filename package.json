@@ -1,7 +1,7 @@
 {
   "name": "trispr-flow",
   "private": true,
-  "version": "0.7.2",
+  "version": "0.7.3",
   "type": "module",
   "scripts": {
     "dev": "tauri dev --release",
@@ -19,7 +19,8 @@
     "benchmark:tts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tts-benchmark.ps1",
     "benchmark:tts:strict": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tts-benchmark.ps1 -FailOnNoRecommendation -FailOnGateMiss",
     "benchmark:ollama-models": "node scripts/eval-ollama-models.mjs",
-    "qa:release": "node scripts/release-qa.mjs"
+    "qa:release": "node scripts/release-qa.mjs",
+    "build:installers": "cmd /c scripts\\windows\\build-installers.bat"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

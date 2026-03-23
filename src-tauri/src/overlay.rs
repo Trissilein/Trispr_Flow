@@ -147,6 +147,14 @@ pub fn prime_overlay_controller(
     });
 }
 
+/// Pre-warms the overlay window at app startup so the WebView2 JS runtime is
+/// fully loaded before the first recording begins. Eliminates the race condition
+/// where window.eval() calls silently fail because JS hasn't loaded yet.
+/// Called once after prime_overlay_controller() during app setup.
+pub fn preload_overlay_window(app: &AppHandle) {
+    schedule_overlay_window_creation(app, "preload");
+}
+
 /// Called when the overlay webview signals readiness.
 /// Settings, state and last level are replayed from the cached desired state.
 pub fn mark_overlay_ready(app: &AppHandle) {
@@ -337,7 +345,10 @@ fn fallback_overlay_to_safe_anchor(window: &WebviewWindow) -> Result<(), String>
     let origin_y = monitor_pos.y as f64 / scale;
 
     let outer_size = window.outer_size().ok();
-    let width = outer_size.map(|size| size.width as f64).unwrap_or(64.0).max(32.0);
+    let width = outer_size
+        .map(|size| size.width as f64)
+        .unwrap_or(64.0)
+        .max(32.0);
     let height = outer_size
         .map(|size| size.height as f64)
         .unwrap_or(64.0)
@@ -346,7 +357,10 @@ fn fallback_overlay_to_safe_anchor(window: &WebviewWindow) -> Result<(), String>
     let pos_x = origin_x + monitor_w * 0.5 - width * 0.5;
     let pos_y = origin_y + monitor_h * 0.5 - height * 0.5;
     window
-        .set_position(tauri::Position::Logical(tauri::LogicalPosition { x: pos_x, y: pos_y }))
+        .set_position(tauri::Position::Logical(tauri::LogicalPosition {
+            x: pos_x,
+            y: pos_y,
+        }))
         .map_err(|e| format!("Failed to fallback overlay position to safe anchor: {}", e))
 }
 

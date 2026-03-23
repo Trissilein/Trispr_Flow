@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Trispr Flow",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "identifier": "com.trispr.flow",
   "build": {
     "beforeDevCommand": "npm run dev:tauri",
@@ -28,7 +28,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -44,6 +46,7 @@
       "bin/cuda/ggml-cpu.dll": "bin/cuda/ggml-cpu.dll",
       "bin/cuda/ggml-cuda.dll": "bin/cuda/ggml-cuda.dll",
       "bin/cuda/cublas64_13.dll": "bin/cuda/cublas64_13.dll",
+      "bin/cuda/cublasLt64_13.dll": "bin/cuda/cublasLt64_13.dll",
       "bin/cuda/cudart64_13.dll": "bin/cuda/cudart64_13.dll",
       "bin/cuda/whisper-server.exe": "bin/cuda/whisper-server.exe",
       "bin/vulkan/whisper-cli.exe": "bin/vulkan/whisper-cli.exe",
@@ -67,7 +70,10 @@
       "nsis": {
         "displayLanguageSelector": true,
         "installerIcon": "icons/icon.ico",
-        "languages": ["English", "German"],
+        "languages": [
+          "English",
+          "German"
+        ],
         "installMode": "currentUser",
         "installerHooks": "nsis/hooks.nsh"
       }

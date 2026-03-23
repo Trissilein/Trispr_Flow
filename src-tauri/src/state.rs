@@ -1797,12 +1797,10 @@ mod tests {
 
         assert!(settings.ai_fallback.enabled);
         assert!(settings.postproc_llm_enabled);
-        assert!(
-            settings
-                .module_settings
-                .enabled_modules
-                .contains(AI_REFINEMENT_MODULE_ID)
-        );
+        assert!(settings
+            .module_settings
+            .enabled_modules
+            .contains(AI_REFINEMENT_MODULE_ID));
     }
 
     #[test]
@@ -1821,12 +1819,10 @@ mod tests {
 
         assert!(!settings.ai_fallback.enabled);
         assert!(!settings.postproc_llm_enabled);
-        assert!(
-            !settings
-                .module_settings
-                .enabled_modules
-                .contains(AI_REFINEMENT_MODULE_ID)
-        );
+        assert!(!settings
+            .module_settings
+            .enabled_modules
+            .contains(AI_REFINEMENT_MODULE_ID));
     }
 
     fn sample_history_entry(id: &str, status: &str, refined: &str, error: &str) -> HistoryEntry {

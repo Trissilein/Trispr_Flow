@@ -1344,6 +1344,75 @@ fn resolve_piper_model_dir(configured: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+/// Download a Piper voice model to `%LOCALAPPDATA%\trispr-flow\piper\voices\`.
+///
+/// `lang_code` must be one of the known bundled voices:
+/// - `"de_DE-thorsten-medium"` (~53 MB)
+/// - `"en_US-amy-medium"` (~63 MB)
+///
+/// Both `.onnx` and `.onnx.json` files are downloaded.
+/// Skips silently if the files already exist.
+/// Returns the path to the `.onnx` file on success.
+pub fn download_piper_voice(lang_code: &str) -> Result<std::path::PathBuf, String> {
+    let voices_dir = std::env::var_os("LOCALAPPDATA")
+        .map(|d| {
+            std::path::PathBuf::from(d)
+                .join("trispr-flow")
+                .join("piper")
+                .join("voices")
+        })
+        .ok_or_else(|| "LOCALAPPDATA not set".to_string())?;
+
+    std::fs::create_dir_all(&voices_dir)
+        .map_err(|e| format!("Cannot create voices dir: {e}"))?;
+
+    let onnx_path = voices_dir.join(format!("{lang_code}.onnx"));
+    let json_path = voices_dir.join(format!("{lang_code}.onnx.json"));
+
+    if file_is_non_empty(&onnx_path) && json_path.exists() {
+        return Ok(onnx_path);
+    }
+
+    let hf_path = match lang_code {
+        "de_DE-thorsten-medium" => "de/de_DE/thorsten/medium",
+        "en_US-amy-medium" => "en/en_US/amy/medium",
+        other => return Err(format!("Unknown voice model: {other}")),
+    };
+
+    let base = "https://huggingface.co/rhasspy/piper-voices/resolve/main";
+
+    for (url, dest) in [
+        (
+            format!("{base}/{hf_path}/{lang_code}.onnx?download=true"),
+            &onnx_path,
+        ),
+        (
+            format!("{base}/{hf_path}/{lang_code}.onnx.json?download=true"),
+            &json_path,
+        ),
+    ] {
+        if file_is_non_empty(dest) {
+            continue;
+        }
+        tracing::info!("[piper] Downloading voice file: {url}");
+        let resp = ureq::get(&url)
+            .call()
+            .map_err(|e| format!("Voice download failed for {lang_code}: {e}"))?;
+        let mut reader = resp.into_reader();
+        let mut out = std::fs::File::create(dest)
+            .map_err(|e| format!("Cannot write {}: {e}", dest.display()))?;
+        std::io::copy(&mut reader, &mut out)
+            .map_err(|e| format!("Cannot write voice data for {lang_code}: {e}"))?;
+    }
+
+    if file_is_non_empty(&onnx_path) {
+        tracing::info!("[piper] Voice model ready: {}", onnx_path.display());
+        Ok(onnx_path)
+    } else {
+        Err(format!("Voice model download succeeded but {lang_code}.onnx is empty"))
+    }
+}
+
 pub fn piper_binary_available(configured: &str) -> bool {
     resolve_piper_binary(configured).is_some()
 }
@@ -1388,10 +1457,21 @@ fn synthesize_piper_to_wav(
     } else {
         // Auto-discover: take the first .onnx in the bundled/configured voices dir.
         let voices = list_piper_voices("");
-        voices.into_iter().next().map(|v| v.id).ok_or_else(|| {
-            "No Piper voice model found. Run scripts/setup-piper.ps1 or set piper_model_path."
-                .to_string()
-        })?
+        if let Some(v) = voices.into_iter().next() {
+            v.id
+        } else {
+            // No voice found — attempt lazy download of the default German voice.
+            tracing::info!("[piper] No voice model found locally, attempting on-demand download.");
+            match download_piper_voice("de_DE-thorsten-medium") {
+                Ok(p) => p.to_string_lossy().to_string(),
+                Err(e) => {
+                    return Err(format!(
+                        "No Piper voice model found and auto-download failed: {e}. \
+                         Connect to the internet and restart the app, or set piper_model_path manually."
+                    ));
+                }
+            }
+        }
     };
     let model_path = resolved_model.as_str();
 

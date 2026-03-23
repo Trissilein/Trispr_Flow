@@ -171,7 +171,7 @@ impl Default for WorkflowAgentSettings {
                 "trispr agent".to_string(),
             ],
             intent_keywords: keywords,
-            model: "qwen3:4b".to_string(),
+            model: "qwen3.5:4b".to_string(),
             temperature: 0.2,
             max_tokens: 512,
             session_gap_minutes: 20,
@@ -341,7 +341,7 @@ pub fn normalize_workflow_agent_settings(settings: &mut WorkflowAgentSettings) {
     }
     settings.model = settings.model.trim().to_string();
     if settings.model.is_empty() {
-        settings.model = "qwen3:4b".to_string();
+        settings.model = "qwen3.5:4b".to_string();
     }
     if !settings.temperature.is_finite() {
         settings.temperature = 0.2;

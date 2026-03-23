@@ -1,140 +1,260 @@
 ; Trispr Flow NSIS Installer Hooks
-; Adds custom pages for install/uninstall selection, overlay style, and capture mode.
+; Wizard: Hardware/Variant info, Component selection, First-run config, Summary.
 ; This file is included at the top level of the installer script by Tauri.
 
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
 
-; Variables for the install/uninstall page
-Var InstallModeDialog
-Var InstallModeLabel
-Var InstallModeRadioInstall
-Var InstallModeRadioUninstall
-Var InstallModeChoice
+; Compile-time variant define injected by build-installers.bat
+; Fallback to "vulkan" if building outside the standard pipeline
+!ifndef TRISPR_VARIANT
+  !define TRISPR_VARIANT "vulkan"
+!endif
 
-; Variables for the overlay style page
-Var OverlayStyleDialog
-Var OverlayStyleLabel
-Var OverlayRadioHal
-Var OverlayRadioKitt
+; =====================================================================
+; Variable declarations
+; =====================================================================
+
+; Page 1: Hardware/Variant info
+Var HardwareDialog
+Var DetectedGpuStr
+
+; Page 2: Components
+Var ComponentsDialog
+Var CheckFFmpeg
+Var CheckPiperRuntime
+Var RadioVoiceDE
+Var RadioVoiceEN
+Var RadioVoiceBoth
+Var ComponentFFmpegSelected
+Var ComponentPiperSelected
+Var ComponentVoiceChoice
+
+; Page 3: First-run config
+Var FirstRunDialog
+Var CheckAIRefinement
+Var RadioHal
+Var RadioKitt
+Var RadioPtt
+Var RadioVad
+Var RadioTtsNatural
+Var RadioTtsSapi
+Var AIRefinementSelected
 Var OverlayStyleChoice
-
-; Variables for the capture mode page
-Var CaptureModeDialog
-Var CaptureModeLabel
-Var CaptureModeRadioPtt
-Var CaptureModeRadioVad
 Var CaptureModeChoice
+Var TtsProviderChoice
 
-; --- Custom page declarations ---
-Page custom InstallModePage InstallModePageLeave
-Page custom OverlayStylePage OverlayStylePageLeave
-Page custom CaptureModePage CaptureModePageLeave
+; Page 4: Summary
+Var SummaryDialog
+Var SummaryLabel
 
 ; =====================================================================
-; Page 1: Install/Uninstall Mode Selection
+; Custom page declarations (inserted between Tauri's reinstall page
+; and the directory selector page)
+; =====================================================================
+Page custom HardwareVariantPage HardwareVariantPageLeave
+Page custom ComponentsPage ComponentsPageLeave
+Page custom FirstRunConfigPage FirstRunConfigPageLeave
+Page custom HardwareSummaryPage
+
+; =====================================================================
+; Page 1: Hardware / Variant Info
 ; =====================================================================
 
-Function InstallModePage
+Function HardwareVariantPage
+  ; Detect NVIDIA GPU via registry
+  StrCpy $DetectedGpuStr "Keine NVIDIA GPU erkannt"
+  StrCpy $0 0
+  GpuScanLoop:
+    IntFmt $1 "%04i" $0
+    ReadRegStr $2 HKLM "SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\$1" "DriverDesc"
+    ${If} $2 == ""
+      IntCmp $0 9 GpuScanDone GpuScanDone +1
+      IntOp $0 $0 + 1
+      Goto GpuScanLoop
+    ${EndIf}
+    ${If} $2 != ""
+      StrCpy $3 $2 6
+      ${If} $3 == "NVIDIA"
+        StrCpy $DetectedGpuStr "NVIDIA: $2"
+        Goto GpuScanDone
+      ${EndIf}
+    ${EndIf}
+    IntOp $0 $0 + 1
+    IntCmp $0 10 GpuScanDone GpuScanLoop GpuScanDone
+  GpuScanDone:
+
   nsDialogs::Create 1018
-  Pop $InstallModeDialog
-  ${If} $InstallModeDialog == error
+  Pop $HardwareDialog
+  ${If} $HardwareDialog == error
     Abort
   ${EndIf}
 
-  ${NSD_CreateLabel} 0 0 100% 36u "Choose whether to install or uninstall Trispr Flow."
-  Pop $InstallModeLabel
+  ${NSD_CreateLabel} 0 0 100% 20u "System-Erkennung"
+  Pop $0
+  SetCtlColors $0 "" 0xffffff
+  CreateFont $1 "Segoe UI" 11 700
+  SendMessage $0 ${WM_SETFONT} $1 1
 
-  ${NSD_CreateRadioButton} 10u 46u 100% 14u "Install Trispr Flow"
-  Pop $InstallModeRadioInstall
-  ${NSD_SetState} $InstallModeRadioInstall ${BST_CHECKED}
+  ${NSD_CreateLabel} 0 26u 100% 14u "Erkannte GPU:"
+  Pop $0
+  ${NSD_CreateLabel} 0 40u 100% 14u "$DetectedGpuStr"
+  Pop $0
 
-  ${NSD_CreateRadioButton} 10u 64u 100% 14u "Uninstall Trispr Flow"
-  Pop $InstallModeRadioUninstall
+  ${NSD_CreateLabel} 0 62u 100% 14u "Diese Installer-Variante:"
+  Pop $0
+  ${NSD_CreateLabel} 0 76u 100% 14u "${TRISPR_VARIANT}"
+  Pop $0
+
+  ${NSD_CreateLabel} 0 100u 100% 30u "Im nächsten Schritt kannst du auswählen, welche zusätzlichen Komponenten heruntergeladen werden sollen."
+  Pop $0
 
   nsDialogs::Show
 FunctionEnd
 
-Function InstallModePageLeave
-  ${NSD_GetState} $InstallModeRadioInstall $0
+Function HardwareVariantPageLeave
+  ; Nothing to capture — informational page only
+FunctionEnd
+
+; =====================================================================
+; Page 2: Component Selection
+; =====================================================================
+
+Function ComponentsPage
+  nsDialogs::Create 1018
+  Pop $ComponentsDialog
+  ${If} $ComponentsDialog == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateLabel} 0 0 100% 20u "Komponenten"
+  Pop $0
+  CreateFont $1 "Segoe UI" 11 700
+  SendMessage $0 ${WM_SETFONT} $1 1
+
+!if "${TRISPR_VARIANT}" == "cuda-complete"
+  ${NSD_CreateLabel} 0 26u 100% 20u "Offline-Variante: FFmpeg und Piper sind bereits enthalten. Kein Download nötig."
+  Pop $0
+!else
+  ${NSD_CreateLabel} 0 26u 100% 14u "Audio-Encoder (wird heruntergeladen bei Installation):"
+  Pop $0
+
+  ${NSD_CreateCheckbox} 10u 42u 100% 14u "FFmpeg ~84 MB — benötigt für OPUS-Aufnahme"
+  Pop $CheckFFmpeg
+  ${NSD_SetState} $CheckFFmpeg ${BST_CHECKED}
+
+  ${NSD_CreateLabel} 0 62u 100% 14u "Sprachausgabe:"
+  Pop $0
+
+  ${NSD_CreateRadioButton} 10u 78u 100% 13u "Windows Natural Voice (empfohlen)"
+  Pop $RadioTtsNatural
+  ${NSD_AddStyle} $RadioTtsNatural ${WS_GROUP}
+  ${NSD_SetState} $RadioTtsNatural ${BST_CHECKED}
+
+  ${NSD_CreateRadioButton} 10u 93u 100% 13u "Windows Sprachausgabe (SAPI, immer verfügbar)"
+  Pop $RadioTtsSapi
+
+  ${NSD_CreateCheckbox} 10u 112u 100% 13u "Piper KI-Stimme (lokal, ~28 MB Download)"
+  Pop $CheckPiperRuntime
+!endif
+
+  nsDialogs::Show
+FunctionEnd
+
+Function ComponentsPageLeave
+!if "${TRISPR_VARIANT}" == "cuda-complete"
+  ; All components bundled in offline installer
+  StrCpy $ComponentFFmpegSelected "0"
+  StrCpy $ComponentPiperSelected "0"
+  StrCpy $TtsProviderChoice "native"
+!else
+  ${NSD_GetState} $CheckFFmpeg $0
   ${If} $0 == ${BST_CHECKED}
-    StrCpy $InstallModeChoice "install"
+    StrCpy $ComponentFFmpegSelected "1"
   ${Else}
-    StrCpy $InstallModeChoice "uninstall"
-    ; User chose uninstall - run uninstaller and quit installer
-    MessageBox MB_YESNO "Do you want to uninstall Trispr Flow?" IDYES DoUninstall
-    Abort  ; Cancel if user clicks No
-
-    DoUninstall:
-      ; Check if uninstaller exists
-      IfFileExists "$INSTDIR\uninstall.exe" +1 NoUninstaller
-        ExecWait '"$INSTDIR\uninstall.exe" _?=$INSTDIR'
-        Quit
-      NoUninstaller:
-        MessageBox MB_OK|MB_ICONEXCLAMATION "Uninstaller not found. The application may not be installed."
-        Quit
+    StrCpy $ComponentFFmpegSelected "0"
   ${EndIf}
+
+  ${NSD_GetState} $CheckPiperRuntime $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $ComponentPiperSelected "1"
+  ${Else}
+    StrCpy $ComponentPiperSelected "0"
+  ${EndIf}
+
+  ; TTS Provider selection
+  ${NSD_GetState} $RadioTtsNatural $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $TtsProviderChoice "natural"
+  ${Else}
+    StrCpy $TtsProviderChoice "native"
+  ${EndIf}
+!endif
 FunctionEnd
 
 ; =====================================================================
-; Page 2: Overlay Style Selection
+; Page 3: First-run Configuration
 ; =====================================================================
 
-Function OverlayStylePage
+Function FirstRunConfigPage
   nsDialogs::Create 1018
-  Pop $OverlayStyleDialog
-  ${If} $OverlayStyleDialog == error
+  Pop $FirstRunDialog
+  ${If} $FirstRunDialog == error
     Abort
   ${EndIf}
 
-  ${NSD_CreateLabel} 0 0 100% 36u "Choose your preferred overlay style.$\r$\n$\r$\nYou can change this later in the app settings."
-  Pop $OverlayStyleLabel
+  ${NSD_CreateLabel} 0 0 100% 20u "Startverhalten"
+  Pop $0
+  CreateFont $1 "Segoe UI" 11 700
+  SendMessage $0 ${WM_SETFONT} $1 1
 
-  ${NSD_CreateRadioButton} 10u 46u 100% 14u "HAL 9000 by Space:2001 (pulsing circle)"
-  Pop $OverlayRadioHal
-  ${NSD_SetState} $OverlayRadioHal ${BST_CHECKED}
+  ${NSD_CreateLabel} 0 26u 100% 12u "KI-Verfeinerung (benötigt lokales Ollama):"
+  Pop $0
 
-  ${NSD_CreateRadioButton} 10u 64u 100% 14u "KITT by Dox (expanding bar)"
-  Pop $OverlayRadioKitt
+  ${NSD_CreateCheckbox} 10u 40u 100% 13u "KI-Verfeinerung direkt aktivieren"
+  Pop $CheckAIRefinement
+  ; Default: unchecked (Ollama must be installed separately)
+
+  ${NSD_CreateLabel} 0 62u 100% 12u "Overlay-Stil (jederzeit in den App-Einstellungen änderbar):"
+  Pop $0
+
+  ${NSD_CreateRadioButton} 10u 76u 100% 13u "HAL 9000 — pulsierender Kreis"
+  Pop $RadioHal
+  ${NSD_SetState} $RadioHal ${BST_CHECKED}
+
+  ${NSD_CreateRadioButton} 10u 91u 100% 13u "KITT — Leuchtbalken"
+  Pop $RadioKitt
+
+  ${NSD_CreateLabel} 0 112u 100% 12u "Aufnahme-Modus:"
+  Pop $0
+
+  ${NSD_CreateRadioButton} 10u 126u 100% 13u "Push-to-Talk (PTT) — empfohlen"
+  Pop $RadioPtt
+  ${NSD_AddStyle} $RadioPtt ${WS_GROUP}
+  ${NSD_SetState} $RadioPtt ${BST_CHECKED}
+
+  ${NSD_CreateRadioButton} 10u 141u 100% 13u "Spracherkennung (VAD) — automatisch"
+  Pop $RadioVad
 
   nsDialogs::Show
 FunctionEnd
 
-Function OverlayStylePageLeave
-  ${NSD_GetState} $OverlayRadioHal $0
+Function FirstRunConfigPageLeave
+  ${NSD_GetState} $CheckAIRefinement $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $AIRefinementSelected "1"
+  ${Else}
+    StrCpy $AIRefinementSelected "0"
+  ${EndIf}
+
+  ${NSD_GetState} $RadioHal $0
   ${If} $0 == ${BST_CHECKED}
     StrCpy $OverlayStyleChoice "dot"
   ${Else}
     StrCpy $OverlayStyleChoice "kitt"
   ${EndIf}
-FunctionEnd
 
-; =====================================================================
-; Page 3: Capture Mode Selection
-; =====================================================================
-
-Function CaptureModePage
-  nsDialogs::Create 1018
-  Pop $CaptureModeDialog
-  ${If} $CaptureModeDialog == error
-    Abort
-  ${EndIf}
-
-  ${NSD_CreateLabel} 0 0 100% 60u "Choose how you want to activate voice recording.$\r$\nPush-to-Talk: Hold a hotkey to record$\r$\nVoice Activation: Automatic recording when you speak.$\r$\n$\r$\nYou can change this later in the app settings."
-  Pop $CaptureModeLabel
-
-  ${NSD_CreateRadioButton} 10u 70u 100% 14u "Push-to-Talk (PTT) - recommended"
-  Pop $CaptureModeRadioPtt
-  ${NSD_SetState} $CaptureModeRadioPtt ${BST_CHECKED}
-
-  ${NSD_CreateRadioButton} 10u 88u 100% 14u "Voice Activation (VAD) - automatic"
-  Pop $CaptureModeRadioVad
-
-  nsDialogs::Show
-FunctionEnd
-
-Function CaptureModePageLeave
-  ${NSD_GetState} $CaptureModeRadioPtt $0
+  ${NSD_GetState} $RadioPtt $0
   ${If} $0 == ${BST_CHECKED}
     StrCpy $CaptureModeChoice "ptt"
   ${Else}
@@ -143,32 +263,106 @@ Function CaptureModePageLeave
 FunctionEnd
 
 ; =====================================================================
-; Post-install: write settings and environment
+; Page 4: Summary (read-only confirmation)
+; =====================================================================
+
+Function HardwareSummaryPage
+  nsDialogs::Create 1018
+  Pop $SummaryDialog
+  ${If} $SummaryDialog == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateLabel} 0 0 100% 20u "Zusammenfassung"
+  Pop $0
+  CreateFont $1 "Segoe UI" 11 700
+  SendMessage $0 ${WM_SETFONT} $1 1
+
+  StrCpy $R0 "GPU:$\t$\t$DetectedGpuStr$\r$\nVariante:$\t${TRISPR_VARIANT}$\r$\n"
+
+!if "${TRISPR_VARIANT}" == "cuda-complete"
+  StrCpy $R0 "$R0FFmpeg:$\t$\tEnthalten (Offline)$\r$\n"
+  StrCpy $R0 "$R0Piper TTS:$\t$\tEnthalten (Offline)$\r$\n"
+!else
+  ${If} $ComponentFFmpegSelected == "1"
+    StrCpy $R0 "$R0FFmpeg:$\t$\tDownload ~84 MB$\r$\n"
+  ${Else}
+    StrCpy $R0 "$R0FFmpeg:$\t$\tNein$\r$\n"
+  ${EndIf}
+  ${If} $ComponentPiperSelected == "1"
+    StrCpy $R0 "$R0Piper TTS:$\t$\tDownload ~28 MB$\r$\n"
+    StrCpy $R0 "$R0Stimme:$\t$\t$ComponentVoiceChoice (Download beim 1. TTS-Aufruf)$\r$\n"
+  ${Else}
+    StrCpy $R0 "$R0Piper TTS:$\t$\tNein$\r$\n"
+  ${EndIf}
+!endif
+
+  ${If} $AIRefinementSelected == "1"
+    StrCpy $R0 "$R0KI-Verfeinerung: Aktiviert (Ollama benötigt)$\r$\n"
+  ${Else}
+    StrCpy $R0 "$R0KI-Verfeinerung: Deaktiviert$\r$\n"
+  ${EndIf}
+  StrCpy $R0 "$R0Overlay:$\t$\t$OverlayStyleChoice$\r$\nAufnahme:$\t$\t$CaptureModeChoice$\r$\n"
+
+  ; TTS summary line
+!if "${TRISPR_VARIANT}" != "cuda-complete"
+  ${If} $TtsProviderChoice == "natural"
+    StrCpy $R0 "$R0Sprachausgabe:$\t$\tWindows Natural Voice"
+  ${Else}
+    StrCpy $R0 "$R0Sprachausgabe:$\t$\tWindows SAPI"
+  ${EndIf}
+  ${If} $ComponentPiperSelected == "1"
+    StrCpy $R0 "$R0 (+ Piper Fallback)"
+  ${EndIf}
+!endif
+
+  ${NSD_CreateLabel} 0 26u 100% 130u "$R0"
+  Pop $SummaryLabel
+
+  ${NSD_CreateLabel} 0 160u 100% 20u "Klick auf 'Installieren' zum Starten."
+  Pop $0
+
+  ${NSD_CreateLabel} 0 185u 100% 14u "Logs findest du später unter: %LOCALAPPDATA%\Trispr Flow\logs\"
+  Pop $0
+
+  nsDialogs::Show
+FunctionEnd
+
+; =====================================================================
+; Post-install: write settings and on-demand downloads
 ; =====================================================================
 
 !macro NSIS_HOOK_POSTINSTALL
-  ; Check install mode - only proceed if user selected "install"
-  ${If} $InstallModeChoice == "uninstall"
-    ; User selected uninstall, skip post-install configuration
-    Goto SkipPostInstall
-  ${EndIf}
+  ; Resolve %LOCALAPPDATA% — matches Rust paths.rs which uses LOCALAPPDATA\Trispr Flow
+  ExpandEnvStrings $R9 "%LOCALAPPDATA%"
+  StrCpy $R8 "$R9\Trispr Flow"
 
-  CreateDirectory "$APPDATA\com.trispr.flow"
-  
-  ; ONLY write settings.json if it doesn't exist yet to preserve existing user configs
-  IfFileExists "$APPDATA\com.trispr.flow\settings.json" SettingsExists
-  
-  FileOpen $0 "$APPDATA\com.trispr.flow\settings.json" w
+  CreateDirectory "$R8"
+
+  ; Only write settings.json on fresh install (preserve existing user config on upgrade)
+  IfFileExists "$R8\settings.json" SettingsExists
+
+  FileOpen $0 "$R8\settings.json" w
   FileWrite $0 '{'
   FileWrite $0 '"mode":"$CaptureModeChoice",'
   FileWrite $0 '"hotkey_ptt":"CommandOrControl+Shift+Space",'
   FileWrite $0 '"hotkey_toggle":"CommandOrControl+Shift+M",'
   FileWrite $0 '"input_device":"default",'
   FileWrite $0 '"language_mode":"auto",'
+  FileWrite $0 '"product_mode":"transcribe",'
   FileWrite $0 '"topic_keywords":{"technical":["code","coding","debug","debugging","bug","error","stacktrace","exception","function","variable","api","endpoint","database","sql","query","schema","deploy","deployment","build","compile","performance","latency","memory","thread","integration","schnittstelle","fehler","datenbank","abfrage","bereitstellung","leistung","speicher","konfiguration","version","docker","kubernetes"],"meeting":["meeting","agenda","minutes","action","action item","deadline","owner","follow-up","stakeholder","alignment","decision","next step","roadmap","priority","milestone","planning","sync","standup","retrospective","workshop","besprechung","termin","protokoll","entscheidung","naechster schritt","prioritaet","meilenstein","planung","abstimmung","aufgabe","verantwortlich","rueckmeldung","review"],"personal":["personal","note","reminder","todo","to-do","follow-up","errand","appointment","family","health","habit","journal","private","vacation","shopping","budget","finance","bank","insurance","medicine","persoenlich","erinnerung","notiz","einkauf","urlaub","arzt","haushalt","konto","rechnung","gesundheit","routine","privat","aufraeumen"]},'
   FileWrite $0 '"model":"whisper-large-v3-turbo",'
   FileWrite $0 '"cloud_fallback":false,'
-  FileWrite $0 '"ai_fallback":{"enabled":false,"provider":"ollama","fallback_provider":null,"execution_mode":"local_primary","strict_local_mode":true,"preserve_source_language":true,"model":"","temperature":0.3,"max_tokens":4000,"custom_prompt_enabled":false,"custom_prompt":"Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.","use_default_prompt":true},'
+
+  ; AI Refinement + module_settings — conditional on wizard choice
+  ${If} $AIRefinementSelected == "1"
+    FileWrite $0 '"module_settings":{"enabled_modules":["ai_refinement"],"consented_permissions":{},"module_overrides":{}},'
+    FileWrite $0 '"ai_fallback":{"enabled":true,"provider":"ollama","fallback_provider":null,"execution_mode":"local_primary","strict_local_mode":true,"preserve_source_language":true,"model":"qwen3.5:4b","temperature":0.3,"max_tokens":4000,"custom_prompt_enabled":false,"custom_prompt":"Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.","use_default_prompt":true},'
+  ${Else}
+    FileWrite $0 '"module_settings":{"enabled_modules":[],"consented_permissions":{},"module_overrides":{}},'
+    FileWrite $0 '"ai_fallback":{"enabled":false,"provider":"ollama","fallback_provider":null,"execution_mode":"local_primary","strict_local_mode":true,"preserve_source_language":true,"model":"","temperature":0.3,"max_tokens":4000,"custom_prompt_enabled":false,"custom_prompt":"Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.","use_default_prompt":true},'
+  ${EndIf}
+
   FileWrite $0 '"setup":{"local_ai_wizard_completed":false,"local_ai_wizard_pending":true,"ollama_remote_expert_opt_in":false},'
   FileWrite $0 '"audio_cues":true,'
   FileWrite $0 '"audio_cues_volume":0.3,'
@@ -218,23 +412,141 @@ FunctionEnd
   FileWrite $0 '"hallucination_max_duration_ms":2000,'
   FileWrite $0 '"hallucination_max_words":5,'
   FileWrite $0 '"hallucination_max_chars":50,'
-  FileWrite $0 '"workflow_agent":{"enabled":false,"wakewords":["trispr","hey trispr","trispr agent"],"intent_keywords":{"gdd_generate_publish":["gdd","game design document","design document","designdokument","publish","confluence","draft","generate","create gdd","erstelle gdd","erstellen","veroeffentlichen","posten","session","meeting","interview","minutes","zusammenfassung","dokument","doc","spec","gameplay","feature"]},"model":"qwen3:4b","temperature":0.2,"max_tokens":512,"session_gap_minutes":20,"max_candidates":3},'
+  FileWrite $0 '"workflow_agent":{"enabled":false,"wakewords":["trispr","hey trispr","trispr agent"],"intent_keywords":{"gdd_generate_publish":["gdd","game design document","design document","designdokument","publish","confluence","draft","generate","create gdd","erstelle gdd","erstellen","veroeffentlichen","posten","session","meeting","interview","minutes","zusammenfassung","dokument","doc","spec","gameplay","feature"]},"model":"qwen3.5:4b","temperature":0.2,"max_tokens":512,"session_gap_minutes":20,"max_candidates":3},'
   FileWrite $0 '"vision_input_settings":{"enabled":false,"fps":2,"source_scope":"all_monitors","max_width":1280,"jpeg_quality":75,"ram_buffer_seconds":30,"all_monitors_default":true},'
-  FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_native","fallback_provider":"local_custom","voice_id_windows":"","voice_id_local":"","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only"},'
+
+  ; Voice output settings — conditional on wizard TTS selection
+  ${If} $TtsProviderChoice == "natural"
+    ; Windows Natural Voice (preferred) with SAPI fallback
+    ${If} $ComponentPiperSelected == "1"
+      FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_natural","fallback_provider":"windows_native","voice_id_windows":"","voice_id_local":"","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only","output_device":"default","piper_binary_path":"","piper_model_path":"","piper_model_dir":""},'
+    ${Else}
+      FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_natural","fallback_provider":"windows_native","voice_id_windows":"","voice_id_local":"","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only","output_device":"default","piper_binary_path":"","piper_model_path":"","piper_model_dir":""},'
+    ${EndIf}
+  ${Else}
+    ; Windows SAPI with optional Piper fallback
+    ${If} $ComponentPiperSelected == "1"
+      FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_native","fallback_provider":"local_custom","voice_id_windows":"","voice_id_local":"de_DE-thorsten-medium","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only","output_device":"default","piper_binary_path":"","piper_model_path":"","piper_model_dir":""},'
+    ${Else}
+      FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_native","fallback_provider":"windows_native","voice_id_windows":"","voice_id_local":"","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only","output_device":"default","piper_binary_path":"","piper_model_path":"","piper_model_dir":""},'
+    ${EndIf}
+  ${EndIf}
+
   FileWrite $0 '"whisper_gpu_layers":35'
   FileWrite $0 '}'
   FileClose $0
 
   SettingsExists:
   ; Create models directory
-  CreateDirectory "$APPDATA\com.trispr.flow\models"
+  CreateDirectory "$R8\models"
+
+  ; ----------------------------------------------------------------
+  ; On-demand downloads (skipped for cuda-complete: already bundled)
+  ; ----------------------------------------------------------------
+
+!if "${TRISPR_VARIANT}" != "cuda-complete"
+
+  ; --- FFmpeg download (via PowerShell for better reliability) ---
+  ${If} $ComponentFFmpegSelected == "1"
+    CreateDirectory "$INSTDIR\resources\bin\ffmpeg"
+    DetailPrint "Lade FFmpeg herunter..."
+    nsExec::ExecToStack 'powershell -NoProfile -Command "Try{$ProgressPreference=\"SilentlyContinue\";Invoke-WebRequest -Uri \"https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip\" -OutFile \"$TEMP\trispr-ffmpeg.zip\" -UseBasicParsing}Catch{Exit 1}"'
+    Pop $0
+    ${If} $0 != 0
+      MessageBox MB_OK|MB_ICONEXCLAMATION "FFmpeg konnte nicht heruntergeladen werden.$\r$\nOPUS-Aufnahme wird nicht verfügbar sein.$\r$\nManuelle Installation: ffmpeg.exe nach$\r$\n$INSTDIR\resources\bin\ffmpeg\ kopieren."
+      Goto FFmpegDownloadDone
+    ${EndIf}
+    DetailPrint "Entpacke FFmpeg..."
+    nsExec::ExecToStack 'powershell -NoProfile -Command "Expand-Archive -Path \"$TEMP\trispr-ffmpeg.zip\" -DestinationPath \"$TEMP\trispr-ffmpeg-ext\" -Force; Get-ChildItem -Path \"$TEMP\trispr-ffmpeg-ext\" -Filter ffmpeg.exe -Recurse | Where-Object { $_.Directory.Name -eq $\"bin$\" } | Select-Object -First 1 | Copy-Item -Destination \"$INSTDIR\resources\bin\ffmpeg\ffmpeg.exe\""'
+    Pop $0
+    Pop $1
+    ; SHA256 verify
+    nsExec::ExecToStack 'powershell -NoProfile -Command "(Get-FileHash -Path \"$INSTDIR\resources\bin\ffmpeg\ffmpeg.exe\" -Algorithm SHA256).Hash.ToLower()"'
+    Pop $0
+    Pop $2
+    StrCmp $2 "b90225987bdd042cca09a1efb5e34e9848f2d1dbf5fbcd388753a44145522997" FFmpegHashOK
+      MessageBox MB_OK|MB_ICONEXCLAMATION "FFmpeg-Prüfsumme ungültig — Datei möglicherweise beschädigt.$\r$\nBitte FFmpeg manuell installieren."
+      Delete "$INSTDIR\resources\bin\ffmpeg\ffmpeg.exe"
+      Goto FFmpegCleanup
+    FFmpegHashOK:
+      DetailPrint "FFmpeg OK (SHA256 verifiziert, libopus enthalten)"
+    FFmpegCleanup:
+      Delete "$TEMP\trispr-ffmpeg.zip"
+      RMDir /r "$TEMP\trispr-ffmpeg-ext"
+    FFmpegDownloadDone:
+  ${EndIf}
+
+  ; --- Piper TTS Runtime download (via PowerShell for better reliability) ---
+  ${If} $ComponentPiperSelected == "1"
+    CreateDirectory "$INSTDIR\resources\bin\piper"
+    DetailPrint "Lade Piper TTS Runtime herunter..."
+    nsExec::ExecToStack 'powershell -NoProfile -Command "Try{$ProgressPreference=\"SilentlyContinue\";Invoke-WebRequest -Uri \"https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip\" -OutFile \"$TEMP\trispr-piper.zip\" -UseBasicParsing}Catch{Exit 1}"'
+    Pop $0
+    ${If} $0 != 0
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Piper TTS Runtime konnte nicht heruntergeladen werden.$\r$\nSprachausgabe wird nicht verfügbar sein."
+      Goto PiperDownloadDone
+    ${EndIf}
+    DetailPrint "Entpacke Piper TTS Runtime..."
+    nsExec::ExecToStack 'powershell -NoProfile -Command "$files=@(\"piper.exe\",\"onnxruntime.dll\",\"onnxruntime_providers_shared.dll\",\"espeak-ng.dll\",\"piper_phonemize.dll\",\"libtashkeel_model.ort\"); $zip=[System.IO.Compression.ZipFile]::OpenRead(\"$TEMP\trispr-piper.zip\"); foreach($e in $zip.Entries){$n=$e.Name; if($files -contains $n -or $e.FullName -match \"espeak-ng-data\"){$out=\"$INSTDIR\resources\bin\piper\\\"+($e.FullName -replace \"^piper/\",\"\"); $dir=[System.IO.Path]::GetDirectoryName($out); if(-not(Test-Path $dir)){New-Item -ItemType Directory -Path $dir -Force|Out-Null}; if(-not $e.FullName.EndsWith(\"/\")){[System.IO.Compression.ZipFileExtensions]::ExtractToFile($e,$out,$true)}}}; $zip.Dispose()"'
+    Pop $0
+    Pop $1
+    DetailPrint "Piper TTS Runtime installiert"
+    Delete "$TEMP\trispr-piper.zip"
+    PiperDownloadDone:
+  ${EndIf}
+
+!endif
+
+  ; ----------------------------------------------------------------
+  ; Ollama auto-install + model pull (when AI Refinement selected)
+  ; ----------------------------------------------------------------
+  ${If} $AIRefinementSelected == "1"
+    ; Check if Ollama is already installed
+    nsExec::ExecToStack 'powershell -NoProfile -Command "if(Test-Path \"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe\"){Write-Output \"installed\"}else{Write-Output \"missing\"}"'
+    Pop $0
+    Pop $1
+    StrCmp $1 "installed" OllamaAlreadyInstalled
+
+    ; Download Ollama installer
+    DetailPrint "Lade Ollama herunter (~80 MB)..."
+    nsExec::ExecToLog 'powershell -NoProfile -Command "Try{$ProgressPreference=\"SilentlyContinue\";Invoke-WebRequest -Uri \"https://ollama.com/download/OllamaSetup.exe\" -OutFile \"$TEMP\OllamaSetup.exe\" -UseBasicParsing;Exit 0}Catch{Write-Error $_.Exception.Message;Exit 1}"'
+    Pop $0
+    ${If} $0 != 0
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Ollama konnte nicht heruntergeladen werden.$\r$\nManuelle Installation: ollama.com$\r$\nKI-Verfeinerung wird ohne Ollama nicht funktionieren."
+      Goto OllamaDone
+    ${EndIf}
+
+    ; Silent install
+    DetailPrint "Installiere Ollama..."
+    nsExec::ExecToLog '"$TEMP\OllamaSetup.exe" /S'
+    Pop $0
+    ${If} $0 != 0
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Ollama-Installation fehlgeschlagen.$\r$\nManuelle Installation: ollama.com"
+      Delete "$TEMP\OllamaSetup.exe"
+      Goto OllamaDone
+    ${EndIf}
+    Delete "$TEMP\OllamaSetup.exe"
+
+    OllamaAlreadyInstalled:
+    ; Start Ollama serve in background, then pull the model
+    DetailPrint "Starte Ollama und lade qwen3.5:4b Modell (~400 MB)..."
+    nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath \"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe\" -ArgumentList \"serve\" -WindowStyle Hidden; Start-Sleep -Seconds 5; $env:OLLAMA_HOST=\"http://127.0.0.1:11434\"; & \"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe\" pull qwen3.5:4b"'
+    Pop $0
+    ${If} $0 != 0
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Ollama-Modell konnte nicht heruntergeladen werden.$\r$\nDu kannst es später manuell laden:$\r$\nollama pull qwen3.5:4b"
+    ${Else}
+      DetailPrint "Ollama + qwen3.5:4b erfolgreich installiert"
+    ${EndIf}
+
+    OllamaDone:
+  ${EndIf}
 
   ; Keep both CUDA and Vulkan runtime folders on disk.
   ; Rationale:
   ; - Hybrid GPU/Optimus systems can report CUDA availability late.
   ; - quantize.exe may need runtime DLLs from either backend folder.
   ; Runtime backend selection is handled by app diagnostics/settings.
-  Goto SkipPostInstall
 
+  Goto SkipPostInstall
   SkipPostInstall:
 !macroend

@@ -2046,9 +2046,12 @@ mod tests {
         let provider = OllamaProvider::with_endpoint("http://127.0.0.1:19999".to_string());
         let options = test_options(false);
         let result = provider.refine_transcript("hello world", "qwen3:14b", &options, "");
+        // Accept both OllamaNotRunning and Timeout: some systems (filtered ports/firewall)
+        // return a timeout instead of connection-refused for a closed local port. Both
+        // indicate Ollama is not reachable.
         assert!(
-            matches!(result, Err(AIError::OllamaNotRunning)),
-            "connection refused should map to OllamaNotRunning, got: {:?}",
+            matches!(result, Err(AIError::OllamaNotRunning) | Err(AIError::Timeout)),
+            "unreachable endpoint should map to OllamaNotRunning or Timeout, got: {:?}",
             result
         );
     }

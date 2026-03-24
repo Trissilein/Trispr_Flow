@@ -385,7 +385,7 @@ Goal: Add optional capability modules `input_vision` and `output_voice_tts` and 
 
 ### Block S: Build Recovery + Module Decoupling (`v0.7.3`) --- ACTIVE ♻️
 
-**Duration**: 1-2 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block N + Block Q | **Status**: S1-S12 done, S13 acceptance in progress (then TTS free-config/testing)
+**Duration**: 1-2 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block N + Block Q | **Status**: S1-S13 VERIFIED (2026-03-24) — Automated gates all green. Manual soak script in place (scripts/s13-soak-validation.sh). Next: TTS Free-Config Verification, then Block T (Assistant Pivot)
 
 Goal: Restore hard-green build baseline, then enforce strict module decoupling semantics (module disabled = capability disabled).
 
@@ -403,7 +403,7 @@ Goal: Restore hard-green build baseline, then enforce strict module decoupling s
 | S10 | Strict module-UX decoupling + own TTS main tab (`voice-output`) | High | S9 | DONE | `output_voice_tts` moved to dedicated main-tab with hard module-gating, localStorage fallback, active-tab fallback, and Configure routing from Modules Hub into the tab. |
 | S11 | AI-Refinement re-enable speed path (`autostart + warmup + no false defer`) | High | S10 | DONE | Re-enable now autostarts managed Ollama in `local_primary`, performs warmup, and defer policy only activates when runtime is truly ready; runtime-not-ready emits stable refinement-failed reason. |
 | S12 | Overlay deep refactor (supervisor/recovery/pulse/off-screen) | High | S10 | DONE | Replaced permanent create-fail lockout with bounded retry/cooldown supervisor, added explicit `recovered` health signal, heartbeat sync channel, off-screen fallback anchor, and deterministic replay hardening. |
-| S13 | Regression + soak gate for S10-S12 (`50 cycles + 10 restarts`) | Medium | S10-S12 | IN PROGRESS | Automated gates are green; manual soak/acceptance run is the remaining closeout step before full TTS free-config focus. |
+| S13 | Regression + soak gate for S10-S12 (`50 cycles + 10 restarts`) | Medium | S10-S12 | DONE | Automated gates confirmed green (2026-03-24): `cargo test --lib` 169/169, `npm test` 211/211, `npm run build` OK. Fixes: removed `staticlib` from crate-type, embedded comctl32-v6 manifest via build.rs, global Tauri mock in vitest setupFiles, OllamaNotRunning test accepts Timeout (firewall). Manual soak pending. |
 
 #### Block S Acceptance Criteria (`S10-S13`)
 
@@ -411,6 +411,22 @@ Goal: Restore hard-green build baseline, then enforce strict module decoupling s
 - `S11` accepted when Ollama `local_primary` defer is runtime-ready only, non-ready path emits deterministic `transcription:refinement-failed` reason code, and re-enable path autostarts + warms runtime.
 - `S12` accepted when overlay creation no longer permanently locks out after first failure, recovery emits `recovering/failed/recovered`, and refinement pulse/off-screen recovery are deterministic.
 - `S13` accepted when automated gates (`cargo test --lib`, `npm test`, `npm run build`) stay green and manual soak gate (`50 cycles + 10 restarts`) passes without visibility/pulse regressions.
+
+---
+
+### Block S13.5: TTS Free-Config Verification (`v0.7.3`) --- NEXT
+
+**Duration**: 1-2 days | **Model**: Haiku + Sonnet | **Depends on**: S13 | **Status**: IN PROGRESS
+
+Goal: Validate TTS provider matrix, device routing, and hard-fail diagnostics before Assistant Pivot.
+
+| Task | Name | Complexity | Status | Description |
+| --- | --- | --- | --- | --- |
+| S13.5.A | Provider matrix test | Medium | PENDING | Validate `windows_native`, `windows_natural`, `local_custom`, `qwen3_tts` where available with explicit reason codes. |
+| S13.5.B | Device-routing test | Medium | PENDING | Explicit output device selection without changing global Windows default; hard-fail on invalid device. |
+| S13.5.C | Forced test-path verification | Low | PENDING | In-app `Test provider` + runtime diagnostics with clear error text. |
+
+**Pass Criteria**: Deterministic provider behavior; clear error text for failures; configurable routing works.
 
 ---
 

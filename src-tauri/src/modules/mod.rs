@@ -235,6 +235,9 @@ pub struct VoiceOutputSettings {
     pub qwen3_tts_api_key: String,
     /// Request timeout for qwen3_tts endpoint.
     pub qwen3_tts_timeout_sec: u64,
+    /// Flag to enable qwen3_tts provider in UI and provider list (set by installer)
+    #[serde(default)]
+    pub qwen3_tts_enabled: bool,
 }
 
 impl Default for VoiceOutputSettings {
@@ -242,7 +245,7 @@ impl Default for VoiceOutputSettings {
         Self {
             enabled: false,
             default_provider: "windows_native".to_string(),
-            fallback_provider: "local_custom".to_string(),
+            fallback_provider: "windows_native".to_string(),
             voice_id_windows: String::new(),
             auto_voice_by_detected_language: false,
             voice_id_local: String::new(),
@@ -258,6 +261,7 @@ impl Default for VoiceOutputSettings {
             qwen3_tts_voice: "vivian".to_string(),
             qwen3_tts_api_key: String::new(),
             qwen3_tts_timeout_sec: 45,
+            qwen3_tts_enabled: false,
         }
     }
 }

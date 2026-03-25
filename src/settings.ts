@@ -1527,6 +1527,9 @@ export function renderSettings() {
   if (dom.opusEnabledToggle) {
     dom.opusEnabledToggle.checked = settings.opus_enabled ?? true;
   }
+  if (dom.opusArchiveToggle) {
+    dom.opusArchiveToggle.checked = settings.opus_enabled ?? true;
+  }
   if (dom.opusBitrateSelect) {
     dom.opusBitrateSelect.value = (settings.opus_bitrate_kbps ?? 64).toString();
   }
@@ -1964,6 +1967,12 @@ export function renderVoiceOutputSettings(): void {
   }
   if (dom.voiceOutputAutoLanguageVoice) {
     dom.voiceOutputAutoLanguageVoice.checked = vo.auto_voice_by_detected_language;
+  }
+
+  // Gate qwen3-TTS UI section based on enabled flag
+  const qwen3Section = document.getElementById("voice-output-qwen3-section");
+  if (qwen3Section) {
+    qwen3Section.style.display = vo.qwen3_tts_enabled ? "block" : "none";
   }
 
   void refreshVoiceOutputWindowsVoices();

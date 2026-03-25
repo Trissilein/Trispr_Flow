@@ -525,8 +525,8 @@ pub fn capture_vision_frame(
     Err("Vision capture is currently available on Windows only.".to_string())
 }
 
-pub fn list_tts_providers() -> Vec<TtsProviderInfo> {
-    vec![
+pub fn list_tts_providers(qwen3_tts_enabled: bool) -> Vec<TtsProviderInfo> {
+    let mut providers = vec![
         TtsProviderInfo {
             id: "windows_native".to_string(),
             label: "Windows Native TTS".to_string(),
@@ -551,7 +551,9 @@ pub fn list_tts_providers() -> Vec<TtsProviderInfo> {
             surface: "runtime_stable".to_string(),
             reason: None,
         },
-        TtsProviderInfo {
+    ];
+    if qwen3_tts_enabled {
+        providers.push(TtsProviderInfo {
             id: "qwen3_tts".to_string(),
             label: "Qwen3-TTS (OpenAI-compatible endpoint)".to_string(),
             available: true,
@@ -560,8 +562,9 @@ pub fn list_tts_providers() -> Vec<TtsProviderInfo> {
                 "Experimental runtime provider. Requires a running OpenAI-compatible /v1/audio/speech endpoint."
                     .to_string(),
             ),
-        },
-    ]
+        });
+    }
+    providers
 }
 
 #[cfg(target_os = "windows")]

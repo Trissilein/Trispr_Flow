@@ -1149,11 +1149,37 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         }
     }
 
+    // Emit registration status to frontend so UI can show conflict badges
+    {
+        let status = serde_json::json!({
+            "ptt": {
+                "key": settings.hotkey_ptt.trim(),
+                "registered": !errors.iter().any(|e| e.starts_with("PTT")),
+                "error": errors.iter().find(|e| e.starts_with("PTT")).cloned(),
+            },
+            "toggle": {
+                "key": settings.hotkey_toggle.trim(),
+                "registered": !errors.iter().any(|e| e.starts_with("Toggle:")),
+                "error": errors.iter().find(|e| e.starts_with("Toggle:")).cloned(),
+            },
+            "transcribe": {
+                "key": settings.transcribe_hotkey.trim(),
+                "registered": !errors.iter().any(|e| e.starts_with("Transcribe")),
+                "error": errors.iter().find(|e| e.starts_with("Transcribe")).cloned(),
+            },
+            "activation_words": {
+                "key": settings.hotkey_toggle_activation_words.trim(),
+                "registered": !errors.iter().any(|e| e.starts_with("Toggle Activation")),
+                "error": errors.iter().find(|e| e.starts_with("Toggle Activation")).cloned(),
+            },
+        });
+        let _ = app.emit("hotkey:registration-status", &status);
+    }
+
     // Report all errors if any occurred, but don't fail completely
     if !errors.is_empty() {
         let error_msg = format!("Some hotkeys failed to register: {}", errors.join(", "));
         warn!("{}", error_msg);
-        // Return Ok to prevent blocking the app, errors already emitted to UI
         Ok(())
     } else {
         info!("All hotkeys registered successfully");
@@ -2510,8 +2536,8 @@ fn scenario_success_counts_for_provider(
     out
 }
 
-fn provider_consistency_from_runtime_surface(providers: &[String]) -> (bool, String) {
-    let runtime_surface = crate::multimodal_io::list_tts_providers()
+fn provider_consistency_from_runtime_surface(providers: &[String], qwen3_tts_enabled: bool) -> (bool, String) {
+    let runtime_surface = crate::multimodal_io::list_tts_providers(qwen3_tts_enabled)
         .into_iter()
         .map(|info| (info.id, info.surface))
         .collect::<HashMap<_, _>>();
@@ -3310,7 +3336,7 @@ fn run_tts_benchmark_inner(
         .collect::<Vec<_>>();
 
     let (provider_consistency_ok, provider_consistency_detail) =
-        provider_consistency_from_runtime_surface(&providers);
+        provider_consistency_from_runtime_surface(&providers, true); // TODO: pass qwen3_tts_enabled from settings if this function gets State access
 
     let release_evaluations = provider_gate_evaluations
         .iter()
@@ -5318,8 +5344,9 @@ fn capture_vision_snapshot(
 }
 
 #[tauri::command]
-fn list_tts_providers() -> Vec<crate::multimodal_io::TtsProviderInfo> {
-    crate::multimodal_io::list_tts_providers()
+fn list_tts_providers(state: State<'_, AppState>) -> Vec<crate::multimodal_io::TtsProviderInfo> {
+    let settings = state.settings.read().unwrap_or_else(|p| p.into_inner());
+    crate::multimodal_io::list_tts_providers(settings.voice_output_settings.qwen3_tts_enabled)
 }
 
 #[tauri::command]
@@ -8790,6 +8817,28 @@ pub fn run() {
                 });
             }
 
+            // Eagerly start whisper-server in background so the first transcription
+            // uses the fast HTTP path instead of the slow CLI cold-start (~50s → <1s).
+            {
+                let handle = app.handle().clone();
+                crate::util::spawn_guarded("eager_whisper_server", move || {
+                    let state = handle.state::<AppState>();
+                    let model_id = {
+                        let s = state.settings.read()
+                            .unwrap_or_else(|p| p.into_inner());
+                        s.model.clone()
+                    };
+                    if let Some(model_path) = crate::models::resolve_model_path(&handle, &model_id) {
+                        match crate::whisper_server::start_whisper_server(&handle, state.inner(), &model_path) {
+                            Ok(()) => info!("Eager whisper-server started successfully"),
+                            Err(e) => warn!("Eager whisper-server start failed (CLI fallback available): {}", e),
+                        }
+                    } else {
+                        warn!("Eager whisper-server skipped: model '{}' not found on disk", model_id);
+                    }
+                });
+            }
+
             {
                 let handle = app.handle().clone();
                 crate::util::spawn_guarded("dependency_preflight", move || {
@@ -9559,6 +9608,7 @@ pub fn run() {
             get_last_recording_path,
             get_recordings_directory,
             open_recordings_directory,
+            open_log_directory,
             fetch_available_models,
             fetch_ollama_models_with_size,
             test_provider_connection,

@@ -119,6 +119,17 @@
         </div>
       </header>
 
+      <!-- Expert Mode global toggle -->
+      <div id="expert-mode-global-bar" class="expert-mode-global-bar">
+        <label class="expert-toggle-label" for="expert-mode-toggle">
+          <span>Expert</span>
+          <input id="expert-mode-toggle" type="checkbox" title="Show advanced settings and modules" />
+          <span class="toggle-track">
+            <span class="toggle-thumb"></span>
+          </span>
+        </label>
+      </div>
+
       <!-- Main navigation tabs -->
       <div class="main-tabs" role="tablist" aria-label="Main navigation">
         <button id="tab-btn-transcription" class="main-tab-btn active" role="tab" aria-selected="true" aria-controls="tab-transcription">
@@ -127,15 +138,26 @@
         <button id="tab-btn-settings" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-settings">
           Settings
         </button>
-        <button id="tab-btn-ai-refinement" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-ai-refinement">
+        <button id="tab-btn-ai-refinement" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-ai-refinement" data-expert-only="true">
           AI Refinement
         </button>
-        <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output">
+        <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output" data-expert-only="true">
           Voice Output
         </button>
         <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules">
           Modules
         </button>
+      </div>
+
+      <!-- Pipeline status bar — shows current transcription stage -->
+      <div id="pipeline-status-bar" class="pipeline-status-bar" hidden>
+        <span class="pipeline-stage" data-stage="rec">REC</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-stage" data-stage="whisper">Whisper</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-stage" data-stage="postproc">Postproc</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-stage" data-stage="paste">Paste</span>
       </div>
 
       <div class="layout-grid">
@@ -265,16 +287,7 @@
 
         <!-- Settings Tab -->
         <div id="tab-settings" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-settings">
-        <div class="expert-mode-bar">
-          <label class="toggle-row" for="expert-mode-toggle">
-            <span class="field-label">Expert Mode</span>
-            <input id="expert-mode-toggle" type="checkbox" title="Show advanced settings controls" />
-            <span class="toggle-track">
-              <span class="toggle-thumb"></span>
-            </span>
-          </label>
-          <span id="expert-mode-label" class="toggle-hint">Standard mode active.</span>
-        </div>
+        <!-- Expert mode toggle moved to global bar above tabs -->
         <section class="panel capture-panel" data-panel="capture" data-default-collapsed="true" data-panel-group="input-source" style="--delay: 0.16s">
           <div class="panel-header">
             <div class="panel-title">
@@ -414,6 +427,14 @@
                 <span id="mic-gain-value" class="range-value" aria-live="polite">+0 dB</span>
               </div>
             </label>
+            <div class="field toggle span-2">
+              <label class="toggle-row">
+                <span class="field-label">Aufnahmen archivieren (OPUS)</span>
+                <input id="opus-archive-toggle" type="checkbox" checked title="Aufnahmen als OPUS-Dateien archivieren" />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              </label>
+              <span class="toggle-hint">Wird fuer zukuenftige Features wie Meeting-Analyse benoetigt. Deaktivieren spart Speicherplatz.</span>
+            </div>
             <details class="expander span-2" data-expert-only="true">
               <summary>
                 <span>Audio Dumping</span>
@@ -537,7 +558,7 @@
           </div>
         </section>
 
-        <section class="panel transcribe-panel" data-panel="system" data-default-collapsed="true" data-panel-group="input-source" style="--delay: 0.18s">
+        <section class="panel transcribe-panel" data-panel="system" data-default-collapsed="true" data-panel-group="input-source" data-expert-only="true" style="--delay: 0.18s">
           <div class="panel-header">
             <div class="panel-title">
               <h2>System Audio Capture</h2>
@@ -869,49 +890,40 @@
           </div>
           <div class="panel-body" id="model-panel-body">
           <div class="model-manager">
-            <div class="panel-grid model-source-grid">
-              <label class="field">
-                <span class="field-label">Source</span>
-                <select id="model-source-select" title="Where to load the Whisper model from">
-                  <option value="default">Default (whisper.cpp)</option>
-                  <option value="custom">Custom URL</option>
-                </select>
-              </label>
-              <label class="field span-2" id="model-custom-url-field" data-expert-only="true">
-                <span class="field-label">Custom model URL</span>
-                <div class="hotkey-input-group">
-                  <input
-                    id="model-custom-url"
-                    type="text"
-                    placeholder="https://example.com/models.json or model.bin"
-                    title="URL to a Whisper model file or JSON model index"
-                  />
-                  <button id="model-refresh" class="hotkey-record-btn" title="Scan for downloaded models">Refresh</button>
-                </div>
-                <span class="field-hint">Supports JSON index or direct model file URL.</span>
-              </label>
-            </div>
-            <div class="panel-grid model-storage-grid" data-expert-only="true">
-              <label class="field span-2">
-                <span class="field-label">Model storage</span>
-                <div class="hotkey-input-group">
-                  <input
-                    id="model-storage-path"
-                    type="text"
-                    placeholder="Default (App data/models)"
-                    title="Folder where downloaded models are stored"
-                  />
-                  <button id="model-storage-browse" class="hotkey-record-btn" title="Choose a folder for storing models">Browse</button>
-                  <button id="model-storage-reset" class="hotkey-record-btn" title="Reset model storage path to default">Reset</button>
-                </div>
-                <span class="field-hint">Choose where downloaded models are stored.</span>
-              </label>
-            </div>
             <div class="model-section">
-              <div class="model-section-title">Models</div>
               <div id="model-list" class="model-list"></div>
               <p class="model-hint">Active models use the teal border. Available models are dimmed.</p>
             </div>
+            <details class="expander" data-expert-only="true" style="margin-top: 8px;">
+              <summary>
+                <span>Source &amp; Storage</span>
+                <span class="expert-pill" aria-hidden="true">Expert</span>
+              </summary>
+              <div class="expander-content model-settings-compact">
+                <label class="field">
+                  <span class="field-label">Source</span>
+                  <select id="model-source-select" title="Where to load the Whisper model from">
+                    <option value="default">Default (whisper.cpp)</option>
+                    <option value="custom">Custom URL</option>
+                  </select>
+                </label>
+                <label class="field" id="model-custom-url-field">
+                  <span class="field-label">Custom URL</span>
+                  <div class="hotkey-input-group">
+                    <input id="model-custom-url" type="text" placeholder="https://..." title="URL to a Whisper model file or JSON model index" />
+                    <button id="model-refresh" class="hotkey-record-btn" title="Refresh">Refresh</button>
+                  </div>
+                </label>
+                <label class="field">
+                  <span class="field-label">Storage</span>
+                  <div class="hotkey-input-group">
+                    <input id="model-storage-path" type="text" placeholder="Default" title="Model storage folder" />
+                    <button id="model-storage-browse" class="hotkey-record-btn" title="Browse">Browse</button>
+                    <button id="model-storage-reset" class="hotkey-record-btn" title="Reset">Reset</button>
+                  </div>
+                </label>
+              </div>
+            </details>
           </div>
           </div>
         </section>
@@ -1825,7 +1837,7 @@
                     </div>
                   </div>
                 </details>
-                <details class="expander">
+                <details class="expander" id="voice-output-qwen3-section">
                   <summary><h4 class="ai-refine-section-title">Advanced (Qwen3-TTS endpoint)</h4></summary>
                   <div class="expander-body">
                     <div class="panel-grid">
@@ -1931,100 +1943,53 @@
       <div id="onboarding-wizard-backdrop" class="auth-modal-backdrop"></div>
       <div class="auth-modal-card onboarding-card" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
         <div class="auth-modal-header">
-          <h3 id="wizard-title" class="ai-refine-section-title">Welcome to Trispr Flow</h3>
-          <div class="wizard-progress">Step <span id="wizard-step-current">1</span> of 5</div>
+          <h3 id="wizard-title" class="ai-refine-section-title">Willkommen bei Trispr Flow</h3>
+          <div class="wizard-progress">Schritt <span id="wizard-step-current">1</span> von 2</div>
         </div>
 
-        <!-- Step 1: Privacy & Welcome -->
+        <!-- Step 1: Recording Mode -->
         <div id="wizard-step-1" class="wizard-step">
-          <p class="wizard-text">Trispr Flow is a <strong>privacy-first</strong> dictation tool. All your recordings and transcriptions stay on this computer.</p>
-          <div class="onboarding-feature-list">
-            <div class="feature-item">
-              <span class="feature-icon">🔒</span>
-              <div>
-                <strong>Offline-First</strong>
-                <p class="field-hint">No audio data is sent to the cloud by default.</p>
-              </div>
-            </div>
-            <div class="feature-item">
-              <span class="feature-icon">⚡</span>
-              <div>
-                <strong>GPU Accelerated</strong>
-                <p class="field-hint">Uses your graphics card for ultra-fast response.</p>
-              </div>
-            </div>
+          <p class="wizard-text">Offline-Diktiertool — alles bleibt auf deinem Rechner.</p>
+          <h4>Wie willst du aufnehmen?</h4>
+          <div class="wizard-mode-selector">
+            <label class="wizard-card" id="wizard-card-ptt">
+              <input type="radio" name="wizard-mode" value="ptt" checked />
+              <strong>Push-to-Talk</strong>
+              <span class="field-hint">Taste gedrückt halten zum Sprechen</span>
+            </label>
+            <label class="wizard-card" id="wizard-card-vad">
+              <input type="radio" name="wizard-mode" value="vad" />
+              <strong>Spracherkennung</strong>
+              <span class="field-hint">Automatisch erkennen wenn du sprichst</span>
+            </label>
           </div>
         </div>
 
-        <!-- Step 2: Hardware Detection -->
+        <!-- Step 2: Hotkey + Done -->
         <div id="wizard-step-2" class="wizard-step" hidden>
-          <p class="wizard-text">Detecting your hardware to optimize performance...</p>
-          
-          <div id="wizard-loading" class="wizard-loading-overlay">
-            <div class="bootstrap-spinner"></div>
-            <span class="field-hint">Analyzing GPU and Driver capabilities...</span>
-          </div>
-
-          <div id="wizard-gpu-info" class="gpu-info-card" hidden>
-            <div class="gpu-info-row">
-              <span class="field-label">GPU:</span>
-              <span id="wizard-gpu-name" class="hero-value">Detecting...</span>
-            </div>
-            <div class="gpu-info-row">
-              <span class="field-label">Memory:</span>
-              <span id="wizard-gpu-vram" class="hero-value">-</span>
-            </div>
-            <div class="gpu-info-row">
-              <span class="field-label">Recommended:</span>
-              <span id="wizard-backend-recommended" class="status-pill status-pill--active">-</span>
-            </div>
-          </div>
-          <p id="wizard-driver-warning" class="field-hint warning-text" hidden>
-            ⚠️ Your NVIDIA drivers might be outdated. For best CUDA performance, please update them.
-            <a id="wizard-driver-link" href="#" class="btn-link">Download Drivers</a>
-          </p>
-        </div>
-
-        <!-- Step 3: Hotkey Setup -->
-        <div id="wizard-step-3" class="wizard-step" hidden>
-          <p class="wizard-text">Define your Push-to-Talk hotkey. Hold this key while speaking to record.</p>
+          <h4>Dein Aufnahme-Hotkey</h4>
+          <p class="wizard-text">Halte diese Tastenkombination, um aufzunehmen:</p>
           <div class="hotkey-setup-box">
-            <div class="field-label">Current Hotkey:</div>
             <div class="hotkey-input-group wizard-hotkey-group">
-              <input id="wizard-hotkey-input" type="text" value="Ctrl + Shift + Space" readonly />
-              <button id="wizard-setup-hotkey-btn" type="button" class="hotkey-record-btn">🎹 Record</button>
+              <input id="wizard-hotkey-input" type="text" value="Ctrl+Shift+Space" readonly />
+              <button id="wizard-setup-hotkey-btn" type="button" class="hotkey-record-btn">🎹 Aufnehmen</button>
             </div>
             <span id="wizard-hotkey-status" class="hotkey-status"></span>
           </div>
-          <p class="field-hint">You can always change this later in the settings.</p>
-        </div>
-
-        <!-- Step 4: AI Refinement -->
-        <div id="wizard-step-4" class="wizard-step" hidden>
-          <p class="wizard-text">Do you want to enable <strong>Local AI Refinement</strong>?</p>
-          <p class="field-hint">This uses Ollama to fix punctuation and grammar automatically after you speak. It requires a one-time download of ~3GB.</p>
-          <div class="toggle-box">
-            <label class="switch-label">
-              <input type="checkbox" id="wizard-ollama-enable" />
-              <span class="switch-text">Enable AI Refinement (Ollama)</span>
-            </label>
-          </div>
-          <div id="wizard-ollama-status" class="field-hint" hidden>
-            Ollama will be downloaded when you finish this wizard.
+          <div class="wizard-finish-section">
+            <p class="wizard-text">Alles andere kannst du jederzeit in den Einstellungen anpassen.</p>
+            <p class="field-hint">Tipp: Aktiviere den <strong>Expert-Modus</strong> oben rechts fuer erweiterte Einstellungen wie KI-Verfeinerung und Sprachausgabe.</p>
           </div>
         </div>
 
-        <!-- Step 5: Finish -->
-        <div id="wizard-step-5" class="wizard-step" hidden>
-          <div class="finish-anim">✨</div>
-          <h4 class="center-text">You're all set!</h4>
-          <p class="wizard-text center-text">Trispr Flow is ready to use. Click finish to start your first transcription.</p>
-        </div>
+        <!-- Legacy wizard steps removed (hardware detection, ollama, finish) -->
+        <!-- Hardware detection runs automatically in background -->
+        <!-- AI Refinement / TTS are available as modules in Expert mode -->
 
         <div class="auth-modal-actions wizard-actions">
-          <button id="wizard-prev-btn" type="button" class="hotkey-record-btn" disabled>Back</button>
-          <button id="wizard-next-btn" type="button" class="btn btn-primary">Next</button>
-          <button id="wizard-finish-btn" type="button" class="btn btn-primary" hidden>Finish</button>
+          <button id="wizard-prev-btn" type="button" class="hotkey-record-btn" disabled>Zurueck</button>
+          <button id="wizard-next-btn" type="button" class="btn btn-primary">Weiter</button>
+          <button id="wizard-finish-btn" type="button" class="btn btn-primary" hidden>Los geht's!</button>
         </div>
       </div>
     </div>

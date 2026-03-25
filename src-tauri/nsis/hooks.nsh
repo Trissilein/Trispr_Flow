@@ -11,6 +11,17 @@
   !define TRISPR_VARIANT "vulkan"
 !endif
 
+; Variant display: uppercase version for UI
+!if "${TRISPR_VARIANT}" == "vulkan"
+  !define TRISPR_VARIANT_DISPLAY "VULKAN"
+!else if "${TRISPR_VARIANT}" == "cuda-lite"
+  !define TRISPR_VARIANT_DISPLAY "CUDA (lite)"
+!else if "${TRISPR_VARIANT}" == "cuda-complete"
+  !define TRISPR_VARIANT_DISPLAY "CUDA (complete, offline)"
+!else
+  !define TRISPR_VARIANT_DISPLAY "${TRISPR_VARIANT}"
+!endif
+
 ; =====================================================================
 ; Variable declarations
 ; =====================================================================
@@ -103,10 +114,30 @@ Function HardwareVariantPage
 
   ${NSD_CreateLabel} 0 62u 100% 14u "Diese Installer-Variante:"
   Pop $0
-  ${NSD_CreateLabel} 0 76u 100% 14u "${TRISPR_VARIANT}"
+
+  ; Variant text in uppercase
+  !if TRISPR_VARIANT == "vulkan"
+    StrCpy $R0 "VULKAN"
+  !else if TRISPR_VARIANT == "cuda-lite"
+    StrCpy $R0 "CUDA (lite)"
+  !else if TRISPR_VARIANT == "cuda-complete"
+    StrCpy $R0 "CUDA (complete, offline)"
+  !else
+    StrCpy $R0 "${TRISPR_VARIANT}"
+  !endif
+  ${NSD_CreateLabel} 0 76u 100% 14u "$R0"
   Pop $0
 
-  ${NSD_CreateLabel} 0 100u 100% 30u "Im nächsten Schritt kannst du auswählen, welche zusätzlichen Komponenten heruntergeladen werden sollen."
+  ; CUDA hint for NVIDIA GPU on Vulkan variant
+  !if TRISPR_VARIANT == "vulkan"
+    StrCmp $DetectedGpuStr "Keine NVIDIA GPU erkannt" no_cuda_hint
+      ${NSD_CreateLabel} 0 92u 100% 20u "Hinweis: Für NVIDIA GPUs steht ein optimierter CUDA-Installer zur Verfügung (cuda-lite)."
+      Pop $0
+      SetCtlColors $0 "ff8800" transparent
+    no_cuda_hint:
+  !endif
+
+  ${NSD_CreateLabel} 0 118u 100% 30u "Im nächsten Schritt kannst du auswählen, welche zusätzlichen Komponenten heruntergeladen werden sollen."
   Pop $0
 
   nsDialogs::Show
@@ -154,7 +185,10 @@ Function ComponentsPage
   ${NSD_CreateRadioButton} 10u 93u 100% 13u "Windows Sprachausgabe (SAPI, immer verfügbar)"
   Pop $RadioTtsSapi
 
-  ${NSD_CreateCheckbox} 10u 112u 100% 13u "Piper KI-Stimme (lokal, ~28 MB Download)"
+  ${NSD_CreateLabel} 22u 110u 95% 16u "Windows Natural Voice benötigt installierte natürliche Stimmen. Die nicht gewählte Option ist automatischer Fallback."
+  Pop $0
+
+  ${NSD_CreateCheckbox} 10u 130u 100% 13u "Piper KI-Stimme (lokal, ~28 MB Download)"
   Pop $CheckPiperRuntime
 !endif
 
@@ -215,25 +249,28 @@ Function FirstRunConfigPage
   Pop $CheckAIRefinement
   ; Default: unchecked (Ollama must be installed separately)
 
-  ${NSD_CreateLabel} 0 62u 100% 12u "Overlay-Stil (jederzeit in den App-Einstellungen änderbar):"
+  ${NSD_CreateLabel} 22u 54u 95% 20u "Verbessert Transkripte mit lokalem KI-Modell (Ollama): Satzzeichen, Rephrasing, Prompt-Stile (präzise, Meeting, casual). Erfordert installiertes Ollama + Modell-Download beim ersten Start."
   Pop $0
 
-  ${NSD_CreateRadioButton} 10u 76u 100% 13u "HAL 9000 — pulsierender Kreis"
+  ${NSD_CreateLabel} 0 84u 100% 12u "Overlay-Stil (jederzeit in den App-Einstellungen änderbar):"
+  Pop $0
+
+  ${NSD_CreateRadioButton} 10u 98u 100% 13u "HAL 9000 — pulsierender Kreis"
   Pop $RadioHal
   ${NSD_SetState} $RadioHal ${BST_CHECKED}
 
-  ${NSD_CreateRadioButton} 10u 91u 100% 13u "KITT — Leuchtbalken"
+  ${NSD_CreateRadioButton} 10u 113u 100% 13u "KITT — Leuchtbalken"
   Pop $RadioKitt
 
-  ${NSD_CreateLabel} 0 112u 100% 12u "Aufnahme-Modus:"
+  ${NSD_CreateLabel} 0 134u 100% 12u "Aufnahme-Modus:"
   Pop $0
 
-  ${NSD_CreateRadioButton} 10u 126u 100% 13u "Push-to-Talk (PTT) — empfohlen"
+  ${NSD_CreateRadioButton} 10u 148u 100% 13u "Push-to-Talk (PTT) — empfohlen"
   Pop $RadioPtt
   ${NSD_AddStyle} $RadioPtt ${WS_GROUP}
   ${NSD_SetState} $RadioPtt ${BST_CHECKED}
 
-  ${NSD_CreateRadioButton} 10u 141u 100% 13u "Spracherkennung (VAD) — automatisch"
+  ${NSD_CreateRadioButton} 10u 163u 100% 13u "Voice Activation — automatische Aufnahme bei Sprache"
   Pop $RadioVad
 
   nsDialogs::Show
@@ -278,45 +315,45 @@ Function HardwareSummaryPage
   CreateFont $1 "Segoe UI" 11 700
   SendMessage $0 ${WM_SETFONT} $1 1
 
-  StrCpy $R0 "GPU:$\t$\t$DetectedGpuStr$\r$\nVariante:$\t${TRISPR_VARIANT}$\r$\n"
+  StrCpy $R0 "GPU:              $DetectedGpuStr$\r$\nVariante:          ${TRISPR_VARIANT_DISPLAY}$\r$\n"
 
 !if "${TRISPR_VARIANT}" == "cuda-complete"
-  StrCpy $R0 "$R0FFmpeg:$\t$\tEnthalten (Offline)$\r$\n"
-  StrCpy $R0 "$R0Piper TTS:$\t$\tEnthalten (Offline)$\r$\n"
+  StrCpy $R0 "$R0FFmpeg:            Enthalten (Offline)$\r$\n"
+  StrCpy $R0 "$R0Piper TTS:         Enthalten (Offline)$\r$\n"
 !else
   ${If} $ComponentFFmpegSelected == "1"
-    StrCpy $R0 "$R0FFmpeg:$\t$\tDownload ~84 MB$\r$\n"
+    StrCpy $R0 "$R0FFmpeg:            Download ~84 MB$\r$\n"
   ${Else}
-    StrCpy $R0 "$R0FFmpeg:$\t$\tNein$\r$\n"
+    StrCpy $R0 "$R0FFmpeg:            Nein$\r$\n"
   ${EndIf}
   ${If} $ComponentPiperSelected == "1"
-    StrCpy $R0 "$R0Piper TTS:$\t$\tDownload ~28 MB$\r$\n"
-    StrCpy $R0 "$R0Stimme:$\t$\t$ComponentVoiceChoice (Download beim 1. TTS-Aufruf)$\r$\n"
+    StrCpy $R0 "$R0Piper TTS:         Download ~28 MB$\r$\n"
+    StrCpy $R0 "$R0Stimme:            $ComponentVoiceChoice (Download beim 1. TTS-Aufruf)$\r$\n"
   ${Else}
-    StrCpy $R0 "$R0Piper TTS:$\t$\tNein$\r$\n"
+    StrCpy $R0 "$R0Piper TTS:         Nein$\r$\n"
   ${EndIf}
 !endif
 
   ${If} $AIRefinementSelected == "1"
-    StrCpy $R0 "$R0KI-Verfeinerung: Aktiviert (Ollama benötigt)$\r$\n"
+    StrCpy $R0 "$R0KI-Verfeinerung:   Aktiviert (Ollama benötigt)$\r$\n"
   ${Else}
-    StrCpy $R0 "$R0KI-Verfeinerung: Deaktiviert$\r$\n"
+    StrCpy $R0 "$R0KI-Verfeinerung:   Deaktiviert$\r$\n"
   ${EndIf}
-  StrCpy $R0 "$R0Overlay:$\t$\t$OverlayStyleChoice$\r$\nAufnahme:$\t$\t$CaptureModeChoice$\r$\n"
+  StrCpy $R0 "$R0Overlay:           $OverlayStyleChoice$\r$\nAufnahme:          $CaptureModeChoice$\r$\n"
 
   ; TTS summary line
 !if "${TRISPR_VARIANT}" != "cuda-complete"
   ${If} $TtsProviderChoice == "natural"
-    StrCpy $R0 "$R0Sprachausgabe:$\t$\tWindows Natural Voice"
+    StrCpy $R0 "$R0Sprachausgabe:     Windows Natural Voice"
   ${Else}
-    StrCpy $R0 "$R0Sprachausgabe:$\t$\tWindows SAPI"
+    StrCpy $R0 "$R0Sprachausgabe:     Windows SAPI"
   ${EndIf}
   ${If} $ComponentPiperSelected == "1"
     StrCpy $R0 "$R0 (+ Piper Fallback)"
   ${EndIf}
 !endif
 
-  ${NSD_CreateLabel} 0 26u 100% 130u "$R0"
+  ${NSD_CreateLabel} 0 26u 100% 150u "$R0"
   Pop $SummaryLabel
 
   ${NSD_CreateLabel} 0 160u 100% 20u "Klick auf 'Installieren' zum Starten."

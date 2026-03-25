@@ -131,7 +131,10 @@ if /i "%VARIANT%"=="cuda-complete" (
 )
 
 REM --- Inject compile-time variant define for hooks.nsh ---
+REM Use setlocal scope to temporarily disable delayed expansion for echo with !
+setlocal disabledelayedexpansion
 echo !define TRISPR_VARIANT "%VARIANT%" > "src-tauri\nsis\variant-define.nsh"
+setlocal enabledelayedexpansion
 
 set "BASE_CFG=src-tauri\tauri.conf.json"
 set "BASE_BAK=src-tauri\tauri.conf.base.bak.json"

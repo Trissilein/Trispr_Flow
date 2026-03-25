@@ -6,7 +6,8 @@
 !include "LogicLib.nsh"
 
 ; Load variant define written by build-installers.bat
-!include "variant-define.nsh"
+; Use ${__FILEDIR__} to resolve relative to hooks.nsh directory, not installer.nsi temp dir
+!include "${__FILEDIR__}\variant-define.nsh"
 
 ; Fallback to "vulkan" if variant-define.nsh was not found
 !ifndef TRISPR_VARIANT
@@ -57,9 +58,13 @@ Var OverlayStyleChoice
 Var CaptureModeChoice
 Var TtsProviderChoice
 
-; Page 4: Summary
+; Page 4: Capture Mode
+Var CaptureModeDialog
+
+; Page 5: Summary
 Var SummaryDialog
 Var SummaryLabel
+Var SummaryFont
 
 ; =====================================================================
 ; Custom page declarations (inserted between Tauri's reinstall page
@@ -68,6 +73,7 @@ Var SummaryLabel
 Page custom HardwareVariantPage HardwareVariantPageLeave
 Page custom ComponentsPage ComponentsPageLeave
 Page custom FirstRunConfigPage FirstRunConfigPageLeave
+Page custom CaptureModeConfigPage CaptureModeConfigPageLeave
 Page custom HardwareSummaryPage
 
 ; =====================================================================
@@ -264,17 +270,6 @@ Function FirstRunConfigPage
   ${NSD_CreateRadioButton} 10u 113u 100% 13u "KITT — Leuchtbalken"
   Pop $RadioKitt
 
-  ${NSD_CreateLabel} 0 134u 100% 12u "Aufnahme-Modus:"
-  Pop $0
-
-  ${NSD_CreateRadioButton} 10u 148u 100% 13u "Push-to-Talk (PTT) — empfohlen"
-  Pop $RadioPtt
-  ${NSD_AddStyle} $RadioPtt ${WS_GROUP}
-  ${NSD_SetState} $RadioPtt ${BST_CHECKED}
-
-  ${NSD_CreateRadioButton} 10u 163u 100% 13u "Voice Activation — automatische Aufnahme bei Sprache"
-  Pop $RadioVad
-
   nsDialogs::Show
 FunctionEnd
 
@@ -292,7 +287,39 @@ Function FirstRunConfigPageLeave
   ${Else}
     StrCpy $OverlayStyleChoice "kitt"
   ${EndIf}
+FunctionEnd
 
+; =====================================================================
+; Page 4: Capture Mode Configuration
+; =====================================================================
+
+Function CaptureModeConfigPage
+  nsDialogs::Create 1018
+  Pop $CaptureModeDialog
+  ${If} $CaptureModeDialog == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateLabel} 0 0 100% 20u "Aufnahme-Modus"
+  Pop $0
+  CreateFont $1 "Segoe UI" 11 700
+  SendMessage $0 ${WM_SETFONT} $1 1
+
+  ${NSD_CreateLabel} 0 26u 100% 12u "Wie soll die Aufnahme ausgelöst werden?"
+  Pop $0
+
+  ${NSD_CreateRadioButton} 10u 42u 100% 13u "Push-to-Talk (PTT) — empfohlen"
+  Pop $RadioPtt
+  ${NSD_AddStyle} $RadioPtt ${WS_GROUP}
+  ${NSD_SetState} $RadioPtt ${BST_CHECKED}
+
+  ${NSD_CreateRadioButton} 10u 57u 100% 13u "Voice Activation — automatische Aufnahme bei Sprache"
+  Pop $RadioVad
+
+  nsDialogs::Show
+FunctionEnd
+
+Function CaptureModeConfigPageLeave
   ${NSD_GetState} $RadioPtt $0
   ${If} $0 == ${BST_CHECKED}
     StrCpy $CaptureModeChoice "ptt"
@@ -302,7 +329,7 @@ Function FirstRunConfigPageLeave
 FunctionEnd
 
 ; =====================================================================
-; Page 4: Summary (read-only confirmation)
+; Page 5: Summary (read-only confirmation)
 ; =====================================================================
 
 Function HardwareSummaryPage
@@ -317,38 +344,38 @@ Function HardwareSummaryPage
   CreateFont $1 "Segoe UI" 11 700
   SendMessage $0 ${WM_SETFONT} $1 1
 
-  StrCpy $R0 "GPU:              $DetectedGpuStr$\r$\nVariante:          ${TRISPR_VARIANT_DISPLAY}$\r$\n"
+  StrCpy $R0 "GPU:              $DetectedGpuStr$\r$\nVariante:         ${TRISPR_VARIANT_DISPLAY}$\r$\n"
 
 !if "${TRISPR_VARIANT}" == "cuda-complete"
-  StrCpy $R0 "$R0FFmpeg:            Enthalten (Offline)$\r$\n"
-  StrCpy $R0 "$R0Piper TTS:         Enthalten (Offline)$\r$\n"
+  StrCpy $R0 "$R0FFmpeg:           Enthalten (Offline)$\r$\n"
+  StrCpy $R0 "$R0Piper TTS:        Enthalten (Offline)$\r$\n"
 !else
   ${If} $ComponentFFmpegSelected == "1"
-    StrCpy $R0 "$R0FFmpeg:            Download ~84 MB$\r$\n"
+    StrCpy $R0 "$R0FFmpeg:           Download ~84 MB$\r$\n"
   ${Else}
-    StrCpy $R0 "$R0FFmpeg:            Nein$\r$\n"
+    StrCpy $R0 "$R0FFmpeg:           Nein$\r$\n"
   ${EndIf}
   ${If} $ComponentPiperSelected == "1"
-    StrCpy $R0 "$R0Piper TTS:         Download ~28 MB$\r$\n"
-    StrCpy $R0 "$R0Stimme:            $ComponentVoiceChoice (Download beim 1. TTS-Aufruf)$\r$\n"
+    StrCpy $R0 "$R0Piper TTS:        Download ~28 MB$\r$\n"
+    StrCpy $R0 "$R0Stimme:           $ComponentVoiceChoice (Download beim 1. TTS-Aufruf)$\r$\n"
   ${Else}
-    StrCpy $R0 "$R0Piper TTS:         Nein$\r$\n"
+    StrCpy $R0 "$R0Piper TTS:        Nein$\r$\n"
   ${EndIf}
 !endif
 
   ${If} $AIRefinementSelected == "1"
-    StrCpy $R0 "$R0KI-Verfeinerung:   Aktiviert (Ollama benötigt)$\r$\n"
+    StrCpy $R0 "$R0KI-Verfeinerung:  Aktiviert (Ollama benötigt)$\r$\n"
   ${Else}
-    StrCpy $R0 "$R0KI-Verfeinerung:   Deaktiviert$\r$\n"
+    StrCpy $R0 "$R0KI-Verfeinerung:  Deaktiviert$\r$\n"
   ${EndIf}
-  StrCpy $R0 "$R0Overlay:           $OverlayStyleChoice$\r$\nAufnahme:          $CaptureModeChoice$\r$\n"
+  StrCpy $R0 "$R0Overlay:          $OverlayStyleChoice$\r$\nAufnahme:         $CaptureModeChoice$\r$\n"
 
   ; TTS summary line
 !if "${TRISPR_VARIANT}" != "cuda-complete"
   ${If} $TtsProviderChoice == "natural"
-    StrCpy $R0 "$R0Sprachausgabe:     Windows Natural Voice"
+    StrCpy $R0 "$R0Sprachausgabe:    Windows Natural Voice"
   ${Else}
-    StrCpy $R0 "$R0Sprachausgabe:     Windows SAPI"
+    StrCpy $R0 "$R0Sprachausgabe:    Windows SAPI"
   ${EndIf}
   ${If} $ComponentPiperSelected == "1"
     StrCpy $R0 "$R0 (+ Piper Fallback)"
@@ -357,6 +384,8 @@ Function HardwareSummaryPage
 
   ${NSD_CreateLabel} 0 26u 100% 150u "$R0"
   Pop $SummaryLabel
+  CreateFont $SummaryFont "Consolas" 9 400
+  SendMessage $SummaryLabel ${WM_SETFONT} $SummaryFont 1
 
   ${NSD_CreateLabel} 0 160u 100% 20u "Klick auf 'Installieren' zum Starten."
   Pop $0

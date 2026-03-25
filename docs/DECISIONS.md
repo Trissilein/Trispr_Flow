@@ -52,11 +52,11 @@ Last updated: 2026-03-06
 - Decision: Support TXT, Markdown, and JSON export formats with stateless format selection (no settings persistence for export format).
 - Why: Export format is contextual — users choose based on immediate need (TXT for sharing, MD for documentation, JSON for data). No single "default" format serves all use cases. Stateless selection avoids unnecessary settings complexity.
 
-### DEC-015 CUDA installer optimization (v0.4.1)
+### DEC-015 CUDA installer optimization (v0.4.1, superseded)
 
-- Status: `implemented`
-- Decision: Remove cublasLt64_13.dll from CUDA bundle, keep only cublas64_13.dll + cudart64_13.dll.
-- Why: cublasLt64_13.dll (459 MB) is not used by whisper.cpp. Removing it reduced CUDA installer from ~560 MB to ~93 MB (81% reduction) with zero functional impact. Verified by testing whisper-cli.exe GPU detection (RTX 5070 Ti) without the DLL.
+- Status: `superseded`
+- Decision: Keep `cublasLt64_13.dll` in CUDA runtime bundle again.
+- Why: Field installs on 2026-03-23 showed `whisper-cli.exe` startup failure (`cublasLt64_13.dll` missing). Current CUDA runtime chain is not reliably loadable without that DLL on all target systems.
 
 ## Accepted Decisions (Planned, Not Fully Implemented)
 

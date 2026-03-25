@@ -49,6 +49,9 @@ function Test-Dir([string]$Path) {
 function Get-RuntimeStatus {
   $cudaCli = Join-Path $BinRoot "cuda\whisper-cli.exe"
   $cudaServer = Join-Path $BinRoot "cuda\whisper-server.exe"
+  $cudaCublas = Join-Path $BinRoot "cuda\cublas64_13.dll"
+  $cudaCublasLt = Join-Path $BinRoot "cuda\cublasLt64_13.dll"
+  $cudaCudart = Join-Path $BinRoot "cuda\cudart64_13.dll"
   $vulkanCli = Join-Path $BinRoot "vulkan\whisper-cli.exe"
   $vulkanServer = Join-Path $BinRoot "vulkan\whisper-server.exe"
   $quantize = Join-Path $BinRoot "quantize.exe"
@@ -65,6 +68,9 @@ function Get-RuntimeStatus {
   $status = [ordered]@{
     cuda_cli = Test-File $cudaCli
     cuda_server = Test-File $cudaServer
+    cuda_cublas = Test-File $cudaCublas
+    cuda_cublaslt = Test-File $cudaCublasLt
+    cuda_cudart = Test-File $cudaCudart
     vulkan_cli = Test-File $vulkanCli
     vulkan_server = Test-File $vulkanServer
     quantize = Test-File $quantize
@@ -78,8 +84,17 @@ function Get-RuntimeStatus {
   $status["recommended_runtime_complete"] = (
     $status.cuda_cli -and
     $status.cuda_server -and
+    $status.cuda_cublas -and
+    $status.cuda_cublaslt -and
+    $status.cuda_cudart -and
     $status.vulkan_cli -and
     $status.vulkan_server
+  )
+  $status["cuda_runtime_complete"] = (
+    $status.cuda_cli -and
+    $status.cuda_cublas -and
+    $status.cuda_cublaslt -and
+    $status.cuda_cudart
   )
   $status["ffmpeg_ready"] = ($status.ffmpeg_local -or $status.ffmpeg_on_path)
 
@@ -203,6 +218,7 @@ $status = Get-RuntimeStatus
 Write-Section "Runtime Status"
 Write-Info ("Transcription runtime ready: {0}" -f $status.transcription_ready)
 Write-Info ("Recommended CUDA+Vulkan runtime complete: {0}" -f $status.recommended_runtime_complete)
+Write-Info ("CUDA runtime complete (including cublasLt64_13.dll): {0}" -f $status.cuda_runtime_complete)
 Write-Info ("Quantize binary ready: {0}" -f $status.quantize)
 Write-Info ("FFmpeg ready (local or PATH): {0}" -f $status.ffmpeg_ready)
 if ($status.env_cli_ready) {
@@ -223,6 +239,10 @@ if (-not $status.transcription_ready) {
 
 if (-not $status.quantize) {
   Write-Warn "quantize.exe missing. 'Optimize' in model manager will be unavailable until bundled."
+}
+
+if ($status.cuda_cli -and -not $status.cuda_runtime_complete) {
+  Write-Warn "CUDA runtime is incomplete (missing cublas/cublasLt/cudart DLLs). CUDA backend may fail and should fall back to Vulkan."
 }
 
 if (-not $status.ffmpeg_ready) {

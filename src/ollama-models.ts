@@ -1233,124 +1233,82 @@ function renderModelsSection(container: HTMLElement): void {
   const section = document.createElement("div");
   section.className = "ollama-models-section";
 
-  const hint = document.createElement("p");
-  hint.className = "field-hint";
-  hint.textContent =
-    "Wähle ein KI-Modell für die Transkriptions-Verfeinerung. Größere Modelle liefern bessere Ergebnisse, brauchen aber mehr RAM.";
-  section.appendChild(hint);
-
-  // --- Dropdown + Status + Action button row ---
-  const selectorRow = document.createElement("div");
-  selectorRow.className = "ollama-model-selector";
-
-  const label = document.createElement("label");
-  label.textContent = "KI-Modell:";
-  label.htmlFor = "ollama-model-select";
-  selectorRow.appendChild(label);
-
-  const select = document.createElement("select");
-  select.id = "ollama-model-select";
-  select.className = "ollama-model-select";
-
   const activeModel = settings?.ai_fallback?.model
     ? normalizeModelTag(settings.ai_fallback.model)
     : "qwen3.5:4b";
 
-  OLLAMA_RECOMMENDED_MODELS.forEach((spec) => {
-    const option = document.createElement("option");
-    option.value = spec.name;
+  const cardList = document.createElement("div");
+  cardList.className = "qwen-model-cards";
+
+  for (const spec of OLLAMA_RECOMMENDED_MODELS) {
     const installed = isModelInstalled(spec.name);
+    const active = isModelActive(spec.name) || isExactModelTagMatch(spec.name, activeModel);
+    const isPulling = ollamaPullProgress.has(spec.name) || activeOllamaPulls.has(spec.name);
+    const progress = ollamaPullProgress.get(spec.name);
+
+    const state = isPulling ? "downloading" : active ? "active" : installed ? "installed" : "available";
     const sizeLabel = installed
       ? formatBytesGb(getInstalledSize(spec.name))
-      : `~${spec.size_gb?.toFixed(1) ?? "?"} GB`;
-    option.textContent = `${spec.label} (${sizeLabel})`;
-    if (isExactModelTagMatch(spec.name, activeModel)) {
-      option.selected = true;
-    }
-    select.appendChild(option);
-  });
-  selectorRow.appendChild(select);
+      : `${spec.size_gb?.toFixed(1) ?? "?"} GB`;
 
-  const statusSpan = document.createElement("span");
-  statusSpan.className = "ollama-model-status-badge";
-  selectorRow.appendChild(statusSpan);
+    const card = document.createElement("div");
+    card.className = "qwen-model-card";
+    card.dataset.model = spec.name;
+    card.dataset.state = state;
 
-  const actionBtn = document.createElement("button");
-  actionBtn.className = "btn-sm btn-primary ollama-model-action-btn";
-  selectorRow.appendChild(actionBtn);
+    const badgeHtml =
+      state === "active" ? `<span class="qwen-card-badge qwen-card-badge--active">Aktiv</span>` :
+      state === "installed" ? `<span class="qwen-card-badge qwen-card-badge--installed">Installiert</span>` :
+      state === "downloading" ? `<span class="qwen-card-badge qwen-card-badge--loading">Lädt…</span>` :
+      "";
 
-  section.appendChild(selectorRow);
-
-  // --- Progress bar ---
-  const progressRow = document.createElement("div");
-  progressRow.className = "ollama-download-progress";
-  progressRow.style.display = "none";
-  progressRow.innerHTML = `
-    <div class="ollama-progress-bar">
-      <div class="ollama-progress-fill" style="width: 0%"></div>
-    </div>
-    <span class="ollama-progress-text"></span>
-  `;
-  section.appendChild(progressRow);
-
-  // --- Update status/action based on selected model ---
-  function updateModelState(): void {
-    const selectedName = select.value;
-    const installed = isModelInstalled(selectedName);
-    const active = isModelActive(selectedName);
-    const isPulling =
-      ollamaPullProgress.has(selectedName) || activeOllamaPulls.has(selectedName);
-    const progress = ollamaPullProgress.get(selectedName);
-
-    if (isPulling) {
-      statusSpan.textContent = "Wird geladen...";
-      statusSpan.className = "ollama-model-status-badge status-downloading";
-      actionBtn.textContent = "Download läuft...";
-      actionBtn.disabled = true;
-      progressRow.style.display = "";
-      if (progress) {
-        const pct = computeOllamaPercent(progress);
-        const fill = progressRow.querySelector(".ollama-progress-fill") as HTMLElement | null;
-        const text = progressRow.querySelector(".ollama-progress-text") as HTMLElement | null;
-        if (fill) fill.style.width = `${pct}%`;
-        if (text) text.textContent = formatOllamaProgress(progress);
-      }
-    } else if (active) {
-      statusSpan.textContent = "Aktiv ✓";
-      statusSpan.className = "ollama-model-status-badge status-active";
-      actionBtn.textContent = "Aktiv";
-      actionBtn.disabled = true;
-      progressRow.style.display = "none";
-    } else if (installed) {
-      statusSpan.textContent = "Installiert";
-      statusSpan.className = "ollama-model-status-badge status-installed";
-      actionBtn.textContent = "Aktivieren";
-      actionBtn.disabled = false;
-      progressRow.style.display = "none";
+    let btnHtml: string;
+    if (state === "active") {
+      btnHtml = `<button class="qwen-card-btn qwen-card-btn--current" disabled>Aktiv ✓</button>`;
+    } else if (state === "downloading") {
+      const pct = progress ? computeOllamaPercent(progress) : 0;
+      btnHtml = `<button class="qwen-card-btn qwen-card-btn--loading" disabled>Lädt… ${pct}%</button>`;
+    } else if (state === "installed") {
+      btnHtml = `<button class="qwen-card-btn qwen-card-btn--activate" data-action="activate" data-model="${spec.name}">Aktivieren</button>`;
     } else {
-      statusSpan.textContent = "Nicht installiert";
-      statusSpan.className = "ollama-model-status-badge status-available";
-      actionBtn.textContent = "Herunterladen";
-      actionBtn.disabled = false;
-      progressRow.style.display = "none";
+      btnHtml = `<button class="qwen-card-btn qwen-card-btn--download" data-action="download" data-model="${spec.name}">↓ ${sizeLabel}</button>`;
     }
+
+    let progressHtml = "";
+    if (isPulling && progress) {
+      const pct = computeOllamaPercent(progress);
+      progressHtml = `
+        <div class="qwen-card-progress">
+          <div class="qwen-card-progress-bar">
+            <div class="qwen-card-progress-fill" style="width: ${pct}%"></div>
+          </div>
+          <span class="qwen-card-progress-text">${formatOllamaProgress(progress)}</span>
+        </div>`;
+    }
+
+    card.innerHTML = `
+      <div class="qwen-card-header">
+        <span class="qwen-card-name">${spec.label}</span>
+        ${badgeHtml}
+        <span class="qwen-card-size">${sizeLabel}</span>
+      </div>
+      <p class="qwen-card-desc">${spec.description}</p>
+      <div class="qwen-card-footer">${btnHtml}</div>
+      ${progressHtml}`;
+
+    cardList.appendChild(card);
   }
 
-  select.addEventListener("change", updateModelState);
-
-  actionBtn.addEventListener("click", () => {
-    const selectedName = select.value;
-    const installed = isModelInstalled(selectedName);
-
-    if (installed) {
-      void activateOllamaModel(selectedName);
-    } else {
-      void handleOllamaPull(selectedName);
-    }
+  // Event delegation — no per-button closures needed
+  cardList.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest("button[data-action]") as HTMLButtonElement | null;
+    if (!btn || btn.disabled) return;
+    const model = btn.dataset.model ?? "";
+    if (btn.dataset.action === "activate") void activateOllamaModel(model);
+    else if (btn.dataset.action === "download") void handleOllamaPull(model);
   });
 
-  updateModelState();
-
+  section.appendChild(cardList);
   container.appendChild(section);
 }
 

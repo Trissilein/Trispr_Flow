@@ -142,6 +142,49 @@
   border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.wizard-mode-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.wizard-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.wizard-card:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.wizard-card.selected {
+  border-color: var(--accent-2-bright, #4a9eff);
+  background: rgba(74, 158, 255, 0.08);
+}
+
+.wizard-card input[type="radio"] {
+  display: none;
+}
+
+.wizard-card strong {
+  font-size: 1rem;
+}
+
+.wizard-finish-section {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .btn-link {
   color: var(--accent-2-bright);
   text-decoration: underline;

@@ -1,9 +1,76 @@
 // Hotkey recorder system
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { ValidationResult } from "./types";
 import { settings } from "./state";
 import { persistSettings } from "./settings";
+
+// Map event.code → tauri-compatible key name for layout-independent recognition
+const CODE_TO_KEY: Record<string, string> = {
+  IntlBackslash: "IntlBackslash", // < > on DE layout
+  BracketLeft: "BracketLeft",
+  BracketRight: "BracketRight",
+  Semicolon: "Semicolon",
+  Quote: "Quote",
+  Backquote: "Backquote",
+  Minus: "Minus",
+  Equal: "Equal",
+  Backslash: "Backslash",
+  Slash: "Slash",
+  Comma: "Comma",
+  Period: "Period",
+  Space: "Space",
+  Enter: "Enter",
+  Escape: "Escape",
+  Backspace: "Backspace",
+  Tab: "Tab",
+  Delete: "Delete",
+  Insert: "Insert",
+  Home: "Home",
+  End: "End",
+  PageUp: "PageUp",
+  PageDown: "PageDown",
+  ArrowUp: "ArrowUp",
+  ArrowDown: "ArrowDown",
+  ArrowLeft: "ArrowLeft",
+  ArrowRight: "ArrowRight",
+};
+
+// Track registration status per hotkey type
+const registrationStatus: Record<string, { registered: boolean; error?: string }> = {};
+
+/** Listen for backend hotkey registration results and update status badges */
+export function initHotkeyStatusListener(): void {
+  listen<Record<string, { key: string; registered: boolean; error?: string | null }>>(
+    "hotkey:registration-status",
+    (event) => {
+      for (const [type, status] of Object.entries(event.payload)) {
+        registrationStatus[type] = {
+          registered: status.registered,
+          error: status.error ?? undefined,
+        };
+        // Update badge in DOM if present
+        const badge = document.querySelector(`.hotkey-reg-badge[data-hotkey-type="${type}"]`);
+        if (badge) {
+          if (!status.registered && status.error) {
+            badge.textContent = "⚠ Belegt";
+            badge.className = "hotkey-reg-badge conflict";
+            badge.setAttribute("title", status.error);
+          } else {
+            badge.textContent = "✓";
+            badge.className = "hotkey-reg-badge ok";
+            badge.setAttribute("title", "Hotkey registriert");
+          }
+        }
+      }
+    }
+  );
+}
+
+export function getHotkeyRegistrationStatus(type: string): { registered: boolean; error?: string } {
+  return registrationStatus[type] ?? { registered: true };
+}
 
 export function setupHotkeyRecorder(
   type: "ptt" | "toggle" | "transcribe" | "toggleActivationWords",
@@ -69,16 +136,27 @@ export function setupHotkeyRecorder(
     if (e.altKey) recordedKeys.add("Alt");
     if (e.metaKey) recordedKeys.add("Command");
 
-    // Add the actual key - use e.code for better reliability with special characters
+    // Add the actual key — use event.code for layout-independent key detection
     const isModifier = ["Control", "Shift", "Alt", "Meta"].includes(e.key);
     if (!isModifier) {
-      // Use e.key for display (shows actual character like "^")
-      // But handle special cases
-      let keyName = e.key;
+      let keyName: string;
 
-      // For single character keys, uppercase them
-      if (keyName.length === 1) {
-        keyName = keyName.toUpperCase();
+      // Check code-to-key mapping first (handles special/punctuation keys)
+      if (CODE_TO_KEY[e.code]) {
+        keyName = CODE_TO_KEY[e.code];
+      } else if (e.code.startsWith("Key")) {
+        // KeyA → A, KeyZ → Z
+        keyName = e.code.slice(3);
+      } else if (e.code.startsWith("Digit")) {
+        // Digit0 → 0, Digit9 → 9
+        keyName = e.code.slice(5);
+      } else if (e.code.startsWith("Numpad")) {
+        keyName = e.code; // NumpadEnter, Numpad0, etc.
+      } else if (e.code.startsWith("F") && /^F\d+$/.test(e.code)) {
+        keyName = e.code; // F1-F24
+      } else {
+        // Fallback to e.key, uppercased for single chars
+        keyName = e.key.length === 1 ? e.key.toUpperCase() : e.key;
       }
 
       recordedKeys.add(keyName);

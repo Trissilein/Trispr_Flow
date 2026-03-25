@@ -98,6 +98,7 @@ import { initExpertMode } from "./expert-mode";
 import { initModulesHub, refreshModulesHub } from "./modules-hub";
 import { initGddFlow } from "./gdd-flow";
 import { initOnboardingWizard } from "./onboarding-wizard";
+import { initPipelineStatus } from "./pipeline-status";
 import {
   appendWorkflowAgentLog,
   handleWorkflowAgentRawResult,
@@ -144,10 +145,13 @@ import { OLLAMA_SETTINGS_CHANGED_POLICY } from "./ollama-refresh-policy";
 let eventUnlisteners: Array<() => void> = [];
 let backlogWarningToastId: string | null = null;
 let overlayHealthToastId: string | null = null;
+let ollamaRuntimeLoadingToastId: string | null = null;
 let pasteQueue: Promise<void> = Promise.resolve();
 let frontendHeartbeatTimer: number | null = null;
 let frontendHeartbeatFailureCount = 0;
 let frontendHeartbeatReloadIssued = false;
+let lastOllamaStartupStarting = false;
+let lastOllamaStartupReady = false;
 
 const FRONTEND_HEARTBEAT_INTERVAL_MS = 2_500;
 const FRONTEND_HEARTBEAT_RELOAD_THRESHOLD = 5;
@@ -278,11 +282,54 @@ function resetTrackedRefinementJobs(): void {
 }
 
 function applyStartupStatus(status: StartupStatus | null): void {
+  syncOllamaStartupToasts(status);
   setStartupStatus(status);
   applyStartupReadinessUi();
   renderHero();
   renderAIFallbackSettingsUi();
   renderOllamaModelManager();
+}
+
+function syncOllamaStartupToasts(status: StartupStatus | null): void {
+  const localAiEnabled = isRefinementEnabled() && settings?.ai_fallback?.provider === "ollama";
+  const starting = Boolean(status?.ollama_starting);
+  const ready = Boolean(status?.ollama_ready);
+
+  if (!localAiEnabled) {
+    dismissToast(ollamaRuntimeLoadingToastId);
+    ollamaRuntimeLoadingToastId = null;
+    lastOllamaStartupStarting = starting;
+    lastOllamaStartupReady = ready;
+    return;
+  }
+
+  if (starting && !ready && !ollamaRuntimeLoadingToastId) {
+    ollamaRuntimeLoadingToastId = showToast({
+      type: "info",
+      icon: "🔵",
+      title: "Lokale AI startet",
+      message: "Ollama wird geladen. Das kann etwas dauern, bis es verfügbar ist.",
+      duration: 0,
+    });
+  }
+
+  if ((!starting || ready) && ollamaRuntimeLoadingToastId) {
+    dismissToast(ollamaRuntimeLoadingToastId);
+    ollamaRuntimeLoadingToastId = null;
+  }
+
+  const transitionedToReady = ready && !lastOllamaStartupReady && (lastOllamaStartupStarting || starting);
+  if (transitionedToReady) {
+    showToast({
+      type: "success",
+      title: "Lokale AI bereit",
+      message: "Ollama ist jetzt erreichbar und kann für AI Refinement verwendet werden.",
+      duration: 4500,
+    });
+  }
+
+  lastOllamaStartupStarting = starting;
+  lastOllamaStartupReady = ready;
 }
 
 function applyStartupReadinessUi(): void {
@@ -630,6 +677,7 @@ async function bootstrap() {
   initGddFlow();
   initWorkflowAgentConsole();
   initOnboardingWizard();
+  initPipelineStatus();
   syncVoiceOutputConsoleState();
 
   if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Rendering interface…";
@@ -1292,6 +1340,34 @@ async function checkDependencyPreflightOnStartup() {
       if (!warning) {
         return;
       }
+
+      if (
+        warning.id === "ollama_runtime" &&
+        isRefinementEnabled() &&
+        settings?.ai_fallback?.provider === "ollama"
+      ) {
+        const runtimeLoading =
+          runtimeCard.busy
+          || runtimeCard.backgroundStarting
+          || Boolean(startupStatus?.ollama_starting);
+        const runtimeReady = runtimeCard.healthy || Boolean(startupStatus?.ollama_ready);
+
+        if (runtimeReady) {
+          return;
+        }
+
+        if (runtimeLoading) {
+          showToast({
+            type: "info",
+            icon: "🔵",
+            title: "Lokale AI startet",
+            message: "Ollama lädt im Hintergrund. Das kann etwas dauern, bis der Dienst verfügbar ist.",
+            duration: 9000,
+          });
+          return;
+        }
+      }
+
       showToast({
         type: "warning",
         title: "Dependency Warnings",

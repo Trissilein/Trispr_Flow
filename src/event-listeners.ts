@@ -41,7 +41,7 @@ import { refreshModels, refreshModelsDir } from "./models";
 import { setHistoryTab, buildConversationHistory, buildConversationText, setSearchQuery, setTopicKeywords, DEFAULT_TOPICS, scheduleHistoryRender, syncHistoryToolbarState } from "./history";
 import { setHistoryAlias, setHistoryFontSize, syncHistoryAliasesIntoSettings } from "./history-preferences";
 import { isPanelId, togglePanel } from "./panels";
-import { setupHotkeyRecorder } from "./hotkeys";
+import { setupHotkeyRecorder, initHotkeyStatusListener } from "./hotkeys";
 import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
@@ -1311,7 +1311,8 @@ export function wireEvents() {
     if (e.key === "Enter") { e.preventDefault(); commitAlias("system", dom.historyAliasSystemInput); }
   });
 
-  // Hotkey recording functionality
+  // Hotkey recording functionality + registration status listener
+  initHotkeyStatusListener();
   setupHotkeyRecorder("ptt", dom.pttHotkey, dom.pttHotkeyRecord, dom.pttHotkeyStatus);
   setupHotkeyRecorder("toggle", dom.toggleHotkey, dom.toggleHotkeyRecord, dom.toggleHotkeyStatus);
   setupHotkeyRecorder("transcribe", dom.transcribeHotkey, dom.transcribeHotkeyRecord, dom.transcribeHotkeyStatus);
@@ -1514,12 +1515,16 @@ export function wireEvents() {
     await persistSettings();
   });
 
-  // Quality & Encoding event listeners
-  dom.opusEnabledToggle?.addEventListener("change", async () => {
+  // Quality & Encoding event listeners — sync both opus toggles
+  const syncOpusToggles = async (source: HTMLInputElement) => {
     if (!settings) return;
-    settings.opus_enabled = dom.opusEnabledToggle!.checked;
+    settings.opus_enabled = source.checked;
+    if (dom.opusEnabledToggle && dom.opusEnabledToggle !== source) dom.opusEnabledToggle.checked = source.checked;
+    if (dom.opusArchiveToggle && dom.opusArchiveToggle !== source) dom.opusArchiveToggle.checked = source.checked;
     await persistSettings();
-  });
+  };
+  dom.opusEnabledToggle?.addEventListener("change", () => void syncOpusToggles(dom.opusEnabledToggle!));
+  dom.opusArchiveToggle?.addEventListener("change", () => void syncOpusToggles(dom.opusArchiveToggle!));
 
   dom.opusBitrateSelect?.addEventListener("change", async () => {
     if (!settings || !dom.opusBitrateSelect) return;

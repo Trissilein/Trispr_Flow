@@ -384,6 +384,7 @@ export const topicKeywordsReset = $("topic-keywords-reset") as HTMLButtonElement
 
 // Quality & Encoding controls
 export const opusEnabledToggle = $("opus-enabled-toggle") as HTMLInputElement | null;
+export const opusArchiveToggle = $("opus-archive-toggle") as HTMLInputElement | null;
 export const opusBitrateSelect = $("opus-bitrate-select") as HTMLSelectElement | null;
 export const autoSaveSystemAudioToggle = $("auto-save-system-audio-toggle") as HTMLInputElement | null;
 export const autoSaveMicAudioToggle = $("auto-save-mic-audio-toggle") as HTMLInputElement | null;

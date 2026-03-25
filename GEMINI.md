@@ -45,9 +45,10 @@ npm run benchmark:latency:live   # Live transcription benchmark
 ```
 
 ### Building Installers
-- `scripts/windows/build_unified.bat`: Builds the unified installer package.
-- `scripts/windows/rebuild-installer.bat`: Rebuilds the NSIS installer.
-- Root wrappers (`build_unified.bat`, `rebuild-installer.bat`) remain for compatibility.
+- `scripts/windows/build-installers.bat`: Builds all installer variants (`vulkan`, `cuda-lite`, `cuda-complete`).
+- `scripts/windows/build_unified.bat`: Backward-compatible wrapper (now delegates to multi-variant build).
+- `scripts/windows/rebuild-installer.bat`: Rebuild entrypoint + opens `installers/`.
+- Root wrappers (`build_unified.bat`, `rebuild-installer.bat`, `build_installers.bat`) remain for compatibility.
 
 ## Development Conventions
 

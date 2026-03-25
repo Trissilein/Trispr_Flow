@@ -1,16 +1,16 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-22 (Block S reopened for strict module-UX + overlay stabilization packet)
+Last updated: 2026-03-25 (Block S S1-S13 code complete; manual soak acceptance + TTS free-config next)
 
 This file is the canonical source for priorities and execution order.
 
 ## Canonical Current State
 
 - Released: `v0.7.0`, `v0.7.1`, `v0.7.2`
-- Current phase: `v0.7.3` stabilization follow-through (`Block S` reopened: S10-S13 active, TTS free-config/testing follows immediately after acceptance).
-- **Next version bump**: `v0.7.3` after Block S stabilization gate (`S10-S13`) plus TTS free-config/testing acceptance.
+- Current phase: `v0.7.3` stabilization with manual acceptance gates (`Block S` S1-S13 code complete, S13 manual soak pending, TTS free-config/testing follows).
+- **Next version bump**: `v0.7.3` after S13 soak acceptance + TTS free-config/testing acceptance + regression baseline green.
 - Foundation complete: Blocks F + G + H + L + M
-- Active execution blocks: Block S stabilization packet (`S10-S13`), then TTS free-config/testing, plus Block R follow-up hardening (non-blocking)
+- Active execution blocks: Block S manual gates (S13 soak), then TTS free-config/testing, then Block T planning (v0.8.0)
 
 ## Analysis De-Scope Decision
 
@@ -126,16 +126,16 @@ This file is the canonical source for priorities and execution order.
 | S10 | Strict module-UX decoupling + dedicated TTS main tab (`voice-output`) | S9 | Done ✅ |
 | S11 | AI-Refinement re-enable speed path (autostart + warmup + runtime-ready defer policy) | S10 | Done ✅ |
 | S12 | Overlay deep refactor (bounded recovery supervisor, off-screen fallback, pulse reliability, recovered health signal) | S10 | Done ✅ |
-| S13 | Regression + soak/manual gate (`50 cycles + 10 restarts`) and closure handoff to TTS free-config/testing | S10-S12 | In progress ⏳ (manual acceptance run pending) |
+| S13 | Regression + soak/manual gate (`50 cycles + 10 restarts`) and closure handoff to TTS free-config/testing | S10-S12 | Code complete ✅ (manual soak validation pending) |
 
 ## Immediate Next Actions
 
-1. Close `S13` manual acceptance (overlay `50 cycles + 10 restarts`, module toggle/re-enable checks).
-2. Immediately continue with `TTS freikonfigurierbar + testbar` (provider-agnostic config + forced verification flow).
-3. Keep GDD Core + Confluence path stable while TTS free-config work is implemented.
-4. Use `docs/N11_TTS_BENCHMARK.md` as supporting evidence guidance for TTS runtime/provider decisions.
-5. Start Block T (`v0.8.0`) only after S13 + TTS acceptance criteria are met and regression baseline remains green.
-6. Carry Block R follow-up (`R4`-`R6`) only as non-blocking parallel work that cannot regress current priorities.
+1. **S13 Manual Soak** (Haiku): Run `50 overlay cycles + 10 app restarts` with `s13-soak-validation.sh` to validate no permanent lockout/stuck state.
+2. **S13.5 TTS Free-Config Verification** (Haiku): Provider matrix test (`windows_native`, `windows_natural`, `local_custom`, `qwen3_tts`), device routing, forced diagnostics.
+3. **Phase A Closure** (Haiku): All build gates (`npm run build`, `npm test`, `cargo test --lib`) green + docs updated → v0.7.3 baseline.
+4. **Block T Planning** (Sonnet): After S13 + S13.5 acceptance, start Block T assistant pivot foundation (T1 already code-complete, T2-T5 to plan).
+5. **Keep GDD + Confluence path stable** while S13 + S13.5 gates run.
+6. **Installer Footprint Optimization** scheduled after Block T completion as deferred optimization wave.
 
 ## References
 

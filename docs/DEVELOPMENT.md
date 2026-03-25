@@ -123,7 +123,7 @@ See `.env.example` for runtime configuration. You can override the default model
 - Trispr Flow manages Ollama runtime per-user and can install it from the UI (AI Refinement section).
 - Model pulls stay in-app and are not bundled with installers.
 - Runtime dependency policy:
-  - Whisper keeps its own CUDA DLL set in `src-tauri/bin/cuda`.
+  - Whisper keeps its own CUDA DLL set in `src-tauri/bin/cuda` (including `cublas64_13.dll`, `cublasLt64_13.dll`, `cudart64_13.dll`).
   - Ollama keeps its own dependency tree under `%LOCALAPPDATA%\Trispr Flow\ollama-runtime\...`.
   - Do not copy/mix DLLs between Whisper and Ollama runtime folders.
 

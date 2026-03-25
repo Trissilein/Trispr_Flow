@@ -58,7 +58,10 @@ Release details:
 
 ### Users
 1. Download the latest release from [GitHub Releases](https://github.com/Trissilein/Trispr_Flow/releases).
-2. Run the latest unified installer (`*.unified-*.exe`).
+2. Choose an installer variant:
+   - `*.vulkan-only-*.exe` (smallest, no CUDA payload)
+   - `*.cuda-lite-*.exe` (CUDA without `cublasLt64_13.dll`, Vulkan fallback included)
+   - `*.cuda-complete-*.exe` (full CUDA payload including `cublasLt64_13.dll`)
 3. Open **AI Refinement** in-app to install/start local Ollama runtime and download models.
 
 ### Developers (Windows)
@@ -69,6 +72,10 @@ scripts\windows\FIRST_RUN.bat
 ```
 
 Compatibility wrappers remain in root (`FIRST_RUN.bat`, `build_unified.bat`, `rebuild-installer.bat`, `build-quantize.bat`).
+
+Installer build/upload shortcuts:
+- `build_installers.bat` (build all variants)
+- `upload_release_assets.bat -Tag vX.Y.Z -CreateReleaseIfMissing -Clobber` (upload latest `vulkan-only`/`cuda-lite`/`cuda-complete` assets for that tag via GitHub CLI)
 
 ## Status and Roadmap
 

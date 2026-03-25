@@ -124,11 +124,11 @@ Function HardwareVariantPage
   Pop $0
 
   ; Variant text in uppercase
-  !if TRISPR_VARIANT == "vulkan"
+  !if "${TRISPR_VARIANT}" == "vulkan"
     StrCpy $R0 "VULKAN"
-  !else if TRISPR_VARIANT == "cuda-lite"
+  !else if "${TRISPR_VARIANT}" == "cuda-lite"
     StrCpy $R0 "CUDA (lite)"
-  !else if TRISPR_VARIANT == "cuda-complete"
+  !else if "${TRISPR_VARIANT}" == "cuda-complete"
     StrCpy $R0 "CUDA (complete, offline)"
   !else
     StrCpy $R0 "${TRISPR_VARIANT}"
@@ -137,7 +137,7 @@ Function HardwareVariantPage
   Pop $0
 
   ; CUDA hint for NVIDIA GPU on Vulkan variant
-  !if TRISPR_VARIANT == "vulkan"
+  !if "${TRISPR_VARIANT}" == "vulkan"
     StrCmp $DetectedGpuStr "Keine NVIDIA GPU erkannt" no_cuda_hint
       ${NSD_CreateLabel} 0 92u 100% 20u "Hinweis: Für NVIDIA GPUs steht ein optimierter CUDA-Installer zur Verfügung (cuda-lite)."
       Pop $0
@@ -257,17 +257,17 @@ Function FirstRunConfigPage
   Pop $CheckAIRefinement
   ; Default: unchecked (Ollama must be installed separately)
 
-  ${NSD_CreateLabel} 22u 54u 95% 20u "Verbessert Transkripte mit lokalem KI-Modell (Ollama): Satzzeichen, Rephrasing, Prompt-Stile (präzise, Meeting, casual). Erfordert installiertes Ollama + Modell-Download beim ersten Start."
+  ${NSD_CreateLabel} 22u 54u 95% 36u "Verbessert Transkripte mit lokalem KI-Modell (Ollama): Satzzeichen, Rephrasing, Prompt-Stile (präzise, Meeting, casual). Erfordert installiertes Ollama + Modell-Download beim ersten Start."
   Pop $0
 
-  ${NSD_CreateLabel} 0 84u 100% 12u "Overlay-Stil (jederzeit in den App-Einstellungen änderbar):"
+  ${NSD_CreateLabel} 0 96u 100% 12u "Overlay-Stil (jederzeit in den App-Einstellungen änderbar):"
   Pop $0
 
-  ${NSD_CreateRadioButton} 10u 98u 100% 13u "HAL 9000 — pulsierender Kreis"
+  ${NSD_CreateRadioButton} 10u 110u 100% 13u "HAL 9000 — pulsierender Kreis"
   Pop $RadioHal
   ${NSD_SetState} $RadioHal ${BST_CHECKED}
 
-  ${NSD_CreateRadioButton} 10u 113u 100% 13u "KITT — Leuchtbalken"
+  ${NSD_CreateRadioButton} 10u 125u 100% 13u "KITT — Leuchtbalken"
   Pop $RadioKitt
 
   nsDialogs::Show

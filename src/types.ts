@@ -261,6 +261,7 @@ export interface VoiceOutputSettings {
   qwen3_tts_voice?: string;
   qwen3_tts_api_key?: string;
   qwen3_tts_timeout_sec?: number;
+  qwen3_tts_enabled?: boolean;
 }
 
 export interface AgentCommandParseResult {

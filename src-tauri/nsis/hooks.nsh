@@ -5,8 +5,10 @@
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
 
-; Compile-time variant define injected by build-installers.bat
-; Fallback to "vulkan" if building outside the standard pipeline
+; Load variant define written by build-installers.bat
+!include "variant-define.nsh"
+
+; Fallback to "vulkan" if variant-define.nsh was not found
 !ifndef TRISPR_VARIANT
   !define TRISPR_VARIANT "vulkan"
 !endif

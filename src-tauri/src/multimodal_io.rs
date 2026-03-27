@@ -1,11 +1,15 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 #[cfg(target_os = "windows")]
 use tauri::{AppHandle, Manager};
 
@@ -1366,8 +1370,7 @@ pub fn download_piper_voice(lang_code: &str) -> Result<std::path::PathBuf, Strin
         })
         .ok_or_else(|| "LOCALAPPDATA not set".to_string())?;
 
-    std::fs::create_dir_all(&voices_dir)
-        .map_err(|e| format!("Cannot create voices dir: {e}"))?;
+    std::fs::create_dir_all(&voices_dir).map_err(|e| format!("Cannot create voices dir: {e}"))?;
 
     let onnx_path = voices_dir.join(format!("{lang_code}.onnx"));
     let json_path = voices_dir.join(format!("{lang_code}.onnx.json"));
@@ -1412,12 +1415,17 @@ pub fn download_piper_voice(lang_code: &str) -> Result<std::path::PathBuf, Strin
         tracing::info!("[piper] Voice model ready: {}", onnx_path.display());
         Ok(onnx_path)
     } else {
-        Err(format!("Voice model download succeeded but {lang_code}.onnx is empty"))
+        Err(format!(
+            "Voice model download succeeded but {lang_code}.onnx is empty"
+        ))
     }
 }
 
-pub fn piper_binary_available(configured: &str) -> bool {
-    resolve_piper_binary(configured).is_some()
+pub fn piper_binary_preflight(configured: &str) -> Result<(), String> {
+    let binary_path = resolve_piper_binary(configured).ok_or_else(|| {
+        "Piper TTS binary not found. Install piper or set piper_binary_path in Voice Output settings.".to_string()
+    })?;
+    ensure_piper_runtime_dependencies(&binary_path)
 }
 
 pub fn piper_model_available(model_path: &str, model_dir: &str) -> bool {
@@ -1425,6 +1433,345 @@ pub fn piper_model_available(model_path: &str, model_dir: &str) -> bool {
         return std::path::Path::new(model_path.trim()).is_file();
     }
     !list_piper_voices(model_dir).is_empty()
+}
+
+const PIPER_DAEMON_ACK_TIMEOUT: Duration = Duration::from_secs(30);
+const PIPER_DAEMON_RETRY_LIMIT: usize = 1;
+static PIPER_DAEMON_REQUEST_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(target_os = "windows")]
+const PIPER_REQUIRED_RUNTIME_FILES: &[&str] = &[
+    "onnxruntime.dll",
+    "onnxruntime_providers_shared.dll",
+    "espeak-ng.dll",
+    "piper_phonemize.dll",
+    "libtashkeel_model.ort",
+];
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PiperDaemonConfig {
+    binary_path: PathBuf,
+    model_path: PathBuf,
+    rate: f32,
+    length_scale: String,
+}
+
+fn normalize_piper_rate(rate: f32) -> f32 {
+    let normalized = rate.clamp(0.25, 4.0);
+    (normalized * 1_000.0).round() / 1_000.0
+}
+
+fn resolve_piper_binary_for_runtime(configured: &str) -> Result<PathBuf, String> {
+    let binary_path = resolve_piper_binary(configured).ok_or_else(|| {
+        "Piper TTS binary not found. Install piper or set piper_binary_path in Voice Output settings.".to_string()
+    })?;
+    ensure_piper_runtime_dependencies(&binary_path)?;
+    Ok(binary_path)
+}
+
+fn ensure_piper_runtime_dependencies(binary_path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let mut missing: Vec<String> = Vec::new();
+    #[cfg(not(target_os = "windows"))]
+    let missing: Vec<String> = Vec::new();
+    let binary_dir = binary_path.parent().ok_or_else(|| {
+        format!(
+            "Piper binary path '{}' has no parent directory.",
+            binary_path.display()
+        )
+    })?;
+
+    #[cfg(target_os = "windows")]
+    {
+        for file in PIPER_REQUIRED_RUNTIME_FILES {
+            let candidate = binary_dir.join(file);
+            if !file_is_non_empty(&candidate) {
+                missing.push(file.to_string());
+            }
+        }
+        let espeak_data_dir = binary_dir.join("espeak-ng-data");
+        if !espeak_data_dir.is_dir() {
+            missing.push("espeak-ng-data/".to_string());
+        }
+    }
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Piper runtime is incomplete in '{}'. Missing: {}. Reinstall Piper assets (including DLLs) and retry.",
+        binary_dir.display(),
+        missing.join(", ")
+    ))
+}
+
+fn resolve_piper_model_for_runtime(model_path: &str) -> Result<PathBuf, String> {
+    if !model_path.trim().is_empty() {
+        let configured = PathBuf::from(model_path.trim());
+        if configured.is_file() {
+            return Ok(configured);
+        }
+        return Err(format!("Piper model not found: {model_path}"));
+    }
+
+    let voices = list_piper_voices("");
+    if let Some(voice) = voices.into_iter().next() {
+        return Ok(PathBuf::from(voice.id));
+    }
+
+    tracing::info!("[piper] No voice model found locally, attempting on-demand download.");
+    download_piper_voice("de_DE-thorsten-medium").map_err(|error| {
+        format!(
+            "No Piper voice model found and auto-download failed: {error}. \
+             Connect to the internet and restart the app, or set piper_model_path manually."
+        )
+    })
+}
+
+pub(crate) fn daemon_config_from_request(
+    binary_path: &str,
+    model_path: &str,
+    rate: f32,
+) -> Result<PiperDaemonConfig, String> {
+    let normalized_rate = normalize_piper_rate(rate);
+    let length_scale = format!("{:.3}", 1.0_f32 / normalized_rate);
+    Ok(PiperDaemonConfig {
+        binary_path: resolve_piper_binary_for_runtime(binary_path)?,
+        model_path: resolve_piper_model_for_runtime(model_path)?,
+        rate: normalized_rate,
+        length_scale,
+    })
+}
+
+struct PiperDaemon {
+    child: Child,
+    stdin: BufWriter<ChildStdin>,
+    stdout_rx: Receiver<Result<String, String>>,
+    config: PiperDaemonConfig,
+}
+
+impl PiperDaemon {
+    fn spawn(config: PiperDaemonConfig) -> Result<Self, String> {
+        let mut cmd = Command::new(&config.binary_path);
+        let model_arg = config.model_path.to_string_lossy().to_string();
+        cmd.args([
+            "--model",
+            model_arg.as_str(),
+            "--json_input",
+            "--length_scale",
+            config.length_scale.as_str(),
+        ]);
+        if let Some(binary_dir) = config.binary_path.parent() {
+            cmd.current_dir(binary_dir);
+        }
+        apply_hidden_creation_flags(&mut cmd);
+
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("Failed to start piper daemon: {error}"))?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "Failed to acquire stdin pipe for piper daemon.".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Failed to acquire stdout pipe for piper daemon.".to_string())?;
+        let stdout_rx = spawn_piper_daemon_stdout_reader(stdout);
+
+        tracing::info!(
+            "[piper-daemon] spawned binary={} model={} rate={:.3}",
+            config.binary_path.display(),
+            config.model_path.display(),
+            config.rate
+        );
+
+        Ok(Self {
+            child,
+            stdin: BufWriter::new(stdin),
+            stdout_rx,
+            config,
+        })
+    }
+
+    fn matches_config(&self, config: &PiperDaemonConfig) -> bool {
+        self.config.binary_path == config.binary_path
+            && self.config.model_path == config.model_path
+            && (self.config.rate - config.rate).abs() <= f32::EPSILON
+    }
+
+    fn is_alive(&mut self) -> bool {
+        match self.child.try_wait() {
+            Ok(Some(_)) => false,
+            Ok(None) => true,
+            Err(_) => false,
+        }
+    }
+
+    fn shutdown(&mut self, reason: &str) {
+        let pid = self.child.id();
+        tracing::info!("[piper-daemon] stopping pid={} reason={}", pid, reason);
+        if matches!(self.child.try_wait(), Ok(None)) {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+    }
+
+    fn synthesize_to_wav_file(&mut self, text: &str) -> Result<PathBuf, String> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err("TTS text is empty.".to_string());
+        }
+        if !self.is_alive() {
+            return Err("Piper daemon is not alive.".to_string());
+        }
+
+        let request_id = PIPER_DAEMON_REQUEST_SEQ.fetch_add(1, Ordering::Relaxed);
+        let output_path =
+            std::env::temp_dir().join(format!("trispr_tts_piper_daemon_{request_id}.wav"));
+        let payload = serde_json::json!({
+            "text": trimmed,
+            "output_file": output_path.to_string_lossy().to_string(),
+        });
+        let payload_line = serde_json::to_string(&payload)
+            .map_err(|error| format!("Invalid daemon payload: {error}"))?;
+
+        self.stdin
+            .write_all(payload_line.as_bytes())
+            .and_then(|_| self.stdin.write_all(b"\n"))
+            .and_then(|_| self.stdin.flush())
+            .map_err(|error| format!("Failed to write Piper daemon request: {error}"))?;
+
+        let ack_line = match self.stdout_rx.recv_timeout(PIPER_DAEMON_ACK_TIMEOUT) {
+            Ok(Ok(line)) => line,
+            Ok(Err(error)) => return Err(error),
+            Err(RecvTimeoutError::Timeout) => {
+                return Err(format!(
+                    "Piper daemon request timed out after {}s.",
+                    PIPER_DAEMON_ACK_TIMEOUT.as_secs()
+                ))
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err("Piper daemon stdout channel disconnected.".to_string())
+            }
+        };
+
+        if ack_line.trim().is_empty() {
+            return Err("Piper daemon returned an empty output-file acknowledgment.".to_string());
+        }
+
+        if !file_is_non_empty(&output_path) {
+            return Err(format!(
+                "Piper daemon did not produce audio output at '{}'.",
+                output_path.display()
+            ));
+        }
+
+        Ok(output_path)
+    }
+}
+
+fn spawn_piper_daemon_stdout_reader(stdout: ChildStdout) -> Receiver<Result<String, String>> {
+    let (tx, rx) = mpsc::channel::<Result<String, String>>();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    let _ = tx.send(Err("Piper daemon stdout closed.".to_string()));
+                    break;
+                }
+                Ok(_) => {
+                    let trimmed = line.trim_end_matches(['\r', '\n']).to_string();
+                    if tx.send(Ok(trimmed)).is_err() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = tx.send(Err(format!("Piper daemon stdout read failed: {error}")));
+                    break;
+                }
+            }
+        }
+    });
+    rx
+}
+
+#[derive(Default)]
+pub struct PiperDaemonState {
+    daemon: Mutex<Option<PiperDaemon>>,
+}
+
+fn lock_piper_daemon<'a>(
+    daemon_state: &'a PiperDaemonState,
+) -> Result<std::sync::MutexGuard<'a, Option<PiperDaemon>>, String> {
+    daemon_state
+        .daemon
+        .lock()
+        .map_err(|error| format!("Piper daemon lock poisoned: {error}"))
+}
+
+fn stop_daemon_slot(slot: &mut Option<PiperDaemon>, reason: &str) {
+    if let Some(mut daemon) = slot.take() {
+        daemon.shutdown(reason);
+    }
+}
+
+fn ensure_matching_daemon_locked(
+    daemon: &mut Option<PiperDaemon>,
+    config: &PiperDaemonConfig,
+) -> Result<(), String> {
+    if let Some(existing) = daemon.as_mut() {
+        if existing.matches_config(config) && existing.is_alive() {
+            return Ok(());
+        }
+
+        let reason = if !existing.is_alive() {
+            "dead"
+        } else {
+            "config changed"
+        };
+        existing.shutdown(reason);
+        *daemon = None;
+    }
+
+    *daemon = Some(PiperDaemon::spawn(config.clone())?);
+    Ok(())
+}
+
+pub(crate) fn ensure_matching_daemon(
+    daemon_state: &PiperDaemonState,
+    config: &PiperDaemonConfig,
+) -> Result<(), String> {
+    let mut guard = lock_piper_daemon(daemon_state)?;
+    ensure_matching_daemon_locked(&mut guard, config)
+}
+
+pub(crate) fn prewarm_piper_daemon(
+    state: &crate::state::AppState,
+    binary_path: &str,
+    model_path: &str,
+    rate: f32,
+) -> Result<(), String> {
+    let config = daemon_config_from_request(binary_path, model_path, rate)?;
+    ensure_matching_daemon(&state.piper_daemon, &config)
+}
+
+pub(crate) fn shutdown_piper_daemon(state: &crate::state::AppState) {
+    shutdown_piper_daemon_state(&state.piper_daemon, "lifecycle shutdown");
+}
+
+fn shutdown_piper_daemon_state(daemon_state: &PiperDaemonState, reason: &str) {
+    match lock_piper_daemon(daemon_state) {
+        Ok(mut guard) => stop_daemon_slot(&mut guard, reason),
+        Err(error) => tracing::warn!("[piper-daemon] {}", error),
+    }
 }
 
 /// Synthesise `text` with Piper and play the result synchronously.
@@ -1437,89 +1784,58 @@ fn synthesize_piper_to_wav(
     binary_path: &str,
     model_path: &str,
     rate: f32,
-    output_path: &std::path::Path,
+    output_path: &Path,
 ) -> Result<(), String> {
-    use std::io::Write;
-    use std::process::Stdio;
-
     let text = text.trim();
     if text.is_empty() {
         return Err("TTS text is empty.".to_string());
     }
 
-    let binary = resolve_piper_binary(binary_path).ok_or_else(|| {
-        "Piper TTS binary not found. Install piper or set piper_binary_path in Voice Output settings.".to_string()
-    })?;
+    let config = daemon_config_from_request(binary_path, model_path, rate)?;
+    let model_arg = config.model_path.to_string_lossy().to_string();
 
-    // Resolve model path: use explicit setting, else auto-pick the first voice from the voices dir.
-    let resolved_model: String = if !model_path.is_empty() {
-        if !std::path::Path::new(model_path).is_file() {
-            return Err(format!("Piper model not found: {model_path}"));
-        }
-        model_path.to_string()
-    } else {
-        // Auto-discover: take the first .onnx in the bundled/configured voices dir.
-        let voices = list_piper_voices("");
-        if let Some(v) = voices.into_iter().next() {
-            v.id
-        } else {
-            // No voice found — attempt lazy download of the default German voice.
-            tracing::info!("[piper] No voice model found locally, attempting on-demand download.");
-            match download_piper_voice("de_DE-thorsten-medium") {
-                Ok(p) => p.to_string_lossy().to_string(),
-                Err(e) => {
-                    return Err(format!(
-                        "No Piper voice model found and auto-download failed: {e}. \
-                         Connect to the internet and restart the app, or set piper_model_path manually."
-                    ));
-                }
-            }
-        }
-    };
-    let model_path = resolved_model.as_str();
-
-    // Piper's --length_scale is the inverse of speed rate.
-    let length_scale = format!("{:.3}", (1.0_f32 / rate.clamp(0.25, 4.0)));
-
-    let mut cmd = Command::new(&binary);
+    let mut cmd = Command::new(&config.binary_path);
     cmd.args([
         "--model",
-        model_path,
+        model_arg.as_str(),
         "--output_file",
-        output_path.to_str().unwrap_or(""),
+        output_path.to_str().unwrap_or_default(),
         "--length_scale",
-        &length_scale,
+        config.length_scale.as_str(),
     ]);
-    if let Some(binary_dir) = binary.parent() {
+    if let Some(binary_dir) = config.binary_path.parent() {
         cmd.current_dir(binary_dir);
     }
+    apply_hidden_creation_flags(&mut cmd);
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("Failed to start piper: {e}"))?;
+        .map_err(|error| format!("Failed to start piper: {error}"))?;
 
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(text.as_bytes());
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|error| format!("Failed to write Piper request text: {error}"))?;
     }
 
     let status = child
         .wait()
-        .map_err(|e| format!("Piper process error: {e}"))?;
+        .map_err(|error| format!("Piper process error: {error}"))?;
 
     if !status.success() {
         return Err(format!("Piper exited with status {status}"));
     }
 
-    if !output_path.is_file() {
+    if !file_is_non_empty(output_path) {
         return Err("Piper produced no output file.".to_string());
     }
 
     Ok(())
 }
 
-pub fn speak_piper(
+fn speak_piper_via_subprocess(
     text: &str,
     binary_path: &str,
     model_path: &str,
@@ -1527,7 +1843,6 @@ pub fn speak_piper(
     volume: f32,
     output_device_id: &str,
 ) -> Result<(), String> {
-    // Unique temp file per call to avoid collisions when called concurrently.
     let temp_path = std::env::temp_dir().join(format!(
         "trispr_tts_{}.wav",
         std::time::SystemTime::now()
@@ -1540,6 +1855,87 @@ pub fn speak_piper(
     let play_result = play_wav_blocking(&temp_path, volume, output_device_id);
     let _ = std::fs::remove_file(&temp_path);
     play_result
+}
+
+fn speak_piper_via_daemon(
+    daemon_state: &PiperDaemonState,
+    text: &str,
+    binary_path: &str,
+    model_path: &str,
+    rate: f32,
+    volume: f32,
+    output_device_id: &str,
+) -> Result<(), String> {
+    let config = daemon_config_from_request(binary_path, model_path, rate)?;
+    let wav_path = {
+        let mut guard = lock_piper_daemon(daemon_state)?;
+        ensure_matching_daemon_locked(&mut guard, &config)?;
+        let daemon = guard
+            .as_mut()
+            .ok_or_else(|| "Piper daemon is unavailable after spawn.".to_string())?;
+        match daemon.synthesize_to_wav_file(text) {
+            Ok(path) => path,
+            Err(error) => {
+                stop_daemon_slot(&mut guard, "synthesis failed");
+                return Err(error);
+            }
+        }
+    };
+
+    let play_result = play_wav_blocking(&wav_path, volume, output_device_id);
+    let _ = std::fs::remove_file(&wav_path);
+    play_result
+}
+
+pub fn speak_piper(
+    daemon_state: &PiperDaemonState,
+    text: &str,
+    binary_path: &str,
+    model_path: &str,
+    rate: f32,
+    volume: f32,
+    output_device_id: &str,
+) -> Result<(), String> {
+    let mut last_daemon_error: Option<String> = None;
+    for attempt in 0..=PIPER_DAEMON_RETRY_LIMIT {
+        match speak_piper_via_daemon(
+            daemon_state,
+            text,
+            binary_path,
+            model_path,
+            rate,
+            volume,
+            output_device_id,
+        ) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                tracing::warn!(
+                    "[piper-daemon] request failed attempt={} error={}",
+                    attempt + 1,
+                    error
+                );
+                last_daemon_error = Some(error);
+                shutdown_piper_daemon_state(daemon_state, "request retry");
+            }
+        }
+    }
+
+    tracing::warn!("[piper-daemon] falling back to legacy subprocess synthesis path");
+    match speak_piper_via_subprocess(
+        text,
+        binary_path,
+        model_path,
+        rate,
+        volume,
+        output_device_id,
+    ) {
+        Ok(()) => Ok(()),
+        Err(legacy_error) => Err(format!(
+            "Piper daemon failed: {} | Legacy subprocess fallback failed: {}",
+            last_daemon_error.unwrap_or_else(|| "unknown daemon failure".to_string()),
+            legacy_error
+        )),
+    }
 }
 
 pub fn play_wav_bytes(bytes: &[u8], volume: f32, output_device_id: &str) -> Result<(), String> {
@@ -2107,11 +2503,13 @@ mod tests {
     use super::{
         convert_f32_to_i16, convert_f32_to_u16, execute_tts_with_fallback,
         format_stream_config_mismatch_error, is_tts_audio_device_unavailable_tagged,
-        is_tts_policy_allowed, remap_channels_interleaved, resample_interleaved_linear,
-        select_voice_from_candidates_for_language, windows_audio_device_error_hint,
-        windows_natural_voice_priority, windows_voice_matches_natural_profile,
-        OutputStreamCandidate, TtsVoiceInfo, VisionFrame, VisionFrameBuffer,
+        is_tts_policy_allowed, normalize_piper_rate, remap_channels_interleaved,
+        resample_interleaved_linear, select_voice_from_candidates_for_language,
+        windows_audio_device_error_hint, windows_natural_voice_priority,
+        windows_voice_matches_natural_profile, OutputStreamCandidate, PiperDaemonConfig,
+        TtsVoiceInfo, VisionFrame, VisionFrameBuffer,
     };
+    use std::path::PathBuf;
 
     fn frame(seq: u64, bytes: usize) -> VisionFrame {
         VisionFrame {
@@ -2306,6 +2704,46 @@ mod tests {
         assert_eq!(as_u16.first().copied(), Some(0));
         assert_eq!(as_u16[2], 32768);
         assert_eq!(as_u16.last().copied(), Some(u16::MAX));
+    }
+
+    #[test]
+    fn piper_rate_normalization_is_stable_for_daemon_key() {
+        assert_eq!(normalize_piper_rate(1.23444), 1.234);
+        assert_eq!(normalize_piper_rate(1.23456), 1.235);
+        assert_eq!(normalize_piper_rate(10.0), 4.0);
+        assert_eq!(normalize_piper_rate(0.01), 0.25);
+    }
+
+    #[test]
+    fn piper_daemon_config_key_distinguishes_binary_model_and_rate() {
+        let base = PiperDaemonConfig {
+            binary_path: PathBuf::from("C:/piper/piper.exe"),
+            model_path: PathBuf::from("C:/voices/de.onnx"),
+            rate: 1.0,
+            length_scale: "1.000".to_string(),
+        };
+        let same = PiperDaemonConfig {
+            binary_path: PathBuf::from("C:/piper/piper.exe"),
+            model_path: PathBuf::from("C:/voices/de.onnx"),
+            rate: 1.0,
+            length_scale: "1.000".to_string(),
+        };
+        let different_rate = PiperDaemonConfig {
+            binary_path: PathBuf::from("C:/piper/piper.exe"),
+            model_path: PathBuf::from("C:/voices/de.onnx"),
+            rate: 1.2,
+            length_scale: "0.833".to_string(),
+        };
+        let different_model = PiperDaemonConfig {
+            binary_path: PathBuf::from("C:/piper/piper.exe"),
+            model_path: PathBuf::from("C:/voices/en.onnx"),
+            rate: 1.0,
+            length_scale: "1.000".to_string(),
+        };
+
+        assert_eq!(base, same);
+        assert_ne!(base, different_rate);
+        assert_ne!(base, different_model);
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::modules::{
     normalize_workflow_agent_settings, ConfluenceSettings, GddModuleSettings, ModuleSettings,
     VisionInputSettings, VoiceOutputSettings, WorkflowAgentSettings,
 };
-use crate::multimodal_io::VisionFrameBuffer;
+use crate::multimodal_io::{PiperDaemonState, VisionFrameBuffer};
 use crate::overlay::OverlayController;
 use crate::paths::resolve_config_path;
 use crate::transcription::TranscribeRecorder;
@@ -749,6 +749,7 @@ pub(crate) struct AppState {
     pub(crate) frontend_watchdog_reload_count: AtomicU64,
     pub(crate) frontend_watchdog_state: Mutex<FrontendWatchdogState>,
     pub(crate) tts_speaking: AtomicBool,
+    pub(crate) piper_daemon: PiperDaemonState,
     #[cfg(target_os = "windows")]
     pub(crate) system_cluster_buffer: Mutex<SystemClusterBuffer>,
     #[cfg(target_os = "windows")]

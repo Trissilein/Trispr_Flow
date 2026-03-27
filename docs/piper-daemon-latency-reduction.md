@@ -1,154 +1,129 @@
-# Runbook: Piper TTS Daemon — Latenz-Reduktion von ~15s auf <1s
+# Runbook: Piper TTS Daemon - Latenz-Reduktion von ~15s auf <1s
 
 ## Kontext
 
-Piper wird aktuell als **Fresh-Process-per-Request** gestartet:
-`synthesize_piper_to_wav()` → `Command::new(piper.exe)` → `.wait()` → 13-17s Latenz
+Piper wird aktuell als Fresh-Process-per-Request gestartet:
+`synthesize_piper_to_wav()` -> `Command::new(piper.exe)` -> `.wait()` -> 13-17s Latenz.
 
-**Hauptursache:** ONNX-Modell wird bei jedem Aufruf neu von Disk geladen (8-12s).
+Hauptursache: Das ONNX-Modell wird bei jedem Request neu geladen.
 
-**Ziel:** Daemon-Modus → Modell einmal laden → alle weiteren Requests in <1s.
-
----
-
-## Piper Daemon-Modus (CLI-Feature)
-
-Piper unterstützt persistente Nutzung via Flags:
-```
-piper.exe --model <path.onnx> --json_input --output_raw
-```
-- `--json_input`: liest JSON-Lines von stdin (`{"text": "...", "speaker_id": 0}`)
-- `--output_raw`: schreibt rohe 16-bit PCM auf stdout (kein WAV-Header)
-- Prozess bleibt am Leben und wartet auf weitere stdin-Zeilen
-- Modell bleibt im RAM zwischen Requests
+Ziel: Persistenter Daemon, Modell nur einmal laden, Folgerequests ohne Kaltstart.
 
 ---
 
-## Startup-Logik (wie User besprochen)
+## v1 Transport (deterministisch)
 
-| Situation | Wann starten |
-|-----------|-------------|
-| Piper = **Primary Provider** | Beim Aktivieren des Voice-Output-Moduls (Tauri `module:state-changed`) |
-| Piper = **Fallback Provider** | Beim ersten TTS-Request der den Fallback triggert (lazy) |
-| Provider wechselt zu Piper | Beim nächsten Request (lazy, on-demand) |
-| Modell-Pfad ändert sich | Daemon killen + neu starten mit neuem Modell |
+Wir nutzen **nicht** `--output_raw`, sondern:
 
----
-
-## Architektur: `PiperDaemon` Struct
-
-**Datei:** `src-tauri/src/multimodal_io.rs` (neue Struct + Methoden)
-
-```rust
-struct PiperDaemon {
-    child: Child,
-    stdin: BufWriter<ChildStdin>,
-    stdout: BufReader<ChildStdout>,
-    model_path: String,        // um Modell-Wechsel zu erkennen
-}
-
-impl PiperDaemon {
-    fn spawn(binary: &Path, model: &Path, rate: f32) -> Result<Self, String>
-    fn synthesize(&mut self, text: &str) -> Result<Vec<i16>, String>
-    fn is_alive(&mut self) -> bool
-}
+```bash
+piper.exe --model <path.onnx> --json_input --length_scale <value>
 ```
 
-**Globaler State** (via `AppState` oder separates `Mutex<Option<PiperDaemon>>`):
-```rust
-pub struct PiperDaemonState {
-    daemon: Mutex<Option<PiperDaemon>>,
-}
+Pro Request senden wir genau eine JSON-Line mit eigener Ausgabe-Datei:
+
+```json
+{"text":"...","output_file":"<temp.wav>"}
 ```
 
----
-
-## Synthesize-Flow im Daemon-Modus
-
-1. Mutex locken
-2. Falls kein Daemon oder Daemon dead → spawnen
-3. `{"text": "..."}` als JSON-Line auf stdin schreiben
-4. Rohes PCM von stdout lesen (bis Stille-Marker oder feste Byte-Länge)
-5. PCM direkt an cpal weitergeben (kein Temp-WAV!)
-6. Mutex freigeben
-
-**PCM-Parameter:** Piper output raw = 16-bit signed, mono, 22050 Hz (modell-abhängig)
-→ Sample-Rate aus der `.onnx.json` Begleitdatei lesen (immer vorhanden neben .onnx)
+Warum so:
+- `output_file` liefert ein klares Ende pro Request (kein Frame-Timeout-Guessing).
+- Piper schreibt pro JSON-Line einen `stdout`-Ack (Dateipfad), den wir request-weise lesen.
+- Playback bleibt auf der bestehenden WAV/cpal-Pipeline.
 
 ---
 
-## Integration in bestehenden Code
+## Daemon-Key und Restart-Regel
 
-| Wo | Was ändern |
-|----|-----------|
-| `speak_piper()` in `multimodal_io.rs` | `synthesize_piper_to_wav()` ersetzen durch `daemon.synthesize()` |
-| `speak_tts_internal()` in `lib.rs` | Bei Primary-Provider-Init: `PiperDaemon::spawn()` aufrufen |
-| `AppState` in `lib.rs` | `piper_daemon: PiperDaemonState` hinzufügen |
-| `module:state-changed` handler | Daemon starten wenn Piper Primary + Modul aktiv |
-| `save_settings` handler | Daemon neustarten wenn piper_model_path geändert |
+Daemon-Identitat in v1:
+- `binary_path`
+- `model_path`
+- `rate` (normalisiert, 3 Nachkommastellen)
 
----
+Wenn einer dieser Werte abweicht, wird der Daemon gestoppt und mit neuer Konfiguration gestartet.
 
-## Modelle: Deutsch + Englisch
+Rate-Verhalten:
+- `rate` wird beim Spawn via `--length_scale` gesetzt.
+- Bei Rate-Wechsel erfolgt Daemon-Restart (kein stilles Ignorieren).
 
-**Kein Multilingual-Modell verfügbar** — separate Modelle pro Sprache nötig.
+## Runtime-Abhängigkeiten (Windows)
 
-Empfohlene Modelle:
+Zusätzlich zu `piper.exe` müssen im selben Verzeichnis vorhanden sein:
+- `onnxruntime.dll`
+- `onnxruntime_providers_shared.dll`
+- `espeak-ng.dll`
+- `piper_phonemize.dll`
+- `libtashkeel_model.ort`
+- `espeak-ng-data/` (Ordner)
 
-| Sprache | Modell | Qualität |
-|---------|--------|----------|
-| Deutsch | `de_DE-thorsten-medium` | Bereits im Einsatz (auto-download) |
-| Englisch US | `en_US-lessac-medium` | Gute Balance |
-| Englisch GB | `en_GB-cori-high` | Höchste EN-GB Qualität |
-
-**Für den ersten Daemon-Schritt:** Ein Daemon pro Sprache ist möglich, aber komplex.
-**Pragmatisch für v1:** Ein Daemon (DE), englische Texte via Windows-Native TTS (hat native EN-Stimmen).
+Fehlen diese Dateien, bricht der Preflight mit klarer Fehlermeldung ab (statt Prozess-Start mit Windows-DLL-Popup).
 
 ---
 
-## Fehlerbehandlung
+## Lifecycle (v1)
 
-| Fehlerfall | Verhalten |
-|-----------|-----------|
-| Daemon stirbt während Request | Neustart + Request wiederholen (1x) |
-| Neustart fehlgeschlagen | Fallback: alter `synthesize_piper_to_wav()` subprocess |
-| Modell nicht gefunden | Fehler an Frontend (kein Daemon-Start) |
-| Timeout auf PCM-Read | Nach 10s → Daemon killen + Fehler |
+| Situation | Verhalten |
+|---|---|
+| Voice-Output Modul aktiviert + Piper ist Primary | Daemon prewarm im Hintergrund |
+| Piper nur Fallback | Kein eager Start, lazy beim ersten echten Piper-Request |
+| Settings geändert (binary/model/rate) | Reconcile: Daemon neu starten falls Key anders |
+| Piper nicht mehr Primary oder Modul deaktiviert | Daemon stoppen |
+| App beendet | Daemon im zentralen Cleanup stoppen |
 
----
-
-## PCM-Frame-Ende erkennen (wichtig!)
-
-Piper im `--output_raw` Modus sendet PCM bis das Ende der Synthese — kein expliziter Frame-End-Marker.
-
-**Lösung:** Piper sendet genau ein Audio-Segment pro JSON-Input-Line. Nach dem Senden der JSON-Line: stdout lesen bis Piper **keine weiteren Bytes** sendet (kurzes Read-Timeout ~50ms nach letztem Byte).
-
-Alternativ: `--output_file /dev/stdout` mit WAV-Header nutzen → Header enthält Länge → definiertes Ende.
+Wichtig: Kein Backend-Start/Stop an `module:state-changed` hängen; direkte Hooks in `enable_module`, `disable_module`, `save_settings` und Exit-Cleanup nutzen.
 
 ---
 
-## Dateien die geändert werden müssen
+## Request-Flow in `speak_piper`
 
-```
-src-tauri/src/multimodal_io.rs   — PiperDaemon struct + spawn/synthesize
-src-tauri/src/lib.rs             — AppState + Daemon lifecycle hooks
-src-tauri/src/state.rs           — PiperDaemonState als Default
-```
+1. Daemon-Key aus Request berechnen.
+2. Daemon unter Mutex prüfen (`ensure_matching_daemon`), bei Bedarf spawnen/restarten.
+3. JSON-Line (`text` + `output_file`) an stdin schreiben + flush.
+4. Einen `stdout`-Ack mit Timeout lesen.
+5. WAV-Datei validieren und wie bisher abspielen.
+6. Mutex freigeben vor Playback.
+
+Fehlerpfad v1:
+- Daemon-Fehler -> Daemon stoppen, **1x restart+retry**.
+- Retry ebenfalls fehlerhaft -> Fallback auf bestehenden Legacy subprocess-WAV-Pfad.
+
+---
+
+## Geplante Codeintegration
+
+- `src-tauri/src/multimodal_io.rs`
+  - `PiperDaemon`, `PiperDaemonState`, `daemon_config_from_request`, `ensure_matching_daemon`, `prewarm_piper_daemon`, `shutdown_piper_daemon`.
+  - `speak_piper` auf Daemon-Pfad mit Retry+Legacy-Fallback umstellen.
+- `src-tauri/src/state.rs`
+  - `AppState` um `piper_daemon` erweitern.
+- `src-tauri/src/lib.rs`
+  - `enable_module(output_voice_tts)`: Primary-Prewarm.
+  - `save_settings_inner`: Daemon-Reconcile.
+  - `disable_module(output_voice_tts)`: Daemon-Stop.
+  - App-Exit-Cleanup: Daemon-Stop.
+
+---
+
+## Out of Scope fur v1
+
+- Kein Multi-Daemon-Setup pro Sprache.
+- Kein Benchmark-Umbau auf Daemon (Benchmark bleibt auf bestehendem Legacy-Syntheseweg).
+- Kein `--output_raw` Framing mit Inaktivitats-Timeout.
 
 ---
 
 ## Verifikation nach Implementierung
 
-```
-1. Voice Output Modul aktivieren, Piper als Primary
-   → Daemon wird beim Modul-Start gestartet (log: "[piper-daemon] spawned")
-2. TTS-Request absetzen
-   → Erste Response: ~3-5s (Model-Load)
-   → Weitere Responses: <1s
-3. Fallback-Pfad: Primary = Windows, Fallback = Piper
-   → Daemon startet erst beim ersten Fallback-Trigger
-4. Modell-Pfad ändern in Settings
-   → Daemon neustart (log: "[piper-daemon] restarting — model changed")
-5. App neu starten
-   → Daemon läuft nicht → startet lazy beim ersten Request
-```
+1. Modul `output_voice_tts` aktivieren, Primary=`local_custom`.
+   - Erwartung: Prewarm-Log erscheint (`[piper-daemon] spawned` / `prewarm complete`).
+2. Zwei TTS-Requests hintereinander senden.
+   - Erwartung: Erster Request kann Kaltstartkosten tragen, danach deutlich schneller.
+3. Fallback-Szenario: Primary=`windows_native`, Fallback=`local_custom`.
+   - Erwartung: Kein Prewarm, Daemon startet erst beim ersten echten Fallback-Trigger.
+4. `piper_model_path` oder `rate` ändern und speichern.
+   - Erwartung: Reconcile startet Daemon mit neuem Key.
+5. Daemon-Prozess extern beenden wahrend Runtime.
+   - Erwartung: Nächster Request startet Daemon neu; bei Fehler greift Retry+Legacy.
+6. Modul deaktivieren.
+   - Erwartung: Daemon wird gestoppt.
+7. App beenden.
+   - Erwartung: Daemon wird im globalen Cleanup beendet.

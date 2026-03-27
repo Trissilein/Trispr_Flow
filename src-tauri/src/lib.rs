@@ -689,6 +689,7 @@ pub(crate) fn terminate_managed_child_slot(label: &str, slot: &Mutex<Option<std:
 }
 
 pub(crate) fn cleanup_managed_processes(app: &AppHandle, state: &AppState) {
+    crate::multimodal_io::shutdown_piper_daemon(state);
     terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
     crate::ollama_runtime::clear_ollama_pid_lockfile(app);
     terminate_managed_child_slot(
@@ -2382,6 +2383,7 @@ fn run_tts_provider_once(
 }
 
 fn run_tts_runtime_smoke_once(
+    state: &AppState,
     provider: &str,
     rate: f32,
     windows_voice_id: &str,
@@ -2412,6 +2414,7 @@ fn run_tts_runtime_smoke_once(
             selected_windows_voice,
         ),
         "local_custom" => crate::multimodal_io::speak_piper(
+            &state.piper_daemon,
             smoke_text,
             piper_binary_path,
             piper_model_path,
@@ -2536,7 +2539,10 @@ fn scenario_success_counts_for_provider(
     out
 }
 
-fn provider_consistency_from_runtime_surface(providers: &[String], qwen3_tts_enabled: bool) -> (bool, String) {
+fn provider_consistency_from_runtime_surface(
+    providers: &[String],
+    qwen3_tts_enabled: bool,
+) -> (bool, String) {
     let runtime_surface = crate::multimodal_io::list_tts_providers(qwen3_tts_enabled)
         .into_iter()
         .map(|info| (info.id, info.surface))
@@ -2694,6 +2700,50 @@ mod tts_benchmark_tests {
                 "qwen3_tts".to_string(),
                 "local_custom".to_string(),
             ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod piper_daemon_lifecycle_tests {
+    use super::{piper_daemon_lifecycle_action, PiperDaemonLifecycleAction};
+    use crate::modules::VoiceOutputSettings;
+
+    #[test]
+    fn lifecycle_action_prewarms_when_voice_output_enabled_and_piper_primary() {
+        let mut voice = VoiceOutputSettings::default();
+        voice.enabled = true;
+        voice.default_provider = "local_custom".to_string();
+        voice.fallback_provider = "windows_native".to_string();
+
+        assert_eq!(
+            piper_daemon_lifecycle_action(&voice),
+            PiperDaemonLifecycleAction::PrewarmPrimary
+        );
+    }
+
+    #[test]
+    fn lifecycle_action_stops_when_voice_output_disabled() {
+        let mut voice = VoiceOutputSettings::default();
+        voice.enabled = false;
+        voice.default_provider = "local_custom".to_string();
+
+        assert_eq!(
+            piper_daemon_lifecycle_action(&voice),
+            PiperDaemonLifecycleAction::Shutdown
+        );
+    }
+
+    #[test]
+    fn lifecycle_action_stops_when_piper_is_only_fallback() {
+        let mut voice = VoiceOutputSettings::default();
+        voice.enabled = true;
+        voice.default_provider = "windows_native".to_string();
+        voice.fallback_provider = "local_custom".to_string();
+
+        assert_eq!(
+            piper_daemon_lifecycle_action(&voice),
+            PiperDaemonLifecycleAction::Shutdown
         );
     }
 }
@@ -2985,7 +3035,9 @@ fn run_tts_benchmark_inner(
                 });
             }
             "local_custom" => {
-                let binary_ok = crate::multimodal_io::piper_binary_available(&piper_binary_path);
+                let binary_preflight =
+                    crate::multimodal_io::piper_binary_preflight(&piper_binary_path);
+                let binary_ok = binary_preflight.is_ok();
                 provider_preflight.push(TtsPreflightCheck {
                     provider: provider.clone(),
                     check: "binary".to_string(),
@@ -2995,12 +3047,9 @@ fn run_tts_benchmark_inner(
                     } else {
                         Some(TTS_FAILURE_MISSING_BINARY.to_string())
                     },
-                    detail: if binary_ok {
-                        "Piper binary resolved.".to_string()
-                    } else {
-                        "Piper binary not found. Configure piper_binary_path or install Piper."
-                            .to_string()
-                    },
+                    detail: binary_preflight
+                        .map(|_| "Piper runtime resolved.".to_string())
+                        .unwrap_or_else(|error| error),
                 });
 
                 let model_ok = crate::multimodal_io::piper_model_available(
@@ -3082,6 +3131,7 @@ fn run_tts_benchmark_inner(
             if request.run_runtime_smoke {
                 if preflight_ok {
                     match run_tts_runtime_smoke_once(
+                        state,
                         provider,
                         rate,
                         &voice_settings.voice_id_windows,
@@ -3955,6 +4005,11 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
     info!("[DIAG] save_settings_inner: saving file");
     sync_model_dir_env(settings);
     save_settings_file(app, settings)?;
+    schedule_piper_daemon_reconcile(
+        app.clone(),
+        settings.voice_output_settings.clone(),
+        "save_settings",
+    );
 
     // Register hotkeys on a detached thread: the Windows GlobalShortcut API
     // internally dispatches to the main event-loop thread and waits for
@@ -4224,6 +4279,55 @@ fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
     });
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PiperDaemonLifecycleAction {
+    PrewarmPrimary,
+    Shutdown,
+}
+
+fn piper_daemon_lifecycle_action(
+    voice_settings: &crate::modules::VoiceOutputSettings,
+) -> PiperDaemonLifecycleAction {
+    if voice_settings.enabled && voice_settings.default_provider == "local_custom" {
+        PiperDaemonLifecycleAction::PrewarmPrimary
+    } else {
+        PiperDaemonLifecycleAction::Shutdown
+    }
+}
+
+fn schedule_piper_daemon_reconcile(
+    app: AppHandle,
+    voice_settings: crate::modules::VoiceOutputSettings,
+    trigger: &'static str,
+) {
+    crate::util::spawn_guarded("piper_daemon_reconcile", move || {
+        let state = app.state::<AppState>();
+        match piper_daemon_lifecycle_action(&voice_settings) {
+            PiperDaemonLifecycleAction::Shutdown => {
+                crate::multimodal_io::shutdown_piper_daemon(state.inner());
+            }
+            PiperDaemonLifecycleAction::PrewarmPrimary => {
+                let rate = voice_settings.rate.clamp(0.5, 2.0);
+                match crate::multimodal_io::prewarm_piper_daemon(
+                    state.inner(),
+                    &voice_settings.piper_binary_path,
+                    &voice_settings.piper_model_path,
+                    rate,
+                ) {
+                    Ok(()) => info!(
+                        "[piper-daemon] prewarm complete trigger={} rate={:.3}",
+                        trigger, rate
+                    ),
+                    Err(error) => warn!(
+                        "[piper-daemon] prewarm failed trigger={} rate={:.3}: {}",
+                        trigger, rate, error
+                    ),
+                }
+            }
+        }
+    });
+}
+
 #[tauri::command]
 fn enable_module(
     app: AppHandle,
@@ -4272,6 +4376,13 @@ fn enable_module(
         };
 
         save_settings_file(&app, &snapshot)?;
+        if result.is_ok() && module_id == "output_voice_tts" {
+            schedule_piper_daemon_reconcile(
+                app.clone(),
+                snapshot.voice_output_settings.clone(),
+                "enable_module",
+            );
+        }
         let _ = app.emit("settings-changed", snapshot);
         let _ = app.emit("module:state-changed", descriptors);
         if result.is_ok() && module_id == AI_REFINEMENT_MODULE_ID {
@@ -4343,6 +4454,7 @@ fn disable_module(
                 }
                 "output_voice_tts" => {
                     let _ = stop_tts_internal(&app, state.inner());
+                    crate::multimodal_io::shutdown_piper_daemon(state.inner());
                 }
                 "ai_refinement" => {
                     crate::audio::force_reset_refinement_activity(&app, "forced_reset");
@@ -5566,6 +5678,7 @@ fn speak_tts_internal(
                     .as_deref(),
                 ),
                 "local_custom" => crate::multimodal_io::speak_piper(
+                    &app_c.state::<AppState>().piper_daemon,
                     &text,
                     &piper_binary_path,
                     &piper_model_path,
@@ -5736,6 +5849,7 @@ fn test_tts_provider(
                     .as_deref(),
                 ),
                 "local_custom" => crate::multimodal_io::speak_piper(
+                    &state.piper_daemon,
                     sample_text,
                     &piper_binary_path,
                     &piper_model_path,
@@ -8761,6 +8875,7 @@ pub fn run() {
                 frontend_watchdog_reload_count: AtomicU64::new(0),
                 frontend_watchdog_state: Mutex::new(state::FrontendWatchdogState::default()),
                 tts_speaking: AtomicBool::new(false),
+                piper_daemon: crate::multimodal_io::PiperDaemonState::default(),
                 #[cfg(target_os = "windows")]
                 system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
                 #[cfg(target_os = "windows")]

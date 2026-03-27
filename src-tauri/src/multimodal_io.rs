@@ -1351,16 +1351,64 @@ fn resolve_piper_model_dir(configured: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+fn piper_hf_path_from_voice_key(voice_key: &str) -> Option<String> {
+    let trimmed = voice_key.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..") {
+        return None;
+    }
+
+    let (prefix, quality) = trimmed.rsplit_once('-')?;
+    let (language_code, voice_name) = prefix.split_once('-')?;
+    if language_code.is_empty() || voice_name.is_empty() || quality.is_empty() {
+        return None;
+    }
+    if !matches!(quality, "x_low" | "low" | "medium" | "high") {
+        return None;
+    }
+    if !language_code
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    if !voice_name
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+
+    let language_family = language_code.split('_').next()?;
+    if language_family.is_empty() || !language_family.chars().all(|ch| ch.is_ascii_lowercase()) {
+        return None;
+    }
+
+    Some(format!(
+        "{language_family}/{language_code}/{voice_name}/{quality}"
+    ))
+}
+
 /// Download a Piper voice model to `%LOCALAPPDATA%\trispr-flow\piper\voices\`.
 ///
-/// `lang_code` must be one of the known bundled voices:
-/// - `"de_DE-thorsten-medium"` (~53 MB)
-/// - `"en_US-amy-medium"` (~63 MB)
+/// `voice_key` must follow Piper naming, for example:
+/// - `de_DE-thorsten-medium`
+/// - `en_GB-alan-medium`
+/// - `en_GB-cori-high`
 ///
 /// Both `.onnx` and `.onnx.json` files are downloaded.
 /// Skips silently if the files already exist.
 /// Returns the path to the `.onnx` file on success.
-pub fn download_piper_voice(lang_code: &str) -> Result<std::path::PathBuf, String> {
+pub fn download_piper_voice(voice_key: &str) -> Result<std::path::PathBuf, String> {
+    let voice_key = voice_key.trim();
+    let hf_path = piper_hf_path_from_voice_key(voice_key).ok_or_else(|| {
+        format!(
+            "Unsupported Piper voice key '{voice_key}'. Expected format like 'de_DE-thorsten-medium'."
+        )
+    })?;
+
     let voices_dir = std::env::var_os("LOCALAPPDATA")
         .map(|d| {
             std::path::PathBuf::from(d)
@@ -1372,28 +1420,22 @@ pub fn download_piper_voice(lang_code: &str) -> Result<std::path::PathBuf, Strin
 
     std::fs::create_dir_all(&voices_dir).map_err(|e| format!("Cannot create voices dir: {e}"))?;
 
-    let onnx_path = voices_dir.join(format!("{lang_code}.onnx"));
-    let json_path = voices_dir.join(format!("{lang_code}.onnx.json"));
+    let onnx_path = voices_dir.join(format!("{voice_key}.onnx"));
+    let json_path = voices_dir.join(format!("{voice_key}.onnx.json"));
 
     if file_is_non_empty(&onnx_path) && json_path.exists() {
         return Ok(onnx_path);
     }
 
-    let hf_path = match lang_code {
-        "de_DE-thorsten-medium" => "de/de_DE/thorsten/medium",
-        "en_US-amy-medium" => "en/en_US/amy/medium",
-        other => return Err(format!("Unknown voice model: {other}")),
-    };
-
     let base = "https://huggingface.co/rhasspy/piper-voices/resolve/main";
 
     for (url, dest) in [
         (
-            format!("{base}/{hf_path}/{lang_code}.onnx?download=true"),
+            format!("{base}/{hf_path}/{voice_key}.onnx?download=true"),
             &onnx_path,
         ),
         (
-            format!("{base}/{hf_path}/{lang_code}.onnx.json?download=true"),
+            format!("{base}/{hf_path}/{voice_key}.onnx.json?download=true"),
             &json_path,
         ),
     ] {
@@ -1403,12 +1445,12 @@ pub fn download_piper_voice(lang_code: &str) -> Result<std::path::PathBuf, Strin
         tracing::info!("[piper] Downloading voice file: {url}");
         let resp = ureq::get(&url)
             .call()
-            .map_err(|e| format!("Voice download failed for {lang_code}: {e}"))?;
+            .map_err(|e| format!("Voice download failed for {voice_key}: {e}"))?;
         let mut reader = resp.into_reader();
         let mut out = std::fs::File::create(dest)
             .map_err(|e| format!("Cannot write {}: {e}", dest.display()))?;
         std::io::copy(&mut reader, &mut out)
-            .map_err(|e| format!("Cannot write voice data for {lang_code}: {e}"))?;
+            .map_err(|e| format!("Cannot write voice data for {voice_key}: {e}"))?;
     }
 
     if file_is_non_empty(&onnx_path) {
@@ -1416,7 +1458,7 @@ pub fn download_piper_voice(lang_code: &str) -> Result<std::path::PathBuf, Strin
         Ok(onnx_path)
     } else {
         Err(format!(
-            "Voice model download succeeded but {lang_code}.onnx is empty"
+            "Voice model download succeeded but {voice_key}.onnx is empty"
         ))
     }
 }
@@ -1507,11 +1549,26 @@ fn ensure_piper_runtime_dependencies(binary_path: &Path) -> Result<(), String> {
 }
 
 fn resolve_piper_model_for_runtime(model_path: &str) -> Result<PathBuf, String> {
-    if !model_path.trim().is_empty() {
-        let configured = PathBuf::from(model_path.trim());
+    let configured_model = model_path.trim();
+    if !configured_model.is_empty() {
+        let configured = PathBuf::from(configured_model);
         if configured.is_file() {
             return Ok(configured);
         }
+
+        if piper_hf_path_from_voice_key(configured_model).is_some() {
+            tracing::info!(
+                "[piper] Model '{}' not found as file. Trying voice-key download.",
+                configured_model
+            );
+            return download_piper_voice(configured_model).map_err(|error| {
+                format!(
+                    "Piper model key '{configured_model}' could not be downloaded: {error}. \
+                     Set piper_model_path to a valid .onnx file or a supported Piper voice key."
+                )
+            });
+        }
+
         return Err(format!("Piper model not found: {model_path}"));
     }
 
@@ -2503,11 +2560,11 @@ mod tests {
     use super::{
         convert_f32_to_i16, convert_f32_to_u16, execute_tts_with_fallback,
         format_stream_config_mismatch_error, is_tts_audio_device_unavailable_tagged,
-        is_tts_policy_allowed, normalize_piper_rate, remap_channels_interleaved,
-        resample_interleaved_linear, select_voice_from_candidates_for_language,
-        windows_audio_device_error_hint, windows_natural_voice_priority,
-        windows_voice_matches_natural_profile, OutputStreamCandidate, PiperDaemonConfig,
-        TtsVoiceInfo, VisionFrame, VisionFrameBuffer,
+        is_tts_policy_allowed, normalize_piper_rate, piper_hf_path_from_voice_key,
+        remap_channels_interleaved, resample_interleaved_linear,
+        select_voice_from_candidates_for_language, windows_audio_device_error_hint,
+        windows_natural_voice_priority, windows_voice_matches_natural_profile,
+        OutputStreamCandidate, PiperDaemonConfig, TtsVoiceInfo, VisionFrame, VisionFrameBuffer,
     };
     use std::path::PathBuf;
 
@@ -2744,6 +2801,30 @@ mod tests {
         assert_eq!(base, same);
         assert_ne!(base, different_rate);
         assert_ne!(base, different_model);
+    }
+
+    #[test]
+    fn piper_voice_key_parser_accepts_supported_formats() {
+        assert_eq!(
+            piper_hf_path_from_voice_key("de_DE-thorsten-medium").as_deref(),
+            Some("de/de_DE/thorsten/medium")
+        );
+        assert_eq!(
+            piper_hf_path_from_voice_key("en_GB-cori-high").as_deref(),
+            Some("en/en_GB/cori/high")
+        );
+        assert_eq!(
+            piper_hf_path_from_voice_key("de_DE-thorsten_emotional-medium").as_deref(),
+            Some("de/de_DE/thorsten_emotional/medium")
+        );
+    }
+
+    #[test]
+    fn piper_voice_key_parser_rejects_invalid_keys() {
+        assert!(piper_hf_path_from_voice_key("").is_none());
+        assert!(piper_hf_path_from_voice_key("de_DE-thorsten").is_none());
+        assert!(piper_hf_path_from_voice_key("de_DE-thorsten-ultra").is_none());
+        assert!(piper_hf_path_from_voice_key("../de_DE-thorsten-medium").is_none());
     }
 
     #[test]

@@ -4,6 +4,7 @@
 
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
+!include "WinMessages.nsh"
 
 ; Load variant define written by build-installers.bat
 ; Use ${__FILEDIR__} to resolve relative to hooks.nsh directory, not installer.nsi temp dir
@@ -37,12 +38,19 @@ Var DetectedGpuStr
 Var ComponentsDialog
 Var CheckFFmpeg
 Var CheckPiperRuntime
-Var RadioVoiceDE
-Var RadioVoiceEN
-Var RadioVoiceBoth
+Var VoiceLabel
+Var VoiceExtraLabel
+Var VoiceExtraInput
+Var CheckVoiceThorsten
+Var CheckVoiceMls
+Var CheckVoiceAlan
+Var CheckVoiceAlba
+Var CheckVoiceCori
 Var ComponentFFmpegSelected
 Var ComponentPiperSelected
 Var ComponentVoiceChoice
+Var ComponentVoiceExtraKeys
+Var ComponentVoiceSelectedCount
 
 ; Page 3: First-run config
 Var FirstRunDialog
@@ -172,42 +180,137 @@ Function ComponentsPage
   SendMessage $0 ${WM_SETFONT} $1 1
 
 !if "${TRISPR_VARIANT}" == "cuda-complete"
-  ${NSD_CreateLabel} 0 26u 100% 20u "Offline-Variante: FFmpeg und Piper sind bereits enthalten. Kein Download nötig."
+  ${NSD_CreateLabel} 0 24u 100% 18u "Offline-Variante: FFmpeg und Piper Runtime sind bereits enthalten."
+  Pop $0
+  ${NSD_CreateLabel} 0 42u 100% 12u "Zusätzliche Piper-Stimmen können optional online nachgeladen werden."
   Pop $0
 !else
-  ${NSD_CreateLabel} 0 26u 100% 14u "Audio-Encoder (wird heruntergeladen bei Installation):"
+  ${NSD_CreateLabel} 0 24u 100% 12u "Audio-Encoder (wird heruntergeladen bei Installation):"
   Pop $0
 
-  ${NSD_CreateCheckbox} 10u 42u 100% 14u "FFmpeg ~84 MB — benötigt für OPUS-Aufnahme"
+  ${NSD_CreateCheckbox} 10u 37u 100% 13u "FFmpeg ~84 MB - benötigt für OPUS-Aufnahme"
   Pop $CheckFFmpeg
   ${NSD_SetState} $CheckFFmpeg ${BST_CHECKED}
 
-  ${NSD_CreateLabel} 0 62u 100% 14u "Sprachausgabe:"
+  ${NSD_CreateLabel} 0 54u 100% 12u "Sprachausgabe:"
   Pop $0
 
-  ${NSD_CreateRadioButton} 10u 78u 100% 13u "Windows Natural Voice (empfohlen)"
+  ${NSD_CreateRadioButton} 10u 67u 100% 12u "Windows Natural Voice (empfohlen)"
   Pop $RadioTtsNatural
   ${NSD_AddStyle} $RadioTtsNatural ${WS_GROUP}
   ${NSD_SetState} $RadioTtsNatural ${BST_CHECKED}
 
-  ${NSD_CreateRadioButton} 10u 93u 100% 13u "Windows Sprachausgabe (SAPI, immer verfügbar)"
+  ${NSD_CreateRadioButton} 10u 80u 100% 12u "Windows Sprachausgabe (SAPI, immer verfügbar)"
   Pop $RadioTtsSapi
 
-  ${NSD_CreateLabel} 22u 110u 95% 16u "Windows Natural Voice benötigt installierte natürliche Stimmen. Die nicht gewählte Option ist automatischer Fallback."
-  Pop $0
-
-  ${NSD_CreateCheckbox} 10u 130u 100% 13u "Piper KI-Stimme (lokal, ~28 MB Download)"
+  ${NSD_CreateCheckbox} 10u 95u 100% 12u "Piper KI-Stimme (lokal, ~28 MB Runtime-Download)"
   Pop $CheckPiperRuntime
+  ${NSD_OnClick} $CheckPiperRuntime ComponentsPiperToggle
+
+  ${NSD_CreateLabel} 22u 108u 95% 16u "Bei deaktiviertem Piper bleiben Voice-Packs inaktiv."
+  Pop $0
+!endif
+
+  ${NSD_CreateLabel} 0 126u 100% 12u "Piper Voice Packs (kuratierte Auswahl, mindestens medium):"
+  Pop $VoiceLabel
+
+  ${NSD_CreateCheckbox} 10u 139u 100% 11u "de_DE-thorsten-medium (~53 MB, maennlich, Default)"
+  Pop $CheckVoiceThorsten
+  ${NSD_SetState} $CheckVoiceThorsten ${BST_CHECKED}
+
+  ${NSD_CreateCheckbox} 10u 151u 100% 11u "de_DE-mls-medium (~54 MB, weiblich)"
+  Pop $CheckVoiceMls
+
+  ${NSD_CreateCheckbox} 10u 163u 100% 11u "en_GB-alan-medium (~56 MB, maennlich)"
+  Pop $CheckVoiceAlan
+
+  ${NSD_CreateCheckbox} 10u 175u 100% 11u "en_GB-alba-medium (~57 MB, weiblich)"
+  Pop $CheckVoiceAlba
+
+  ${NSD_CreateCheckbox} 10u 187u 100% 11u "en_GB-cori-high (~81 MB, weiblich)"
+  Pop $CheckVoiceCori
+
+  ${NSD_CreateLabel} 0 196u 100% 10u "Weitere Voice-Keys (optional, eine Zeile pro Key):"
+  Pop $VoiceExtraLabel
+
+  ${NSD_CreateText} 10u 206u 100% 22u ""
+  Pop $VoiceExtraInput
+  ${NSD_AddStyle} $VoiceExtraInput ${ES_MULTILINE}|${ES_AUTOVSCROLL}|${WS_VSCROLL}
+  SendMessage $VoiceExtraInput ${EM_SETLIMITTEXT} 2048 0
+
+!if "${TRISPR_VARIANT}" == "cuda-complete"
+  StrCpy $0 "1"
+  Call SetVoiceControlsState
+!else
+  Call ComponentsPiperToggle
 !endif
 
   nsDialogs::Show
+FunctionEnd
+
+Function SetVoiceControlsState
+  ${If} $0 == "1"
+    EnableWindow $VoiceLabel 1
+    EnableWindow $CheckVoiceThorsten 1
+    EnableWindow $CheckVoiceMls 1
+    EnableWindow $CheckVoiceAlan 1
+    EnableWindow $CheckVoiceAlba 1
+    EnableWindow $CheckVoiceCori 1
+    EnableWindow $VoiceExtraLabel 1
+    EnableWindow $VoiceExtraInput 1
+  ${Else}
+    EnableWindow $VoiceLabel 0
+    EnableWindow $CheckVoiceThorsten 0
+    EnableWindow $CheckVoiceMls 0
+    EnableWindow $CheckVoiceAlan 0
+    EnableWindow $CheckVoiceAlba 0
+    EnableWindow $CheckVoiceCori 0
+    EnableWindow $VoiceExtraLabel 0
+    EnableWindow $VoiceExtraInput 0
+  ${EndIf}
+FunctionEnd
+
+Function ComponentsPiperToggle
+  ${NSD_GetState} $CheckPiperRuntime $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $0 "1"
+  ${Else}
+    StrCpy $0 "0"
+  ${EndIf}
+  Call SetVoiceControlsState
+FunctionEnd
+
+Function CountNonEmptyLines
+  ; In:  $0 = potentially multiline string
+  ; Out: $1 = number of non-empty lines
+  StrCpy $1 "0"
+  StrCpy $2 "0"
+  StrCpy $3 ""
+  CountLinesLoop:
+    StrCpy $4 $0 1 $2
+    StrCmp $4 "" CountLinesDone
+    StrCmp $4 "$\r" CountLinesNext
+    StrCmp $4 "$\n" CountLinesBreak
+    StrCpy $3 "$3$4"
+    Goto CountLinesNext
+  CountLinesBreak:
+    StrCmp $3 "" CountLinesReset
+    IntOp $1 $1 + 1
+  CountLinesReset:
+    StrCpy $3 ""
+  CountLinesNext:
+    IntOp $2 $2 + 1
+    Goto CountLinesLoop
+  CountLinesDone:
+    StrCmp $3 "" +2
+    IntOp $1 $1 + 1
 FunctionEnd
 
 Function ComponentsPageLeave
 !if "${TRISPR_VARIANT}" == "cuda-complete"
   ; All components bundled in offline installer
   StrCpy $ComponentFFmpegSelected "0"
-  StrCpy $ComponentPiperSelected "0"
+  StrCpy $ComponentPiperSelected "1"
   StrCpy $TtsProviderChoice "native"
 !else
   ${NSD_GetState} $CheckFFmpeg $0
@@ -232,6 +335,63 @@ Function ComponentsPageLeave
     StrCpy $TtsProviderChoice "native"
   ${EndIf}
 !endif
+
+  StrCpy $ComponentVoiceChoice ""
+  StrCpy $ComponentVoiceExtraKeys ""
+  StrCpy $ComponentVoiceSelectedCount "0"
+
+  ${If} $ComponentPiperSelected == "1"
+    ${NSD_GetState} $CheckVoiceThorsten $0
+    ${If} $0 == ${BST_CHECKED}
+      StrCpy $ComponentVoiceChoice "de_DE-thorsten-medium"
+      IntOp $ComponentVoiceSelectedCount $ComponentVoiceSelectedCount + 1
+    ${EndIf}
+
+    ${NSD_GetState} $CheckVoiceMls $0
+    ${If} $0 == ${BST_CHECKED}
+      ${If} $ComponentVoiceChoice == ""
+        StrCpy $ComponentVoiceChoice "de_DE-mls-medium"
+      ${Else}
+        StrCpy $ComponentVoiceChoice "$ComponentVoiceChoice$\r$\nde_DE-mls-medium"
+      ${EndIf}
+      IntOp $ComponentVoiceSelectedCount $ComponentVoiceSelectedCount + 1
+    ${EndIf}
+
+    ${NSD_GetState} $CheckVoiceAlan $0
+    ${If} $0 == ${BST_CHECKED}
+      ${If} $ComponentVoiceChoice == ""
+        StrCpy $ComponentVoiceChoice "en_GB-alan-medium"
+      ${Else}
+        StrCpy $ComponentVoiceChoice "$ComponentVoiceChoice$\r$\nen_GB-alan-medium"
+      ${EndIf}
+      IntOp $ComponentVoiceSelectedCount $ComponentVoiceSelectedCount + 1
+    ${EndIf}
+
+    ${NSD_GetState} $CheckVoiceAlba $0
+    ${If} $0 == ${BST_CHECKED}
+      ${If} $ComponentVoiceChoice == ""
+        StrCpy $ComponentVoiceChoice "en_GB-alba-medium"
+      ${Else}
+        StrCpy $ComponentVoiceChoice "$ComponentVoiceChoice$\r$\nen_GB-alba-medium"
+      ${EndIf}
+      IntOp $ComponentVoiceSelectedCount $ComponentVoiceSelectedCount + 1
+    ${EndIf}
+
+    ${NSD_GetState} $CheckVoiceCori $0
+    ${If} $0 == ${BST_CHECKED}
+      ${If} $ComponentVoiceChoice == ""
+        StrCpy $ComponentVoiceChoice "en_GB-cori-high"
+      ${Else}
+        StrCpy $ComponentVoiceChoice "$ComponentVoiceChoice$\r$\nen_GB-cori-high"
+      ${EndIf}
+      IntOp $ComponentVoiceSelectedCount $ComponentVoiceSelectedCount + 1
+    ${EndIf}
+
+    ${NSD_GetText} $VoiceExtraInput $ComponentVoiceExtraKeys
+    StrCpy $0 $ComponentVoiceExtraKeys
+    Call CountNonEmptyLines
+    IntOp $ComponentVoiceSelectedCount $ComponentVoiceSelectedCount + $1
+  ${EndIf}
 FunctionEnd
 
 ; =====================================================================
@@ -349,6 +509,7 @@ Function HardwareSummaryPage
 !if "${TRISPR_VARIANT}" == "cuda-complete"
   StrCpy $R0 "$R0FFmpeg:           Enthalten (Offline)$\r$\n"
   StrCpy $R0 "$R0Piper TTS:        Enthalten (Offline)$\r$\n"
+  StrCpy $R0 "$R0Stimmen:          $ComponentVoiceSelectedCount gewaehlt / Default: de_DE-thorsten-medium$\r$\n"
 !else
   ${If} $ComponentFFmpegSelected == "1"
     StrCpy $R0 "$R0FFmpeg:           Download ~84 MB$\r$\n"
@@ -357,9 +518,10 @@ Function HardwareSummaryPage
   ${EndIf}
   ${If} $ComponentPiperSelected == "1"
     StrCpy $R0 "$R0Piper TTS:        Download ~28 MB$\r$\n"
-    StrCpy $R0 "$R0Stimme:           $ComponentVoiceChoice (Download beim 1. TTS-Aufruf)$\r$\n"
+    StrCpy $R0 "$R0Stimmen:          $ComponentVoiceSelectedCount gewaehlt / Default: de_DE-thorsten-medium$\r$\n"
   ${Else}
     StrCpy $R0 "$R0Piper TTS:        Nein$\r$\n"
+    StrCpy $R0 "$R0Stimmen:          0 gewaehlt / Default: de_DE-thorsten-medium$\r$\n"
   ${EndIf}
 !endif
 
@@ -487,14 +649,14 @@ FunctionEnd
   ${If} $TtsProviderChoice == "natural"
     ; Windows Natural Voice (preferred) with SAPI fallback
     ${If} $ComponentPiperSelected == "1"
-      FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_natural","fallback_provider":"windows_native","voice_id_windows":"","voice_id_local":"","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only","output_device":"default","piper_binary_path":"","piper_model_path":"","piper_model_dir":""},'
+      FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_natural","fallback_provider":"windows_native","voice_id_windows":"","voice_id_local":"","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only","output_device":"default","piper_binary_path":"","piper_model_path":"de_DE-thorsten-medium","piper_model_dir":""},'
     ${Else}
       FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_natural","fallback_provider":"windows_native","voice_id_windows":"","voice_id_local":"","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only","output_device":"default","piper_binary_path":"","piper_model_path":"","piper_model_dir":""},'
     ${EndIf}
   ${Else}
     ; Windows SAPI with optional Piper fallback
     ${If} $ComponentPiperSelected == "1"
-      FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_native","fallback_provider":"local_custom","voice_id_windows":"","voice_id_local":"de_DE-thorsten-medium","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only","output_device":"default","piper_binary_path":"","piper_model_path":"","piper_model_dir":""},'
+      FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_native","fallback_provider":"local_custom","voice_id_windows":"","voice_id_local":"de_DE-thorsten-medium","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only","output_device":"default","piper_binary_path":"","piper_model_path":"de_DE-thorsten-medium","piper_model_dir":""},'
     ${Else}
       FileWrite $0 '"voice_output_settings":{"enabled":false,"default_provider":"windows_native","fallback_provider":"windows_native","voice_id_windows":"","voice_id_local":"","rate":1.0,"volume":1.0,"output_policy":"agent_replies_only","output_device":"default","piper_binary_path":"","piper_model_path":"","piper_model_dir":""},'
     ${EndIf}
@@ -509,7 +671,7 @@ FunctionEnd
   CreateDirectory "$R8\models"
 
   ; ----------------------------------------------------------------
-  ; On-demand downloads (skipped for cuda-complete: already bundled)
+  ; Core runtime downloads (skipped for cuda-complete: already bundled)
   ; ----------------------------------------------------------------
 
 !if "${TRISPR_VARIANT}" != "cuda-complete"
@@ -564,6 +726,62 @@ FunctionEnd
   ${EndIf}
 
 !endif
+
+  ; --- Piper voice packs (all variants, optional/best-effort) ---
+!if "${TRISPR_VARIANT}" == "cuda-complete"
+  StrCpy $R7 "1"
+!else
+  StrCpy $R7 $ComponentPiperSelected
+!endif
+  ${If} $R7 == "1"
+    IfFileExists "$INSTDIR\resources\bin\piper\piper.exe" PiperVoicesRuntimeReady PiperVoicesRuntimeMissing
+
+    PiperVoicesRuntimeMissing:
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Piper Runtime wurde nicht gefunden.$\r$\nVoice-Packs konnten nicht heruntergeladen werden."
+      Goto PiperVoicesDone
+
+    PiperVoicesRuntimeReady:
+      CreateDirectory "$INSTDIR\resources\bin\piper\voices"
+      DetailPrint "Verarbeite Piper Voice-Packs..."
+
+      FileOpen $0 "$TEMP\trispr-piper-selected-voices.txt" w
+      FileWrite $0 "$ComponentVoiceChoice"
+      FileClose $0
+
+      FileOpen $0 "$TEMP\trispr-piper-extra-voices.txt" w
+      FileWrite $0 "$ComponentVoiceExtraKeys"
+      FileClose $0
+
+      Delete "$TEMP\trispr-piper-invalid-keys.txt"
+      Delete "$TEMP\trispr-piper-failed-keys.txt"
+
+      File "/oname=$PLUGINSDIR\download-piper-voices.ps1" "${__FILEDIR__}\download-piper-voices.ps1"
+      nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\download-piper-voices.ps1" -SelectedFile "$TEMP\trispr-piper-selected-voices.txt" -ExtraFile "$TEMP\trispr-piper-extra-voices.txt" -VoicesDir "$INSTDIR\resources\bin\piper\voices" -InvalidOut "$TEMP\trispr-piper-invalid-keys.txt" -FailedOut "$TEMP\trispr-piper-failed-keys.txt"'
+      Pop $0
+      ${If} $0 != 0
+        MessageBox MB_OK|MB_ICONEXCLAMATION "Voice-Pack Download meldete einen Fehler.$\r$\nDie Installation wird fortgesetzt."
+      ${EndIf}
+
+      nsExec::ExecToStack 'powershell -NoProfile -Command "if(Test-Path \"$TEMP\trispr-piper-invalid-keys.txt\"){Get-Content -Path \"$TEMP\trispr-piper-invalid-keys.txt\" -Raw}"'
+      Pop $0
+      Pop $1
+      ${If} $1 != ""
+        MessageBox MB_OK|MB_ICONEXCLAMATION "Ungueltige Piper Voice-Keys wurden uebersprungen:$\r$\n$1"
+      ${EndIf}
+
+      nsExec::ExecToStack 'powershell -NoProfile -Command "if(Test-Path \"$TEMP\trispr-piper-failed-keys.txt\"){Get-Content -Path \"$TEMP\trispr-piper-failed-keys.txt\" -Raw}"'
+      Pop $0
+      Pop $1
+      ${If} $1 != ""
+        MessageBox MB_OK|MB_ICONEXCLAMATION "Folgende Voice-Keys konnten nicht geladen werden:$\r$\n$1$\r$\nDie Installation wurde trotzdem abgeschlossen."
+      ${EndIf}
+
+      Delete "$TEMP\trispr-piper-selected-voices.txt"
+      Delete "$TEMP\trispr-piper-extra-voices.txt"
+      Delete "$TEMP\trispr-piper-invalid-keys.txt"
+      Delete "$TEMP\trispr-piper-failed-keys.txt"
+  PiperVoicesDone:
+  ${EndIf}
 
   ; ----------------------------------------------------------------
   ; Ollama auto-install + model pull (when AI Refinement selected)

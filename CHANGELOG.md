@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New Tauri variant config generator (`scripts/generate-tauri-variant-config.mjs`).
   - New manual release asset uploader (`scripts/windows/upload-release-assets.ps1`, wrapper: `upload_release_assets.bat`).
   - New GitHub Actions workflow for Windows installer build/upload: `.github/workflows/windows-release-installers.yml`.
+- **Installer voice packs v1.1**:
+  - Components page now includes curated Piper voice selection (`de_DE-thorsten-medium`, `de_DE-mls-medium`, `en_GB-alan-medium`, `en_GB-alba-medium`, `en_GB-cori-high`) plus optional extra voice-key input.
+  - Voice pack download flow supports all installer variants (including optional online add-ons for `cuda-complete`).
+  - Fresh installs now bind `voice_output_settings.piper_model_path` deterministically to `de_DE-thorsten-medium` when Piper is enabled.
+  - `cuda-complete` packaging now bundles only Piper runtime + base voice; additional voices remain optional installer downloads.
 
 ### Fixed
 

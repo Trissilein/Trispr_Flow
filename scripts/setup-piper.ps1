@@ -9,9 +9,16 @@
       - onnxruntime.dll, onnxruntime_providers_shared.dll
       - espeak-ng-data/ directory (phoneme data for all languages)
 
-    Also downloads the following default voice models into src-tauri/bin/piper/voices/:
+    Also downloads Piper voice models into src-tauri/bin/piper/voices/.
+    Default behavior (used by installer builds) bundles only:
       - de_DE-thorsten-medium  (German, ~53 MB)
-      - en_US-amy-medium       (English, ~63 MB)
+
+    Optional curated catalog (download with -IncludeCuratedVoices):
+      - de_DE-thorsten-medium
+      - de_DE-mls-medium
+      - en_GB-alan-medium
+      - en_GB-alba-medium
+      - en_GB-cori-high
 
     These files are referenced in tauri.conf.json / tauri.conf.vulkan.json as bundle resources
     and end up in <install_dir>/resources/bin/piper/ after the NSIS installer runs.
@@ -22,13 +29,17 @@
 .PARAMETER SkipVoices
     Skip voice model downloads (e.g. when only refreshing the binary).
 
+.PARAMETER IncludeCuratedVoices
+    Download full curated voice catalog instead of only bundled base voice.
+
 .EXAMPLE
     .\scripts\setup-piper.ps1
     .\scripts\setup-piper.ps1 -PiperVersion 2023.11.14-2 -SkipVoices
 #>
 param(
     [string]$PiperVersion = "2023.11.14-2",
-    [switch]$SkipVoices
+    [switch]$SkipVoices,
+    [switch]$IncludeCuratedVoices
 )
 
 $ErrorActionPreference = "Stop"
@@ -116,31 +127,43 @@ if (-not $SkipVoices) {
     # Voice model base URL (Piper voice models hosted on Hugging Face)
     $HfBase = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 
-    $Voices = @(
-        @{ Lang = "de/de_DE/thorsten/medium"; Name = "de_DE-thorsten-medium" },
-        @{ Lang = "en/en_US/amy/medium";      Name = "en_US-amy-medium"      }
+    # Curated installer catalog (>= medium, no US voices)
+    $CuratedVoices = @(
+        @{ Key = "de_DE-thorsten-medium"; HfPath = "de/de_DE/thorsten/medium"; ApproxMb = 53 },
+        @{ Key = "de_DE-mls-medium";      HfPath = "de/de_DE/mls/medium";      ApproxMb = 54 },
+        @{ Key = "en_GB-alan-medium";     HfPath = "en/en_GB/alan/medium";     ApproxMb = 56 },
+        @{ Key = "en_GB-alba-medium";     HfPath = "en/en_GB/alba/medium";     ApproxMb = 57 },
+        @{ Key = "en_GB-cori-high";       HfPath = "en/en_GB/cori/high";       ApproxMb = 81 }
     )
 
-    foreach ($v in $Voices) {
-        $OnnxUrl     = "$HfBase/$($v.Lang)/$($v.Name).onnx?download=true"
-        $OnnxCfgUrl  = "$HfBase/$($v.Lang)/$($v.Name).onnx.json?download=true"
-        $OnnxDst     = Join-Path $VoicesDir "$($v.Name).onnx"
-        $OnnxCfgDst  = Join-Path $VoicesDir "$($v.Name).onnx.json"
+    # cuda-complete offline payload keeps only base voice bundled
+    $BundledVoiceKeys = @("de_DE-thorsten-medium")
+    if ($IncludeCuratedVoices) {
+        $VoicesToDownload = $CuratedVoices
+    } else {
+        $VoicesToDownload = $CuratedVoices | Where-Object { $BundledVoiceKeys -contains $_.Key }
+    }
+
+    foreach ($v in $VoicesToDownload) {
+        $OnnxUrl     = "$HfBase/$($v.HfPath)/$($v.Key).onnx?download=true"
+        $OnnxCfgUrl  = "$HfBase/$($v.HfPath)/$($v.Key).onnx.json?download=true"
+        $OnnxDst     = Join-Path $VoicesDir "$($v.Key).onnx"
+        $OnnxCfgDst  = Join-Path $VoicesDir "$($v.Key).onnx.json"
 
         if (Test-NonEmptyFile $OnnxDst) {
-            Write-Host "  Skipping $($v.Name).onnx (already exists)"
+            Write-Host "  Skipping $($v.Key).onnx (already exists)"
         } else {
-            Write-Host "  Fetching: $($v.Name).onnx (~50-70 MB)..."
+            Write-Host "  Fetching: $($v.Key).onnx (~$($v.ApproxMb) MB)..."
             Invoke-WebRequest -Uri $OnnxUrl -OutFile $OnnxDst -UseBasicParsing
-            Write-Host "  OK: $($v.Name).onnx"
+            Write-Host "  OK: $($v.Key).onnx"
         }
 
         if (Test-NonEmptyFile $OnnxCfgDst) {
-            Write-Host "  Skipping $($v.Name).onnx.json (already exists)"
+            Write-Host "  Skipping $($v.Key).onnx.json (already exists)"
         } else {
-            Write-Host "  Fetching: $($v.Name).onnx.json..."
+            Write-Host "  Fetching: $($v.Key).onnx.json..."
             Invoke-WebRequest -Uri $OnnxCfgUrl -OutFile $OnnxCfgDst -UseBasicParsing
-            Write-Host "  OK: $($v.Name).onnx.json"
+            Write-Host "  OK: $($v.Key).onnx.json"
         }
     }
 }

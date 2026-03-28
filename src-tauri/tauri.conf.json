@@ -65,9 +65,7 @@
       "bin/piper/onnxruntime_providers_shared.dll": "bin/piper/onnxruntime_providers_shared.dll",
       "bin/piper/espeak-ng-data/**/*": "bin/piper/espeak-ng-data",
       "bin/piper/voices/de_DE-thorsten-medium.onnx": "bin/piper/voices/de_DE-thorsten-medium.onnx",
-      "bin/piper/voices/de_DE-thorsten-medium.onnx.json": "bin/piper/voices/de_DE-thorsten-medium.onnx.json",
-      "bin/piper/voices/en_US-amy-medium.onnx": "bin/piper/voices/en_US-amy-medium.onnx",
-      "bin/piper/voices/en_US-amy-medium.onnx.json": "bin/piper/voices/en_US-amy-medium.onnx.json"
+      "bin/piper/voices/de_DE-thorsten-medium.onnx.json": "bin/piper/voices/de_DE-thorsten-medium.onnx.json"
     },
     "windows": {
       "nsis": {

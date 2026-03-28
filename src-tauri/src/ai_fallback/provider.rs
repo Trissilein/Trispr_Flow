@@ -45,13 +45,13 @@ fn refinement_agent(input_text: &str, system_prompt: &str) -> ureq::Agent {
 
 // Prompt templates optimized for local models (Ollama: qwen3, mistral-small).
 // Guidelines: no translation, no explanations, preserve register and proper nouns.
-pub const OLLAMA_PROMPT_EN: &str = "You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors in the text below. Rules: do NOT translate; do NOT add explanations or commentary; preserve all proper nouns and technical terms exactly; preserve the original register (formal/informal). Output ONLY the corrected text with no preamble.";
+pub const OLLAMA_PROMPT_EN: &str = "You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors in the text below. Rules: do NOT translate; do NOT add explanations or commentary; preserve all proper nouns and technical terms exactly; preserve the original register (formal/informal); do NOT add line breaks, paragraph breaks, or tabs that are not in the original. Output ONLY the corrected text with no preamble.";
 
-pub const OLLAMA_PROMPT_DE: &str = "Du bist ein Transkript-Editor. Korrigiere Zeichensetzung, Groß-/Kleinschreibung und offensichtliche Sprache-zu-Text-Fehler im Text unten. Regeln: NICHT übersetzen; KEINE Erklärungen oder Kommentare hinzufügen; alle Eigennamen und Fachbegriffe exakt beibehalten; Anredeform (Du/Sie) aus dem Original beibehalten. Gib NUR den korrigierten Text aus, ohne Einleitung.";
+pub const OLLAMA_PROMPT_DE: &str = "Du bist ein Transkript-Editor. Korrigiere Zeichensetzung, Groß-/Kleinschreibung und offensichtliche Sprache-zu-Text-Fehler im Text unten. Regeln: NICHT übersetzen; KEINE Erklärungen oder Kommentare hinzufügen; alle Eigennamen und Fachbegriffe exakt beibehalten; Anredeform (Du/Sie) aus dem Original beibehalten; KEINE zusätzlichen Zeilenumbrüche, Absätze oder Tabulatoren einfügen. Gib NUR den korrigierten Text aus, ohne Einleitung.";
 
 // Used when Whisper language is set to auto-detect. Language-neutral phrasing avoids
 // the model inferring "output in English" from an English-only system prompt.
-pub const OLLAMA_PROMPT_AUTO: &str = "IMPORTANT: Detect the language of the input text and output in that SAME language — never translate. You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors. Rules: do NOT translate under any circumstances; do NOT add explanations; preserve all proper nouns and technical terms exactly; preserve the original register. Output ONLY the corrected text with no preamble.";
+pub const OLLAMA_PROMPT_AUTO: &str = "IMPORTANT: Detect the language of the input text and output in that SAME language — never translate. You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors. Rules: do NOT translate under any circumstances; do NOT add explanations; preserve all proper nouns and technical terms exactly; preserve the original register; do NOT add line breaks, paragraph breaks, or tabs not present in the original. Output ONLY the corrected text with no preamble.";
 
 const OLLAMA_PROMPT_SUMMARY_EN: &str = "Summarize this transcript into 3 to 6 concise bullet points. Preserve key facts, numbers, names, and decisions. Do not invent information. If something is uncertain, state it cautiously. Return only the bullet list.";
 
@@ -1023,7 +1023,10 @@ fn sanitize_ollama_refinement_output(
     refined: &str,
     options: &RefinementOptions,
 ) -> String {
-    let normalized = refined.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = refined
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\t', " "); // Tabs → Space (Modell soll keine Tabs einfügen)
     let collapsed = collapse_excessive_blank_lines(normalized.trim());
     if suspicious_refinement_shape(original, &collapsed) {
         warn!(
@@ -2050,7 +2053,10 @@ mod tests {
         // return a timeout instead of connection-refused for a closed local port. Both
         // indicate Ollama is not reachable.
         assert!(
-            matches!(result, Err(AIError::OllamaNotRunning) | Err(AIError::Timeout)),
+            matches!(
+                result,
+                Err(AIError::OllamaNotRunning) | Err(AIError::Timeout)
+            ),
             "unreachable endpoint should map to OllamaNotRunning or Timeout, got: {:?}",
             result
         );

@@ -77,11 +77,23 @@ pub fn validate_hotkey_format(key: &str) -> ValidationResult {
         }
     }
 
-    // Validate key part (basic validation - could be more comprehensive)
+    // Validate key part — must not be empty and must not be a modifier itself
     if key_part.is_empty() {
         return ValidationResult {
             valid: false,
             error: Some("Missing key after modifiers".to_string()),
+            formatted: None,
+        };
+    }
+    if valid_modifiers
+        .iter()
+        .any(|m| m.eq_ignore_ascii_case(key_part))
+    {
+        return ValidationResult {
+            valid: false,
+            error: Some(
+                "Hotkey needs a main key, not just modifiers. Example: Ctrl+Shift+Y".to_string(),
+            ),
             formatted: None,
         };
     }

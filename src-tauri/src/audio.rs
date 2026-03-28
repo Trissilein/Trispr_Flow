@@ -1022,7 +1022,7 @@ fn start_ptt_hot_recording(
         .recorder
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if recorder.active || recorder.transcribing {
+    if recorder.active {
         return Ok(());
     }
 
@@ -1065,8 +1065,8 @@ pub(crate) fn start_recording_with_settings(
         .recorder
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if recorder.active || recorder.transcribing {
-        info!("Recording already active or transcribing, skipping");
+    if recorder.active {
+        info!("Recording already active, skipping");
         return Ok(());
     }
 
@@ -2013,8 +2013,8 @@ pub(crate) fn start_vad_monitor(
         .recorder
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if recorder.active || recorder.transcribing {
-        info!("VAD already active or transcribing, skipping");
+    if recorder.active {
+        info!("VAD already active, skipping");
         return Ok(());
     }
 

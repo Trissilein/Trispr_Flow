@@ -1,16 +1,16 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-25 (Block S S1-S13 code complete; manual soak acceptance + TTS free-config next)
+Last updated: 2026-03-28 (Agent-Evolution roadmap accepted; S13.5 -> T -> V execution chain defined)
 
 This file is the canonical source for priorities and execution order.
 
 ## Canonical Current State
 
 - Released: `v0.7.0`, `v0.7.1`, `v0.7.2`
-- Current phase: `v0.7.3` stabilization with manual acceptance gates (`Block S` S1-S13 code complete, S13 manual soak pending, TTS free-config/testing follows).
-- **Next version bump**: `v0.7.3` after S13 soak acceptance + TTS free-config/testing acceptance + regression baseline green.
+- Current phase: `v0.8.0` execution prep with `Block S` closure complete (`S13` manual soak done, `S13.5` done, `v0.7.3` regression gates green).
+- **Next version bump**: `v0.8.0` after `Block T` completion + baseline regression gates green.
 - Foundation complete: Blocks F + G + H + L + M
-- Active execution blocks: Block S manual gates (S13 soak), then TTS free-config/testing, then Block T planning (v0.8.0)
+- Active execution blocks: Block T (assistant foundation), then Block V (GDD copilot loop), then Block U (assistant release gate)
 
 ## Analysis De-Scope Decision
 
@@ -36,7 +36,8 @@ This file is the canonical source for priorities and execution order.
 | R | Local AI provider hardening (Input Truncation + LM Studio integration) | Low | Q, D | Planned / partial ✅ |
 | S | Build Recovery + Module Decoupling (`v0.7.3`) | High | N, Q | Active ♻️ (`S1-S9` done, `S10-S13` active) |
 | T | Assistant Pivot Foundation (`v0.8.0`) | Extra High | S, M | Planned |
-| U | Assistant UX + Soak + Release Gate (`v0.8.x`) | Extra High | T | Planned |
+| V | GDD Copilot Loop (`v0.8.x`) | Extra High | T, L, M, N | Planned |
+| U | Assistant UX + Soak + Release Gate (`v0.8.x`) | Extra High | T, V | Planned |
 
 ## v0.7 Task Ledger
 
@@ -67,13 +68,38 @@ This file is the canonical source for priorities and execution order.
 - GDD generation is now treated as core workflow capability; autonomous orchestration is handled by `workflow_agent`.
 - Multimodal modules (`input_vision`, `output_voice_tts`) are capability modules consumed by `workflow_agent` when enabled.
 
-## Upcoming Blocks (Post-S)
+## Agent Evolution Guardrails
 
-**Block T — Assistant Pivot Foundation (`v0.8.0`)**: Introduce explicit product mode switch (`transcribe` vs `assistant`), assistant orchestration state/events, and graceful degradation when TTS/Vision capabilities are unavailable.
+- Activation model: `Hybrid` (explicit `product_mode` switch + wakeword while in assistant mode).
+- Autonomy model: `Plan+Confirm` for all actions with side effects.
+- Product priority: `GDD copilot` first, then generalized assistant expansion.
+- LLM policy: `Local-first`; cloud remains optional fallback, not required baseline.
+- Knowledge baseline: transcript + archive remain primary v1 context source.
 
-**Block U — Assistant UX + Soak + Release Gate (`v0.8.x`)**: Ship assistant-facing UX hardening and enforce long-run stability gates (soak + bounded-recovery behavior) before release.
+## Phased Path to Full Agent
 
-**Block O / Block P** are explicitly reclassified as post-foundation assistant expansions (after T/U), not immediate next-step execution items.
+**Phase 0 — Stabiler Unterbau (`S13.5`)**  
+Close TTS provider-matrix/device-routing/forced-failure validation and unify runtime diagnostics.  
+Exit: deterministic behavior for disabled/unavailable modules.
+
+**Phase 1 — Assistant Pivot Foundation (`Block T`, `v0.8.0`)**  
+Finalize assistant state machine + `transcribe|assistant` mode UX + graceful degradation policy.  
+Exit: stable assistant mode without transcribe regression.
+
+**Phase 2 — GDD Copilot Loop (`Block V`, `v0.8.x`)**  
+Evolve workflow-agent from command trigger to copilot loop (conversation -> clustered session -> archive context -> suggestions -> GDD draft).  
+Exit: reproducible E2E `conversation -> draft -> review` path.
+
+**Phase 3 — Voice Confirmation Loop (`Block O`)**  
+Implement `awaiting_confirmation` with TTL/token model and wakeword confirm/cancel intents plus TTS prompt timeout.  
+Exit: safe voice approvals without accidental execution.
+
+**Phase 4 — Hands-free Actions (`Block P`)**  
+Add focus/inject command surface and E2E voice-plan-confirm-window-action path.  
+Exit: reliable keyboard-free workflow for defined target apps.
+
+**Phase 5 — Vollwertiger Mitarbeiter-Modus (continuous hardening)**  
+Iterate proactive suggestions, role/skill profiles, and policy-bounded autonomy with measurable productivity gains.
 
 ## Block Q Task Details
 
@@ -126,21 +152,21 @@ This file is the canonical source for priorities and execution order.
 | S10 | Strict module-UX decoupling + dedicated TTS main tab (`voice-output`) | S9 | Done ✅ |
 | S11 | AI-Refinement re-enable speed path (autostart + warmup + runtime-ready defer policy) | S10 | Done ✅ |
 | S12 | Overlay deep refactor (bounded recovery supervisor, off-screen fallback, pulse reliability, recovered health signal) | S10 | Done ✅ |
-| S13 | Regression + soak/manual gate (`50 cycles + 10 restarts`) and closure handoff to TTS free-config/testing | S10-S12 | Code complete ✅ (manual soak validation pending) |
+| S13 | Regression + soak/manual gate (`50 cycles + 10 restarts`) and closure handoff to TTS free-config/testing | S10-S12 | Done ✅ (manual soak validated) |
 
 ## Immediate Next Actions
 
-1. **S13 Manual Soak** (Haiku): Run `50 overlay cycles + 10 app restarts` with `s13-soak-validation.sh` to validate no permanent lockout/stuck state.
-2. **S13.5 TTS Free-Config Verification** (Haiku): Provider matrix test (`windows_native`, `windows_natural`, `local_custom`, `qwen3_tts`), device routing, forced diagnostics.
-3. **Phase A Closure** (Haiku): All build gates (`npm run build`, `npm test`, `cargo test --lib`) green + docs updated → v0.7.3 baseline.
-4. **Block T Planning** (Sonnet): After S13 + S13.5 acceptance, start Block T assistant pivot foundation (T1 already code-complete, T2-T5 to plan).
-5. **Keep GDD + Confluence path stable** while S13 + S13.5 gates run.
-6. **Installer Footprint Optimization** scheduled after Block T completion as deferred optimization wave.
+1. **Block T Execution Packet** (Sonnet): implement `T2-T5` with assistant state/event surface and mode-safe UX.
+2. **Block T Regression Gate**: verify mode-safety (`transcribe` vs `assistant`) and graceful degradation.
+3. **Block V Execution Packet** (Sonnet/Opus): implement copilot loop (`conversation -> suggestions -> draft`) with strict plan/execute separation.
+4. **Block U Hardening Packet** (Opus/Sonnet): assistant UX hardening + 8h/24h soak + release evidence.
+5. **Hold O/P as post-T/V/U expansions** while preserving GDD + Confluence stability.
 
 ## References
 
 - `docs/TASK_SCHEDULE.md`
 - `docs/DECISIONS.md`
+- `docs/AGENT_EVOLUTION_ROADMAP.md`
 - `docs/ARCHITECTURE_REVIEW_0.7.md`
 - `docs/V0.7.0_ARCHITECTURE.md`
 - `docs/INSTALLER_VARIANTS.md`

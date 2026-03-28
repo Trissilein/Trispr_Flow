@@ -1,17 +1,21 @@
 # Roadmap (Sketch)
 
-This is a compact view of the roadmap. The detailed version is in the repo root: `ROADMAP.md`.
+This is a compact view of priorities. The canonical detailed plan is `ROADMAP.md` and `docs/TASK_SCHEDULE.md`.
 
 ## Now
-- Documentation sync across roadmap and architecture/state docs
+- Execute `Block T` (`T2-T5`: assistant state machine, mode UX, graceful degradation, assistant events).
+- Keep regression baseline green (`npm run build`, `npm test`, `cargo test --lib`) while integrating `T`.
 
 ## Next
-- Activity feedback: tray pulse and transcribe backlog warning/expansion
+- `Block T`: Assistant pivot foundation (`transcribe` vs `assistant`, state machine, graceful degradation).
+- `Block V`: GDD copilot loop (`conversation -> suggestions -> draft`) with strict plan/execute separation.
 
 ## Then
-- Capture enhancements: activation words, language pinning, extra hotkeys
+- `Block O`: Voice confirmation loop (`awaiting_confirmation`, token+TTL, confirm/cancel intents).
+- `Block P`: Hands-free execution (`focus/inject`, voice-plan-confirm-action E2E).
 
-## Later
-- Post-processing pipeline and AI fallback overhaul
-- Long-form transcription features (export, chapters, topics)
-- Conversation window configurability
+## Guardrails
+- Hybrid activation model (mode switch + wakeword in assistant mode).
+- Plan+Confirm for side-effect actions.
+- Local-first LLM strategy.
+- GDD copilot before generalized assistant expansion.

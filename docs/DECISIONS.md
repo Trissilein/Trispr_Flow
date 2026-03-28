@@ -1,6 +1,6 @@
 # Decisions
 
-Last updated: 2026-03-06
+Last updated: 2026-03-28
 
 ## Implemented Decisions
 
@@ -357,6 +357,36 @@ Last updated: 2026-03-06
 - Implementation notes:
   - Stufe 1 ist im Workflow-Agent umgesetzt (`agent_reply`/`agent_event` Kontexte, policy-gated `speak_tts`).
   - Policy-Matrix ist aktiv (`agent_replies_only`, `replies_and_events`, `explicit_only`) und durch Integrationstests abgedeckt (`N12`).
+
+### DEC-053 Voxtral TTS Lab-Evaluierung (2026-03-27)
+
+- Status: `accepted` (lab-only, conditional go)
+- Decision: Für Trispr wird eine **lokale, experimentelle** Voxtral-TTS-Evaluierung freigegeben (`voxtral_local_experimental`), strikt opt-in und ohne Änderung des Produktionsdefaults.
+- Context: Das bestehende TTS-Setup (`windows_native`/`windows_natural`/`local_custom`=Piper) ist stabil. Voxtral zeigt hohes Qualitäts-Potenzial, aber die Open-Weights-TTS-Lane ist derzeit NC-lizenziert und damit nicht automatisch produktions-/kommerztauglich.
+- Why: Wir wollen Qualitätsgewinn (Natürlichkeit) unter realen lokalen Bedingungen messen, ohne die aktuelle Runtime-Stabilität oder Release-Policy zu gefährden.
+- Guardrails:
+  - Nur intern/lab.
+  - Kein Default-Switch weg von Piper.
+  - Deterministischer Fallback auf bestehende Provider bleibt verpflichtend.
+  - Vor jeder kommerziellen Nutzung ist ein separates Lizenz-/Alternativen-Gate Pflicht.
+- Reference:
+  - `docs/VOXTRAL_TTS_DECISION_MEMO.md`
+
+### DEC-054 Agent-Evolution Guardrails und Phasenpfad (2026-03-28)
+
+- Status: `accepted`
+- Decision: Die Agent-Entwicklung folgt verbindlich einem Phasenpfad `S13.5 -> T -> V -> O -> P` mit den Produktleitplanken **Hybrid activation**, **Plan+Confirm**, **GDD copilot first**, **Local-first**.
+- Context: Kernbausteine (Transkript, Archiv, TTS, Workflow-Agent, GDD) sind vorhanden, aber der Weg zum vollwertigen Assistant benötigte eine klare Priorisierungs- und Sicherheitslinie.
+- Why: Verhindert Scope-Drift, schützt den stabilen Transcribe-Flow und schafft abarbeitbare Exit-Kriterien je Ausbauphase.
+- Guardrails:
+  - Wakeword-Auswertung nur im `assistant`-Modus.
+  - Side-effect Aktionen bleiben confirm-pflichtig.
+  - Kein Breaking Change für den bestehenden Transcribe-Produktpfad.
+  - Transcript/Archive bleiben v1-Primärwissensbasis.
+- Reference:
+  - `docs/AGENT_EVOLUTION_ROADMAP.md`
+  - `ROADMAP.md`
+  - `docs/TASK_SCHEDULE.md`
 
 ## Open Decisions
 

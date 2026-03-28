@@ -1,0 +1,5 @@
+{
+  "local_backend_preference": "cuda",
+  "ai_fallback": { "enabled": false },
+  "postproc_llm_enabled": false
+}

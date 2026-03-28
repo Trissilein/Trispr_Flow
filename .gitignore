@@ -60,6 +60,9 @@ src-tauri/.vibe-coding/
 
 # Editor temporary files (from code editing tools, e.g. Claude Code)
 *.tmp.*
+tmp/
+s13-soak-log.txt
+release-build.log
 
 # Rust-analyzer build artifacts (flycheck builds, not production)
 target/rust-analyzer/

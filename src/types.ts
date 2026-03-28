@@ -25,6 +25,14 @@ export type ModulePermission =
   | "screen_capture"
   | "audio_output";
 export type AgentIntent = "gdd_generate_publish" | "unknown";
+export type AssistantOrchestratorState =
+  | "idle"
+  | "listening"
+  | "parsing"
+  | "planning"
+  | "awaiting_confirm"
+  | "executing"
+  | "recovering";
 export type AgentTargetLanguage =
   | "source"
   | "en"
@@ -319,6 +327,40 @@ export interface AgentExecutionResult {
   publish_result?: GddPublishResult;
   queued_job?: GddPendingPublishJob;
   error?: string;
+}
+
+export interface AssistantCapabilitySnapshot {
+  product_mode: ProductMode;
+  assistant_mode: boolean;
+  workflow_agent_available: boolean;
+  tts_available: boolean;
+  vision_available: boolean;
+  degraded: boolean;
+  hard_blocked: boolean;
+  missing_capabilities: string[];
+}
+
+export interface AssistantStateChangedEvent {
+  state: AssistantOrchestratorState;
+  previous_state: AssistantOrchestratorState;
+  reason: string;
+  transition_id: number;
+  changed_at_ms: number;
+  capability: AssistantCapabilitySnapshot;
+}
+
+export interface AssistantPlanReadyEvent {
+  state: AssistantOrchestratorState;
+  reason: string;
+  plan: AgentExecutionPlan;
+  capability: AssistantCapabilitySnapshot;
+}
+
+export interface AssistantActionResultEvent {
+  state: AssistantOrchestratorState;
+  reason: string;
+  result: AgentExecutionResult;
+  capability: AssistantCapabilitySnapshot;
 }
 
 export interface VisionSourceInfo {

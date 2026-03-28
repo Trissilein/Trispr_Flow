@@ -709,6 +709,43 @@ pub(crate) struct FrontendWatchdogState {
     pub(crate) last_degraded_reason: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AssistantOrchestratorState {
+    Idle,
+    Listening,
+    Parsing,
+    Planning,
+    AwaitingConfirm,
+    Executing,
+    Recovering,
+}
+
+impl Default for AssistantOrchestratorState {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AssistantOrchestratorStatus {
+    pub(crate) state: AssistantOrchestratorState,
+    pub(crate) last_reason: String,
+    pub(crate) changed_at_ms: u64,
+    pub(crate) transition_id: u64,
+}
+
+impl Default for AssistantOrchestratorStatus {
+    fn default() -> Self {
+        Self {
+            state: AssistantOrchestratorState::Idle,
+            last_reason: "startup".to_string(),
+            changed_at_ms: 0,
+            transition_id: 0,
+        }
+    }
+}
+
 pub(crate) struct AppState {
     pub(crate) settings: RwLock<Settings>,
     pub(crate) history: Mutex<PartitionedHistory>,
@@ -748,6 +785,7 @@ pub(crate) struct AppState {
     pub(crate) frontend_watchdog_last_reload_ms: AtomicU64,
     pub(crate) frontend_watchdog_reload_count: AtomicU64,
     pub(crate) frontend_watchdog_state: Mutex<FrontendWatchdogState>,
+    pub(crate) assistant_orchestrator: Mutex<AssistantOrchestratorStatus>,
     pub(crate) tts_speaking: AtomicBool,
     pub(crate) piper_daemon: PiperDaemonState,
     #[cfg(target_os = "windows")]

@@ -319,6 +319,14 @@
               </label>
               <span class="toggle-hint">When disabled, input capture and hotkeys are inactive</span>
             </div>
+            <label class="field span-2">
+              <span class="field-label">Product mode</span>
+              <select id="product-mode-select" title="Choose whether Trispr runs as transcription tool or assistant">
+                <option value="transcribe">Transcribe</option>
+                <option value="assistant">Assistant</option>
+              </select>
+              <span id="product-mode-hint" class="field-hint">Assistant mode enables wakeword-driven planning and execution.</span>
+            </label>
             <label class="field">
               <span class="field-label">Input device</span>
               <select id="device-select" title="Microphone or audio input device to use for recording"></select>

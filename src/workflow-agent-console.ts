@@ -8,6 +8,7 @@ import type {
   AgentCommandParseResult,
   AgentExecutionPlan,
   AgentExecutionResult,
+  AssistantStateChangedEvent,
   TranscriptionRawResultEvent,
   TranscriptSessionCandidate,
 } from "./types";
@@ -18,6 +19,7 @@ let lastCandidates: TranscriptSessionCandidate[] = [];
 let selectedSessionId = "";
 let currentPlan: AgentExecutionPlan | null = null;
 let languageExplicitlySet = false;
+let latestAssistantState: AssistantStateChangedEvent | null = null;
 
 function ensureWorkflowAgentDefaults(): void {
   if (!settings) return;
@@ -52,6 +54,10 @@ function isWorkflowAgentEnabled(): boolean {
   return isModuleEnabled("workflow_agent") && Boolean(settings?.workflow_agent?.enabled);
 }
 
+function isAssistantModeEnabled(): boolean {
+  return settings?.product_mode === "assistant";
+}
+
 function appendLog(line: string): void {
   if (!dom.workflowAgentExecutionLog) return;
   const now = new Date().toLocaleTimeString();
@@ -65,10 +71,39 @@ function renderStatus(): void {
   if (!dom.workflowAgentConsole) return;
   const enabled = isWorkflowAgentEnabled();
   dom.workflowAgentConsole.hidden = !enabled;
+  const interactionEnabled = enabled && isAssistantModeEnabled();
+  const controls: Array<HTMLElement | null> = [
+    dom.workflowAgentCommandInput,
+    dom.workflowAgentParseBtn,
+    dom.workflowAgentRefreshCandidatesBtn,
+    dom.workflowAgentTargetLanguage,
+    dom.workflowAgentBuildPlanBtn,
+    dom.workflowAgentExecuteBtn,
+  ];
+  controls.forEach((control) => control?.toggleAttribute("disabled", !interactionEnabled));
+
   if (!dom.workflowAgentStatus) return;
-  dom.workflowAgentStatus.textContent = enabled
-    ? "Wakeword + Confirm is active."
-    : "Agent disabled.";
+  if (!enabled) {
+    dom.workflowAgentStatus.textContent = "Agent disabled.";
+    return;
+  }
+  if (!isAssistantModeEnabled()) {
+    dom.workflowAgentStatus.textContent = "Assistant mode is off. Switch Product mode to Assistant.";
+    return;
+  }
+
+  const stateLabel = latestAssistantState?.state ?? "listening";
+  const base = `Assistant state: ${stateLabel.replace(/_/g, " ")}.`;
+  if (!latestAssistantState?.capability?.degraded) {
+    dom.workflowAgentStatus.textContent = base;
+    return;
+  }
+  const softMissing = latestAssistantState.capability.missing_capabilities
+    .filter((id) => id === "output_voice_tts" || id === "input_vision")
+    .join(", ");
+  dom.workflowAgentStatus.textContent = softMissing
+    ? `${base} Degraded capability: ${softMissing}.`
+    : `${base} Degraded capability mode active.`;
 }
 
 function renderCandidates(): void {
@@ -120,6 +155,15 @@ function matchesWakeword(text: string): boolean {
 }
 
 async function parseCommand(commandText: string): Promise<void> {
+  if (!isAssistantModeEnabled()) {
+    showToast({
+      type: "info",
+      title: "Assistant mode required",
+      message: "Switch Product mode to Assistant before running workflow-agent commands.",
+      duration: 3200,
+    });
+    return;
+  }
   if (!commandText.trim()) {
     showToast({
       type: "warning",
@@ -153,6 +197,7 @@ async function parseCommand(commandText: string): Promise<void> {
 }
 
 async function refreshCandidates(): Promise<void> {
+  if (!isAssistantModeEnabled()) return;
   if (!lastParse) {
     showToast({
       type: "info",
@@ -195,6 +240,7 @@ async function refreshCandidates(): Promise<void> {
 }
 
 async function buildPlan(): Promise<void> {
+  if (!isAssistantModeEnabled()) return;
   if (!lastParse?.detected) {
     showToast({
       type: "warning",
@@ -244,6 +290,7 @@ async function buildPlan(): Promise<void> {
 }
 
 async function executePlan(): Promise<void> {
+  if (!isAssistantModeEnabled()) return;
   if (!currentPlan) {
     showToast({
       type: "warning",
@@ -323,6 +370,7 @@ export async function handleWorkflowAgentRawResult(
   payload: TranscriptionRawResultEvent
 ): Promise<void> {
   if (!isWorkflowAgentEnabled()) return;
+  if (!isAssistantModeEnabled()) return;
   if (!payload?.text?.trim()) return;
   if (!matchesWakeword(payload.text)) return;
 
@@ -335,4 +383,9 @@ export async function handleWorkflowAgentRawResult(
 
 export function appendWorkflowAgentLog(line: string): void {
   appendLog(line);
+}
+
+export function handleAssistantStateChanged(payload: AssistantStateChangedEvent): void {
+  latestAssistantState = payload;
+  renderStatus();
 }

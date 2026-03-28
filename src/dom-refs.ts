@@ -56,6 +56,8 @@ export const appVersion = $("app-version") as HTMLSpanElement | null;
 
 // Capture input controls
 export const captureEnabledToggle = $("capture-enabled-toggle") as HTMLInputElement | null;
+export const productModeSelect = $("product-mode-select") as HTMLSelectElement | null;
+export const productModeHint = $("product-mode-hint") as HTMLSpanElement | null;
 export const modeSelect = $("mode-select") as HTMLSelectElement | null;
 export const pttHotkey = $("ptt-hotkey") as HTMLInputElement | null;
 export const pttHotkeyRecord = $("ptt-hotkey-record") as HTMLButtonElement | null;

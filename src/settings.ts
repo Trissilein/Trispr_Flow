@@ -1320,12 +1320,27 @@ export function renderAIFallbackSettingsUi() {
   }
 }
 
+function renderProductModeSettings(): void {
+  if (!settings) return;
+  const productMode = settings.product_mode === "assistant" ? "assistant" : "transcribe";
+  settings.product_mode = productMode;
+  if (dom.productModeSelect) {
+    dom.productModeSelect.value = productMode;
+  }
+  if (dom.productModeHint) {
+    dom.productModeHint.textContent = productMode === "assistant"
+      ? "Assistant mode: wakeword flow + planning states are active."
+      : "Transcribe mode: capture/transcript stays primary and wakeword automation is paused.";
+  }
+}
+
 export function renderSettings() {
   if (!settings) return;
   ensureContinuousDumpDefaults();
   ensureSetupDefaults();
   syncDerivedLanguageSettings();
   applyOverlayDimensionSliderBounds();
+  renderProductModeSettings();
   if (dom.captureEnabledToggle) dom.captureEnabledToggle.checked = settings.capture_enabled;
   if (dom.transcribeEnabledToggle) dom.transcribeEnabledToggle.checked = settings.transcribe_enabled;
   if (dom.modeSelect) dom.modeSelect.value = settings.mode;

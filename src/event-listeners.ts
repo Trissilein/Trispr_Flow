@@ -78,6 +78,7 @@ import {
 import { openExportDialog } from "./export-dialog";
 import { openArchiveBrowser } from "./archive-browser";
 import { normalizeModelTag } from "./ollama-tag-utils";
+import { syncWorkflowAgentConsoleState } from "./workflow-agent-console";
 
 // Cleanup registry for window-level listeners added by wireEvents()
 const _windowCleanups: Array<() => void> = [];
@@ -1117,6 +1118,15 @@ export function wireEvents() {
     settings.mode = dom.modeSelect!.value as Settings["mode"];
     syncCaptureModeVisibility(settings.mode, settings.ptt_use_vad);
     renderSettings();
+    await persistSettings();
+    renderHero();
+  });
+
+  dom.productModeSelect?.addEventListener("change", async () => {
+    if (!settings || !dom.productModeSelect) return;
+    settings.product_mode = dom.productModeSelect.value === "assistant" ? "assistant" : "transcribe";
+    renderSettings();
+    syncWorkflowAgentConsoleState();
     await persistSettings();
     renderHero();
   });

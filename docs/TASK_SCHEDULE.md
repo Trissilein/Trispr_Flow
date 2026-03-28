@@ -439,10 +439,10 @@ Goal: Introduce explicit product-mode split and assistant orchestration baseline
 | Task | Name | Complexity | Dependencies | Status | Description |
 | --- | --- | --- | --- | --- | --- |
 | T1 | Product mode types/settings (`transcribe` vs `assistant`) | High | S | DONE | Added persistent `product_mode` schema (`transcribe`/`assistant`) in Rust + TypeScript settings with migration-safe normalization defaults for legacy configs. |
-| T2 | Backend assistant orchestrator state | High | T1 | PLANNED | Introduce deterministic assistant pipeline states and transition handling. |
-| T3 | Frontend mode switch UX | Medium | T1 | PLANNED | Add mode switch controls and mode-aware shell behavior without startup disruption. |
-| T4 | Graceful degradation policy | High | T2, T3 | PLANNED | Ensure assistant stays usable when TTS/Vision modules are unavailable or disabled. |
-| T5 | Assistant state events | Medium | T2, T3 | PLANNED | Expose consistent state/event surface for assistant runtime diagnostics and UI sync. |
+| T2 | Backend assistant orchestrator state | High | T1 | DONE | Added deterministic assistant orchestrator states (`idle/listening/parsing/planning/awaiting_confirm/executing/recovering`) with transition tracking + reconciliation hooks on settings/module lifecycle paths. |
+| T3 | Frontend mode switch UX | Medium | T1 | DONE | Added explicit `product_mode` selector (`transcribe` vs `assistant`) in Capture settings and mode-aware workflow-agent console behavior. |
+| T4 | Graceful degradation policy | High | T2, T3 | DONE | Assistant now degrades soft for missing TTS/Vision and hard-blocks only when product mode or workflow-agent capability is unavailable; wakeword handling is assistant-mode gated. |
+| T5 | Assistant state events | Medium | T2, T3 | DONE | Added `assistant:state-changed`, `assistant:plan-ready`, and `assistant:action-result` events with capability snapshot payloads; frontend listener/log sync wired. |
 
 ---
 

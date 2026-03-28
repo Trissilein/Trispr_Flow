@@ -44,6 +44,9 @@ import type {
   DependencyPreflightReport,
   StabilityDegradedEvent,
   StartupStatus,
+  AssistantActionResultEvent,
+  AssistantPlanReadyEvent,
+  AssistantStateChangedEvent,
 } from "./types";
 import {
   settings,
@@ -101,6 +104,7 @@ import { initOnboardingWizard } from "./onboarding-wizard";
 import { initPipelineStatus } from "./pipeline-status";
 import {
   appendWorkflowAgentLog,
+  handleAssistantStateChanged,
   handleWorkflowAgentRawResult,
   initWorkflowAgentConsole,
   syncWorkflowAgentConsoleState,
@@ -336,6 +340,7 @@ function applyStartupReadinessUi(): void {
   const ready = Boolean(startupStatus?.interactive && startupStatus?.transcription_ready);
   const controls = [
     dom.captureEnabledToggle,
+    dom.productModeSelect,
     dom.modeSelect,
     dom.deviceSelect,
     dom.pttHotkey,
@@ -964,6 +969,25 @@ async function bootstrap() {
         appendWorkflowAgentLog(`Event ${name} -> ${JSON.stringify(event.payload)}`);
       })
     ),
+    listen<AssistantStateChangedEvent>("assistant:state-changed", (event) => {
+      if (!event.payload) return;
+      handleAssistantStateChanged(event.payload);
+      appendWorkflowAgentLog(
+        `Event assistant:state-changed -> state=${event.payload.state}, reason=${event.payload.reason}`
+      );
+    }),
+    listen<AssistantPlanReadyEvent>("assistant:plan-ready", (event) => {
+      if (!event.payload) return;
+      appendWorkflowAgentLog(
+        `Event assistant:plan-ready -> intent=${event.payload.plan.intent}, session=${event.payload.plan.session_id}`
+      );
+    }),
+    listen<AssistantActionResultEvent>("assistant:action-result", (event) => {
+      if (!event.payload) return;
+      appendWorkflowAgentLog(
+        `Event assistant:action-result -> status=${event.payload.result.status}, reason=${event.payload.reason}`
+      );
+    }),
     listen<TranscriptionRefinementStartedEvent>("transcription:refinement-started", (event) => {
       markRefinementJobStarted(event.payload?.job_id || "");
       handlePipelineRefinementStarted(event.payload);

@@ -1,5 +1,6 @@
 use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use crate::state::HistoryEntry;
 
@@ -230,6 +231,111 @@ fn topic_score(topic_hint: Option<&str>, entries: &[HistoryEntry]) -> f32 {
     }
 }
 
+fn tokenize_for_similarity(text: &str) -> Vec<String> {
+    const STOPWORDS: &[&str] = &[
+        "the", "and", "for", "with", "that", "this", "from", "have", "will", "into", "about", "de",
+        "der", "die", "das", "und", "mit", "ist", "ein", "eine", "den", "dem", "des", "wir", "ihr",
+        "sie", "ich", "du", "zu", "auf", "von", "im", "in", "am", "an", "oder", "aber",
+    ];
+    text.to_lowercase()
+        .split(|ch: char| !ch.is_alphanumeric())
+        .map(str::trim)
+        .filter(|token| token.len() >= 3)
+        .filter(|token| !STOPWORDS.contains(token))
+        .map(str::to_string)
+        .collect()
+}
+
+fn lexical_overlap_score(left: &str, right: &str) -> f32 {
+    let left_tokens: HashSet<String> = tokenize_for_similarity(left).into_iter().collect();
+    let right_tokens: HashSet<String> = tokenize_for_similarity(right).into_iter().collect();
+    if left_tokens.is_empty() || right_tokens.is_empty() {
+        return 0.0;
+    }
+    let intersection = left_tokens.intersection(&right_tokens).count() as f32;
+    let union = left_tokens.union(&right_tokens).count() as f32;
+    if union <= 0.0 {
+        0.0
+    } else {
+        (intersection / union).clamp(0.0, 1.0)
+    }
+}
+
+fn entry_continuation_score(previous: &HistoryEntry, next: &HistoryEntry) -> f32 {
+    let lexical = lexical_overlap_score(&previous.text, &next.text);
+    let source_switch = if previous.source == next.source {
+        0.5
+    } else {
+        1.0
+    };
+    let gap_minutes =
+        next.timestamp_ms.saturating_sub(previous.timestamp_ms) as f32 / (1000.0 * 60.0);
+    let gap_score = (1.0 / (1.0 + (gap_minutes / 20.0))).clamp(0.0, 1.0);
+    (lexical * 0.45 + source_switch * 0.25 + gap_score * 0.30).clamp(0.0, 1.0)
+}
+
+fn session_continuity_score(entries: &[HistoryEntry]) -> f32 {
+    if entries.len() < 2 {
+        return 0.0;
+    }
+    let mut source_switch_acc = 0.0f32;
+    let mut lexical_acc = 0.0f32;
+    let mut gap_acc = 0.0f32;
+    let mut pairs = 0.0f32;
+
+    for window in entries.windows(2) {
+        let previous = &window[0];
+        let next = &window[1];
+        pairs += 1.0;
+        source_switch_acc += if previous.source == next.source {
+            0.0
+        } else {
+            1.0
+        };
+        lexical_acc += lexical_overlap_score(&previous.text, &next.text);
+        let gap_minutes =
+            next.timestamp_ms.saturating_sub(previous.timestamp_ms) as f32 / (1000.0 * 60.0);
+        gap_acc += (1.0 / (1.0 + (gap_minutes / 3.0))).clamp(0.0, 1.0);
+    }
+
+    if pairs <= 0.0 {
+        return 0.0;
+    }
+    let source_switch_ratio = source_switch_acc / pairs;
+    let lexical_ratio = lexical_acc / pairs;
+    let gap_ratio = gap_acc / pairs;
+    (source_switch_ratio * 0.35 + lexical_ratio * 0.30 + gap_ratio * 0.35).clamp(0.0, 1.0)
+}
+
+fn archive_context_score(session: &SessionBucket) -> f32 {
+    let entry_count = session.entries.len() as f32;
+    if entry_count <= 0.0 {
+        return 0.0;
+    }
+    let duration_minutes =
+        ((session.end_ms.saturating_sub(session.start_ms)) as f32 / (1000.0 * 60.0)).max(1.0);
+    let richness = (entry_count / 12.0).clamp(0.0, 1.0);
+    let duration_coverage = (duration_minutes / 20.0).clamp(0.0, 1.0);
+    let density = ((entry_count / duration_minutes) / 3.0).clamp(0.0, 1.0);
+    let unique_sources = session
+        .entries
+        .iter()
+        .map(|entry| entry.source.as_str())
+        .collect::<HashSet<_>>()
+        .len();
+    let source_diversity = if unique_sources >= 3 {
+        1.0
+    } else if unique_sources == 2 {
+        0.8
+    } else if unique_sources == 1 {
+        0.3
+    } else {
+        0.0
+    };
+    (richness * 0.35 + duration_coverage * 0.2 + density * 0.2 + source_diversity * 0.25)
+        .clamp(0.0, 1.0)
+}
+
 fn session_preview(entries: &[HistoryEntry]) -> String {
     let mut joined = entries
         .iter()
@@ -310,6 +416,7 @@ pub fn build_sessions(entries: &[HistoryEntry], session_gap_minutes: u32) -> Vec
     sorted.sort_by_key(|entry| entry.timestamp_ms);
 
     let gap_ms = (session_gap_minutes.max(1) as u64) * 60_000;
+    let adaptive_gap_ms = gap_ms.saturating_mul(2);
     let mut sessions: Vec<SessionBucket> = Vec::new();
     let mut current_entries: Vec<HistoryEntry> = Vec::new();
     let mut current_start = sorted[0].timestamp_ms;
@@ -323,7 +430,20 @@ pub fn build_sessions(entries: &[HistoryEntry], session_gap_minutes: u32) -> Vec
             continue;
         }
 
-        if entry.timestamp_ms.saturating_sub(current_end) > gap_ms {
+        let gap_since_last_ms = entry.timestamp_ms.saturating_sub(current_end);
+        let should_split = if gap_since_last_ms <= gap_ms {
+            false
+        } else if gap_since_last_ms <= adaptive_gap_ms {
+            if let Some(previous) = current_entries.last() {
+                entry_continuation_score(previous, &entry) < 0.58
+            } else {
+                true
+            }
+        } else {
+            true
+        };
+
+        if should_split {
             let id = format!("s_{}_{}", current_start, current_end);
             sessions.push(SessionBucket {
                 id,
@@ -369,7 +489,14 @@ pub fn score_sessions(
                 .unwrap_or(0.0);
             let topic = topic_score(topic_hint.as_deref(), &session.entries);
             let recency = recency_score(session.start_ms, now_ms);
-            let score = (temporal * 0.5 + topic * 0.3 + recency * 0.2).clamp(0.0, 1.0);
+            let continuity = session_continuity_score(&session.entries);
+            let archive_context = archive_context_score(session);
+            let score = (temporal * 0.34
+                + topic * 0.26
+                + recency * 0.18
+                + continuity * 0.12
+                + archive_context * 0.10)
+                .clamp(0.0, 1.0);
 
             let mut source_mix = session
                 .entries
@@ -388,8 +515,8 @@ pub fn score_sessions(
                 preview: session_preview(&session.entries),
                 score,
                 reasoning: format!(
-                    "temporal={:.2}, topic={:.2}, recency={:.2}",
-                    temporal, topic, recency
+                    "temporal={:.2}, topic={:.2}, recency={:.2}, continuity={:.2}, archive={:.2}",
+                    temporal, topic, recency, continuity, archive_context
                 ),
             }
         })
@@ -456,6 +583,22 @@ mod tests {
             text: text.to_string(),
             timestamp_ms,
             source: "mic".to_string(),
+            speaker_name: None,
+            refinement: None,
+        }
+    }
+
+    fn make_entry_with_source(
+        id: &str,
+        text: &str,
+        timestamp_ms: u64,
+        source: &str,
+    ) -> HistoryEntry {
+        HistoryEntry {
+            id: id.to_string(),
+            text: text.to_string(),
+            timestamp_ms,
+            source: source.to_string(),
             speaker_name: None,
             refinement: None,
         }
@@ -585,6 +728,36 @@ mod tests {
     }
 
     #[test]
+    fn adaptive_gap_merge_keeps_continuous_conversation_together() {
+        let entries = vec![
+            make_entry_with_source("e1", "combat mechanics balancing", 0, "mic"),
+            make_entry_with_source(
+                "e2",
+                "combat mechanics balancing follow-up",
+                21 * 60_000,
+                "system",
+            ),
+        ];
+        let sessions = build_sessions(&entries, 20);
+        assert_eq!(sessions.len(), 1);
+    }
+
+    #[test]
+    fn adaptive_gap_merge_still_splits_when_gap_is_too_large() {
+        let entries = vec![
+            make_entry_with_source("e1", "combat mechanics balancing", 0, "mic"),
+            make_entry_with_source(
+                "e2",
+                "combat mechanics balancing follow-up",
+                45 * 60_000,
+                "system",
+            ),
+        ];
+        let sessions = build_sessions(&entries, 20);
+        assert_eq!(sessions.len(), 2);
+    }
+
+    #[test]
     fn sessions_sorted_most_recent_first() {
         let entries = vec![
             make_entry("e1", "old", 0),
@@ -640,5 +813,46 @@ mod tests {
         };
         let scored = score_sessions(&sessions, &req);
         assert!(scored.len() <= 3);
+    }
+
+    #[test]
+    fn score_prefers_richer_mixed_source_session_when_recency_matches() {
+        let sessions = vec![
+            SessionBucket {
+                id: "s_rich".to_string(),
+                start_ms: 0,
+                end_ms: 10 * 60_000,
+                entries: vec![
+                    make_entry_with_source("e1", "combat loop draft", 0, "mic"),
+                    make_entry_with_source("e2", "combat loop feedback", 2 * 60_000, "system"),
+                    make_entry_with_source("e3", "combat loop action items", 4 * 60_000, "mic"),
+                ],
+            },
+            SessionBucket {
+                id: "s_thin".to_string(),
+                start_ms: 0,
+                end_ms: 10 * 60_000,
+                entries: vec![make_entry_with_source("e4", "combat", 0, "mic")],
+            },
+        ];
+        let req = SearchTranscriptSessionsRequest {
+            temporal_hint: None,
+            topic_hint: None,
+            session_gap_minutes: Some(20),
+            max_candidates: Some(5),
+        };
+        let scored = score_sessions(&sessions, &req);
+        assert_eq!(
+            scored.first().map(|item| item.session_id.as_str()),
+            Some("s_rich")
+        );
+        assert!(scored
+            .first()
+            .map(|item| item.reasoning.contains("continuity="))
+            .unwrap_or(false));
+        assert!(scored
+            .first()
+            .map(|item| item.reasoning.contains("archive="))
+            .unwrap_or(false));
     }
 }

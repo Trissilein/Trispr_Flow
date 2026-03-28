@@ -213,6 +213,7 @@ pub struct VoiceOutputSettings {
     pub default_provider: String, // "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts"
     pub fallback_provider: String, // "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts"
     pub voice_id_windows: String,
+    pub voice_id_windows_fallback: String,
     pub auto_voice_by_detected_language: bool,
     pub voice_id_local: String,
     pub rate: f32,             // 0.5..2.0
@@ -247,6 +248,7 @@ impl Default for VoiceOutputSettings {
             default_provider: "windows_native".to_string(),
             fallback_provider: "windows_native".to_string(),
             voice_id_windows: String::new(),
+            voice_id_windows_fallback: String::new(),
             auto_voice_by_detected_language: false,
             voice_id_local: String::new(),
             rate: 1.0,

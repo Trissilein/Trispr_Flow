@@ -33,6 +33,7 @@ import type {
   AIExecutionMode,
   AIProviderAuthMethodPreference,
   OverlayRefiningIndicatorPreset,
+  TtsProviderInfo,
   TtsVoiceInfo,
   UserRefinementPromptPreset,
 } from "./types";
@@ -1713,11 +1714,37 @@ export async function renderTopicKeywords(): Promise<void> {
  * Render Voice Output Settings from settings.voice_output_settings to the UI.
  */
 let voiceOutputWindowsVoiceRequestSeq = 0;
+let voiceOutputFallbackVoiceRequestSeq = 0;
 
 function isWindowsVoiceProvider(
   provider: string | null | undefined
 ): provider is "windows_native" | "windows_natural" {
   return provider === "windows_native" || provider === "windows_natural";
+}
+
+function setFieldHidden(field: HTMLElement | null, hidden: boolean): void {
+  if (!field) return;
+  field.hidden = hidden;
+  if (hidden) {
+    field.style.display = "none";
+  } else {
+    field.style.removeProperty("display");
+  }
+}
+
+function voicePickerTitle(provider: string, isDefault: boolean): string {
+  if (isWindowsVoiceProvider(provider)) {
+    return isDefault
+      ? "Select a Windows speaker voice"
+      : "Select a fallback Windows speaker voice";
+  }
+  if (provider === "local_custom") {
+    return "Voice selection is managed by Piper model settings";
+  }
+  if (provider === "qwen3_tts") {
+    return "Voice selection is managed in Qwen3-TTS settings";
+  }
+  return "Auto (provider default)";
 }
 
 function toDisplayLanguage(locale: string): string {
@@ -1767,19 +1794,32 @@ function formatWindowsVoiceLabel(voice: TtsVoiceInfo): string {
   return parts.length > 0 ? `${voice.label} (${parts.join(", ")})` : voice.label;
 }
 
-export async function refreshVoiceOutputWindowsVoices(): Promise<void> {
-  if (!settings?.voice_output_settings || !dom.voiceOutputWindowsVoiceSelect) return;
+export async function refreshProviderVoices(target: "default" | "fallback"): Promise<void> {
+  if (!settings?.voice_output_settings) return;
 
-  const provider = settings.voice_output_settings.default_provider;
-  const field = dom.voiceOutputWindowsVoiceField;
-  const select = dom.voiceOutputWindowsVoiceSelect;
-  const hint = dom.voiceOutputWindowsVoiceHint;
-  const autoField = dom.voiceOutputAutoLanguageVoiceField;
+  const isDefault = target === "default";
+  const provider = isDefault
+    ? settings.voice_output_settings.default_provider
+    : settings.voice_output_settings.fallback_provider;
+
+  const field = isDefault ? dom.voiceOutputWindowsVoiceField : dom.voiceOutputFallbackVoiceField;
+  const select = isDefault ? dom.voiceOutputWindowsVoiceSelect : dom.voiceOutputFallbackVoiceSelect;
+  const hint = isDefault ? dom.voiceOutputWindowsVoiceHint : dom.voiceOutputFallbackVoiceHint;
+  const autoField = isDefault ? dom.voiceOutputAutoLanguageVoiceField : null;
+
+  if (!select) return;
+  select.title = voicePickerTitle(provider, isDefault);
 
   if (!isWindowsVoiceProvider(provider)) {
-    if (field) field.hidden = true;
-    if (autoField) autoField.hidden = true;
-    if (hint) hint.textContent = "Voice selection is available for Windows providers.";
+    setFieldHidden(field, true);
+    setFieldHidden(autoField, true);
+    if (hint) {
+      hint.textContent = provider === "local_custom"
+        ? "Stimme wird über das Piper-Modell gesteuert."
+        : provider === "qwen3_tts"
+          ? "Stimme wird in den Qwen3-TTS-Einstellungen gesteuert."
+          : "Stimme-Auswahl nur für Windows-Provider verfügbar.";
+    }
     select.innerHTML = "";
     const option = document.createElement("option");
     option.value = "";
@@ -1790,30 +1830,30 @@ export async function refreshVoiceOutputWindowsVoices(): Promise<void> {
     return;
   }
 
-  if (field) field.hidden = false;
-  if (autoField) autoField.hidden = false;
+  setFieldHidden(field, false);
+  setFieldHidden(autoField, false);
   select.disabled = true;
   select.innerHTML = "";
   const loadingOption = document.createElement("option");
   loadingOption.value = "";
-  loadingOption.textContent = "Loading voices...";
+  loadingOption.textContent = "Lade Stimmen...";
   select.appendChild(loadingOption);
-  if (hint) hint.textContent = "Loading installed Windows voices...";
+  if (hint) hint.textContent = "Lade installierte Windows-Stimmen...";
 
-  const requestSeq = ++voiceOutputWindowsVoiceRequestSeq;
+  const seqRef = isDefault ? ++voiceOutputWindowsVoiceRequestSeq : ++voiceOutputFallbackVoiceRequestSeq;
   try {
     const voices = await invoke<TtsVoiceInfo[]>("list_tts_voices", { provider });
-    if (requestSeq !== voiceOutputWindowsVoiceRequestSeq) {
-      return;
-    }
+    const currentSeq = isDefault ? voiceOutputWindowsVoiceRequestSeq : voiceOutputFallbackVoiceRequestSeq;
+    if (seqRef !== currentSeq) return;
 
     const filteredVoices = voices.filter((voice) => voice.provider === provider);
-    const selectedVoiceId = (settings.voice_output_settings.voice_id_windows ?? "").trim();
+    const voiceIdKey = isDefault ? "voice_id_windows" : "voice_id_windows_fallback";
+    const selectedVoiceId = ((settings.voice_output_settings[voiceIdKey] as string) ?? "").trim();
     const availableIds = new Set(filteredVoices.map((voice) => voice.id));
     const effectiveVoiceId = selectedVoiceId.length > 0 && availableIds.has(selectedVoiceId)
       ? selectedVoiceId
       : "";
-    settings.voice_output_settings.voice_id_windows = effectiveVoiceId;
+    (settings.voice_output_settings[voiceIdKey] as string) = effectiveVoiceId;
 
     select.innerHTML = "";
     const autoOption = document.createElement("option");
@@ -1832,13 +1872,12 @@ export async function refreshVoiceOutputWindowsVoices(): Promise<void> {
     select.disabled = filteredVoices.length === 0;
     if (hint) {
       hint.textContent = filteredVoices.length > 0
-        ? `${filteredVoices.length} Windows voice(s) detected.`
-        : "No Windows voices detected for the selected provider.";
+        ? `${filteredVoices.length} Windows-Stimme(n) gefunden.`
+        : "Keine Windows-Stimmen für diesen Provider gefunden.";
     }
   } catch (error) {
-    if (requestSeq !== voiceOutputWindowsVoiceRequestSeq) {
-      return;
-    }
+    const currentSeq = isDefault ? voiceOutputWindowsVoiceRequestSeq : voiceOutputFallbackVoiceRequestSeq;
+    if (seqRef !== currentSeq) return;
     select.innerHTML = "";
     const errorOption = document.createElement("option");
     errorOption.value = "";
@@ -1847,9 +1886,83 @@ export async function refreshVoiceOutputWindowsVoices(): Promise<void> {
     select.value = "";
     select.disabled = false;
     if (hint) {
-      hint.textContent = `Voice list unavailable: ${String(error).replace(/^Error:\s*/i, "").trim()}`;
+      hint.textContent = `Stimmliste nicht verfügbar: ${String(error).replace(/^Error:\s*/i, "").trim()}`;
     }
   }
+}
+
+// Backward-compatibility wrapper — existing call sites keep working
+export async function refreshVoiceOutputWindowsVoices(): Promise<void> {
+  return refreshProviderVoices("default");
+}
+
+export function updateProviderMutualExclusion(): void {
+  const defVal = dom.voiceOutputDefaultProvider?.value ?? "";
+  const fbVal = dom.voiceOutputFallbackProvider?.value ?? "";
+  for (const option of Array.from(dom.voiceOutputDefaultProvider?.options ?? [])) {
+    if (!option.value) continue;
+    option.disabled = option.value === fbVal;
+  }
+  for (const option of Array.from(dom.voiceOutputFallbackProvider?.options ?? [])) {
+    if (!option.value) continue;
+    option.disabled = option.value === defVal;
+  }
+}
+
+export async function refreshProviderAvailability(): Promise<void> {
+  let providers: TtsProviderInfo[];
+  try {
+    providers = await Promise.race([
+      invoke<TtsProviderInfo[]>("list_tts_providers"),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
+    ]);
+  } catch {
+    return; // Silent failure — UI nicht blockieren
+  }
+
+  for (const select of [dom.voiceOutputDefaultProvider, dom.voiceOutputFallbackProvider]) {
+    if (!select) continue;
+    for (const option of Array.from(select.options)) {
+      if (!option.value) continue;
+      const info = providers.find((p) => p.id === option.value);
+      if (!info) {
+        // Provider nicht im Backend bekannt (z.B. qwen3_tts wenn disabled) → unavailable
+        option.disabled = true;
+        const baseText = option.textContent?.replace(/ — nicht verfügbar$/, "") ?? option.value;
+        option.textContent = `${baseText} — nicht verfügbar`;
+      } else if (!info.available) {
+        option.disabled = true;
+        option.textContent = `${info.label} — nicht verfügbar`;
+      } else {
+        option.disabled = false;
+        option.textContent = info.label;
+      }
+    }
+  }
+
+  const setAvailabilityBadge = (
+    badge: HTMLElement | null,
+    providerId: string | null | undefined
+  ): void => {
+    if (!badge) return;
+    const provider = providers.find((entry) => entry.id === providerId);
+    if (!provider) {
+      badge.textContent = "Unavailable";
+      badge.classList.add("unavailable");
+      return;
+    }
+    badge.textContent = provider.available ? "Available" : "Unavailable";
+    badge.classList.toggle("unavailable", !provider.available);
+  };
+
+  setAvailabilityBadge(
+    dom.voiceOutputDefaultAvailability,
+    dom.voiceOutputDefaultProvider?.value
+  );
+  setAvailabilityBadge(
+    dom.voiceOutputFallbackAvailability,
+    dom.voiceOutputFallbackProvider?.value
+  );
 }
 
 export function renderVoiceOutputSettings(): void {
@@ -1975,5 +2088,8 @@ export function renderVoiceOutputSettings(): void {
     qwen3Section.style.display = vo.qwen3_tts_enabled ? "block" : "none";
   }
 
-  void refreshVoiceOutputWindowsVoices();
+  updateProviderMutualExclusion();
+  void refreshProviderVoices("default");
+  void refreshProviderVoices("fallback");
+  void refreshProviderAvailability();
 }

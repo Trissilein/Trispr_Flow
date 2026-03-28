@@ -5571,6 +5571,22 @@ fn resolve_windows_voice_for_provider(
     }
 }
 
+fn resolve_manual_windows_voice_id_for_lane(
+    lane_provider: &str,
+    default_provider: &str,
+    fallback_provider: &str,
+    default_voice_id: &str,
+    fallback_voice_id: &str,
+) -> String {
+    if lane_provider == fallback_provider && lane_provider != default_provider {
+        let fallback = fallback_voice_id.trim();
+        if !fallback.is_empty() {
+            return fallback.to_string();
+        }
+    }
+    default_voice_id.trim().to_string()
+}
+
 fn speak_tts_internal(
     app: &AppHandle,
     state: &AppState,
@@ -5634,7 +5650,10 @@ fn speak_tts_internal(
     let piper_model_path = voice_settings.piper_model_path.clone();
     let qwen3_runtime_config = resolve_qwen3_tts_runtime_config(&voice_settings);
     let output_device_id = voice_settings.output_device.clone();
-    let windows_voice_id = voice_settings.voice_id_windows.clone();
+    let default_provider_config = voice_settings.default_provider.clone();
+    let fallback_provider_config = voice_settings.fallback_provider.clone();
+    let windows_voice_id_default = voice_settings.voice_id_windows.clone();
+    let windows_voice_id_fallback = voice_settings.voice_id_windows_fallback.clone();
     let auto_voice_by_language_enabled = voice_settings.auto_voice_by_detected_language;
     let auto_voice_language_hint = if auto_voice_by_language_enabled {
         infer_tts_language_hint(&text, &language_mode, language_pinned)
@@ -5651,32 +5670,50 @@ fn speak_tts_internal(
             &preferred_provider_for_thread,
             &fallback_provider_for_thread,
             |provider| match provider {
-                "windows_native" => crate::multimodal_io::speak_windows_native(
-                    &text,
-                    rate,
-                    volume,
-                    &output_device_id,
-                    resolve_windows_voice_for_provider(
+                "windows_native" => {
+                    let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
                         "windows_native",
-                        &windows_voice_id,
+                        &default_provider_config,
+                        &fallback_provider_config,
+                        &windows_voice_id_default,
+                        &windows_voice_id_fallback,
+                    );
+                    let resolved_voice = resolve_windows_voice_for_provider(
+                        "windows_native",
+                        &manual_voice_id,
                         auto_voice_by_language_enabled,
                         auto_voice_language_hint.as_deref(),
+                    );
+                    crate::multimodal_io::speak_windows_native(
+                        &text,
+                        rate,
+                        volume,
+                        &output_device_id,
+                        resolved_voice.as_deref(),
                     )
-                    .as_deref(),
-                ),
-                "windows_natural" => crate::multimodal_io::speak_windows_natural(
-                    &text,
-                    rate,
-                    volume,
-                    &output_device_id,
-                    resolve_windows_voice_for_provider(
+                }
+                "windows_natural" => {
+                    let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
                         "windows_natural",
-                        &windows_voice_id,
+                        &default_provider_config,
+                        &fallback_provider_config,
+                        &windows_voice_id_default,
+                        &windows_voice_id_fallback,
+                    );
+                    let resolved_voice = resolve_windows_voice_for_provider(
+                        "windows_natural",
+                        &manual_voice_id,
                         auto_voice_by_language_enabled,
                         auto_voice_language_hint.as_deref(),
+                    );
+                    crate::multimodal_io::speak_windows_natural(
+                        &text,
+                        rate,
+                        volume,
+                        &output_device_id,
+                        resolved_voice.as_deref(),
                     )
-                    .as_deref(),
-                ),
+                }
                 "local_custom" => crate::multimodal_io::speak_piper(
                     &app_c.state::<AppState>().piper_daemon,
                     &text,
@@ -5809,7 +5846,10 @@ fn test_tts_provider(
         let piper_model_path = voice_settings.piper_model_path.clone();
         let qwen3_runtime_config = resolve_qwen3_tts_runtime_config(&voice_settings);
         let output_device_id = voice_settings.output_device.clone();
-        let windows_voice_id = voice_settings.voice_id_windows.clone();
+        let default_provider_config = voice_settings.default_provider.clone();
+        let fallback_provider_config = voice_settings.fallback_provider.clone();
+        let windows_voice_id_default = voice_settings.voice_id_windows.clone();
+        let windows_voice_id_fallback = voice_settings.voice_id_windows_fallback.clone();
         let auto_voice_by_language_enabled = voice_settings.auto_voice_by_detected_language;
         let sample_text = "Trisper Flow voice output test.";
         let auto_voice_language_hint = if auto_voice_by_language_enabled {
@@ -5822,32 +5862,50 @@ fn test_tts_provider(
             &preferred_provider,
             &fallback_provider,
             |lane| match lane {
-                "windows_native" => crate::multimodal_io::speak_windows_native(
-                    sample_text,
-                    rate,
-                    volume,
-                    &output_device_id,
-                    resolve_windows_voice_for_provider(
+                "windows_native" => {
+                    let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
                         "windows_native",
-                        &windows_voice_id,
+                        &default_provider_config,
+                        &fallback_provider_config,
+                        &windows_voice_id_default,
+                        &windows_voice_id_fallback,
+                    );
+                    let resolved_voice = resolve_windows_voice_for_provider(
+                        "windows_native",
+                        &manual_voice_id,
                         auto_voice_by_language_enabled,
                         auto_voice_language_hint.as_deref(),
+                    );
+                    crate::multimodal_io::speak_windows_native(
+                        sample_text,
+                        rate,
+                        volume,
+                        &output_device_id,
+                        resolved_voice.as_deref(),
                     )
-                    .as_deref(),
-                ),
-                "windows_natural" => crate::multimodal_io::speak_windows_natural(
-                    sample_text,
-                    rate,
-                    volume,
-                    &output_device_id,
-                    resolve_windows_voice_for_provider(
+                }
+                "windows_natural" => {
+                    let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
                         "windows_natural",
-                        &windows_voice_id,
+                        &default_provider_config,
+                        &fallback_provider_config,
+                        &windows_voice_id_default,
+                        &windows_voice_id_fallback,
+                    );
+                    let resolved_voice = resolve_windows_voice_for_provider(
+                        "windows_natural",
+                        &manual_voice_id,
                         auto_voice_by_language_enabled,
                         auto_voice_language_hint.as_deref(),
+                    );
+                    crate::multimodal_io::speak_windows_natural(
+                        sample_text,
+                        rate,
+                        volume,
+                        &output_device_id,
+                        resolved_voice.as_deref(),
                     )
-                    .as_deref(),
-                ),
+                }
                 "local_custom" => crate::multimodal_io::speak_piper(
                     &state.piper_daemon,
                     sample_text,

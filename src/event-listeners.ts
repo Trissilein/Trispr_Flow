@@ -33,7 +33,9 @@ import {
   derivePostprocLanguageFromAsr,
   syncCaptureModeVisibility,
   syncDerivedLanguageSettings,
-  refreshVoiceOutputWindowsVoices,
+  refreshProviderAvailability,
+  refreshProviderVoices,
+  updateProviderMutualExclusion,
 } from "./settings";
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
@@ -2856,7 +2858,9 @@ export function wireEvents() {
     if (!settings?.voice_output_settings) return;
     settings.voice_output_settings.default_provider = dom.voiceOutputDefaultProvider!
       .value as "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
-    await refreshVoiceOutputWindowsVoices();
+    await refreshProviderVoices("default");
+    updateProviderMutualExclusion();
+    await refreshProviderAvailability();
     await persistSettings();
   });
 
@@ -2864,6 +2868,9 @@ export function wireEvents() {
     if (!settings?.voice_output_settings) return;
     settings.voice_output_settings.fallback_provider = dom.voiceOutputFallbackProvider!
       .value as "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
+    await refreshProviderVoices("fallback");
+    updateProviderMutualExclusion();
+    await refreshProviderAvailability();
     await persistSettings();
   });
 
@@ -2883,6 +2890,12 @@ export function wireEvents() {
   dom.voiceOutputWindowsVoiceSelect?.addEventListener("change", async () => {
     if (!settings?.voice_output_settings || !dom.voiceOutputWindowsVoiceSelect) return;
     settings.voice_output_settings.voice_id_windows = dom.voiceOutputWindowsVoiceSelect.value.trim();
+    await persistSettings();
+  });
+
+  dom.voiceOutputFallbackVoiceSelect?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputFallbackVoiceSelect) return;
+    settings.voice_output_settings.voice_id_windows_fallback = dom.voiceOutputFallbackVoiceSelect.value.trim();
     await persistSettings();
   });
 

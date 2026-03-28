@@ -138,10 +138,10 @@
         <button id="tab-btn-settings" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-settings">
           Settings
         </button>
-        <button id="tab-btn-ai-refinement" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-ai-refinement" data-expert-only="true">
+        <button id="tab-btn-ai-refinement" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-ai-refinement">
           AI Refinement
         </button>
-        <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output" data-expert-only="true">
+        <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output">
           Voice Output
         </button>
         <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules">
@@ -1731,22 +1731,55 @@
                   <summary><h4 class="ai-refine-section-title">Provider &amp; Policy</h4></summary>
                   <div class="expander-body">
                     <div class="panel-grid">
-                      <label class="field">
-                        <span class="field-label">Default provider</span>
-                        <select id="voice-output-default-provider" title="Primary TTS engine">
-                          <option value="windows_native">Windows Native TTS</option>
-                          <option value="windows_natural">Windows Natural Language (SAPI Adapter)</option>
-                          <option value="local_custom">Local Custom (Piper)</option>
-                          <option value="qwen3_tts">Qwen3-TTS (OpenAI-compatible endpoint)</option>
-                        </select>
-                      </label>
-                      <label class="field" id="voice-output-windows-voice-field">
-                        <span class="field-label">Windows voice</span>
-                        <select id="voice-output-windows-voice-select" title="Select a Windows speaker voice">
-                          <option value="">Auto (provider default)</option>
-                        </select>
-                        <span class="field-hint" id="voice-output-windows-voice-hint">Choose a specific Windows speaker voice when multiple voices are installed.</span>
-                      </label>
+                      <!-- TTS Provider Cards (span-2) -->
+                      <div class="tts-provider-cards span-2">
+                        <!-- Standard-Provider Card -->
+                        <div class="tts-provider-card ai-provider-lane" id="voice-output-default-card">
+                          <div class="tts-provider-card-header">
+                            <span class="field-label">Standard-Provider</span>
+                            <span id="voice-output-default-availability" class="tts-provider-availability"></span>
+                          </div>
+                          <label class="field">
+                            <span class="field-label">Provider</span>
+                            <select id="voice-output-default-provider" title="Primary TTS engine">
+                              <option value="windows_native">Windows Native TTS</option>
+                              <option value="windows_natural">Windows Natural Language (SAPI Adapter)</option>
+                              <option value="local_custom">Piper (lokal)</option>
+                              <option value="qwen3_tts">Qwen3-TTS (OpenAI-compatible)</option>
+                            </select>
+                          </label>
+                          <label class="field" id="voice-output-windows-voice-field">
+                            <span class="field-label">Stimme</span>
+                            <select id="voice-output-windows-voice-select" title="Select a Windows speaker voice">
+                              <option value="">Auto (provider default)</option>
+                            </select>
+                            <span class="field-hint" id="voice-output-windows-voice-hint">Wähle eine installierte Windows-Stimme.</span>
+                          </label>
+                        </div>
+                        <!-- Fallback-Provider Card -->
+                        <div class="tts-provider-card ai-provider-lane" id="voice-output-fallback-card">
+                          <div class="tts-provider-card-header">
+                            <span class="field-label">Fallback-Provider</span>
+                            <span id="voice-output-fallback-availability" class="tts-provider-availability"></span>
+                          </div>
+                          <label class="field">
+                            <span class="field-label">Provider</span>
+                            <select id="voice-output-fallback-provider" title="Used if default provider fails">
+                              <option value="windows_native">Windows Native TTS</option>
+                              <option value="windows_natural">Windows Natural Language (SAPI Adapter)</option>
+                              <option value="local_custom">Piper (lokal)</option>
+                              <option value="qwen3_tts">Qwen3-TTS (OpenAI-compatible)</option>
+                            </select>
+                          </label>
+                          <label class="field" id="voice-output-fallback-voice-field">
+                            <span class="field-label">Stimme</span>
+                            <select id="voice-output-fallback-voice-select" title="Fallback voice">
+                              <option value="">Auto (provider default)</option>
+                            </select>
+                            <span class="field-hint" id="voice-output-fallback-voice-hint">Wähle eine Stimme für den Fallback-Provider.</span>
+                          </label>
+                        </div>
+                      </div>
                       <div class="field toggle span-2" id="voice-output-auto-language-voice-field">
                         <label class="toggle-row">
                           <span class="field-label">Auto voice by detected language</span>
@@ -1755,16 +1788,6 @@
                         </label>
                         <span class="toggle-hint">When enabled, Trispr picks a matching Windows voice (for example de/en) per utterance. Manual voice remains fallback.</span>
                       </div>
-                      <label class="field">
-                        <span class="field-label">Fallback provider</span>
-                        <select id="voice-output-fallback-provider" title="Used if default provider fails">
-                          <option value="windows_native">Windows Native TTS</option>
-                          <option value="windows_natural">Windows Natural Language (SAPI Adapter)</option>
-                          <option value="local_custom">Local Custom (Piper)</option>
-                          <option value="qwen3_tts">Qwen3-TTS (OpenAI-compatible endpoint)</option>
-                        </select>
-                        <span class="field-hint">Used automatically if the default provider fails. Qwen3-TTS needs a running OpenAI-compatible `/v1/audio/speech` endpoint.</span>
-                      </label>
                       <label class="field">
                         <span class="field-label">Output policy</span>
                         <select id="voice-output-policy" title="Controls when voice output is triggered">

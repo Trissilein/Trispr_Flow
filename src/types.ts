@@ -247,6 +247,7 @@ export interface VoiceOutputSettings {
   default_provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
   fallback_provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
   voice_id_windows: string;
+  voice_id_windows_fallback?: string;
   auto_voice_by_detected_language?: boolean;
   voice_id_local: string;
   rate: number;

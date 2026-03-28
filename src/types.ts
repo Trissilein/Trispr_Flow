@@ -310,6 +310,9 @@ export interface AgentExecutionPlan {
   target_language: AgentTargetLanguage;
   publish: boolean;
   steps: AgentExecutionStep[];
+  recognized_signals: string[];
+  assumptions: string[];
+  proposed_actions: string[];
   summary: string;
 }
 
@@ -318,6 +321,10 @@ export interface AgentBuildExecutionPlanRequest {
   session_id: string;
   target_language: AgentTargetLanguage | string;
   publish: boolean;
+  command_text?: string | null;
+  temporal_hint?: string | null;
+  topic_hint?: string | null;
+  parse_confidence?: number | null;
 }
 
 export interface AgentExecutionResult {

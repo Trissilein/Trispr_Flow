@@ -133,11 +133,27 @@ function renderPlanPreview(): void {
     return;
   }
   const steps = currentPlan.steps.map((step) => `- ${step.title}`).join("\n");
+  const recognizedSignals = (currentPlan.recognized_signals ?? [])
+    .map((item) => `- ${item}`)
+    .join("\n");
+  const assumptions = (currentPlan.assumptions ?? []).map((item) => `- ${item}`).join("\n");
+  const proposedActions = (currentPlan.proposed_actions ?? [])
+    .map((item) => `- ${item}`)
+    .join("\n");
   dom.workflowAgentPlanPreview.value = [
     `Intent: ${currentPlan.intent}`,
     `Session: ${currentPlan.session_id}`,
     `Target language: ${currentPlan.target_language}`,
     `Publish: ${currentPlan.publish ? "yes" : "no"}`,
+    "",
+    "Recognized signals:",
+    recognizedSignals || "- none",
+    "",
+    "Assumptions:",
+    assumptions || "- none",
+    "",
+    "Proposed actions:",
+    proposedActions || "- none",
     "",
     "Steps:",
     steps,
@@ -283,6 +299,10 @@ async function buildPlan(): Promise<void> {
     session_id: selectedSessionId,
     target_language: targetLanguage,
     publish: Boolean(lastParse.publish_requested),
+    command_text: lastParse.command_text,
+    temporal_hint: lastParse.temporal_hint ?? null,
+    topic_hint: lastParse.topic_hint ?? null,
+    parse_confidence: lastParse.confidence,
   };
   currentPlan = await invoke<AgentExecutionPlan>("agent_build_execution_plan", { request: req });
   renderPlanPreview();

@@ -57,6 +57,10 @@ pub struct AgentBuildExecutionPlanRequest {
     pub session_id: String,
     pub target_language: String, // "source" | "en" | ...
     pub publish: bool,
+    pub command_text: Option<String>,
+    pub temporal_hint: Option<String>,
+    pub topic_hint: Option<String>,
+    pub parse_confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +71,12 @@ pub struct AgentExecutionPlan {
     pub target_language: String,
     pub publish: bool,
     pub steps: Vec<AgentExecutionStep>,
+    #[serde(default)]
+    pub recognized_signals: Vec<String>,
+    #[serde(default)]
+    pub assumptions: Vec<String>,
+    #[serde(default)]
+    pub proposed_actions: Vec<String>,
     pub summary: String,
 }
 
@@ -528,6 +538,87 @@ pub fn score_sessions(
 }
 
 pub fn default_execution_plan(request: &AgentBuildExecutionPlanRequest) -> AgentExecutionPlan {
+    let mut recognized_signals = vec![
+        format!("intent={}", request.intent),
+        format!("session_id={}", request.session_id),
+        format!("target_language={}", request.target_language),
+        format!("publish_requested={}", request.publish),
+    ];
+    if let Some(confidence) = request.parse_confidence {
+        recognized_signals.push(format!(
+            "parse_confidence={:.2}",
+            confidence.clamp(0.0, 1.0)
+        ));
+    }
+    if let Some(topic_hint) = request.topic_hint.as_deref().map(str::trim) {
+        if !topic_hint.is_empty() {
+            recognized_signals.push(format!("topic_hint={topic_hint}"));
+        }
+    }
+    if let Some(temporal_hint) = request.temporal_hint.as_deref().map(str::trim) {
+        if !temporal_hint.is_empty() {
+            recognized_signals.push(format!("temporal_hint={temporal_hint}"));
+        }
+    }
+    if let Some(command_text) = request.command_text.as_deref().map(str::trim) {
+        if !command_text.is_empty() {
+            let mut excerpt = command_text.to_string();
+            if excerpt.len() > 140 {
+                excerpt.truncate(140);
+                excerpt.push_str("...");
+            }
+            recognized_signals.push(format!("command_excerpt=\"{excerpt}\""));
+        }
+    }
+
+    let assumptions = vec![
+        if request
+            .topic_hint
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
+            "No explicit topic hint provided; transcript ranking determines dominant topic."
+                .to_string()
+        } else {
+            "Topic hint is treated as primary retrieval guidance.".to_string()
+        },
+        if request
+            .temporal_hint
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
+            "No temporal hint provided; recent sessions are preferred.".to_string()
+        } else {
+            "Temporal hint is used to prioritize matching session day.".to_string()
+        },
+        if request.publish {
+            "Publish was requested; execution requires explicit confirmation before side effects."
+                .to_string()
+        } else {
+            "Publish not requested; execution should remain draft-only unless user confirms publish."
+                .to_string()
+        },
+    ];
+
+    let proposed_actions = vec![
+        "Review selected session context and confirm it matches the intended conversation."
+            .to_string(),
+        format!(
+            "Generate a {} GDD draft from the session transcript.",
+            request.target_language
+        ),
+        if request.publish {
+            "After review, publish to Confluence or queue fallback if publishing is unavailable."
+                .to_string()
+        } else {
+            "Present draft for review and wait for explicit publish decision.".to_string()
+        },
+    ];
+
     AgentExecutionPlan {
         intent: request.intent.clone(),
         session_id: request.session_id.clone(),
@@ -554,6 +645,9 @@ pub fn default_execution_plan(request: &AgentBuildExecutionPlanRequest) -> Agent
                 detail: None,
             },
         ],
+        recognized_signals,
+        assumptions,
+        proposed_actions,
         summary: format!(
             "Intent={} session={} target_language={} publish={}",
             request.intent, request.session_id, request.target_language, request.publish
@@ -854,5 +948,40 @@ mod tests {
             .first()
             .map(|item| item.reasoning.contains("archive="))
             .unwrap_or(false));
+    }
+
+    #[test]
+    fn default_execution_plan_surfaces_transparent_suggestion_metadata() {
+        let request = AgentBuildExecutionPlanRequest {
+            intent: "gdd_generate_publish".to_string(),
+            session_id: "s_123_456".to_string(),
+            target_language: "en".to_string(),
+            publish: true,
+            command_text: Some(
+                "hey trispr build a gdd draft for yesterday about combat balancing".to_string(),
+            ),
+            temporal_hint: Some("yesterday".to_string()),
+            topic_hint: Some("combat balancing".to_string()),
+            parse_confidence: Some(0.87),
+        };
+        let plan = default_execution_plan(&request);
+        assert_eq!(plan.intent, "gdd_generate_publish");
+        assert_eq!(plan.session_id, "s_123_456");
+        assert!(plan
+            .recognized_signals
+            .iter()
+            .any(|item| item.contains("parse_confidence=0.87")));
+        assert!(plan
+            .recognized_signals
+            .iter()
+            .any(|item| item.contains("topic_hint=combat balancing")));
+        assert!(plan
+            .assumptions
+            .iter()
+            .any(|item| item.contains("requires explicit confirmation")));
+        assert!(plan
+            .proposed_actions
+            .iter()
+            .any(|item| item.contains("publish to Confluence")));
     }
 }

@@ -455,7 +455,7 @@ Goal: Evolve workflow-agent from wakeword command trigger to a transparent GDD c
 | Task | Name | Complexity | Dependencies | Status | Description |
 | --- | --- | --- | --- | --- | --- |
 | V1 | Session intelligence for copilot | High | T2, M4 | DONE | Added adaptive session clustering for slight gap-overruns when conversation continuity is high, plus enriched scoring signals (`continuity`, `archive_context`) for mixed-source/archive-aware candidate ranking. |
-| V2 | Suggestion engine (transparent reasoning) | High | V1, T5 | PLANNED | Generate explicit suggestions with recognized signals, assumptions, and next-step proposals. |
+| V2 | Suggestion engine (transparent reasoning) | High | V1, T5 | DONE | Extended workflow-agent execution plans with explicit `recognized_signals`, `assumptions`, and `proposed_actions`; wired parse metadata through plan build and surfaced transparent reasoning in the console plan preview. |
 | V3 | Copilot plan model | High | V2, M5 | PLANNED | Extend plan shape to separate `analysis/suggestion` from `side-effectful` actions. |
 | V4 | Draft-only execution lane | Medium | V3, L11 | PLANNED | Ensure draft generation is side-effect free; no publish without confirmation path. |
 | V5 | Review UX for copilot suggestions | Medium | V2, T3 | PLANNED | Add review-friendly presentation before plan execution/publish decisions. |

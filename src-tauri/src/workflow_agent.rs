@@ -669,6 +669,21 @@ pub fn default_execution_plan(request: &AgentBuildExecutionPlanRequest) -> Agent
     }
 }
 
+pub fn should_publish_after_draft(plan: &AgentExecutionPlan) -> bool {
+    if !plan.publish {
+        return false;
+    }
+    let has_execution_publish_step = plan
+        .execution_steps
+        .iter()
+        .any(|step| step.id == "publish_or_queue");
+    if has_execution_publish_step {
+        return true;
+    }
+    // Compatibility lane: accept older plans that only carry `steps`.
+    plan.steps.iter().any(|step| step.id == "publish_or_queue")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1018,5 +1033,49 @@ mod tests {
         assert_eq!(plan.analysis_steps.len(), 2);
         assert!(plan.execution_steps.is_empty());
         assert_eq!(plan.steps.len(), 2);
+    }
+
+    #[test]
+    fn should_publish_after_draft_requires_publish_flag_and_publish_step() {
+        let publish_plan = AgentExecutionPlan {
+            intent: "gdd_generate_publish".to_string(),
+            session_id: "s_1".to_string(),
+            session_title: "Session s_1".to_string(),
+            target_language: "source".to_string(),
+            publish: true,
+            analysis_steps: vec![],
+            execution_steps: vec![AgentExecutionStep {
+                id: "publish_or_queue".to_string(),
+                title: "Publish to Confluence".to_string(),
+                status: "pending".to_string(),
+                detail: None,
+            }],
+            steps: vec![],
+            recognized_signals: vec![],
+            assumptions: vec![],
+            proposed_actions: vec![],
+            summary: "x".to_string(),
+        };
+        assert!(should_publish_after_draft(&publish_plan));
+
+        let missing_publish_step = AgentExecutionPlan {
+            publish: true,
+            execution_steps: vec![],
+            steps: vec![],
+            ..publish_plan.clone()
+        };
+        assert!(!should_publish_after_draft(&missing_publish_step));
+
+        let publish_flag_off = AgentExecutionPlan {
+            publish: false,
+            execution_steps: vec![AgentExecutionStep {
+                id: "publish_or_queue".to_string(),
+                title: "Publish to Confluence".to_string(),
+                status: "pending".to_string(),
+                detail: None,
+            }],
+            ..publish_plan
+        };
+        assert!(!should_publish_after_draft(&publish_flag_off));
     }
 }

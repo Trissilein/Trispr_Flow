@@ -5413,10 +5413,16 @@ fn agent_execute_gdd_plan(
                 };
                 let draft = crate::gdd::generate_draft(&draft_request, &preset_clones);
 
-                if !plan.publish {
+                let publish_after_draft = crate::workflow_agent::should_publish_after_draft(&plan);
+                if !publish_after_draft {
+                    let skipped_reason = if plan.publish {
+                        "Draft generated. Publish skipped because the execution lane had no publish step."
+                    } else {
+                        "Draft generated. Publish skipped by plan."
+                    };
                     let result = crate::workflow_agent::AgentExecutionResult {
                         status: "completed".to_string(),
-                        message: "Draft generated. Publish skipped by plan.".to_string(),
+                        message: skipped_reason.to_string(),
                         draft: Some(draft.clone()),
                         publish_result: None,
                         queued_job: None,

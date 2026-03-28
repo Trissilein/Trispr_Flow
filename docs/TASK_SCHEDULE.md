@@ -457,7 +457,7 @@ Goal: Evolve workflow-agent from wakeword command trigger to a transparent GDD c
 | V1 | Session intelligence for copilot | High | T2, M4 | DONE | Added adaptive session clustering for slight gap-overruns when conversation continuity is high, plus enriched scoring signals (`continuity`, `archive_context`) for mixed-source/archive-aware candidate ranking. |
 | V2 | Suggestion engine (transparent reasoning) | High | V1, T5 | DONE | Extended workflow-agent execution plans with explicit `recognized_signals`, `assumptions`, and `proposed_actions`; wired parse metadata through plan build and surfaced transparent reasoning in the console plan preview. |
 | V3 | Copilot plan model | High | V2, M5 | DONE | Extended `AgentExecutionPlan` with explicit `analysis_steps` and `execution_steps` lanes while keeping `steps` as compatibility aggregate; publish side-effects now appear only in execution lane. |
-| V4 | Draft-only execution lane | Medium | V3, L11 | PLANNED | Ensure draft generation is side-effect free; no publish without confirmation path. |
+| V4 | Draft-only execution lane | Medium | V3, L11 | DONE | Added strict publish gating via plan execution-lane evaluation: draft generation always works side-effect free, and publish only runs when `publish=true` plus explicit `publish_or_queue` lane step are present (compat fallback for legacy aggregate steps retained). |
 | V5 | Review UX for copilot suggestions | Medium | V2, T3 | PLANNED | Add review-friendly presentation before plan execution/publish decisions. |
 | V6 | E2E Copilot flow tests | High | V1-V5 | PLANNED | Validate `conversation -> suggestions -> draft -> optional publish` reproducibility. |
 

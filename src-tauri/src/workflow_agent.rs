@@ -1078,4 +1078,109 @@ mod tests {
         };
         assert!(!should_publish_after_draft(&publish_flag_off));
     }
+
+    #[test]
+    fn copilot_flow_conversation_to_suggestions_to_draft_only_plan() {
+        let entries = vec![
+            make_entry_with_source(
+                "old-1",
+                "legacy unrelated discussion about build scripts",
+                0,
+                "mic",
+            ),
+            make_entry_with_source(
+                "old-2",
+                "more unrelated operational notes",
+                2 * 60_000,
+                "system",
+            ),
+            make_entry_with_source(
+                "new-1",
+                "combat balancing goals and damage curve",
+                30 * 60_000,
+                "mic",
+            ),
+            make_entry_with_source(
+                "new-2",
+                "combat balancing enemy hp and stamina loop",
+                32 * 60_000,
+                "system",
+            ),
+            make_entry_with_source(
+                "new-3",
+                "combat balancing follow-up for boss pacing",
+                34 * 60_000,
+                "mic",
+            ),
+        ];
+        let parse_request = AgentParseCommandRequest {
+            command_text: "hey trispr create a gdd draft about combat balancing".to_string(),
+            source: Some("test".to_string()),
+        };
+        let parse = parse_command(&parse_request, &make_wakewords(), &make_keywords());
+        assert!(parse.detected);
+        assert_eq!(parse.intent, "gdd_generate_publish");
+        assert!(!parse.publish_requested);
+
+        let session_request = SearchTranscriptSessionsRequest {
+            temporal_hint: parse.temporal_hint.clone(),
+            topic_hint: parse.topic_hint.clone(),
+            session_gap_minutes: Some(20),
+            max_candidates: Some(3),
+        };
+        let sessions = build_sessions(&entries, 20);
+        let scored = score_sessions(&sessions, &session_request);
+        assert!(!scored.is_empty());
+
+        let top = scored.first().unwrap();
+        let plan_request = AgentBuildExecutionPlanRequest {
+            intent: parse.intent.clone(),
+            session_id: top.session_id.clone(),
+            target_language: "source".to_string(),
+            publish: parse.publish_requested,
+            command_text: Some(parse.command_text.clone()),
+            temporal_hint: parse.temporal_hint.clone(),
+            topic_hint: parse.topic_hint.clone(),
+            parse_confidence: Some(parse.confidence),
+        };
+        let plan = default_execution_plan(&plan_request);
+        assert!(plan
+            .recognized_signals
+            .iter()
+            .any(|item| item.contains("topic_hint=combat balancing")));
+        assert_eq!(plan.analysis_steps.len(), 2);
+        assert!(plan.execution_steps.is_empty());
+        assert!(!should_publish_after_draft(&plan));
+    }
+
+    #[test]
+    fn copilot_flow_conversation_to_publish_plan_requires_execution_lane() {
+        let parse_request = AgentParseCommandRequest {
+            command_text: "hey trispr create gdd about combat and publish to confluence"
+                .to_string(),
+            source: Some("test".to_string()),
+        };
+        let parse = parse_command(&parse_request, &make_wakewords(), &make_keywords());
+        assert!(parse.detected);
+        assert!(parse.publish_requested);
+
+        let plan_request = AgentBuildExecutionPlanRequest {
+            intent: parse.intent.clone(),
+            session_id: "s_publish".to_string(),
+            target_language: "en".to_string(),
+            publish: true,
+            command_text: Some(parse.command_text.clone()),
+            temporal_hint: parse.temporal_hint.clone(),
+            topic_hint: parse.topic_hint.clone(),
+            parse_confidence: Some(parse.confidence),
+        };
+        let plan = default_execution_plan(&plan_request);
+        assert_eq!(plan.analysis_steps.len(), 2);
+        assert_eq!(plan.execution_steps.len(), 1);
+        assert!(plan
+            .proposed_actions
+            .iter()
+            .any(|item| item.contains("publish to Confluence")));
+        assert!(should_publish_after_draft(&plan));
+    }
 }

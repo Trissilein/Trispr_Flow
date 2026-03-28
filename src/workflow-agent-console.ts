@@ -140,6 +140,10 @@ function renderPlanPreview(): void {
   const proposedActions = (currentPlan.proposed_actions ?? [])
     .map((item) => `- ${item}`)
     .join("\n");
+  const analysisSteps = (currentPlan.analysis_steps ?? []).map((step) => `- ${step.title}`).join("\n");
+  const executionSteps = (currentPlan.execution_steps ?? [])
+    .map((step) => `- ${step.title}`)
+    .join("\n");
   dom.workflowAgentPlanPreview.value = [
     `Intent: ${currentPlan.intent}`,
     `Session: ${currentPlan.session_id}`,
@@ -155,8 +159,14 @@ function renderPlanPreview(): void {
     "Proposed actions:",
     proposedActions || "- none",
     "",
-    "Steps:",
-    steps,
+    "Analysis lane (no side effects):",
+    analysisSteps || "- none",
+    "",
+    "Execution lane (side effects):",
+    executionSteps || "- none",
+    "",
+    "Combined steps:",
+    steps || "- none",
   ].join("\n");
 }
 

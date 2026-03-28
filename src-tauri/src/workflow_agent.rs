@@ -70,6 +70,10 @@ pub struct AgentExecutionPlan {
     pub session_title: String,
     pub target_language: String,
     pub publish: bool,
+    #[serde(default)]
+    pub analysis_steps: Vec<AgentExecutionStep>,
+    #[serde(default)]
+    pub execution_steps: Vec<AgentExecutionStep>,
     pub steps: Vec<AgentExecutionStep>,
     #[serde(default)]
     pub recognized_signals: Vec<String>,
@@ -619,32 +623,42 @@ pub fn default_execution_plan(request: &AgentBuildExecutionPlanRequest) -> Agent
         },
     ];
 
+    let analysis_steps = vec![
+        AgentExecutionStep {
+            id: "load_session".to_string(),
+            title: "Load transcript session".to_string(),
+            status: "pending".to_string(),
+            detail: None,
+        },
+        AgentExecutionStep {
+            id: "generate_draft".to_string(),
+            title: "Generate GDD draft".to_string(),
+            status: "pending".to_string(),
+            detail: None,
+        },
+    ];
+    let execution_steps = if request.publish {
+        vec![AgentExecutionStep {
+            id: "publish_or_queue".to_string(),
+            title: "Publish to Confluence or queue fallback".to_string(),
+            status: "pending".to_string(),
+            detail: None,
+        }]
+    } else {
+        Vec::new()
+    };
+    let mut steps = analysis_steps.clone();
+    steps.extend(execution_steps.clone());
+
     AgentExecutionPlan {
         intent: request.intent.clone(),
         session_id: request.session_id.clone(),
         session_title: format!("Session {}", request.session_id),
         target_language: request.target_language.clone(),
         publish: request.publish,
-        steps: vec![
-            AgentExecutionStep {
-                id: "load_session".to_string(),
-                title: "Load transcript session".to_string(),
-                status: "pending".to_string(),
-                detail: None,
-            },
-            AgentExecutionStep {
-                id: "generate_draft".to_string(),
-                title: "Generate GDD draft".to_string(),
-                status: "pending".to_string(),
-                detail: None,
-            },
-            AgentExecutionStep {
-                id: "publish_or_queue".to_string(),
-                title: "Publish to Confluence or queue fallback".to_string(),
-                status: "pending".to_string(),
-                detail: None,
-            },
-        ],
+        analysis_steps,
+        execution_steps,
+        steps,
         recognized_signals,
         assumptions,
         proposed_actions,
@@ -983,5 +997,26 @@ mod tests {
             .proposed_actions
             .iter()
             .any(|item| item.contains("publish to Confluence")));
+        assert_eq!(plan.analysis_steps.len(), 2);
+        assert_eq!(plan.execution_steps.len(), 1);
+        assert_eq!(plan.steps.len(), 3);
+    }
+
+    #[test]
+    fn default_execution_plan_omits_side_effect_lane_when_publish_is_false() {
+        let request = AgentBuildExecutionPlanRequest {
+            intent: "gdd_generate_publish".to_string(),
+            session_id: "s_123_789".to_string(),
+            target_language: "source".to_string(),
+            publish: false,
+            command_text: Some("hey trispr build draft".to_string()),
+            temporal_hint: None,
+            topic_hint: None,
+            parse_confidence: Some(0.72),
+        };
+        let plan = default_execution_plan(&request);
+        assert_eq!(plan.analysis_steps.len(), 2);
+        assert!(plan.execution_steps.is_empty());
+        assert_eq!(plan.steps.len(), 2);
     }
 }

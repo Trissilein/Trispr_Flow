@@ -309,6 +309,8 @@ export interface AgentExecutionPlan {
   session_title: string;
   target_language: AgentTargetLanguage;
   publish: boolean;
+  analysis_steps: AgentExecutionStep[];
+  execution_steps: AgentExecutionStep[];
   steps: AgentExecutionStep[];
   recognized_signals: string[];
   assumptions: string[];

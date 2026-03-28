@@ -1,16 +1,16 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-28 (Agent-Evolution roadmap accepted; S13.5 -> T -> V execution chain defined)
+Last updated: 2026-03-28 (Blocks T and V closed; entering Block U release hardening)
 
 This file is the canonical source for priorities and execution order.
 
 ## Canonical Current State
 
 - Released: `v0.7.0`, `v0.7.1`, `v0.7.2`
-- Current phase: `v0.8.0` execution prep with `Block S` closure complete (`S13` manual soak done, `S13.5` done, `v0.7.3` regression gates green).
-- **Next version bump**: `v0.8.0` after `Block T` completion + baseline regression gates green.
+- Current phase: `v0.8.x` assistant hardening with `Block T` + `Block V` completed and `Block U` active.
+- **Next version bump**: `v0.8.x` after `Block U` soak/release gates are green.
 - Foundation complete: Blocks F + G + H + L + M
-- Active execution blocks: Block T (assistant foundation), then Block V (GDD copilot loop), then Block U (assistant release gate)
+- Active execution blocks: Block U (assistant UX + soak + release gate)
 
 ## Analysis De-Scope Decision
 
@@ -34,10 +34,10 @@ This file is the canonical source for priorities and execution order.
 | N | Multimodal I/O modules (screen vision input + TTS voice output) | Extra High | M, L | Foundations complete ✅ (`N1-N12` + benchmark track) |
 | Q | Onboarding refinement and startup stability | Medium | D | Complete ✅ |
 | R | Local AI provider hardening (Input Truncation + LM Studio integration) | Low | Q, D | Planned / partial ✅ |
-| S | Build Recovery + Module Decoupling (`v0.7.3`) | High | N, Q | Active ♻️ (`S1-S9` done, `S10-S13` active) |
-| T | Assistant Pivot Foundation (`v0.8.0`) | Extra High | S, M | Planned |
-| V | GDD Copilot Loop (`v0.8.x`) | Extra High | T, L, M, N | Planned |
-| U | Assistant UX + Soak + Release Gate (`v0.8.x`) | Extra High | T, V | Planned |
+| S | Build Recovery + Module Decoupling (`v0.7.3`) | High | N, Q | Complete ✅ (`S1-S13.5`) |
+| T | Assistant Pivot Foundation (`v0.8.0`) | Extra High | S, M | Complete ✅ (`T1-T5`) |
+| V | GDD Copilot Loop (`v0.8.x`) | Extra High | T, L, M, N | Complete ✅ (`V1-V6`) |
+| U | Assistant UX + Soak + Release Gate (`v0.8.x`) | Extra High | T, V | Active ♻️ |
 
 ## v0.7 Task Ledger
 
@@ -156,11 +156,10 @@ Iterate proactive suggestions, role/skill profiles, and policy-bounded autonomy 
 
 ## Immediate Next Actions
 
-1. **Block T Execution Packet** (Sonnet): implement `T2-T5` with assistant state/event surface and mode-safe UX.
-2. **Block T Regression Gate**: verify mode-safety (`transcribe` vs `assistant`) and graceful degradation.
-3. **Block V Execution Packet** (Sonnet/Opus): implement copilot loop (`conversation -> suggestions -> draft`) with strict plan/execute separation.
-4. **Block U Hardening Packet** (Opus/Sonnet): assistant UX hardening + 8h/24h soak + release evidence.
-5. **Hold O/P as post-T/V/U expansions** while preserving GDD + Confluence stability.
+1. **Block U Hardening Packet** (Opus/Sonnet): assistant UX hardening + 8h/24h soak + release evidence.
+2. **Block U Gate Closure**: verify mode-safety + degraded-capability behavior + publish safety + long-run stability.
+3. **Release Readiness Bundle**: consolidate evidence (`build`, `tests`, soak logs, manual validation checklist).
+4. **Plan O/P follow-up** only after U gates are closed, keeping plan/confirm guarantees intact.
 
 ## References
 

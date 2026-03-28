@@ -1952,12 +1952,22 @@
                 </label>
                 <div class="auth-modal-actions">
                   <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn">Build Plan</button>
-                  <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn">Confirm & Execute</button>
                 </div>
                 <label class="field">
                   <span class="field-label">Plan preview</span>
                   <textarea id="workflow-agent-plan-preview" rows="5" readonly placeholder="Execution plan appears here..."></textarea>
                 </label>
+                <div class="field toggle">
+                  <label class="toggle-row">
+                    <span class="field-label">Review confirmed</span>
+                    <input id="workflow-agent-review-confirm" type="checkbox" title="Confirm you reviewed the plan details before execution" />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </label>
+                  <span id="workflow-agent-review-summary" class="field-hint">Build a plan first, then review signals, assumptions, and action lanes.</span>
+                </div>
+                <div class="auth-modal-actions">
+                  <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn">Confirm & Execute</button>
+                </div>
                 <label class="field">
                   <span class="field-label">Execution log</span>
                   <textarea id="workflow-agent-execution-log" rows="6" readonly placeholder="Agent events and execution output appear here..."></textarea>

@@ -313,6 +313,8 @@ export const workflowAgentTargetLanguage = $("workflow-agent-target-language") a
 export const workflowAgentBuildPlanBtn = $("workflow-agent-build-plan-btn") as HTMLButtonElement | null;
 export const workflowAgentExecuteBtn = $("workflow-agent-execute-btn") as HTMLButtonElement | null;
 export const workflowAgentPlanPreview = $("workflow-agent-plan-preview") as HTMLTextAreaElement | null;
+export const workflowAgentReviewConfirm = $("workflow-agent-review-confirm") as HTMLInputElement | null;
+export const workflowAgentReviewSummary = $("workflow-agent-review-summary") as HTMLSpanElement | null;
 export const workflowAgentExecutionLog = $("workflow-agent-execution-log") as HTMLTextAreaElement | null;
 
 // GDD flow modal

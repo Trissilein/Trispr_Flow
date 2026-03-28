@@ -67,6 +67,37 @@ function appendLog(line: string): void {
   dom.workflowAgentExecutionLog.scrollTop = dom.workflowAgentExecutionLog.scrollHeight;
 }
 
+function isReviewConfirmed(): boolean {
+  return Boolean(dom.workflowAgentReviewConfirm?.checked);
+}
+
+function setReviewConfirmed(value: boolean): void {
+  if (dom.workflowAgentReviewConfirm) {
+    dom.workflowAgentReviewConfirm.checked = value;
+  }
+}
+
+function renderReviewGate(): void {
+  const interactionEnabled = isWorkflowAgentEnabled() && isAssistantModeEnabled();
+  const hasPlan = Boolean(currentPlan);
+  const publishLaneActive = (currentPlan?.execution_steps?.length ?? 0) > 0;
+  const reviewConfirmed = isReviewConfirmed();
+  if (dom.workflowAgentReviewSummary) {
+    if (!hasPlan) {
+      dom.workflowAgentReviewSummary.textContent =
+        "Build a plan first, then review signals, assumptions, and action lanes.";
+    } else if (publishLaneActive) {
+      dom.workflowAgentReviewSummary.textContent =
+        "Side-effect lane detected (publish). Review and confirm is required before execute.";
+    } else {
+      dom.workflowAgentReviewSummary.textContent =
+        "Draft-only lane detected (no publish step). Confirm review to execute.";
+    }
+  }
+  const canExecute = interactionEnabled && hasPlan && reviewConfirmed;
+  dom.workflowAgentExecuteBtn?.toggleAttribute("disabled", !canExecute);
+}
+
 function renderStatus(): void {
   if (!dom.workflowAgentConsole) return;
   const enabled = isWorkflowAgentEnabled();
@@ -78,17 +109,19 @@ function renderStatus(): void {
     dom.workflowAgentRefreshCandidatesBtn,
     dom.workflowAgentTargetLanguage,
     dom.workflowAgentBuildPlanBtn,
-    dom.workflowAgentExecuteBtn,
+    dom.workflowAgentReviewConfirm,
   ];
   controls.forEach((control) => control?.toggleAttribute("disabled", !interactionEnabled));
 
   if (!dom.workflowAgentStatus) return;
   if (!enabled) {
     dom.workflowAgentStatus.textContent = "Agent disabled.";
+    renderReviewGate();
     return;
   }
   if (!isAssistantModeEnabled()) {
     dom.workflowAgentStatus.textContent = "Assistant mode is off. Switch Product mode to Assistant.";
+    renderReviewGate();
     return;
   }
 
@@ -96,6 +129,7 @@ function renderStatus(): void {
   const base = `Assistant state: ${stateLabel.replace(/_/g, " ")}.`;
   if (!latestAssistantState?.capability?.degraded) {
     dom.workflowAgentStatus.textContent = base;
+    renderReviewGate();
     return;
   }
   const softMissing = latestAssistantState.capability.missing_capabilities
@@ -104,6 +138,7 @@ function renderStatus(): void {
   dom.workflowAgentStatus.textContent = softMissing
     ? `${base} Degraded capability: ${softMissing}.`
     : `${base} Degraded capability mode active.`;
+  renderReviewGate();
 }
 
 function renderCandidates(): void {
@@ -130,6 +165,7 @@ function renderPlanPreview(): void {
   if (!dom.workflowAgentPlanPreview) return;
   if (!currentPlan) {
     dom.workflowAgentPlanPreview.value = "";
+    renderReviewGate();
     return;
   }
   const steps = currentPlan.steps.map((step) => `- ${step.title}`).join("\n");
@@ -168,6 +204,7 @@ function renderPlanPreview(): void {
     "Combined steps:",
     steps || "- none",
   ].join("\n");
+  renderReviewGate();
 }
 
 function matchesWakeword(text: string): boolean {
@@ -244,6 +281,7 @@ async function refreshCandidates(): Promise<void> {
   lastCandidates = candidates;
   selectedSessionId = ""; // M9: require explicit selection, no auto-select
   currentPlan = null;
+  setReviewConfirmed(false);
   renderCandidates();
   renderPlanPreview();
   appendLog(`Session search -> ${candidates.length} candidate(s) found.`);
@@ -315,8 +353,9 @@ async function buildPlan(): Promise<void> {
     parse_confidence: lastParse.confidence,
   };
   currentPlan = await invoke<AgentExecutionPlan>("agent_build_execution_plan", { request: req });
+  setReviewConfirmed(false);
   renderPlanPreview();
-  appendLog("Execution plan ready.");
+  appendLog("Execution plan ready. Review the plan details and confirm review before execution.");
 }
 
 async function executePlan(): Promise<void> {
@@ -327,6 +366,15 @@ async function executePlan(): Promise<void> {
       title: "No plan",
       message: "Build a plan before execution.",
       duration: 3000,
+    });
+    return;
+  }
+  if (!isReviewConfirmed()) {
+    showToast({
+      type: "warning",
+      title: "Review required",
+      message: "Review the plan and toggle review confirmation before execution.",
+      duration: 3500,
     });
     return;
   }
@@ -369,11 +417,24 @@ function bindUi(): void {
     const button = target?.closest<HTMLButtonElement>("[data-session-id]");
     if (!button) return;
     selectedSessionId = button.dataset.sessionId || "";
+    currentPlan = null;
+    setReviewConfirmed(false);
     renderCandidates();
+    renderPlanPreview();
     appendLog(`Selected session ${selectedSessionId}`);
   });
   dom.workflowAgentTargetLanguage?.addEventListener("change", () => {
     languageExplicitlySet = true; // M10: user actively chose language
+    if (!currentPlan) {
+      return;
+    }
+    currentPlan = null;
+    setReviewConfirmed(false);
+    renderPlanPreview();
+    appendLog("Target language changed. Rebuild the execution plan.");
+  });
+  dom.workflowAgentReviewConfirm?.addEventListener("change", () => {
+    renderReviewGate();
   });
 }
 
@@ -390,10 +451,12 @@ export function initWorkflowAgentConsole(): void {
   renderStatus();
   renderCandidates();
   renderPlanPreview();
+  renderReviewGate();
 }
 
 export function syncWorkflowAgentConsoleState(): void {
   renderStatus();
+  renderReviewGate();
 }
 
 export async function handleWorkflowAgentRawResult(

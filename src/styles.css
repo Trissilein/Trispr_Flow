@@ -496,12 +496,11 @@ h1 {
 #tab-settings [data-panel="system"]    { grid-area: system; }
 #tab-settings [data-panel="model"]     { grid-area: model; }
 
-/* Standard mode: stack Settings panels in one column */
+/* Standard mode: keep microphone + system panels side by side */
 html.standard-mode #tab-settings.active {
   grid-template-areas:
     "interface interface"
-    "capture capture"
-    "system system"
+    "capture system"
     "model model";
 }
 

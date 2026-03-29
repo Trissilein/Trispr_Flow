@@ -93,6 +93,8 @@ pub struct AgentExecuteGddPlanRequest {
     pub space_key: Option<String>,
     pub parent_page_id: Option<String>,
     pub target_page_id: Option<String>,
+    #[serde(default)]
+    pub confirmation_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

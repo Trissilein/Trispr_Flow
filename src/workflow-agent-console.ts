@@ -26,6 +26,12 @@ let latestAssistantState: AssistantStateChangedEvent | null = null;
 let latestIntentLine = "No intent detected yet.";
 let latestReplyLine = "No replies yet.";
 let latestConfirmationLine = "No pending confirmation.";
+let pendingConfirmationToken: string | null = null;
+let pendingConfirmationExpiresAtMs: number | null = null;
+let pendingConfirmationTimer: number | null = null;
+
+const CONFIRM_KEYWORDS = ["confirm", "confirmed", "bestätigen", "bestaetigen", "freigeben", "ok"];
+const CANCEL_KEYWORDS = ["cancel", "abbrechen", "stopp", "stop"];
 
 function ensureWorkflowAgentDefaults(): void {
   if (!settings) return;
@@ -108,6 +114,57 @@ async function persistWorkflowAgentSettings(): Promise<void> {
   } catch (error) {
     console.error("Failed to persist workflow agent settings", error);
   }
+}
+
+function clearPendingConfirmationTimer(): void {
+  if (pendingConfirmationTimer !== null) {
+    window.clearTimeout(pendingConfirmationTimer);
+    pendingConfirmationTimer = null;
+  }
+}
+
+function clearPendingConfirmationState(): void {
+  pendingConfirmationToken = null;
+  pendingConfirmationExpiresAtMs = null;
+  clearPendingConfirmationTimer();
+}
+
+async function cancelPendingConfirmation(reason: "timeout" | "cancelled_by_voice"): Promise<void> {
+  try {
+    await invoke("agent_cancel_pending_confirmation", {
+      request: {
+        reason,
+      },
+    });
+  } catch (error) {
+    console.warn("Failed to cancel pending confirmation", error);
+  } finally {
+    clearPendingConfirmationState();
+    latestConfirmationLine =
+      reason === "timeout" ? "Confirmation expired (timeout)." : "Pending confirmation cancelled.";
+    renderLiveState();
+  }
+}
+
+function schedulePendingConfirmationTimeout(expiresAtMs: number): void {
+  clearPendingConfirmationTimer();
+  const delayMs = Math.max(0, expiresAtMs - Date.now());
+  pendingConfirmationTimer = window.setTimeout(() => {
+    void cancelPendingConfirmation("timeout");
+  }, delayMs);
+}
+
+function normalizeToken(value: string): string {
+  return value
+    .toLowerCase()
+    .split("")
+    .filter((char) => /[a-z0-9]/.test(char))
+    .join("");
+}
+
+function containsAnyKeyword(text: string, keywords: string[]): boolean {
+  const normalized = text.toLowerCase();
+  return keywords.some((keyword) => normalized.includes(keyword));
 }
 
 function appendLog(line: string): void {
@@ -468,7 +525,7 @@ async function buildPlan(): Promise<void> {
   appendLog("Execution plan ready. Review the plan details and confirm review before execution.");
 }
 
-async function executePlan(): Promise<void> {
+async function executePlan(confirmationToken?: string): Promise<void> {
   if (!isAssistantModeEnabled()) return;
   if (!currentPlan) {
     showToast({
@@ -498,10 +555,15 @@ async function executePlan(): Promise<void> {
       space_key: settings?.confluence_settings?.default_space_key || null,
       parent_page_id: settings?.confluence_settings?.default_parent_page_id || null,
       target_page_id: null,
+      confirmation_token: confirmationToken ?? null,
     },
   });
+  if (result.status !== "failed") {
+    clearPendingConfirmationState();
+  }
   latestReplyLine = result.message;
-  latestConfirmationLine = "No pending confirmation.";
+  latestConfirmationLine =
+    result.status === "failed" ? latestConfirmationLine : "No pending confirmation.";
   renderLiveState();
   appendLog(`Execution result -> ${result.status}: ${result.message}`);
   showToast({
@@ -630,13 +692,34 @@ export async function handleWorkflowAgentRawResult(
   if (!isAssistantModeEnabled()) return;
   if (!settings?.workflow_agent?.hands_free_enabled) return;
   if (!payload?.text?.trim()) return;
-  if (!matchesWakeword(payload.text)) return;
+  const spoken = payload.text.trim();
+  if (!matchesWakeword(spoken)) return;
 
-  appendLog(`Wakeword detected from ${payload.source}.`);
-  if (dom.workflowAgentCommandInput) {
-    dom.workflowAgentCommandInput.value = payload.text;
+  if (pendingConfirmationToken) {
+    const normalizedSpoken = spoken.toLowerCase();
+    if (containsAnyKeyword(normalizedSpoken, CANCEL_KEYWORDS)) {
+      appendLog(`Voice cancel detected from ${payload.source}.`);
+      await cancelPendingConfirmation("cancelled_by_voice");
+      return;
+    }
+
+    const pendingTokenNormalized = normalizeToken(pendingConfirmationToken);
+    const spokenTokenNormalized = normalizeToken(spoken);
+    const confirms = containsAnyKeyword(normalizedSpoken, CONFIRM_KEYWORDS);
+    const tokenMatched = pendingTokenNormalized.length > 0
+      && spokenTokenNormalized.includes(pendingTokenNormalized);
+    if (confirms && tokenMatched) {
+      appendLog(`Voice confirmation token accepted from ${payload.source}.`);
+      await executePlan(pendingConfirmationToken);
+      return;
+    }
   }
-  await parseCommand(payload.text);
+
+  appendLog(`Wakeword command detected from ${payload.source}.`);
+  if (dom.workflowAgentCommandInput) {
+    dom.workflowAgentCommandInput.value = spoken;
+  }
+  await parseCommand(spoken);
 }
 
 export function appendWorkflowAgentLog(line: string): void {
@@ -645,6 +728,11 @@ export function appendWorkflowAgentLog(line: string): void {
 
 export function handleAssistantStateChanged(payload: AssistantStateChangedEvent): void {
   latestAssistantState = payload;
+  if (payload.state !== "awaiting_confirm" && pendingConfirmationToken) {
+    clearPendingConfirmationState();
+    latestConfirmationLine = "No pending confirmation.";
+    renderLiveState();
+  }
   renderStatus();
 }
 
@@ -656,11 +744,29 @@ export function handleAssistantIntentDetected(payload: AssistantIntentDetectedEv
 }
 
 export function handleAssistantAwaitingConfirmation(payload: AssistantAwaitingConfirmationEvent): void {
-  latestConfirmationLine = `Awaiting confirm (${payload.confirm_timeout_sec}s): ${payload.plan.summary}`;
+  pendingConfirmationToken = payload.confirm_token?.trim() || null;
+  pendingConfirmationExpiresAtMs = payload.expires_at_ms;
+  if (pendingConfirmationExpiresAtMs) {
+    schedulePendingConfirmationTimeout(pendingConfirmationExpiresAtMs);
+  }
+  latestConfirmationLine = pendingConfirmationToken
+    ? `Awaiting confirm (${payload.confirm_timeout_sec}s), token ${pendingConfirmationToken}: ${payload.plan.summary}`
+    : `Awaiting confirm (${payload.confirm_timeout_sec}s): ${payload.plan.summary}`;
   renderLiveState();
 }
 
 export function handleAssistantConfirmationExpired(payload: AssistantConfirmationExpiredEvent): void {
+  clearPendingConfirmationState();
   latestConfirmationLine = `Confirmation expired (${new Date(payload.expired_at_ms).toLocaleTimeString()}).`;
   renderLiveState();
+}
+
+export function handleAssistantActionResult(
+  payload: { result: AgentExecutionResult }
+): void {
+  if (payload.result.status === "completed" || payload.result.status === "queued" || payload.result.status === "cancelled") {
+    clearPendingConfirmationState();
+    latestConfirmationLine = "No pending confirmation.";
+    renderLiveState();
+  }
 }

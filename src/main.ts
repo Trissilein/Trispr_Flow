@@ -107,6 +107,7 @@ import { initOnboardingWizard } from "./onboarding-wizard";
 import { initPipelineStatus } from "./pipeline-status";
 import {
   appendWorkflowAgentLog,
+  handleAssistantActionResult as handleWorkflowAssistantActionResult,
   handleAssistantAwaitingConfirmation,
   handleAssistantConfirmationExpired,
   handleAssistantIntentDetected,
@@ -1009,6 +1010,7 @@ async function bootstrap() {
     }),
     listen<AssistantActionResultEvent>("assistant:action-result", (event) => {
       if (!event.payload) return;
+      handleWorkflowAssistantActionResult(event.payload);
       appendWorkflowAgentLog(
         `Event assistant:action-result -> status=${event.payload.result.status}, reason=${event.payload.reason}`
       );

@@ -380,6 +380,7 @@ export interface AssistantAwaitingConfirmationEvent {
   state: AssistantOrchestratorState;
   reason: string;
   plan: AgentExecutionPlan;
+  confirm_token: string;
   confirm_timeout_sec: number;
   expires_at_ms: number;
   capability: AssistantCapabilitySnapshot;

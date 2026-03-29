@@ -47,6 +47,7 @@ use std::sync::Mutex;
 // Backoff schedule: 1st fail→immediate, 2nd→2 s, 3rd→4 s, 4th→8 s, 5+→30 s.
 static OLLAMA_DIAG_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
 static OLLAMA_DIAG_NEXT_MS: AtomicU64 = AtomicU64::new(0);
+static ASSISTANT_CONFIRM_TOKEN_SEQ: AtomicU64 = AtomicU64::new(1_000);
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::thread;
@@ -127,6 +128,16 @@ const CLIPBOARD_RETRY_INTERVAL_MS: u64 = 50;
 const CLIPBOARD_CAPTURE_TIMEOUT_MS: u64 = 1_000;
 const CLIPBOARD_RESTORE_DELAY_MS: u64 = 350;
 const CLIPBOARD_RESTORE_TIMEOUT_MS: u64 = 3_000;
+
+#[derive(Debug, Clone)]
+struct PendingAssistantConfirmation {
+    plan: crate::workflow_agent::AgentExecutionPlan,
+    confirm_token: String,
+    expires_at_ms: u64,
+}
+
+static ASSISTANT_PENDING_CONFIRMATION: Mutex<Option<PendingAssistantConfirmation>> =
+    Mutex::new(None);
 
 static LAST_TRAY_CLICK_MS: AtomicU64 = AtomicU64::new(0);
 static TRAY_CAPTURE_STATE: AtomicU8 = AtomicU8::new(0);
@@ -4687,8 +4698,18 @@ struct AssistantAwaitingConfirmationEvent {
     state: AssistantOrchestratorState,
     reason: String,
     plan: crate::workflow_agent::AgentExecutionPlan,
+    confirm_token: String,
     confirm_timeout_sec: u16,
     expires_at_ms: u64,
+    capability: AssistantCapabilitySnapshot,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct AssistantConfirmationExpiredEvent {
+    state: AssistantOrchestratorState,
+    reason: String,
+    expired_at_ms: u64,
     capability: AssistantCapabilitySnapshot,
 }
 
@@ -4699,6 +4720,103 @@ struct AssistantActionResultEvent {
     reason: String,
     result: crate::workflow_agent::AgentExecutionResult,
     capability: AssistantCapabilitySnapshot,
+}
+
+#[derive(Debug)]
+enum PendingConfirmationError {
+    Missing,
+    Expired { expired_at_ms: u64 },
+    TokenMismatch,
+    PlanMismatch,
+}
+
+fn next_confirmation_token() -> String {
+    let seq = ASSISTANT_CONFIRM_TOKEN_SEQ.fetch_add(1, Ordering::Relaxed);
+    let code = (seq % 9_000) + 1_000;
+    format!("{code:04}")
+}
+
+fn normalize_confirmation_token(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
+}
+
+fn plans_match_for_confirmation(
+    left: &crate::workflow_agent::AgentExecutionPlan,
+    right: &crate::workflow_agent::AgentExecutionPlan,
+) -> bool {
+    left.intent == right.intent
+        && left.session_id == right.session_id
+        && left.target_language == right.target_language
+        && left.publish == right.publish
+}
+
+fn register_pending_confirmation(
+    plan: &crate::workflow_agent::AgentExecutionPlan,
+    confirm_timeout_sec: u16,
+) -> (String, u64) {
+    let token = next_confirmation_token();
+    let expires_at_ms = crate::util::now_ms().saturating_add(confirm_timeout_sec as u64 * 1_000);
+    let mut pending = ASSISTANT_PENDING_CONFIRMATION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *pending = Some(PendingAssistantConfirmation {
+        plan: plan.clone(),
+        confirm_token: token.clone(),
+        expires_at_ms,
+    });
+    (token, expires_at_ms)
+}
+
+fn clear_pending_confirmation() {
+    let mut pending = ASSISTANT_PENDING_CONFIRMATION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *pending = None;
+}
+
+fn clear_pending_confirmation_for_plan(plan: &crate::workflow_agent::AgentExecutionPlan) {
+    let mut pending = ASSISTANT_PENDING_CONFIRMATION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if pending
+        .as_ref()
+        .map(|entry| plans_match_for_confirmation(&entry.plan, plan))
+        .unwrap_or(false)
+    {
+        *pending = None;
+    }
+}
+
+fn consume_pending_confirmation(
+    plan: &crate::workflow_agent::AgentExecutionPlan,
+    token: &str,
+) -> Result<(), PendingConfirmationError> {
+    let now_ms = crate::util::now_ms();
+    let mut pending = ASSISTANT_PENDING_CONFIRMATION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(current) = pending.as_ref() else {
+        return Err(PendingConfirmationError::Missing);
+    };
+    if now_ms > current.expires_at_ms {
+        let expired_at_ms = current.expires_at_ms;
+        *pending = None;
+        return Err(PendingConfirmationError::Expired { expired_at_ms });
+    }
+    if !plans_match_for_confirmation(&current.plan, plan) {
+        return Err(PendingConfirmationError::PlanMismatch);
+    }
+    if normalize_confirmation_token(token)
+        != normalize_confirmation_token(current.confirm_token.as_str())
+    {
+        return Err(PendingConfirmationError::TokenMismatch);
+    }
+    *pending = None;
+    Ok(())
 }
 
 fn assistant_product_mode(settings: &Settings) -> &'static str {
@@ -4822,6 +4940,7 @@ fn emit_assistant_baseline_state(
 ) -> AssistantStateChangedEvent {
     let capability = assistant_capability_snapshot(settings);
     let (baseline_state, baseline_reason) = assistant_baseline_state(&capability);
+    clear_pending_confirmation();
     let reason = if trigger.trim().is_empty() {
         baseline_reason.to_string()
     } else {
@@ -4892,16 +5011,69 @@ fn emit_assistant_awaiting_confirmation(
         return;
     }
     let confirm_timeout_sec = settings.workflow_agent.confirm_timeout_sec.clamp(10, 300);
-    let expires_at_ms = crate::util::now_ms().saturating_add(confirm_timeout_sec as u64 * 1_000);
+    let (confirm_token, expires_at_ms) = register_pending_confirmation(plan, confirm_timeout_sec);
     let payload = AssistantAwaitingConfirmationEvent {
         state: AssistantOrchestratorState::AwaitingConfirm,
         reason: reason.to_string(),
         plan: plan.clone(),
+        confirm_token,
         confirm_timeout_sec,
         expires_at_ms,
         capability,
     };
     let _ = app.emit("assistant:awaiting-confirmation", &payload);
+}
+
+fn emit_assistant_confirmation_expired(
+    app: &AppHandle,
+    settings: &Settings,
+    reason: &str,
+    expired_at_ms: u64,
+) {
+    let capability = assistant_capability_snapshot(settings);
+    if !capability.assistant_mode {
+        return;
+    }
+    let payload = AssistantConfirmationExpiredEvent {
+        state: AssistantOrchestratorState::Recovering,
+        reason: reason.to_string(),
+        expired_at_ms,
+        capability,
+    };
+    let _ = app.emit("assistant:confirmation-expired", &payload);
+}
+
+fn expire_pending_confirmation_if_needed(
+    app: &AppHandle,
+    state: &AppState,
+    settings: &Settings,
+    trigger: &str,
+) -> bool {
+    let now_ms = crate::util::now_ms();
+    let expired_at_ms = {
+        let mut pending = ASSISTANT_PENDING_CONFIRMATION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match pending.as_ref() {
+            Some(entry) if now_ms > entry.expires_at_ms => {
+                let expired_at_ms = entry.expires_at_ms;
+                *pending = None;
+                Some(expired_at_ms)
+            }
+            _ => None,
+        }
+    };
+    if let Some(expired_at_ms) = expired_at_ms {
+        emit_assistant_confirmation_expired(
+            app,
+            settings,
+            &format!("{}:timeout", trigger),
+            expired_at_ms,
+        );
+        let _ = emit_assistant_baseline_state(app, state, settings, trigger);
+        return true;
+    }
+    false
 }
 
 fn emit_assistant_action_result(
@@ -5119,6 +5291,88 @@ fn agent_list_supported_actions() -> Vec<String> {
     vec!["gdd_generate_publish".to_string()]
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct AgentCancelPendingConfirmationRequest {
+    reason: Option<String>,
+}
+
+#[tauri::command]
+fn agent_cancel_pending_confirmation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: Option<AgentCancelPendingConfirmationRequest>,
+) -> Result<crate::workflow_agent::AgentExecutionResult, String> {
+    guarded_command!("agent_cancel_pending_confirmation", {
+        let settings_snapshot = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            settings.clone()
+        };
+        let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
+        let reason = request
+            .and_then(|value| value.reason)
+            .unwrap_or_else(|| "cancelled_by_user".to_string());
+        let reason_trimmed = reason.trim().to_string();
+        let pending = {
+            let mut guard = ASSISTANT_PENDING_CONFIRMATION
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard.take()
+        };
+
+        if pending.is_none() {
+            return Ok(crate::workflow_agent::AgentExecutionResult {
+                status: "cancelled".to_string(),
+                message: "No pending confirmation to cancel.".to_string(),
+                draft: None,
+                publish_result: None,
+                queued_job: None,
+                error: None,
+            });
+        }
+
+        let pending = pending.expect("checked is_some");
+        let result = crate::workflow_agent::AgentExecutionResult {
+            status: "cancelled".to_string(),
+            message: "Pending confirmation cancelled.".to_string(),
+            draft: None,
+            publish_result: None,
+            queued_job: None,
+            error: None,
+        };
+
+        if assistant_mode {
+            if reason_trimmed.eq_ignore_ascii_case("timeout") {
+                emit_assistant_confirmation_expired(
+                    &app,
+                    &settings_snapshot,
+                    "agent_cancel_pending_confirmation:timeout",
+                    pending.expires_at_ms,
+                );
+            } else {
+                emit_assistant_action_result(
+                    &app,
+                    &settings_snapshot,
+                    AssistantOrchestratorState::Recovering,
+                    &result,
+                    "agent_cancel_pending_confirmation",
+                );
+            }
+            let _ = emit_assistant_baseline_state(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                "agent_cancel_pending_confirmation",
+            );
+        }
+
+        Ok(result)
+    })
+}
+
 #[tauri::command]
 fn agent_parse_command(
     app: AppHandle,
@@ -5135,6 +5389,14 @@ fn agent_parse_command(
             settings.clone()
         };
         let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
+        if assistant_mode {
+            let _ = expire_pending_confirmation_if_needed(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                "agent_parse_command",
+            );
+        }
         if assistant_mode {
             let _ = transition_assistant_state_with_settings(
                 &app,
@@ -5227,6 +5489,14 @@ fn agent_build_execution_plan(
             settings.clone()
         };
         let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
+        if assistant_mode {
+            let _ = expire_pending_confirmation_if_needed(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                "agent_build_execution_plan",
+            );
+        }
         if request.intent.trim().is_empty() {
             return Err("Intent is required.".to_string());
         }
@@ -5299,6 +5569,14 @@ fn agent_execute_gdd_plan(
         };
         let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
         if assistant_mode {
+            let _ = expire_pending_confirmation_if_needed(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                "agent_execute_gdd_plan",
+            );
+        }
+        if assistant_mode {
             let _ = transition_assistant_state_with_settings(
                 &app,
                 state.inner(),
@@ -5306,6 +5584,131 @@ fn agent_execute_gdd_plan(
                 AssistantOrchestratorState::Executing,
                 "agent_execute_gdd_plan:start",
             );
+        }
+        let confirmation_token = request
+            .confirmation_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(str::to_string);
+
+        if let Some(token) = confirmation_token.as_deref() {
+            match consume_pending_confirmation(&plan, token) {
+                Ok(()) => {}
+                Err(PendingConfirmationError::Missing) => {
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "No pending confirmation for this execution.".to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("confirmation_missing".to_string()),
+                    };
+                    if assistant_mode {
+                        emit_assistant_action_result(
+                            &app,
+                            &settings_snapshot,
+                            AssistantOrchestratorState::Recovering,
+                            &result,
+                            "agent_execute_gdd_plan:confirmation_missing",
+                        );
+                        let _ = emit_assistant_baseline_state(
+                            &app,
+                            state.inner(),
+                            &settings_snapshot,
+                            "agent_execute_gdd_plan:confirmation_missing",
+                        );
+                    }
+                    return Ok(result);
+                }
+                Err(PendingConfirmationError::Expired { expired_at_ms }) => {
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "Confirmation token expired. Build a new plan and confirm again."
+                            .to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("confirmation_expired".to_string()),
+                    };
+                    if assistant_mode {
+                        emit_assistant_confirmation_expired(
+                            &app,
+                            &settings_snapshot,
+                            "agent_execute_gdd_plan:confirmation_expired",
+                            expired_at_ms,
+                        );
+                        emit_assistant_action_result(
+                            &app,
+                            &settings_snapshot,
+                            AssistantOrchestratorState::Recovering,
+                            &result,
+                            "agent_execute_gdd_plan:confirmation_expired",
+                        );
+                        let _ = emit_assistant_baseline_state(
+                            &app,
+                            state.inner(),
+                            &settings_snapshot,
+                            "agent_execute_gdd_plan:confirmation_expired",
+                        );
+                    }
+                    return Ok(result);
+                }
+                Err(PendingConfirmationError::TokenMismatch) => {
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "Invalid confirmation token.".to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("confirmation_token_mismatch".to_string()),
+                    };
+                    if assistant_mode {
+                        emit_assistant_action_result(
+                            &app,
+                            &settings_snapshot,
+                            AssistantOrchestratorState::Recovering,
+                            &result,
+                            "agent_execute_gdd_plan:confirmation_token_mismatch",
+                        );
+                        let _ = emit_assistant_baseline_state(
+                            &app,
+                            state.inner(),
+                            &settings_snapshot,
+                            "agent_execute_gdd_plan:confirmation_token_mismatch",
+                        );
+                    }
+                    return Ok(result);
+                }
+                Err(PendingConfirmationError::PlanMismatch) => {
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "Confirmation token does not match the active plan.".to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("confirmation_plan_mismatch".to_string()),
+                    };
+                    if assistant_mode {
+                        emit_assistant_action_result(
+                            &app,
+                            &settings_snapshot,
+                            AssistantOrchestratorState::Recovering,
+                            &result,
+                            "agent_execute_gdd_plan:confirmation_plan_mismatch",
+                        );
+                        let _ = emit_assistant_baseline_state(
+                            &app,
+                            state.inner(),
+                            &settings_snapshot,
+                            "agent_execute_gdd_plan:confirmation_plan_mismatch",
+                        );
+                    }
+                    return Ok(result);
+                }
+            }
+        } else {
+            clear_pending_confirmation_for_plan(&plan);
         }
 
         let execution_result =
@@ -10254,6 +10657,7 @@ pub fn run() {
             search_transcript_sessions,
             agent_build_execution_plan,
             agent_execute_gdd_plan,
+            agent_cancel_pending_confirmation,
             list_screen_sources,
             start_vision_stream,
             stop_vision_stream,

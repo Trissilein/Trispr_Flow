@@ -50,6 +50,7 @@ import type {
   AssistantIntentDetectedEvent,
   AssistantPlanReadyEvent,
   AssistantStateChangedEvent,
+  PiperVoiceDownloadProgress,
 } from "./types";
 import {
   settings,
@@ -73,7 +74,7 @@ import {
   isRefinementEnabled,
 } from "./state";
 import * as dom from "./dom-refs";
-import { renderAIFallbackSettingsUi, renderSettings } from "./settings";
+import { handlePiperVoiceDownloadProgress, renderAIFallbackSettingsUi, renderSettings } from "./settings";
 import { renderDevices, renderOutputDevices } from "./devices";
 import {
   renderHero,
@@ -1099,6 +1100,10 @@ async function bootstrap() {
       );
       setModels(updatedModels);
       scheduleModelRender();
+    }),
+    listen<PiperVoiceDownloadProgress>("piper:voice-download-progress", (event) => {
+      if (!event.payload) return;
+      handlePiperVoiceDownloadProgress(event.payload);
     }),
     listen<DownloadComplete>("model:download-complete", async (event) => {
       modelProgress.delete(event.payload.id);

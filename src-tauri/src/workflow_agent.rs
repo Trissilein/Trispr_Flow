@@ -405,7 +405,9 @@ pub fn parse_command(
         "freigeben",
     ];
 
-    let recap_hit = recap_keywords.iter().any(|keyword| normalized.contains(keyword));
+    let recap_hit = recap_keywords
+        .iter()
+        .any(|keyword| normalized.contains(keyword));
     let plan_status_hit = plan_status_keywords
         .iter()
         .any(|keyword| normalized.contains(keyword));

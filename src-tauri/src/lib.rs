@@ -5747,10 +5747,9 @@ fn agent_execute_gdd_plan(
                     .one_click_confidence_threshold;
                 let vision_bridge_enabled =
                     capability_enabled(&settings_snapshot, RuntimeCapability::VisionInput);
-                let tts_bridge_enabled = capability_enabled(
-                    &settings_snapshot,
-                    RuntimeCapability::VoiceOutputTts,
-                ) && settings_snapshot.workflow_agent.voice_feedback_enabled;
+                let tts_bridge_enabled =
+                    capability_enabled(&settings_snapshot, RuntimeCapability::VoiceOutputTts)
+                        && settings_snapshot.workflow_agent.voice_feedback_enabled;
                 let maybe_agent_speak = |context: &str, message: &str| {
                     if !tts_bridge_enabled || message.trim().is_empty() {
                         return;
@@ -6449,6 +6448,7 @@ fn list_piper_voice_catalog(
 
 #[tauri::command]
 fn download_piper_voice_key(
+    app: AppHandle,
     state: State<'_, AppState>,
     voice_key: String,
 ) -> Result<String, String> {
@@ -6459,7 +6459,10 @@ fn download_piper_voice_key(
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         require_capability_enabled(&settings, RuntimeCapability::VoiceOutputTts)?;
     }
-    let path = crate::multimodal_io::download_piper_voice(voice_key.trim())?;
+    let path =
+        crate::multimodal_io::download_piper_voice_with_progress(voice_key.trim(), |progress| {
+            let _ = app.emit("piper:voice-download-progress", progress);
+        })?;
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -6747,7 +6750,9 @@ fn speak_tts_internal(
                         recovered_output_device = true;
                         Ok(outcome)
                     }
-                    Err(retry_error) => Err(format!("{error} Retry with default device failed: {retry_error}")),
+                    Err(retry_error) => Err(format!(
+                        "{error} Retry with default device failed: {retry_error}"
+                    )),
                 }
             }
             Err(error) => Err(error),
@@ -6984,7 +6989,8 @@ fn test_tts_provider(
                                 .settings
                                 .write()
                                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-                            settings_guard.voice_output_settings.output_device = "default".to_string();
+                            settings_guard.voice_output_settings.output_device =
+                                "default".to_string();
                         }
                         let snapshot = state
                             .settings
@@ -6996,7 +7002,8 @@ fn test_tts_provider(
                         outcome
                     }
                     Err(retry_error) => {
-                        let merged = format!("{error} Retry with default device failed: {retry_error}");
+                        let merged =
+                            format!("{error} Retry with default device failed: {retry_error}");
                         tracing::error!(
                             "test_tts_provider failed preferred='{}' fallback='{}' device='{}': {}",
                             preferred_provider,
@@ -7071,9 +7078,7 @@ fn test_tts_provider(
                     preferred_provider, provider_used
                 );
                 if recovered_output_device {
-                    format!(
-                        "{fallback_msg} Gerät ungültig, auf Default zurückgesetzt."
-                    )
+                    format!("{fallback_msg} Gerät ungültig, auf Default zurückgesetzt.")
                 } else {
                     fallback_msg
                 }

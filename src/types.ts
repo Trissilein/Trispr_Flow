@@ -465,6 +465,16 @@ export interface PiperVoiceCatalogEntry {
   path: string | null;
 }
 
+export interface PiperVoiceDownloadProgress {
+  voice_key: string;
+  stage: "started" | "downloading" | "completed" | "error";
+  file_name: string;
+  downloaded_bytes: number;
+  total_bytes?: number | null;
+  percent?: number | null;
+  message?: string | null;
+}
+
 export interface TtsSpeakResult {
   provider_used: "windows_native" | "windows_natural" | "local_custom" | string;
   accepted: boolean;

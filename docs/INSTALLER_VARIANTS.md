@@ -35,7 +35,7 @@ FFmpeg is SHA256-verified after download (`b90225987bdd...`). If FFmpeg is unava
 falls back to WAV mode gracefully (`opus.rs::find_ffmpeg()` handles missing binary).
 
 Installer Components page now contains:
-- Curated Piper list (>= medium, no US): `de_DE-thorsten-medium`, `de_DE-mls-medium`, `en_GB-alan-medium`, `en_GB-alba-medium`, `en_GB-cori-high`.
+- Curated Piper list (>= medium, no US): `de_DE-thorsten-medium`, `de_DE-thorsten_emotional-medium`, `en_GB-alan-medium`, `en_GB-alba-medium`, `en_GB-cori-high`.
 - Extra key input field (`<locale>-<voice>-<quality>`, one key per line, quality in `x_low|low|medium|high`).
 
 Behavior:

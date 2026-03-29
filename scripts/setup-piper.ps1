@@ -15,7 +15,7 @@
 
     Optional curated catalog (download with -IncludeCuratedVoices):
       - de_DE-thorsten-medium
-      - de_DE-mls-medium
+      - de_DE-thorsten_emotional-medium
       - en_GB-alan-medium
       - en_GB-alba-medium
       - en_GB-cori-high
@@ -129,11 +129,11 @@ if (-not $SkipVoices) {
 
     # Curated installer catalog (>= medium, no US voices)
     $CuratedVoices = @(
-        @{ Key = "de_DE-thorsten-medium"; HfPath = "de/de_DE/thorsten/medium"; ApproxMb = 53 },
-        @{ Key = "de_DE-mls-medium";      HfPath = "de/de_DE/mls/medium";      ApproxMb = 54 },
-        @{ Key = "en_GB-alan-medium";     HfPath = "en/en_GB/alan/medium";     ApproxMb = 56 },
-        @{ Key = "en_GB-alba-medium";     HfPath = "en/en_GB/alba/medium";     ApproxMb = 57 },
-        @{ Key = "en_GB-cori-high";       HfPath = "en/en_GB/cori/high";       ApproxMb = 81 }
+        @{ Key = "de_DE-thorsten-medium";           HfPath = "de/de_DE/thorsten/medium";           ApproxMb = 53 },
+        @{ Key = "de_DE-thorsten_emotional-medium"; HfPath = "de/de_DE/thorsten_emotional/medium"; ApproxMb = 77 },
+        @{ Key = "en_GB-alan-medium";               HfPath = "en/en_GB/alan/medium";               ApproxMb = 56 },
+        @{ Key = "en_GB-alba-medium";               HfPath = "en/en_GB/alba/medium";               ApproxMb = 57 },
+        @{ Key = "en_GB-cori-high";                 HfPath = "en/en_GB/cori/high";                 ApproxMb = 81 }
     )
 
     # cuda-complete offline payload keeps only base voice bundled

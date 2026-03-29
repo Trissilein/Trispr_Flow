@@ -42,7 +42,7 @@ Var VoiceLabel
 Var VoiceExtraLabel
 Var VoiceExtraInput
 Var CheckVoiceThorsten
-Var CheckVoiceMls
+Var CheckVoiceThorstenEmotional
 Var CheckVoiceAlan
 Var CheckVoiceAlba
 Var CheckVoiceCori
@@ -218,8 +218,8 @@ Function ComponentsPage
   Pop $CheckVoiceThorsten
   ${NSD_SetState} $CheckVoiceThorsten ${BST_CHECKED}
 
-  ${NSD_CreateCheckbox} 10u 151u 100% 11u "de_DE-mls-medium (~54 MB, weiblich)"
-  Pop $CheckVoiceMls
+  ${NSD_CreateCheckbox} 10u 151u 100% 11u "de_DE-thorsten_emotional-medium (~77 MB, 8 styles)"
+  Pop $CheckVoiceThorstenEmotional
 
   ${NSD_CreateCheckbox} 10u 163u 100% 11u "en_GB-alan-medium (~56 MB, maennlich)"
   Pop $CheckVoiceAlan
@@ -252,7 +252,7 @@ Function SetVoiceControlsState
   ${If} $0 == "1"
     EnableWindow $VoiceLabel 1
     EnableWindow $CheckVoiceThorsten 1
-    EnableWindow $CheckVoiceMls 1
+    EnableWindow $CheckVoiceThorstenEmotional 1
     EnableWindow $CheckVoiceAlan 1
     EnableWindow $CheckVoiceAlba 1
     EnableWindow $CheckVoiceCori 1
@@ -261,7 +261,7 @@ Function SetVoiceControlsState
   ${Else}
     EnableWindow $VoiceLabel 0
     EnableWindow $CheckVoiceThorsten 0
-    EnableWindow $CheckVoiceMls 0
+    EnableWindow $CheckVoiceThorstenEmotional 0
     EnableWindow $CheckVoiceAlan 0
     EnableWindow $CheckVoiceAlba 0
     EnableWindow $CheckVoiceCori 0
@@ -347,12 +347,12 @@ Function ComponentsPageLeave
       IntOp $ComponentVoiceSelectedCount $ComponentVoiceSelectedCount + 1
     ${EndIf}
 
-    ${NSD_GetState} $CheckVoiceMls $0
+    ${NSD_GetState} $CheckVoiceThorstenEmotional $0
     ${If} $0 == ${BST_CHECKED}
       ${If} $ComponentVoiceChoice == ""
-        StrCpy $ComponentVoiceChoice "de_DE-mls-medium"
+        StrCpy $ComponentVoiceChoice "de_DE-thorsten_emotional-medium"
       ${Else}
-        StrCpy $ComponentVoiceChoice "$ComponentVoiceChoice$\r$\nde_DE-mls-medium"
+        StrCpy $ComponentVoiceChoice "$ComponentVoiceChoice$\r$\nde_DE-thorsten_emotional-medium"
       ${EndIf}
       IntOp $ComponentVoiceSelectedCount $ComponentVoiceSelectedCount + 1
     ${EndIf}

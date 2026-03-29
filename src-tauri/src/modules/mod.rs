@@ -224,10 +224,10 @@ pub struct VoiceOutputSettings {
     pub voice_id_windows_fallback: String,
     pub auto_voice_by_detected_language: bool,
     pub voice_id_local: String,
-    pub rate: f32,             // 0.5..2.0
-    pub volume: f32,           // 0.0..1.0
+    pub rate: f32,   // 0.5..2.0
+    pub volume: f32, // 0.0..1.0
     #[serde(default = "default_piper_gain_db")]
-    pub piper_gain_db: f32,    // -24.0..+6.0 (applies only to Piper)
+    pub piper_gain_db: f32, // -24.0..+6.0 (applies only to Piper)
     pub output_policy: String, // "agent_replies_only" | "replies_and_events" | "explicit_only"
     pub output_device: String, // "default" | "wasapi:<id>" (windows) | "output-<idx>-<name>" (non-windows)
     /// Full path to piper.exe. Empty = auto-resolve via PATH or %LOCALAPPDATA%\trispr-flow\piper\
@@ -281,6 +281,19 @@ impl Default for VoiceOutputSettings {
 
 const fn default_piper_gain_db() -> f32 {
     -12.0
+}
+
+const REMOVED_PIPER_MODEL_KEYS: &[&str] = &["de_DE-mls-medium"];
+const DEFAULT_PIPER_MODEL_KEY: &str = "de_DE-thorsten-medium";
+
+fn is_removed_piper_model_key(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    REMOVED_PIPER_MODEL_KEYS
+        .iter()
+        .any(|blocked| blocked.eq_ignore_ascii_case(trimmed))
 }
 
 pub fn normalize_module_settings(settings: &mut ModuleSettings) {
@@ -464,4 +477,13 @@ pub fn normalize_voice_output_settings(settings: &mut VoiceOutputSettings) {
     }
     settings.qwen3_tts_api_key = settings.qwen3_tts_api_key.trim().to_string();
     settings.qwen3_tts_timeout_sec = settings.qwen3_tts_timeout_sec.clamp(3, 180);
+
+    settings.piper_model_path = settings.piper_model_path.trim().to_string();
+    if is_removed_piper_model_key(&settings.piper_model_path) {
+        settings.piper_model_path = DEFAULT_PIPER_MODEL_KEY.to_string();
+    }
+    settings.voice_id_local = settings.voice_id_local.trim().to_string();
+    if is_removed_piper_model_key(&settings.voice_id_local) {
+        settings.voice_id_local = DEFAULT_PIPER_MODEL_KEY.to_string();
+    }
 }

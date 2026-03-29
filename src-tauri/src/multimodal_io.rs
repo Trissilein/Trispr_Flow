@@ -9,7 +9,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 #[cfg(target_os = "windows")]
 use tauri::{AppHandle, Manager};
 
@@ -219,6 +219,20 @@ pub struct PiperVoiceCatalogEntry {
     pub curated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiperVoiceDownloadProgress {
+    pub voice_key: String,
+    pub stage: String, // "started" | "downloading" | "completed" | "error"
+    pub file_name: String,
+    pub downloaded_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub percent: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -886,11 +900,19 @@ pub fn select_windows_voice_for_language(provider: &str, language_hint: &str) ->
 
 const PIPER_CURATED_VOICE_KEYS: &[&str] = &[
     "de_DE-thorsten-medium",
-    "de_DE-mls-medium",
+    "de_DE-thorsten_emotional-medium",
     "en_GB-alan-medium",
     "en_GB-alba-medium",
     "en_GB-cori-high",
 ];
+const PIPER_REMOVED_VOICE_KEYS: &[&str] = &["de_DE-mls-medium"];
+
+fn is_removed_piper_voice_key(voice_key: &str) -> bool {
+    let normalized = voice_key.trim().to_ascii_lowercase();
+    PIPER_REMOVED_VOICE_KEYS
+        .iter()
+        .any(|blocked| blocked.eq_ignore_ascii_case(&normalized))
+}
 
 fn parse_piper_voice_key(voice_key: &str) -> Option<(String, String, String)> {
     let trimmed = voice_key.trim();
@@ -905,7 +927,11 @@ fn parse_piper_voice_key(voice_key: &str) -> Option<(String, String, String)> {
     if locale.is_empty() || voice_name.is_empty() {
         return None;
     }
-    Some((locale.to_string(), voice_name.to_string(), quality.to_string()))
+    Some((
+        locale.to_string(),
+        voice_name.to_string(),
+        quality.to_string(),
+    ))
 }
 
 fn locale_display_label(locale: &str) -> String {
@@ -951,20 +977,23 @@ pub fn list_piper_voices(model_dir: &str) -> Vec<TtsVoiceInfo> {
                 .extension()
                 .map_or(false, |ext| ext.eq_ignore_ascii_case("onnx"))
         })
-        .map(|e| {
+        .filter_map(|e| {
             let path = e.path();
             let label = path
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("unknown")
                 .to_string();
-            TtsVoiceInfo {
+            if is_removed_piper_voice_key(&label) {
+                return None;
+            }
+            Some(TtsVoiceInfo {
                 id: path.to_string_lossy().to_string(), // full path used as ID
                 label,
                 provider: "local_custom".to_string(),
                 locale: None,
                 profile: None,
-            }
+            })
         })
         .collect();
 
@@ -973,21 +1002,38 @@ pub fn list_piper_voices(model_dir: &str) -> Vec<TtsVoiceInfo> {
 }
 
 pub fn list_piper_voice_catalog(model_dir: &str) -> Vec<PiperVoiceCatalogEntry> {
-    let installed_voices = list_piper_voices(model_dir);
     let mut installed_by_key: HashMap<String, String> = HashMap::new();
-    for voice in installed_voices {
-        let path = PathBuf::from(voice.id.clone());
-        let stem = path
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if stem.is_empty() {
+    for dir in collect_piper_catalog_model_dirs(model_dir) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
-        }
-        if piper_hf_path_from_voice_key(&stem).is_some() {
-            installed_by_key.entry(stem).or_insert(voice.id);
+        };
+        for entry in entries.filter_map(|item| item.ok()) {
+            let path = entry.path();
+            if !path
+                .extension()
+                .map_or(false, |ext| ext.eq_ignore_ascii_case("onnx"))
+            {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if stem.is_empty()
+                || piper_hf_path_from_voice_key(&stem).is_none()
+                || is_removed_piper_voice_key(&stem)
+            {
+                continue;
+            }
+            let metadata_path = path.with_extension("onnx.json");
+            if !file_is_non_empty(&path) || !file_is_non_empty(&metadata_path) {
+                continue;
+            }
+            installed_by_key
+                .entry(stem)
+                .or_insert_with(|| path.to_string_lossy().to_string());
         }
     }
 
@@ -1482,6 +1528,74 @@ fn resolve_piper_model_dir(configured: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+fn piper_bundled_model_dir() -> Option<PathBuf> {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bundled = exe_dir
+                .join("resources")
+                .join("bin")
+                .join("piper")
+                .join("voices");
+            if bundled.is_dir() {
+                return Some(bundled);
+            }
+        }
+    }
+    None
+}
+
+fn piper_local_app_data_model_dir() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").and_then(|local_app_data| {
+        let candidate = PathBuf::from(local_app_data)
+            .join("trispr-flow")
+            .join("piper")
+            .join("voices");
+        if candidate.is_dir() {
+            Some(candidate)
+        } else {
+            None
+        }
+    })
+}
+
+fn push_unique_dir(dirs: &mut Vec<PathBuf>, dir: PathBuf) {
+    let normalized = dir
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    if dirs.iter().any(|existing| {
+        existing
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase()
+            == normalized
+    }) {
+        return;
+    }
+    dirs.push(dir);
+}
+
+fn collect_piper_catalog_model_dirs(configured: &str) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let configured_trimmed = configured.trim();
+    if !configured_trimmed.is_empty() {
+        let configured_dir = PathBuf::from(configured_trimmed);
+        if configured_dir.is_dir() {
+            push_unique_dir(&mut dirs, configured_dir);
+        }
+    }
+    if let Some(primary) = resolve_piper_model_dir(configured_trimmed) {
+        push_unique_dir(&mut dirs, primary);
+    }
+    if let Some(local) = piper_local_app_data_model_dir() {
+        push_unique_dir(&mut dirs, local);
+    }
+    if let Some(bundled) = piper_bundled_model_dir() {
+        push_unique_dir(&mut dirs, bundled);
+    }
+    dirs
+}
+
 fn piper_hf_path_from_voice_key(voice_key: &str) -> Option<String> {
     let trimmed = voice_key.trim();
     if trimmed.is_empty() {
@@ -1522,6 +1636,131 @@ fn piper_hf_path_from_voice_key(voice_key: &str) -> Option<String> {
     ))
 }
 
+fn emit_piper_download_progress<F>(
+    emit_progress: &mut F,
+    voice_key: &str,
+    stage: &str,
+    file_name: &str,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    percent: Option<f32>,
+    message: Option<String>,
+) where
+    F: FnMut(PiperVoiceDownloadProgress),
+{
+    emit_progress(PiperVoiceDownloadProgress {
+        voice_key: voice_key.to_string(),
+        stage: stage.to_string(),
+        file_name: file_name.to_string(),
+        downloaded_bytes,
+        total_bytes,
+        percent,
+        message,
+    });
+}
+
+fn download_piper_voice_file_with_progress<F>(
+    voice_key: &str,
+    url: &str,
+    dest: &Path,
+    stage_file_name: &str,
+    start_percent: f32,
+    span_percent: f32,
+    emit_progress: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(PiperVoiceDownloadProgress),
+{
+    if file_is_non_empty(dest) {
+        let total = std::fs::metadata(dest).ok().map(|meta| meta.len());
+        emit_piper_download_progress(
+            emit_progress,
+            voice_key,
+            "downloading",
+            stage_file_name,
+            total.unwrap_or(0),
+            total,
+            Some((start_percent + span_percent).clamp(0.0, 100.0)),
+            Some("Datei bereits vorhanden".to_string()),
+        );
+        return Ok(());
+    }
+
+    let response = ureq::get(url)
+        .call()
+        .map_err(|error| format!("Voice download failed for {voice_key}: {error}"))?;
+    let total = response
+        .header("Content-Length")
+        .and_then(|value| value.parse::<u64>().ok());
+    let tmp_path = dest.with_extension("part");
+    let mut reader = response.into_reader();
+    let mut out = std::fs::File::create(&tmp_path)
+        .map_err(|error| format!("Cannot write {}: {error}", dest.display()))?;
+    let mut downloaded: u64 = 0;
+    let mut last_emit = Instant::now()
+        .checked_sub(Duration::from_millis(300))
+        .unwrap_or_else(Instant::now);
+    let mut buffer = [0u8; 64 * 1024];
+
+    loop {
+        let read_bytes = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("Cannot read download stream for {voice_key}: {error}"))?;
+        if read_bytes == 0 {
+            break;
+        }
+        out.write_all(&buffer[..read_bytes])
+            .map_err(|error| format!("Cannot write voice data for {voice_key}: {error}"))?;
+        downloaded += read_bytes as u64;
+
+        if last_emit.elapsed() >= Duration::from_millis(200) {
+            let percent = total.map(|value| {
+                let ratio = if value == 0 {
+                    1.0
+                } else {
+                    (downloaded as f32 / value as f32).clamp(0.0, 1.0)
+                };
+                (start_percent + (span_percent * ratio)).clamp(0.0, 100.0)
+            });
+            emit_piper_download_progress(
+                emit_progress,
+                voice_key,
+                "downloading",
+                stage_file_name,
+                downloaded,
+                total,
+                percent,
+                None,
+            );
+            last_emit = Instant::now();
+        }
+    }
+
+    out.flush()
+        .map_err(|error| format!("Cannot finalize voice data for {voice_key}: {error}"))?;
+    drop(out);
+    std::fs::rename(&tmp_path, dest).map_err(|error| {
+        format!(
+            "Cannot finalize voice file {}: {error}",
+            dest.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+        )
+    })?;
+
+    emit_piper_download_progress(
+        emit_progress,
+        voice_key,
+        "downloading",
+        stage_file_name,
+        downloaded,
+        total,
+        Some((start_percent + span_percent).clamp(0.0, 100.0)),
+        None,
+    );
+    Ok(())
+}
+
 /// Download a Piper voice model to `%LOCALAPPDATA%\trispr-flow\piper\voices\`.
 ///
 /// `voice_key` must follow Piper naming, for example:
@@ -1532,8 +1771,19 @@ fn piper_hf_path_from_voice_key(voice_key: &str) -> Option<String> {
 /// Both `.onnx` and `.onnx.json` files are downloaded.
 /// Skips silently if the files already exist.
 /// Returns the path to the `.onnx` file on success.
-pub fn download_piper_voice(voice_key: &str) -> Result<std::path::PathBuf, String> {
+pub fn download_piper_voice_with_progress<F>(
+    voice_key: &str,
+    mut emit_progress: F,
+) -> Result<std::path::PathBuf, String>
+where
+    F: FnMut(PiperVoiceDownloadProgress),
+{
     let voice_key = voice_key.trim();
+    if is_removed_piper_voice_key(voice_key) {
+        return Err(format!(
+            "Piper voice '{voice_key}' was removed from Trispr voice catalog and cannot be used."
+        ));
+    }
     let hf_path = piper_hf_path_from_voice_key(voice_key).ok_or_else(|| {
         format!(
             "Unsupported Piper voice key '{voice_key}'. Expected format like 'de_DE-thorsten-medium'."
@@ -1554,44 +1804,118 @@ pub fn download_piper_voice(voice_key: &str) -> Result<std::path::PathBuf, Strin
     let onnx_path = voices_dir.join(format!("{voice_key}.onnx"));
     let json_path = voices_dir.join(format!("{voice_key}.onnx.json"));
 
-    if file_is_non_empty(&onnx_path) && json_path.exists() {
+    emit_piper_download_progress(
+        &mut emit_progress,
+        voice_key,
+        "started",
+        "init",
+        0,
+        None,
+        Some(0.0),
+        None,
+    );
+
+    if file_is_non_empty(&onnx_path) && file_is_non_empty(&json_path) {
+        emit_piper_download_progress(
+            &mut emit_progress,
+            voice_key,
+            "completed",
+            "all",
+            std::fs::metadata(&onnx_path)
+                .ok()
+                .map(|meta| meta.len())
+                .unwrap_or(0),
+            None,
+            Some(100.0),
+            Some("Stimme ist bereits installiert.".to_string()),
+        );
         return Ok(onnx_path);
     }
 
     let base = "https://huggingface.co/rhasspy/piper-voices/resolve/main";
-
-    for (url, dest) in [
-        (
-            format!("{base}/{hf_path}/{voice_key}.onnx?download=true"),
-            &onnx_path,
-        ),
-        (
-            format!("{base}/{hf_path}/{voice_key}.onnx.json?download=true"),
-            &json_path,
-        ),
-    ] {
-        if file_is_non_empty(dest) {
-            continue;
-        }
-        tracing::info!("[piper] Downloading voice file: {url}");
-        let resp = ureq::get(&url)
-            .call()
-            .map_err(|e| format!("Voice download failed for {voice_key}: {e}"))?;
-        let mut reader = resp.into_reader();
-        let mut out = std::fs::File::create(dest)
-            .map_err(|e| format!("Cannot write {}: {e}", dest.display()))?;
-        std::io::copy(&mut reader, &mut out)
-            .map_err(|e| format!("Cannot write voice data for {voice_key}: {e}"))?;
+    let onnx_url = format!("{base}/{hf_path}/{voice_key}.onnx?download=true");
+    let json_url = format!("{base}/{hf_path}/{voice_key}.onnx.json?download=true");
+    tracing::info!("[piper] Downloading voice file: {onnx_url}");
+    if let Err(error) = download_piper_voice_file_with_progress(
+        voice_key,
+        &onnx_url,
+        &onnx_path,
+        "onnx",
+        0.0,
+        96.0,
+        &mut emit_progress,
+    ) {
+        let _ = std::fs::remove_file(onnx_path.with_extension("part"));
+        emit_piper_download_progress(
+            &mut emit_progress,
+            voice_key,
+            "error",
+            "onnx",
+            0,
+            None,
+            None,
+            Some(error.clone()),
+        );
+        return Err(error);
+    }
+    tracing::info!("[piper] Downloading voice file: {json_url}");
+    if let Err(error) = download_piper_voice_file_with_progress(
+        voice_key,
+        &json_url,
+        &json_path,
+        "onnx_json",
+        96.0,
+        4.0,
+        &mut emit_progress,
+    ) {
+        let _ = std::fs::remove_file(json_path.with_extension("part"));
+        emit_piper_download_progress(
+            &mut emit_progress,
+            voice_key,
+            "error",
+            "onnx_json",
+            0,
+            None,
+            None,
+            Some(error.clone()),
+        );
+        return Err(error);
     }
 
     if file_is_non_empty(&onnx_path) {
         tracing::info!("[piper] Voice model ready: {}", onnx_path.display());
+        emit_piper_download_progress(
+            &mut emit_progress,
+            voice_key,
+            "completed",
+            "all",
+            std::fs::metadata(&onnx_path)
+                .ok()
+                .map(|meta| meta.len())
+                .unwrap_or(0),
+            None,
+            Some(100.0),
+            Some("Download abgeschlossen.".to_string()),
+        );
         Ok(onnx_path)
     } else {
-        Err(format!(
-            "Voice model download succeeded but {voice_key}.onnx is empty"
-        ))
+        let error = format!("Voice model download succeeded but {voice_key}.onnx is empty");
+        emit_piper_download_progress(
+            &mut emit_progress,
+            voice_key,
+            "error",
+            "onnx",
+            0,
+            None,
+            None,
+            Some(error.clone()),
+        );
+        Err(error)
     }
+}
+
+pub fn download_piper_voice(voice_key: &str) -> Result<std::path::PathBuf, String> {
+    download_piper_voice_with_progress(voice_key, |_| {})
 }
 
 pub fn piper_binary_preflight(configured: &str) -> Result<(), String> {
@@ -1682,6 +2006,18 @@ fn ensure_piper_runtime_dependencies(binary_path: &Path) -> Result<(), String> {
 fn resolve_piper_model_for_runtime(model_path: &str) -> Result<PathBuf, String> {
     let configured_model = model_path.trim();
     if !configured_model.is_empty() {
+        if is_removed_piper_voice_key(configured_model) {
+            tracing::warn!(
+                "[piper] Voice key '{}' is removed. Falling back to default key.",
+                configured_model
+            );
+            return download_piper_voice("de_DE-thorsten-medium").map_err(|error| {
+                format!(
+                    "Removed Piper model key '{configured_model}' could not be replaced automatically: {error}. \
+                     Set piper_model_path to a valid .onnx file or a supported Piper voice key."
+                )
+            });
+        }
         let configured = PathBuf::from(configured_model);
         if configured.is_file() {
             return Ok(configured);
@@ -2691,7 +3027,8 @@ mod tests {
     use super::{
         convert_f32_to_i16, convert_f32_to_u16, execute_tts_with_fallback,
         format_stream_config_mismatch_error, is_tts_audio_device_unavailable_tagged,
-        is_tts_policy_allowed, normalize_piper_rate, piper_hf_path_from_voice_key,
+        is_removed_piper_voice_key, is_tts_policy_allowed, normalize_piper_rate,
+        piper_hf_path_from_voice_key,
         remap_channels_interleaved, resample_interleaved_linear,
         select_voice_from_candidates_for_language, windows_audio_device_error_hint,
         windows_natural_voice_priority, windows_voice_matches_natural_profile,
@@ -2956,6 +3293,13 @@ mod tests {
         assert!(piper_hf_path_from_voice_key("de_DE-thorsten").is_none());
         assert!(piper_hf_path_from_voice_key("de_DE-thorsten-ultra").is_none());
         assert!(piper_hf_path_from_voice_key("../de_DE-thorsten-medium").is_none());
+    }
+
+    #[test]
+    fn removed_piper_voice_key_is_detected_case_insensitive() {
+        assert!(is_removed_piper_voice_key("de_DE-mls-medium"));
+        assert!(is_removed_piper_voice_key("DE_de-MLS-medium"));
+        assert!(!is_removed_piper_voice_key("de_DE-thorsten-medium"));
     }
 
     #[test]

@@ -34,6 +34,7 @@ import type {
   AIProviderAuthMethodPreference,
   OverlayRefiningIndicatorPreset,
   PiperVoiceCatalogEntry,
+  PiperVoiceDownloadProgress,
   VoiceOutputSettings,
   TtsProviderInfo,
   TtsVoiceInfo,
@@ -1735,8 +1736,14 @@ let voiceOutputFallbackVoiceRequestSeq = 0;
 const DEFAULT_PIPER_VOICE_KEY = "de_DE-thorsten-medium";
 const PIPER_OPTION_CUSTOM_PREFIX = "[Custom] ";
 const PIPER_OPTION_INSTALLED_MARKER = "✓ ";
+const REMOVED_PIPER_VOICE_KEYS = new Set(["de_de-mls-medium"]);
 let lastTtsProviders: TtsProviderInfo[] = [];
+let piperDownloadInFlight = false;
 type TtsProviderId = VoiceOutputSettings["default_provider"];
+
+function isRemovedPiperVoiceKey(value: string): boolean {
+  return REMOVED_PIPER_VOICE_KEYS.has(value.trim().toLowerCase());
+}
 
 function isWindowsVoiceProvider(
   provider: string | null | undefined
@@ -1752,6 +1759,56 @@ function normalizePiperGainDb(value: number | null | undefined): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return -12;
   return Math.max(-24, Math.min(6, Math.round(parsed)));
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const digits = size >= 100 ? 0 : size >= 10 ? 1 : 2;
+  return `${size.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+function isAnyPiperProviderActive(): boolean {
+  if (!settings?.voice_output_settings) return false;
+  return isPiperVoiceProvider(settings.voice_output_settings.default_provider)
+    || isPiperVoiceProvider(settings.voice_output_settings.fallback_provider);
+}
+
+function setPiperDownloadProgressUi(
+  percent: number,
+  text: string,
+  options?: { forceVisible?: boolean }
+): void {
+  const normalizedPercent = Math.max(0, Math.min(100, Math.round(percent)));
+  if (dom.voiceOutputPiperDownloadFill) {
+    dom.voiceOutputPiperDownloadFill.style.width = `${normalizedPercent}%`;
+    const progressBar = dom.voiceOutputPiperDownloadFill.parentElement;
+    if (progressBar) {
+      progressBar.setAttribute("aria-valuenow", String(normalizedPercent));
+    }
+  }
+  if (dom.voiceOutputPiperDownloadText) {
+    dom.voiceOutputPiperDownloadText.textContent = text;
+  }
+  if (dom.voiceOutputPiperDownloadStatus) {
+    const visible = Boolean(options?.forceVisible || piperDownloadInFlight || isAnyPiperProviderActive());
+    dom.voiceOutputPiperDownloadStatus.hidden = !visible;
+  }
+}
+
+async function isPiperVoiceInstalledByCatalog(voiceKey: string): Promise<boolean> {
+  try {
+    const catalog = await invoke<PiperVoiceCatalogEntry[]>("list_piper_voice_catalog");
+    return catalog.some((entry) => entry.key === voiceKey && entry.installed);
+  } catch {
+    return false;
+  }
 }
 
 function setFieldHidden(field: HTMLElement | null, hidden: boolean): void {
@@ -1850,6 +1907,9 @@ function normalizedPiperSelection(
 ): string {
   const configured = configuredModelPath.trim();
   if (configured.length === 0) return DEFAULT_PIPER_VOICE_KEY;
+  if (isRemovedPiperVoiceKey(configured)) {
+    return DEFAULT_PIPER_VOICE_KEY;
+  }
   if (catalog.some((entry) => entry.key === configured)) {
     return configured;
   }
@@ -1929,6 +1989,9 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
 
   if (!select) return;
   select.title = voicePickerTitle(provider, isDefault);
+  if (!piperDownloadInFlight) {
+    setPiperDownloadProgressUi(0, "Bereit.");
+  }
 
   if (!isWindowsVoiceProvider(provider) && !isPiperVoiceProvider(provider)) {
     select.classList.remove("piper-voice-select");
@@ -2095,6 +2158,57 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
 // Backward-compatibility wrapper — existing call sites keep working
 export async function refreshVoiceOutputWindowsVoices(): Promise<void> {
   return refreshProviderVoices("default");
+}
+
+export function handlePiperVoiceDownloadProgress(progress: PiperVoiceDownloadProgress): void {
+  const key = (progress.voice_key ?? "").trim();
+  const stage = (progress.stage ?? "").trim().toLowerCase();
+  const downloaded = Number(progress.downloaded_bytes ?? 0);
+  const total = Number(progress.total_bytes ?? 0);
+  const explicitPercent = Number(progress.percent ?? Number.NaN);
+  const computedPercent = Number.isFinite(explicitPercent)
+    ? explicitPercent
+    : (Number.isFinite(total) && total > 0
+      ? (downloaded / total) * 100
+      : 0);
+  const readableDownloaded = formatBytes(Math.max(0, downloaded));
+  const readableTotal = total > 0 ? formatBytes(total) : null;
+  const stageLabel = key.length > 0 ? key : "Piper";
+
+  if (stage === "started") {
+    piperDownloadInFlight = true;
+    const message = progress.message?.trim() || `${stageLabel}: Download gestartet...`;
+    setPiperDownloadProgressUi(0, message, { forceVisible: true });
+    return;
+  }
+
+  if (stage === "downloading") {
+    piperDownloadInFlight = true;
+    const suffix = readableTotal
+      ? `${readableDownloaded} / ${readableTotal}`
+      : readableDownloaded;
+    const message = progress.message?.trim()
+      || `${stageLabel}: ${Math.round(Math.max(0, Math.min(100, computedPercent)))}% · ${suffix}`;
+    setPiperDownloadProgressUi(computedPercent, message, { forceVisible: true });
+    return;
+  }
+
+  if (stage === "completed") {
+    piperDownloadInFlight = false;
+    const message = progress.message?.trim() || `${stageLabel}: Download abgeschlossen.`;
+    setPiperDownloadProgressUi(100, message, { forceVisible: true });
+    return;
+  }
+
+  if (stage === "error") {
+    piperDownloadInFlight = false;
+    const message = progress.message?.trim() || `${stageLabel}: Download fehlgeschlagen.`;
+    setPiperDownloadProgressUi(computedPercent, message, { forceVisible: true });
+    return;
+  }
+
+  const fallbackMessage = progress.message?.trim() || `${stageLabel}: ${stage || "Status-Update"}`;
+  setPiperDownloadProgressUi(computedPercent, fallbackMessage, { forceVisible: true });
 }
 
 export function updateProviderMutualExclusion(): void {
@@ -2311,6 +2425,12 @@ export function renderVoiceOutputSettings(): void {
     qwen3Section.style.display = vo.qwen3_tts_enabled ? "block" : "none";
   }
 
+  if (!piperDownloadInFlight) {
+    setPiperDownloadProgressUi(0, "Bereit.");
+  } else {
+    setPiperDownloadProgressUi(0, dom.voiceOutputPiperDownloadText?.textContent?.trim() || "Lade Stimme...");
+  }
+
   void refreshProviderAvailability();
 }
 
@@ -2341,8 +2461,25 @@ export async function handleProviderVoiceSelection(target: "default" | "fallback
   const selected = select.value.trim();
   const previous = (settings.voice_output_settings.piper_model_path ?? DEFAULT_PIPER_VOICE_KEY).trim();
   const nextKey = selected || DEFAULT_PIPER_VOICE_KEY;
+  if (isRemovedPiperVoiceKey(nextKey)) {
+    select.value = DEFAULT_PIPER_VOICE_KEY;
+    settings.voice_output_settings.piper_model_path = DEFAULT_PIPER_VOICE_KEY;
+    if (dom.voiceOutputPiperModel) {
+      dom.voiceOutputPiperModel.value = DEFAULT_PIPER_VOICE_KEY;
+    }
+    if (hint) {
+      hint.textContent = "Diese Piper-Stimme wurde entfernt. Default wurde wiederhergestellt.";
+    }
+    await persistSettings();
+    await refreshProviderVoices("default");
+    await refreshProviderVoices("fallback");
+    return;
+  }
   const selectedOption = Array.from(select.options).find((option) => option.value === nextKey);
-  const installed = selectedOption?.dataset.piperInstalled === "1";
+  let installed = selectedOption?.dataset.piperInstalled === "1";
+  if (!installed) {
+    installed = await isPiperVoiceInstalledByCatalog(nextKey);
+  }
 
   if (!installed) {
     const confirmed = window.confirm(
@@ -2354,15 +2491,20 @@ export async function handleProviderVoiceSelection(target: "default" | "fallback
       return;
     }
     if (hint) hint.textContent = `Lade Piper-Stimme '${nextKey}'...`;
+    piperDownloadInFlight = true;
+    setPiperDownloadProgressUi(0, `${nextKey}: Download gestartet...`, { forceVisible: true });
     try {
       await invoke<string>("download_piper_voice_key", { voiceKey: nextKey });
-      if (selectedOption) {
-        applyPiperOptionVisualState(selectedOption, true);
-        const baseLabel = selectedOption.dataset.piperBaseLabel?.trim() || nextKey;
-        selectedOption.textContent = `${PIPER_OPTION_INSTALLED_MARKER}${baseLabel}`;
-      }
+      piperDownloadInFlight = false;
+      setPiperDownloadProgressUi(100, `${nextKey}: Download abgeschlossen.`, { forceVisible: true });
     } catch (error) {
+      piperDownloadInFlight = false;
       select.value = previous;
+      setPiperDownloadProgressUi(
+        0,
+        `${nextKey}: Download fehlgeschlagen (${String(error).replace(/^Error:\s*/i, "").trim()}).`,
+        { forceVisible: true }
+      );
       if (hint) {
         hint.textContent = `Download fehlgeschlagen (${nextKey}): ${String(error).replace(/^Error:\s*/i, "").trim()}`;
       }
@@ -2375,5 +2517,13 @@ export async function handleProviderVoiceSelection(target: "default" | "fallback
     dom.voiceOutputPiperModel.value = nextKey;
   }
   await persistSettings();
-  await refreshProviderVoices(target);
+  await refreshProviderVoices("default");
+  await refreshProviderVoices("fallback");
+  const activeSelect = target === "default" ? dom.voiceOutputWindowsVoiceSelect : dom.voiceOutputFallbackVoiceSelect;
+  if (activeSelect) {
+    activeSelect.value = nextKey;
+  }
+  if (hint) {
+    hint.textContent = `Aktive Piper-Stimme: ${nextKey}.`;
+  }
 }

@@ -1734,7 +1734,6 @@ let voiceOutputWindowsVoiceRequestSeq = 0;
 let voiceOutputFallbackVoiceRequestSeq = 0;
 const DEFAULT_PIPER_VOICE_KEY = "de_DE-thorsten-medium";
 const PIPER_OPTION_INSTALLED_PREFIX = "[Installiert] ";
-const PIPER_OPTION_DOWNLOAD_PREFIX = "[Download] ";
 const PIPER_OPTION_CUSTOM_PREFIX = "[Custom] ";
 let lastTtsProviders: TtsProviderInfo[] = [];
 type TtsProviderId = VoiceOutputSettings["default_provider"];
@@ -1836,7 +1835,20 @@ function basenameFromPath(rawPath: string): string {
 function formatPiperOptionLabel(entry: PiperVoiceCatalogEntry): string {
   return entry.installed
     ? `${PIPER_OPTION_INSTALLED_PREFIX}${entry.label}`
-    : `${PIPER_OPTION_DOWNLOAD_PREFIX}${entry.label}`;
+    : entry.label;
+}
+
+function applyPiperOptionVisualState(option: HTMLOptionElement, installed: boolean): void {
+  option.dataset.piperInstalled = installed ? "1" : "0";
+  if (installed) {
+    option.style.background = "linear-gradient(135deg, rgba(24, 53, 58, 0.52), rgba(22, 32, 42, 0.56))";
+    option.style.color = "rgba(226, 255, 247, 0.98)";
+    option.style.fontWeight = "600";
+  } else {
+    option.style.background = "";
+    option.style.color = "";
+    option.style.fontWeight = "";
+  }
 }
 
 function normalizedPiperSelection(
@@ -1926,6 +1938,7 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
   select.title = voicePickerTitle(provider, isDefault);
 
   if (!isWindowsVoiceProvider(provider) && !isPiperVoiceProvider(provider)) {
+    select.classList.remove("piper-voice-select");
     setFieldHidden(field, true);
     setFieldHidden(autoField, true);
     if (hint) {
@@ -1944,6 +1957,7 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
   }
 
   if (isPiperVoiceProvider(provider)) {
+    select.classList.add("piper-voice-select");
     setFieldHidden(field, false);
     setFieldHidden(autoField, true);
     select.disabled = true;
@@ -1966,49 +1980,32 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
       if (!configured) {
         settings.voice_output_settings.piper_model_path = normalizedSelection;
       }
-      const installedGroup = document.createElement("optgroup");
-      installedGroup.label = "Installierte Stimmen";
-      const downloadGroup = document.createElement("optgroup");
-      downloadGroup.label = "Nicht installiert (Download)";
-
-      catalog.forEach((entry) => {
+      const installedEntries = catalog.filter((entry) => entry.installed);
+      const downloadableEntries = catalog.filter((entry) => !entry.installed);
+      [...installedEntries, ...downloadableEntries].forEach((entry) => {
         const option = document.createElement("option");
         option.value = entry.key;
         option.textContent = formatPiperOptionLabel(entry);
-        option.dataset.piperInstalled = entry.installed ? "1" : "0";
+        applyPiperOptionVisualState(option, entry.installed);
         option.dataset.piperPath = entry.path ?? "";
         option.dataset.piperCurated = entry.curated ? "1" : "0";
         option.dataset.piperBaseLabel = entry.label;
-        if (entry.installed) {
-          installedGroup.appendChild(option);
-        } else {
-          downloadGroup.appendChild(option);
-        }
+        select.appendChild(option);
       });
-
-      if (installedGroup.children.length > 0) {
-        select.appendChild(installedGroup);
-      }
-      if (downloadGroup.children.length > 0) {
-        select.appendChild(downloadGroup);
-      }
 
       if (
         normalizedSelection.length > 0
         && !catalog.some((entry) => entry.key === normalizedSelection)
       ) {
-        const customGroup = document.createElement("optgroup");
-        customGroup.label = "Benutzerdefiniert";
         const customOption = document.createElement("option");
         customOption.value = normalizedSelection;
         customOption.textContent =
-          `${PIPER_OPTION_CUSTOM_PREFIX}${basenameFromPath(normalizedSelection)}`;
-        customOption.dataset.piperInstalled = "1";
+          `${PIPER_OPTION_INSTALLED_PREFIX}${PIPER_OPTION_CUSTOM_PREFIX}${basenameFromPath(normalizedSelection)}`;
+        applyPiperOptionVisualState(customOption, true);
         customOption.dataset.piperPath = normalizedSelection;
         customOption.dataset.piperCurated = "0";
         customOption.dataset.piperBaseLabel = basenameFromPath(normalizedSelection);
-        customGroup.appendChild(customOption);
-        select.appendChild(customGroup);
+        select.appendChild(customOption);
       }
 
       select.value = normalizedSelection;
@@ -2026,8 +2023,8 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
       select.innerHTML = "";
       const fallbackOption = document.createElement("option");
       fallbackOption.value = settings.voice_output_settings.piper_model_path || DEFAULT_PIPER_VOICE_KEY;
-      fallbackOption.textContent = `${PIPER_OPTION_CUSTOM_PREFIX}${fallbackOption.value}`;
-      fallbackOption.dataset.piperInstalled = "1";
+      fallbackOption.textContent = `${PIPER_OPTION_INSTALLED_PREFIX}${PIPER_OPTION_CUSTOM_PREFIX}${fallbackOption.value}`;
+      applyPiperOptionVisualState(fallbackOption, true);
       fallbackOption.dataset.piperPath = fallbackOption.value;
       fallbackOption.dataset.piperBaseLabel = fallbackOption.value;
       select.appendChild(fallbackOption);
@@ -2040,6 +2037,7 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
     }
   }
 
+  select.classList.remove("piper-voice-select");
   setFieldHidden(field, false);
   setFieldHidden(autoField, false);
   select.disabled = true;
@@ -2366,7 +2364,7 @@ export async function handleProviderVoiceSelection(target: "default" | "fallback
     try {
       await invoke<string>("download_piper_voice_key", { voiceKey: nextKey });
       if (selectedOption) {
-        selectedOption.dataset.piperInstalled = "1";
+        applyPiperOptionVisualState(selectedOption, true);
         const baseLabel = selectedOption.dataset.piperBaseLabel?.trim() || nextKey;
         selectedOption.textContent = `${PIPER_OPTION_INSTALLED_PREFIX}${baseLabel}`;
       }

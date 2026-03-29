@@ -1734,6 +1734,7 @@ let voiceOutputWindowsVoiceRequestSeq = 0;
 let voiceOutputFallbackVoiceRequestSeq = 0;
 const DEFAULT_PIPER_VOICE_KEY = "de_DE-thorsten-medium";
 const PIPER_OPTION_CUSTOM_PREFIX = "[Custom] ";
+const PIPER_OPTION_INSTALLED_MARKER = "✓ ";
 let lastTtsProviders: TtsProviderInfo[] = [];
 type TtsProviderId = VoiceOutputSettings["default_provider"];
 
@@ -1832,19 +1833,15 @@ function basenameFromPath(rawPath: string): string {
 }
 
 function formatPiperOptionLabel(entry: PiperVoiceCatalogEntry): string {
-  return entry.label;
+  return entry.installed
+    ? `${PIPER_OPTION_INSTALLED_MARKER}${entry.label}`
+    : entry.label;
 }
 
 function applyPiperOptionVisualState(option: HTMLOptionElement, installed: boolean): void {
   option.dataset.piperInstalled = installed ? "1" : "0";
-  if (installed) {
-    option.style.backgroundColor = "rgba(46, 200, 192, 0.10)";
-    option.style.backgroundImage =
-      "linear-gradient(90deg, rgba(46, 200, 192, 0.16) 0%, rgba(46, 200, 192, 0.03) 72%, rgba(46, 200, 192, 0) 100%)";
-  } else {
-    option.style.backgroundColor = "";
-    option.style.backgroundImage = "";
-  }
+  option.style.backgroundColor = "";
+  option.style.backgroundImage = "";
 }
 
 function normalizedPiperSelection(
@@ -1996,7 +1993,7 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
         const customOption = document.createElement("option");
         customOption.value = normalizedSelection;
         customOption.textContent =
-          `${PIPER_OPTION_CUSTOM_PREFIX}${basenameFromPath(normalizedSelection)}`;
+          `${PIPER_OPTION_INSTALLED_MARKER}${PIPER_OPTION_CUSTOM_PREFIX}${basenameFromPath(normalizedSelection)}`;
         applyPiperOptionVisualState(customOption, true);
         customOption.dataset.piperPath = normalizedSelection;
         customOption.dataset.piperCurated = "0";
@@ -2019,7 +2016,7 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
       select.innerHTML = "";
       const fallbackOption = document.createElement("option");
       fallbackOption.value = settings.voice_output_settings.piper_model_path || DEFAULT_PIPER_VOICE_KEY;
-      fallbackOption.textContent = `${PIPER_OPTION_CUSTOM_PREFIX}${fallbackOption.value}`;
+      fallbackOption.textContent = `${PIPER_OPTION_INSTALLED_MARKER}${PIPER_OPTION_CUSTOM_PREFIX}${fallbackOption.value}`;
       applyPiperOptionVisualState(fallbackOption, true);
       fallbackOption.dataset.piperPath = fallbackOption.value;
       fallbackOption.dataset.piperBaseLabel = fallbackOption.value;
@@ -2362,7 +2359,7 @@ export async function handleProviderVoiceSelection(target: "default" | "fallback
       if (selectedOption) {
         applyPiperOptionVisualState(selectedOption, true);
         const baseLabel = selectedOption.dataset.piperBaseLabel?.trim() || nextKey;
-        selectedOption.textContent = baseLabel;
+        selectedOption.textContent = `${PIPER_OPTION_INSTALLED_MARKER}${baseLabel}`;
       }
     } catch (error) {
       select.value = previous;

@@ -112,6 +112,7 @@ import {
   handleAssistantAwaitingConfirmation,
   handleAssistantConfirmationExpired,
   handleAssistantIntentDetected,
+  handleAssistantPlanReady as handleWorkflowAssistantPlanReady,
   handleAssistantStateChanged,
   handleWorkflowAgentFinalResult,
   handleWorkflowAgentRawResult,
@@ -988,6 +989,7 @@ async function bootstrap() {
     }),
     listen<AssistantPlanReadyEvent>("assistant:plan-ready", (event) => {
       if (!event.payload) return;
+      handleWorkflowAssistantPlanReady(event.payload);
       appendWorkflowAgentLog(
         `Event assistant:plan-ready -> intent=${event.payload.plan.intent}, session=${event.payload.plan.session_id}`
       );

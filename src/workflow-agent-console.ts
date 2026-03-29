@@ -11,6 +11,7 @@ import type {
   AssistantAwaitingConfirmationEvent,
   AssistantConfirmationExpiredEvent,
   AssistantIntentDetectedEvent,
+  AssistantPlanReadyEvent,
   AssistantStateChangedEvent,
   TranscriptionResultEvent,
   TranscriptionRawResultEvent,
@@ -82,6 +83,61 @@ function isWorkflowAgentEnabled(): boolean {
 
 function isAssistantModeEnabled(): boolean {
   return settings?.product_mode === "assistant";
+}
+
+function capabilityLabel(capabilityId: string): string {
+  switch (capabilityId) {
+    case "output_voice_tts":
+      return "Voice Output (TTS)";
+    case "input_vision":
+      return "Vision Input";
+    case "workflow_agent":
+      return "Workflow Agent";
+    case "product_mode_assistant":
+      return "Assistant Product Mode";
+    default:
+      return capabilityId;
+  }
+}
+
+function formatCapabilityList(capabilityIds: string[]): string {
+  const labels = capabilityIds.map((id) => capabilityLabel(id));
+  return labels.length > 0 ? labels.join(", ") : "none";
+}
+
+function assistantReasonGuidance(reason: string | null | undefined): string {
+  switch ((reason ?? "").trim()) {
+    case "product_mode_transcribe":
+      return "Switch Product mode to Assistant.";
+    case "workflow_agent_unavailable":
+      return "Enable Workflow Agent module and settings.";
+    case "assistant_degraded_capability":
+      return "Assistant is running with reduced capabilities.";
+    default:
+      return "";
+  }
+}
+
+function requireAssistantInteraction(actionLabel: string): boolean {
+  if (!isWorkflowAgentEnabled()) {
+    showToast({
+      type: "warning",
+      title: "Workflow Agent disabled",
+      message: `Enable Workflow Agent before ${actionLabel}.`,
+      duration: 3200,
+    });
+    return false;
+  }
+  if (!isAssistantModeEnabled()) {
+    showToast({
+      type: "info",
+      title: "Assistant mode required",
+      message: `Switch Product mode to Assistant before ${actionLabel}.`,
+      duration: 3200,
+    });
+    return false;
+  }
+  return true;
 }
 
 function suggestionLevelFromMaxCandidates(maxCandidates: number): "low" | "standard" | "high" {
@@ -334,14 +390,16 @@ function renderStatus(): void {
 
   if (!dom.workflowAgentStatus) return;
   if (!enabled) {
-    dom.workflowAgentStatus.textContent = "Agent disabled.";
+    dom.workflowAgentStatus.textContent =
+      "Workflow Agent disabled. Enable module + setting to use assistant actions.";
     renderReviewGate();
     renderConfiguration();
     renderLiveState();
     return;
   }
   if (!isAssistantModeEnabled()) {
-    dom.workflowAgentStatus.textContent = "Assistant mode is off. Switch Product mode to Assistant.";
+    dom.workflowAgentStatus.textContent =
+      "Assistant mode is off (Product mode = Transcribe). Switch to Assistant to interact.";
     renderReviewGate();
     renderConfiguration();
     renderLiveState();
@@ -351,19 +409,19 @@ function renderStatus(): void {
   const stateLabel = latestAssistantState?.state ?? "listening";
   const handsFree = settings?.workflow_agent?.hands_free_enabled ? "on" : "off";
   const base = `Assistant state: ${stateLabel.replace(/_/g, " ")} · hands-free ${handsFree}.`;
+  const guidance = assistantReasonGuidance(latestAssistantState?.reason);
   if (!latestAssistantState?.capability?.degraded) {
-    dom.workflowAgentStatus.textContent = base;
+    dom.workflowAgentStatus.textContent = guidance ? `${base} ${guidance}` : base;
     renderReviewGate();
     renderConfiguration();
     renderLiveState();
     return;
   }
-  const softMissing = latestAssistantState.capability.missing_capabilities
-    .filter((id) => id === "output_voice_tts" || id === "input_vision")
-    .join(", ");
-  dom.workflowAgentStatus.textContent = softMissing
-    ? `${base} Degraded capability: ${softMissing}.`
-    : `${base} Degraded capability mode active.`;
+  const missing = latestAssistantState.capability.missing_capabilities ?? [];
+  const softMissing = missing.filter((id) => id === "output_voice_tts" || id === "input_vision");
+  dom.workflowAgentStatus.textContent = softMissing.length > 0
+    ? `${base} Degraded capability: ${formatCapabilityList(softMissing)}.`
+    : `${base} Degraded capability mode active (${formatCapabilityList(missing)}).`;
   renderReviewGate();
   renderConfiguration();
   renderLiveState();
@@ -469,15 +527,7 @@ function buildSessionRecapReply(): string {
 }
 
 async function parseCommand(commandText: string): Promise<void> {
-  if (!isAssistantModeEnabled()) {
-    showToast({
-      type: "info",
-      title: "Assistant mode required",
-      message: "Switch Product mode to Assistant before running workflow-agent commands.",
-      duration: 3200,
-    });
-    return;
-  }
+  if (!requireAssistantInteraction("running workflow-agent commands")) return;
   if (!commandText.trim()) {
     showToast({
       type: "warning",
@@ -550,7 +600,7 @@ async function parseCommand(commandText: string): Promise<void> {
 }
 
 async function refreshCandidates(): Promise<void> {
-  if (!isAssistantModeEnabled()) return;
+  if (!requireAssistantInteraction("searching transcript sessions")) return;
   if (!lastParse) {
     showToast({
       type: "info",
@@ -594,7 +644,7 @@ async function refreshCandidates(): Promise<void> {
 }
 
 async function buildPlan(): Promise<void> {
-  if (!isAssistantModeEnabled()) return;
+  if (!requireAssistantInteraction("building an execution plan")) return;
   if (!lastParse?.detected) {
     showToast({
       type: "warning",
@@ -649,7 +699,7 @@ async function buildPlan(): Promise<void> {
 }
 
 async function executePlan(confirmationToken?: string): Promise<void> {
-  if (!isAssistantModeEnabled()) return;
+  if (!requireAssistantInteraction("executing the plan")) return;
   if (!currentPlan) {
     showToast({
       type: "warning",
@@ -918,6 +968,14 @@ export function handleAssistantIntentDetected(payload: AssistantIntentDetectedEv
   latestIntentLine = payload.parse.detected
     ? `${payload.parse.intent} (${(payload.parse.confidence * 100).toFixed(0)}%)`
     : "No actionable intent detected.";
+  renderLiveState();
+}
+
+export function handleAssistantPlanReady(payload: AssistantPlanReadyEvent): void {
+  currentPlan = payload.plan;
+  setReviewConfirmed(false);
+  latestReplyLine = `Plan ready: ${payload.plan.summary}`;
+  renderPlanPreview();
   renderLiveState();
 }
 

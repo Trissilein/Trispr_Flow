@@ -20,6 +20,7 @@
     "benchmark:tts:strict": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tts-benchmark.ps1 -FailOnNoRecommendation -FailOnGateMiss",
     "benchmark:ollama-models": "node scripts/eval-ollama-models.mjs",
     "qa:release": "node scripts/release-qa.mjs",
+    "qa:assistant": "node scripts/assistant-release-gate.mjs",
     "build:installers": "cmd /c scripts\\windows\\build-installers.bat"
   },
   "dependencies": {

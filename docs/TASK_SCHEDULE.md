@@ -1,6 +1,6 @@
 # Task Schedule - Trispr Flow
 
-Last updated: 2026-03-28 (Agent-Evolution roadmap accepted; Block V inserted after Block T)
+Last updated: 2026-03-29 (Block U started: U1 UX hardening done, U4 evidence gate runner prepared; soaks deferred)
 
 ## Overview
 
@@ -463,18 +463,18 @@ Goal: Evolve workflow-agent from wakeword command trigger to a transparent GDD c
 
 ---
 
-### Block U: Assistant UX + Soak + Release Gate (`v0.8.x`) --- PLANNED
+### Block U: Assistant UX + Soak + Release Gate (`v0.8.x`) --- ACTIVE
 
-**Duration**: 2-3 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block T + Block V | **Status**: Planned
+**Duration**: 2-3 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block T + Block V | **Status**: Active
 
 Goal: Stabilize assistant UX and enforce long-run release gates before assistant-focused rollout.
 
 | Task | Name | Complexity | Dependencies | Status | Description |
 | --- | --- | --- | --- | --- | --- |
-| U1 | Assistant UX hardening | High | T | PLANNED | Tighten mode-specific UX copy, feedback, and error surfaces for daily usage. |
+| U1 | Assistant UX hardening | High | T | DONE | Tightened workflow-agent panel UX copy/status guidance, improved mode/module guard feedback, and surfaced `assistant:plan-ready` directly in live panel state. |
 | U2 | Soak: 8h stability run | High | U1 | PLANNED | Validate no manual restart requirement under continuous tray/assistant operation. |
 | U3 | Soak: 24h release soak | High | U2 | PLANNED | Validate bounded-recovery behavior and no restart loops over a full-day run. |
-| U4 | Release gate + evidence packet | High | U2, U3 | PLANNED | Gate release on soak evidence + smoke pass + benchmark-linked diagnostics. |
+| U4 | Release gate + evidence packet | High | U2, U3 | IN PROGRESS | Added `npm run qa:assistant` (`scripts/assistant-release-gate.mjs`) plus Block-U packet doc (`docs/V0.8.x_BLOCK_U_RELEASE_GATE.md`) and report artifacts under `docs/reports/`; final sign-off waits for U2/U3 soak attachments. |
 
 ---
 

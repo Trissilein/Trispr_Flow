@@ -1,0 +1,59 @@
+{
+  "generated_at": "2026-03-29T15:51:27.135Z",
+  "started_at": "2026-03-29T15:51:21.510Z",
+  "ended_at": "2026-03-29T15:51:27.135Z",
+  "git_commit": "8727388471a4896d677c0facd174159e5de60697",
+  "options": {
+    "require_soak": false,
+    "strict_benchmark": false,
+    "skip_rust_lib_tests": true,
+    "soak8_path": null,
+    "soak24_path": null
+  },
+  "steps": [
+    {
+      "name": "build",
+      "command": "npm run build",
+      "status": 0,
+      "duration_ms": 2347
+    },
+    {
+      "name": "test",
+      "command": "npm test",
+      "status": 0,
+      "duration_ms": 3233
+    },
+    {
+      "name": "cargo-test-lib",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib",
+      "skipped": true,
+      "skip_reason": "skip-rust-lib-tests",
+      "status": null,
+      "duration_ms": 0
+    }
+  ],
+  "benchmarks": {
+    "latency_present": true,
+    "tts_present": false,
+    "tts_release_gate_pass": false,
+    "tts_provider_consistency_ok": false,
+    "tts_uncategorized_failure_count": 0,
+    "latency_report_path": "bench\\results\\latest.json",
+    "tts_report_path": "bench\\results\\tts.latest.json"
+  },
+  "soak": {
+    "eight_hour": null,
+    "twenty_four_hour": null
+  },
+  "gates": {
+    "automated_checks_pass": true,
+    "benchmark_linked_pass": false,
+    "soak_evidence_attached": false,
+    "overall_pass": true
+  },
+  "warnings": [
+    "TTS benchmark report (bench/results/tts.latest.json) missing.",
+    "8h soak evidence not attached.",
+    "24h soak evidence not attached."
+  ]
+}

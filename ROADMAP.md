@@ -156,9 +156,9 @@ Iterate proactive suggestions, role/skill profiles, and policy-bounded autonomy 
 
 ## Immediate Next Actions
 
-1. **Block U Hardening Packet** (Opus/Sonnet): assistant UX hardening + 8h/24h soak + release evidence.
-2. **Block U Gate Closure**: verify mode-safety + degraded-capability behavior + publish safety + long-run stability.
-3. **Release Readiness Bundle**: consolidate evidence (`build`, `tests`, soak logs, manual validation checklist).
+1. **Block U U2/U3 Soak Runs (deferred to end)**: attach 8h + 24h soak evidence after U1/U4 prep is complete.
+2. **Block U Gate Closure**: run strict assistant gate with benchmark + soak evidence and verify mode-safety/degraded-capability/publish safety.
+3. **Release Readiness Bundle**: consolidate evidence (`build`, `tests`, benchmark links, soak logs, manual validation checklist).
 4. **Plan O/P follow-up** only after U gates are closed, keeping plan/confirm guarantees intact.
 
 ## References

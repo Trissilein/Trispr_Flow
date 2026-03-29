@@ -1943,7 +1943,7 @@
               <section id="workflow-agent-console" class="module-agent-console" hidden>
                 <div class="module-agent-console-header">
                   <h3>Workflow Agent</h3>
-                  <span id="workflow-agent-status" class="field-hint">Agent disabled.</span>
+                  <span id="workflow-agent-status" class="field-hint">Workflow Agent disabled. Enable module + Assistant mode.</span>
                 </div>
                 <details class="expander" open>
                   <summary><h4 class="ai-refine-section-title">Conversation</h4></summary>
@@ -1954,7 +1954,7 @@
                         <textarea
                           id="workflow-agent-command-input"
                           rows="3"
-                          placeholder="Hey Trispr, create a GDD from yesterday's meeting about combat and publish to Confluence."
+                          placeholder="Hey Trispr, build a GDD draft from yesterday's combat discussion."
                         ></textarea>
                       </label>
                       <div class="auth-modal-actions span-2">
@@ -2016,7 +2016,7 @@
                           <input id="workflow-agent-review-confirm" type="checkbox" title="Confirm you reviewed the plan details before execution" />
                           <span class="toggle-track"><span class="toggle-thumb"></span></span>
                         </label>
-                        <span id="workflow-agent-review-summary" class="field-hint">Build a plan first, then review signals, assumptions, and action lanes.</span>
+                        <span id="workflow-agent-review-summary" class="field-hint">Build a plan first, review analysis/execution lanes, then confirm before execute.</span>
                       </div>
                       <div class="auth-modal-actions span-2">
                         <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn">Confirm & Execute</button>
@@ -2034,7 +2034,7 @@
                           <input id="workflow-agent-hands-free-enabled" type="checkbox" title="Enable wakeword-driven command parsing in assistant mode" />
                           <span class="toggle-track"><span class="toggle-thumb"></span></span>
                         </label>
-                        <span class="field-hint">When enabled, wakeword commands are parsed from raw transcription events in assistant mode.</span>
+                        <span class="field-hint">When enabled, wakeword commands are parsed in Assistant mode. PTT remains available for one-shot bypass.</span>
                       </div>
                       <label class="field span-2">
                         <span class="field-label">Wakewords</span>
@@ -2044,7 +2044,7 @@
                       <label class="field">
                         <span class="field-label">Confirm timeout (seconds)</span>
                         <input id="workflow-agent-confirm-timeout-sec" type="number" min="10" max="300" step="1" value="45" />
-                        <span class="field-hint">Used by awaiting-confirmation metadata for assistant flow.</span>
+                        <span class="field-hint">How long the confirm token remains valid before auto-cancel.</span>
                       </label>
                       <label class="field">
                         <span class="field-label">Suggestion level</span>

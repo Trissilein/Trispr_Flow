@@ -5288,7 +5288,12 @@ mod assistant_orchestrator_tests {
 
 #[tauri::command]
 fn agent_list_supported_actions() -> Vec<String> {
-    vec!["gdd_generate_publish".to_string()]
+    vec![
+        "gdd_generate_publish".to_string(),
+        "session_recap".to_string(),
+        "plan_status".to_string(),
+        "confirm_or_cancel".to_string(),
+    ]
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -5742,8 +5747,10 @@ fn agent_execute_gdd_plan(
                     .one_click_confidence_threshold;
                 let vision_bridge_enabled =
                     capability_enabled(&settings_snapshot, RuntimeCapability::VisionInput);
-                let tts_bridge_enabled =
-                    capability_enabled(&settings_snapshot, RuntimeCapability::VoiceOutputTts);
+                let tts_bridge_enabled = capability_enabled(
+                    &settings_snapshot,
+                    RuntimeCapability::VoiceOutputTts,
+                ) && settings_snapshot.workflow_agent.voice_feedback_enabled;
                 let maybe_agent_speak = |context: &str, message: &str| {
                     if !tts_bridge_enabled || message.trim().is_empty() {
                         return;

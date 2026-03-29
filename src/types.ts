@@ -24,7 +24,12 @@ export type ModulePermission =
   | "keyring_access"
   | "screen_capture"
   | "audio_output";
-export type AgentIntent = "gdd_generate_publish" | "unknown";
+export type AgentIntent =
+  | "gdd_generate_publish"
+  | "session_recap"
+  | "plan_status"
+  | "confirm_or_cancel"
+  | "unknown";
 export type AssistantOrchestratorState =
   | "idle"
   | "listening"

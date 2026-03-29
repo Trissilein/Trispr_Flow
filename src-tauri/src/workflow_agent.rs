@@ -375,29 +375,66 @@ pub fn parse_command(
     let text = request.command_text.trim().to_string();
     let normalized = normalize(&text);
     let wakeword_matched = contains_any(&normalized, wakewords);
-    let keyword_hits = intent_keywords
+    let gdd_keyword_hits = intent_keywords
         .iter()
         .filter(|keyword| {
             let normalized_keyword = normalize(keyword);
             !normalized_keyword.is_empty() && normalized.contains(&normalized_keyword)
         })
         .count();
+    let recap_keywords = [
+        "recap",
+        "summary",
+        "zusammenfassung",
+        "fasse zusammen",
+        "session recap",
+    ];
+    let plan_status_keywords = [
+        "plan status",
+        "status",
+        "status update",
+        "planstand",
+        "was ist der plan",
+    ];
+    let confirm_cancel_keywords = [
+        "confirm",
+        "cancel",
+        "bestätigen",
+        "bestaetigen",
+        "abbrechen",
+        "freigeben",
+    ];
 
-    let intent_detected = wakeword_matched && keyword_hits > 0;
-    let intent = if intent_detected {
-        "gdd_generate_publish".to_string()
+    let recap_hit = recap_keywords.iter().any(|keyword| normalized.contains(keyword));
+    let plan_status_hit = plan_status_keywords
+        .iter()
+        .any(|keyword| normalized.contains(keyword));
+    let confirm_cancel_hit = confirm_cancel_keywords
+        .iter()
+        .any(|keyword| normalized.contains(keyword));
+
+    let (intent_detected, intent) = if wakeword_matched && confirm_cancel_hit {
+        (true, "confirm_or_cancel".to_string())
+    } else if wakeword_matched && plan_status_hit {
+        (true, "plan_status".to_string())
+    } else if wakeword_matched && recap_hit {
+        (true, "session_recap".to_string())
+    } else if wakeword_matched && gdd_keyword_hits > 0 {
+        (true, "gdd_generate_publish".to_string())
     } else {
-        "unknown".to_string()
+        (false, "unknown".to_string())
     };
     let temporal_hint = detect_temporal_hint(&normalized);
     let topic_hint = detect_topic_hint(&normalized);
     let publish_requested = parse_publish_requested(&normalized);
+    let publish_requested_for_intent =
+        intent_detected && intent.as_str() == "gdd_generate_publish" && publish_requested;
 
     let mut confidence: f32 = 0.0;
     if wakeword_matched {
         confidence += 0.45;
     }
-    if keyword_hits > 0 {
+    if gdd_keyword_hits > 0 || recap_hit || plan_status_hit || confirm_cancel_hit {
         confidence += 0.35;
     }
     if temporal_hint.is_some() {
@@ -411,13 +448,13 @@ pub fn parse_command(
         detected: intent_detected,
         intent,
         confidence: confidence.clamp(0.0, 1.0),
-        publish_requested,
+        publish_requested: publish_requested_for_intent,
         wakeword_matched,
         temporal_hint,
         topic_hint,
         reasoning: format!(
-            "wakeword={}, keyword_hits={}, publish_hint={}",
-            wakeword_matched, keyword_hits, publish_requested
+            "wakeword={}, gdd_keywords={}, recap={}, plan_status={}, confirm_cancel={}, publish_hint={}",
+            wakeword_matched, gdd_keyword_hits, recap_hit, plan_status_hit, confirm_cancel_hit, publish_requested
         ),
         command_text: text,
     }
@@ -762,6 +799,39 @@ mod tests {
         };
         let result = parse_command(&req, &make_wakewords(), &make_keywords());
         assert!(!result.detected);
+    }
+
+    #[test]
+    fn detects_session_recap_intent() {
+        let req = AgentParseCommandRequest {
+            command_text: "hey trispr recap yesterday session".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(result.detected);
+        assert_eq!(result.intent, "session_recap");
+    }
+
+    #[test]
+    fn detects_plan_status_intent() {
+        let req = AgentParseCommandRequest {
+            command_text: "trispr plan status".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(result.detected);
+        assert_eq!(result.intent, "plan_status");
+    }
+
+    #[test]
+    fn detects_confirm_or_cancel_intent() {
+        let req = AgentParseCommandRequest {
+            command_text: "hey trispr bestätigen".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(result.detected);
+        assert_eq!(result.intent, "confirm_or_cancel");
     }
 
     #[test]

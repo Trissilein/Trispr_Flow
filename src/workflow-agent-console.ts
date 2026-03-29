@@ -380,6 +380,29 @@ function matchesWakeword(text: string): boolean {
   });
 }
 
+function buildPlanStatusReply(): string {
+  if (currentPlan) {
+    return `Current plan ready: ${currentPlan.summary}`;
+  }
+  if (pendingConfirmationToken) {
+    return `Awaiting confirmation token ${pendingConfirmationToken}.`;
+  }
+  if (lastParse?.detected) {
+    return `Last intent ${lastParse.intent} parsed; no active execution plan yet.`;
+  }
+  return "No active plan. Start with a wakeword command to build one.";
+}
+
+function buildSessionRecapReply(): string {
+  if (!lastCandidates.length) {
+    return "No session candidates found yet. Say a command with a topic or time hint first.";
+  }
+  const top = lastCandidates[0];
+  const startedAt = new Date(top.start_ms).toLocaleString();
+  const preview = top.preview?.trim() || "No transcript preview available.";
+  return `Top session ${startedAt} with ${top.entry_count} entries. Preview: ${preview}`;
+}
+
 async function parseCommand(commandText: string): Promise<void> {
   if (!isAssistantModeEnabled()) {
     showToast({
@@ -423,6 +446,41 @@ async function parseCommand(commandText: string): Promise<void> {
     });
     return;
   }
+
+  if (parsed.intent === "plan_status") {
+    const reply = buildPlanStatusReply();
+    latestReplyLine = reply;
+    appendLog(`Plan status reply -> ${reply}`);
+    renderLiveState();
+    return;
+  }
+
+  if (parsed.intent === "session_recap") {
+    if (!lastCandidates.length) {
+      await refreshCandidates();
+    }
+    const reply = buildSessionRecapReply();
+    latestReplyLine = reply;
+    appendLog(`Session recap reply -> ${reply}`);
+    renderLiveState();
+    return;
+  }
+
+  if (parsed.intent === "confirm_or_cancel") {
+    const normalized = parsed.command_text.toLowerCase();
+    if (containsAnyKeyword(normalized, CANCEL_KEYWORDS) && pendingConfirmationToken) {
+      await cancelPendingConfirmation("cancelled_by_voice");
+      latestReplyLine = "Pending confirmation cancelled.";
+    } else {
+      latestReplyLine = pendingConfirmationToken
+        ? `Confirmation pending. Speak wakeword + confirm + token ${pendingConfirmationToken}.`
+        : "No pending confirmation to resolve.";
+    }
+    appendLog(`Confirm/cancel intent reply -> ${latestReplyLine}`);
+    renderLiveState();
+    return;
+  }
+
   await refreshCandidates();
 }
 

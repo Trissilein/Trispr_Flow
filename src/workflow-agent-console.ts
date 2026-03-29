@@ -12,6 +12,7 @@ import type {
   AssistantConfirmationExpiredEvent,
   AssistantIntentDetectedEvent,
   AssistantStateChangedEvent,
+  TranscriptionResultEvent,
   TranscriptionRawResultEvent,
   TranscriptSessionCandidate,
 } from "./types";
@@ -29,9 +30,14 @@ let latestConfirmationLine = "No pending confirmation.";
 let pendingConfirmationToken: string | null = null;
 let pendingConfirmationExpiresAtMs: number | null = null;
 let pendingConfirmationTimer: number | null = null;
+let agentPttArmedUntilMs: number | null = null;
+let lastHandledTranscriptKey = "";
+let lastHandledTranscriptAtMs = 0;
 
 const CONFIRM_KEYWORDS = ["confirm", "confirmed", "bestätigen", "bestaetigen", "freigeben", "ok"];
 const CANCEL_KEYWORDS = ["cancel", "abbrechen", "stopp", "stop"];
+const AGENT_PTT_ARM_WINDOW_MS = 12_000;
+const AGENT_TRANSCRIPT_DEDUPE_WINDOW_MS = 1_600;
 
 function ensureWorkflowAgentDefaults(): void {
   if (!settings) return;
@@ -162,6 +168,61 @@ function normalizeToken(value: string): string {
     .join("");
 }
 
+function normalizeWakewordText(value: string): string {
+  let normalized = value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const aliasPatterns: Array<[RegExp, string]> = [
+    [/\btrispa\b/gu, "trispr"],
+    [/\btrisper\b/gu, "trispr"],
+    [/\btrispar\b/gu, "trispr"],
+    [/\btrispur\b/gu, "trispr"],
+  ];
+  aliasPatterns.forEach(([pattern, replacement]) => {
+    normalized = normalized.replace(pattern, replacement);
+  });
+  return normalized;
+}
+
+function isAgentPttArmed(nowMs = Date.now()): boolean {
+  return agentPttArmedUntilMs !== null && nowMs < agentPttArmedUntilMs;
+}
+
+function setAgentPttArmed(armed: boolean): void {
+  if (!dom.workflowAgentPttArmBtn) return;
+  dom.workflowAgentPttArmBtn.textContent = armed ? "PTT Armed (Agent)" : "PTT (Agent)";
+  dom.workflowAgentPttArmBtn.classList.toggle("recording", armed);
+}
+
+function armAgentPtt(): void {
+  agentPttArmedUntilMs = Date.now() + AGENT_PTT_ARM_WINDOW_MS;
+  setAgentPttArmed(true);
+  appendLog("Agent PTT armed for next utterance.");
+}
+
+function disarmAgentPtt(reason: string): void {
+  if (!isAgentPttArmed()) return;
+  agentPttArmedUntilMs = null;
+  setAgentPttArmed(false);
+  appendLog(`Agent PTT disarmed (${reason}).`);
+}
+
+function isDuplicateTranscript(spoken: string, nowMs: number): boolean {
+  const key = normalizeWakewordText(spoken);
+  if (!key) return true;
+  if (
+    key === lastHandledTranscriptKey
+    && nowMs - lastHandledTranscriptAtMs < AGENT_TRANSCRIPT_DEDUPE_WINDOW_MS
+  ) {
+    return true;
+  }
+  lastHandledTranscriptKey = key;
+  lastHandledTranscriptAtMs = nowMs;
+  return false;
+}
+
 function containsAnyKeyword(text: string, keywords: string[]): boolean {
   const normalized = text.toLowerCase();
   return keywords.some((keyword) => normalized.includes(keyword));
@@ -251,11 +312,15 @@ function renderStatus(): void {
     dom.workflowAgentCommandInput,
     dom.workflowAgentParseBtn,
     dom.workflowAgentRefreshCandidatesBtn,
+    dom.workflowAgentPttArmBtn,
     dom.workflowAgentTargetLanguage,
     dom.workflowAgentBuildPlanBtn,
     dom.workflowAgentReviewConfirm,
   ];
   actionControls.forEach((control) => control?.toggleAttribute("disabled", !interactionEnabled));
+  if (!interactionEnabled && isAgentPttArmed()) {
+    disarmAgentPtt("assistant mode off");
+  }
 
   const configControls: Array<HTMLElement | null> = [
     dom.workflowAgentHandsFreeEnabled,
@@ -371,11 +436,11 @@ function renderPlanPreview(): void {
 }
 
 function matchesWakeword(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
+  const normalized = normalizeWakewordText(text);
   if (!normalized) return false;
   const wakewords = settings?.workflow_agent?.wakewords ?? [];
   return wakewords.some((wakeword) => {
-    const needle = wakeword.trim().toLowerCase();
+    const needle = normalizeWakewordText(wakeword);
     return Boolean(needle) && normalized.includes(needle);
   });
 }
@@ -639,6 +704,18 @@ function bindUi(): void {
   dom.workflowAgentRefreshCandidatesBtn?.addEventListener("click", () => {
     void refreshCandidates();
   });
+  dom.workflowAgentPttArmBtn?.addEventListener("click", () => {
+    if (!isWorkflowAgentEnabled() || !isAssistantModeEnabled()) {
+      showToast({
+        type: "info",
+        title: "Assistant mode required",
+        message: "Enable Workflow Agent and switch Product mode to Assistant first.",
+        duration: 3200,
+      });
+      return;
+    }
+    armAgentPtt();
+  });
   dom.workflowAgentBuildPlanBtn?.addEventListener("click", () => {
     void buildPlan();
   });
@@ -734,6 +811,7 @@ export function initWorkflowAgentConsole(): void {
   renderReviewGate();
   renderConfiguration();
   renderLiveState();
+  setAgentPttArmed(false);
 }
 
 export function syncWorkflowAgentConsoleState(): void {
@@ -741,23 +819,35 @@ export function syncWorkflowAgentConsoleState(): void {
   renderReviewGate();
   renderConfiguration();
   renderLiveState();
+  setAgentPttArmed(isAgentPttArmed());
 }
 
-export async function handleWorkflowAgentRawResult(
-  payload: TranscriptionRawResultEvent
+async function handleWorkflowAgentTranscriptInput(
+  spokenRaw: string,
+  source: string,
+  timestampMs: number,
+  streamKind: "raw" | "final"
 ): Promise<void> {
   if (!isWorkflowAgentEnabled()) return;
   if (!isAssistantModeEnabled()) return;
-  if (!settings?.workflow_agent?.hands_free_enabled) return;
-  if (!payload?.text?.trim()) return;
-  const spoken = payload.text.trim();
-  if (!matchesWakeword(spoken)) return;
+  const handsFree = Boolean(settings?.workflow_agent?.hands_free_enabled);
+  const pttArmed = isAgentPttArmed(timestampMs);
+  if (!handsFree && !pttArmed) return;
+
+  const spoken = spokenRaw.trim();
+  if (!spoken) return;
+  if (isDuplicateTranscript(spoken, timestampMs)) return;
+
+  const bypassWakeword = pttArmed;
+  const wakewordMatched = matchesWakeword(spoken);
+  if (!bypassWakeword && !wakewordMatched) return;
 
   if (pendingConfirmationToken) {
-    const normalizedSpoken = spoken.toLowerCase();
+    const normalizedSpoken = normalizeWakewordText(spoken);
     if (containsAnyKeyword(normalizedSpoken, CANCEL_KEYWORDS)) {
-      appendLog(`Voice cancel detected from ${payload.source}.`);
+      appendLog(`Voice cancel detected from ${source} (${streamKind}).`);
       await cancelPendingConfirmation("cancelled_by_voice");
+      if (pttArmed) disarmAgentPtt("voice cancel");
       return;
     }
 
@@ -767,17 +857,47 @@ export async function handleWorkflowAgentRawResult(
     const tokenMatched = pendingTokenNormalized.length > 0
       && spokenTokenNormalized.includes(pendingTokenNormalized);
     if (confirms && tokenMatched) {
-      appendLog(`Voice confirmation token accepted from ${payload.source}.`);
+      appendLog(`Voice confirmation token accepted from ${source} (${streamKind}).`);
       await executePlan(pendingConfirmationToken);
+      if (pttArmed) disarmAgentPtt("confirmation accepted");
       return;
     }
   }
 
-  appendLog(`Wakeword command detected from ${payload.source}.`);
+  appendLog(
+    `${bypassWakeword ? "PTT command" : "Wakeword command"} detected from ${source} (${streamKind}).`
+  );
   if (dom.workflowAgentCommandInput) {
     dom.workflowAgentCommandInput.value = spoken;
   }
   await parseCommand(spoken);
+  if (pttArmed) {
+    disarmAgentPtt("command consumed");
+  }
+}
+
+export async function handleWorkflowAgentRawResult(
+  payload: TranscriptionRawResultEvent
+): Promise<void> {
+  if (!payload?.text) return;
+  await handleWorkflowAgentTranscriptInput(
+    payload.text,
+    payload.source || "unknown",
+    Number(payload.timestamp_ms || Date.now()),
+    "raw"
+  );
+}
+
+export async function handleWorkflowAgentFinalResult(
+  payload: TranscriptionResultEvent
+): Promise<void> {
+  if (!payload?.text) return;
+  await handleWorkflowAgentTranscriptInput(
+    payload.text,
+    payload.source || "unknown",
+    Date.now(),
+    "final"
+  );
 }
 
 export function appendWorkflowAgentLog(line: string): void {

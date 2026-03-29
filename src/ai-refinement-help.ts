@@ -275,12 +275,21 @@ export function applyHelpTooltip(target: HTMLElement | null, key: HelpKey): void
   if (!target) return;
   const text = HELP_TEXTS[key];
   if (!text) return;
+  const anchor = (() => {
+    if (target instanceof HTMLInputElement && target.type === "checkbox") {
+      const toggle = target.closest<HTMLElement>(".toggle-row");
+      if (toggle) return toggle;
+      const label = target.closest<HTMLElement>("label");
+      if (label) return label;
+    }
+    return target;
+  })();
 
-  target.dataset.helpKey = key;
-  target.dataset.tooltipTitle = text.title;
-  target.dataset.tooltipBody = text.description;
-  target.dataset.tooltipConsequence = text.consequence;
-  target.classList.add("has-help-tooltip");
+  anchor.dataset.helpKey = key;
+  anchor.dataset.tooltipTitle = text.title;
+  anchor.dataset.tooltipBody = text.description;
+  anchor.dataset.tooltipConsequence = text.consequence;
+  anchor.classList.add("has-help-tooltip");
 }
 
 export function renderAIRefinementStaticHelp(): void {

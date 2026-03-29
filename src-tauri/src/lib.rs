@@ -6432,6 +6432,37 @@ fn list_tts_voices(
     }
 }
 
+#[tauri::command]
+fn list_piper_voice_catalog(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::multimodal_io::PiperVoiceCatalogEntry>, String> {
+    let model_dir = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        require_capability_enabled(&settings, RuntimeCapability::VoiceOutputTts)?;
+        settings.voice_output_settings.piper_model_dir.clone()
+    };
+    Ok(crate::multimodal_io::list_piper_voice_catalog(&model_dir))
+}
+
+#[tauri::command]
+fn download_piper_voice_key(
+    state: State<'_, AppState>,
+    voice_key: String,
+) -> Result<String, String> {
+    {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        require_capability_enabled(&settings, RuntimeCapability::VoiceOutputTts)?;
+    }
+    let path = crate::multimodal_io::download_piper_voice(voice_key.trim())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 fn pinned_tts_language_hint(language_mode: &str, language_pinned: bool) -> Option<String> {
     if !language_pinned {
         return None;
@@ -6538,6 +6569,17 @@ fn resolve_manual_windows_voice_id_for_lane(
     default_voice_id.trim().to_string()
 }
 
+fn piper_effective_volume(global_volume: f32, piper_gain_db: f32) -> f32 {
+    let gain = 10_f32.powf(piper_gain_db.clamp(-24.0, 6.0) / 20.0);
+    (global_volume.clamp(0.0, 1.0) * gain).clamp(0.0, 1.0)
+}
+
+fn is_tts_output_device_unavailable_error(error: &str) -> bool {
+    error
+        .to_ascii_lowercase()
+        .contains("[tts_output_device_unavailable]")
+}
+
 fn speak_tts_internal(
     app: &AppHandle,
     state: &AppState,
@@ -6586,6 +6628,7 @@ fn speak_tts_internal(
         .volume
         .unwrap_or(voice_settings.volume)
         .clamp(0.0, 1.0);
+    let piper_gain_db = voice_settings.piper_gain_db.clamp(-24.0, 6.0);
 
     state.tts_speaking.store(true, Ordering::Release);
     let _ = app.emit(
@@ -6617,78 +6660,118 @@ fn speak_tts_internal(
     let context_for_thread = context.clone();
     let app_c = app.clone();
     crate::util::spawn_guarded("tts_playback", move || {
-        let result = crate::multimodal_io::execute_tts_with_fallback(
-            &preferred_provider_for_thread,
-            &fallback_provider_for_thread,
-            |provider| match provider {
-                "windows_native" => {
-                    let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
-                        "windows_native",
-                        &default_provider_config,
-                        &fallback_provider_config,
-                        &windows_voice_id_default,
-                        &windows_voice_id_fallback,
-                    );
-                    let resolved_voice = resolve_windows_voice_for_provider(
-                        "windows_native",
-                        &manual_voice_id,
-                        auto_voice_by_language_enabled,
-                        auto_voice_language_hint.as_deref(),
-                    );
-                    crate::multimodal_io::speak_windows_native(
+        let run_chain = |selected_output_device: &str| {
+            crate::multimodal_io::execute_tts_with_fallback(
+                &preferred_provider_for_thread,
+                &fallback_provider_for_thread,
+                |provider| match provider {
+                    "windows_native" => {
+                        let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
+                            "windows_native",
+                            &default_provider_config,
+                            &fallback_provider_config,
+                            &windows_voice_id_default,
+                            &windows_voice_id_fallback,
+                        );
+                        let resolved_voice = resolve_windows_voice_for_provider(
+                            "windows_native",
+                            &manual_voice_id,
+                            auto_voice_by_language_enabled,
+                            auto_voice_language_hint.as_deref(),
+                        );
+                        crate::multimodal_io::speak_windows_native(
+                            &text,
+                            rate,
+                            volume,
+                            selected_output_device,
+                            resolved_voice.as_deref(),
+                        )
+                    }
+                    "windows_natural" => {
+                        let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
+                            "windows_natural",
+                            &default_provider_config,
+                            &fallback_provider_config,
+                            &windows_voice_id_default,
+                            &windows_voice_id_fallback,
+                        );
+                        let resolved_voice = resolve_windows_voice_for_provider(
+                            "windows_natural",
+                            &manual_voice_id,
+                            auto_voice_by_language_enabled,
+                            auto_voice_language_hint.as_deref(),
+                        );
+                        crate::multimodal_io::speak_windows_natural(
+                            &text,
+                            rate,
+                            volume,
+                            selected_output_device,
+                            resolved_voice.as_deref(),
+                        )
+                    }
+                    "local_custom" => crate::multimodal_io::speak_piper(
+                        &app_c.state::<AppState>().piper_daemon,
+                        &text,
+                        &piper_binary_path,
+                        &piper_model_path,
+                        rate,
+                        piper_effective_volume(volume, piper_gain_db),
+                        selected_output_device,
+                    ),
+                    "qwen3_tts" => speak_qwen3_tts(
                         &text,
                         rate,
                         volume,
-                        &output_device_id,
-                        resolved_voice.as_deref(),
-                    )
+                        selected_output_device,
+                        &qwen3_runtime_config,
+                    ),
+                    _ => Err(format!("Unknown TTS provider '{}'.", provider)),
+                },
+            )
+        };
+
+        let mut recovered_output_device = false;
+        let result = match run_chain(&output_device_id) {
+            Ok(outcome) => Ok(outcome),
+            Err(error)
+                if output_device_id != "default"
+                    && is_tts_output_device_unavailable_error(&error) =>
+            {
+                tracing::warn!(
+                    "tts playback retrying with default output device after unavailable device '{}': {}",
+                    output_device_id,
+                    error
+                );
+                match run_chain("default") {
+                    Ok(outcome) => {
+                        recovered_output_device = true;
+                        Ok(outcome)
+                    }
+                    Err(retry_error) => Err(format!("{error} Retry with default device failed: {retry_error}")),
                 }
-                "windows_natural" => {
-                    let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
-                        "windows_natural",
-                        &default_provider_config,
-                        &fallback_provider_config,
-                        &windows_voice_id_default,
-                        &windows_voice_id_fallback,
-                    );
-                    let resolved_voice = resolve_windows_voice_for_provider(
-                        "windows_natural",
-                        &manual_voice_id,
-                        auto_voice_by_language_enabled,
-                        auto_voice_language_hint.as_deref(),
-                    );
-                    crate::multimodal_io::speak_windows_natural(
-                        &text,
-                        rate,
-                        volume,
-                        &output_device_id,
-                        resolved_voice.as_deref(),
-                    )
-                }
-                "local_custom" => crate::multimodal_io::speak_piper(
-                    &app_c.state::<AppState>().piper_daemon,
-                    &text,
-                    &piper_binary_path,
-                    &piper_model_path,
-                    rate,
-                    volume,
-                    &output_device_id,
-                ),
-                "qwen3_tts" => speak_qwen3_tts(
-                    &text,
-                    rate,
-                    volume,
-                    &output_device_id,
-                    &qwen3_runtime_config,
-                ),
-                _ => Err(format!("Unknown TTS provider '{}'.", provider)),
-            },
-        );
+            }
+            Err(error) => Err(error),
+        };
 
         let state = app_c.state::<AppState>();
         state.tts_speaking.store(false, Ordering::Release);
         match result {
             Ok(outcome) => {
+                if recovered_output_device {
+                    let mut snapshot = {
+                        let mut settings = state
+                            .settings
+                            .write()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        settings.voice_output_settings.output_device = "default".to_string();
+                        settings.clone()
+                    };
+                    crate::modules::normalize_voice_output_settings(
+                        &mut snapshot.voice_output_settings,
+                    );
+                    let _ = save_settings_file(&app_c, &snapshot);
+                    let _ = app_c.emit("settings-changed", snapshot);
+                }
                 let _ = app_c.emit(
                     "tts:speech-finished",
                     serde_json::json!({
@@ -6697,6 +6780,7 @@ fn speak_tts_internal(
                         "fallback_provider": fallback_provider_for_thread,
                         "used_fallback": outcome.used_fallback,
                         "primary_error": outcome.primary_error,
+                        "output_device_recovered": recovered_output_device,
                         "context": context_for_thread,
                         "timestamp_ms": crate::util::now_ms(),
                     }),
@@ -6793,6 +6877,7 @@ fn test_tts_provider(
         let fallback_provider = voice_settings.fallback_provider.clone();
         let rate = voice_settings.rate.clamp(0.5, 2.0);
         let volume = voice_settings.volume.clamp(0.0, 1.0);
+        let piper_gain_db = voice_settings.piper_gain_db.clamp(-24.0, 6.0);
         let piper_binary_path = voice_settings.piper_binary_path.clone();
         let piper_model_path = voice_settings.piper_model_path.clone();
         let qwen3_runtime_config = resolve_qwen3_tts_runtime_config(&voice_settings);
@@ -6809,74 +6894,131 @@ fn test_tts_provider(
             None
         };
 
-        let outcome = match crate::multimodal_io::execute_tts_with_fallback(
-            &preferred_provider,
-            &fallback_provider,
-            |lane| match lane {
-                "windows_native" => {
-                    let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
-                        "windows_native",
-                        &default_provider_config,
-                        &fallback_provider_config,
-                        &windows_voice_id_default,
-                        &windows_voice_id_fallback,
-                    );
-                    let resolved_voice = resolve_windows_voice_for_provider(
-                        "windows_native",
-                        &manual_voice_id,
-                        auto_voice_by_language_enabled,
-                        auto_voice_language_hint.as_deref(),
-                    );
-                    crate::multimodal_io::speak_windows_native(
+        let run_chain = |selected_output_device: &str| {
+            crate::multimodal_io::execute_tts_with_fallback(
+                &preferred_provider,
+                &fallback_provider,
+                |lane| match lane {
+                    "windows_native" => {
+                        let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
+                            "windows_native",
+                            &default_provider_config,
+                            &fallback_provider_config,
+                            &windows_voice_id_default,
+                            &windows_voice_id_fallback,
+                        );
+                        let resolved_voice = resolve_windows_voice_for_provider(
+                            "windows_native",
+                            &manual_voice_id,
+                            auto_voice_by_language_enabled,
+                            auto_voice_language_hint.as_deref(),
+                        );
+                        crate::multimodal_io::speak_windows_native(
+                            sample_text,
+                            rate,
+                            volume,
+                            selected_output_device,
+                            resolved_voice.as_deref(),
+                        )
+                    }
+                    "windows_natural" => {
+                        let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
+                            "windows_natural",
+                            &default_provider_config,
+                            &fallback_provider_config,
+                            &windows_voice_id_default,
+                            &windows_voice_id_fallback,
+                        );
+                        let resolved_voice = resolve_windows_voice_for_provider(
+                            "windows_natural",
+                            &manual_voice_id,
+                            auto_voice_by_language_enabled,
+                            auto_voice_language_hint.as_deref(),
+                        );
+                        crate::multimodal_io::speak_windows_natural(
+                            sample_text,
+                            rate,
+                            volume,
+                            selected_output_device,
+                            resolved_voice.as_deref(),
+                        )
+                    }
+                    "local_custom" => crate::multimodal_io::speak_piper(
+                        &state.piper_daemon,
+                        sample_text,
+                        &piper_binary_path,
+                        &piper_model_path,
+                        rate,
+                        piper_effective_volume(volume, piper_gain_db),
+                        selected_output_device,
+                    ),
+                    "qwen3_tts" => speak_qwen3_tts(
                         sample_text,
                         rate,
                         volume,
-                        &output_device_id,
-                        resolved_voice.as_deref(),
-                    )
-                }
-                "windows_natural" => {
-                    let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
-                        "windows_natural",
-                        &default_provider_config,
-                        &fallback_provider_config,
-                        &windows_voice_id_default,
-                        &windows_voice_id_fallback,
-                    );
-                    let resolved_voice = resolve_windows_voice_for_provider(
-                        "windows_natural",
-                        &manual_voice_id,
-                        auto_voice_by_language_enabled,
-                        auto_voice_language_hint.as_deref(),
-                    );
-                    crate::multimodal_io::speak_windows_natural(
-                        sample_text,
-                        rate,
-                        volume,
-                        &output_device_id,
-                        resolved_voice.as_deref(),
-                    )
-                }
-                "local_custom" => crate::multimodal_io::speak_piper(
-                    &state.piper_daemon,
-                    sample_text,
-                    &piper_binary_path,
-                    &piper_model_path,
-                    rate,
-                    volume,
-                    &output_device_id,
-                ),
-                "qwen3_tts" => speak_qwen3_tts(
-                    sample_text,
-                    rate,
-                    volume,
-                    &output_device_id,
-                    &qwen3_runtime_config,
-                ),
-                _ => Err(format!("Unknown TTS provider '{}'.", lane)),
-            },
-        ) {
+                        selected_output_device,
+                        &qwen3_runtime_config,
+                    ),
+                    _ => Err(format!("Unknown TTS provider '{}'.", lane)),
+                },
+            )
+        };
+
+        let mut recovered_output_device = false;
+        let outcome = match run_chain(&output_device_id) {
             Ok(outcome) => outcome,
+            Err(error)
+                if output_device_id != "default"
+                    && is_tts_output_device_unavailable_error(&error) =>
+            {
+                tracing::warn!(
+                    "test_tts_provider retrying with default output device after unavailable '{}': {}",
+                    output_device_id,
+                    error
+                );
+                match run_chain("default") {
+                    Ok(outcome) => {
+                        recovered_output_device = true;
+                        {
+                            let mut settings_guard = state
+                                .settings
+                                .write()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            settings_guard.voice_output_settings.output_device = "default".to_string();
+                        }
+                        let snapshot = state
+                            .settings
+                            .read()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .clone();
+                        let _ = save_settings_file(&app, &snapshot);
+                        let _ = app.emit("settings-changed", snapshot);
+                        outcome
+                    }
+                    Err(retry_error) => {
+                        let merged = format!("{error} Retry with default device failed: {retry_error}");
+                        tracing::error!(
+                            "test_tts_provider failed preferred='{}' fallback='{}' device='{}': {}",
+                            preferred_provider,
+                            fallback_provider,
+                            output_device_id,
+                            merged
+                        );
+                        let _ = app.emit(
+                            "tts:speech-error",
+                            serde_json::json!({
+                                "provider": preferred_provider.clone(),
+                                "preferred_provider": preferred_provider.clone(),
+                                "fallback_provider": fallback_provider.clone(),
+                                "context": "manual_test",
+                                "error": merged.clone(),
+                                "timestamp_ms": crate::util::now_ms(),
+                            }),
+                        );
+                        return Err(merged);
+                    }
+                }
+            }
             Err(error) => {
                 tracing::error!(
                     "test_tts_provider failed preferred='{}' fallback='{}' device='{}': {}",
@@ -6913,6 +7055,7 @@ fn test_tts_provider(
                     "fallback_provider": fallback_provider.clone(),
                     "used_fallback": true,
                     "primary_error": primary_error.clone(),
+                    "output_device_recovered": recovered_output_device,
                     "context": "manual_test",
                     "timestamp_ms": crate::util::now_ms(),
                 }),
@@ -6923,12 +7066,24 @@ fn test_tts_provider(
             provider_used: provider_used.clone(),
             accepted: true,
             message: if used_fallback {
-                format!(
+                let fallback_msg = format!(
                     "Fallback used: {} -> {}.",
                     preferred_provider, provider_used
-                )
+                );
+                if recovered_output_device {
+                    format!(
+                        "{fallback_msg} Gerät ungültig, auf Default zurückgesetzt."
+                    )
+                } else {
+                    fallback_msg
+                }
             } else {
-                format!("Provider '{}' responded.", provider_used)
+                let base = format!("Provider '{}' responded.", provider_used);
+                if recovered_output_device {
+                    format!("{base} Gerät ungültig, auf Default zurückgesetzt.")
+                } else {
+                    base
+                }
             },
             used_fallback: Some(used_fallback),
             preferred_provider: Some(preferred_provider),
@@ -10672,6 +10827,8 @@ pub fn run() {
             capture_vision_snapshot,
             list_tts_providers,
             list_tts_voices,
+            list_piper_voice_catalog,
+            download_piper_voice_key,
             speak_tts,
             stop_tts,
             test_tts_provider,

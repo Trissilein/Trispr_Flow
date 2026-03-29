@@ -160,6 +160,8 @@
         <span class="pipeline-arrow">&rarr;</span>
         <span class="pipeline-stage" data-stage="postproc">Postproc</span>
         <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-stage" data-stage="agent">Agent</span>
+        <span class="pipeline-arrow">&rarr;</span>
         <span class="pipeline-stage" data-stage="paste">Paste</span>
       </div>
 
@@ -1850,6 +1852,18 @@
                   <summary><h4 class="ai-refine-section-title">Advanced (Piper paths)</h4></summary>
                   <div class="expander-body">
                     <div class="panel-grid">
+                      <label class="field range span-2">
+                        <span class="field-label">Piper gain</span>
+                        <div class="range-row">
+                          <input id="voice-output-piper-gain-db" type="range" min="-24" max="6" step="1"
+                                title="-24 dB = much quieter · +6 dB = louder"
+                                aria-valuemin="-24" aria-valuemax="6" aria-valuenow="-12"
+                                aria-label="Piper gain in decibel"
+                                aria-describedby="voice-output-piper-gain-db-value" />
+                          <span id="voice-output-piper-gain-db-value" class="range-value" aria-live="polite">-12 dB</span>
+                        </div>
+                        <span class="field-hint">Additional gain applied only to Piper playback, after global volume.</span>
+                      </label>
                       <label class="field">
                         <span class="field-label">Piper binary path</span>
                         <input id="voice-output-piper-binary" type="text"
@@ -1939,6 +1953,7 @@
                       <div class="auth-modal-actions span-2">
                         <button id="workflow-agent-parse-btn" type="button" class="hotkey-record-btn">Parse Command</button>
                         <button id="workflow-agent-refresh-candidates-btn" type="button" class="hotkey-record-btn">Find Sessions</button>
+                        <button id="workflow-agent-ptt-arm-btn" type="button" class="hotkey-record-btn">PTT (Agent)</button>
                       </div>
                       <div class="field span-2">
                         <span class="field-label">Live status</span>

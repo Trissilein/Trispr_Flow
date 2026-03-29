@@ -112,6 +112,7 @@ import {
   handleAssistantConfirmationExpired,
   handleAssistantIntentDetected,
   handleAssistantStateChanged,
+  handleWorkflowAgentFinalResult,
   handleWorkflowAgentRawResult,
   initWorkflowAgentConsole,
   syncWorkflowAgentConsoleState,
@@ -931,6 +932,7 @@ async function bootstrap() {
     }),
     listen<TranscriptionResultEvent>("transcription:result", (event) => {
       const payload = event.payload;
+      void handleWorkflowAgentFinalResult(payload);
       handlePipelineTranscriptionResult(payload);
       handleTranscriptionResultForInspector(payload);
       scheduleHistoryRender();

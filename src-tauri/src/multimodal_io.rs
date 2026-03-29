@@ -1,6 +1,6 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -206,6 +206,19 @@ pub struct TtsVoiceInfo {
     pub locale: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiperVoiceCatalogEntry {
+    pub key: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    pub quality: String,
+    pub installed: bool,
+    pub curated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -871,6 +884,53 @@ pub fn select_windows_voice_for_language(provider: &str, language_hint: &str) ->
     select_voice_from_candidates_for_language(&candidates, language_hint)
 }
 
+const PIPER_CURATED_VOICE_KEYS: &[&str] = &[
+    "de_DE-thorsten-medium",
+    "de_DE-mls-medium",
+    "en_GB-alan-medium",
+    "en_GB-alba-medium",
+    "en_GB-cori-high",
+];
+
+fn parse_piper_voice_key(voice_key: &str) -> Option<(String, String, String)> {
+    let trimmed = voice_key.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (prefix, quality) = trimmed.rsplit_once('-')?;
+    if !matches!(quality, "x_low" | "low" | "medium" | "high") {
+        return None;
+    }
+    let (locale, voice_name) = prefix.split_once('-')?;
+    if locale.is_empty() || voice_name.is_empty() {
+        return None;
+    }
+    Some((locale.to_string(), voice_name.to_string(), quality.to_string()))
+}
+
+fn locale_display_label(locale: &str) -> String {
+    let normalized = locale.trim();
+    if normalized.eq_ignore_ascii_case("de_DE") {
+        "Deutsch (DE)".to_string()
+    } else if normalized.eq_ignore_ascii_case("en_GB") {
+        "English (GB)".to_string()
+    } else {
+        normalized.replace('_', "-")
+    }
+}
+
+fn piper_voice_catalog_label(voice_key: &str) -> String {
+    if let Some((locale, voice_name, quality)) = parse_piper_voice_key(voice_key) {
+        return format!(
+            "{} · {} · {}",
+            locale_display_label(&locale),
+            voice_name,
+            quality
+        );
+    }
+    voice_key.to_string()
+}
+
 /// Scan the resolved piper voice model directory for `.onnx` files.
 /// `model_dir` overrides auto-discovery when non-empty; otherwise the bundled
 /// installer path and %LOCALAPPDATA% fallback are tried automatically.
@@ -910,6 +970,77 @@ pub fn list_piper_voices(model_dir: &str) -> Vec<TtsVoiceInfo> {
 
     voices.sort_by(|a, b| a.label.cmp(&b.label));
     voices
+}
+
+pub fn list_piper_voice_catalog(model_dir: &str) -> Vec<PiperVoiceCatalogEntry> {
+    let installed_voices = list_piper_voices(model_dir);
+    let mut installed_by_key: HashMap<String, String> = HashMap::new();
+    for voice in installed_voices {
+        let path = PathBuf::from(voice.id.clone());
+        let stem = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if stem.is_empty() {
+            continue;
+        }
+        if piper_hf_path_from_voice_key(&stem).is_some() {
+            installed_by_key.entry(stem).or_insert(voice.id);
+        }
+    }
+
+    let mut entries: Vec<PiperVoiceCatalogEntry> = Vec::new();
+
+    for key in PIPER_CURATED_VOICE_KEYS {
+        let path = installed_by_key.get(*key).cloned();
+        let (locale, _, quality) = parse_piper_voice_key(key)
+            .unwrap_or_else(|| ("".to_string(), "".to_string(), "medium".to_string()));
+        entries.push(PiperVoiceCatalogEntry {
+            key: (*key).to_string(),
+            label: piper_voice_catalog_label(key),
+            locale: if locale.is_empty() {
+                None
+            } else {
+                Some(locale.replace('_', "-"))
+            },
+            quality,
+            installed: path.is_some(),
+            curated: true,
+            path,
+        });
+    }
+
+    for (key, path) in installed_by_key {
+        if entries.iter().any(|entry| entry.key == key) {
+            continue;
+        }
+        let (locale, _, quality) = parse_piper_voice_key(&key)
+            .unwrap_or_else(|| ("".to_string(), "".to_string(), "medium".to_string()));
+        entries.push(PiperVoiceCatalogEntry {
+            key: key.clone(),
+            label: piper_voice_catalog_label(&key),
+            locale: if locale.is_empty() {
+                None
+            } else {
+                Some(locale.replace('_', "-"))
+            },
+            quality,
+            installed: true,
+            curated: false,
+            path: Some(path),
+        });
+    }
+
+    entries.sort_by(|left, right| {
+        right
+            .curated
+            .cmp(&left.curated)
+            .then(left.label.cmp(&right.label))
+            .then(left.key.cmp(&right.key))
+    });
+    entries
 }
 
 #[cfg(target_os = "windows")]

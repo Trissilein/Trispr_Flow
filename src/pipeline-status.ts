@@ -2,7 +2,7 @@
 
 import { listen } from "@tauri-apps/api/event";
 
-const stages = ["rec", "whisper", "postproc", "paste"] as const;
+const stages = ["rec", "whisper", "postproc", "agent", "paste"] as const;
 type Stage = (typeof stages)[number];
 
 let activeStage: Stage | null = null;
@@ -14,12 +14,16 @@ function getBar(): HTMLElement | null {
   return bar;
 }
 
-function setStage(stage: Stage | null, state: "active" | "done" | "error" = "active"): void {
+function setStage(
+  stage: Stage | null,
+  state: "active" | "done" | "error" = "active",
+  force = false
+): void {
   const b = getBar();
   if (!b) return;
 
   // Only advance forward through the pipeline
-  if (stage !== null && activeStage !== null) {
+  if (!force && stage !== null && activeStage !== null) {
     if (stages.indexOf(stage) < stages.indexOf(activeStage)) return;
   }
 
@@ -79,4 +83,19 @@ export function initPipelineStatus(): void {
 
   // Transcription error → show error state then hide
   listen("transcription:error", () => { setStage("whisper", "error"); clearAfterDelay(3000); });
+
+  listen("assistant:intent-detected", () => {
+    setStage("agent", "active", true);
+  });
+
+  listen("assistant:action-result", () => {
+    setStage("agent", "done", true);
+    clearAfterDelay(1500);
+  });
+
+  listen<{ state?: string }>("assistant:state-changed", (event) => {
+    if (event.payload?.state === "idle" || event.payload?.state === "recovering") {
+      clearAfterDelay(400);
+    }
+  });
 }

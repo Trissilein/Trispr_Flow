@@ -33,6 +33,8 @@ import type {
   AIExecutionMode,
   AIProviderAuthMethodPreference,
   OverlayRefiningIndicatorPreset,
+  PiperVoiceCatalogEntry,
+  VoiceOutputSettings,
   TtsProviderInfo,
   TtsVoiceInfo,
   UserRefinementPromptPreset,
@@ -1730,11 +1732,25 @@ export async function renderTopicKeywords(): Promise<void> {
  */
 let voiceOutputWindowsVoiceRequestSeq = 0;
 let voiceOutputFallbackVoiceRequestSeq = 0;
+const DEFAULT_PIPER_VOICE_KEY = "de_DE-thorsten-medium";
+const PIPER_DOWNLOAD_MARKER = " · Download";
+let lastTtsProviders: TtsProviderInfo[] = [];
+type TtsProviderId = VoiceOutputSettings["default_provider"];
 
 function isWindowsVoiceProvider(
   provider: string | null | undefined
 ): provider is "windows_native" | "windows_natural" {
   return provider === "windows_native" || provider === "windows_natural";
+}
+
+function isPiperVoiceProvider(provider: string | null | undefined): provider is "local_custom" {
+  return provider === "local_custom";
+}
+
+function normalizePiperGainDb(value: number | null | undefined): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return -12;
+  return Math.max(-24, Math.min(6, Math.round(parsed)));
 }
 
 function setFieldHidden(field: HTMLElement | null, hidden: boolean): void {
@@ -1754,7 +1770,7 @@ function voicePickerTitle(provider: string, isDefault: boolean): string {
       : "Select a fallback Windows speaker voice";
   }
   if (provider === "local_custom") {
-    return "Voice selection is managed by Piper model settings";
+    return "Select a Piper voice model";
   }
   if (provider === "qwen3_tts") {
     return "Voice selection is managed in Qwen3-TTS settings";
@@ -1809,6 +1825,82 @@ function formatWindowsVoiceLabel(voice: TtsVoiceInfo): string {
   return parts.length > 0 ? `${voice.label} (${parts.join(", ")})` : voice.label;
 }
 
+function basenameFromPath(rawPath: string): string {
+  const normalized = rawPath.replace(/\\/g, "/");
+  const parts = normalized.split("/");
+  return parts[parts.length - 1] || rawPath;
+}
+
+function normalizedPiperSelection(
+  configuredModelPath: string,
+  catalog: PiperVoiceCatalogEntry[]
+): string {
+  const configured = configuredModelPath.trim();
+  if (configured.length === 0) return DEFAULT_PIPER_VOICE_KEY;
+  if (catalog.some((entry) => entry.key === configured)) {
+    return configured;
+  }
+  const byPath = catalog.find((entry) => entry.path && entry.path === configured);
+  if (byPath) {
+    return byPath.key;
+  }
+  return configured;
+}
+
+function availableRuntimeStableProviderIds(providers: TtsProviderInfo[]): TtsProviderId[] {
+  return providers
+    .filter((provider) => provider.available && provider.surface === "runtime_stable")
+    .map((provider) => provider.id) as TtsProviderId[];
+}
+
+function normalizeProviderPair(
+  providers: TtsProviderInfo[],
+  preferredDefault: TtsProviderId,
+  preferredFallback: TtsProviderId
+): { defaultProvider: TtsProviderId; fallbackProvider: TtsProviderId } {
+  const runtimeStable = availableRuntimeStableProviderIds(providers) as TtsProviderId[];
+  const available = providers
+    .filter((provider) => provider.available)
+    .map((provider) => provider.id) as TtsProviderId[];
+  const defaultBase: TtsProviderId = runtimeStable[0] ?? available[0] ?? "windows_native";
+  const selectPreferred = (preferred: TtsProviderId, disallow: TtsProviderId | null): TtsProviderId => {
+    const candidate = preferred;
+    const preferredInfo = providers.find((provider) => provider.id === candidate);
+    if (preferredInfo?.available) {
+      if (disallow && candidate === disallow && runtimeStable.length > 1) {
+        // fall through to choose another provider
+      } else {
+        return candidate;
+      }
+    }
+    const runtimeCandidate = runtimeStable.find((id) => id !== disallow);
+    if (runtimeCandidate) return runtimeCandidate;
+    const availableCandidate = available.find((id) => id !== disallow);
+    if (availableCandidate) return availableCandidate;
+    return defaultBase;
+  };
+
+  const defaultProvider = selectPreferred(preferredDefault, null);
+  const fallbackProvider = selectPreferred(preferredFallback, defaultProvider);
+  return { defaultProvider, fallbackProvider };
+}
+
+function setProviderOptions(
+  select: HTMLSelectElement | null,
+  providers: TtsProviderInfo[]
+): void {
+  if (!select) return;
+  select.innerHTML = "";
+  providers.forEach((provider) => {
+    const option = document.createElement("option");
+    option.value = provider.id;
+    option.textContent = provider.available ? provider.label : `${provider.label} — nicht verfügbar`;
+    option.disabled = !provider.available;
+    option.dataset.providerAvailable = provider.available ? "1" : "0";
+    select.appendChild(option);
+  });
+}
+
 export async function refreshProviderVoices(target: "default" | "fallback"): Promise<void> {
   if (!settings?.voice_output_settings) return;
 
@@ -1825,15 +1917,13 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
   if (!select) return;
   select.title = voicePickerTitle(provider, isDefault);
 
-  if (!isWindowsVoiceProvider(provider)) {
+  if (!isWindowsVoiceProvider(provider) && !isPiperVoiceProvider(provider)) {
     setFieldHidden(field, true);
     setFieldHidden(autoField, true);
     if (hint) {
-      hint.textContent = provider === "local_custom"
-        ? "Stimme wird über das Piper-Modell gesteuert."
-        : provider === "qwen3_tts"
-          ? "Stimme wird in den Qwen3-TTS-Einstellungen gesteuert."
-          : "Stimme-Auswahl nur für Windows-Provider verfügbar.";
+      hint.textContent = provider === "qwen3_tts"
+        ? "Stimme wird in den Qwen3-TTS-Einstellungen gesteuert."
+        : "Stimme-Auswahl nur für Windows-Provider verfügbar.";
     }
     select.innerHTML = "";
     const option = document.createElement("option");
@@ -1843,6 +1933,79 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
     select.value = "";
     select.disabled = true;
     return;
+  }
+
+  if (isPiperVoiceProvider(provider)) {
+    setFieldHidden(field, false);
+    setFieldHidden(autoField, true);
+    select.disabled = true;
+    select.innerHTML = "";
+    const loadingOption = document.createElement("option");
+    loadingOption.value = "";
+    loadingOption.textContent = "Lade Piper-Stimmen...";
+    select.appendChild(loadingOption);
+    if (hint) hint.textContent = "Lade kuratierte und installierte Piper-Stimmen...";
+
+    const seqRef = isDefault ? ++voiceOutputWindowsVoiceRequestSeq : ++voiceOutputFallbackVoiceRequestSeq;
+    try {
+      const catalog = await invoke<PiperVoiceCatalogEntry[]>("list_piper_voice_catalog");
+      const currentSeq = isDefault ? voiceOutputWindowsVoiceRequestSeq : voiceOutputFallbackVoiceRequestSeq;
+      if (seqRef !== currentSeq) return;
+
+      select.innerHTML = "";
+      const configured = (settings.voice_output_settings.piper_model_path ?? "").trim();
+      const normalizedSelection = normalizedPiperSelection(configured, catalog);
+      if (!configured) {
+        settings.voice_output_settings.piper_model_path = normalizedSelection;
+      }
+
+      catalog.forEach((entry) => {
+        const option = document.createElement("option");
+        option.value = entry.key;
+        option.textContent = `${entry.label}${entry.installed ? "" : PIPER_DOWNLOAD_MARKER}`;
+        option.dataset.piperInstalled = entry.installed ? "1" : "0";
+        option.dataset.piperPath = entry.path ?? "";
+        option.dataset.piperCurated = entry.curated ? "1" : "0";
+        select.appendChild(option);
+      });
+
+      if (
+        normalizedSelection.length > 0
+        && !catalog.some((entry) => entry.key === normalizedSelection)
+      ) {
+        const customOption = document.createElement("option");
+        customOption.value = normalizedSelection;
+        customOption.textContent = `Custom model (${basenameFromPath(normalizedSelection)})`;
+        customOption.dataset.piperInstalled = "1";
+        customOption.dataset.piperPath = normalizedSelection;
+        customOption.dataset.piperCurated = "0";
+        select.appendChild(customOption);
+      }
+
+      select.value = normalizedSelection;
+      select.disabled = false;
+      const installedCount = catalog.filter((entry) => entry.installed).length;
+      if (hint) {
+        hint.textContent = `${installedCount}/${catalog.length} Piper-Stimme(n) installiert.`;
+      }
+      return;
+    } catch (error) {
+      const currentSeq = isDefault ? voiceOutputWindowsVoiceRequestSeq : voiceOutputFallbackVoiceRequestSeq;
+      if (seqRef !== currentSeq) return;
+      select.innerHTML = "";
+      const fallbackOption = document.createElement("option");
+      fallbackOption.value = settings.voice_output_settings.piper_model_path || DEFAULT_PIPER_VOICE_KEY;
+      fallbackOption.textContent = `Model key: ${fallbackOption.value}`;
+      fallbackOption.dataset.piperInstalled = "1";
+      fallbackOption.dataset.piperPath = fallbackOption.value;
+      select.appendChild(fallbackOption);
+      select.value = fallbackOption.value;
+      select.disabled = false;
+      if (hint) {
+        hint.textContent = `Piper-Stimmliste nicht verfügbar: ${String(error).replace(/^Error:\s*/i, "").trim()}`;
+      }
+      return;
+    }
   }
 
   setFieldHidden(field, false);
@@ -1912,15 +2075,19 @@ export async function refreshVoiceOutputWindowsVoices(): Promise<void> {
 }
 
 export function updateProviderMutualExclusion(): void {
+  const stableAvailable = availableRuntimeStableProviderIds(lastTtsProviders);
+  const enforceDistinctProviders = stableAvailable.length > 1;
   const defVal = dom.voiceOutputDefaultProvider?.value ?? "";
   const fbVal = dom.voiceOutputFallbackProvider?.value ?? "";
   for (const option of Array.from(dom.voiceOutputDefaultProvider?.options ?? [])) {
     if (!option.value) continue;
-    option.disabled = option.value === fbVal;
+    const available = option.dataset.providerAvailable !== "0";
+    option.disabled = !available || (enforceDistinctProviders && option.value === fbVal);
   }
   for (const option of Array.from(dom.voiceOutputFallbackProvider?.options ?? [])) {
     if (!option.value) continue;
-    option.disabled = option.value === defVal;
+    const available = option.dataset.providerAvailable !== "0";
+    option.disabled = !available || (enforceDistinctProviders && option.value === defVal);
   }
 }
 
@@ -1935,25 +2102,32 @@ export async function refreshProviderAvailability(): Promise<void> {
     return; // Silent failure — UI nicht blockieren
   }
 
-  for (const select of [dom.voiceOutputDefaultProvider, dom.voiceOutputFallbackProvider]) {
-    if (!select) continue;
-    for (const option of Array.from(select.options)) {
-      if (!option.value) continue;
-      const info = providers.find((p) => p.id === option.value);
-      if (!info) {
-        // Provider nicht im Backend bekannt (z.B. qwen3_tts wenn disabled) → unavailable
-        option.disabled = true;
-        const baseText = option.textContent?.replace(/ — nicht verfügbar$/, "") ?? option.value;
-        option.textContent = `${baseText} — nicht verfügbar`;
-      } else if (!info.available) {
-        option.disabled = true;
-        option.textContent = `${info.label} — nicht verfügbar`;
-      } else {
-        option.disabled = false;
-        option.textContent = info.label;
-      }
+  lastTtsProviders = providers;
+  setProviderOptions(dom.voiceOutputDefaultProvider, providers);
+  setProviderOptions(dom.voiceOutputFallbackProvider, providers);
+
+  if (settings?.voice_output_settings) {
+    const { defaultProvider, fallbackProvider } = normalizeProviderPair(
+      providers,
+      settings.voice_output_settings.default_provider,
+      settings.voice_output_settings.fallback_provider
+    );
+    const changed =
+      settings.voice_output_settings.default_provider !== defaultProvider
+      || settings.voice_output_settings.fallback_provider !== fallbackProvider;
+    settings.voice_output_settings.default_provider = defaultProvider;
+    settings.voice_output_settings.fallback_provider = fallbackProvider;
+    if (dom.voiceOutputDefaultProvider) {
+      dom.voiceOutputDefaultProvider.value = defaultProvider;
+    }
+    if (dom.voiceOutputFallbackProvider) {
+      dom.voiceOutputFallbackProvider.value = fallbackProvider;
+    }
+    if (changed) {
+      void persistSettings();
     }
   }
+  updateProviderMutualExclusion();
 
   const setAvailabilityBadge = (
     badge: HTMLElement | null,
@@ -1978,6 +2152,9 @@ export async function refreshProviderAvailability(): Promise<void> {
     dom.voiceOutputFallbackAvailability,
     dom.voiceOutputFallbackProvider?.value
   );
+
+  void refreshProviderVoices("default");
+  void refreshProviderVoices("fallback");
 }
 
 export function renderVoiceOutputSettings(): void {
@@ -1985,6 +2162,7 @@ export function renderVoiceOutputSettings(): void {
 
   const vo = settings.voice_output_settings;
   vo.auto_voice_by_detected_language = vo.auto_voice_by_detected_language === true;
+  vo.piper_gain_db = normalizePiperGainDb(vo.piper_gain_db);
   const normalizedOutputDevice = typeof vo.output_device === "string" && vo.output_device.trim().length > 0
     ? vo.output_device.trim()
     : "default";
@@ -2065,6 +2243,13 @@ export function renderVoiceOutputSettings(): void {
     }
   }
 
+  if (dom.voiceOutputPiperGainDb) {
+    dom.voiceOutputPiperGainDb.value = String(vo.piper_gain_db);
+    if (dom.voiceOutputPiperGainDbValue) {
+      dom.voiceOutputPiperGainDbValue.textContent = `${vo.piper_gain_db} dB`;
+    }
+  }
+
   // Piper paths
   if (dom.voiceOutputPiperBinary) {
     dom.voiceOutputPiperBinary.value = vo.piper_binary_path ?? "";
@@ -2103,8 +2288,68 @@ export function renderVoiceOutputSettings(): void {
     qwen3Section.style.display = vo.qwen3_tts_enabled ? "block" : "none";
   }
 
-  updateProviderMutualExclusion();
-  void refreshProviderVoices("default");
-  void refreshProviderVoices("fallback");
   void refreshProviderAvailability();
+}
+
+export async function handleProviderVoiceSelection(target: "default" | "fallback"): Promise<void> {
+  if (!settings?.voice_output_settings) return;
+  const isDefault = target === "default";
+  const provider = isDefault
+    ? settings.voice_output_settings.default_provider
+    : settings.voice_output_settings.fallback_provider;
+  const select = isDefault ? dom.voiceOutputWindowsVoiceSelect : dom.voiceOutputFallbackVoiceSelect;
+  const hint = isDefault ? dom.voiceOutputWindowsVoiceHint : dom.voiceOutputFallbackVoiceHint;
+  if (!select) return;
+
+  if (isWindowsVoiceProvider(provider)) {
+    if (isDefault) {
+      settings.voice_output_settings.voice_id_windows = select.value.trim();
+    } else {
+      settings.voice_output_settings.voice_id_windows_fallback = select.value.trim();
+    }
+    await persistSettings();
+    return;
+  }
+
+  if (!isPiperVoiceProvider(provider)) {
+    return;
+  }
+
+  const selected = select.value.trim();
+  const previous = (settings.voice_output_settings.piper_model_path ?? DEFAULT_PIPER_VOICE_KEY).trim();
+  const nextKey = selected || DEFAULT_PIPER_VOICE_KEY;
+  const selectedOption = Array.from(select.options).find((option) => option.value === nextKey);
+  const installed = selectedOption?.dataset.piperInstalled === "1";
+
+  if (!installed) {
+    const confirmed = window.confirm(
+      `Die Stimme '${nextKey}' ist nicht installiert. Jetzt herunterladen und aktivieren?`
+    );
+    if (!confirmed) {
+      select.value = previous;
+      if (hint) hint.textContent = `Auswahl verworfen. Aktiv bleibt: ${previous}.`;
+      return;
+    }
+    if (hint) hint.textContent = `Lade Piper-Stimme '${nextKey}'...`;
+    try {
+      await invoke<string>("download_piper_voice_key", { voiceKey: nextKey });
+      if (selectedOption) {
+        selectedOption.dataset.piperInstalled = "1";
+        selectedOption.textContent = selectedOption.textContent?.replace(PIPER_DOWNLOAD_MARKER, "") ?? nextKey;
+      }
+    } catch (error) {
+      select.value = previous;
+      if (hint) {
+        hint.textContent = `Download fehlgeschlagen (${nextKey}): ${String(error).replace(/^Error:\s*/i, "").trim()}`;
+      }
+      return;
+    }
+  }
+
+  settings.voice_output_settings.piper_model_path = nextKey;
+  if (dom.voiceOutputPiperModel) {
+    dom.voiceOutputPiperModel.value = nextKey;
+  }
+  await persistSettings();
+  await refreshProviderVoices(target);
 }

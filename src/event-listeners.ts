@@ -34,8 +34,8 @@ import {
   syncCaptureModeVisibility,
   syncDerivedLanguageSettings,
   refreshProviderAvailability,
+  handleProviderVoiceSelection,
   refreshProviderVoices,
-  updateProviderMutualExclusion,
 } from "./settings";
 import { renderSettings } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
@@ -119,6 +119,9 @@ function refreshAIUi(): void {
 function formatTtsTestError(error: unknown): string {
   const raw = String(error ?? "Unknown error");
   const normalized = raw.replace(/^Error:\s*/i, "").trim();
+  if (normalized.toLowerCase().includes("[tts_output_device_unavailable]")) {
+    return `${normalized} Voice Output device was reset to Default. Please retest.`;
+  }
   return normalized;
 }
 
@@ -2914,9 +2917,8 @@ export function wireEvents() {
     if (!settings?.voice_output_settings) return;
     settings.voice_output_settings.default_provider = dom.voiceOutputDefaultProvider!
       .value as "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
-    await refreshProviderVoices("default");
-    updateProviderMutualExclusion();
     await refreshProviderAvailability();
+    await refreshProviderVoices("default");
     await persistSettings();
   });
 
@@ -2924,9 +2926,8 @@ export function wireEvents() {
     if (!settings?.voice_output_settings) return;
     settings.voice_output_settings.fallback_provider = dom.voiceOutputFallbackProvider!
       .value as "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
-    await refreshProviderVoices("fallback");
-    updateProviderMutualExclusion();
     await refreshProviderAvailability();
+    await refreshProviderVoices("fallback");
     await persistSettings();
   });
 
@@ -2945,14 +2946,12 @@ export function wireEvents() {
 
   dom.voiceOutputWindowsVoiceSelect?.addEventListener("change", async () => {
     if (!settings?.voice_output_settings || !dom.voiceOutputWindowsVoiceSelect) return;
-    settings.voice_output_settings.voice_id_windows = dom.voiceOutputWindowsVoiceSelect.value.trim();
-    await persistSettings();
+    await handleProviderVoiceSelection("default");
   });
 
   dom.voiceOutputFallbackVoiceSelect?.addEventListener("change", async () => {
     if (!settings?.voice_output_settings || !dom.voiceOutputFallbackVoiceSelect) return;
-    settings.voice_output_settings.voice_id_windows_fallback = dom.voiceOutputFallbackVoiceSelect.value.trim();
-    await persistSettings();
+    await handleProviderVoiceSelection("fallback");
   });
 
   dom.voiceOutputAutoLanguageVoice?.addEventListener("change", async () => {
@@ -2995,6 +2994,30 @@ export function wireEvents() {
     await persistSettings();
   });
 
+  dom.voiceOutputPiperGainDb?.addEventListener("input", () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputPiperGainDb) return;
+    const parsed = Number.parseInt(dom.voiceOutputPiperGainDb.value, 10);
+    settings.voice_output_settings.piper_gain_db = Number.isFinite(parsed)
+      ? Math.max(-24, Math.min(6, parsed))
+      : -12;
+    if (dom.voiceOutputPiperGainDbValue) {
+      dom.voiceOutputPiperGainDbValue.textContent = `${settings.voice_output_settings.piper_gain_db} dB`;
+    }
+  });
+
+  dom.voiceOutputPiperGainDb?.addEventListener("change", async () => {
+    if (!settings?.voice_output_settings || !dom.voiceOutputPiperGainDb) return;
+    const parsed = Number.parseInt(dom.voiceOutputPiperGainDb.value, 10);
+    settings.voice_output_settings.piper_gain_db = Number.isFinite(parsed)
+      ? Math.max(-24, Math.min(6, parsed))
+      : -12;
+    dom.voiceOutputPiperGainDb.value = String(settings.voice_output_settings.piper_gain_db);
+    if (dom.voiceOutputPiperGainDbValue) {
+      dom.voiceOutputPiperGainDbValue.textContent = `${settings.voice_output_settings.piper_gain_db} dB`;
+    }
+    await persistSettings();
+  });
+
   // Voice Output Test Button
   dom.voiceOutputTestBtn?.addEventListener("click", async () => {
     if (!settings?.voice_output_settings || !dom.voiceOutputTestBtn || !dom.voiceOutputTestStatus) return;
@@ -3002,12 +3025,18 @@ export function wireEvents() {
     dom.voiceOutputTestStatus.textContent = "Testing…";
     try {
       const result = await invoke<TtsSpeakResult>("test_tts_provider", { provider });
+      const message = (result.message ?? "").trim();
       if (result.used_fallback) {
         const preferred = result.preferred_provider || provider;
-        dom.voiceOutputTestStatus.textContent = `⚠ Fallback used: ${preferred} -> ${result.provider_used}`;
+        dom.voiceOutputTestStatus.textContent = message
+          ? `⚠ ${message}`
+          : `⚠ Fallback used: ${preferred} -> ${result.provider_used}`;
       } else {
-        dom.voiceOutputTestStatus.textContent = `✓ ${result.provider_used} responded.`;
+        dom.voiceOutputTestStatus.textContent = message
+          ? `✓ ${message}`
+          : `✓ ${result.provider_used} responded.`;
       }
+      dom.voiceOutputTestStatus.title = message;
     } catch (e) {
       const formatted = formatTtsTestError(e);
       dom.voiceOutputTestStatus.textContent = `Error: ${formatted}`;
@@ -3027,12 +3056,16 @@ export function wireEvents() {
     if (!settings?.voice_output_settings || !dom.voiceOutputPiperModel) return;
     settings.voice_output_settings.piper_model_path = dom.voiceOutputPiperModel.value;
     await persistSettings();
+    await refreshProviderVoices("default");
+    await refreshProviderVoices("fallback");
   });
 
   dom.voiceOutputPiperModelDir?.addEventListener("change", async () => {
     if (!settings?.voice_output_settings || !dom.voiceOutputPiperModelDir) return;
     settings.voice_output_settings.piper_model_dir = dom.voiceOutputPiperModelDir.value;
     await persistSettings();
+    await refreshProviderVoices("default");
+    await refreshProviderVoices("fallback");
   });
 
   // Voice Output Qwen3 endpoint/model settings

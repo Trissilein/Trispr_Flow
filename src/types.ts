@@ -269,6 +269,7 @@ export interface VoiceOutputSettings {
   voice_id_local: string;
   rate: number;
   volume: number;
+  piper_gain_db?: number;
   output_policy: "agent_replies_only" | "replies_and_events" | "explicit_only";
   output_device: string;
   piper_binary_path?: string;
@@ -452,6 +453,16 @@ export interface TtsVoiceInfo {
   provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
   locale?: string | null;
   profile?: string | null;
+}
+
+export interface PiperVoiceCatalogEntry {
+  key: string;
+  label: string;
+  locale: string | null;
+  quality: "x_low" | "low" | "medium" | "high";
+  installed: boolean;
+  curated: boolean;
+  path: string | null;
 }
 
 export interface TtsSpeakResult {

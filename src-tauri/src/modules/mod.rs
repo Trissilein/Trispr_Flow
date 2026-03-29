@@ -226,6 +226,8 @@ pub struct VoiceOutputSettings {
     pub voice_id_local: String,
     pub rate: f32,             // 0.5..2.0
     pub volume: f32,           // 0.0..1.0
+    #[serde(default = "default_piper_gain_db")]
+    pub piper_gain_db: f32,    // -24.0..+6.0 (applies only to Piper)
     pub output_policy: String, // "agent_replies_only" | "replies_and_events" | "explicit_only"
     pub output_device: String, // "default" | "wasapi:<id>" (windows) | "output-<idx>-<name>" (non-windows)
     /// Full path to piper.exe. Empty = auto-resolve via PATH or %LOCALAPPDATA%\trispr-flow\piper\
@@ -261,6 +263,7 @@ impl Default for VoiceOutputSettings {
             voice_id_local: String::new(),
             rate: 1.0,
             volume: 1.0,
+            piper_gain_db: default_piper_gain_db(),
             output_policy: "agent_replies_only".to_string(),
             output_device: "default".to_string(),
             piper_binary_path: String::new(),
@@ -274,6 +277,10 @@ impl Default for VoiceOutputSettings {
             qwen3_tts_enabled: false,
         }
     }
+}
+
+const fn default_piper_gain_db() -> f32 {
+    -12.0
 }
 
 pub fn normalize_module_settings(settings: &mut ModuleSettings) {
@@ -421,6 +428,10 @@ pub fn normalize_voice_output_settings(settings: &mut VoiceOutputSettings) {
         settings.volume = 1.0;
     }
     settings.volume = settings.volume.clamp(0.0, 1.0);
+    if !settings.piper_gain_db.is_finite() {
+        settings.piper_gain_db = default_piper_gain_db();
+    }
+    settings.piper_gain_db = settings.piper_gain_db.clamp(-24.0, 6.0);
     settings.output_policy = match settings.output_policy.as_str() {
         "replies_and_events" => "replies_and_events".to_string(),
         "explicit_only" => "explicit_only".to_string(),

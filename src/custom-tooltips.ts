@@ -66,9 +66,19 @@ function convertTitleElement(element: HTMLElement): void {
     return;
   }
 
-  element.dataset.tooltipNative = trimmed;
-  if (!element.getAttribute("aria-label")) {
-    element.setAttribute("aria-label", trimmed);
+  const anchor = (() => {
+    if (element instanceof HTMLInputElement && element.type === "checkbox") {
+      const toggle = element.closest<HTMLElement>(".toggle-row");
+      if (toggle) return toggle;
+      const label = element.closest<HTMLElement>("label");
+      if (label) return label;
+    }
+    return element;
+  })();
+
+  anchor.dataset.tooltipNative = trimmed;
+  if (!anchor.getAttribute("aria-label")) {
+    anchor.setAttribute("aria-label", trimmed);
   }
   element.removeAttribute("title");
 }
@@ -152,7 +162,7 @@ function hideTooltip(): void {
   tooltipEl.setAttribute("aria-hidden", "true");
 }
 
-function onMouseOver(event: MouseEvent): void {
+function onPointerOver(event: PointerEvent): void {
   const target = findTooltipTarget(event.target);
   if (!target) {
     hideTooltip();
@@ -162,7 +172,7 @@ function onMouseOver(event: MouseEvent): void {
   showTooltip(target);
 }
 
-function onMouseOut(event: MouseEvent): void {
+function onPointerOut(event: PointerEvent): void {
   if (!activeTarget) return;
   if (!(event.target instanceof Node) || !activeTarget.contains(event.target)) return;
 
@@ -202,8 +212,8 @@ export function refreshUnifiedTooltips(root: ParentNode = document): void {
 
 export function cleanupUnifiedTooltips(): void {
   if (!initialized) return;
-  document.removeEventListener("mouseover", onMouseOver, true);
-  document.removeEventListener("mouseout", onMouseOut, true);
+  document.removeEventListener("pointerover", onPointerOver, true);
+  document.removeEventListener("pointerout", onPointerOut, true);
   document.removeEventListener("focusin", onFocusIn, true);
   document.removeEventListener("focusout", onFocusOut, true);
   window.removeEventListener("scroll", onViewportChanged, true);
@@ -225,8 +235,8 @@ export function initUnifiedTooltips(): void {
   ensureTooltipElement();
   refreshUnifiedTooltips(document);
 
-  document.addEventListener("mouseover", onMouseOver, true);
-  document.addEventListener("mouseout", onMouseOut, true);
+  document.addEventListener("pointerover", onPointerOver, true);
+  document.addEventListener("pointerout", onPointerOut, true);
   document.addEventListener("focusin", onFocusIn, true);
   document.addEventListener("focusout", onFocusOut, true);
   window.addEventListener("scroll", onViewportChanged, true);

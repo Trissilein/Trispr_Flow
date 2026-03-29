@@ -1733,7 +1733,9 @@ export async function renderTopicKeywords(): Promise<void> {
 let voiceOutputWindowsVoiceRequestSeq = 0;
 let voiceOutputFallbackVoiceRequestSeq = 0;
 const DEFAULT_PIPER_VOICE_KEY = "de_DE-thorsten-medium";
-const PIPER_DOWNLOAD_MARKER = " · Download";
+const PIPER_OPTION_INSTALLED_PREFIX = "[Installiert] ";
+const PIPER_OPTION_DOWNLOAD_PREFIX = "[Download] ";
+const PIPER_OPTION_CUSTOM_PREFIX = "[Custom] ";
 let lastTtsProviders: TtsProviderInfo[] = [];
 type TtsProviderId = VoiceOutputSettings["default_provider"];
 
@@ -1829,6 +1831,12 @@ function basenameFromPath(rawPath: string): string {
   const normalized = rawPath.replace(/\\/g, "/");
   const parts = normalized.split("/");
   return parts[parts.length - 1] || rawPath;
+}
+
+function formatPiperOptionLabel(entry: PiperVoiceCatalogEntry): string {
+  return entry.installed
+    ? `${PIPER_OPTION_INSTALLED_PREFIX}${entry.label}`
+    : `${PIPER_OPTION_DOWNLOAD_PREFIX}${entry.label}`;
 }
 
 function normalizedPiperSelection(
@@ -1958,35 +1966,58 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
       if (!configured) {
         settings.voice_output_settings.piper_model_path = normalizedSelection;
       }
+      const installedGroup = document.createElement("optgroup");
+      installedGroup.label = "Installierte Stimmen";
+      const downloadGroup = document.createElement("optgroup");
+      downloadGroup.label = "Nicht installiert (Download)";
 
       catalog.forEach((entry) => {
         const option = document.createElement("option");
         option.value = entry.key;
-        option.textContent = `${entry.label}${entry.installed ? "" : PIPER_DOWNLOAD_MARKER}`;
+        option.textContent = formatPiperOptionLabel(entry);
         option.dataset.piperInstalled = entry.installed ? "1" : "0";
         option.dataset.piperPath = entry.path ?? "";
         option.dataset.piperCurated = entry.curated ? "1" : "0";
-        select.appendChild(option);
+        option.dataset.piperBaseLabel = entry.label;
+        if (entry.installed) {
+          installedGroup.appendChild(option);
+        } else {
+          downloadGroup.appendChild(option);
+        }
       });
+
+      if (installedGroup.children.length > 0) {
+        select.appendChild(installedGroup);
+      }
+      if (downloadGroup.children.length > 0) {
+        select.appendChild(downloadGroup);
+      }
 
       if (
         normalizedSelection.length > 0
         && !catalog.some((entry) => entry.key === normalizedSelection)
       ) {
+        const customGroup = document.createElement("optgroup");
+        customGroup.label = "Benutzerdefiniert";
         const customOption = document.createElement("option");
         customOption.value = normalizedSelection;
-        customOption.textContent = `Custom model (${basenameFromPath(normalizedSelection)})`;
+        customOption.textContent =
+          `${PIPER_OPTION_CUSTOM_PREFIX}${basenameFromPath(normalizedSelection)}`;
         customOption.dataset.piperInstalled = "1";
         customOption.dataset.piperPath = normalizedSelection;
         customOption.dataset.piperCurated = "0";
-        select.appendChild(customOption);
+        customOption.dataset.piperBaseLabel = basenameFromPath(normalizedSelection);
+        customGroup.appendChild(customOption);
+        select.appendChild(customGroup);
       }
 
       select.value = normalizedSelection;
       select.disabled = false;
       const installedCount = catalog.filter((entry) => entry.installed).length;
+      const downloadableCount = Math.max(0, catalog.length - installedCount);
       if (hint) {
-        hint.textContent = `${installedCount}/${catalog.length} Piper-Stimme(n) installiert.`;
+        hint.textContent =
+          `${installedCount}/${catalog.length} installiert · ${downloadableCount} per Download verfügbar.`;
       }
       return;
     } catch (error) {
@@ -1995,9 +2026,10 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
       select.innerHTML = "";
       const fallbackOption = document.createElement("option");
       fallbackOption.value = settings.voice_output_settings.piper_model_path || DEFAULT_PIPER_VOICE_KEY;
-      fallbackOption.textContent = `Model key: ${fallbackOption.value}`;
+      fallbackOption.textContent = `${PIPER_OPTION_CUSTOM_PREFIX}${fallbackOption.value}`;
       fallbackOption.dataset.piperInstalled = "1";
       fallbackOption.dataset.piperPath = fallbackOption.value;
+      fallbackOption.dataset.piperBaseLabel = fallbackOption.value;
       select.appendChild(fallbackOption);
       select.value = fallbackOption.value;
       select.disabled = false;
@@ -2335,7 +2367,8 @@ export async function handleProviderVoiceSelection(target: "default" | "fallback
       await invoke<string>("download_piper_voice_key", { voiceKey: nextKey });
       if (selectedOption) {
         selectedOption.dataset.piperInstalled = "1";
-        selectedOption.textContent = selectedOption.textContent?.replace(PIPER_DOWNLOAD_MARKER, "") ?? nextKey;
+        const baseLabel = selectedOption.dataset.piperBaseLabel?.trim() || nextKey;
+        selectedOption.textContent = `${PIPER_OPTION_INSTALLED_PREFIX}${baseLabel}`;
       }
     } catch (error) {
       select.value = previous;

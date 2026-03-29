@@ -125,6 +125,10 @@ pub struct WorkflowAgentSettings {
     pub max_tokens: u32,
     pub session_gap_minutes: u32,
     pub max_candidates: u8,
+    pub hands_free_enabled: bool,
+    pub confirm_timeout_sec: u16,
+    pub reply_mode: String,
+    pub voice_feedback_enabled: bool,
 }
 
 impl Default for WorkflowAgentSettings {
@@ -176,6 +180,10 @@ impl Default for WorkflowAgentSettings {
             max_tokens: 512,
             session_gap_minutes: 20,
             max_candidates: 3,
+            hands_free_enabled: false,
+            confirm_timeout_sec: 45,
+            reply_mode: "rule_only".to_string(),
+            voice_feedback_enabled: false,
         }
     }
 }
@@ -356,6 +364,11 @@ pub fn normalize_workflow_agent_settings(settings: &mut WorkflowAgentSettings) {
     settings.max_tokens = settings.max_tokens.clamp(128, 4096);
     settings.session_gap_minutes = settings.session_gap_minutes.clamp(5, 240);
     settings.max_candidates = settings.max_candidates.clamp(1, 5);
+    settings.confirm_timeout_sec = settings.confirm_timeout_sec.clamp(10, 300);
+    settings.reply_mode = match settings.reply_mode.as_str() {
+        "hybrid_local_llm" => "hybrid_local_llm".to_string(),
+        _ => "rule_only".to_string(),
+    };
 
     let defaults = WorkflowAgentSettings::default().intent_keywords;
     if settings.intent_keywords.is_empty() {

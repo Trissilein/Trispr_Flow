@@ -4674,6 +4674,26 @@ struct AssistantPlanReadyEvent {
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+struct AssistantIntentDetectedEvent {
+    state: AssistantOrchestratorState,
+    reason: String,
+    parse: crate::workflow_agent::AgentCommandParseResult,
+    capability: AssistantCapabilitySnapshot,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct AssistantAwaitingConfirmationEvent {
+    state: AssistantOrchestratorState,
+    reason: String,
+    plan: crate::workflow_agent::AgentExecutionPlan,
+    confirm_timeout_sec: u16,
+    expires_at_ms: u64,
+    capability: AssistantCapabilitySnapshot,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 struct AssistantActionResultEvent {
     state: AssistantOrchestratorState,
     reason: String,
@@ -4840,6 +4860,48 @@ fn emit_assistant_plan_ready(
         capability,
     };
     let _ = app.emit("assistant:plan-ready", &payload);
+}
+
+fn emit_assistant_intent_detected(
+    app: &AppHandle,
+    settings: &Settings,
+    parse: &crate::workflow_agent::AgentCommandParseResult,
+    reason: &str,
+) {
+    let capability = assistant_capability_snapshot(settings);
+    if !capability.assistant_mode {
+        return;
+    }
+    let payload = AssistantIntentDetectedEvent {
+        state: AssistantOrchestratorState::Parsing,
+        reason: reason.to_string(),
+        parse: parse.clone(),
+        capability,
+    };
+    let _ = app.emit("assistant:intent-detected", &payload);
+}
+
+fn emit_assistant_awaiting_confirmation(
+    app: &AppHandle,
+    settings: &Settings,
+    plan: &crate::workflow_agent::AgentExecutionPlan,
+    reason: &str,
+) {
+    let capability = assistant_capability_snapshot(settings);
+    if !capability.assistant_mode {
+        return;
+    }
+    let confirm_timeout_sec = settings.workflow_agent.confirm_timeout_sec.clamp(10, 300);
+    let expires_at_ms = crate::util::now_ms().saturating_add(confirm_timeout_sec as u64 * 1_000);
+    let payload = AssistantAwaitingConfirmationEvent {
+        state: AssistantOrchestratorState::AwaitingConfirm,
+        reason: reason.to_string(),
+        plan: plan.clone(),
+        confirm_timeout_sec,
+        expires_at_ms,
+        capability,
+    };
+    let _ = app.emit("assistant:awaiting-confirmation", &payload);
 }
 
 fn emit_assistant_action_result(
@@ -5095,6 +5157,14 @@ fn agent_parse_command(
         );
         if parsed.detected {
             let _ = app.emit("agent:command-detected", &parsed);
+            if assistant_mode {
+                emit_assistant_intent_detected(
+                    &app,
+                    &settings_snapshot,
+                    &parsed,
+                    "agent_parse_command:detected",
+                );
+            }
         }
         if assistant_mode {
             let trigger = if parsed.detected {
@@ -5195,6 +5265,12 @@ fn agent_build_execution_plan(
                 "agent_build_execution_plan:ready",
             );
             emit_assistant_plan_ready(
+                &app,
+                &settings_snapshot,
+                &plan,
+                "agent_build_execution_plan:ready",
+            );
+            emit_assistant_awaiting_confirmation(
                 &app,
                 &settings_snapshot,
                 &plan,

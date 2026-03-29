@@ -45,6 +45,9 @@ import type {
   StabilityDegradedEvent,
   StartupStatus,
   AssistantActionResultEvent,
+  AssistantAwaitingConfirmationEvent,
+  AssistantConfirmationExpiredEvent,
+  AssistantIntentDetectedEvent,
   AssistantPlanReadyEvent,
   AssistantStateChangedEvent,
 } from "./types";
@@ -104,6 +107,9 @@ import { initOnboardingWizard } from "./onboarding-wizard";
 import { initPipelineStatus } from "./pipeline-status";
 import {
   appendWorkflowAgentLog,
+  handleAssistantAwaitingConfirmation,
+  handleAssistantConfirmationExpired,
+  handleAssistantIntentDetected,
   handleAssistantStateChanged,
   handleWorkflowAgentRawResult,
   initWorkflowAgentConsole,
@@ -981,6 +987,25 @@ async function bootstrap() {
       appendWorkflowAgentLog(
         `Event assistant:plan-ready -> intent=${event.payload.plan.intent}, session=${event.payload.plan.session_id}`
       );
+    }),
+    listen<AssistantIntentDetectedEvent>("assistant:intent-detected", (event) => {
+      if (!event.payload) return;
+      handleAssistantIntentDetected(event.payload);
+      appendWorkflowAgentLog(
+        `Event assistant:intent-detected -> intent=${event.payload.parse.intent}, confidence=${event.payload.parse.confidence.toFixed(2)}`
+      );
+    }),
+    listen<AssistantAwaitingConfirmationEvent>("assistant:awaiting-confirmation", (event) => {
+      if (!event.payload) return;
+      handleAssistantAwaitingConfirmation(event.payload);
+      appendWorkflowAgentLog(
+        `Event assistant:awaiting-confirmation -> timeout=${event.payload.confirm_timeout_sec}s`
+      );
+    }),
+    listen<AssistantConfirmationExpiredEvent>("assistant:confirmation-expired", (event) => {
+      if (!event.payload) return;
+      handleAssistantConfirmationExpired(event.payload);
+      appendWorkflowAgentLog("Event assistant:confirmation-expired");
     }),
     listen<AssistantActionResultEvent>("assistant:action-result", (event) => {
       if (!event.payload) return;

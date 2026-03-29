@@ -129,7 +129,7 @@ function moduleGuide(moduleId: string): { description: string; usage: string } {
   if (moduleId === "workflow_agent") {
     return {
       description: "Parses wakeword voice commands into confirmable GDD execution plans.",
-      usage: "Use: Enable, open Agent Console, parse command, confirm and execute.",
+      usage: "Use: Enable, open Agent tab, parse command, confirm and execute.",
     };
   }
   if (moduleId === "analysis") {
@@ -220,17 +220,19 @@ function openModuleConfig(moduleId: string): void {
   }
 
   if (moduleId === "workflow_agent") {
-    const enabled = settings?.module_settings?.enabled_modules?.includes("workflow_agent") ?? false;
+    const enabled =
+      (settings?.module_settings?.enabled_modules?.includes("workflow_agent") ?? false)
+      && Boolean(settings?.workflow_agent?.enabled);
     if (!enabled) {
       showToast({
         type: "info",
         title: "Enable module first",
-        message: "Enable Workflow Agent to open its console.",
+        message: "Enable Workflow Agent to open its Agent tab.",
         duration: 3200,
       });
       return;
     }
-    openMainTab("modules");
+    openMainTab("agent");
     focusWorkflowAgentConsole();
     return;
   }

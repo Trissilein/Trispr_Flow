@@ -659,6 +659,15 @@ html.expert-mode details[data-expert-only="true"] > summary {
   display: block;
 }
 
+/* Agent Tab */
+#tab-agent {
+  display: none;
+}
+
+#tab-agent.active {
+  display: block;
+}
+
 /* Modules Tab */
 #tab-modules {
   display: none;
@@ -837,6 +846,22 @@ html.expert-mode details[data-expert-only="true"] > summary {
 .workflow-agent-candidate.is-active {
   border-color: rgba(81, 196, 255, 0.66);
   box-shadow: 0 0 0 1px rgba(81, 196, 255, 0.2) inset;
+}
+
+.workflow-agent-live-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.workflow-agent-live-line {
+  margin-top: 4px;
+  min-height: 26px;
+  padding: 6px 8px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 0.78rem;
+  color: var(--ink-soft);
 }
 
 /* Panel grid-area assignments */

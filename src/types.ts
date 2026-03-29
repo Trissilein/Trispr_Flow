@@ -238,6 +238,10 @@ export interface WorkflowAgentSettings {
   max_tokens: number;
   session_gap_minutes: number;
   max_candidates: number;
+  hands_free_enabled?: boolean;
+  confirm_timeout_sec?: number;
+  reply_mode?: "rule_only" | "hybrid_local_llm";
+  voice_feedback_enabled?: boolean;
 }
 
 export interface VisionInputSettings {
@@ -362,6 +366,29 @@ export interface AssistantPlanReadyEvent {
   state: AssistantOrchestratorState;
   reason: string;
   plan: AgentExecutionPlan;
+  capability: AssistantCapabilitySnapshot;
+}
+
+export interface AssistantIntentDetectedEvent {
+  state: AssistantOrchestratorState;
+  reason: string;
+  parse: AgentCommandParseResult;
+  capability: AssistantCapabilitySnapshot;
+}
+
+export interface AssistantAwaitingConfirmationEvent {
+  state: AssistantOrchestratorState;
+  reason: string;
+  plan: AgentExecutionPlan;
+  confirm_timeout_sec: number;
+  expires_at_ms: number;
+  capability: AssistantCapabilitySnapshot;
+}
+
+export interface AssistantConfirmationExpiredEvent {
+  state: AssistantOrchestratorState;
+  reason: string;
+  expired_at_ms: number;
   capability: AssistantCapabilitySnapshot;
 }
 

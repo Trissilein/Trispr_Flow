@@ -8,6 +8,9 @@ import type {
   AgentCommandParseResult,
   AgentExecutionPlan,
   AgentExecutionResult,
+  AssistantAwaitingConfirmationEvent,
+  AssistantConfirmationExpiredEvent,
+  AssistantIntentDetectedEvent,
   AssistantStateChangedEvent,
   TranscriptionRawResultEvent,
   TranscriptSessionCandidate,
@@ -20,6 +23,9 @@ let selectedSessionId = "";
 let currentPlan: AgentExecutionPlan | null = null;
 let languageExplicitlySet = false;
 let latestAssistantState: AssistantStateChangedEvent | null = null;
+let latestIntentLine = "No intent detected yet.";
+let latestReplyLine = "No replies yet.";
+let latestConfirmationLine = "No pending confirmation.";
 
 function ensureWorkflowAgentDefaults(): void {
   if (!settings) return;
@@ -42,7 +48,15 @@ function ensureWorkflowAgentDefaults(): void {
     max_tokens: 512,
     session_gap_minutes: 20,
     max_candidates: 3,
+    hands_free_enabled: false,
+    confirm_timeout_sec: 45,
+    reply_mode: "rule_only",
+    voice_feedback_enabled: false,
   };
+  settings.workflow_agent.hands_free_enabled ??= false;
+  settings.workflow_agent.confirm_timeout_sec ??= 45;
+  settings.workflow_agent.reply_mode ??= "rule_only";
+  settings.workflow_agent.voice_feedback_enabled ??= false;
 }
 
 function isModuleEnabled(moduleId: string): boolean {
@@ -58,6 +72,44 @@ function isAssistantModeEnabled(): boolean {
   return settings?.product_mode === "assistant";
 }
 
+function suggestionLevelFromMaxCandidates(maxCandidates: number): "low" | "standard" | "high" {
+  if (maxCandidates <= 2) return "low";
+  if (maxCandidates >= 5) return "high";
+  return "standard";
+}
+
+function maxCandidatesFromSuggestionLevel(level: string): number {
+  if (level === "low") return 2;
+  if (level === "high") return 5;
+  return 3;
+}
+
+function parseWakewordsInput(value: string): string[] {
+  const seen = new Set<string>();
+  const parsed: string[] = [];
+  for (const token of value.split(/[\n,]+/)) {
+    const normalized = token.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    parsed.push(normalized);
+  }
+  return parsed;
+}
+
+async function persistWorkflowAgentSettings(): Promise<void> {
+  if (!settings) return;
+  try {
+    await Promise.race([
+      invoke("save_settings", { settings }),
+      new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error("save_settings timed out")), 3_000)
+      ),
+    ]);
+  } catch (error) {
+    console.error("Failed to persist workflow agent settings", error);
+  }
+}
+
 function appendLog(line: string): void {
   if (!dom.workflowAgentExecutionLog) return;
   const now = new Date().toLocaleTimeString();
@@ -65,6 +117,14 @@ function appendLog(line: string): void {
   const current = dom.workflowAgentExecutionLog.value.trim();
   dom.workflowAgentExecutionLog.value = current ? `${current}\n${next}` : next;
   dom.workflowAgentExecutionLog.scrollTop = dom.workflowAgentExecutionLog.scrollHeight;
+}
+
+function renderLiveState(): void {
+  if (dom.workflowAgentLastIntent) dom.workflowAgentLastIntent.textContent = latestIntentLine;
+  if (dom.workflowAgentLastReply) dom.workflowAgentLastReply.textContent = latestReplyLine;
+  if (dom.workflowAgentAwaitingConfirmation) {
+    dom.workflowAgentAwaitingConfirmation.textContent = latestConfirmationLine;
+  }
 }
 
 function isReviewConfirmed(): boolean {
@@ -98,12 +158,39 @@ function renderReviewGate(): void {
   dom.workflowAgentExecuteBtn?.toggleAttribute("disabled", !canExecute);
 }
 
+function renderConfiguration(): void {
+  ensureWorkflowAgentDefaults();
+  const cfg = settings?.workflow_agent;
+  if (!cfg) return;
+
+  if (dom.workflowAgentHandsFreeEnabled) {
+    dom.workflowAgentHandsFreeEnabled.checked = Boolean(cfg.hands_free_enabled);
+  }
+  if (dom.workflowAgentWakewords) {
+    dom.workflowAgentWakewords.value = (cfg.wakewords ?? []).join("\n");
+  }
+  if (dom.workflowAgentConfirmTimeoutSec) {
+    dom.workflowAgentConfirmTimeoutSec.value = String(cfg.confirm_timeout_sec ?? 45);
+  }
+  if (dom.workflowAgentSuggestionLevel) {
+    dom.workflowAgentSuggestionLevel.value = suggestionLevelFromMaxCandidates(cfg.max_candidates ?? 3);
+  }
+  if (dom.workflowAgentReplyMode) {
+    dom.workflowAgentReplyMode.value =
+      cfg.reply_mode === "hybrid_local_llm" ? "hybrid_local_llm" : "rule_only";
+  }
+  if (dom.workflowAgentVoiceFeedbackEnabled) {
+    dom.workflowAgentVoiceFeedbackEnabled.checked = Boolean(cfg.voice_feedback_enabled);
+  }
+}
+
 function renderStatus(): void {
   if (!dom.workflowAgentConsole) return;
   const enabled = isWorkflowAgentEnabled();
   dom.workflowAgentConsole.hidden = !enabled;
+
   const interactionEnabled = enabled && isAssistantModeEnabled();
-  const controls: Array<HTMLElement | null> = [
+  const actionControls: Array<HTMLElement | null> = [
     dom.workflowAgentCommandInput,
     dom.workflowAgentParseBtn,
     dom.workflowAgentRefreshCandidatesBtn,
@@ -111,25 +198,42 @@ function renderStatus(): void {
     dom.workflowAgentBuildPlanBtn,
     dom.workflowAgentReviewConfirm,
   ];
-  controls.forEach((control) => control?.toggleAttribute("disabled", !interactionEnabled));
+  actionControls.forEach((control) => control?.toggleAttribute("disabled", !interactionEnabled));
+
+  const configControls: Array<HTMLElement | null> = [
+    dom.workflowAgentHandsFreeEnabled,
+    dom.workflowAgentWakewords,
+    dom.workflowAgentConfirmTimeoutSec,
+    dom.workflowAgentSuggestionLevel,
+    dom.workflowAgentReplyMode,
+    dom.workflowAgentVoiceFeedbackEnabled,
+  ];
+  configControls.forEach((control) => control?.toggleAttribute("disabled", !enabled));
 
   if (!dom.workflowAgentStatus) return;
   if (!enabled) {
     dom.workflowAgentStatus.textContent = "Agent disabled.";
     renderReviewGate();
+    renderConfiguration();
+    renderLiveState();
     return;
   }
   if (!isAssistantModeEnabled()) {
     dom.workflowAgentStatus.textContent = "Assistant mode is off. Switch Product mode to Assistant.";
     renderReviewGate();
+    renderConfiguration();
+    renderLiveState();
     return;
   }
 
   const stateLabel = latestAssistantState?.state ?? "listening";
-  const base = `Assistant state: ${stateLabel.replace(/_/g, " ")}.`;
+  const handsFree = settings?.workflow_agent?.hands_free_enabled ? "on" : "off";
+  const base = `Assistant state: ${stateLabel.replace(/_/g, " ")} · hands-free ${handsFree}.`;
   if (!latestAssistantState?.capability?.degraded) {
     dom.workflowAgentStatus.textContent = base;
     renderReviewGate();
+    renderConfiguration();
+    renderLiveState();
     return;
   }
   const softMissing = latestAssistantState.capability.missing_capabilities
@@ -139,6 +243,8 @@ function renderStatus(): void {
     ? `${base} Degraded capability: ${softMissing}.`
     : `${base} Degraded capability mode active.`;
   renderReviewGate();
+  renderConfiguration();
+  renderLiveState();
 }
 
 function renderCandidates(): void {
@@ -243,10 +349,14 @@ async function parseCommand(commandText: string): Promise<void> {
     },
   });
   lastParse = parsed;
-  languageExplicitlySet = false; // M10: reset on each new command
+  languageExplicitlySet = false;
+  latestIntentLine = parsed.detected
+    ? `${parsed.intent} (${(parsed.confidence * 100).toFixed(0)}%)`
+    : "No actionable intent detected.";
   appendLog(
     `Parsed command -> intent=${parsed.intent}, confidence=${(parsed.confidence * 100).toFixed(0)}%, publish=${parsed.publish_requested}`
   );
+  renderLiveState();
   if (!parsed.detected) {
     showToast({
       type: "info",
@@ -279,7 +389,7 @@ async function refreshCandidates(): Promise<void> {
     },
   });
   lastCandidates = candidates;
-  selectedSessionId = ""; // M9: require explicit selection, no auto-select
+  selectedSessionId = "";
   currentPlan = null;
   setReviewConfirmed(false);
   renderCandidates();
@@ -390,6 +500,9 @@ async function executePlan(): Promise<void> {
       target_page_id: null,
     },
   });
+  latestReplyLine = result.message;
+  latestConfirmationLine = "No pending confirmation.";
+  renderLiveState();
   appendLog(`Execution result -> ${result.status}: ${result.message}`);
   showToast({
     type: result.status === "failed" ? "error" : result.status === "queued" ? "warning" : "success",
@@ -424,7 +537,7 @@ function bindUi(): void {
     appendLog(`Selected session ${selectedSessionId}`);
   });
   dom.workflowAgentTargetLanguage?.addEventListener("change", () => {
-    languageExplicitlySet = true; // M10: user actively chose language
+    languageExplicitlySet = true;
     if (!currentPlan) {
       return;
     }
@@ -435,6 +548,53 @@ function bindUi(): void {
   });
   dom.workflowAgentReviewConfirm?.addEventListener("change", () => {
     renderReviewGate();
+  });
+
+  dom.workflowAgentHandsFreeEnabled?.addEventListener("change", () => {
+    if (!settings?.workflow_agent || !dom.workflowAgentHandsFreeEnabled) return;
+    settings.workflow_agent.hands_free_enabled = dom.workflowAgentHandsFreeEnabled.checked;
+    void persistWorkflowAgentSettings();
+    renderStatus();
+  });
+
+  dom.workflowAgentWakewords?.addEventListener("change", () => {
+    if (!settings?.workflow_agent || !dom.workflowAgentWakewords) return;
+    const wakewords = parseWakewordsInput(dom.workflowAgentWakewords.value);
+    if (wakewords.length > 0) {
+      settings.workflow_agent.wakewords = wakewords;
+    }
+    renderConfiguration();
+    void persistWorkflowAgentSettings();
+  });
+
+  dom.workflowAgentConfirmTimeoutSec?.addEventListener("change", () => {
+    if (!settings?.workflow_agent || !dom.workflowAgentConfirmTimeoutSec) return;
+    const parsed = Number.parseInt(dom.workflowAgentConfirmTimeoutSec.value, 10);
+    const clamped = Number.isFinite(parsed) ? Math.min(300, Math.max(10, parsed)) : 45;
+    settings.workflow_agent.confirm_timeout_sec = clamped;
+    dom.workflowAgentConfirmTimeoutSec.value = String(clamped);
+    void persistWorkflowAgentSettings();
+  });
+
+  dom.workflowAgentSuggestionLevel?.addEventListener("change", () => {
+    if (!settings?.workflow_agent || !dom.workflowAgentSuggestionLevel) return;
+    settings.workflow_agent.max_candidates = maxCandidatesFromSuggestionLevel(
+      dom.workflowAgentSuggestionLevel.value
+    );
+    void persistWorkflowAgentSettings();
+  });
+
+  dom.workflowAgentReplyMode?.addEventListener("change", () => {
+    if (!settings?.workflow_agent || !dom.workflowAgentReplyMode) return;
+    settings.workflow_agent.reply_mode =
+      dom.workflowAgentReplyMode.value === "hybrid_local_llm" ? "hybrid_local_llm" : "rule_only";
+    void persistWorkflowAgentSettings();
+  });
+
+  dom.workflowAgentVoiceFeedbackEnabled?.addEventListener("change", () => {
+    if (!settings?.workflow_agent || !dom.workflowAgentVoiceFeedbackEnabled) return;
+    settings.workflow_agent.voice_feedback_enabled = dom.workflowAgentVoiceFeedbackEnabled.checked;
+    void persistWorkflowAgentSettings();
   });
 }
 
@@ -452,11 +612,15 @@ export function initWorkflowAgentConsole(): void {
   renderCandidates();
   renderPlanPreview();
   renderReviewGate();
+  renderConfiguration();
+  renderLiveState();
 }
 
 export function syncWorkflowAgentConsoleState(): void {
   renderStatus();
   renderReviewGate();
+  renderConfiguration();
+  renderLiveState();
 }
 
 export async function handleWorkflowAgentRawResult(
@@ -464,6 +628,7 @@ export async function handleWorkflowAgentRawResult(
 ): Promise<void> {
   if (!isWorkflowAgentEnabled()) return;
   if (!isAssistantModeEnabled()) return;
+  if (!settings?.workflow_agent?.hands_free_enabled) return;
   if (!payload?.text?.trim()) return;
   if (!matchesWakeword(payload.text)) return;
 
@@ -481,4 +646,21 @@ export function appendWorkflowAgentLog(line: string): void {
 export function handleAssistantStateChanged(payload: AssistantStateChangedEvent): void {
   latestAssistantState = payload;
   renderStatus();
+}
+
+export function handleAssistantIntentDetected(payload: AssistantIntentDetectedEvent): void {
+  latestIntentLine = payload.parse.detected
+    ? `${payload.parse.intent} (${(payload.parse.confidence * 100).toFixed(0)}%)`
+    : "No actionable intent detected.";
+  renderLiveState();
+}
+
+export function handleAssistantAwaitingConfirmation(payload: AssistantAwaitingConfirmationEvent): void {
+  latestConfirmationLine = `Awaiting confirm (${payload.confirm_timeout_sec}s): ${payload.plan.summary}`;
+  renderLiveState();
+}
+
+export function handleAssistantConfirmationExpired(payload: AssistantConfirmationExpiredEvent): void {
+  latestConfirmationLine = `Confirmation expired (${new Date(payload.expired_at_ms).toLocaleTimeString()}).`;
+  renderLiveState();
 }

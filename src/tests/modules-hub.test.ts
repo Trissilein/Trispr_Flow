@@ -4,6 +4,7 @@ import type { ModuleDescriptor, Settings } from "../types";
 const invokeMock = vi.fn();
 const showToastMock = vi.fn();
 const syncWorkflowAgentConsoleStateMock = vi.fn();
+const focusWorkflowAgentConsoleMock = vi.fn();
 const syncVoiceOutputConsoleStateMock = vi.fn();
 const focusVoiceOutputConsoleMock = vi.fn();
 const openMainTabMock = vi.fn();
@@ -22,6 +23,7 @@ vi.mock("../gdd-flow", () => ({
 
 vi.mock("../workflow-agent-console", () => ({
   syncWorkflowAgentConsoleState: syncWorkflowAgentConsoleStateMock,
+  focusWorkflowAgentConsole: focusWorkflowAgentConsoleMock,
 }));
 
 vi.mock("../event-listeners", () => ({
@@ -56,13 +58,28 @@ function moduleDefaults(overrides: Partial<ModuleDescriptor>): ModuleDescriptor 
 
 function makeSettings(
   consents: Record<string, string[]> = {},
-  enabledModules: string[] = []
+  enabledModules: string[] = [],
+  workflowAgentEnabled = false
 ): Settings {
   return {
     module_settings: {
       enabled_modules: enabledModules,
       consented_permissions: consents,
       module_overrides: {},
+    },
+    workflow_agent: {
+      enabled: workflowAgentEnabled,
+      wakewords: ["trispr"],
+      intent_keywords: { gdd_generate_publish: ["gdd"] },
+      model: "qwen3.5:4b",
+      temperature: 0.2,
+      max_tokens: 512,
+      session_gap_minutes: 20,
+      max_candidates: 3,
+      hands_free_enabled: false,
+      confirm_timeout_sec: 45,
+      reply_mode: "rule_only",
+      voice_feedback_enabled: false,
     },
   } as unknown as Settings;
 }
@@ -97,6 +114,7 @@ describe("modules-hub consent messaging", () => {
     invokeMock.mockReset();
     showToastMock.mockReset();
     syncWorkflowAgentConsoleStateMock.mockReset();
+    focusWorkflowAgentConsoleMock.mockReset();
     syncVoiceOutputConsoleStateMock.mockReset();
     focusVoiceOutputConsoleMock.mockReset();
     openMainTabMock.mockReset();
@@ -236,5 +254,37 @@ describe("modules-hub consent messaging", () => {
 
     const modal = document.getElementById("module-config-modal");
     expect(modal?.hasAttribute("hidden")).toBe(true);
+  });
+
+  it("routes Workflow Agent configure action to agent main tab", async () => {
+    const modules: ModuleDescriptor[] = [
+      moduleDefaults({
+        id: "workflow_agent",
+        name: "Workflow Agent",
+        state: "active",
+      }),
+    ];
+    const state = await import("../state");
+    state.setSettings(makeSettings({}, ["workflow_agent"], true));
+
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "list_modules") return modules;
+      return null;
+    });
+
+    const modulesHub = await import("../modules-hub");
+    modulesHub.initModulesHub();
+    await flushAsync();
+
+    const configureBtn = document.querySelector<HTMLButtonElement>(
+      "[data-module-action='open-config'][data-module-id='workflow_agent']"
+    );
+    expect(configureBtn).not.toBeNull();
+
+    configureBtn?.click();
+    await flushAsync();
+
+    expect(openMainTabMock).toHaveBeenCalledWith("agent");
+    expect(focusWorkflowAgentConsoleMock).toHaveBeenCalledTimes(1);
   });
 });

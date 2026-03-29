@@ -4,11 +4,13 @@ import type { Settings } from "../types";
 function makeSettings(
   moduleEnabled: boolean,
   aiEnabled: boolean,
-  ttsModuleEnabled = false
+  ttsModuleEnabled = false,
+  workflowAgentEnabled = false
 ): Settings {
   const enabledModules: string[] = [];
   if (moduleEnabled) enabledModules.push("ai_refinement");
   if (ttsModuleEnabled) enabledModules.push("output_voice_tts");
+  if (workflowAgentEnabled) enabledModules.push("workflow_agent");
   return {
     ai_fallback: {
       enabled: aiEnabled,
@@ -81,6 +83,22 @@ function makeSettings(
       consented_permissions: {},
       module_overrides: {},
     },
+    workflow_agent: {
+      enabled: workflowAgentEnabled,
+      wakewords: ["trispr"],
+      intent_keywords: {
+        gdd_generate_publish: ["gdd"],
+      },
+      model: "qwen3.5:4b",
+      temperature: 0.2,
+      max_tokens: 512,
+      session_gap_minutes: 20,
+      max_candidates: 3,
+      hands_free_enabled: false,
+      confirm_timeout_sec: 45,
+      reply_mode: "rule_only",
+      voice_feedback_enabled: false,
+    },
     postproc_llm_enabled: aiEnabled,
     voice_output_settings: {
       enabled: ttsModuleEnabled,
@@ -95,11 +113,13 @@ function mountMainTabDom(): void {
     <button id="tab-btn-settings"></button>
     <button id="tab-btn-ai-refinement"></button>
     <button id="tab-btn-voice-output"></button>
+    <button id="tab-btn-agent"></button>
     <button id="tab-btn-modules"></button>
     <div id="tab-transcription"></div>
     <div id="tab-settings"></div>
     <div id="tab-ai-refinement"></div>
     <div id="tab-voice-output"></div>
+    <div id="tab-agent"></div>
     <div id="tab-modules"></div>
   `;
 }
@@ -224,5 +244,49 @@ describe("AI refinement module tab gating", () => {
     const voiceBtn = document.getElementById("tab-btn-voice-output");
     expect(transBtn?.classList.contains("active")).toBe(true);
     expect(voiceBtn?.classList.contains("active")).toBe(false);
+  });
+
+  it("shows Agent tab only when workflow_agent is enabled", async () => {
+    const state = await import("../state");
+    const listeners = await import("../event-listeners");
+
+    state.setSettings(makeSettings(true, true, true, false));
+    listeners.initMainTab();
+
+    const agentBtn = document.getElementById("tab-btn-agent") as HTMLButtonElement | null;
+    const agentPanel = document.getElementById("tab-agent") as HTMLDivElement | null;
+    expect(agentBtn?.hidden).toBe(true);
+    expect(agentPanel?.hidden).toBe(true);
+
+    state.setSettings(makeSettings(true, true, true, true));
+    listeners.reconcileMainTabVisibility();
+    expect(agentBtn?.hidden).toBe(false);
+    expect(agentPanel?.hidden).toBe(false);
+  });
+
+  it("falls back to transcription when active Agent tab gets disabled", async () => {
+    const state = await import("../state");
+    const listeners = await import("../event-listeners");
+
+    state.setSettings(makeSettings(true, true, true, true));
+    listeners.initMainTab();
+
+    const transBtn = document.getElementById("tab-btn-transcription");
+    const agentBtn = document.getElementById("tab-btn-agent");
+    const transPanel = document.getElementById("tab-transcription");
+    const agentPanel = document.getElementById("tab-agent");
+
+    transBtn?.classList.remove("active");
+    agentBtn?.classList.add("active");
+    transPanel?.classList.remove("active");
+    agentPanel?.classList.add("active");
+    localStorage.setItem("trispr-active-tab", "agent");
+
+    state.setSettings(makeSettings(true, true, true, false));
+    listeners.reconcileMainTabVisibility();
+
+    expect(localStorage.getItem("trispr-active-tab")).toBe("transcription");
+    expect(transBtn?.classList.contains("active")).toBe(true);
+    expect(agentBtn?.classList.contains("active")).toBe(false);
   });
 });

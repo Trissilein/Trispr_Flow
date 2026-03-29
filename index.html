@@ -144,6 +144,9 @@
         <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output">
           Voice Output
         </button>
+        <button id="tab-btn-agent" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-agent">
+          Agent
+        </button>
         <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules">
           Modules
         </button>
@@ -1906,6 +1909,154 @@
           </section>
         </div>
 
+        <!-- Agent Tab -->
+        <div id="tab-agent" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-agent">
+          <section class="panel" data-panel="agent" style="--delay: 0.12s">
+            <div class="panel-header">
+              <div class="panel-title">
+                <h2>Agent</h2>
+                <p>Interactive workflow copilot with explicit plan-and-confirm execution lanes.</p>
+              </div>
+            </div>
+            <div class="panel-body">
+              <section id="workflow-agent-console" class="module-agent-console" hidden>
+                <div class="module-agent-console-header">
+                  <h3>Workflow Agent</h3>
+                  <span id="workflow-agent-status" class="field-hint">Agent disabled.</span>
+                </div>
+                <details class="expander" open>
+                  <summary><h4 class="ai-refine-section-title">Conversation</h4></summary>
+                  <div class="expander-body">
+                    <div class="panel-grid">
+                      <label class="field span-2">
+                        <span class="field-label">Command</span>
+                        <textarea
+                          id="workflow-agent-command-input"
+                          rows="3"
+                          placeholder="Hey Trispr, create a GDD from yesterday's meeting about combat and publish to Confluence."
+                        ></textarea>
+                      </label>
+                      <div class="auth-modal-actions span-2">
+                        <button id="workflow-agent-parse-btn" type="button" class="hotkey-record-btn">Parse Command</button>
+                        <button id="workflow-agent-refresh-candidates-btn" type="button" class="hotkey-record-btn">Find Sessions</button>
+                      </div>
+                      <div class="field span-2">
+                        <span class="field-label">Live status</span>
+                        <div class="workflow-agent-live-grid">
+                          <div>
+                            <span class="field-hint">Last intent</span>
+                            <div id="workflow-agent-last-intent" class="workflow-agent-live-line">No intent detected yet.</div>
+                          </div>
+                          <div>
+                            <span class="field-hint">Latest reply</span>
+                            <div id="workflow-agent-last-reply" class="workflow-agent-live-line">No replies yet.</div>
+                          </div>
+                          <div>
+                            <span class="field-hint">Confirmation</span>
+                            <div id="workflow-agent-awaiting-confirmation" class="workflow-agent-live-line">No pending confirmation.</div>
+                          </div>
+                        </div>
+                      </div>
+                      <label class="field span-2">
+                        <span class="field-label">Conversation log</span>
+                        <textarea id="workflow-agent-execution-log" rows="6" readonly placeholder="Agent events and execution output appear here..."></textarea>
+                      </label>
+                    </div>
+                  </div>
+                </details>
+                <details class="expander" open>
+                  <summary><h4 class="ai-refine-section-title">Actions</h4></summary>
+                  <div class="expander-body">
+                    <div class="panel-grid">
+                      <div id="workflow-agent-candidates" class="module-agent-candidates span-2"></div>
+                      <label class="field">
+                        <span class="field-label">Target language <strong>(required)</strong></span>
+                        <select id="workflow-agent-target-language">
+                          <option value="" disabled selected>— select language —</option>
+                          <option value="source">Source language (keep original)</option>
+                          <option value="en">English</option>
+                          <option value="de">Deutsch</option>
+                          <option value="fr">Français</option>
+                          <option value="es">Español</option>
+                        </select>
+                        <span class="field-hint">Choose a language for each command before building a plan.</span>
+                      </label>
+                      <div class="field">
+                        <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn">Build Plan</button>
+                      </div>
+                      <label class="field span-2">
+                        <span class="field-label">Plan preview</span>
+                        <textarea id="workflow-agent-plan-preview" rows="5" readonly placeholder="Execution plan appears here..."></textarea>
+                      </label>
+                      <div class="field toggle span-2">
+                        <label class="toggle-row">
+                          <span class="field-label">Review confirmed</span>
+                          <input id="workflow-agent-review-confirm" type="checkbox" title="Confirm you reviewed the plan details before execution" />
+                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span id="workflow-agent-review-summary" class="field-hint">Build a plan first, then review signals, assumptions, and action lanes.</span>
+                      </div>
+                      <div class="auth-modal-actions span-2">
+                        <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn">Confirm & Execute</button>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+                <details class="expander">
+                  <summary><h4 class="ai-refine-section-title">Configuration</h4></summary>
+                  <div class="expander-body">
+                    <div class="panel-grid">
+                      <div class="field toggle span-2">
+                        <label class="toggle-row">
+                          <span class="field-label">Hands-free mode</span>
+                          <input id="workflow-agent-hands-free-enabled" type="checkbox" title="Enable wakeword-driven command parsing in assistant mode" />
+                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span class="field-hint">When enabled, wakeword commands are parsed from raw transcription events in assistant mode.</span>
+                      </div>
+                      <label class="field span-2">
+                        <span class="field-label">Wakewords</span>
+                        <textarea id="workflow-agent-wakewords" rows="3" placeholder="trispr&#10;hey trispr&#10;trispr agent"></textarea>
+                        <span class="field-hint">One wakeword per line (comma-separated entries also supported).</span>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Confirm timeout (seconds)</span>
+                        <input id="workflow-agent-confirm-timeout-sec" type="number" min="10" max="300" step="1" value="45" />
+                        <span class="field-hint">Used by awaiting-confirmation metadata for assistant flow.</span>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Suggestion level</span>
+                        <select id="workflow-agent-suggestion-level">
+                          <option value="standard">Standard</option>
+                          <option value="low">Low</option>
+                          <option value="high">High</option>
+                        </select>
+                        <span class="field-hint">Controls session candidate breadth.</span>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Reply mode</span>
+                        <select id="workflow-agent-reply-mode">
+                          <option value="rule_only">Rule-only</option>
+                          <option value="hybrid_local_llm">Hybrid local LLM</option>
+                        </select>
+                        <span class="field-hint">Hybrid only affects wording; execution remains deterministic.</span>
+                      </label>
+                      <div class="field toggle">
+                        <label class="toggle-row">
+                          <span class="field-label">Voice feedback</span>
+                          <input id="workflow-agent-voice-feedback-enabled" type="checkbox" title="Allow spoken agent feedback when TTS is available" />
+                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span class="field-hint">Falls back to text responses when voice output is unavailable.</span>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              </section>
+            </div>
+          </section>
+        </div>
+
         <!-- Modules Tab -->
         <div id="tab-modules" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-modules">
           <section class="panel modules-panel" style="--delay: 0.12s">
@@ -1920,59 +2071,7 @@
             </div>
             <div class="panel-body">
               <div id="modules-list" class="modules-list"></div>
-              <section id="workflow-agent-console" class="module-agent-console" hidden>
-                <div class="module-agent-console-header">
-                  <h3>Workflow Agent Console</h3>
-                  <span id="workflow-agent-status" class="field-hint">Agent disabled.</span>
-                </div>
-                <label class="field">
-                  <span class="field-label">Test command</span>
-                  <textarea
-                    id="workflow-agent-command-input"
-                    rows="3"
-                    placeholder="Hey Trispr, create a GDD from yesterday's meeting about combat and publish to Confluence."
-                  ></textarea>
-                </label>
-                <div class="auth-modal-actions">
-                  <button id="workflow-agent-parse-btn" type="button" class="hotkey-record-btn">Parse Command</button>
-                  <button id="workflow-agent-refresh-candidates-btn" type="button" class="hotkey-record-btn">Find Sessions</button>
-                </div>
-                <div id="workflow-agent-candidates" class="module-agent-candidates"></div>
-                <label class="field">
-                  <span class="field-label">Target language <strong>(required — select before building plan)</strong></span>
-                  <select id="workflow-agent-target-language">
-                    <option value="" disabled selected>— select language —</option>
-                    <option value="source">Source language (keep original)</option>
-                    <option value="en">English</option>
-                    <option value="de">Deutsch</option>
-                    <option value="fr">Français</option>
-                    <option value="es">Español</option>
-                  </select>
-                  <span class="field-hint">You must explicitly choose a language for each command. This resets with each new parse.</span>
-                </label>
-                <div class="auth-modal-actions">
-                  <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn">Build Plan</button>
-                </div>
-                <label class="field">
-                  <span class="field-label">Plan preview</span>
-                  <textarea id="workflow-agent-plan-preview" rows="5" readonly placeholder="Execution plan appears here..."></textarea>
-                </label>
-                <div class="field toggle">
-                  <label class="toggle-row">
-                    <span class="field-label">Review confirmed</span>
-                    <input id="workflow-agent-review-confirm" type="checkbox" title="Confirm you reviewed the plan details before execution" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span id="workflow-agent-review-summary" class="field-hint">Build a plan first, then review signals, assumptions, and action lanes.</span>
-                </div>
-                <div class="auth-modal-actions">
-                  <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn">Confirm & Execute</button>
-                </div>
-                <label class="field">
-                  <span class="field-label">Execution log</span>
-                  <textarea id="workflow-agent-execution-log" rows="6" readonly placeholder="Agent events and execution output appear here..."></textarea>
-                </label>
-              </section>
+              <div class="field-hint">Workflow Agent configuration moved to the Agent tab.</div>
             </div>
           </section>
         </div>

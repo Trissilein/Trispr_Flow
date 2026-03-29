@@ -850,7 +850,13 @@ function addVocabRow(original: string, replacement: string) {
 }
 
 // Main tab switching
-type MainTab = "transcription" | "settings" | "ai-refinement" | "voice-output" | "modules";
+type MainTab =
+  | "transcription"
+  | "settings"
+  | "ai-refinement"
+  | "voice-output"
+  | "agent"
+  | "modules";
 let aiRefinementTabRefreshInFlight: Promise<void> | null = null;
 
 function aiRefinementTabAvailable(): boolean {
@@ -861,9 +867,15 @@ function voiceOutputTabAvailable(): boolean {
   return settings?.module_settings?.enabled_modules?.includes("output_voice_tts") ?? false;
 }
 
+function agentTabAvailable(): boolean {
+  const moduleEnabled = settings?.module_settings?.enabled_modules?.includes("workflow_agent") ?? false;
+  return moduleEnabled && Boolean(settings?.workflow_agent?.enabled);
+}
+
 function syncMainTabAvailability(): void {
   const aiAvailable = aiRefinementTabAvailable();
   const voiceAvailable = voiceOutputTabAvailable();
+  const agentAvailable = agentTabAvailable();
   if (dom.tabBtnAiRefinement) {
     dom.tabBtnAiRefinement.hidden = !aiAvailable;
     dom.tabBtnAiRefinement.setAttribute("aria-hidden", (!aiAvailable).toString());
@@ -894,12 +906,28 @@ function syncMainTabAvailability(): void {
       dom.tabVoiceOutput.classList.remove("active");
     }
   }
+  if (dom.tabBtnAgent) {
+    dom.tabBtnAgent.hidden = !agentAvailable;
+    dom.tabBtnAgent.setAttribute("aria-hidden", (!agentAvailable).toString());
+    if (agentAvailable) {
+      dom.tabBtnAgent.removeAttribute("tabindex");
+    } else {
+      dom.tabBtnAgent.setAttribute("tabindex", "-1");
+    }
+  }
+  if (dom.tabAgent) {
+    dom.tabAgent.hidden = !agentAvailable;
+    if (!agentAvailable) {
+      dom.tabAgent.classList.remove("active");
+    }
+  }
 }
 
 function getActiveMainTabFromDom(): MainTab {
   if (dom.tabBtnSettings?.classList.contains("active")) return "settings";
   if (dom.tabBtnAiRefinement?.classList.contains("active")) return "ai-refinement";
   if (dom.tabBtnVoiceOutput?.classList.contains("active")) return "voice-output";
+  if (dom.tabBtnAgent?.classList.contains("active")) return "agent";
   if (dom.tabBtnModules?.classList.contains("active")) return "modules";
   return "transcription";
 }
@@ -912,6 +940,10 @@ export function reconcileMainTabVisibility(): void {
     return;
   }
   if (!voiceOutputTabAvailable() && activeTab === "voice-output") {
+    switchMainTab("transcription");
+    return;
+  }
+  if (!agentTabAvailable() && activeTab === "agent") {
     switchMainTab("transcription");
   }
 }
@@ -954,23 +986,29 @@ function switchMainTab(tab: MainTab) {
   if (resolvedTab === "voice-output" && !voiceOutputTabAvailable()) {
     resolvedTab = "transcription";
   }
+  if (resolvedTab === "agent" && !agentTabAvailable()) {
+    resolvedTab = "transcription";
+  }
 
   const isTranscription = resolvedTab === "transcription";
   const isSettings = resolvedTab === "settings";
   const isAiRefinement = resolvedTab === "ai-refinement";
   const isVoiceOutput = resolvedTab === "voice-output";
+  const isAgent = resolvedTab === "agent";
   const isModules = resolvedTab === "modules";
 
   dom.tabBtnTranscription?.classList.toggle("active", isTranscription);
   dom.tabBtnSettings?.classList.toggle("active", isSettings);
   dom.tabBtnAiRefinement?.classList.toggle("active", isAiRefinement);
   dom.tabBtnVoiceOutput?.classList.toggle("active", isVoiceOutput);
+  dom.tabBtnAgent?.classList.toggle("active", isAgent);
   dom.tabBtnModules?.classList.toggle("active", isModules);
 
   dom.tabBtnTranscription?.setAttribute("aria-selected", isTranscription.toString());
   dom.tabBtnSettings?.setAttribute("aria-selected", isSettings.toString());
   dom.tabBtnAiRefinement?.setAttribute("aria-selected", isAiRefinement.toString());
   dom.tabBtnVoiceOutput?.setAttribute("aria-selected", isVoiceOutput.toString());
+  dom.tabBtnAgent?.setAttribute("aria-selected", isAgent.toString());
   dom.tabBtnModules?.setAttribute("aria-selected", isModules.toString());
 
   // Update tab content visibility — clear any inline display styles first
@@ -989,6 +1027,10 @@ function switchMainTab(tab: MainTab) {
   if (dom.tabVoiceOutput) {
     dom.tabVoiceOutput.style.removeProperty("display");
     dom.tabVoiceOutput.classList.toggle("active", isVoiceOutput);
+  }
+  if (dom.tabAgent) {
+    dom.tabAgent.style.removeProperty("display");
+    dom.tabAgent.classList.toggle("active", isAgent);
   }
   if (dom.tabModules) {
     dom.tabModules.style.removeProperty("display");
@@ -1023,6 +1065,7 @@ export function initMainTab() {
       savedTab === "transcription" ||
       savedTab === "ai-refinement" ||
       savedTab === "voice-output" ||
+      savedTab === "agent" ||
       savedTab === "modules"
     ) {
       switchMainTab(savedTab);
@@ -1094,6 +1137,9 @@ export function wireEvents() {
   });
   dom.tabBtnVoiceOutput?.addEventListener("click", () => {
     switchMainTab("voice-output");
+  });
+  dom.tabBtnAgent?.addEventListener("click", () => {
+    switchMainTab("agent");
   });
   dom.tabBtnModules?.addEventListener("click", () => {
     switchMainTab("modules");

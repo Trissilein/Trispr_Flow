@@ -496,11 +496,12 @@ h1 {
 #tab-settings [data-panel="system"]    { grid-area: system; }
 #tab-settings [data-panel="model"]     { grid-area: model; }
 
-/* Standard mode: no system column (expert-only hidden) */
+/* Standard mode: stack Settings panels in one column */
 html.standard-mode #tab-settings.active {
   grid-template-areas:
     "interface interface"
     "capture capture"
+    "system system"
     "model model";
 }
 

@@ -1733,7 +1733,6 @@ export async function renderTopicKeywords(): Promise<void> {
 let voiceOutputWindowsVoiceRequestSeq = 0;
 let voiceOutputFallbackVoiceRequestSeq = 0;
 const DEFAULT_PIPER_VOICE_KEY = "de_DE-thorsten-medium";
-const PIPER_OPTION_INSTALLED_PREFIX = "[Installiert] ";
 const PIPER_OPTION_CUSTOM_PREFIX = "[Custom] ";
 let lastTtsProviders: TtsProviderInfo[] = [];
 type TtsProviderId = VoiceOutputSettings["default_provider"];
@@ -1833,21 +1832,18 @@ function basenameFromPath(rawPath: string): string {
 }
 
 function formatPiperOptionLabel(entry: PiperVoiceCatalogEntry): string {
-  return entry.installed
-    ? `${PIPER_OPTION_INSTALLED_PREFIX}${entry.label}`
-    : entry.label;
+  return entry.label;
 }
 
 function applyPiperOptionVisualState(option: HTMLOptionElement, installed: boolean): void {
   option.dataset.piperInstalled = installed ? "1" : "0";
   if (installed) {
-    option.style.background = "linear-gradient(135deg, rgba(24, 53, 58, 0.52), rgba(22, 32, 42, 0.56))";
-    option.style.color = "rgba(226, 255, 247, 0.98)";
-    option.style.fontWeight = "600";
+    option.style.backgroundColor = "rgba(46, 200, 192, 0.10)";
+    option.style.backgroundImage =
+      "linear-gradient(90deg, rgba(46, 200, 192, 0.16) 0%, rgba(46, 200, 192, 0.03) 72%, rgba(46, 200, 192, 0) 100%)";
   } else {
-    option.style.background = "";
-    option.style.color = "";
-    option.style.fontWeight = "";
+    option.style.backgroundColor = "";
+    option.style.backgroundImage = "";
   }
 }
 
@@ -2000,7 +1996,7 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
         const customOption = document.createElement("option");
         customOption.value = normalizedSelection;
         customOption.textContent =
-          `${PIPER_OPTION_INSTALLED_PREFIX}${PIPER_OPTION_CUSTOM_PREFIX}${basenameFromPath(normalizedSelection)}`;
+          `${PIPER_OPTION_CUSTOM_PREFIX}${basenameFromPath(normalizedSelection)}`;
         applyPiperOptionVisualState(customOption, true);
         customOption.dataset.piperPath = normalizedSelection;
         customOption.dataset.piperCurated = "0";
@@ -2023,7 +2019,7 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
       select.innerHTML = "";
       const fallbackOption = document.createElement("option");
       fallbackOption.value = settings.voice_output_settings.piper_model_path || DEFAULT_PIPER_VOICE_KEY;
-      fallbackOption.textContent = `${PIPER_OPTION_INSTALLED_PREFIX}${PIPER_OPTION_CUSTOM_PREFIX}${fallbackOption.value}`;
+      fallbackOption.textContent = `${PIPER_OPTION_CUSTOM_PREFIX}${fallbackOption.value}`;
       applyPiperOptionVisualState(fallbackOption, true);
       fallbackOption.dataset.piperPath = fallbackOption.value;
       fallbackOption.dataset.piperBaseLabel = fallbackOption.value;
@@ -2366,7 +2362,7 @@ export async function handleProviderVoiceSelection(target: "default" | "fallback
       if (selectedOption) {
         applyPiperOptionVisualState(selectedOption, true);
         const baseLabel = selectedOption.dataset.piperBaseLabel?.trim() || nextKey;
-        selectedOption.textContent = `${PIPER_OPTION_INSTALLED_PREFIX}${baseLabel}`;
+        selectedOption.textContent = baseLabel;
       }
     } catch (error) {
       select.value = previous;

@@ -5298,6 +5298,150 @@ fn agent_list_supported_actions() -> Vec<String> {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
+struct AgentComposeUnknownReplyRequest {
+    command_text: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct AgentComposeReplyResult {
+    text: String,
+    source: String,
+    reason_code: String,
+}
+
+fn merged_workflow_wakewords(settings: &crate::modules::WorkflowAgentSettings) -> Vec<String> {
+    let mut merged = settings.wakewords.clone();
+    merged.extend(settings.wakeword_aliases.clone());
+    merged
+}
+
+fn unknown_rule_reply(command_text: &str) -> String {
+    let normalized = command_text.to_lowercase();
+    let english_hint = normalized.contains("please")
+        || normalized.contains("what")
+        || normalized.contains("session")
+        || normalized.contains("status")
+        || normalized.contains("weather");
+    let weather_like = normalized.contains("weather")
+        || normalized.contains("wetter")
+        || normalized.contains("forecast")
+        || normalized.contains("temperatur");
+    if weather_like {
+        if english_hint {
+            return "I do not have live weather access in local mode. I can still help with plan status, session recaps, or GDD drafts from your transcripts.".to_string();
+        }
+        return "Ich habe lokal keinen Live-Wetterzugriff. Ich kann dir aber einen Plan, Recap oder GDD-Draft aus deinen Transkripten erstellen.".to_string();
+    }
+    if english_hint {
+        return "I can currently handle GDD drafts, session recaps, and plan status from your local transcripts. Please rephrase your request within that scope.".to_string();
+    }
+    "Ich kann aktuell GDD-Drafts, Session-Recaps und Plan-Status aus deinen lokalen Transkripten verarbeiten. Formuliere die Anfrage bitte in diesem Scope.".to_string()
+}
+
+fn ai_provider_is_local(provider: &str) -> bool {
+    matches!(provider, "ollama" | "lm_studio" | "oobabooga")
+}
+
+#[tauri::command]
+fn agent_compose_unknown_reply(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: AgentComposeUnknownReplyRequest,
+) -> Result<AgentComposeReplyResult, String> {
+    guarded_command!("agent_compose_unknown_reply", {
+        let settings_snapshot = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
+            settings.clone()
+        };
+
+        let command_text = request.command_text.trim();
+        if command_text.is_empty() {
+            return Ok(AgentComposeReplyResult {
+                text: unknown_rule_reply(""),
+                source: "rule".to_string(),
+                reason_code: "empty_command".to_string(),
+            });
+        }
+
+        let workflow_cfg = &settings_snapshot.workflow_agent;
+        if workflow_cfg.reply_mode != "hybrid_local_llm" {
+            return Ok(AgentComposeReplyResult {
+                text: unknown_rule_reply(command_text),
+                source: "rule".to_string(),
+                reason_code: "rule_only_mode".to_string(),
+            });
+        }
+
+        if !settings_snapshot.ai_fallback.enabled {
+            return Ok(AgentComposeReplyResult {
+                text: unknown_rule_reply(command_text),
+                source: "rule".to_string(),
+                reason_code: "ai_refinement_disabled".to_string(),
+            });
+        }
+
+        if !ai_provider_is_local(&settings_snapshot.ai_fallback.provider) {
+            return Ok(AgentComposeReplyResult {
+                text: unknown_rule_reply(command_text),
+                source: "rule".to_string(),
+                reason_code: "non_local_provider".to_string(),
+            });
+        }
+
+        let setup = match prepare_refinement(&app, &settings_snapshot) {
+            Ok(value) => value,
+            Err(error) => {
+                return Ok(AgentComposeReplyResult {
+                    text: unknown_rule_reply(command_text),
+                    source: "rule".to_string(),
+                    reason_code: format!("local_runtime_unavailable:{error}"),
+                });
+            }
+        };
+
+        let mut options = setup.options.clone();
+        options.max_tokens = options.max_tokens.clamp(128, 512);
+        options.custom_prompt = Some(
+            "You are Trispr, a local assistant. Reply in the same language as the user. Keep answers concise and practical. Never claim live internet access. If the request needs real-time external data, say this capability is unavailable locally and suggest a supported local action. Output only the reply."
+                .to_string(),
+        );
+        options.enforce_language_guard = false;
+
+        match setup
+            .provider
+            .refine_transcript(command_text, &setup.model, &options, &setup.api_key)
+        {
+            Ok(reply) => {
+                let text = reply.text.trim();
+                if text.is_empty() {
+                    return Ok(AgentComposeReplyResult {
+                        text: unknown_rule_reply(command_text),
+                        source: "rule".to_string(),
+                        reason_code: "local_llm_empty".to_string(),
+                    });
+                }
+                Ok(AgentComposeReplyResult {
+                    text: text.to_string(),
+                    source: "local_llm".to_string(),
+                    reason_code: "local_llm_success".to_string(),
+                })
+            }
+            Err(error) => Ok(AgentComposeReplyResult {
+                text: unknown_rule_reply(command_text),
+                source: "rule".to_string(),
+                reason_code: format!("local_llm_error:{error}"),
+            }),
+        }
+    })
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 struct AgentCancelPendingConfirmationRequest {
     reason: Option<String>,
 }
@@ -5417,25 +5561,32 @@ fn agent_parse_command(
             .get("gdd_generate_publish")
             .cloned()
             .unwrap_or_default();
+        let wakewords = merged_workflow_wakewords(&workflow_settings);
         let parsed = crate::workflow_agent::parse_command(
             &request,
-            &workflow_settings.wakewords,
+            &wakewords,
             &intent_keywords,
         );
-        if parsed.detected {
+        if parsed.detected || parsed.wakeword_matched {
             let _ = app.emit("agent:command-detected", &parsed);
             if assistant_mode {
                 emit_assistant_intent_detected(
                     &app,
                     &settings_snapshot,
                     &parsed,
-                    "agent_parse_command:detected",
+                    if parsed.detected {
+                        "agent_parse_command:detected"
+                    } else {
+                        "agent_parse_command:wakeword_unknown"
+                    },
                 );
             }
         }
         if assistant_mode {
             let trigger = if parsed.detected {
                 "agent_parse_command:detected"
+            } else if parsed.wakeword_matched {
+                "agent_parse_command:wakeword_unknown"
             } else {
                 "agent_parse_command:ignored"
             };
@@ -10821,6 +10972,7 @@ pub fn run() {
             check_module_updates,
             agent_list_supported_actions,
             agent_parse_command,
+            agent_compose_unknown_reply,
             search_transcript_sessions,
             agent_build_execution_plan,
             agent_execute_gdd_plan,

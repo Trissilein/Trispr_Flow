@@ -119,6 +119,7 @@ impl Default for ConfluenceSettings {
 pub struct WorkflowAgentSettings {
     pub enabled: bool,
     pub wakewords: Vec<String>,
+    pub wakeword_aliases: Vec<String>,
     pub intent_keywords: HashMap<String, Vec<String>>,
     pub model: String,
     pub temperature: f32,
@@ -174,6 +175,7 @@ impl Default for WorkflowAgentSettings {
                 "hey trispr".to_string(),
                 "trispr agent".to_string(),
             ],
+            wakeword_aliases: Vec::new(),
             intent_keywords: keywords,
             model: "qwen3.5:4b".to_string(),
             temperature: 0.2,
@@ -369,10 +371,25 @@ pub fn normalize_confluence_settings(settings: &mut ConfluenceSettings) {
 }
 
 pub fn normalize_workflow_agent_settings(settings: &mut WorkflowAgentSettings) {
-    settings.wakewords.retain(|word| !word.trim().is_empty());
+    settings.wakewords = settings
+        .wakewords
+        .iter()
+        .map(|word| word.trim().to_lowercase())
+        .filter(|word| !word.is_empty())
+        .collect();
+    settings.wakewords.sort();
+    settings.wakewords.dedup();
     if settings.wakewords.is_empty() {
         settings.wakewords = WorkflowAgentSettings::default().wakewords;
     }
+    settings.wakeword_aliases = settings
+        .wakeword_aliases
+        .iter()
+        .map(|word| word.trim().to_lowercase())
+        .filter(|word| !word.is_empty())
+        .collect();
+    settings.wakeword_aliases.sort();
+    settings.wakeword_aliases.dedup();
     settings.model = settings.model.trim().to_string();
     if settings.model.is_empty() {
         settings.model = "qwen3.5:4b".to_string();

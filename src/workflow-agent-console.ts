@@ -8,6 +8,7 @@ import type {
   AgentCommandParseResult,
   AgentExecutionPlan,
   AgentExecutionResult,
+  AgentReplyResult,
   AssistantAwaitingConfirmationEvent,
   AssistantConfirmationExpiredEvent,
   AssistantIntentDetectedEvent,
@@ -25,6 +26,8 @@ let selectedSessionId = "";
 let currentPlan: AgentExecutionPlan | null = null;
 let languageExplicitlySet = false;
 let latestAssistantState: AssistantStateChangedEvent | null = null;
+let latestHeardLine = "No utterance captured yet.";
+let latestGateLine = "No gate decisions yet.";
 let latestIntentLine = "No intent detected yet.";
 let latestReplyLine = "No replies yet.";
 let latestConfirmationLine = "No pending confirmation.";
@@ -39,12 +42,14 @@ const CONFIRM_KEYWORDS = ["confirm", "confirmed", "bestätigen", "bestaetigen", 
 const CANCEL_KEYWORDS = ["cancel", "abbrechen", "stopp", "stop"];
 const AGENT_PTT_ARM_WINDOW_MS = 12_000;
 const AGENT_TRANSCRIPT_DEDUPE_WINDOW_MS = 1_600;
+const BUILTIN_WAKEWORD_ALIASES = ["trispa", "trisper", "trispar", "trispur"];
 
 function ensureWorkflowAgentDefaults(): void {
   if (!settings) return;
   settings.workflow_agent ??= {
     enabled: false,
     wakewords: ["trispr", "hey trispr", "trispr agent"],
+    wakeword_aliases: [],
     intent_keywords: {
       gdd_generate_publish: [
         "gdd",
@@ -70,6 +75,7 @@ function ensureWorkflowAgentDefaults(): void {
   settings.workflow_agent.confirm_timeout_sec ??= 45;
   settings.workflow_agent.reply_mode ??= "rule_only";
   settings.workflow_agent.voice_feedback_enabled ??= false;
+  settings.workflow_agent.wakeword_aliases ??= [];
 }
 
 function isModuleEnabled(moduleId: string): boolean {
@@ -164,6 +170,18 @@ function parseWakewordsInput(value: string): string[] {
   return parsed;
 }
 
+function parseWakewordAliasesInput(value: string): string[] {
+  const seen = new Set<string>();
+  const parsed: string[] = [];
+  for (const token of value.split(/[\n,]+/)) {
+    const normalized = normalizeWakewordText(token);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    parsed.push(normalized);
+  }
+  return parsed;
+}
+
 async function persistWorkflowAgentSettings(): Promise<void> {
   if (!settings) return;
   try {
@@ -225,19 +243,23 @@ function normalizeToken(value: string): string {
 }
 
 function normalizeWakewordText(value: string): string {
-  let normalized = value
+  return value
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
-  const aliasPatterns: Array<[RegExp, string]> = [
-    [/\btrispa\b/gu, "trispr"],
-    [/\btrisper\b/gu, "trispr"],
-    [/\btrispar\b/gu, "trispr"],
-    [/\btrispur\b/gu, "trispr"],
-  ];
-  aliasPatterns.forEach(([pattern, replacement]) => {
-    normalized = normalized.replace(pattern, replacement);
+}
+
+function applyWakewordAliases(value: string): string {
+  let normalized = normalizeWakewordText(value);
+  const aliases = new Set<string>([
+    ...BUILTIN_WAKEWORD_ALIASES.map((alias) => normalizeWakewordText(alias)),
+    ...((settings?.workflow_agent?.wakeword_aliases ?? []).map((alias) => normalizeWakewordText(alias))),
+  ]);
+  aliases.forEach((alias) => {
+    if (!alias) return;
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    normalized = normalized.replace(new RegExp(`\\b${escaped}\\b`, "gu"), "trispr");
   });
   return normalized;
 }
@@ -266,7 +288,7 @@ function disarmAgentPtt(reason: string): void {
 }
 
 function isDuplicateTranscript(spoken: string, nowMs: number): boolean {
-  const key = normalizeWakewordText(spoken);
+  const key = applyWakewordAliases(spoken);
   if (!key) return true;
   if (
     key === lastHandledTranscriptKey
@@ -280,8 +302,13 @@ function isDuplicateTranscript(spoken: string, nowMs: number): boolean {
 }
 
 function containsAnyKeyword(text: string, keywords: string[]): boolean {
-  const normalized = text.toLowerCase();
+  const normalized = applyWakewordAliases(text);
   return keywords.some((keyword) => normalized.includes(keyword));
+}
+
+function setGateReason(reasonCode: string, detail: string): void {
+  latestGateLine = `${reasonCode}: ${detail}`;
+  renderLiveState();
 }
 
 function appendLog(line: string): void {
@@ -294,6 +321,8 @@ function appendLog(line: string): void {
 }
 
 function renderLiveState(): void {
+  if (dom.workflowAgentLastHeard) dom.workflowAgentLastHeard.textContent = latestHeardLine;
+  if (dom.workflowAgentLastGate) dom.workflowAgentLastGate.textContent = latestGateLine;
   if (dom.workflowAgentLastIntent) dom.workflowAgentLastIntent.textContent = latestIntentLine;
   if (dom.workflowAgentLastReply) dom.workflowAgentLastReply.textContent = latestReplyLine;
   if (dom.workflowAgentAwaitingConfirmation) {
@@ -332,6 +361,37 @@ function renderReviewGate(): void {
   dom.workflowAgentExecuteBtn?.toggleAttribute("disabled", !canExecute);
 }
 
+function shouldShowPlanLane(): boolean {
+  return Boolean(
+    currentPlan
+      || (lastParse?.detected && lastParse.intent === "gdd_generate_publish")
+      || pendingConfirmationToken
+  );
+}
+
+function renderActionLane(): void {
+  const showPlanLane = shouldShowPlanLane();
+  dom.workflowAgentPlanLane?.toggleAttribute("hidden", !showPlanLane);
+  if (!dom.workflowAgentActionHint) return;
+  if (!lastParse) {
+    dom.workflowAgentActionHint.textContent =
+      "Non-side-effect intents reply immediately. GDD intents open a confirmable plan lane.";
+    return;
+  }
+  if (lastParse.intent === "gdd_generate_publish") {
+    dom.workflowAgentActionHint.textContent =
+      "GDD intent detected. Select a session, build plan, then confirm execution.";
+    return;
+  }
+  if (lastParse.intent === "unknown") {
+    dom.workflowAgentActionHint.textContent =
+      "Wakeword was recognized, but no side-effect intent was detected. Reply stays safe and read-only.";
+    return;
+  }
+  dom.workflowAgentActionHint.textContent =
+    "Intent is read-only (no side effects). Confirm lane is not required.";
+}
+
 function renderConfiguration(): void {
   ensureWorkflowAgentDefaults();
   const cfg = settings?.workflow_agent;
@@ -342,6 +402,9 @@ function renderConfiguration(): void {
   }
   if (dom.workflowAgentWakewords) {
     dom.workflowAgentWakewords.value = (cfg.wakewords ?? []).join("\n");
+  }
+  if (dom.workflowAgentWakewordAliases) {
+    dom.workflowAgentWakewordAliases.value = (cfg.wakeword_aliases ?? []).join("\n");
   }
   if (dom.workflowAgentConfirmTimeoutSec) {
     dom.workflowAgentConfirmTimeoutSec.value = String(cfg.confirm_timeout_sec ?? 45);
@@ -381,6 +444,7 @@ function renderStatus(): void {
   const configControls: Array<HTMLElement | null> = [
     dom.workflowAgentHandsFreeEnabled,
     dom.workflowAgentWakewords,
+    dom.workflowAgentWakewordAliases,
     dom.workflowAgentConfirmTimeoutSec,
     dom.workflowAgentSuggestionLevel,
     dom.workflowAgentReplyMode,
@@ -393,6 +457,7 @@ function renderStatus(): void {
     dom.workflowAgentStatus.textContent =
       "Workflow Agent disabled. Enable module + setting to use assistant actions.";
     renderReviewGate();
+    renderActionLane();
     renderConfiguration();
     renderLiveState();
     return;
@@ -401,6 +466,7 @@ function renderStatus(): void {
     dom.workflowAgentStatus.textContent =
       "Assistant mode is off (Product mode = Transcribe). Switch to Assistant to interact.";
     renderReviewGate();
+    renderActionLane();
     renderConfiguration();
     renderLiveState();
     return;
@@ -413,6 +479,7 @@ function renderStatus(): void {
   if (!latestAssistantState?.capability?.degraded) {
     dom.workflowAgentStatus.textContent = guidance ? `${base} ${guidance}` : base;
     renderReviewGate();
+    renderActionLane();
     renderConfiguration();
     renderLiveState();
     return;
@@ -423,6 +490,7 @@ function renderStatus(): void {
     ? `${base} Degraded capability: ${formatCapabilityList(softMissing)}.`
     : `${base} Degraded capability mode active (${formatCapabilityList(missing)}).`;
   renderReviewGate();
+  renderActionLane();
   renderConfiguration();
   renderLiveState();
 }
@@ -494,11 +562,15 @@ function renderPlanPreview(): void {
 }
 
 function matchesWakeword(text: string): boolean {
-  const normalized = normalizeWakewordText(text);
+  const normalized = applyWakewordAliases(text);
   if (!normalized) return false;
-  const wakewords = settings?.workflow_agent?.wakewords ?? [];
+  const wakewords = [
+    ...(settings?.workflow_agent?.wakewords ?? []),
+    ...((settings?.workflow_agent?.wakeword_aliases ?? [])),
+    ...BUILTIN_WAKEWORD_ALIASES,
+  ];
   return wakewords.some((wakeword) => {
-    const needle = normalizeWakewordText(wakeword);
+    const needle = applyWakewordAliases(wakeword);
     return Boolean(needle) && normalized.includes(needle);
   });
 }
@@ -526,6 +598,47 @@ function buildSessionRecapReply(): string {
   return `Top session ${startedAt} with ${top.entry_count} entries. Preview: ${preview}`;
 }
 
+function buildUnknownRuleReply(commandText: string): string {
+  const normalized = applyWakewordAliases(commandText);
+  const englishHint = normalized.includes("please")
+    || normalized.includes("what")
+    || normalized.includes("session")
+    || normalized.includes("status")
+    || normalized.includes("weather");
+  const weatherLike = normalized.includes("wetter")
+    || normalized.includes("weather")
+    || normalized.includes("forecast")
+    || normalized.includes("temperatur");
+  if (weatherLike) {
+    if (englishHint) {
+      return "I do not have live weather access in local mode. I can still help with plan status, session recaps, or GDD drafts from your transcripts.";
+    }
+    return "Ich habe lokal keinen Live-Wetterzugriff. Ich kann dir aber einen Plan, Recap oder GDD-Draft aus deinen Transkripten erstellen.";
+  }
+  if (englishHint) {
+    return "I can currently handle GDD drafts, session recaps, and plan status from your local transcripts. Please rephrase your request within that scope.";
+  }
+  return "Ich kann aktuell GDD-Drafts, Session-Recaps und Plan-Status aus deinen lokalen Transkripten verarbeiten. Formuliere die Anfrage bitte in diesem Scope.";
+}
+
+async function composeUnknownReply(commandText: string): Promise<void> {
+  try {
+    const reply = await invoke<AgentReplyResult>("agent_compose_unknown_reply", {
+      request: {
+        command_text: commandText,
+      },
+    });
+    latestReplyLine = reply.text?.trim() || buildUnknownRuleReply(commandText);
+    setGateReason(reply.reason_code || "unknown_reply", `source=${reply.source || "rule"}`);
+    appendLog(`Unknown intent reply -> ${reply.source}/${reply.reason_code}`);
+  } catch (error) {
+    latestReplyLine = buildUnknownRuleReply(commandText);
+    setGateReason("unknown_reply_fallback", "local_llm_unavailable");
+    appendLog(`Unknown intent fallback reply -> ${String(error)}`);
+  }
+  renderLiveState();
+}
+
 async function parseCommand(commandText: string): Promise<void> {
   if (!requireAssistantInteraction("running workflow-agent commands")) return;
   if (!commandText.trim()) {
@@ -545,20 +658,32 @@ async function parseCommand(commandText: string): Promise<void> {
   });
   lastParse = parsed;
   languageExplicitlySet = false;
+  latestHeardLine = parsed.command_text?.trim() || commandText.trim();
   latestIntentLine = parsed.detected
     ? `${parsed.intent} (${(parsed.confidence * 100).toFixed(0)}%)`
-    : "No actionable intent detected.";
+    : parsed.wakeword_matched
+      ? "Wakeword matched, no mapped action intent."
+      : "No actionable intent detected.";
   appendLog(
     `Parsed command -> intent=${parsed.intent}, confidence=${(parsed.confidence * 100).toFixed(0)}%, publish=${parsed.publish_requested}`
   );
+  setGateReason(
+    parsed.wakeword_matched ? "wakeword_matched" : "wakeword_missing",
+    parsed.reasoning || "no reasoning"
+  );
+  renderActionLane();
   renderLiveState();
-  if (!parsed.detected) {
+  if (!parsed.detected && !parsed.wakeword_matched) {
     showToast({
       type: "info",
       title: "No actionable intent",
       message: "Wakeword or intent keywords were missing.",
       duration: 3200,
     });
+    return;
+  }
+  if (!parsed.detected && parsed.wakeword_matched) {
+    await composeUnknownReply(parsed.command_text);
     return;
   }
 
@@ -624,6 +749,7 @@ async function refreshCandidates(): Promise<void> {
   setReviewConfirmed(false);
   renderCandidates();
   renderPlanPreview();
+  renderActionLane();
   appendLog(`Session search -> ${candidates.length} candidate(s) found.`);
   if (candidates.length === 0) {
     appendLog("No matching sessions found. Try different keywords or check transcript history.");
@@ -695,6 +821,7 @@ async function buildPlan(): Promise<void> {
   currentPlan = await invoke<AgentExecutionPlan>("agent_build_execution_plan", { request: req });
   setReviewConfirmed(false);
   renderPlanPreview();
+  renderActionLane();
   appendLog("Execution plan ready. Review the plan details and confirm review before execution.");
 }
 
@@ -737,6 +864,7 @@ async function executePlan(confirmationToken?: string): Promise<void> {
   latestReplyLine = result.message;
   latestConfirmationLine =
     result.status === "failed" ? latestConfirmationLine : "No pending confirmation.";
+  renderActionLane();
   renderLiveState();
   appendLog(`Execution result -> ${result.status}: ${result.message}`);
   showToast({
@@ -814,6 +942,15 @@ function bindUi(): void {
     void persistWorkflowAgentSettings();
   });
 
+  dom.workflowAgentWakewordAliases?.addEventListener("change", () => {
+    if (!settings?.workflow_agent || !dom.workflowAgentWakewordAliases) return;
+    settings.workflow_agent.wakeword_aliases = parseWakewordAliasesInput(
+      dom.workflowAgentWakewordAliases.value
+    );
+    renderConfiguration();
+    void persistWorkflowAgentSettings();
+  });
+
   dom.workflowAgentConfirmTimeoutSec?.addEventListener("change", () => {
     if (!settings?.workflow_agent || !dom.workflowAgentConfirmTimeoutSec) return;
     const parsed = Number.parseInt(dom.workflowAgentConfirmTimeoutSec.value, 10);
@@ -859,6 +996,7 @@ export function initWorkflowAgentConsole(): void {
   renderCandidates();
   renderPlanPreview();
   renderReviewGate();
+  renderActionLane();
   renderConfiguration();
   renderLiveState();
   setAgentPttArmed(false);
@@ -867,6 +1005,7 @@ export function initWorkflowAgentConsole(): void {
 export function syncWorkflowAgentConsoleState(): void {
   renderStatus();
   renderReviewGate();
+  renderActionLane();
   renderConfiguration();
   renderLiveState();
   setAgentPttArmed(isAgentPttArmed());
@@ -878,19 +1017,35 @@ async function handleWorkflowAgentTranscriptInput(
   timestampMs: number,
   streamKind: "raw" | "final"
 ): Promise<void> {
-  if (!isWorkflowAgentEnabled()) return;
-  if (!isAssistantModeEnabled()) return;
+  if (!isWorkflowAgentEnabled()) {
+    setGateReason("module_disabled", "workflow_agent not enabled");
+    return;
+  }
+  if (!isAssistantModeEnabled()) {
+    setGateReason("assistant_mode_required", "product_mode=transcribe");
+    return;
+  }
   const handsFree = Boolean(settings?.workflow_agent?.hands_free_enabled);
   const pttArmed = isAgentPttArmed(timestampMs);
-  if (!handsFree && !pttArmed) return;
+  if (!handsFree && !pttArmed) {
+    setGateReason("hands_free_off", "awaiting ptt arm");
+    return;
+  }
 
   const spoken = spokenRaw.trim();
   if (!spoken) return;
-  if (isDuplicateTranscript(spoken, timestampMs)) return;
+  latestHeardLine = `${source}/${streamKind}: ${spoken}`;
+  if (isDuplicateTranscript(spoken, timestampMs)) {
+    setGateReason("duplicate_suppressed", `${source}/${streamKind}`);
+    return;
+  }
 
   const bypassWakeword = pttArmed;
   const wakewordMatched = matchesWakeword(spoken);
-  if (!bypassWakeword && !wakewordMatched) return;
+  if (!bypassWakeword && !wakewordMatched) {
+    setGateReason("no_wakeword", `${source}/${streamKind}`);
+    return;
+  }
 
   if (pendingConfirmationToken) {
     const normalizedSpoken = normalizeWakewordText(spoken);
@@ -916,6 +1071,10 @@ async function handleWorkflowAgentTranscriptInput(
 
   appendLog(
     `${bypassWakeword ? "PTT command" : "Wakeword command"} detected from ${source} (${streamKind}).`
+  );
+  setGateReason(
+    bypassWakeword ? "ptt_bypass" : "wakeword_command",
+    `${source}/${streamKind}`
   );
   if (dom.workflowAgentCommandInput) {
     dom.workflowAgentCommandInput.value = spoken;
@@ -961,13 +1120,22 @@ export function handleAssistantStateChanged(payload: AssistantStateChangedEvent)
     latestConfirmationLine = "No pending confirmation.";
     renderLiveState();
   }
+  setGateReason("assistant_state", `${payload.state}:${payload.reason}`);
   renderStatus();
 }
 
 export function handleAssistantIntentDetected(payload: AssistantIntentDetectedEvent): void {
+  lastParse = payload.parse;
   latestIntentLine = payload.parse.detected
     ? `${payload.parse.intent} (${(payload.parse.confidence * 100).toFixed(0)}%)`
-    : "No actionable intent detected.";
+    : payload.parse.wakeword_matched
+      ? "Wakeword matched, no mapped action intent."
+      : "No actionable intent detected.";
+  setGateReason(
+    payload.parse.wakeword_matched ? "assistant_parse_wakeword" : "assistant_parse_ignored",
+    payload.parse.reasoning || payload.reason
+  );
+  renderActionLane();
   renderLiveState();
 }
 
@@ -976,6 +1144,7 @@ export function handleAssistantPlanReady(payload: AssistantPlanReadyEvent): void
   setReviewConfirmed(false);
   latestReplyLine = `Plan ready: ${payload.plan.summary}`;
   renderPlanPreview();
+  renderActionLane();
   renderLiveState();
 }
 
@@ -988,12 +1157,14 @@ export function handleAssistantAwaitingConfirmation(payload: AssistantAwaitingCo
   latestConfirmationLine = pendingConfirmationToken
     ? `Awaiting confirm (${payload.confirm_timeout_sec}s), token ${pendingConfirmationToken}: ${payload.plan.summary}`
     : `Awaiting confirm (${payload.confirm_timeout_sec}s): ${payload.plan.summary}`;
+  renderActionLane();
   renderLiveState();
 }
 
 export function handleAssistantConfirmationExpired(payload: AssistantConfirmationExpiredEvent): void {
   clearPendingConfirmationState();
   latestConfirmationLine = `Confirmation expired (${new Date(payload.expired_at_ms).toLocaleTimeString()}).`;
+  renderActionLane();
   renderLiveState();
 }
 
@@ -1003,6 +1174,7 @@ export function handleAssistantActionResult(
   if (payload.result.status === "completed" || payload.result.status === "queued" || payload.result.status === "cancelled") {
     clearPendingConfirmationState();
     latestConfirmationLine = "No pending confirmation.";
-    renderLiveState();
   }
+  renderActionLane();
+  renderLiveState();
 }

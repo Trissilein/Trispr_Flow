@@ -123,7 +123,22 @@ pub struct SessionBucket {
 }
 
 fn normalize(text: &str) -> String {
-    text.trim().to_lowercase()
+    let mut cleaned = String::with_capacity(text.len());
+    for ch in text.trim().to_lowercase().chars() {
+        if ch.is_alphanumeric() || ch.is_whitespace() {
+            cleaned.push(ch);
+        } else {
+            cleaned.push(' ');
+        }
+    }
+    cleaned
+        .split_whitespace()
+        .map(|token| match token {
+            "trispa" | "trisper" | "trispar" | "trispur" => "trispr",
+            _ => token,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn contains_any(text: &str, words: &[String]) -> bool {
@@ -780,6 +795,30 @@ mod tests {
         assert!(result.detected);
         assert_eq!(result.intent, "gdd_generate_publish");
         assert!(result.confidence >= 0.8);
+    }
+
+    #[test]
+    fn detects_wakeword_alias_variant() {
+        let req = AgentParseCommandRequest {
+            command_text: "hey trispa create a gdd for today".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(result.detected);
+        assert_eq!(result.intent, "gdd_generate_publish");
+        assert!(result.wakeword_matched);
+    }
+
+    #[test]
+    fn detects_intent_with_punctuation_around_wakeword() {
+        let req = AgentParseCommandRequest {
+            command_text: "Hey, Trispr! plan status please.".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(result.detected);
+        assert_eq!(result.intent, "plan_status");
+        assert!(result.wakeword_matched);
     }
 
     #[test]

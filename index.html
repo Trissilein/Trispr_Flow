@@ -1956,15 +1956,19 @@
                           rows="3"
                           placeholder="Hey Trispr, build a GDD draft from yesterday's combat discussion."
                         ></textarea>
+                        <span class="field-hint">Wakeword + intent. Unbekannte Fragen bekommen eine sichere Antwort ohne Side-Effects.</span>
                       </label>
                       <div class="auth-modal-actions span-2">
                         <button id="workflow-agent-parse-btn" type="button" class="hotkey-record-btn">Parse Command</button>
-                        <button id="workflow-agent-refresh-candidates-btn" type="button" class="hotkey-record-btn">Find Sessions</button>
                         <button id="workflow-agent-ptt-arm-btn" type="button" class="hotkey-record-btn">PTT (Agent)</button>
                       </div>
                       <div class="field span-2">
                         <span class="field-label">Live status</span>
                         <div class="workflow-agent-live-grid">
+                          <div>
+                            <span class="field-hint">Last heard</span>
+                            <div id="workflow-agent-last-heard" class="workflow-agent-live-line">No utterance captured yet.</div>
+                          </div>
                           <div>
                             <span class="field-hint">Last intent</span>
                             <div id="workflow-agent-last-intent" class="workflow-agent-live-line">No intent detected yet.</div>
@@ -1974,15 +1978,15 @@
                             <div id="workflow-agent-last-reply" class="workflow-agent-live-line">No replies yet.</div>
                           </div>
                           <div>
+                            <span class="field-hint">Last gate reason</span>
+                            <div id="workflow-agent-last-gate" class="workflow-agent-live-line">No gate decisions yet.</div>
+                          </div>
+                          <div>
                             <span class="field-hint">Confirmation</span>
                             <div id="workflow-agent-awaiting-confirmation" class="workflow-agent-live-line">No pending confirmation.</div>
                           </div>
                         </div>
                       </div>
-                      <label class="field span-2">
-                        <span class="field-label">Conversation log</span>
-                        <textarea id="workflow-agent-execution-log" rows="6" readonly placeholder="Agent events and execution output appear here..."></textarea>
-                      </label>
                     </div>
                   </div>
                 </details>
@@ -1990,36 +1994,46 @@
                   <summary><h4 class="ai-refine-section-title">Actions</h4></summary>
                   <div class="expander-body">
                     <div class="panel-grid">
-                      <div id="workflow-agent-candidates" class="module-agent-candidates span-2"></div>
-                      <label class="field">
-                        <span class="field-label">Target language <strong>(required)</strong></span>
-                        <select id="workflow-agent-target-language">
-                          <option value="" disabled selected>— select language —</option>
-                          <option value="source">Source language (keep original)</option>
-                          <option value="en">English</option>
-                          <option value="de">Deutsch</option>
-                          <option value="fr">Français</option>
-                          <option value="es">Español</option>
-                        </select>
-                        <span class="field-hint">Choose a language for each command before building a plan.</span>
-                      </label>
-                      <div class="field">
-                        <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn">Build Plan</button>
+                      <div class="field span-2">
+                        <span class="field-label">Action lane</span>
+                        <div id="workflow-agent-action-hint" class="workflow-agent-live-line">
+                          Non-side-effect intents reply immediately. GDD intents open a confirmable plan lane.
+                        </div>
                       </div>
-                      <label class="field span-2">
-                        <span class="field-label">Plan preview</span>
-                        <textarea id="workflow-agent-plan-preview" rows="5" readonly placeholder="Execution plan appears here..."></textarea>
-                      </label>
-                      <div class="field toggle span-2">
-                        <label class="toggle-row">
-                          <span class="field-label">Review confirmed</span>
-                          <input id="workflow-agent-review-confirm" type="checkbox" title="Confirm you reviewed the plan details before execution" />
-                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                        </label>
-                        <span id="workflow-agent-review-summary" class="field-hint">Build a plan first, review analysis/execution lanes, then confirm before execute.</span>
-                      </div>
-                      <div class="auth-modal-actions span-2">
-                        <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn">Confirm & Execute</button>
+                      <div id="workflow-agent-plan-lane" class="span-2 workflow-agent-plan-lane">
+                        <div class="panel-grid">
+                          <div id="workflow-agent-candidates" class="module-agent-candidates span-2"></div>
+                          <label class="field">
+                            <span class="field-label">Target language <strong>(required)</strong></span>
+                            <select id="workflow-agent-target-language">
+                              <option value="" disabled selected>— select language —</option>
+                              <option value="source">Source language (keep original)</option>
+                              <option value="en">English</option>
+                              <option value="de">Deutsch</option>
+                              <option value="fr">Français</option>
+                              <option value="es">Español</option>
+                            </select>
+                            <span class="field-hint">Choose a language for each GDD command before building a plan.</span>
+                          </label>
+                          <div class="field">
+                            <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn">Build Plan</button>
+                          </div>
+                          <label class="field span-2">
+                            <span class="field-label">Plan preview</span>
+                            <textarea id="workflow-agent-plan-preview" rows="5" readonly placeholder="Execution plan appears here..."></textarea>
+                          </label>
+                          <div class="field toggle span-2">
+                            <label class="toggle-row">
+                              <span class="field-label">Review confirmed</span>
+                              <input id="workflow-agent-review-confirm" type="checkbox" title="Confirm you reviewed the plan details before execution" />
+                              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                            </label>
+                            <span id="workflow-agent-review-summary" class="field-hint">Build a plan first, review analysis/execution lanes, then confirm before execute.</span>
+                          </div>
+                          <div class="auth-modal-actions span-2">
+                            <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn">Confirm & Execute</button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2040,6 +2054,11 @@
                         <span class="field-label">Wakewords</span>
                         <textarea id="workflow-agent-wakewords" rows="3" placeholder="trispr&#10;hey trispr&#10;trispr agent"></textarea>
                         <span class="field-hint">One wakeword per line (comma-separated entries also supported).</span>
+                      </label>
+                      <label class="field span-2">
+                        <span class="field-label">Wakeword aliases (optional)</span>
+                        <textarea id="workflow-agent-wakeword-aliases" rows="2" placeholder="trispa&#10;trisper"></textarea>
+                        <span class="field-hint">Alternative pronunciations that should trigger the same wakeword intent.</span>
                       </label>
                       <label class="field">
                         <span class="field-label">Confirm timeout (seconds)</span>
@@ -2071,6 +2090,20 @@
                         </label>
                         <span class="field-hint">Falls back to text responses when voice output is unavailable.</span>
                       </div>
+                    </div>
+                  </div>
+                </details>
+                <details class="expander">
+                  <summary><h4 class="ai-refine-section-title">Expert &amp; Diagnostics</h4></summary>
+                  <div class="expander-body">
+                    <div class="panel-grid">
+                      <div class="auth-modal-actions span-2">
+                        <button id="workflow-agent-refresh-candidates-btn" type="button" class="hotkey-record-btn">Find Sessions</button>
+                      </div>
+                      <label class="field span-2">
+                        <span class="field-label">Conversation log</span>
+                        <textarea id="workflow-agent-execution-log" rows="6" readonly placeholder="Agent events and execution output appear here..."></textarea>
+                      </label>
                     </div>
                   </div>
                 </details>

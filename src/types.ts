@@ -237,6 +237,7 @@ export interface ConfluenceSettings {
 export interface WorkflowAgentSettings {
   enabled: boolean;
   wakewords: string[];
+  wakeword_aliases?: string[];
   intent_keywords: Record<string, string[]>;
   model: string;
   temperature: number;
@@ -346,6 +347,12 @@ export interface AgentExecutionResult {
   publish_result?: GddPublishResult;
   queued_job?: GddPendingPublishJob;
   error?: string;
+}
+
+export interface AgentReplyResult {
+  text: string;
+  source: "rule" | "local_llm";
+  reason_code: string;
 }
 
 export interface AssistantCapabilitySnapshot {

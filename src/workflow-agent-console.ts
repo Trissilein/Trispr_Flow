@@ -37,11 +37,13 @@ let pendingConfirmationTimer: number | null = null;
 let agentPttArmedUntilMs: number | null = null;
 let lastHandledTranscriptKey = "";
 let lastHandledTranscriptAtMs = 0;
+let lastGateToastAtMs = 0;
 
 const CONFIRM_KEYWORDS = ["confirm", "confirmed", "bestätigen", "bestaetigen", "freigeben", "ok"];
 const CANCEL_KEYWORDS = ["cancel", "abbrechen", "stopp", "stop"];
 const AGENT_PTT_ARM_WINDOW_MS = 12_000;
 const AGENT_TRANSCRIPT_DEDUPE_WINDOW_MS = 1_600;
+const AGENT_GATE_TOAST_COOLDOWN_MS = 8_000;
 const BUILTIN_WAKEWORD_ALIASES = ["trispa", "trisper", "trispar", "trispur"];
 
 function ensureWorkflowAgentDefaults(): void {
@@ -309,6 +311,39 @@ function containsAnyKeyword(text: string, keywords: string[]): boolean {
 function setGateReason(reasonCode: string, detail: string): void {
   latestGateLine = `${reasonCode}: ${detail}`;
   renderLiveState();
+}
+
+function maybeShowGateToast(title: string, message: string): void {
+  const now = Date.now();
+  if (now - lastGateToastAtMs < AGENT_GATE_TOAST_COOLDOWN_MS) return;
+  lastGateToastAtMs = now;
+  showToast({
+    type: "info",
+    title,
+    message,
+    duration: 3200,
+  });
+}
+
+async function maybeSpeakAgentReply(text: string): Promise<void> {
+  if (!text.trim()) return;
+  if (!settings?.workflow_agent?.voice_feedback_enabled) {
+    appendLog("Voice feedback disabled -> reply shown as text only.");
+    return;
+  }
+  try {
+    await invoke("speak_tts", {
+      request: {
+        provider: "",
+        text,
+        rate: null,
+        volume: null,
+        context: "agent_reply",
+      },
+    });
+  } catch (error) {
+    appendLog(`Voice feedback failed: ${String(error)}`);
+  }
 }
 
 function appendLog(line: string): void {
@@ -637,6 +672,7 @@ async function composeUnknownReply(commandText: string): Promise<void> {
     appendLog(`Unknown intent fallback reply -> ${String(error)}`);
   }
   renderLiveState();
+  await maybeSpeakAgentReply(latestReplyLine);
 }
 
 async function parseCommand(commandText: string): Promise<void> {
@@ -692,6 +728,7 @@ async function parseCommand(commandText: string): Promise<void> {
     latestReplyLine = reply;
     appendLog(`Plan status reply -> ${reply}`);
     renderLiveState();
+    await maybeSpeakAgentReply(reply);
     return;
   }
 
@@ -703,6 +740,7 @@ async function parseCommand(commandText: string): Promise<void> {
     latestReplyLine = reply;
     appendLog(`Session recap reply -> ${reply}`);
     renderLiveState();
+    await maybeSpeakAgentReply(reply);
     return;
   }
 
@@ -718,6 +756,7 @@ async function parseCommand(commandText: string): Promise<void> {
     }
     appendLog(`Confirm/cancel intent reply -> ${latestReplyLine}`);
     renderLiveState();
+    await maybeSpeakAgentReply(latestReplyLine);
     return;
   }
 
@@ -1017,23 +1056,34 @@ async function handleWorkflowAgentTranscriptInput(
   timestampMs: number,
   streamKind: "raw" | "final"
 ): Promise<void> {
+  const spoken = spokenRaw.trim();
+  if (!spoken) return;
+  const wakewordPreview = matchesWakeword(spoken);
+
   if (!isWorkflowAgentEnabled()) {
     setGateReason("module_disabled", "workflow_agent not enabled");
+    if (wakewordPreview) {
+      maybeShowGateToast("Workflow Agent disabled", "Enable the Workflow Agent module to receive replies.");
+    }
     return;
   }
   if (!isAssistantModeEnabled()) {
     setGateReason("assistant_mode_required", "product_mode=transcribe");
+    if (wakewordPreview) {
+      maybeShowGateToast("Assistant mode required", "Switch Product mode to Assistant for wakeword replies.");
+    }
     return;
   }
   const handsFree = Boolean(settings?.workflow_agent?.hands_free_enabled);
   const pttArmed = isAgentPttArmed(timestampMs);
   if (!handsFree && !pttArmed) {
     setGateReason("hands_free_off", "awaiting ptt arm");
+    if (wakewordPreview) {
+      maybeShowGateToast("Hands-free is off", "Enable Hands-free mode or use PTT (Agent) for the next utterance.");
+    }
     return;
   }
 
-  const spoken = spokenRaw.trim();
-  if (!spoken) return;
   latestHeardLine = `${source}/${streamKind}: ${spoken}`;
   if (isDuplicateTranscript(spoken, timestampMs)) {
     setGateReason("duplicate_suppressed", `${source}/${streamKind}`);

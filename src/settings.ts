@@ -1333,7 +1333,7 @@ function renderProductModeSettings(): void {
   if (dom.productModeHint) {
     dom.productModeHint.textContent = productMode === "assistant"
       ? "Assistant mode: wakeword flow + planning states are active."
-      : "Transcribe mode: capture/transcript stays primary and wakeword automation is paused.";
+      : "Transcribe mode: capture/transcript stays primary; wakeword commands are auto-routed to Agent.";
   }
 }
 

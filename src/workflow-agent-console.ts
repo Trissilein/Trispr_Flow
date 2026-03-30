@@ -136,15 +136,6 @@ function requireAssistantInteraction(actionLabel: string): boolean {
     });
     return false;
   }
-  if (!isAssistantModeEnabled()) {
-    showToast({
-      type: "info",
-      title: "Assistant mode required",
-      message: `Switch Product mode to Assistant before ${actionLabel}.`,
-      duration: 3200,
-    });
-    return false;
-  }
   return true;
 }
 
@@ -376,7 +367,7 @@ function setReviewConfirmed(value: boolean): void {
 }
 
 function renderReviewGate(): void {
-  const interactionEnabled = isWorkflowAgentEnabled() && isAssistantModeEnabled();
+  const interactionEnabled = isWorkflowAgentEnabled();
   const hasPlan = Boolean(currentPlan);
   const publishLaneActive = (currentPlan?.execution_steps?.length ?? 0) > 0;
   const reviewConfirmed = isReviewConfirmed();
@@ -461,7 +452,7 @@ function renderStatus(): void {
   const enabled = isWorkflowAgentEnabled();
   dom.workflowAgentConsole.hidden = !enabled;
 
-  const interactionEnabled = enabled && isAssistantModeEnabled();
+  const interactionEnabled = enabled;
   const actionControls: Array<HTMLElement | null> = [
     dom.workflowAgentCommandInput,
     dom.workflowAgentParseBtn,
@@ -473,7 +464,7 @@ function renderStatus(): void {
   ];
   actionControls.forEach((control) => control?.toggleAttribute("disabled", !interactionEnabled));
   if (!interactionEnabled && isAgentPttArmed()) {
-    disarmAgentPtt("assistant mode off");
+    disarmAgentPtt("workflow agent off");
   }
 
   const configControls: Array<HTMLElement | null> = [
@@ -498,8 +489,9 @@ function renderStatus(): void {
     return;
   }
   if (!isAssistantModeEnabled()) {
+    const handsFree = settings?.workflow_agent?.hands_free_enabled ? "on" : "off";
     dom.workflowAgentStatus.textContent =
-      "Assistant mode is off (Product mode = Transcribe). Switch to Assistant to interact.";
+      `Transcribe mode active. Wakeword auto-route is enabled · hands-free ${handsFree}. Assistant state events are limited in this mode.`;
     renderReviewGate();
     renderActionLane();
     renderConfiguration();
@@ -922,11 +914,11 @@ function bindUi(): void {
     void refreshCandidates();
   });
   dom.workflowAgentPttArmBtn?.addEventListener("click", () => {
-    if (!isWorkflowAgentEnabled() || !isAssistantModeEnabled()) {
+    if (!isWorkflowAgentEnabled()) {
       showToast({
         type: "info",
-        title: "Assistant mode required",
-        message: "Enable Workflow Agent and switch Product mode to Assistant first.",
+        title: "Workflow Agent disabled",
+        message: "Enable Workflow Agent before arming Agent PTT.",
         duration: 3200,
       });
       return;
@@ -1067,21 +1059,25 @@ async function handleWorkflowAgentTranscriptInput(
     }
     return;
   }
-  if (!isAssistantModeEnabled()) {
-    setGateReason("assistant_mode_required", "product_mode=transcribe");
-    if (wakewordPreview) {
-      maybeShowGateToast("Assistant mode required", "Switch Product mode to Assistant for wakeword replies.");
-    }
-    return;
-  }
+  const assistantMode = isAssistantModeEnabled();
   const handsFree = Boolean(settings?.workflow_agent?.hands_free_enabled);
   const pttArmed = isAgentPttArmed(timestampMs);
-  if (!handsFree && !pttArmed) {
-    setGateReason("hands_free_off", "awaiting ptt arm");
-    if (wakewordPreview) {
-      maybeShowGateToast("Hands-free is off", "Enable Hands-free mode or use PTT (Agent) for the next utterance.");
+  if (assistantMode) {
+    if (!handsFree && !pttArmed) {
+      setGateReason("hands_free_off", "awaiting ptt arm");
+      if (wakewordPreview) {
+        maybeShowGateToast("Hands-free is off", "Enable Hands-free mode or use PTT (Agent) for the next utterance.");
+      }
+      return;
     }
+  } else if (!pttArmed && !wakewordPreview) {
+    setGateReason("transcribe_passthrough", "no wakeword detected");
     return;
+  } else if (wakewordPreview) {
+    setGateReason("auto_route_transcribe", `${source}/${streamKind}`);
+    if (!handsFree) {
+      maybeShowGateToast("Wakeword routed", "Wakeword command is routed in Transcribe mode (auto-route active).");
+    }
   }
 
   latestHeardLine = `${source}/${streamKind}: ${spoken}`;

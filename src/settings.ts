@@ -1332,8 +1332,8 @@ function renderProductModeSettings(): void {
   }
   if (dom.productModeHint) {
     dom.productModeHint.textContent = productMode === "assistant"
-      ? "Assistant mode: wakeword flow + planning states are active."
-      : "Transcribe mode: capture/transcript stays primary; wakeword commands are auto-routed to Agent.";
+      ? "Assistant mode active: planning states + voice confirmations."
+      : "Transcribe mode active: wakeword commands auto-route to Agent.";
   }
 }
 
@@ -1393,6 +1393,9 @@ export function renderSettings() {
   if (dom.vadSilenceValue) dom.vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
   if (dom.transcribeHotkey) dom.transcribeHotkey.value = settings.transcribe_hotkey;
   if (dom.toggleActivationWordsHotkey) dom.toggleActivationWordsHotkey.value = settings.hotkey_toggle_activation_words;
+  if (dom.productModeHotkey) {
+    dom.productModeHotkey.value = settings.hotkey_product_mode_toggle || "CommandOrControl+Shift+P";
+  }
   if (dom.transcribeDeviceSelect) {
     dom.transcribeDeviceSelect.value = settings.transcribe_output_device;
     // If the stored device ID is not present in the current option list, the browser

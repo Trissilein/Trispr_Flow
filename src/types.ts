@@ -584,6 +584,7 @@ export interface Settings {
   transcribe_enabled: boolean;
   transcribe_hotkey: string;
   hotkey_toggle_activation_words: string;
+  hotkey_product_mode_toggle?: string;
   transcribe_output_device: string;
   transcribe_vad_mode: boolean;
   transcribe_vad_threshold: number;

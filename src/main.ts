@@ -361,6 +361,8 @@ function applyStartupReadinessUi(): void {
     dom.transcribeHotkey,
     dom.transcribeHotkeyRecord,
     dom.transcribeDeviceSelect,
+    dom.productModeHotkey,
+    dom.productModeHotkeyRecord,
   ];
   for (const control of controls) {
     if (control) {

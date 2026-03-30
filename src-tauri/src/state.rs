@@ -242,6 +242,10 @@ fn default_product_mode() -> String {
     "transcribe".to_string()
 }
 
+fn default_hotkey_product_mode_toggle() -> String {
+    "CommandOrControl+Shift+P".to_string()
+}
+
 fn default_local_backend_preference() -> String {
     "auto".to_string()
 }
@@ -292,6 +296,8 @@ pub(crate) struct Settings {
     pub(crate) transcribe_enabled: bool,
     pub(crate) transcribe_hotkey: String,
     pub(crate) hotkey_toggle_activation_words: String,
+    #[serde(default = "default_hotkey_product_mode_toggle")]
+    pub(crate) hotkey_product_mode_toggle: String,
     pub(crate) transcribe_output_device: String,
     pub(crate) transcribe_vad_mode: bool,
     pub(crate) transcribe_vad_threshold: f32,
@@ -438,6 +444,7 @@ impl Default for Settings {
       transcribe_enabled: true,
       transcribe_hotkey: "CommandOrControl+Shift+T".to_string(),
       hotkey_toggle_activation_words: "CommandOrControl+Shift+A".to_string(),
+      hotkey_product_mode_toggle: default_hotkey_product_mode_toggle(),
       transcribe_output_device: "default".to_string(),
       transcribe_vad_mode: false,
       transcribe_vad_threshold: 0.04,

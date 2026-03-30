@@ -121,6 +121,14 @@
 
       <!-- Expert Mode global toggle -->
       <div id="expert-mode-global-bar" class="expert-mode-global-bar">
+        <div class="global-mode-control">
+          <label class="global-mode-label" for="product-mode-select">Product mode</label>
+          <select id="product-mode-select" class="global-mode-select" title="Choose whether Trispr runs as transcription tool or assistant">
+            <option value="transcribe">Transcribe</option>
+            <option value="assistant">Assistant</option>
+          </select>
+          <span id="product-mode-hint" class="global-mode-hint">Transcribe mode routes wakeword commands to Agent.</span>
+        </div>
         <label class="expert-toggle-label" for="expert-mode-toggle">
           <span>Expert</span>
           <input id="expert-mode-toggle" type="checkbox" title="Show advanced settings and modules" />
@@ -324,14 +332,6 @@
               </label>
               <span class="toggle-hint">When disabled, input capture and hotkeys are inactive</span>
             </div>
-            <label class="field span-2">
-              <span class="field-label">Product mode</span>
-              <select id="product-mode-select" title="Choose whether Trispr runs as transcription tool or assistant">
-                <option value="transcribe">Transcribe</option>
-                <option value="assistant">Assistant</option>
-              </select>
-              <span id="product-mode-hint" class="field-hint">Assistant mode enables wakeword-driven planning and execution.</span>
-            </label>
             <label class="field">
               <span class="field-label">Input device</span>
               <select id="device-select" title="Microphone or audio input device to use for recording"></select>
@@ -983,6 +983,21 @@
                 </button>
               </div>
               <span id="toggle-activation-words-hotkey-status" class="hotkey-status"
+                    role="status"
+                    aria-live="polite"></span>
+            </div>
+            <div class="field hotkey-field span-2">
+              <span class="field-label">Toggle product mode</span>
+              <div class="hotkey-input-group">
+                <input id="product-mode-hotkey" type="text" readonly title="Current hotkey for toggling Product mode — click Record to change" />
+                <button id="product-mode-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
+                  </svg>
+                  Record
+                </button>
+              </div>
+              <span id="product-mode-hotkey-status" class="hotkey-status"
                     role="status"
                     aria-live="polite"></span>
             </div>

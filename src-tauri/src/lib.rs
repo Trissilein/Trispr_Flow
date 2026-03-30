@@ -1110,6 +1110,36 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         }
     };
 
+    let register_product_mode_toggle = || -> Result<(), String> {
+        let hotkey = settings.hotkey_product_mode_toggle.trim();
+        if hotkey.is_empty() {
+            return Ok(());
+        }
+        info!("Registering Product Mode hotkey (toggle): {}", hotkey);
+        match manager.on_shortcut(hotkey, |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                toggle_product_mode_async(app.clone());
+            }
+        }) {
+            Ok(_) => {
+                info!("Product Mode hotkey registered successfully");
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to register Product Mode hotkey '{}': {}", hotkey, e);
+                emit_error(
+                    app,
+                    AppError::Hotkey(format!(
+                        "Could not register Product Mode hotkey '{}': {}",
+                        hotkey, e
+                    )),
+                    Some("Hotkey Registration"),
+                );
+                Err(e.to_string())
+            }
+        }
+    };
+
     match settings.mode.as_str() {
         "ptt" => {
             if let Err(e) = register_ptt() {
@@ -1132,6 +1162,9 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
 
     if let Err(e) = register_transcribe() {
         errors.push(format!("Transcribe: {}", e));
+    }
+    if let Err(e) = register_product_mode_toggle() {
+        errors.push(format!("Product Mode: {}", e));
     }
 
     // Register Toggle Activation Words hotkey
@@ -1185,6 +1218,11 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
                 "key": settings.hotkey_toggle_activation_words.trim(),
                 "registered": !errors.iter().any(|e| e.starts_with("Toggle Activation")),
                 "error": errors.iter().find(|e| e.starts_with("Toggle Activation")).cloned(),
+            },
+            "product_mode": {
+                "key": settings.hotkey_product_mode_toggle.trim(),
+                "registered": !errors.iter().any(|e| e.starts_with("Product Mode")),
+                "error": errors.iter().find(|e| e.starts_with("Product Mode")).cloned(),
             },
         });
         let _ = app.emit("hotkey:registration-status", &status);
@@ -8453,6 +8491,7 @@ fn get_hotkey_conflicts(state: State<'_, AppState>) -> Vec<hotkeys::ConflictInfo
         settings.hotkey_ptt.clone(),
         settings.hotkey_toggle.clone(),
         settings.transcribe_hotkey.clone(),
+        settings.hotkey_product_mode_toggle.clone(),
     ];
     hotkeys::detect_conflicts(hotkeys)
 }
@@ -10044,6 +10083,34 @@ pub(crate) fn toggle_activation_words_async(app: AppHandle) {
             settings
         });
         info!("Activation words toggled to: {}", new_enabled);
+    });
+}
+
+pub(crate) fn toggle_product_mode_async(app: AppHandle) {
+    crate::util::spawn_guarded("toggle_product_mode", move || {
+        let state = app.state::<AppState>();
+        let (next_mode, snapshot) = {
+            let mut settings = state
+                .settings
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            settings.product_mode = if settings.product_mode.trim().eq_ignore_ascii_case("assistant") {
+                "transcribe".to_string()
+            } else {
+                "assistant".to_string()
+            };
+            normalize_product_mode_field(&mut settings);
+            let next_mode = settings.product_mode.clone();
+            let snapshot = settings.clone();
+            let _ = save_settings_file(&app, &settings);
+            (next_mode, snapshot)
+        };
+
+        let _ = app.emit("settings-changed", snapshot.clone());
+        let _ = emit_assistant_baseline_state(&app, state.inner(), &snapshot, "hotkey_toggle_product_mode");
+        let cue = if next_mode == "assistant" { "start" } else { "stop" };
+        let _ = app.emit("audio:cue", cue);
+        info!("Product mode toggled to: {}", next_mode);
     });
 }
 

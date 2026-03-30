@@ -506,6 +506,7 @@ function ensureAIFallbackSettingsDefaults() {
   };
   settings.setup.ollama_remote_expert_opt_in ??= false;
   settings.product_mode = settings.product_mode === "assistant" ? "assistant" : "transcribe";
+  settings.hotkey_product_mode_toggle ??= "CommandOrControl+Shift+P";
   normalizeAiRefinementModuleBindingInSettings();
   settings.gdd_module_settings ??= {
     enabled: false,
@@ -1378,6 +1379,7 @@ export function wireEvents() {
   setupHotkeyRecorder("toggle", dom.toggleHotkey, dom.toggleHotkeyRecord, dom.toggleHotkeyStatus);
   setupHotkeyRecorder("transcribe", dom.transcribeHotkey, dom.transcribeHotkeyRecord, dom.transcribeHotkeyStatus);
   setupHotkeyRecorder("toggleActivationWords", dom.toggleActivationWordsHotkey, dom.toggleActivationWordsHotkeyRecord, dom.toggleActivationWordsHotkeyStatus);
+  setupHotkeyRecorder("productModeToggle", dom.productModeHotkey, dom.productModeHotkeyRecord, dom.productModeHotkeyStatus);
 
   const _onResize = () => updateDeviceLineClamp();
   window.addEventListener("resize", _onResize);

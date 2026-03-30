@@ -398,6 +398,9 @@ export const archiveExportBtn = $("archive-export-btn") as HTMLButtonElement | n
 export const toggleActivationWordsHotkey = $("toggle-activation-words-hotkey") as HTMLInputElement | null;
 export const toggleActivationWordsHotkeyRecord = $("toggle-activation-words-hotkey-record") as HTMLButtonElement | null;
 export const toggleActivationWordsHotkeyStatus = $("toggle-activation-words-hotkey-status") as HTMLSpanElement | null;
+export const productModeHotkey = $("product-mode-hotkey") as HTMLInputElement | null;
+export const productModeHotkeyRecord = $("product-mode-hotkey-record") as HTMLButtonElement | null;
+export const productModeHotkeyStatus = $("product-mode-hotkey-status") as HTMLSpanElement | null;
 
 // Topic keywords controls (Settings tab)
 export const topicKeywordsList = $("topic-keywords-list") as HTMLDivElement | null;

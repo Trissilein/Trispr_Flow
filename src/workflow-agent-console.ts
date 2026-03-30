@@ -38,12 +38,22 @@ let agentPttArmedUntilMs: number | null = null;
 let lastHandledTranscriptKey = "";
 let lastHandledTranscriptAtMs = 0;
 let lastGateToastAtMs = 0;
+let transcribeAssistantHoldUntilMs = 0;
 
 const CONFIRM_KEYWORDS = ["confirm", "confirmed", "bestätigen", "bestaetigen", "freigeben", "ok"];
 const CANCEL_KEYWORDS = ["cancel", "abbrechen", "stopp", "stop"];
+const TRANSCRIBE_DIRECTIVE_PREFIXES = [
+  "schreib mal bitte",
+  "schreibe mal bitte",
+  "schreib bitte",
+  "transcribe",
+  "transkribiere",
+  "parse mal bitte folgendes",
+];
 const AGENT_PTT_ARM_WINDOW_MS = 12_000;
 const AGENT_TRANSCRIPT_DEDUPE_WINDOW_MS = 1_600;
 const AGENT_GATE_TOAST_COOLDOWN_MS = 8_000;
+const TRANSCRIBE_ASSISTANT_HOLD_MS = 5_000;
 const BUILTIN_WAKEWORD_ALIASES = ["trispa", "trisper", "trispar", "trispur"];
 
 function ensureWorkflowAgentDefaults(): void {
@@ -257,6 +267,42 @@ function applyWakewordAliases(value: string): string {
   return normalized;
 }
 
+function isLikelyInputSource(source: string): boolean {
+  const normalized = source.trim().toLowerCase();
+  if (!normalized) return true;
+  if (normalized.includes("system") || normalized.includes("output")) return false;
+  return normalized.includes("mic")
+    || normalized.includes("input")
+    || normalized.includes("local")
+    || normalized.includes("unknown");
+}
+
+function isTranscribeAssistantHoldActive(timestampMs: number, source: string): boolean {
+  if (!isLikelyInputSource(source)) return false;
+  return timestampMs <= transcribeAssistantHoldUntilMs;
+}
+
+function armTranscribeAssistantHold(reason: string): void {
+  if (isAssistantModeEnabled()) return;
+  transcribeAssistantHoldUntilMs = Date.now() + TRANSCRIBE_ASSISTANT_HOLD_MS;
+  setGateReason("transcribe_followup_hold", reason);
+}
+
+function detectTranscribeDirective(commandText: string): boolean {
+  const normalized = applyWakewordAliases(commandText);
+  if (!normalized) return false;
+  for (const prefix of TRANSCRIBE_DIRECTIVE_PREFIXES) {
+    if (normalized === prefix || normalized.startsWith(`${prefix} `)) {
+      return true;
+    }
+    const wakewordBound = `trispr ${prefix}`;
+    if (normalized === wakewordBound || normalized.startsWith(`${wakewordBound} `)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isAgentPttArmed(nowMs = Date.now()): boolean {
   return agentPttArmedUntilMs !== null && nowMs < agentPttArmedUntilMs;
 }
@@ -332,6 +378,7 @@ async function maybeSpeakAgentReply(text: string): Promise<void> {
         context: "agent_reply",
       },
     });
+    armTranscribeAssistantHold("reply_spoken");
   } catch (error) {
     appendLog(`Voice feedback failed: ${String(error)}`);
   }
@@ -491,7 +538,7 @@ function renderStatus(): void {
   if (!isAssistantModeEnabled()) {
     const handsFree = settings?.workflow_agent?.hands_free_enabled ? "on" : "off";
     dom.workflowAgentStatus.textContent =
-      `Transcribe mode active. Wakeword auto-route is enabled · hands-free ${handsFree}. Assistant state events are limited in this mode.`;
+      `Transcribe mode active. Wakeword auto-route is enabled · 5s follow-up window after spoken replies · hands-free ${handsFree}. Assistant state events are limited in this mode.`;
     renderReviewGate();
     renderActionLane();
     renderConfiguration();
@@ -1050,6 +1097,11 @@ async function handleWorkflowAgentTranscriptInput(
 ): Promise<void> {
   const spoken = spokenRaw.trim();
   if (!spoken) return;
+  if (detectTranscribeDirective(spoken)) {
+    setGateReason("transcribe_directive_passthrough", `${source}/${streamKind}`);
+    appendLog(`Transcribe directive passthrough from ${source} (${streamKind}).`);
+    return;
+  }
   const wakewordPreview = matchesWakeword(spoken);
 
   if (!isWorkflowAgentEnabled()) {
@@ -1062,6 +1114,8 @@ async function handleWorkflowAgentTranscriptInput(
   const assistantMode = isAssistantModeEnabled();
   const handsFree = Boolean(settings?.workflow_agent?.hands_free_enabled);
   const pttArmed = isAgentPttArmed(timestampMs);
+  const transcribeHoldActive = !assistantMode
+    && isTranscribeAssistantHoldActive(timestampMs, source);
   if (assistantMode) {
     if (!handsFree && !pttArmed) {
       setGateReason("hands_free_off", "awaiting ptt arm");
@@ -1070,7 +1124,7 @@ async function handleWorkflowAgentTranscriptInput(
       }
       return;
     }
-  } else if (!pttArmed && !wakewordPreview) {
+  } else if (!pttArmed && !wakewordPreview && !transcribeHoldActive) {
     setGateReason("transcribe_passthrough", "no wakeword detected");
     return;
   } else if (wakewordPreview) {
@@ -1078,6 +1132,8 @@ async function handleWorkflowAgentTranscriptInput(
     if (!handsFree) {
       maybeShowGateToast("Wakeword routed", "Wakeword command is routed in Transcribe mode (auto-route active).");
     }
+  } else if (transcribeHoldActive) {
+    setGateReason("transcribe_followup", `${source}/${streamKind}`);
   }
 
   latestHeardLine = `${source}/${streamKind}: ${spoken}`;
@@ -1088,7 +1144,7 @@ async function handleWorkflowAgentTranscriptInput(
 
   const bypassWakeword = pttArmed;
   const wakewordMatched = matchesWakeword(spoken);
-  if (!bypassWakeword && !wakewordMatched) {
+  if (!bypassWakeword && !wakewordMatched && !transcribeHoldActive) {
     setGateReason("no_wakeword", `${source}/${streamKind}`);
     return;
   }
@@ -1116,10 +1172,10 @@ async function handleWorkflowAgentTranscriptInput(
   }
 
   appendLog(
-    `${bypassWakeword ? "PTT command" : "Wakeword command"} detected from ${source} (${streamKind}).`
+    `${bypassWakeword ? "PTT command" : wakewordMatched ? "Wakeword command" : "Follow-up command"} detected from ${source} (${streamKind}).`
   );
   setGateReason(
-    bypassWakeword ? "ptt_bypass" : "wakeword_command",
+    bypassWakeword ? "ptt_bypass" : wakewordMatched ? "wakeword_command" : "followup_command",
     `${source}/${streamKind}`
   );
   if (dom.workflowAgentCommandInput) {

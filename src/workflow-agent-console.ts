@@ -39,6 +39,9 @@ let lastHandledTranscriptKey = "";
 let lastHandledTranscriptAtMs = 0;
 let lastGateToastAtMs = 0;
 let transcribeAssistantHoldUntilMs = 0;
+let uiAgentStage: AssistantStateChangedEvent["state"] = "idle";
+let uiAgentStageNote = "Idle: waiting for wakeword or PTT command.";
+let uiAgentStageResetTimer: number | null = null;
 
 const CONFIRM_KEYWORDS = ["confirm", "confirmed", "bestätigen", "bestaetigen", "freigeben", "ok"];
 const CANCEL_KEYWORDS = ["cancel", "abbrechen", "stopp", "stop"];
@@ -54,6 +57,15 @@ const AGENT_PTT_ARM_WINDOW_MS = 12_000;
 const AGENT_TRANSCRIPT_DEDUPE_WINDOW_MS = 1_600;
 const AGENT_GATE_TOAST_COOLDOWN_MS = 8_000;
 const TRANSCRIBE_ASSISTANT_HOLD_MS = 5_000;
+const AGENT_STAGE_ORDER: AssistantStateChangedEvent["state"][] = [
+  "idle",
+  "listening",
+  "parsing",
+  "planning",
+  "awaiting_confirm",
+  "executing",
+  "recovering",
+];
 const BUILTIN_WAKEWORD_ALIASES = ["trispa", "trisper", "trispar", "trispur"];
 
 function ensureWorkflowAgentDefaults(): void {
@@ -81,11 +93,13 @@ function ensureWorkflowAgentDefaults(): void {
     hands_free_enabled: false,
     confirm_timeout_sec: 45,
     reply_mode: "rule_only",
+    online_enabled: false,
     voice_feedback_enabled: false,
   };
   settings.workflow_agent.hands_free_enabled ??= false;
   settings.workflow_agent.confirm_timeout_sec ??= 45;
   settings.workflow_agent.reply_mode ??= "rule_only";
+  settings.workflow_agent.online_enabled ??= false;
   settings.workflow_agent.voice_feedback_enabled ??= false;
   settings.workflow_agent.wakeword_aliases ??= [];
 }
@@ -362,6 +376,48 @@ function maybeShowGateToast(title: string, message: string): void {
   });
 }
 
+function clearAgentStageResetTimer(): void {
+  if (uiAgentStageResetTimer !== null) {
+    window.clearTimeout(uiAgentStageResetTimer);
+    uiAgentStageResetTimer = null;
+  }
+}
+
+function renderAgentStatePipeline(): void {
+  const chips = dom.workflowAgentStatePipeline?.querySelectorAll<HTMLElement>("[data-agent-stage]") ?? [];
+  const activeIndex = AGENT_STAGE_ORDER.indexOf(uiAgentStage);
+  chips.forEach((chip) => {
+    const stage = chip.dataset.agentStage as AssistantStateChangedEvent["state"] | undefined;
+    const chipIndex = stage ? AGENT_STAGE_ORDER.indexOf(stage) : -1;
+    chip.classList.toggle("is-active", stage === uiAgentStage);
+    chip.classList.toggle("is-done", chipIndex >= 0 && chipIndex < activeIndex);
+  });
+  if (dom.workflowAgentStateNote) {
+    dom.workflowAgentStateNote.textContent = uiAgentStageNote;
+  }
+}
+
+function setAgentPipelineStage(
+  stage: AssistantStateChangedEvent["state"],
+  note: string,
+  autoResetMs?: number
+): void {
+  clearAgentStageResetTimer();
+  uiAgentStage = stage;
+  uiAgentStageNote = note;
+  renderAgentStatePipeline();
+  if ((autoResetMs ?? 0) > 0) {
+    uiAgentStageResetTimer = window.setTimeout(() => {
+      uiAgentStageResetTimer = null;
+      uiAgentStage = isAssistantModeEnabled() ? "listening" : "idle";
+      uiAgentStageNote = isAssistantModeEnabled()
+        ? "Listening for wakeword commands."
+        : "Idle: waiting for wakeword or PTT command.";
+      renderAgentStatePipeline();
+    }, autoResetMs);
+  }
+}
+
 async function maybeSpeakAgentReply(text: string): Promise<void> {
   if (!text.trim()) return;
   if (!settings?.workflow_agent?.voice_feedback_enabled) {
@@ -489,6 +545,9 @@ function renderConfiguration(): void {
     dom.workflowAgentReplyMode.value =
       cfg.reply_mode === "hybrid_local_llm" ? "hybrid_local_llm" : "rule_only";
   }
+  if (dom.workflowAgentOnlineMode) {
+    dom.workflowAgentOnlineMode.value = cfg.online_enabled ? "online_enabled" : "local_only";
+  }
   if (dom.workflowAgentVoiceFeedbackEnabled) {
     dom.workflowAgentVoiceFeedbackEnabled.checked = Boolean(cfg.voice_feedback_enabled);
   }
@@ -521,6 +580,7 @@ function renderStatus(): void {
     dom.workflowAgentConfirmTimeoutSec,
     dom.workflowAgentSuggestionLevel,
     dom.workflowAgentReplyMode,
+    dom.workflowAgentOnlineMode,
     dom.workflowAgentVoiceFeedbackEnabled,
   ];
   configControls.forEach((control) => control?.toggleAttribute("disabled", !enabled));
@@ -529,10 +589,12 @@ function renderStatus(): void {
   if (!enabled) {
     dom.workflowAgentStatus.textContent =
       "Workflow Agent disabled. Enable module + setting to use assistant actions.";
+    setAgentPipelineStage("idle", "Workflow Agent disabled.");
     renderReviewGate();
     renderActionLane();
     renderConfiguration();
     renderLiveState();
+    renderAgentStatePipeline();
     return;
   }
   if (!isAssistantModeEnabled()) {
@@ -543,6 +605,7 @@ function renderStatus(): void {
     renderActionLane();
     renderConfiguration();
     renderLiveState();
+    renderAgentStatePipeline();
     return;
   }
 
@@ -556,6 +619,7 @@ function renderStatus(): void {
     renderActionLane();
     renderConfiguration();
     renderLiveState();
+    renderAgentStatePipeline();
     return;
   }
   const missing = latestAssistantState.capability.missing_capabilities ?? [];
@@ -567,6 +631,7 @@ function renderStatus(): void {
   renderActionLane();
   renderConfiguration();
   renderLiveState();
+  renderAgentStatePipeline();
 }
 
 function renderCandidates(): void {
@@ -674,6 +739,7 @@ function buildSessionRecapReply(): string {
 
 function buildUnknownRuleReply(commandText: string): string {
   const normalized = applyWakewordAliases(commandText);
+  const onlineEnabled = Boolean(settings?.workflow_agent?.online_enabled);
   const englishHint = normalized.includes("please")
     || normalized.includes("what")
     || normalized.includes("session")
@@ -684,6 +750,12 @@ function buildUnknownRuleReply(commandText: string): string {
     || normalized.includes("forecast")
     || normalized.includes("temperatur");
   if (weatherLike) {
+    if (onlineEnabled) {
+      if (englishHint) {
+        return "Online mode is enabled, but live web lookup tools are not configured yet. I can still provide a best-effort answer from model knowledge.";
+      }
+      return "Online-Modus ist aktiv, aber Live-Web-Lookup ist noch nicht konfiguriert. Ich kann dir trotzdem eine Best-Effort-Antwort aus Modellwissen geben.";
+    }
     if (englishHint) {
       return "I do not have live weather access in local mode. I can still help with plan status, session recaps, or GDD drafts from your transcripts.";
     }
@@ -716,6 +788,7 @@ async function composeUnknownReply(commandText: string): Promise<void> {
 
 async function parseCommand(commandText: string): Promise<void> {
   if (!requireAssistantInteraction("running workflow-agent commands")) return;
+  setAgentPipelineStage("parsing", "Parsing command and intent…");
   if (!commandText.trim()) {
     showToast({
       type: "warning",
@@ -749,6 +822,7 @@ async function parseCommand(commandText: string): Promise<void> {
   renderActionLane();
   renderLiveState();
   if (!parsed.detected && !parsed.wakeword_matched) {
+    setAgentPipelineStage("listening", "No actionable intent detected.", 1200);
     showToast({
       type: "info",
       title: "No actionable intent",
@@ -758,11 +832,13 @@ async function parseCommand(commandText: string): Promise<void> {
     return;
   }
   if (!parsed.detected && parsed.wakeword_matched) {
+    setAgentPipelineStage("listening", "Wakeword recognized; replying in safe read-only mode.", 1400);
     await composeUnknownReply(parsed.command_text);
     return;
   }
 
   if (parsed.intent === "plan_status") {
+    setAgentPipelineStage("listening", "Plan status generated.", 1400);
     const reply = buildPlanStatusReply();
     latestReplyLine = reply;
     appendLog(`Plan status reply -> ${reply}`);
@@ -772,6 +848,7 @@ async function parseCommand(commandText: string): Promise<void> {
   }
 
   if (parsed.intent === "session_recap") {
+    setAgentPipelineStage("listening", "Session recap generated.", 1400);
     if (!lastCandidates.length) {
       await refreshCandidates();
     }
@@ -784,6 +861,7 @@ async function parseCommand(commandText: string): Promise<void> {
   }
 
   if (parsed.intent === "confirm_or_cancel") {
+    setAgentPipelineStage("listening", "Confirmation intent processed.", 1400);
     const normalized = parsed.command_text.toLowerCase();
     if (containsAnyKeyword(normalized, CANCEL_KEYWORDS) && pendingConfirmationToken) {
       await cancelPendingConfirmation("cancelled_by_voice");
@@ -799,11 +877,13 @@ async function parseCommand(commandText: string): Promise<void> {
     return;
   }
 
+  setAgentPipelineStage("planning", "Intent accepted. Looking up matching sessions…");
   await refreshCandidates();
 }
 
 async function refreshCandidates(): Promise<void> {
   if (!requireAssistantInteraction("searching transcript sessions")) return;
+  setAgentPipelineStage("planning", "Searching transcript sessions…");
   if (!lastParse) {
     showToast({
       type: "info",
@@ -829,6 +909,9 @@ async function refreshCandidates(): Promise<void> {
   renderPlanPreview();
   renderActionLane();
   appendLog(`Session search -> ${candidates.length} candidate(s) found.`);
+  setAgentPipelineStage("planning", candidates.length > 0
+    ? "Session candidates ready. Select one and build plan."
+    : "No matching sessions found.");
   if (candidates.length === 0) {
     appendLog("No matching sessions found. Try different keywords or check transcript history.");
     return;
@@ -849,6 +932,7 @@ async function refreshCandidates(): Promise<void> {
 
 async function buildPlan(): Promise<void> {
   if (!requireAssistantInteraction("building an execution plan")) return;
+  setAgentPipelineStage("planning", "Building execution plan…");
   if (!lastParse?.detected) {
     showToast({
       type: "warning",
@@ -901,10 +985,12 @@ async function buildPlan(): Promise<void> {
   renderPlanPreview();
   renderActionLane();
   appendLog("Execution plan ready. Review the plan details and confirm review before execution.");
+  setAgentPipelineStage("planning", "Plan ready. Review and confirm before execution.");
 }
 
 async function executePlan(confirmationToken?: string): Promise<void> {
   if (!requireAssistantInteraction("executing the plan")) return;
+  setAgentPipelineStage("executing", "Executing plan…");
   if (!currentPlan) {
     showToast({
       type: "warning",
@@ -951,6 +1037,11 @@ async function executePlan(confirmationToken?: string): Promise<void> {
     message: result.message,
     duration: 4200,
   });
+  setAgentPipelineStage(
+    result.status === "failed" ? "recovering" : "listening",
+    result.status === "failed" ? "Execution failed. Recovery path active." : "Execution finished.",
+    result.status === "failed" ? 0 : 2000
+  );
 }
 
 function bindUi(): void {
@@ -1053,6 +1144,12 @@ function bindUi(): void {
     void persistWorkflowAgentSettings();
   });
 
+  dom.workflowAgentOnlineMode?.addEventListener("change", () => {
+    if (!settings?.workflow_agent || !dom.workflowAgentOnlineMode) return;
+    settings.workflow_agent.online_enabled = dom.workflowAgentOnlineMode.value === "online_enabled";
+    void persistWorkflowAgentSettings();
+  });
+
   dom.workflowAgentVoiceFeedbackEnabled?.addEventListener("change", () => {
     if (!settings?.workflow_agent || !dom.workflowAgentVoiceFeedbackEnabled) return;
     settings.workflow_agent.voice_feedback_enabled = dom.workflowAgentVoiceFeedbackEnabled.checked;
@@ -1077,6 +1174,7 @@ export function initWorkflowAgentConsole(): void {
   renderActionLane();
   renderConfiguration();
   renderLiveState();
+  setAgentPipelineStage("idle", "Idle: waiting for wakeword or PTT command.");
   setAgentPttArmed(false);
 }
 
@@ -1086,6 +1184,7 @@ export function syncWorkflowAgentConsoleState(): void {
   renderActionLane();
   renderConfiguration();
   renderLiveState();
+  renderAgentStatePipeline();
   setAgentPttArmed(isAgentPttArmed());
 }
 
@@ -1100,12 +1199,14 @@ async function handleWorkflowAgentTranscriptInput(
   if (detectTranscribeDirective(spoken)) {
     setGateReason("transcribe_directive_passthrough", `${source}/${streamKind}`);
     appendLog(`Transcribe directive passthrough from ${source} (${streamKind}).`);
+    setAgentPipelineStage("idle", "Transcribe directive recognized. Agent routing skipped.", 1200);
     return;
   }
   const wakewordPreview = matchesWakeword(spoken);
 
   if (!isWorkflowAgentEnabled()) {
     setGateReason("module_disabled", "workflow_agent not enabled");
+    setAgentPipelineStage("idle", "Workflow Agent disabled.");
     if (wakewordPreview) {
       maybeShowGateToast("Workflow Agent disabled", "Enable the Workflow Agent module to receive replies.");
     }
@@ -1126,6 +1227,7 @@ async function handleWorkflowAgentTranscriptInput(
     }
   } else if (!pttArmed && !wakewordPreview && !transcribeHoldActive) {
     setGateReason("transcribe_passthrough", "no wakeword detected");
+    setAgentPipelineStage("idle", "No wakeword detected in transcribe mode.");
     return;
   } else if (wakewordPreview) {
     setGateReason("auto_route_transcribe", `${source}/${streamKind}`);
@@ -1146,6 +1248,7 @@ async function handleWorkflowAgentTranscriptInput(
   const wakewordMatched = matchesWakeword(spoken);
   if (!bypassWakeword && !wakewordMatched && !transcribeHoldActive) {
     setGateReason("no_wakeword", `${source}/${streamKind}`);
+    setAgentPipelineStage("idle", "Wakeword required for agent routing.");
     return;
   }
 
@@ -1178,6 +1281,7 @@ async function handleWorkflowAgentTranscriptInput(
     bypassWakeword ? "ptt_bypass" : wakewordMatched ? "wakeword_command" : "followup_command",
     `${source}/${streamKind}`
   );
+  setAgentPipelineStage("parsing", "Command routed to parser.");
   if (dom.workflowAgentCommandInput) {
     dom.workflowAgentCommandInput.value = spoken;
   }
@@ -1223,11 +1327,13 @@ export function handleAssistantStateChanged(payload: AssistantStateChangedEvent)
     renderLiveState();
   }
   setGateReason("assistant_state", `${payload.state}:${payload.reason}`);
+  setAgentPipelineStage(payload.state, `Assistant state: ${payload.state.replace(/_/g, " ")}.`);
   renderStatus();
 }
 
 export function handleAssistantIntentDetected(payload: AssistantIntentDetectedEvent): void {
   lastParse = payload.parse;
+  setAgentPipelineStage("parsing", `Intent detected: ${payload.parse.intent}.`);
   latestIntentLine = payload.parse.detected
     ? `${payload.parse.intent} (${(payload.parse.confidence * 100).toFixed(0)}%)`
     : payload.parse.wakeword_matched
@@ -1244,6 +1350,7 @@ export function handleAssistantIntentDetected(payload: AssistantIntentDetectedEv
 export function handleAssistantPlanReady(payload: AssistantPlanReadyEvent): void {
   currentPlan = payload.plan;
   setReviewConfirmed(false);
+  setAgentPipelineStage("planning", "Plan ready for review.");
   latestReplyLine = `Plan ready: ${payload.plan.summary}`;
   renderPlanPreview();
   renderActionLane();
@@ -1251,6 +1358,7 @@ export function handleAssistantPlanReady(payload: AssistantPlanReadyEvent): void
 }
 
 export function handleAssistantAwaitingConfirmation(payload: AssistantAwaitingConfirmationEvent): void {
+  setAgentPipelineStage("awaiting_confirm", "Awaiting voice or manual confirmation.");
   pendingConfirmationToken = payload.confirm_token?.trim() || null;
   pendingConfirmationExpiresAtMs = payload.expires_at_ms;
   if (pendingConfirmationExpiresAtMs) {
@@ -1265,6 +1373,7 @@ export function handleAssistantAwaitingConfirmation(payload: AssistantAwaitingCo
 
 export function handleAssistantConfirmationExpired(payload: AssistantConfirmationExpiredEvent): void {
   clearPendingConfirmationState();
+  setAgentPipelineStage("listening", "Confirmation expired. Waiting for next command.", 2000);
   latestConfirmationLine = `Confirmation expired (${new Date(payload.expired_at_ms).toLocaleTimeString()}).`;
   renderActionLane();
   renderLiveState();
@@ -1273,6 +1382,11 @@ export function handleAssistantConfirmationExpired(payload: AssistantConfirmatio
 export function handleAssistantActionResult(
   payload: { result: AgentExecutionResult }
 ): void {
+  setAgentPipelineStage(
+    payload.result.status === "failed" ? "recovering" : "listening",
+    payload.result.status === "failed" ? "Action failed. Recovery required." : "Action completed.",
+    payload.result.status === "failed" ? 0 : 2000
+  );
   if (payload.result.status === "completed" || payload.result.status === "queued" || payload.result.status === "cancelled") {
     clearPendingConfirmationState();
     latestConfirmationLine = "No pending confirmation.";

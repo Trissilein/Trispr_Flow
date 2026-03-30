@@ -1978,6 +1978,19 @@
                         <button id="workflow-agent-ptt-arm-btn" type="button" class="hotkey-record-btn">PTT (Agent)</button>
                       </div>
                       <div class="field span-2">
+                        <span class="field-label">Agent pipeline</span>
+                        <div id="workflow-agent-state-pipeline" class="workflow-agent-state-pipeline" role="group" aria-label="Agent orchestration state">
+                          <span class="workflow-agent-stage-chip" data-agent-stage="idle">Idle</span>
+                          <span class="workflow-agent-stage-chip" data-agent-stage="listening">Listening</span>
+                          <span class="workflow-agent-stage-chip" data-agent-stage="parsing">Parsing</span>
+                          <span class="workflow-agent-stage-chip" data-agent-stage="planning">Planning</span>
+                          <span class="workflow-agent-stage-chip" data-agent-stage="awaiting_confirm">Await Confirm</span>
+                          <span class="workflow-agent-stage-chip" data-agent-stage="executing">Executing</span>
+                          <span class="workflow-agent-stage-chip" data-agent-stage="recovering">Recovering</span>
+                        </div>
+                        <div id="workflow-agent-state-note" class="field-hint">Idle: waiting for wakeword or PTT command.</div>
+                      </div>
+                      <div class="field span-2">
                         <span class="field-label">Live status</span>
                         <div class="workflow-agent-live-grid">
                           <div>
@@ -2096,6 +2109,14 @@
                           <option value="hybrid_local_llm">Hybrid local LLM</option>
                         </select>
                         <span class="field-hint">Hybrid only affects wording; execution remains deterministic.</span>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Knowledge scope</span>
+                        <select id="workflow-agent-online-mode">
+                          <option value="local_only">Local only</option>
+                          <option value="online_enabled">Online enabled</option>
+                        </select>
+                        <span class="field-hint">Online enabled allows cloud-model replies. Live web lookup tools are still explicit and separate.</span>
                       </label>
                       <div class="field toggle">
                         <label class="toggle-row">

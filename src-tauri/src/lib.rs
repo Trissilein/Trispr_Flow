@@ -5354,7 +5354,7 @@ fn merged_workflow_wakewords(settings: &crate::modules::WorkflowAgentSettings) -
     merged
 }
 
-fn unknown_rule_reply(command_text: &str) -> String {
+fn unknown_rule_reply(command_text: &str, online_enabled: bool) -> String {
     let normalized = command_text.to_lowercase();
     let english_hint = normalized.contains("please")
         || normalized.contains("what")
@@ -5366,6 +5366,12 @@ fn unknown_rule_reply(command_text: &str) -> String {
         || normalized.contains("forecast")
         || normalized.contains("temperatur");
     if weather_like {
+        if online_enabled {
+            if english_hint {
+                return "Online mode is enabled, but live web lookup tools are not configured yet. I can still provide a best-effort answer from model knowledge.".to_string();
+            }
+            return "Online-Modus ist aktiv, aber Live-Web-Lookup ist noch nicht konfiguriert. Ich kann dir trotzdem eine Best-Effort-Antwort aus Modellwissen geben.".to_string();
+        }
         if english_hint {
             return "I do not have live weather access in local mode. I can still help with plan status, session recaps, or GDD drafts from your transcripts.".to_string();
         }
@@ -5400,16 +5406,17 @@ fn agent_compose_unknown_reply(
         let command_text = request.command_text.trim();
         if command_text.is_empty() {
             return Ok(AgentComposeReplyResult {
-                text: unknown_rule_reply(""),
+                text: unknown_rule_reply("", false),
                 source: "rule".to_string(),
                 reason_code: "empty_command".to_string(),
             });
         }
 
         let workflow_cfg = &settings_snapshot.workflow_agent;
+        let online_enabled = workflow_cfg.online_enabled;
         if workflow_cfg.reply_mode != "hybrid_local_llm" {
             return Ok(AgentComposeReplyResult {
-                text: unknown_rule_reply(command_text),
+                text: unknown_rule_reply(command_text, online_enabled),
                 source: "rule".to_string(),
                 reason_code: "rule_only_mode".to_string(),
             });
@@ -5417,17 +5424,17 @@ fn agent_compose_unknown_reply(
 
         if !settings_snapshot.ai_fallback.enabled {
             return Ok(AgentComposeReplyResult {
-                text: unknown_rule_reply(command_text),
+                text: unknown_rule_reply(command_text, online_enabled),
                 source: "rule".to_string(),
                 reason_code: "ai_refinement_disabled".to_string(),
             });
         }
 
-        if !ai_provider_is_local(&settings_snapshot.ai_fallback.provider) {
+        if !online_enabled && !ai_provider_is_local(&settings_snapshot.ai_fallback.provider) {
             return Ok(AgentComposeReplyResult {
-                text: unknown_rule_reply(command_text),
+                text: unknown_rule_reply(command_text, online_enabled),
                 source: "rule".to_string(),
-                reason_code: "non_local_provider".to_string(),
+                reason_code: "non_local_provider_blocked".to_string(),
             });
         }
 
@@ -5435,7 +5442,7 @@ fn agent_compose_unknown_reply(
             Ok(value) => value,
             Err(error) => {
                 return Ok(AgentComposeReplyResult {
-                    text: unknown_rule_reply(command_text),
+                    text: unknown_rule_reply(command_text, online_enabled),
                     source: "rule".to_string(),
                     reason_code: format!("local_runtime_unavailable:{error}"),
                 });
@@ -5444,10 +5451,12 @@ fn agent_compose_unknown_reply(
 
         let mut options = setup.options.clone();
         options.max_tokens = options.max_tokens.clamp(128, 512);
-        options.custom_prompt = Some(
+        options.custom_prompt = Some(if online_enabled {
+            "You are Trispr. Reply in the same language as the user. Keep answers concise and practical. Online models are allowed, but live web lookup tools may be unavailable. Never fabricate citations or claim verified live data unless explicit tool results are provided. Output only the reply.".to_string()
+        } else {
             "You are Trispr, a local assistant. Reply in the same language as the user. Keep answers concise and practical. Never claim live internet access. If the request needs real-time external data, say this capability is unavailable locally and suggest a supported local action. Output only the reply."
-                .to_string(),
-        );
+                .to_string()
+        });
         options.enforce_language_guard = false;
 
         match setup
@@ -5458,7 +5467,7 @@ fn agent_compose_unknown_reply(
                 let text = reply.text.trim();
                 if text.is_empty() {
                     return Ok(AgentComposeReplyResult {
-                        text: unknown_rule_reply(command_text),
+                        text: unknown_rule_reply(command_text, online_enabled),
                         source: "rule".to_string(),
                         reason_code: "local_llm_empty".to_string(),
                     });
@@ -5470,7 +5479,7 @@ fn agent_compose_unknown_reply(
                 })
             }
             Err(error) => Ok(AgentComposeReplyResult {
-                text: unknown_rule_reply(command_text),
+                text: unknown_rule_reply(command_text, online_enabled),
                 source: "rule".to_string(),
                 reason_code: format!("local_llm_error:{error}"),
             }),

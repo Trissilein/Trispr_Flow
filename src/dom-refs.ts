@@ -311,6 +311,8 @@ export const workflowAgentCommandInput = $("workflow-agent-command-input") as HT
 export const workflowAgentParseBtn = $("workflow-agent-parse-btn") as HTMLButtonElement | null;
 export const workflowAgentRefreshCandidatesBtn = $("workflow-agent-refresh-candidates-btn") as HTMLButtonElement | null;
 export const workflowAgentPttArmBtn = $("workflow-agent-ptt-arm-btn") as HTMLButtonElement | null;
+export const workflowAgentStatePipeline = $("workflow-agent-state-pipeline") as HTMLDivElement | null;
+export const workflowAgentStateNote = $("workflow-agent-state-note") as HTMLDivElement | null;
 export const workflowAgentCandidates = $("workflow-agent-candidates") as HTMLDivElement | null;
 export const workflowAgentActionHint = $("workflow-agent-action-hint") as HTMLDivElement | null;
 export const workflowAgentPlanLane = $("workflow-agent-plan-lane") as HTMLDivElement | null;
@@ -332,6 +334,7 @@ export const workflowAgentWakewordAliases = $("workflow-agent-wakeword-aliases")
 export const workflowAgentConfirmTimeoutSec = $("workflow-agent-confirm-timeout-sec") as HTMLInputElement | null;
 export const workflowAgentSuggestionLevel = $("workflow-agent-suggestion-level") as HTMLSelectElement | null;
 export const workflowAgentReplyMode = $("workflow-agent-reply-mode") as HTMLSelectElement | null;
+export const workflowAgentOnlineMode = $("workflow-agent-online-mode") as HTMLSelectElement | null;
 export const workflowAgentVoiceFeedbackEnabled = $("workflow-agent-voice-feedback-enabled") as HTMLInputElement | null;
 
 // GDD flow modal

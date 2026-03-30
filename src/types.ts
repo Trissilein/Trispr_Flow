@@ -247,6 +247,7 @@ export interface WorkflowAgentSettings {
   hands_free_enabled?: boolean;
   confirm_timeout_sec?: number;
   reply_mode?: "rule_only" | "hybrid_local_llm";
+  online_enabled?: boolean;
   voice_feedback_enabled?: boolean;
 }
 

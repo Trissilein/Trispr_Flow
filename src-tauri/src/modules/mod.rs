@@ -129,6 +129,7 @@ pub struct WorkflowAgentSettings {
     pub hands_free_enabled: bool,
     pub confirm_timeout_sec: u16,
     pub reply_mode: String,
+    pub online_enabled: bool,
     pub voice_feedback_enabled: bool,
 }
 
@@ -185,6 +186,7 @@ impl Default for WorkflowAgentSettings {
             hands_free_enabled: false,
             confirm_timeout_sec: 45,
             reply_mode: "rule_only".to_string(),
+            online_enabled: false,
             voice_feedback_enabled: false,
         }
     }

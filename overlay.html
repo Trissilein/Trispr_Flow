@@ -125,6 +125,64 @@
         animation: refinePulseB calc(var(--refine-pulse-duration) * var(--refine-duration-factor)) ease-out infinite;
       }
 
+      #tts-stop-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 4;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+      }
+
+      #container[data-tts-stop="on"] #tts-stop-layer {
+        display: flex;
+      }
+
+      #tts-stop-button {
+        appearance: none;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(0, 0, 0, 0.5);
+        color: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(8px);
+        box-shadow: 0 0 18px rgba(0, 0, 0, 0.24);
+        cursor: pointer;
+        pointer-events: auto;
+        font: 600 12px/1 "IBM Plex Sans", sans-serif;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        padding: 10px 12px;
+        min-width: 56px;
+        min-height: 56px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+      }
+
+      #tts-stop-button:hover {
+        transform: scale(1.03);
+      }
+
+      #tts-stop-button:active {
+        transform: scale(0.98);
+      }
+
+      #tts-stop-button .tts-stop-icon {
+        width: 14px;
+        height: 14px;
+        flex: 0 0 auto;
+      }
+
+      #tts-stop-button[data-shape="round"] {
+        border-radius: 999px;
+      }
+
+      #tts-stop-button[data-shape="compact"] {
+        border-radius: 16px;
+      }
+
       #container[data-refining-preset="subtle"] #refine-indicator {
         --refine-inner-size: 30px;
         --refine-outer-size: 44px;
@@ -230,12 +288,20 @@
     </style>
   </head>
   <body>
-    <div id="container" data-style="dot" data-state="idle">
-      <div id="dot"></div>
-      <div id="kitt"></div>
-      <div id="transcribe-indicator"></div>
-      <div id="refine-indicator"></div>
-    </div>
+      <div id="container" data-style="dot" data-state="idle">
+        <div id="dot"></div>
+        <div id="kitt"></div>
+        <div id="transcribe-indicator"></div>
+        <div id="refine-indicator"></div>
+        <div id="tts-stop-layer" aria-hidden="true">
+          <button id="tts-stop-button" type="button" title="Stop speech immediately" aria-label="Stop speech immediately">
+            <svg class="tts-stop-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M6 6h12v12H6z" />
+            </svg>
+            <span>Stop</span>
+          </button>
+        </div>
+      </div>
 
     <script type="module" src="/overlay.js"></script>
   </body>

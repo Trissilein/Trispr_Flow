@@ -31,6 +31,7 @@ let latestGateLine = "No gate decisions yet.";
 let latestIntentLine = "No intent detected yet.";
 let latestReplyLine = "No replies yet.";
 let latestConfirmationLine = "No pending confirmation.";
+let ttsSpeaking = false;
 let pendingConfirmationToken: string | null = null;
 let pendingConfirmationExpiresAtMs: number | null = null;
 let pendingConfirmationTimer: number | null = null;
@@ -102,6 +103,14 @@ function ensureWorkflowAgentDefaults(): void {
   settings.workflow_agent.online_enabled ??= false;
   settings.workflow_agent.voice_feedback_enabled ??= false;
   settings.workflow_agent.wakeword_aliases ??= [];
+}
+
+export function handleTtsSpeechStarted(): void {
+  ttsSpeaking = true;
+}
+
+export function handleTtsSpeechFinished(): void {
+  ttsSpeaking = false;
 }
 
 function isModuleEnabled(moduleId: string): boolean {
@@ -521,6 +530,17 @@ function renderActionLane(): void {
     "Intent is read-only (no side effects). Confirm lane is not required.";
 }
 
+function syncGlobalOnlineModeHeader(onlineEnabled: boolean): void {
+  if (dom.globalOnlineOfflineBtn) {
+    dom.globalOnlineOfflineBtn.classList.toggle("is-active", !onlineEnabled);
+    dom.globalOnlineOfflineBtn.setAttribute("aria-pressed", onlineEnabled ? "false" : "true");
+  }
+  if (dom.globalOnlineEnabledBtn) {
+    dom.globalOnlineEnabledBtn.classList.toggle("is-active", onlineEnabled);
+    dom.globalOnlineEnabledBtn.setAttribute("aria-pressed", onlineEnabled ? "true" : "false");
+  }
+}
+
 function renderConfiguration(): void {
   ensureWorkflowAgentDefaults();
   const cfg = settings?.workflow_agent;
@@ -548,6 +568,7 @@ function renderConfiguration(): void {
   if (dom.workflowAgentOnlineMode) {
     dom.workflowAgentOnlineMode.value = cfg.online_enabled ? "online_enabled" : "local_only";
   }
+  syncGlobalOnlineModeHeader(Boolean(cfg.online_enabled));
   if (dom.workflowAgentVoiceFeedbackEnabled) {
     dom.workflowAgentVoiceFeedbackEnabled.checked = Boolean(cfg.voice_feedback_enabled);
   }
@@ -752,9 +773,9 @@ function buildUnknownRuleReply(commandText: string): string {
   if (weatherLike) {
     if (onlineEnabled) {
       if (englishHint) {
-        return "Online mode is enabled, but live web lookup tools are not configured yet. I can still provide a best-effort answer from model knowledge.";
+        return "Online weather lookup is currently unavailable. Please try again or include a city (for example: weather in Berlin tomorrow).";
       }
-      return "Online-Modus ist aktiv, aber Live-Web-Lookup ist noch nicht konfiguriert. Ich kann dir trotzdem eine Best-Effort-Antwort aus Modellwissen geben.";
+      return "Live-Wetterabfrage ist aktuell nicht verfügbar. Bitte erneut versuchen oder eine Stadt mit angeben (z. B. Wetter in Berlin morgen).";
     }
     if (englishHint) {
       return "I do not have live weather access in local mode. I can still help with plan status, session recaps, or GDD drafts from your transcripts.";
@@ -786,8 +807,14 @@ async function composeUnknownReply(commandText: string): Promise<void> {
   await maybeSpeakAgentReply(latestReplyLine);
 }
 
-async function parseCommand(commandText: string): Promise<void> {
+async function parseCommand(
+  commandText: string,
+  options?: {
+    allowWakewordless?: boolean;
+  }
+): Promise<void> {
   if (!requireAssistantInteraction("running workflow-agent commands")) return;
+  const allowWakewordless = Boolean(options?.allowWakewordless);
   setAgentPipelineStage("parsing", "Parsing command and intent…");
   if (!commandText.trim()) {
     showToast({
@@ -816,12 +843,21 @@ async function parseCommand(commandText: string): Promise<void> {
     `Parsed command -> intent=${parsed.intent}, confidence=${(parsed.confidence * 100).toFixed(0)}%, publish=${parsed.publish_requested}`
   );
   setGateReason(
-    parsed.wakeword_matched ? "wakeword_matched" : "wakeword_missing",
+    parsed.wakeword_matched
+      ? "wakeword_matched"
+      : allowWakewordless
+        ? "assistant_handsfree_direct"
+        : "wakeword_missing",
     parsed.reasoning || "no reasoning"
   );
   renderActionLane();
   renderLiveState();
   if (!parsed.detected && !parsed.wakeword_matched) {
+    if (allowWakewordless) {
+      setAgentPipelineStage("listening", "No mapped action intent. Replying in conversational mode.", 1400);
+      await composeUnknownReply(parsed.command_text || commandText);
+      return;
+    }
     setAgentPipelineStage("listening", "No actionable intent detected.", 1200);
     showToast({
       type: "info",
@@ -1046,7 +1082,7 @@ async function executePlan(confirmationToken?: string): Promise<void> {
 
 function bindUi(): void {
   dom.workflowAgentParseBtn?.addEventListener("click", () => {
-    void parseCommand(dom.workflowAgentCommandInput?.value || "");
+    void parseCommand(dom.workflowAgentCommandInput?.value || "", { allowWakewordless: true });
   });
   dom.workflowAgentRefreshCandidatesBtn?.addEventListener("click", () => {
     void refreshCandidates();
@@ -1147,6 +1183,7 @@ function bindUi(): void {
   dom.workflowAgentOnlineMode?.addEventListener("change", () => {
     if (!settings?.workflow_agent || !dom.workflowAgentOnlineMode) return;
     settings.workflow_agent.online_enabled = dom.workflowAgentOnlineMode.value === "online_enabled";
+    syncGlobalOnlineModeHeader(Boolean(settings.workflow_agent.online_enabled));
     void persistWorkflowAgentSettings();
   });
 
@@ -1202,6 +1239,15 @@ async function handleWorkflowAgentTranscriptInput(
     setAgentPipelineStage("idle", "Transcribe directive recognized. Agent routing skipped.", 1200);
     return;
   }
+  const normalizedSpoken = normalizeWakewordText(spoken);
+  if (ttsSpeaking && isLikelyInputSource(source) && containsAnyKeyword(normalizedSpoken, CANCEL_KEYWORDS)) {
+    appendLog(`Emergency TTS stop detected from ${source} (${streamKind}).`);
+    setGateReason("tts_stop_requested", `${source}/${streamKind}`);
+    await invoke("stop_tts");
+    handleTtsSpeechFinished();
+    setAgentPipelineStage("idle", "TTS stop requested.", 1000);
+    return;
+  }
   const wakewordPreview = matchesWakeword(spoken);
 
   if (!isWorkflowAgentEnabled()) {
@@ -1215,6 +1261,7 @@ async function handleWorkflowAgentTranscriptInput(
   const assistantMode = isAssistantModeEnabled();
   const handsFree = Boolean(settings?.workflow_agent?.hands_free_enabled);
   const pttArmed = isAgentPttArmed(timestampMs);
+  const assistantHandsFreeDirectRoute = assistantMode && handsFree && !pttArmed;
   const transcribeHoldActive = !assistantMode
     && isTranscribeAssistantHoldActive(timestampMs, source);
   if (assistantMode) {
@@ -1246,14 +1293,13 @@ async function handleWorkflowAgentTranscriptInput(
 
   const bypassWakeword = pttArmed;
   const wakewordMatched = matchesWakeword(spoken);
-  if (!bypassWakeword && !wakewordMatched && !transcribeHoldActive) {
+  if (!bypassWakeword && !wakewordMatched && !transcribeHoldActive && !assistantHandsFreeDirectRoute) {
     setGateReason("no_wakeword", `${source}/${streamKind}`);
     setAgentPipelineStage("idle", "Wakeword required for agent routing.");
     return;
   }
 
   if (pendingConfirmationToken) {
-    const normalizedSpoken = normalizeWakewordText(spoken);
     if (containsAnyKeyword(normalizedSpoken, CANCEL_KEYWORDS)) {
       appendLog(`Voice cancel detected from ${source} (${streamKind}).`);
       await cancelPendingConfirmation("cancelled_by_voice");
@@ -1275,17 +1321,31 @@ async function handleWorkflowAgentTranscriptInput(
   }
 
   appendLog(
-    `${bypassWakeword ? "PTT command" : wakewordMatched ? "Wakeword command" : "Follow-up command"} detected from ${source} (${streamKind}).`
+    `${
+      bypassWakeword
+        ? "PTT command"
+        : wakewordMatched
+          ? "Wakeword command"
+          : assistantHandsFreeDirectRoute
+            ? "Assistant hands-free command"
+            : "Follow-up command"
+    } detected from ${source} (${streamKind}).`
   );
   setGateReason(
-    bypassWakeword ? "ptt_bypass" : wakewordMatched ? "wakeword_command" : "followup_command",
+    bypassWakeword
+      ? "ptt_bypass"
+      : wakewordMatched
+        ? "wakeword_command"
+        : assistantHandsFreeDirectRoute
+          ? "assistant_handsfree_direct"
+          : "followup_command",
     `${source}/${streamKind}`
   );
   setAgentPipelineStage("parsing", "Command routed to parser.");
   if (dom.workflowAgentCommandInput) {
     dom.workflowAgentCommandInput.value = spoken;
   }
-  await parseCommand(spoken);
+  await parseCommand(spoken, { allowWakewordless: assistantHandsFreeDirectRoute });
   if (pttArmed) {
     disarmAgentPtt("command consumed");
   }

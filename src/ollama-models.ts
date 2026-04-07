@@ -29,7 +29,7 @@ import type {
 } from "./types";
 
 const DEFAULT_LOCAL_ENDPOINT = "http://127.0.0.1:11434";
-const DEFAULT_RUNTIME_VERSION = "0.17.7";
+const DEFAULT_RUNTIME_VERSION = "0.20.2";
 const AUTOSTART_WARNING_COOLDOWN_MS = 60_000;
 const LOCAL_OLLAMA_HOSTS = new Set(["localhost", "127.0.0.1"]);
 const BACKGROUND_START_POLL_INTERVAL_MS = 2_000;
@@ -49,9 +49,29 @@ type WizardStage =
   | "select_model_source"
   | "ready";
 
-// OllamaModelSpec type removed — simplified model list uses inline object shape
+type OllamaRecommendedModelSpec = {
+  name: string;
+  label: string;
+  size_gb: number;
+  profile: string;
+  description: string;
+  vram_gb?: number;
+};
 
-export const OLLAMA_RECOMMENDED_MODELS = [
+type CuratedModelState = "active" | "installed" | "downloading" | "available" | "missing";
+
+export type InstalledOllamaInventoryItem = {
+  name: string;
+  size_bytes: number;
+  size_label: string;
+  is_active: boolean;
+  is_curated: boolean;
+  curated_spec?: OllamaRecommendedModelSpec;
+  can_activate: boolean;
+  can_uninstall: boolean;
+};
+
+export const OLLAMA_RECOMMENDED_MODELS: OllamaRecommendedModelSpec[] = [
   {
     name: "qwen3.5:2b",
     label: "Qwen 3.5 2B — Leicht",
@@ -73,14 +93,59 @@ export const OLLAMA_RECOMMENDED_MODELS = [
     profile: "Hohe Qualität",
     description: "Beste Verfeinerung, braucht 8+ GB RAM frei",
   },
+  {
+    name: "gemma4:e2b",
+    label: "Gemma 4 E2B — Fast (Q4)",
+    size_gb: 7.2,
+    vram_gb: 3.2,
+    profile: "Schnell",
+    description: "Google Gemma 4 MoE, 4-bit quantized. Fastest option, ~3 GB VRAM. Good for simple wording fixes.",
+  },
+  {
+    name: "gemma4:e2b-it-q8_0",
+    label: "Gemma 4 E2B — Balanced (Q8)",
+    size_gb: 8.1,
+    vram_gb: 4.6,
+    profile: "Ausgewogen",
+    description: "8-bit quantized. Better accuracy than Q4, still fast. ~5 GB VRAM.",
+  },
+  {
+    name: "gemma4:e4b",
+    label: "Gemma 4 E4B — Standard (Q4)",
+    size_gb: 9.6,
+    vram_gb: 5.0,
+    profile: "Empfohlen",
+    description: "Google Gemma 4 MoE, 4-bit quantized. Best balance for most GPUs. ~5 GB VRAM.",
+  },
+  {
+    name: "gemma4:e4b-it-q8_0",
+    label: "Gemma 4 E4B — High Quality (Q8)",
+    size_gb: 12.0,
+    vram_gb: 7.5,
+    profile: "Qualität",
+    description: "8-bit quantized. Noticeably better output quality. ~8 GB VRAM.",
+  },
+  {
+    name: "gemma4:e4b-it-bf16",
+    label: "Gemma 4 E4B — Maximum (BF16)",
+    size_gb: 16.0,
+    vram_gb: 15.0,
+    profile: "Maximum",
+    description: "Full precision BF16. Best possible quality — requires 16+ GB VRAM. Not recommended for most setups.",
+  },
 ];
 
 let installedOllamaModels: Array<{ name: string; size_bytes: number }> = [];
 const activeOllamaPulls = new Set<string>();
+const activeOllamaDeletes = new Set<string>();
 
 let runtimeDetect: OllamaRuntimeDetectResult | null = null;
 let runtimeVerify: OllamaRuntimeVerifyResult | null = null;
 let runtimeInstallProgress: OllamaRuntimeInstallProgress | null = null;
+
+export function getRuntimeInstallProgress(): OllamaRuntimeInstallProgress | null {
+  return runtimeInstallProgress;
+}
 let runtimeInstallError: OllamaRuntimeInstallError | null = null;
 let runtimeHealth: OllamaRuntimeHealth | null = null;
 let runtimeVersionCatalog: OllamaRuntimeVersionInfo[] = [];
@@ -726,14 +791,69 @@ function isModelInstalled(name: string): boolean {
   return installedOllamaModels.some((m) => isExactModelTagMatch(m.name, target));
 }
 
-function isModelActive(name: string): boolean {
-  return isExactModelTagMatch(name, settings?.ai_fallback?.model);
-}
-
 function getInstalledSize(name: string): number {
   const target = normalizeModelTag(name);
   const found = installedOllamaModels.find((m) => isExactModelTagMatch(m.name, target));
   return found ? found.size_bytes : 0;
+}
+
+function getCuratedModelSpec(name: string): OllamaRecommendedModelSpec | undefined {
+  const target = normalizeModelTag(name);
+  return OLLAMA_RECOMMENDED_MODELS.find((spec) => isExactModelTagMatch(spec.name, target));
+}
+
+export function resolveCuratedModelState(
+  specName: string,
+  activeModel: string | null | undefined,
+  installed: boolean,
+  isPulling: boolean
+): CuratedModelState {
+  const selected = isExactModelTagMatch(specName, activeModel);
+  if (isPulling) return "downloading";
+  if (selected && installed) return "active";
+  if (selected) return "missing";
+  if (installed) return "installed";
+  return "available";
+}
+
+export function buildInstalledOllamaInventory(
+  installedModels: Array<{ name: string; size_bytes: number }>,
+  activeModel: string | null | undefined
+): InstalledOllamaInventoryItem[] {
+  const deduped = new Map<string, { name: string; size_bytes: number }>();
+  for (const model of installedModels) {
+    const normalized = normalizeModelTag(model.name);
+    if (!normalized || deduped.has(normalized)) continue;
+    deduped.set(normalized, {
+      name: model.name,
+      size_bytes: model.size_bytes,
+    });
+  }
+
+  return Array.from(deduped.values())
+    .map((model) => {
+      const curatedSpec = getCuratedModelSpec(model.name);
+      const isActive = isExactModelTagMatch(model.name, activeModel);
+      return {
+        name: model.name,
+        size_bytes: model.size_bytes,
+        size_label: formatBytesGb(model.size_bytes),
+        is_active: isActive,
+        is_curated: Boolean(curatedSpec),
+        curated_spec: curatedSpec,
+        can_activate: !isActive,
+        can_uninstall: !isActive,
+      };
+    })
+    .sort((left, right) => {
+      if (left.is_active !== right.is_active) {
+        return left.is_active ? -1 : 1;
+      }
+      if (left.is_curated !== right.is_curated) {
+        return left.is_curated ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+    });
 }
 
 // resolveCardStatus removed — dropdown UI uses direct isModelActive/isModelInstalled checks
@@ -1211,7 +1331,72 @@ export async function activateOllamaModel(modelName: string): Promise<void> {
     message: `${modelName} is now active for AI refinement.`,
     duration: 3000,
   });
+  await refreshOllamaInstalledModels();
   renderOllamaModelManager();
+}
+
+async function handleOllamaDelete(modelName: string): Promise<void> {
+  if (activeOllamaDeletes.has(modelName)) return;
+
+  const normalized = normalizeModelTag(modelName);
+  if (!normalized) return;
+
+  if (isExactModelTagMatch(normalized, settings?.ai_fallback?.model)) {
+    showToast({
+      type: "info",
+      title: "Model in use",
+      message: "Activate another refinement model before uninstalling this one.",
+      duration: 4200,
+    });
+    return;
+  }
+
+  const sizeBytes = getInstalledSize(modelName);
+  const sizeHint =
+    sizeBytes > 0 ? `\n\nThis will remove about ${formatBytesGb(sizeBytes)} from local Ollama storage.` : "";
+  const confirmed = window.confirm(
+    `Delete local model "${modelName}" permanently?${sizeHint}\n\nThis removes the downloaded/imported model data from disk. You can install it again later.`
+  );
+  if (!confirmed) return;
+
+  activeOllamaDeletes.add(modelName);
+  renderOllamaModelManager();
+
+  try {
+    await invoke("delete_ollama_model", { model: modelName });
+    const refreshed = await refreshOllamaInstalledModels({ clearOnError: false });
+    await refreshOllamaRuntimeState({ force: true, verify: true });
+
+    if (!refreshed) {
+      showToast({
+        type: "warning",
+        title: "Model removed, refresh failed",
+        message: `Deleted ${modelName}, but local inventory could not be refreshed automatically.`,
+        duration: 5200,
+      });
+      return;
+    }
+
+    showToast({
+      type: "success",
+      title: "Model uninstalled",
+      message:
+        sizeBytes > 0
+          ? `${modelName} was removed from local storage (${formatBytesGb(sizeBytes)} freed).`
+          : `${modelName} was removed from local storage.`,
+      duration: 4200,
+    });
+  } catch (error) {
+    showToast({
+      type: "error",
+      title: "Uninstall failed",
+      message: String(error),
+      duration: 5200,
+    });
+  } finally {
+    activeOllamaDeletes.delete(modelName);
+    renderOllamaModelManager();
+  }
 }
 
 async function handleRefreshRuntimeAndModels(): Promise<void> {
@@ -1242,14 +1427,15 @@ function renderModelsSection(container: HTMLElement): void {
 
   for (const spec of OLLAMA_RECOMMENDED_MODELS) {
     const installed = isModelInstalled(spec.name);
-    const active = isModelActive(spec.name) || isExactModelTagMatch(spec.name, activeModel);
     const isPulling = ollamaPullProgress.has(spec.name) || activeOllamaPulls.has(spec.name);
     const progress = ollamaPullProgress.get(spec.name);
 
-    const state = isPulling ? "downloading" : active ? "active" : installed ? "installed" : "available";
+    const state = resolveCuratedModelState(spec.name, activeModel, installed, isPulling);
     const sizeLabel = installed
       ? formatBytesGb(getInstalledSize(spec.name))
-      : `${spec.size_gb?.toFixed(1) ?? "?"} GB`;
+      : spec.vram_gb != null
+        ? `${spec.size_gb?.toFixed(1) ?? "?"} GB · ~${spec.vram_gb.toFixed(1)} GB VRAM`
+        : `${spec.size_gb?.toFixed(1) ?? "?"} GB`;
 
     const card = document.createElement("div");
     card.className = "qwen-model-card";
@@ -1259,6 +1445,7 @@ function renderModelsSection(container: HTMLElement): void {
     const badgeHtml =
       state === "active" ? `<span class="qwen-card-badge qwen-card-badge--active">Aktiv</span>` :
       state === "installed" ? `<span class="qwen-card-badge qwen-card-badge--installed">Installiert</span>` :
+      state === "missing" ? `<span class="qwen-card-badge qwen-card-badge--missing">Fehlt</span>` :
       state === "downloading" ? `<span class="qwen-card-badge qwen-card-badge--loading">Lädt…</span>` :
       "";
 
@@ -1270,6 +1457,8 @@ function renderModelsSection(container: HTMLElement): void {
       btnHtml = `<button class="qwen-card-btn qwen-card-btn--loading" disabled>Lädt… ${pct}%</button>`;
     } else if (state === "installed") {
       btnHtml = `<button class="qwen-card-btn qwen-card-btn--activate" data-action="activate" data-model="${spec.name}">Aktivieren</button>`;
+    } else if (state === "missing") {
+      btnHtml = `<button class="qwen-card-btn qwen-card-btn--download" data-action="download" data-model="${spec.name}">Neu installieren</button>`;
     } else {
       btnHtml = `<button class="qwen-card-btn qwen-card-btn--download" data-action="download" data-model="${spec.name}">↓ ${sizeLabel}</button>`;
     }
@@ -1312,6 +1501,93 @@ function renderModelsSection(container: HTMLElement): void {
   container.appendChild(section);
 }
 
+function renderInstalledModelsSection(container: HTMLElement): void {
+  const section = document.createElement("div");
+  section.className = "ollama-models-section ollama-installed-section";
+
+  const heading = document.createElement("div");
+  heading.className = "ollama-installed-header";
+  heading.innerHTML = `
+    <div>
+      <div class="ollama-installed-title">Installed locally</div>
+      <p class="ollama-installed-note">Manage all local Ollama refinement models, including imported and older tags.</p>
+    </div>
+  `;
+  section.appendChild(heading);
+
+  const list = document.createElement("div");
+  list.className = "ollama-installed-list";
+
+  const inventory = buildInstalledOllamaInventory(installedOllamaModels, settings?.ai_fallback?.model);
+  if (inventory.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "ollama-installed-empty";
+    empty.textContent = "No local refinement models installed yet.";
+    list.appendChild(empty);
+    section.appendChild(list);
+    container.appendChild(section);
+    return;
+  }
+
+  for (const item of inventory) {
+    const title = item.curated_spec?.label ?? item.name;
+    const curatedBadge = item.is_curated
+      ? `<span class="ollama-installed-badge ollama-installed-badge--curated">Curated</span>`
+      : "";
+    const statusBadge = item.is_active
+      ? `<span class="ollama-installed-badge ollama-installed-badge--active">Active</span>`
+      : `<span class="ollama-installed-badge ollama-installed-badge--installed">Installed</span>`;
+    const deleting = activeOllamaDeletes.has(item.name);
+
+    let actionsHtml = "";
+    if (item.is_active) {
+      actionsHtml = `
+        <button class="qwen-card-btn qwen-card-btn--current" disabled>Active ✓</button>
+        <span class="ollama-installed-hint">Activate another model to uninstall this one.</span>
+      `;
+    } else {
+      actionsHtml = `
+        <button class="qwen-card-btn qwen-card-btn--activate" data-action="activate" data-model="${item.name}">Activate</button>
+        <button class="qwen-card-btn qwen-card-btn--delete" data-action="delete" data-model="${item.name}"${deleting ? " disabled" : ""}>
+          ${deleting ? "Removing…" : "Uninstall"}
+        </button>
+      `;
+    }
+
+    const row = document.createElement("article");
+    row.className = "ollama-installed-item";
+    row.dataset.state = item.is_active ? "active" : "installed";
+    row.innerHTML = `
+      <div class="ollama-installed-main">
+        <div class="ollama-installed-top">
+          <div class="ollama-installed-name">${title}</div>
+          <div class="ollama-installed-badges">${statusBadge}${curatedBadge}</div>
+        </div>
+        <div class="ollama-installed-meta">
+          <code class="ollama-installed-tag">${item.name}</code>
+          <span class="ollama-installed-size">${item.size_label}</span>
+        </div>
+      </div>
+      <div class="ollama-installed-actions">${actionsHtml}</div>
+    `;
+    list.appendChild(row);
+  }
+
+  list.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest("button[data-action]") as HTMLButtonElement | null;
+    if (!btn || btn.disabled) return;
+    const model = btn.dataset.model ?? "";
+    if (btn.dataset.action === "activate") {
+      void activateOllamaModel(model);
+    } else if (btn.dataset.action === "delete") {
+      void handleOllamaDelete(model);
+    }
+  });
+
+  section.appendChild(list);
+  container.appendChild(section);
+}
+
 function renderOllamaModelManagerNow(): void {
   const container = document.getElementById("ollama-model-manager");
   if (!container) return;
@@ -1322,13 +1598,17 @@ function renderOllamaModelManagerNow(): void {
 
   container.innerHTML = "";
   renderModelsSection(container);
+  renderInstalledModelsSection(container);
 }
 
 export function renderOllamaModelManager(): void {
   scheduleRender();
 }
 
-export async function refreshOllamaInstalledModels(): Promise<void> {
+export async function refreshOllamaInstalledModels(
+  options: { clearOnError?: boolean } = {}
+): Promise<boolean> {
+  const clearOnError = options.clearOnError ?? true;
   try {
     const result = await invoke<Array<{ name: string; size_bytes: number }>>(
       "fetch_ollama_models_with_size"
@@ -1336,7 +1616,10 @@ export async function refreshOllamaInstalledModels(): Promise<void> {
     installedOllamaModels = result;
   } catch (error) {
     console.error("Failed to refresh Ollama models:", error);
-    installedOllamaModels = [];
+    if (clearOnError) {
+      installedOllamaModels = [];
+    }
+    return false;
   }
 
   if (runtimeHealth) {
@@ -1351,6 +1634,7 @@ export async function refreshOllamaInstalledModels(): Promise<void> {
       models_count: installedOllamaModels.length,
     };
   }
+  return true;
 }
 
 export async function refreshOllamaRuntimeState(
@@ -1504,7 +1788,7 @@ async function handleOllamaPull(modelName: string): Promise<void> {
 
 // handleOllamaDelete removed — simplified dropdown UI; delete via ollama CLI if needed
 
-function computeOllamaPercent(progress: OllamaPullProgressType): number {
+export function computeOllamaPercent(progress: OllamaPullProgressType): number {
   if (progress.total && progress.total > 0 && progress.completed) {
     return Math.min(100, Math.round((progress.completed / progress.total) * 100));
   }

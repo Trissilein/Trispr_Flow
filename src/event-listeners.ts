@@ -79,6 +79,8 @@ import { openExportDialog } from "./export-dialog";
 import { openArchiveBrowser } from "./archive-browser";
 import { normalizeModelTag } from "./ollama-tag-utils";
 import { syncWorkflowAgentConsoleState } from "./workflow-agent-console";
+import { clearAllCandidates } from "./vocab-candidates";
+import { renderVocabSuggestionBanner, renderVocabCandidatesStatus } from "./vocab-suggestion-ui";
 
 // Cleanup registry for window-level listeners added by wireEvents()
 const _windowCleanups: Array<() => void> = [];
@@ -277,7 +279,8 @@ function refreshResolvedRefinementPromptInSettings() {
     settings.ai_fallback.prompt_profile,
     resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
     settings.ai_fallback.custom_prompt,
-    settings.ai_fallback.preserve_source_language
+    settings.ai_fallback.preserve_source_language,
+    settings.ai_fallback.model
   );
 }
 
@@ -419,7 +422,7 @@ function ensureAIFallbackSettingsDefaults() {
         runtime_source: "manual",
         runtime_path: "",
         runtime_version: "",
-        runtime_target_version: "0.17.7",
+        runtime_target_version: "0.20.2",
         last_health_check: null,
       },
     };
@@ -432,7 +435,7 @@ function ensureAIFallbackSettingsDefaults() {
       runtime_source: "manual",
       runtime_path: "",
       runtime_version: "",
-      runtime_target_version: "0.17.7",
+      runtime_target_version: "0.20.2",
       last_health_check: null,
     };
   }
@@ -475,14 +478,15 @@ function ensureAIFallbackSettingsDefaults() {
     settings.ai_fallback.prompt_profile,
     effectiveLanguageHint,
     settings.ai_fallback.custom_prompt,
-    settings.ai_fallback.preserve_source_language
+    settings.ai_fallback.preserve_source_language,
+    settings.ai_fallback.model
   );
   settings.topic_keywords = normalizeTopicKeywordsInput(settings.topic_keywords);
   setTopicKeywords(settings.topic_keywords);
   settings.providers.ollama.runtime_source ??= "manual";
   settings.providers.ollama.runtime_path ??= "";
   settings.providers.ollama.runtime_version ??= "";
-  settings.providers.ollama.runtime_target_version ??= "0.17.7";
+  settings.providers.ollama.runtime_target_version ??= "0.20.2";
   settings.providers.ollama.last_health_check ??= null;
   CLOUD_PROVIDER_IDS.forEach((provider) => {
     const providerSettings = getAIFallbackProviderSettings(provider);
@@ -507,6 +511,10 @@ function ensureAIFallbackSettingsDefaults() {
   settings.setup.ollama_remote_expert_opt_in ??= false;
   settings.product_mode = settings.product_mode === "assistant" ? "assistant" : "transcribe";
   settings.hotkey_product_mode_toggle ??= "CommandOrControl+Shift+P";
+  settings.hotkey_tts_stop ??= "CommandOrControl+Shift+F12";
+  settings.overlay_tts_stop_enabled ??= true;
+  settings.overlay_tts_stop_shape = settings.overlay_tts_stop_shape === "round" ? "round" : "compact";
+  settings.overlay_tts_stop_color ??= "#4be0d4";
   normalizeAiRefinementModuleBindingInSettings();
   settings.gdd_module_settings ??= {
     enabled: false,
@@ -847,10 +855,36 @@ function addVocabRow(original: string, replacement: string) {
     await updateVocab();
   });
 
+  const arrowSpan = document.createElement("span");
+  arrowSpan.className = "vocab-row-arrow";
+  arrowSpan.textContent = "→";
+  arrowSpan.setAttribute("aria-hidden", "true");
+
   row.appendChild(originalInput);
+  row.appendChild(arrowSpan);
   row.appendChild(replacementInput);
   row.appendChild(removeBtn);
   dom.postprocVocabRows.appendChild(row);
+}
+
+/** Add a vocabulary entry directly from a learned suggestion (skips DOM row creation). */
+export async function addVocabEntryFromSuggestion(from: string, to: string): Promise<void> {
+  if (!settings) return;
+  const vocab = { ...(settings.postproc_custom_vocab ?? {}) };
+  vocab[from] = to;
+  settings.postproc_custom_vocab = vocab;
+  // Enable custom vocab if it wasn't already
+  if (!settings.postproc_custom_vocab_enabled) {
+    settings.postproc_custom_vocab_enabled = true;
+  }
+  await persistSettings();
+  // Sync the vocab rows UI if it is currently visible
+  if (dom.postprocVocabRows) {
+    dom.postprocVocabRows.innerHTML = "";
+    for (const [original, replacement] of Object.entries(vocab)) {
+      addVocabRow(original, replacement);
+    }
+  }
 }
 
 // Main tab switching
@@ -1172,13 +1206,38 @@ export function wireEvents() {
     renderHero();
   });
 
-  dom.productModeSelect?.addEventListener("change", async () => {
-    if (!settings || !dom.productModeSelect) return;
-    settings.product_mode = dom.productModeSelect.value === "assistant" ? "assistant" : "transcribe";
+  const setProductMode = async (nextMode: "transcribe" | "assistant") => {
+    if (!settings) return;
+    settings.product_mode = nextMode;
     renderSettings();
     syncWorkflowAgentConsoleState();
     await persistSettings();
     renderHero();
+  };
+
+  dom.productModeTranscribeBtn?.addEventListener("click", async () => {
+    await setProductMode("transcribe");
+  });
+
+  dom.productModeAssistantBtn?.addEventListener("click", async () => {
+    await setProductMode("assistant");
+  });
+
+  const setGlobalOnlineMode = async (onlineEnabled: boolean) => {
+    if (!settings?.workflow_agent) return;
+    settings.workflow_agent.online_enabled = onlineEnabled;
+    renderSettings();
+    syncWorkflowAgentConsoleState();
+    await persistSettings();
+    renderHero();
+  };
+
+  dom.globalOnlineOfflineBtn?.addEventListener("click", async () => {
+    await setGlobalOnlineMode(false);
+  });
+
+  dom.globalOnlineEnabledBtn?.addEventListener("click", async () => {
+    await setGlobalOnlineMode(true);
   });
 
   dom.modelSourceSelect?.addEventListener("change", async () => {
@@ -1380,6 +1439,7 @@ export function wireEvents() {
   setupHotkeyRecorder("transcribe", dom.transcribeHotkey, dom.transcribeHotkeyRecord, dom.transcribeHotkeyStatus);
   setupHotkeyRecorder("toggleActivationWords", dom.toggleActivationWordsHotkey, dom.toggleActivationWordsHotkeyRecord, dom.toggleActivationWordsHotkeyStatus);
   setupHotkeyRecorder("productModeToggle", dom.productModeHotkey, dom.productModeHotkeyRecord, dom.productModeHotkeyStatus);
+  setupHotkeyRecorder("ttsStop", dom.ttsStopHotkey, dom.ttsStopHotkeyRecord, dom.ttsStopHotkeyStatus);
 
   const _onResize = () => updateDeviceLineClamp();
   window.addEventListener("resize", _onResize);
@@ -1784,12 +1844,51 @@ export function wireEvents() {
   dom.postprocCustomVocabEnabled?.addEventListener("change", async () => {
     if (!settings) return;
     settings.postproc_custom_vocab_enabled = dom.postprocCustomVocabEnabled!.checked;
+    if (dom.postprocCustomVocabConfig) {
+      dom.postprocCustomVocabConfig.style.display = settings.postproc_custom_vocab_enabled ? "flex" : "none";
+    }
+    if (dom.vocabLearningConfig) {
+      dom.vocabLearningConfig.style.display = settings.postproc_custom_vocab_enabled ? "flex" : "none";
+    }
     await persistSettings();
     scheduleSettingsRender();
   });
 
   dom.postprocVocabAdd?.addEventListener("click", () => {
     addVocabRow("", "");
+  });
+
+  // Vocabulary Learning event listeners
+  dom.vocabLearningEnabled?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.vocab_learning_enabled = dom.vocabLearningEnabled!.checked;
+    if (dom.vocabLearningSettings) {
+      dom.vocabLearningSettings.style.display = settings.vocab_learning_enabled ? "flex" : "none";
+    }
+    await persistSettings();
+  });
+
+  dom.vocabAutoAdd?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.vocab_auto_add = dom.vocabAutoAdd!.checked;
+    await persistSettings();
+  });
+
+  dom.vocabThreshold?.addEventListener("change", async () => {
+    if (!settings) return;
+    const val = parseInt(dom.vocabThreshold!.value, 10);
+    if (val >= 1 && val <= 10) {
+      settings.vocab_suggestion_threshold = val;
+      await persistSettings();
+      renderVocabSuggestionBanner();
+      renderVocabCandidatesStatus();
+    }
+  });
+
+  dom.vocabResetCandidates?.addEventListener("click", () => {
+    clearAllCandidates();
+    renderVocabCandidatesStatus();
+    renderVocabSuggestionBanner();
   });
 
   // AI fallback event listeners
@@ -2861,6 +2960,25 @@ export function wireEvents() {
     if (!settings) return;
     await persistSettings();
   });
+
+  dom.overlayTtsStopEnabled?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.overlay_tts_stop_enabled = Boolean(dom.overlayTtsStopEnabled?.checked);
+    await persistSettings();
+  });
+
+  dom.overlayTtsStopShape?.addEventListener("change", async () => {
+    if (!settings || !dom.overlayTtsStopShape) return;
+    settings.overlay_tts_stop_shape = dom.overlayTtsStopShape.value === "round" ? "round" : "compact";
+    await persistSettings();
+  });
+
+  dom.overlayTtsStopColor?.addEventListener("input", () => {
+    if (!settings || !dom.overlayTtsStopColor) return;
+    settings.overlay_tts_stop_color = dom.overlayTtsStopColor.value;
+  });
+
+  onChangePersist(dom.overlayTtsStopColor);
 
   dom.overlayKittMinWidth?.addEventListener("input", () => {
     if (!settings || !dom.overlayKittMinWidth) return;

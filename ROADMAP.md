@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-03-28 (Blocks T and V closed; entering Block U release hardening)
+Last updated: 2026-04-07 (Vocabulary learning (44a/44b) complete; Keep-Alive 20m→60m; UI redesign: Custom Vocabulary flat + compact)
 
 This file is the canonical source for priorities and execution order.
 
@@ -52,18 +52,22 @@ This file is the canonical source for priorities and execution order.
 | 35 | Prompt strategy polish for local models (DE/EN) | Done |
 | 38 | Offline E2E + fail-safe regression tests | Done |
 | 43 | GPU VRAM detection (Tauri backend) | Planned |
-| 43a | VRAM requirement display in AI Fallback UI | Planned |
-| 44 | Word-diff extraction from refinement events | Planned |
-| 44a | Persistence and threshold logic for learned vocabulary | Planned |
-| 44b | Learned vocabulary settings UI | Planned |
+| 43a | VRAM requirement display in AI Fallback UI | Partial ✅ (Gemma4 variant cards show size_gb + vram_gb; backend VRAM probe not yet exposed) |
+| 44 | Word-diff extraction from refinement events | Done ✅ |
+| 44a | Persistence and threshold logic for learned vocabulary | Done ✅ |
+| 44b | Learned vocabulary settings UI + suggestion review dialog | Done ✅ |
 | 44c | Adaptive vocabulary regression tests | Planned |
-| 45 | Refinement quantization profiles + quality/speed recommendation matrix | Deferred (future iteration) |
+| 44d | Screen Recording ground-truth path (capture before Enter → OCR → diff → learn) | Future / depends on Screen Recording module |
+| 45 | Refinement quantization profiles + quality/speed recommendation matrix | Partial ✅ (Gemma4 Q4/Q8/BF16 variants with VRAM labels added to model picker) |
 
 ## AI Direction (Decision Snapshot)
 
 - Primary fallback mode is now offline-first via locally running Ollama.
 - Runtime assumption: external Ollama install, local endpoint, model once downloaded then offline-capable.
-- Recommended baseline model track: `qwen3.5:4b` primary, `qwen3.5:2b` fast fallback, `qwen3.5:9b` quality profile.
+- Recommended baseline model track:
+  - **Qwen track**: `qwen3.5:4b` primary, `qwen3.5:2b` fast fallback, `qwen3.5:9b` quality profile.
+  - **Gemma4 track** (added 2026-04-06): `gemma4:e4b` standard (Q4 ~5 GB VRAM), `gemma4:e4b-it-q8_0` high-quality (~7.5 GB), `gemma4:e4b-it-bf16` maximum (~15 GB). Gemma4 requires explicit anglicism-preservation prompt addons — handled automatically by `resolveEffectiveRefinementPrompt()`.
+- Model-family prompt adaptation is live: `detectModelFamily()` prefix heuristic routes Gemma/Qwen/generic to appropriate system-prompt variants.
 - Cloud provider UX/activation is intentionally postponed to v0.7.3.
 - GDD generation is now treated as core workflow capability; autonomous orchestration is handled by `workflow_agent`.
 - Multimodal modules (`input_vision`, `output_voice_tts`) are capability modules consumed by `workflow_agent` when enabled.

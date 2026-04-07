@@ -204,6 +204,29 @@ export function normalizePersistedRefinementPromptPresetId(
   return normalizedActive;
 }
 
+/** Detects the model family from an Ollama model tag for prompt adaptation. */
+function detectModelFamily(model: string | null | undefined): "gemma" | "qwen" | "generic" {
+  const m = (model || "").toLowerCase().trim();
+  if (m.startsWith("gemma")) return "gemma";
+  if (m.startsWith("qwen")) return "qwen";
+  return "generic";
+}
+
+/**
+ * Model-family-specific prompt additions appended after the base prompt.
+ * Gemma 4 tends to silently remove anglicisms and foreign-language terms unless
+ * explicitly told to preserve them.
+ */
+const MODEL_FAMILY_PROMPT_ADDONS: Partial<Record<
+  ReturnType<typeof detectModelFamily>,
+  Partial<Record<BuiltInRefinementPromptPreset, string>>
+>> = {
+  gemma: {
+    wording:
+      "Do not remove, replace, or translate anglicisms, brand names, technical jargon, or foreign-language terms intentionally used by the speaker. Preserve them exactly as spoken, even if they appear in a different language than the surrounding text.",
+  },
+};
+
 export function resolveRefinementPresetPrompt(
   preset: RefinementPromptPreset,
   language: string | null | undefined
@@ -217,7 +240,8 @@ export function resolveEffectiveRefinementPrompt(
   preset: RefinementPromptPreset,
   language: string | null | undefined,
   customPrompt: string | null | undefined,
-  preserveSourceLanguage: boolean
+  preserveSourceLanguage: boolean,
+  model?: string | null
 ): string {
   if (preset === "custom") {
     const normalized = (customPrompt || "").trim();
@@ -228,9 +252,20 @@ export function resolveEffectiveRefinementPrompt(
   }
 
   const base = resolveRefinementPresetPrompt(preset, language) || "";
-  // llm_prompt always outputs in English, so skip language guard
+
+  // llm_prompt always outputs in English, so skip language guard and model addons
   if (preset === "llm_prompt") {
     return base;
   }
-  return withLanguageLockGuard(base, language, preserveSourceLanguage);
+
+  const withLanguageGuard = withLanguageLockGuard(base, language, preserveSourceLanguage);
+
+  // Append model-family-specific additions (e.g. Gemma anglicism preservation)
+  const family = detectModelFamily(model);
+  const addon = MODEL_FAMILY_PROMPT_ADDONS[family]?.[preset as BuiltInRefinementPromptPreset];
+  if (addon) {
+    return `${withLanguageGuard}\n\n${addon}`;
+  }
+
+  return withLanguageGuard;
 }

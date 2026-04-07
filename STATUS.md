@@ -1,29 +1,42 @@
 # Trispr Flow - Status
 
-Last updated: 2026-03-22
+Last updated: 2026-04-07
 
 ## Snapshot
 
 - Current release: `v0.7.2`
-- Current planning phase: `v0.7.3 stabilization follow-through (Block S reopened: S10-S13 active, then TTS free-config/testing)`
+- Current planning phase: `v0.8.x active — Block U (assistant UX + soak + release gate) in progress`
 - Canonical next steps: `ROADMAP.md`
-- Current readiness: development-ready, not release-ready
+- Current readiness: development-active, not release-ready
 
 ## Current Blockers
 
-1. No hard compile/test blockers in current S10-S12 baseline as of 2026-03-22 (`cargo test --lib`, `npm test`, `npm run build` green).
-2. Remaining stabilization blocker: `S13` manual acceptance gate (overlay `50 cycles + 10 restarts` + module toggle soak) is still pending.
-3. Remaining milestone blocker after S13: `TTS freikonfigurierbar + testbar` completion (forced verification flow finalization).
+1. No hard compile/test blockers as of 2026-04-07 (`cargo test --lib`, `npm test`, `npm run build` all green).
+2. Block U release gate: soak evidence (8h + 24h runs) still pending before `v0.8.x` cut.
+3. Vocabulary learning (Block J / Tasks 44a–44b) now complete; Task 44c (regression tests) planned.
 
-## Tomorrow's Objective (Execution Order)
+## Next Focus (Execution Order)
 
-1. Close `S13` acceptance with overlay soak gate and re-enable performance validation.
-2. Continue directly with `TTS freikonfigurierbar + testbar` (provider-agnostic configuration + explicit forced-test path).
-3. Keep baseline gates green while iterating (`cargo test --lib`, `npm test`, `npm run build`).
-4. Hold Block T start until S13 + TTS acceptance pass.
+1. Complete Block U U2/U3 soak runs and close release gate.
+2. Task 44c: vocabulary learning regression tests (validate learning + threshold + auto-add flows).
+3. Screen Recording Module (future): vocabulary ground-truth via active-window capture + OCR diff.
+4. Keep baseline gates green while iterating (`cargo test --lib`, `npm test`, `npm run build`).
 
 ## Working State
 
+- **Recent (2026-04-07)**:
+  - **Vocabulary Learning (Tasks 44a–44b) complete**: LLM-diff-based word correction tracking now live. Users can collect recurring AI corrections with configurable threshold (1–10 repetitions, default 3), optional auto-add, and review dialog. Settings: enable learning toggle + threshold + auto-add controls + reset button. Banner + modal UI for suggesting newly-detected corrections. Persistence via localStorage with max 200 candidates.
+  - **Custom Vocabulary UI Redesign**: Flattened nesting (now 1 level max, previously 3 deep). Moved from inside "Rule-Based Details" to peer section before "Topic Detection". Compact vocab table (reduced padding 7→4px, smaller fonts 13→12px) with arrow separators. Vocab Learning section is sub-toggle within Custom Vocabulary expander.
+  - **Keep-Alive duration**: Ollama refinement keep-alive increased from 20m to 60m default (env var `TRISPR_OLLAMA_KEEP_ALIVE` still configurable). Reduces cold-start latency for refinement requests after long idle periods.
+  - **Frontend build**: `npm run build` green, all TypeScript compiles clean, Vite bundle optimized.
+- **Recent (2026-04-06)**:
+  - **Hotkey system overhaul**: ISO `<`/`>` key (`IntlBackslash`) now supported via local vendor patch for `global-hotkey v0.7.0`. Hotkey recorder uses hybrid `event.code`/`event.key` strategy fixing DE keyboard Y ↔ Z swap. Extended recordable surface to Numpad, Media, Volume, and lock keys. Human-readable display labels via `formatHotkeyForDisplay()` in `ui-helpers.ts`.
+  - **TTS-Stop default hotkey**: Changed from `CommandOrControl+Shift+Escape` (conflicted with Windows Task Manager) to `CommandOrControl+Shift+F12`.
+  - **Gemma 4 model variant matrix**: Model picker now shows all 5 quantization variants (E2B Q4/Q8, E4B Q4/Q8/BF16) with explicit VRAM annotations per card.
+  - **Model-family-specific refinement prompts**: `resolveEffectiveRefinementPrompt()` now receives the active model name and appends Gemma-specific anglicism/brand-name preservation instructions for `gemma*` models.
+  - **Ollama target runtime**: Updated to v0.20.2.
+  - **Ollama download progress popup**: Model pull progress now shown in modal with MB counter.
+  - **Block J (vocabulary learning) designed**: LLM-diff-based suggestion flow planned (Tasks 44–44c); Screen Recording module identified as future ground-truth path. Implementation not yet started.
 - Contributor process now enforces a pre-push housekeeping gate in `CONTRIBUTING.md` ("Housekeeping (Required Before Push)").
 - **Recent (2026-03-20)**:
   - Overlay startup hardening: transparent WebView create now retries once with safe non-transparent fallback before disabling overlay for the session.
@@ -92,8 +105,7 @@ Last updated: 2026-03-22
 
 ## Next Focus
 
-1. Close `S13` manual acceptance (`50 cycles + 10 restarts` overlay/module soak gate).
-2. Prioritize `TTS freikonfigurierbar + testbar` (configuration flexibility + forced end-to-end verification).
-3. Use `docs/N11_TTS_BENCHMARK.md` as supporting evidence for TTS provider/runtime defaults while implementing free-config mode.
-4. Start Block T (`v0.8.0` assistant foundation) only after S13 + TTS acceptance gates are green.
-5. Keep Block R follow-up (`R4`-`R6`) non-blocking and regression-safe.
+1. Complete Block U soak runs (U2/U3: 8h + 24h) and close `v0.8.x` release gate.
+2. Begin Block J: Task 44 word-diff extraction from refinement events → persistence threshold → vocabulary suggestion UI.
+3. Screen Recording Module (future): active-window capture before Enter/send-click → OCR diff → vocabulary ground-truth learning.
+4. Keep Block R follow-up (`R4`–`R6`) non-blocking and regression-safe.

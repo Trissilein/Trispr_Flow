@@ -8,6 +8,8 @@ const container = document.getElementById("container");
 const dot = document.getElementById("dot");
 const kitt = document.getElementById("kitt");
 const refineIndicator = document.getElementById("refine-indicator");
+const ttsStopLayer = document.getElementById("tts-stop-layer");
+const ttsStopButton = document.getElementById("tts-stop-button");
 
 // State
 let isActive = false;
@@ -22,6 +24,10 @@ let refiningPreset = "standard";
 let refiningColor = "#6ec8ff";
 let refiningSpeedMs = 1150;
 let refiningRangePercent = 100;
+let ttsStopVisible = false;
+let ttsStopEnabled = true;
+let ttsStopShape = "compact";
+let ttsStopColor = "#4be0d4";
 let lastHeartbeatSentAt = 0;
 
 // KITT settings
@@ -132,6 +138,45 @@ function updateRefiningAppearance() {
   refineIndicator.style.setProperty("--refine-range-scale", `${(refiningRangePercent / 100).toFixed(2)}`);
 }
 
+function updateTtsStopAppearance() {
+  if (!ttsStopButton) return;
+  const rgb = hexToRgb(ttsStopColor);
+  if (rgb) {
+    ttsStopButton.style.background = `linear-gradient(180deg, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.28) 0%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.18) 100%)`;
+    ttsStopButton.style.borderColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.4)`;
+    ttsStopButton.style.boxShadow = `0 0 20px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.24)`;
+  }
+  ttsStopButton.dataset.shape = ttsStopShape;
+}
+
+function updateTtsStopVisibility() {
+  const visible = Boolean(ttsStopVisible && ttsStopEnabled);
+  if (container) {
+    container.dataset.ttsStop = visible ? "on" : "off";
+    container.dataset.ttsStopEnabled = ttsStopEnabled ? "true" : "false";
+    container.dataset.ttsStopShape = ttsStopShape;
+  }
+  if (ttsStopLayer) {
+    ttsStopLayer.hidden = !visible;
+    ttsStopLayer.setAttribute("aria-hidden", visible ? "false" : "true");
+  }
+  if (ttsStopButton) {
+    ttsStopButton.hidden = !visible;
+    ttsStopButton.disabled = !visible;
+  }
+}
+
+function normalizeTtsStopShape(value) {
+  if (value === "round" || value === "compact") return value;
+  return "compact";
+}
+
+function normalizeTtsStopColor(value) {
+  if (typeof value !== "string") return "#4be0d4";
+  const trimmed = value.trim();
+  return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed : "#4be0d4";
+}
+
 function resetOverlayGeometryToMinimum() {
   dot.style.width = `${dotMinRadius * 2}px`;
   dot.style.height = `${dotMinRadius * 2}px`;
@@ -196,6 +241,26 @@ window.setOverlayRefiningAppearance = function(color, speedMs, rangePercent) {
   updateRefiningAppearance();
 };
 
+window.setOverlayTtsStopConfig = function(enabled, shape, color) {
+  ttsStopEnabled = Boolean(enabled);
+  ttsStopShape = normalizeTtsStopShape(shape);
+  ttsStopColor = normalizeTtsStopColor(color);
+  updateTtsStopAppearance();
+  updateTtsStopVisibility();
+};
+
+window.setOverlayTtsStopVisible = function(visible, enabled, shape) {
+  ttsStopVisible = Boolean(visible);
+  if (typeof enabled === "boolean") {
+    ttsStopEnabled = enabled;
+  }
+  if (typeof shape === "string") {
+    ttsStopShape = normalizeTtsStopShape(shape);
+  }
+  updateTtsStopAppearance();
+  updateTtsStopVisibility();
+};
+
 window.setKittDimensions = function(minWidth, maxWidth, height) {
   const parsedMin = Number(minWidth);
   const parsedMax = Number(maxWidth);
@@ -257,6 +322,8 @@ updateDotGradient();
 updateKittGradient();
 updateRefiningIndicator();
 updateRefiningAppearance();
+updateTtsStopAppearance();
+updateTtsStopVisibility();
 
 // Signal readiness to Rust backend
 if (window.__TAURI__?.event?.emit) {
@@ -295,6 +362,9 @@ function applySettingsPayload(payload) {
   const refiningIndicatorColor = normalizeRefiningColor(payload.overlay_refining_indicator_color);
   const refiningIndicatorSpeedMs = normalizeRefiningSpeedMs(payload.overlay_refining_indicator_speed_ms);
   const refiningIndicatorRange = normalizeRefiningRange(payload.overlay_refining_indicator_range);
+  const ttsStopEnabled = typeof payload.overlay_tts_stop_enabled === "boolean" ? payload.overlay_tts_stop_enabled : true;
+  const ttsStopShape = normalizeTtsStopShape(payload.overlay_tts_stop_shape);
+  const ttsStopColor = normalizeTtsStopColor(payload.overlay_tts_stop_color);
   if (color) {
     window.setOverlayColor(color);
   }
@@ -313,6 +383,7 @@ function applySettingsPayload(payload) {
     refiningIndicatorSpeedMs,
     refiningIndicatorRange
   );
+  window.setOverlayTtsStopConfig(ttsStopEnabled, ttsStopShape, ttsStopColor);
   // Position is handled by Rust via window.set_position() - no JS positioning needed
 }
 
@@ -322,6 +393,12 @@ if (invoke) {
   invoke("get_settings")
     .then(applySettingsPayload)
     .catch(() => {});
+}
+
+if (ttsStopButton && invoke) {
+  ttsStopButton.addEventListener("click", () => {
+    invoke("stop_tts").catch(() => {});
+  });
 }
 
 // Listen for settings changes (backup path - primary is window.eval from Rust)
@@ -360,8 +437,24 @@ if (listen) {
         overlay_refining_indicator_color: payload.refining_indicator_color,
         overlay_refining_indicator_speed_ms: payload.refining_indicator_speed_ms,
         overlay_refining_indicator_range: payload.refining_indicator_range,
+        overlay_tts_stop_enabled: payload.tts_stop_enabled,
+        overlay_tts_stop_shape: payload.tts_stop_shape,
+        overlay_tts_stop_color: payload.tts_stop_color,
       });
     }
+  }).catch(() => {});
+
+  listen("tts:speech-started", (event) => {
+    void event;
+    window.setOverlayTtsStopVisible(true, ttsStopEnabled, ttsStopShape);
+  }).catch(() => {});
+
+  listen("tts:speech-finished", () => {
+    window.setOverlayTtsStopVisible(false, ttsStopEnabled, ttsStopShape);
+  }).catch(() => {});
+
+  listen("tts:speech-error", () => {
+    window.setOverlayTtsStopVisible(false, ttsStopEnabled, ttsStopShape);
   }).catch(() => {});
 
   listen("settings-changed", (event) => {

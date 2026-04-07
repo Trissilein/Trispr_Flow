@@ -10,6 +10,7 @@ import {
   traceFrontendWarn,
 } from "./frontend-trace";
 import { initWindowStatePersistence } from "./window-state";
+import { renderDownloadProgressPopup, scheduleDownloadProgressRender } from "./download-progress-popup";
 
 type TranscriptionStatus = "idle" | "recording" | "transcribing";
 type AudioCueType = "start" | "stop";
@@ -116,10 +117,15 @@ import {
   handleAssistantStateChanged,
   handleWorkflowAgentFinalResult,
   handleWorkflowAgentRawResult,
+  handleTtsSpeechStarted,
+  handleTtsSpeechFinished,
   initWorkflowAgentConsole,
   syncWorkflowAgentConsoleState,
 } from "./workflow-agent-console";
 import { syncVoiceOutputConsoleState } from "./voice-output-console";
+import { recordRefinementDiff, getPendingSuggestionCount, removeCandidateByPair } from "./vocab-candidates";
+import { renderVocabSuggestionBanner, renderVocabCandidatesStatus, initVocabSuggestionBanner } from "./vocab-suggestion-ui";
+import { addVocabEntryFromSuggestion } from "./event-listeners";
 import {
   handleRefinementFailureForInspector,
   handleRefinementStartedForInspector,
@@ -350,7 +356,10 @@ function applyStartupReadinessUi(): void {
   const ready = Boolean(startupStatus?.interactive && startupStatus?.transcription_ready);
   const controls = [
     dom.captureEnabledToggle,
-    dom.productModeSelect,
+    dom.productModeTranscribeBtn,
+    dom.productModeAssistantBtn,
+    dom.globalOnlineOfflineBtn,
+    dom.globalOnlineEnabledBtn,
     dom.modeSelect,
     dom.deviceSelect,
     dom.pttHotkey,
@@ -696,6 +705,7 @@ async function bootstrap() {
   initOnboardingWizard();
   initPipelineStatus();
   syncVoiceOutputConsoleState();
+  initVocabSuggestionBanner();
 
   if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Rendering interface…";
   traceFrontendInfo("bootstrap", "rendering primary interface");
@@ -902,6 +912,7 @@ async function bootstrap() {
       context?: string;
       error: string;
     }>("tts:speech-error", (event) => {
+      handleTtsSpeechFinished();
       const preferred = event.payload.preferred_provider || event.payload.provider || "unknown";
       const fallback = event.payload.fallback_provider || "none";
       showToast({
@@ -918,6 +929,7 @@ async function bootstrap() {
       primary_error?: string;
       context?: string;
     }>("tts:speech-finished", (event) => {
+      handleTtsSpeechFinished();
       if (!event.payload.used_fallback || event.payload.context !== "manual_test") return;
       const preferred = event.payload.preferred_provider || "unknown";
       const used = event.payload.provider_used || "unknown";
@@ -927,6 +939,14 @@ async function bootstrap() {
         title: "Voice output fallback used",
         message: `${preferred} failed${primaryError}. Switched to ${used}.`,
       });
+    }),
+    listen<{
+      session_id?: number;
+      provider?: string;
+      text_len?: number;
+      context?: string;
+    }>("tts:speech-started", () => {
+      handleTtsSpeechStarted();
     }),
     // Re-check Ollama health when a timeout or connection error occurs during
     // refinement — avoids requiring a full app restart to recover the status.
@@ -1029,9 +1049,26 @@ async function bootstrap() {
       scheduleHistoryRender();
     }),
     // AI Fallback: refined transcript available — log silently (original already shown).
-    listen<TranscriptionRefinedEvent>("transcription:refined", (event) => {
+    listen<TranscriptionRefinedEvent>("transcription:refined", async (event) => {
       handleRefinementSuccessForInspector(event.payload);
       scheduleHistoryRender();
+      // Record word-level substitutions for vocabulary learning
+      if (event.payload.original && event.payload.refined && event.payload.original !== event.payload.refined) {
+        const newSuggestions = recordRefinementDiff(event.payload.original, event.payload.refined);
+        if (newSuggestions.length > 0) {
+          if (settings?.vocab_auto_add) {
+            // Auto-add mode: add directly without user review
+            for (const s of newSuggestions) {
+              await addVocabEntryFromSuggestion(s.from, s.to);
+              removeCandidateByPair(s.from, s.to);
+            }
+          }
+          renderVocabCandidatesStatus();
+        }
+        if (getPendingSuggestionCount() > 0) {
+          renderVocabSuggestionBanner();
+        }
+      }
       const { refined, model, execution_time_ms, job_id: jobId } = event.payload;
       markRefinementJobFinished(jobId);
       const priorOutcome = deferredPasteOutcomes.get(jobId);
@@ -1104,6 +1141,7 @@ async function bootstrap() {
       );
       setModels(updatedModels);
       scheduleModelRender();
+      scheduleDownloadProgressRender();
     }),
     listen<PiperVoiceDownloadProgress>("piper:voice-download-progress", (event) => {
       if (!event.payload) return;
@@ -1113,26 +1151,31 @@ async function bootstrap() {
       modelProgress.delete(event.payload.id);
       await refreshModels();
       await refreshStartupStatusFromBackend();
+      renderDownloadProgressPopup();
     }),
     listen<DownloadError>("model:download-error", async (event) => {
       console.error("model download error", event.payload.error);
       modelProgress.delete(event.payload.id);
       await refreshModels();
+      renderDownloadProgressPopup();
     }),
     listen<QuantizeProgress>("model:quantize-progress", (event) => {
       const payload = event.payload;
       if (!payload?.file_name) return;
       quantizeProgress.set(payload.file_name, payload);
       scheduleModelRender();
+      scheduleDownloadProgressRender();
     }),
     // Ollama pull progress events
     listen<OllamaPullProgress>("ollama:pull-progress", (event) => {
       ollamaPullProgress.set(event.payload.model, event.payload);
       scheduleOllamaRender();
+      scheduleDownloadProgressRender();
     }),
     listen<OllamaPullComplete>("ollama:pull-complete", async (event) => {
       clearActiveOllamaPull(event.payload.model);
       ollamaPullProgress.delete(event.payload.model);
+      renderDownloadProgressPopup();
       showToast({
         type: "success",
         title: "Model downloaded",
@@ -1153,6 +1196,7 @@ async function bootstrap() {
     listen<OllamaPullError>("ollama:pull-error", (event) => {
       clearActiveOllamaPull(event.payload.model);
       ollamaPullProgress.delete(event.payload.model);
+      renderDownloadProgressPopup();
       showToast({
         type: "error",
         title: "Download Failed",
@@ -1164,14 +1208,17 @@ async function bootstrap() {
     listen<OllamaRuntimeInstallProgress>("ollama:runtime-install-progress", (event) => {
       setOllamaRuntimeInstallProgress(event.payload);
       scheduleOllamaRender();
+      scheduleDownloadProgressRender();
     }),
     listen<OllamaRuntimeInstallComplete>("ollama:runtime-install-complete", async (event) => {
       setOllamaRuntimeInstallComplete(event.payload);
+      renderDownloadProgressPopup();
       await refreshOllamaRuntimeState({ force: true });
       renderAIFallbackSettingsUi();
     }),
     listen<OllamaRuntimeInstallError>("ollama:runtime-install-error", (event) => {
       setOllamaRuntimeInstallError(event.payload);
+      renderDownloadProgressPopup();
       renderAIFallbackSettingsUi();
     }),
     listen<OllamaRuntimeHealth>("ollama:runtime-health", (event) => {

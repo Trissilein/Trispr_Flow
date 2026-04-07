@@ -1140,6 +1140,37 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         }
     };
 
+    let register_tts_stop = || -> Result<(), String> {
+        let hotkey = settings.hotkey_tts_stop.trim();
+        if hotkey.is_empty() {
+            return Ok(());
+        }
+        info!("Registering TTS Stop hotkey: {}", hotkey);
+        match manager.on_shortcut(hotkey, |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                let app = app.clone();
+                let _ = stop_tts_internal(&app, app.state::<AppState>().inner());
+            }
+        }) {
+            Ok(_) => {
+                info!("TTS Stop hotkey registered successfully");
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to register TTS Stop hotkey '{}': {}", hotkey, e);
+                emit_error(
+                    app,
+                    AppError::Hotkey(format!(
+                        "Could not register TTS Stop hotkey '{}': {}",
+                        hotkey, e
+                    )),
+                    Some("Hotkey Registration"),
+                );
+                Err(e.to_string())
+            }
+        }
+    };
+
     match settings.mode.as_str() {
         "ptt" => {
             if let Err(e) = register_ptt() {
@@ -1165,6 +1196,9 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
     }
     if let Err(e) = register_product_mode_toggle() {
         errors.push(format!("Product Mode: {}", e));
+    }
+    if let Err(e) = register_tts_stop() {
+        errors.push(format!("TTS Stop: {}", e));
     }
 
     // Register Toggle Activation Words hotkey
@@ -1223,6 +1257,11 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
                 "key": settings.hotkey_product_mode_toggle.trim(),
                 "registered": !errors.iter().any(|e| e.starts_with("Product Mode")),
                 "error": errors.iter().find(|e| e.starts_with("Product Mode")).cloned(),
+            },
+            "tts_stop": {
+                "key": settings.hotkey_tts_stop.trim(),
+                "registered": !errors.iter().any(|e| e.starts_with("TTS Stop")),
+                "error": errors.iter().find(|e| e.starts_with("TTS Stop")).cloned(),
             },
         });
         let _ = app.emit("hotkey:registration-status", &status);
@@ -2320,6 +2359,7 @@ fn speak_qwen3_tts(
     volume: f32,
     output_device_id: &str,
     config: &Qwen3TtsBenchmarkConfig,
+    playback_control: Option<std::sync::Arc<crate::multimodal_io::TtsPlaybackControl>>,
 ) -> Result<(), String> {
     let (bytes, content_type) = request_qwen3_tts_audio_bytes(text, rate, config)?;
     if bytes.is_empty() {
@@ -2338,7 +2378,7 @@ fn speak_qwen3_tts(
             content_type
         ));
     }
-    crate::multimodal_io::play_wav_bytes(&bytes, volume, output_device_id)
+    crate::multimodal_io::play_wav_bytes(&bytes, volume, output_device_id, playback_control)
 }
 
 fn normalize_tts_benchmark_scenarios(
@@ -2456,6 +2496,7 @@ fn run_tts_runtime_smoke_once(
             0.0,
             output_device_id,
             selected_windows_voice,
+            None,
         ),
         "windows_natural" => crate::multimodal_io::speak_windows_natural(
             smoke_text,
@@ -2463,6 +2504,7 @@ fn run_tts_runtime_smoke_once(
             0.0,
             output_device_id,
             selected_windows_voice,
+            None,
         ),
         "local_custom" => crate::multimodal_io::speak_piper(
             &state.piper_daemon,
@@ -2472,6 +2514,7 @@ fn run_tts_runtime_smoke_once(
             rate,
             0.0,
             output_device_id,
+            None,
         ),
         _ => Err(format!(
             "Runtime smoke is unsupported for benchmark-only provider '{}'.",
@@ -5354,23 +5397,383 @@ fn merged_workflow_wakewords(settings: &crate::modules::WorkflowAgentSettings) -
     merged
 }
 
-fn unknown_rule_reply(command_text: &str, online_enabled: bool) -> String {
-    let normalized = command_text.to_lowercase();
-    let english_hint = normalized.contains("please")
+#[derive(Debug, Clone, serde::Deserialize)]
+struct OpenMeteoGeocodingResponse {
+    results: Option<Vec<OpenMeteoGeocodingEntry>>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct OpenMeteoGeocodingEntry {
+    name: String,
+    country: Option<String>,
+    admin1: Option<String>,
+    latitude: f64,
+    longitude: f64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct OpenMeteoForecastResponse {
+    daily: Option<OpenMeteoDailyData>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct OpenMeteoDailyData {
+    time: Vec<String>,
+    weather_code: Option<Vec<i64>>,
+    temperature_2m_max: Option<Vec<f64>>,
+    temperature_2m_min: Option<Vec<f64>>,
+    precipitation_probability_max: Option<Vec<f64>>,
+}
+
+fn weather_query_english_hint(normalized: &str) -> bool {
+    normalized.contains("please")
         || normalized.contains("what")
         || normalized.contains("session")
         || normalized.contains("status")
-        || normalized.contains("weather");
-    let weather_like = normalized.contains("weather")
+        || normalized.contains("weather")
+        || normalized.contains("tomorrow")
+}
+
+fn weather_query_like(normalized: &str) -> bool {
+    normalized.contains("weather")
         || normalized.contains("wetter")
         || normalized.contains("forecast")
-        || normalized.contains("temperatur");
+        || normalized.contains("temperatur")
+}
+
+fn weather_query_day_offset(normalized: &str) -> usize {
+    if normalized.contains("übermorgen") || normalized.contains("day after tomorrow") {
+        2
+    } else if normalized.contains("morgen") || normalized.contains("tomorrow") {
+        1
+    } else {
+        0
+    }
+}
+
+fn is_weather_location_stopword(token: &str) -> bool {
+    matches!(
+        token,
+        "heute"
+            | "today"
+            | "morgen"
+            | "tomorrow"
+            | "übermorgen"
+            | "after"
+            | "day"
+            | "wetter"
+            | "weather"
+            | "forecast"
+            | "temperatur"
+            | "temperature"
+            | "bitte"
+            | "please"
+            | "wie"
+            | "wird"
+            | "ist"
+            | "das"
+            | "the"
+            | "for"
+            | "in"
+    )
+}
+
+fn extract_weather_location_hint(command_text: &str) -> Option<String> {
+    let tokens: Vec<String> = command_text
+        .split_whitespace()
+        .map(|raw| {
+            raw.trim_matches(|ch: char| {
+                matches!(
+                    ch,
+                    ',' | '.' | '!' | '?' | ';' | ':' | '"' | '\'' | '(' | ')' | '[' | ']'
+                )
+            })
+            .to_string()
+        })
+        .filter(|token| !token.is_empty())
+        .collect();
+    if tokens.len() < 2 {
+        return None;
+    }
+
+    for idx in 0..tokens.len().saturating_sub(1) {
+        let marker = tokens[idx].to_lowercase();
+        if marker != "in" && marker != "für" && marker != "for" {
+            continue;
+        }
+        let mut parts: Vec<String> = Vec::new();
+        for token in tokens.iter().skip(idx + 1).take(3) {
+            let lower = token.to_lowercase();
+            if is_weather_location_stopword(lower.as_str()) {
+                break;
+            }
+            parts.push(token.to_string());
+        }
+        if !parts.is_empty() {
+            return Some(parts.join(" "));
+        }
+    }
+    None
+}
+
+fn weather_code_label(code: i64, english: bool) -> &'static str {
+    match code {
+        0 => {
+            if english {
+                "clear sky"
+            } else {
+                "klar"
+            }
+        }
+        1 => {
+            if english {
+                "mainly clear"
+            } else {
+                "überwiegend klar"
+            }
+        }
+        2 => {
+            if english {
+                "partly cloudy"
+            } else {
+                "leicht bewölkt"
+            }
+        }
+        3 => {
+            if english {
+                "overcast"
+            } else {
+                "bedeckt"
+            }
+        }
+        45 | 48 => {
+            if english {
+                "fog"
+            } else {
+                "Nebel"
+            }
+        }
+        51 | 53 | 55 | 56 | 57 => {
+            if english {
+                "drizzle"
+            } else {
+                "Nieselregen"
+            }
+        }
+        61 | 63 | 65 | 66 | 67 => {
+            if english {
+                "rain"
+            } else {
+                "Regen"
+            }
+        }
+        71 | 73 | 75 | 77 => {
+            if english {
+                "snow"
+            } else {
+                "Schnee"
+            }
+        }
+        80 | 81 | 82 => {
+            if english {
+                "rain showers"
+            } else {
+                "Regenschauer"
+            }
+        }
+        85 | 86 => {
+            if english {
+                "snow showers"
+            } else {
+                "Schneeschauer"
+            }
+        }
+        95 | 96 | 99 => {
+            if english {
+                "thunderstorm"
+            } else {
+                "Gewitter"
+            }
+        }
+        _ => {
+            if english {
+                "mixed conditions"
+            } else {
+                "gemischte Bedingungen"
+            }
+        }
+    }
+}
+
+fn encode_url_component(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>()
+}
+
+fn online_weather_unavailable_reply(command_text: &str) -> String {
+    let normalized = command_text.to_lowercase();
+    let english_hint = weather_query_english_hint(&normalized);
+    if english_hint {
+        return "Online weather lookup is currently unavailable. Please try again or include a city (for example: weather in Berlin tomorrow).".to_string();
+    }
+    "Live-Wetterabfrage ist aktuell nicht verfügbar. Bitte erneut versuchen oder eine Stadt mit angeben (z. B. Wetter in Berlin morgen).".to_string()
+}
+
+fn fetch_live_weather_reply(command_text: &str) -> Result<String, String> {
+    let normalized = command_text.to_lowercase();
+    let english_hint = weather_query_english_hint(&normalized);
+    let day_offset = weather_query_day_offset(&normalized);
+
+    let explicit_location = extract_weather_location_hint(command_text);
+    let using_default_location = explicit_location.is_none();
+    let location_query = explicit_location.unwrap_or_else(|| "Berlin".to_string());
+    let geocode_language = if english_hint { "en" } else { "de" };
+
+    let agent = ureq::builder()
+        .timeout_connect(Duration::from_secs(4))
+        .timeout_read(Duration::from_secs(6))
+        .timeout_write(Duration::from_secs(6))
+        .build();
+
+    let geocode_url = format!(
+        "https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language={}&format=json",
+        encode_url_component(location_query.trim()),
+        geocode_language
+    );
+
+    let geocode_response: OpenMeteoGeocodingResponse = agent
+        .get(&geocode_url)
+        .call()
+        .map_err(|err| format!("weather geocoding request failed: {err}"))?
+        .into_json()
+        .map_err(|err| format!("weather geocoding parse failed: {err}"))?;
+
+    let location = geocode_response
+        .results
+        .and_then(|mut entries| entries.drain(..).next())
+        .ok_or_else(|| format!("weather geocoding returned no result for '{}'", location_query))?;
+
+    let forecast_days = std::cmp::max(3, day_offset + 1);
+    let forecast_url = format!(
+        "https://api.open-meteo.com/v1/forecast?latitude={:.5}&longitude={:.5}&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days={}",
+        location.latitude,
+        location.longitude,
+        forecast_days
+    );
+
+    let forecast_response: OpenMeteoForecastResponse = agent
+        .get(&forecast_url)
+        .call()
+        .map_err(|err| format!("weather forecast request failed: {err}"))?
+        .into_json()
+        .map_err(|err| format!("weather forecast parse failed: {err}"))?;
+
+    let daily = forecast_response
+        .daily
+        .ok_or_else(|| "weather forecast daily block missing".to_string())?;
+    let weather_codes = daily
+        .weather_code
+        .ok_or_else(|| "weather codes missing in forecast response".to_string())?;
+    let max_temps = daily
+        .temperature_2m_max
+        .ok_or_else(|| "max temperatures missing in forecast response".to_string())?;
+    let min_temps = daily
+        .temperature_2m_min
+        .ok_or_else(|| "min temperatures missing in forecast response".to_string())?;
+    if daily.time.is_empty() || weather_codes.is_empty() || max_temps.is_empty() || min_temps.is_empty() {
+        return Err("weather forecast response is empty".to_string());
+    }
+
+    let idx = day_offset.min(daily.time.len().saturating_sub(1));
+    let weather_code = *weather_codes
+        .get(idx)
+        .ok_or_else(|| "weather code missing for requested day".to_string())?;
+    let temp_max = *max_temps
+        .get(idx)
+        .ok_or_else(|| "max temperature missing for requested day".to_string())?;
+    let temp_min = *min_temps
+        .get(idx)
+        .ok_or_else(|| "min temperature missing for requested day".to_string())?;
+    let precip_prob = daily
+        .precipitation_probability_max
+        .as_ref()
+        .and_then(|values| values.get(idx))
+        .copied()
+        .unwrap_or(0.0);
+
+    let location_display = match (&location.admin1, &location.country) {
+        (Some(region), Some(country)) if !region.trim().is_empty() && !country.trim().is_empty() => {
+            format!("{}, {}, {}", location.name, region, country)
+        }
+        (_, Some(country)) if !country.trim().is_empty() => {
+            format!("{}, {}", location.name, country)
+        }
+        _ => location.name.clone(),
+    };
+
+    let day_label = match day_offset {
+        0 => {
+            if english_hint {
+                "today".to_string()
+            } else {
+                "heute".to_string()
+            }
+        }
+        1 => {
+            if english_hint {
+                "tomorrow".to_string()
+            } else {
+                "morgen".to_string()
+            }
+        }
+        2 => {
+            if english_hint {
+                "the day after tomorrow".to_string()
+            } else {
+                "übermorgen".to_string()
+            }
+        }
+        n => {
+            if english_hint {
+                format!("in {n} days")
+            } else {
+                format!("in {n} Tagen")
+            }
+        }
+    };
+
+    let summary = weather_code_label(weather_code, english_hint);
+    let temp_max_round = temp_max.round() as i32;
+    let temp_min_round = temp_min.round() as i32;
+    let precip_round = precip_prob.round() as i32;
+
+    if english_hint {
+        let prefix = if using_default_location {
+            "Live weather (default location Berlin)"
+        } else {
+            "Live weather"
+        };
+        return Ok(format!(
+            "{prefix} for {location_display} {day_label}: {summary}, {temp_min_round}°C to {temp_max_round}°C, precipitation up to {precip_round}%. Source: Open-Meteo."
+        ));
+    }
+
+    let prefix = if using_default_location {
+        "Live-Wetter (Standardort Berlin)"
+    } else {
+        "Live-Wetter"
+    };
+    Ok(format!(
+        "{prefix} für {location_display} {day_label}: {summary}, {temp_min_round}°C bis {temp_max_round}°C, Niederschlag bis {precip_round}%. Quelle: Open-Meteo."
+    ))
+}
+
+fn unknown_rule_reply(command_text: &str, online_enabled: bool) -> String {
+    let normalized = command_text.to_lowercase();
+    let english_hint = weather_query_english_hint(&normalized);
+    let weather_like = weather_query_like(&normalized);
     if weather_like {
         if online_enabled {
-            if english_hint {
-                return "Online mode is enabled, but live web lookup tools are not configured yet. I can still provide a best-effort answer from model knowledge.".to_string();
-            }
-            return "Online-Modus ist aktiv, aber Live-Web-Lookup ist noch nicht konfiguriert. Ich kann dir trotzdem eine Best-Effort-Antwort aus Modellwissen geben.".to_string();
+            return online_weather_unavailable_reply(command_text);
         }
         if english_hint {
             return "I do not have live weather access in local mode. I can still help with plan status, session recaps, or GDD drafts from your transcripts.".to_string();
@@ -5385,6 +5788,49 @@ fn unknown_rule_reply(command_text: &str, online_enabled: bool) -> String {
 
 fn ai_provider_is_local(provider: &str) -> bool {
     matches!(provider, "ollama" | "lm_studio" | "oobabooga")
+}
+
+#[cfg(test)]
+mod online_weather_tests {
+    use super::{
+        extract_weather_location_hint, online_weather_unavailable_reply, weather_query_day_offset,
+        weather_query_like,
+    };
+
+    #[test]
+    fn weather_query_keywords_cover_de_and_en() {
+        assert!(weather_query_like("wie wird das wetter morgen?"));
+        assert!(weather_query_like("weather forecast tomorrow"));
+        assert!(!weather_query_like("build me a gdd recap"));
+    }
+
+    #[test]
+    fn weather_day_offset_detects_relative_terms() {
+        assert_eq!(weather_query_day_offset("weather tomorrow"), 1);
+        assert_eq!(weather_query_day_offset("wetter übermorgen"), 2);
+        assert_eq!(weather_query_day_offset("weather today"), 0);
+    }
+
+    #[test]
+    fn weather_location_hint_extracts_city_after_markers() {
+        assert_eq!(
+            extract_weather_location_hint("Wie wird das Wetter morgen in Berlin?"),
+            Some("Berlin".to_string())
+        );
+        assert_eq!(
+            extract_weather_location_hint("weather forecast for New York tomorrow"),
+            Some("New York".to_string())
+        );
+    }
+
+    #[test]
+    fn weather_unavailable_reply_is_localized() {
+        let de = online_weather_unavailable_reply("wie wird das wetter?");
+        assert!(de.contains("Live-Wetterabfrage"));
+
+        let en = online_weather_unavailable_reply("weather tomorrow please");
+        assert!(en.contains("Online weather lookup"));
+    }
 }
 
 #[tauri::command]
@@ -5414,6 +5860,26 @@ fn agent_compose_unknown_reply(
 
         let workflow_cfg = &settings_snapshot.workflow_agent;
         let online_enabled = workflow_cfg.online_enabled;
+        let weather_like = weather_query_like(&command_text.to_lowercase());
+        if weather_like && online_enabled {
+            match fetch_live_weather_reply(command_text) {
+                Ok(text) => {
+                    return Ok(AgentComposeReplyResult {
+                        text,
+                        source: "weather_api".to_string(),
+                        reason_code: "weather_api_success".to_string(),
+                    });
+                }
+                Err(error) => {
+                    warn!("weather_api_error: {}", error);
+                    return Ok(AgentComposeReplyResult {
+                        text: online_weather_unavailable_reply(command_text),
+                        source: "rule".to_string(),
+                        reason_code: "weather_api_error".to_string(),
+                    });
+                }
+            }
+        }
         if workflow_cfg.reply_mode != "hybrid_local_llm" {
             return Ok(AgentComposeReplyResult {
                 text: unknown_rule_reply(command_text, online_enabled),
@@ -6781,6 +7247,44 @@ fn is_tts_output_device_unavailable_error(error: &str) -> bool {
         .contains("[tts_output_device_unavailable]")
 }
 
+#[allow(dead_code)]
+fn tts_playback_control_snapshot(
+    state: &AppState,
+) -> Option<std::sync::Arc<crate::multimodal_io::TtsPlaybackControl>> {
+    state
+        .tts_playback_control
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+fn replace_tts_playback_control(
+    state: &AppState,
+    control: Option<std::sync::Arc<crate::multimodal_io::TtsPlaybackControl>>,
+) -> Option<std::sync::Arc<crate::multimodal_io::TtsPlaybackControl>> {
+    let mut guard = state
+        .tts_playback_control
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let previous = guard.take();
+    *guard = control;
+    previous
+}
+
+fn clear_tts_playback_control_if_session(state: &AppState, session_id: u64) -> bool {
+    let mut guard = state
+        .tts_playback_control
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match guard.as_ref() {
+        Some(control) if control.session_id == session_id => {
+            *guard = None;
+            true
+        }
+        _ => false,
+    }
+}
+
 fn speak_tts_internal(
     app: &AppHandle,
     state: &AppState,
@@ -6830,11 +7334,25 @@ fn speak_tts_internal(
         .unwrap_or(voice_settings.volume)
         .clamp(0.0, 1.0);
     let piper_gain_db = voice_settings.piper_gain_db.clamp(-24.0, 6.0);
+    let session_id = state
+        .tts_session_counter
+        .fetch_add(1, Ordering::AcqRel)
+        .saturating_add(1);
+    let playback_control = std::sync::Arc::new(crate::multimodal_io::TtsPlaybackControl::new(
+        session_id,
+    ));
+    if let Some(previous) =
+        replace_tts_playback_control(state, Some(std::sync::Arc::clone(&playback_control)))
+    {
+        previous.cancel();
+    }
 
     state.tts_speaking.store(true, Ordering::Release);
+    let _ = crate::overlay::update_overlay_tts_stop_visibility(app, true);
     let _ = app.emit(
         "tts:speech-started",
         serde_json::json!({
+            "session_id": session_id,
             "provider": preferred_provider.clone(),
             "text_len": text.len(),
             "context": context.clone(),
@@ -6859,12 +7377,17 @@ fn speak_tts_internal(
     let preferred_provider_for_thread = preferred_provider.clone();
     let fallback_provider_for_thread = fallback_provider.clone();
     let context_for_thread = context.clone();
+    let playback_control_for_thread = std::sync::Arc::clone(&playback_control);
     let app_c = app.clone();
     crate::util::spawn_guarded("tts_playback", move || {
         let run_chain = |selected_output_device: &str| {
+            if playback_control_for_thread.is_cancelled() {
+                return Err("[tts_playback_cancelled] TTS request cancelled.".to_string());
+            }
             crate::multimodal_io::execute_tts_with_fallback(
                 &preferred_provider_for_thread,
                 &fallback_provider_for_thread,
+                Some(std::sync::Arc::clone(&playback_control_for_thread)),
                 |provider| match provider {
                     "windows_native" => {
                         let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
@@ -6886,6 +7409,7 @@ fn speak_tts_internal(
                             volume,
                             selected_output_device,
                             resolved_voice.as_deref(),
+                            Some(std::sync::Arc::clone(&playback_control_for_thread)),
                         )
                     }
                     "windows_natural" => {
@@ -6908,6 +7432,7 @@ fn speak_tts_internal(
                             volume,
                             selected_output_device,
                             resolved_voice.as_deref(),
+                            Some(std::sync::Arc::clone(&playback_control_for_thread)),
                         )
                     }
                     "local_custom" => crate::multimodal_io::speak_piper(
@@ -6918,6 +7443,7 @@ fn speak_tts_internal(
                         rate,
                         piper_effective_volume(volume, piper_gain_db),
                         selected_output_device,
+                        Some(std::sync::Arc::clone(&playback_control_for_thread)),
                     ),
                     "qwen3_tts" => speak_qwen3_tts(
                         &text,
@@ -6925,6 +7451,7 @@ fn speak_tts_internal(
                         volume,
                         selected_output_device,
                         &qwen3_runtime_config,
+                        Some(std::sync::Arc::clone(&playback_control_for_thread)),
                     ),
                     _ => Err(format!("Unknown TTS provider '{}'.", provider)),
                 },
@@ -6957,7 +7484,21 @@ fn speak_tts_internal(
         };
 
         let state = app_c.state::<AppState>();
+        if playback_control_for_thread.is_cancelled() {
+            if clear_tts_playback_control_if_session(&state, session_id) {
+                state.tts_speaking.store(false, Ordering::Release);
+                let _ = crate::overlay::update_overlay_tts_stop_visibility(&app_c, false);
+            }
+            return;
+        }
+
+        let is_current_session = clear_tts_playback_control_if_session(&state, session_id);
+        if !is_current_session {
+            return;
+        }
+
         state.tts_speaking.store(false, Ordering::Release);
+        let _ = crate::overlay::update_overlay_tts_stop_visibility(&app_c, false);
         match result {
             Ok(outcome) => {
                 if recovered_output_device {
@@ -6978,6 +7519,7 @@ fn speak_tts_internal(
                 let _ = app_c.emit(
                     "tts:speech-finished",
                     serde_json::json!({
+                        "session_id": session_id,
                         "provider_used": outcome.provider_used,
                         "preferred_provider": preferred_provider_for_thread,
                         "fallback_provider": fallback_provider_for_thread,
@@ -6993,6 +7535,7 @@ fn speak_tts_internal(
                 let _ = app_c.emit(
                     "tts:speech-error",
                     serde_json::json!({
+                        "session_id": session_id,
                         "provider": preferred_provider_for_thread.clone(),
                         "preferred_provider": preferred_provider_for_thread.clone(),
                         "fallback_provider": fallback_provider_for_thread.clone(),
@@ -7042,10 +7585,25 @@ fn stop_tts(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> 
 }
 
 fn stop_tts_internal(app: &AppHandle, state: &AppState) -> bool {
-    let was_speaking = state.tts_speaking.swap(false, Ordering::AcqRel);
+    let active_control = {
+        let mut guard = state
+            .tts_playback_control
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.take()
+    };
+    if let Some(control) = active_control.as_ref() {
+        control.cancel();
+    }
+    let was_speaking = state.tts_speaking.swap(false, Ordering::AcqRel) || active_control.is_some();
+    if !was_speaking {
+        return false;
+    }
+    let _ = crate::overlay::update_overlay_tts_stop_visibility(app, false);
     let _ = app.emit(
         "tts:speech-finished",
         serde_json::json!({
+            "session_id": active_control.as_ref().map(|control| control.session_id),
             "stopped": was_speaking,
             "timestamp_ms": crate::util::now_ms(),
         }),
@@ -7091,6 +7649,9 @@ fn test_tts_provider(
         let windows_voice_id_fallback = voice_settings.voice_id_windows_fallback.clone();
         let auto_voice_by_language_enabled = voice_settings.auto_voice_by_detected_language;
         let sample_text = "Trisper Flow voice output test.";
+        let playback_control = std::sync::Arc::new(crate::multimodal_io::TtsPlaybackControl::new(
+            crate::util::now_ms(),
+        ));
         let auto_voice_language_hint = if auto_voice_by_language_enabled {
             infer_tts_language_hint(sample_text, &language_mode, language_pinned)
         } else {
@@ -7101,6 +7662,7 @@ fn test_tts_provider(
             crate::multimodal_io::execute_tts_with_fallback(
                 &preferred_provider,
                 &fallback_provider,
+                Some(std::sync::Arc::clone(&playback_control)),
                 |lane| match lane {
                     "windows_native" => {
                         let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
@@ -7122,6 +7684,7 @@ fn test_tts_provider(
                             volume,
                             selected_output_device,
                             resolved_voice.as_deref(),
+                            None,
                         )
                     }
                     "windows_natural" => {
@@ -7144,6 +7707,7 @@ fn test_tts_provider(
                             volume,
                             selected_output_device,
                             resolved_voice.as_deref(),
+                            None,
                         )
                     }
                     "local_custom" => crate::multimodal_io::speak_piper(
@@ -7154,6 +7718,7 @@ fn test_tts_provider(
                         rate,
                         piper_effective_volume(volume, piper_gain_db),
                         selected_output_device,
+                        None,
                     ),
                     "qwen3_tts" => speak_qwen3_tts(
                         sample_text,
@@ -7161,6 +7726,7 @@ fn test_tts_provider(
                         volume,
                         selected_output_device,
                         &qwen3_runtime_config,
+                        None,
                     ),
                     _ => Err(format!("Unknown TTS provider '{}'.", lane)),
                 },
@@ -9237,6 +9803,9 @@ fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
         refining_indicator_color: settings.overlay_refining_indicator_color.clone(),
         refining_indicator_speed_ms: settings.overlay_refining_indicator_speed_ms,
         refining_indicator_range: settings.overlay_refining_indicator_range as f64,
+        tts_stop_enabled: settings.overlay_tts_stop_enabled,
+        tts_stop_shape: settings.overlay_tts_stop_shape.clone(),
+        tts_stop_color: settings.overlay_tts_stop_color.clone(),
         kitt_min_width: settings.overlay_kitt_min_width as f64,
         kitt_max_width: settings.overlay_kitt_max_width as f64,
         kitt_height: settings.overlay_kitt_height as f64,
@@ -10272,6 +10841,8 @@ pub fn run() {
                 frontend_watchdog_state: Mutex::new(state::FrontendWatchdogState::default()),
                 assistant_orchestrator: Mutex::new(state::AssistantOrchestratorStatus::default()),
                 tts_speaking: AtomicBool::new(false),
+                tts_session_counter: AtomicU64::new(0),
+                tts_playback_control: Mutex::new(None),
                 piper_daemon: crate::multimodal_io::PiperDaemonState::default(),
                 #[cfg(target_os = "windows")]
                 system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),

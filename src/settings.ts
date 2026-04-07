@@ -2,10 +2,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { overlayHealth, outputDevices, runtimeDiagnostics, settings, startupStatus } from "./state";
 import * as dom from "./dom-refs";
-import { thresholdToDb, VAD_DB_FLOOR } from "./ui-helpers";
+import { thresholdToDb, VAD_DB_FLOOR, formatBytes } from "./ui-helpers";
 import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "./utils";
 import { renderVocabulary } from "./event-listeners";
+import { renderVocabCandidatesStatus, renderVocabSuggestionBanner } from "./vocab-suggestion-ui";
 import { DEFAULT_TOPICS, setTopicKeywords, type TopicKeywords } from "./history";
+import { formatHotkeyForDisplay } from "./ui-helpers";
 import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
 import {
   getOllamaRuntimeCardState,
@@ -788,7 +790,7 @@ export function renderAIFallbackSettingsUi() {
     );
   });
   const ai = settings.ai_fallback;
-  settings.providers.ollama.runtime_target_version ??= "0.17.7";
+  settings.providers.ollama.runtime_target_version ??= "0.20.2";
   ai.prompt_profile = normalizeRefinementPromptPreset(ai.prompt_profile);
   ai.prompt_presets = normalizeUserRefinementPromptPresets(ai.prompt_presets);
   ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
@@ -1010,7 +1012,7 @@ export function renderAIFallbackSettingsUi() {
   }
   if (dom.aiFallbackLocalRuntimeVersion) {
     const selectedVersion =
-      settings.providers.ollama.runtime_target_version?.trim() || runtimeCardState.version || "0.17.7";
+      settings.providers.ollama.runtime_target_version?.trim() || runtimeCardState.version || "0.20.2";
     const optionPool = [...runtimeVersionOptions];
     const appendIfMissing = (version: string) => {
       if (!version) return;
@@ -1020,7 +1022,7 @@ export function renderAIFallbackSettingsUi() {
         source: "online",
         selected: version === selectedVersion,
         installed: version === runtimeCardState.version,
-        recommended: version === "0.17.7",
+        recommended: version === "0.20.2",
         installable: false,
         installable_reason:
           "This version is not in the verified installable runtime catalog.",
@@ -1058,7 +1060,7 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackLocalRuntimeVersion.disabled = runtimeCardState.busy;
   }
   if (dom.aiFallbackLocalRuntimeVersionNote) {
-    const selected = settings.providers.ollama.runtime_target_version || "0.17.7";
+    const selected = settings.providers.ollama.runtime_target_version || "0.20.2";
     dom.aiFallbackLocalRuntimeVersionNote.textContent = "";
     const lead = document.createElement("span");
     lead.textContent = `Selected target ${selected}. `;
@@ -1259,7 +1261,8 @@ export function renderAIFallbackSettingsUi() {
     promptProfile,
     effectiveLanguageHint,
     ai?.custom_prompt,
-    Boolean(ai?.preserve_source_language ?? true)
+    Boolean(ai?.preserve_source_language ?? true),
+    ai?.model
   );
   const isCustomPrompt = activePromptPresetId === "custom";
   const isUserPrompt = Boolean(selectedUserPromptPreset);
@@ -1327,13 +1330,29 @@ function renderProductModeSettings(): void {
   if (!settings) return;
   const productMode = settings.product_mode === "assistant" ? "assistant" : "transcribe";
   settings.product_mode = productMode;
-  if (dom.productModeSelect) {
-    dom.productModeSelect.value = productMode;
+  const transcribeActive = productMode === "transcribe";
+  const assistantActive = productMode === "assistant";
+  if (dom.productModeTranscribeBtn) {
+    dom.productModeTranscribeBtn.classList.toggle("is-active", transcribeActive);
+    dom.productModeTranscribeBtn.setAttribute("aria-pressed", transcribeActive ? "true" : "false");
   }
-  if (dom.productModeHint) {
-    dom.productModeHint.textContent = productMode === "assistant"
-      ? "Assistant mode active: planning states + voice confirmations."
-      : "Transcribe mode active: wakeword commands auto-route to Agent.";
+  if (dom.productModeAssistantBtn) {
+    dom.productModeAssistantBtn.classList.toggle("is-active", assistantActive);
+    dom.productModeAssistantBtn.setAttribute("aria-pressed", assistantActive ? "true" : "false");
+  }
+  dom.globalOnlineControl?.toggleAttribute("hidden", productMode !== "assistant");
+}
+
+function renderGlobalOnlineModeSettings(): void {
+  if (!settings) return;
+  const onlineEnabled = Boolean(settings.workflow_agent?.online_enabled);
+  if (dom.globalOnlineOfflineBtn) {
+    dom.globalOnlineOfflineBtn.classList.toggle("is-active", !onlineEnabled);
+    dom.globalOnlineOfflineBtn.setAttribute("aria-pressed", onlineEnabled ? "false" : "true");
+  }
+  if (dom.globalOnlineEnabledBtn) {
+    dom.globalOnlineEnabledBtn.classList.toggle("is-active", onlineEnabled);
+    dom.globalOnlineEnabledBtn.setAttribute("aria-pressed", onlineEnabled ? "true" : "false");
   }
 }
 
@@ -1344,11 +1363,12 @@ export function renderSettings() {
   syncDerivedLanguageSettings();
   applyOverlayDimensionSliderBounds();
   renderProductModeSettings();
+  renderGlobalOnlineModeSettings();
   if (dom.captureEnabledToggle) dom.captureEnabledToggle.checked = settings.capture_enabled;
   if (dom.transcribeEnabledToggle) dom.transcribeEnabledToggle.checked = settings.transcribe_enabled;
   if (dom.modeSelect) dom.modeSelect.value = settings.mode;
-  if (dom.pttHotkey) dom.pttHotkey.value = settings.hotkey_ptt;
-  if (dom.toggleHotkey) dom.toggleHotkey.value = settings.hotkey_toggle;
+  if (dom.pttHotkey) dom.pttHotkey.value = formatHotkeyForDisplay(settings.hotkey_ptt);
+  if (dom.toggleHotkey) dom.toggleHotkey.value = formatHotkeyForDisplay(settings.hotkey_toggle);
   syncCaptureModeVisibility(settings.mode, settings.ptt_use_vad);
   if (dom.deviceSelect) dom.deviceSelect.value = settings.input_device;
   if (dom.languageSelect) dom.languageSelect.value = settings.language_mode;
@@ -1391,10 +1411,13 @@ export function renderSettings() {
   if (dom.vadThresholdValue) dom.vadThresholdValue.textContent = `${Math.round(vadThresholdDb)} dB`;
   if (dom.vadSilence) dom.vadSilence.value = settings.vad_silence_ms.toString();
   if (dom.vadSilenceValue) dom.vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
-  if (dom.transcribeHotkey) dom.transcribeHotkey.value = settings.transcribe_hotkey;
-  if (dom.toggleActivationWordsHotkey) dom.toggleActivationWordsHotkey.value = settings.hotkey_toggle_activation_words;
+  if (dom.transcribeHotkey) dom.transcribeHotkey.value = formatHotkeyForDisplay(settings.transcribe_hotkey);
+  if (dom.toggleActivationWordsHotkey) dom.toggleActivationWordsHotkey.value = formatHotkeyForDisplay(settings.hotkey_toggle_activation_words);
   if (dom.productModeHotkey) {
-    dom.productModeHotkey.value = settings.hotkey_product_mode_toggle || "CommandOrControl+Shift+P";
+    dom.productModeHotkey.value = formatHotkeyForDisplay(settings.hotkey_product_mode_toggle || "CommandOrControl+Shift+P");
+  }
+  if (dom.ttsStopHotkey) {
+    dom.ttsStopHotkey.value = formatHotkeyForDisplay(settings.hotkey_tts_stop || "CommandOrControl+Shift+F12");
   }
   if (dom.transcribeDeviceSelect) {
     dom.transcribeDeviceSelect.value = settings.transcribe_output_device;
@@ -1503,6 +1526,11 @@ export function renderSettings() {
   settings.overlay_refining_indicator_range = normalizeRefiningIndicatorRange(
     settings.overlay_refining_indicator_range
   );
+  settings.overlay_tts_stop_shape = settings.overlay_tts_stop_shape === "round" ? "round" : "compact";
+  settings.overlay_tts_stop_color = normalizeColorHex(
+    settings.overlay_tts_stop_color,
+    DEFAULT_ACCENT_COLOR
+  );
   if (dom.overlayRefiningIndicatorColor) {
     dom.overlayRefiningIndicatorColor.value = settings.overlay_refining_indicator_color;
   }
@@ -1517,6 +1545,15 @@ export function renderSettings() {
   }
   if (dom.overlayRefiningIndicatorRangeValue) {
     dom.overlayRefiningIndicatorRangeValue.textContent = `${settings.overlay_refining_indicator_range}%`;
+  }
+  if (dom.overlayTtsStopEnabled) {
+    dom.overlayTtsStopEnabled.checked = Boolean(settings.overlay_tts_stop_enabled);
+  }
+  if (dom.overlayTtsStopShape) {
+    dom.overlayTtsStopShape.value = settings.overlay_tts_stop_shape;
+  }
+  if (dom.overlayTtsStopColor) {
+    dom.overlayTtsStopColor.value = settings.overlay_tts_stop_color;
   }
   updateOverlayStyleVisibility(overlayStyleValue);
   applyOverlaySharedUi(overlayStyleValue);
@@ -1669,6 +1706,25 @@ export function renderSettings() {
   }
   renderVocabulary();
 
+  // Vocabulary Learning settings
+  if (dom.vocabLearningConfig) {
+    dom.vocabLearningConfig.style.display = dom.postprocCustomVocabEnabled?.checked ? "flex" : "none";
+  }
+  if (dom.vocabLearningEnabled) {
+    dom.vocabLearningEnabled.checked = settings.vocab_learning_enabled ?? true;
+  }
+  if (dom.vocabLearningSettings) {
+    dom.vocabLearningSettings.style.display = (settings.vocab_learning_enabled ?? true) ? "flex" : "none";
+  }
+  if (dom.vocabAutoAdd) {
+    dom.vocabAutoAdd.checked = settings.vocab_auto_add ?? false;
+  }
+  if (dom.vocabThreshold) {
+    dom.vocabThreshold.value = String(settings.vocab_suggestion_threshold ?? 3);
+  }
+  renderVocabCandidatesStatus();
+  renderVocabSuggestionBanner();
+
   renderAIRefinementTab();
   renderVoiceOutputSettings();
 }
@@ -1764,18 +1820,6 @@ function normalizePiperGainDb(value: number | null | undefined): number {
   return Math.max(-24, Math.min(6, Math.round(parsed)));
 }
 
-function formatBytes(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let size = value;
-  let unitIndex = 0;
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex += 1;
-  }
-  const digits = size >= 100 ? 0 : size >= 10 ? 1 : 2;
-  return `${size.toFixed(digits)} ${units[unitIndex]}`;
-}
 
 function isAnyPiperProviderActive(): boolean {
   if (!settings?.voice_output_settings) return false;

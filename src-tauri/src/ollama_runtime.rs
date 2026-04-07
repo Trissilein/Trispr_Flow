@@ -34,7 +34,7 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-const DEFAULT_RUNTIME_VERSION: &str = "0.17.7";
+const DEFAULT_RUNTIME_VERSION: &str = "0.20.2";
 const GITHUB_RELEASES_API: &str = "https://api.github.com/repos/ollama/ollama/releases";
 const BACKGROUND_IO_THROTTLE_BYTES: u64 = 16 * 1024 * 1024;
 const BACKGROUND_IO_THROTTLE_SLEEP_MS: u64 = 2;
@@ -53,7 +53,12 @@ struct RuntimeManifestResolved {
     sha256: String,
 }
 
-const WINDOWS_MANIFESTS: [RuntimeManifest; 2] = [
+const WINDOWS_MANIFESTS: [RuntimeManifest; 3] = [
+    RuntimeManifest {
+        version: "0.20.2",
+        url: "https://github.com/ollama/ollama/releases/download/v0.20.2/ollama-windows-amd64.zip",
+        sha256: "f26ead8baa55e919828ffe88cddf3e588444891e43e19a059f1d6c933fb1a5b6",
+    },
     RuntimeManifest {
         version: "0.17.7",
         url: "https://github.com/ollama/ollama/releases/download/v0.17.7/ollama-windows-amd64.zip",

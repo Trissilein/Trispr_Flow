@@ -183,13 +183,13 @@ export function renderModels() {
           quantSelect.className = "model-quant-select";
           const quantChoice = selectedQuantByModel.get(model.id) ?? "q8_0";
           quantSelect.innerHTML = `
-            <option value="q8_0">Q8_0 (recommended)</option>
-            <option value="q5_0">Q5_0 (low VRAM)</option>
+            <option value="q8_0">Q8_0 — Recommended (~25% smaller, minimal quality loss)</option>
+            <option value="q5_0">Q5_0 — Compact (~50% smaller, for low VRAM)</option>
           `;
           quantSelect.value = quantChoice;
           const isOptimizing = optimizingModels.has(model.id) || Boolean(quantizeState);
           quantSelect.disabled = isOptimizing;
-          quantSelect.title = "Quantization target used by Optimize (Q8 recommended; Q5 for low VRAM)";
+          quantSelect.title = "Quantization level for Optimize — Q8_0 recommended, Q5_0 for low-end hardware";
           quantSelect.addEventListener("click", (event) => {
             event.stopPropagation();
           });

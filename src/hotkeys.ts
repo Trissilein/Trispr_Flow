@@ -5,10 +5,14 @@ import { listen } from "@tauri-apps/api/event";
 import type { ValidationResult } from "./types";
 import { settings } from "./state";
 import { persistSettings } from "./settings";
+import { formatHotkeyForDisplay } from "./ui-helpers";
 
 // Map event.code → tauri-compatible key name for layout-independent recognition
 const CODE_TO_KEY: Record<string, string> = {
-  IntlBackslash: "IntlBackslash", // < > on DE layout
+  // Punctuation / symbol keys
+  IntlBackslash: "IntlBackslash", // < > on DE/ISO layout (next to left Shift)
+  IntlRo: "IntlRo",               // JIS Ro key
+  IntlYen: "IntlYen",             // JIS Yen key
   BracketLeft: "BracketLeft",
   BracketRight: "BracketRight",
   Semicolon: "Semicolon",
@@ -20,6 +24,7 @@ const CODE_TO_KEY: Record<string, string> = {
   Slash: "Slash",
   Comma: "Comma",
   Period: "Period",
+  // Navigation / editing
   Space: "Space",
   Enter: "Enter",
   Escape: "Escape",
@@ -35,6 +40,37 @@ const CODE_TO_KEY: Record<string, string> = {
   ArrowDown: "ArrowDown",
   ArrowLeft: "ArrowLeft",
   ArrowRight: "ArrowRight",
+  // Lock / system keys
+  CapsLock: "CapsLock",
+  NumLock: "NumLock",
+  ScrollLock: "ScrollLock",
+  Pause: "Pause",
+  PrintScreen: "PrintScreen",
+  // Numpad
+  Numpad0: "Numpad0",
+  Numpad1: "Numpad1",
+  Numpad2: "Numpad2",
+  Numpad3: "Numpad3",
+  Numpad4: "Numpad4",
+  Numpad5: "Numpad5",
+  Numpad6: "Numpad6",
+  Numpad7: "Numpad7",
+  Numpad8: "Numpad8",
+  Numpad9: "Numpad9",
+  NumpadAdd: "NumpadAdd",
+  NumpadDecimal: "NumpadDecimal",
+  NumpadDivide: "NumpadDivide",
+  NumpadEnter: "NumpadEnter",
+  NumpadMultiply: "NumpadMultiply",
+  NumpadSubtract: "NumpadSubtract",
+  // Media keys
+  MediaPlayPause: "MediaPlayPause",
+  MediaStop: "MediaStop",
+  MediaTrackNext: "MediaTrackNext",
+  MediaTrackPrevious: "MediaTrackPrevious",
+  AudioVolumeUp: "AudioVolumeUp",
+  AudioVolumeDown: "AudioVolumeDown",
+  AudioVolumeMute: "AudioVolumeMute",
 };
 
 // Track registration status per hotkey type
@@ -54,13 +90,13 @@ export function initHotkeyStatusListener(): void {
         const badge = document.querySelector(`.hotkey-reg-badge[data-hotkey-type="${type}"]`);
         if (badge) {
           if (!status.registered && status.error) {
-            badge.textContent = "⚠ Belegt";
+            badge.textContent = "⚠ Conflict";
             badge.className = "hotkey-reg-badge conflict";
             badge.setAttribute("title", status.error);
           } else {
             badge.textContent = "✓";
             badge.className = "hotkey-reg-badge ok";
-            badge.setAttribute("title", "Hotkey registriert");
+            badge.setAttribute("title", "Hotkey registered");
           }
         }
       }
@@ -73,7 +109,7 @@ export function getHotkeyRegistrationStatus(type: string): { registered: boolean
 }
 
 export function setupHotkeyRecorder(
-  type: "ptt" | "toggle" | "transcribe" | "toggleActivationWords" | "productModeToggle",
+  type: "ptt" | "toggle" | "transcribe" | "toggleActivationWords" | "productModeToggle" | "ttsStop",
   input: HTMLInputElement | null,
   recordBtn: HTMLButtonElement | null,
   statusEl: HTMLSpanElement | null
@@ -141,12 +177,14 @@ export function setupHotkeyRecorder(
     if (!isModifier) {
       let keyName: string;
 
-      // Check code-to-key mapping first (handles special/punctuation keys)
+      // Check code-to-key mapping first (handles special/punctuation keys like IntlBackslash)
       if (CODE_TO_KEY[e.code]) {
         keyName = CODE_TO_KEY[e.code];
       } else if (e.code.startsWith("Key")) {
-        // KeyA → A, KeyZ → Z
-        keyName = e.code.slice(3);
+        // Use event.key for letter keys so DE layout (Z/Y swap) is respected.
+        // e.key gives the actual character the user typed, e.g. "z" on DE when
+        // the physical key is where US-Y is. parse_key() accepts single letters.
+        keyName = e.key.length === 1 ? e.key.toUpperCase() : e.code.slice(3);
       } else if (e.code.startsWith("Digit")) {
         // Digit0 → 0, Digit9 → 9
         keyName = e.code.slice(5);
@@ -162,10 +200,10 @@ export function setupHotkeyRecorder(
       recordedKeys.add(keyName);
     }
 
-    // Display current combination
+    // Display current combination with human-readable labels
     const keysArray = Array.from(recordedKeys);
     const hotkeyString = keysArray.join("+");
-    input.value = hotkeyString;
+    input.value = formatHotkeyForDisplay(hotkeyString);
   };
 
   const finalizeHotkey = async () => {
@@ -192,6 +230,8 @@ export function setupHotkeyRecorder(
         settings.hotkey_toggle_activation_words = hotkeyString;
       } else if (type === "productModeToggle") {
         settings.hotkey_product_mode_toggle = hotkeyString;
+      } else if (type === "ttsStop") {
+        settings.hotkey_tts_stop = hotkeyString;
       }
       await persistSettings();
     }

@@ -56,6 +56,14 @@ fn default_accent_color() -> String {
     "#4be0d4".to_string()
 }
 
+fn default_vocab_learning_enabled() -> bool {
+    true
+}
+
+fn default_vocab_suggestion_threshold() -> u8 {
+    3
+}
+
 fn default_overlay_refining_indicator_enabled() -> bool {
     true
 }
@@ -74,6 +82,22 @@ fn default_overlay_refining_indicator_speed_ms() -> u64 {
 
 fn default_overlay_refining_indicator_range() -> f32 {
     100.0
+}
+
+fn default_hotkey_tts_stop() -> String {
+    "CommandOrControl+Shift+F12".to_string()
+}
+
+fn default_overlay_tts_stop_enabled() -> bool {
+    true
+}
+
+fn default_overlay_tts_stop_shape() -> String {
+    "compact".to_string()
+}
+
+fn default_overlay_tts_stop_color() -> String {
+    default_accent_color()
 }
 
 fn default_history_alias_mic() -> String {
@@ -268,6 +292,8 @@ pub(crate) struct Settings {
     pub(crate) product_mode: String,
     pub(crate) hotkey_ptt: String,
     pub(crate) hotkey_toggle: String,
+    #[serde(default = "default_hotkey_tts_stop")]
+    pub(crate) hotkey_tts_stop: String,
     pub(crate) input_device: String,
     pub(crate) language_mode: String,
     pub(crate) language_pinned: bool,
@@ -344,6 +370,12 @@ pub(crate) struct Settings {
     pub(crate) overlay_refining_indicator_speed_ms: u64,
     #[serde(default = "default_overlay_refining_indicator_range")]
     pub(crate) overlay_refining_indicator_range: f32,
+    #[serde(default = "default_overlay_tts_stop_enabled")]
+    pub(crate) overlay_tts_stop_enabled: bool,
+    #[serde(default = "default_overlay_tts_stop_shape")]
+    pub(crate) overlay_tts_stop_shape: String,
+    #[serde(default = "default_overlay_tts_stop_color")]
+    pub(crate) overlay_tts_stop_color: String,
     pub(crate) overlay_kitt_min_width: f32,
     pub(crate) overlay_kitt_max_width: f32,
     pub(crate) overlay_kitt_height: f32,
@@ -364,6 +396,12 @@ pub(crate) struct Settings {
     pub(crate) postproc_numbers_enabled: bool,
     pub(crate) postproc_custom_vocab_enabled: bool,
     pub(crate) postproc_custom_vocab: HashMap<String, String>,
+    #[serde(default = "default_vocab_learning_enabled")]
+    pub(crate) vocab_learning_enabled: bool,
+    #[serde(default)]
+    pub(crate) vocab_auto_add: bool,
+    #[serde(default = "default_vocab_suggestion_threshold")]
+    pub(crate) vocab_suggestion_threshold: u8,
     pub(crate) postproc_llm_enabled: bool,
     pub(crate) postproc_llm_provider: String,
     #[serde(skip_serializing)]
@@ -420,6 +458,7 @@ impl Default for Settings {
       product_mode: default_product_mode(),
       hotkey_ptt: "CommandOrControl+Shift+Space".to_string(),
       hotkey_toggle: "CommandOrControl+Shift+M".to_string(),
+      hotkey_tts_stop: default_hotkey_tts_stop(),
       input_device: "default".to_string(),
       language_mode: "auto".to_string(),
       language_pinned: false,
@@ -483,6 +522,9 @@ impl Default for Settings {
       overlay_refining_indicator_color: "#6ec8ff".to_string(),
       overlay_refining_indicator_speed_ms: 1_150,
       overlay_refining_indicator_range: 100.0,
+      overlay_tts_stop_enabled: default_overlay_tts_stop_enabled(),
+      overlay_tts_stop_shape: default_overlay_tts_stop_shape(),
+      overlay_tts_stop_color: default_overlay_tts_stop_color(),
       overlay_kitt_min_width: 20.0,
       overlay_kitt_max_width: 700.0,
       overlay_kitt_height: 13.0,
@@ -501,6 +543,9 @@ impl Default for Settings {
       postproc_numbers_enabled: true,
       postproc_custom_vocab_enabled: false,
       postproc_custom_vocab: HashMap::new(),
+      vocab_learning_enabled: true,
+      vocab_auto_add: false,
+      vocab_suggestion_threshold: 3,
       postproc_llm_enabled: false,
       postproc_llm_provider: "ollama".to_string(),
       postproc_llm_api_key: String::new(),
@@ -794,6 +839,8 @@ pub(crate) struct AppState {
     pub(crate) frontend_watchdog_state: Mutex<FrontendWatchdogState>,
     pub(crate) assistant_orchestrator: Mutex<AssistantOrchestratorStatus>,
     pub(crate) tts_speaking: AtomicBool,
+    pub(crate) tts_session_counter: AtomicU64,
+    pub(crate) tts_playback_control: Mutex<Option<std::sync::Arc<crate::multimodal_io::TtsPlaybackControl>>>,
     pub(crate) piper_daemon: PiperDaemonState,
     #[cfg(target_os = "windows")]
     pub(crate) system_cluster_buffer: Mutex<SystemClusterBuffer>,
@@ -1123,6 +1170,19 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             }
             if settings.overlay_refining_indicator_range > 180.0 {
                 settings.overlay_refining_indicator_range = 180.0;
+            }
+            if settings.hotkey_tts_stop.trim().is_empty() {
+                settings.hotkey_tts_stop = default_hotkey_tts_stop();
+            } else {
+                settings.hotkey_tts_stop = settings.hotkey_tts_stop.trim().to_string();
+            }
+            settings.overlay_tts_stop_shape = match settings.overlay_tts_stop_shape.trim().to_ascii_lowercase().as_str() {
+                "round" => "round".to_string(),
+                _ => "compact".to_string(),
+            };
+            settings.overlay_tts_stop_color = settings.overlay_tts_stop_color.trim().to_string();
+            if settings.overlay_tts_stop_color.is_empty() {
+                settings.overlay_tts_stop_color = default_overlay_tts_stop_color();
             }
             if !(0.0..=1.0).contains(&settings.overlay_kitt_opacity_inactive) {
                 settings.overlay_kitt_opacity_inactive = 0.2;

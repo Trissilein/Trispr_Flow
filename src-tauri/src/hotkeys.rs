@@ -16,6 +16,18 @@ pub struct ConflictInfo {
     pub conflicting_with: Vec<String>,
 }
 
+/// Keys that can be registered without a modifier (media / volume keys).
+/// Windows RegisterHotKey supports modifier-less registration for these.
+const MODIFIER_FREE_KEYS: &[&str] = &[
+    "MediaPlayPause",
+    "MediaStop",
+    "MediaTrackNext",
+    "MediaTrackPrevious",
+    "AudioVolumeUp",
+    "AudioVolumeDown",
+    "AudioVolumeMute",
+];
+
 /// Validates a hotkey string format
 pub fn validate_hotkey_format(key: &str) -> ValidationResult {
     let key = key.trim();
@@ -31,7 +43,19 @@ pub fn validate_hotkey_format(key: &str) -> ValidationResult {
     // Parse modifiers and key
     let parts: Vec<&str> = key.split('+').map(|s| s.trim()).collect();
 
-    if parts.len() < 2 {
+    // Allow modifier-free registration for media/volume keys
+    if parts.len() == 1 {
+        let single = parts[0];
+        if MODIFIER_FREE_KEYS
+            .iter()
+            .any(|k| k.eq_ignore_ascii_case(single))
+        {
+            return ValidationResult {
+                valid: true,
+                error: None,
+                formatted: Some(single.to_string()),
+            };
+        }
         return ValidationResult {
             valid: false,
             error: Some(

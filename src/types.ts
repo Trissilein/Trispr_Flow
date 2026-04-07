@@ -69,6 +69,18 @@ export interface UserRefinementPromptPreset {
   prompt: string;
 }
 
+/** A single word-substitution candidate learned from AI refinement diffs. */
+export interface VocabCandidate {
+  /** Whisper-transcribed token (incorrect form) */
+  from: string;
+  /** AI-corrected token (desired form) */
+  to: string;
+  /** Number of times this exact substitution was observed */
+  count: number;
+  /** Timestamp of the last observed occurrence (ms since epoch) */
+  last_seen_ms: number;
+}
+
 export interface ModuleDescriptor {
   id: ModuleId | string;
   name: string;
@@ -560,6 +572,7 @@ export interface Settings {
   product_mode: ProductMode;
   hotkey_ptt: string;
   hotkey_toggle: string;
+  hotkey_tts_stop: string;
   input_device: string;
   language_mode: "auto" | "en" | "de" | "fr" | "es" | "it" | "pt" | "nl" | "pl" | "ru" | "ja" | "ko" | "zh" | "ar" | "tr" | "hi";
   language_pinned: boolean;
@@ -623,6 +636,9 @@ export interface Settings {
   overlay_refining_indicator_color: string;
   overlay_refining_indicator_speed_ms: number;
   overlay_refining_indicator_range: number;
+  overlay_tts_stop_enabled: boolean;
+  overlay_tts_stop_shape: "compact" | "round" | string;
+  overlay_tts_stop_color: string;
   overlay_kitt_min_width: number;
   overlay_kitt_max_width: number;
   overlay_kitt_height: number;
@@ -638,6 +654,9 @@ export interface Settings {
   postproc_numbers_enabled: boolean;
   postproc_custom_vocab_enabled: boolean;
   postproc_custom_vocab: Record<string, string>;
+  vocab_learning_enabled: boolean;
+  vocab_auto_add: boolean;
+  vocab_suggestion_threshold: number;
   postproc_llm_enabled: boolean;
   postproc_llm_provider: string;
   postproc_llm_api_key: string;

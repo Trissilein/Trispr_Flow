@@ -58,3 +58,6 @@ tauri-plugin-single-instance = "2"
 wasapi = "0.22"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 windows = { version = "0.59", features = ["Win32_Graphics_Dxgi", "Win32_System_LibraryLoader"] }
+
+[patch.crates-io]
+global-hotkey = { path = "../vendor/global-hotkey-0.7.0" }

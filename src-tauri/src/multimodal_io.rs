@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -272,6 +272,29 @@ pub struct TtsFallbackOutcome {
     pub primary_error: Option<String>,
 }
 
+#[derive(Debug)]
+pub struct TtsPlaybackControl {
+    pub session_id: u64,
+    cancelled: AtomicBool,
+}
+
+impl TtsPlaybackControl {
+    pub fn new(session_id: u64) -> Self {
+        Self {
+            session_id,
+            cancelled: AtomicBool::new(false),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
 fn is_windows_tts_provider(provider: &str) -> bool {
     provider == "windows_native" || provider == "windows_natural"
 }
@@ -303,6 +326,7 @@ fn windows_audio_device_error_hint(primary_error: &str) -> String {
 pub fn execute_tts_with_fallback<F>(
     preferred_provider: &str,
     fallback_provider: &str,
+    playback_control: Option<Arc<TtsPlaybackControl>>,
     mut attempt: F,
 ) -> Result<TtsFallbackOutcome, String>
 where
@@ -315,6 +339,19 @@ where
             primary_error: None,
         }),
         Err(primary_error) => {
+            if primary_error
+                .to_ascii_lowercase()
+                .contains("[tts_playback_cancelled]")
+            {
+                return Err(primary_error);
+            }
+            if playback_control
+                .as_ref()
+                .map(|control| control.is_cancelled())
+                .unwrap_or(false)
+            {
+                return Err("[tts_playback_cancelled] TTS request cancelled.".to_string());
+            }
             if is_windows_audio_device_error(&primary_error)
                 && is_windows_tts_provider(preferred_provider)
                 && is_windows_tts_provider(fallback_provider)
@@ -333,6 +370,13 @@ where
                     "[tts_fallback_unavailable] Preferred provider '{}' failed: {} | Fallback '{}' is unavailable (no Natural voice installed).",
                     preferred_provider, primary_error, fallback_provider
                 ));
+            }
+            if playback_control
+                .as_ref()
+                .map(|control| control.is_cancelled())
+                .unwrap_or(false)
+            {
+                return Err("[tts_playback_cancelled] TTS request cancelled.".to_string());
             }
             match attempt(fallback_provider) {
                 Ok(()) => Ok(TtsFallbackOutcome {
@@ -1224,6 +1268,7 @@ fn speak_windows_sapi(
     natural_only: bool,
     output_device_id: &str,
     selected_voice: Option<&str>,
+    playback_control: Option<Arc<TtsPlaybackControl>>,
 ) -> Result<(), String> {
     let text = text.trim();
     if text.is_empty() {
@@ -1240,7 +1285,7 @@ fn speak_windows_sapi(
     if output_device_id != "default" {
         let wav_path =
             synthesize_windows_sapi_to_wav(text, rate, volume, natural_only, selected_voice)?;
-        let play_result = play_wav_blocking(&wav_path, volume, output_device_id);
+        let play_result = play_wav_blocking(&wav_path, volume, output_device_id, playback_control);
         let _ = std::fs::remove_file(&wav_path);
         return play_result.map_err(|play_error| {
             format!(
@@ -1249,33 +1294,10 @@ fn speak_windows_sapi(
             )
         });
     }
-    let script =
-        build_windows_sapi_speech_script(text, rate, volume, natural_only, selected_voice, false);
-    match run_hidden_powershell(&script, "Windows TTS") {
-        Ok(_) => Ok(()),
-        Err(error) => {
-            if !is_windows_audio_device_error(&error) {
-                return Err(error);
-            }
-            let hinted = windows_audio_device_error_hint(&error);
-            match synthesize_windows_sapi_to_wav(text, rate, volume, natural_only, selected_voice) {
-                Ok(wav_path) => {
-                    let play_result = play_wav_blocking(&wav_path, volume, output_device_id);
-                    let _ = std::fs::remove_file(&wav_path);
-                    play_result.map_err(|play_error| {
-                        format!(
-                            "{} | Secondary fallback (SAPI->WAV playback) failed: {}",
-                            hinted, play_error
-                        )
-                    })
-                }
-                Err(synth_error) => Err(format!(
-                    "{} | Secondary fallback (SAPI->WAV synthesis) failed: {}",
-                    hinted, synth_error
-                )),
-            }
-        }
-    }
+    let wav_path = synthesize_windows_sapi_to_wav(text, rate, volume, natural_only, selected_voice)?;
+    let play_result = play_wav_blocking(&wav_path, volume, output_device_id, playback_control);
+    let _ = std::fs::remove_file(&wav_path);
+    play_result
 }
 
 #[cfg(target_os = "windows")]
@@ -1302,8 +1324,17 @@ pub fn speak_windows_native(
     volume: f32,
     output_device_id: &str,
     selected_voice: Option<&str>,
+    playback_control: Option<Arc<TtsPlaybackControl>>,
 ) -> Result<(), String> {
-    speak_windows_sapi(text, rate, volume, false, output_device_id, selected_voice)
+    speak_windows_sapi(
+        text,
+        rate,
+        volume,
+        false,
+        output_device_id,
+        selected_voice,
+        playback_control,
+    )
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1313,6 +1344,7 @@ pub fn speak_windows_native(
     _volume: f32,
     _output_device_id: &str,
     _selected_voice: Option<&str>,
+    _playback_control: Option<Arc<TtsPlaybackControl>>,
 ) -> Result<(), String> {
     Err("Windows native TTS is only available on Windows.".to_string())
 }
@@ -1324,8 +1356,17 @@ pub fn speak_windows_natural(
     volume: f32,
     output_device_id: &str,
     selected_voice: Option<&str>,
+    playback_control: Option<Arc<TtsPlaybackControl>>,
 ) -> Result<(), String> {
-    speak_windows_sapi(text, rate, volume, true, output_device_id, selected_voice)
+    speak_windows_sapi(
+        text,
+        rate,
+        volume,
+        true,
+        output_device_id,
+        selected_voice,
+        playback_control,
+    )
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1335,6 +1376,7 @@ pub fn speak_windows_natural(
     _volume: f32,
     _output_device_id: &str,
     _selected_voice: Option<&str>,
+    _playback_control: Option<Arc<TtsPlaybackControl>>,
 ) -> Result<(), String> {
     Err("Windows natural TTS is only available on Windows.".to_string())
 }
@@ -2366,6 +2408,7 @@ fn speak_piper_via_subprocess(
     rate: f32,
     volume: f32,
     output_device_id: &str,
+    playback_control: Option<Arc<TtsPlaybackControl>>,
 ) -> Result<(), String> {
     let temp_path = std::env::temp_dir().join(format!(
         "trispr_tts_{}.wav",
@@ -2376,7 +2419,7 @@ fn speak_piper_via_subprocess(
     ));
 
     synthesize_piper_to_wav(text, binary_path, model_path, rate, &temp_path)?;
-    let play_result = play_wav_blocking(&temp_path, volume, output_device_id);
+    let play_result = play_wav_blocking(&temp_path, volume, output_device_id, playback_control);
     let _ = std::fs::remove_file(&temp_path);
     play_result
 }
@@ -2389,6 +2432,7 @@ fn speak_piper_via_daemon(
     rate: f32,
     volume: f32,
     output_device_id: &str,
+    playback_control: Option<Arc<TtsPlaybackControl>>,
 ) -> Result<(), String> {
     let config = daemon_config_from_request(binary_path, model_path, rate)?;
     let wav_path = {
@@ -2406,7 +2450,7 @@ fn speak_piper_via_daemon(
         }
     };
 
-    let play_result = play_wav_blocking(&wav_path, volume, output_device_id);
+    let play_result = play_wav_blocking(&wav_path, volume, output_device_id, playback_control);
     let _ = std::fs::remove_file(&wav_path);
     play_result
 }
@@ -2419,6 +2463,7 @@ pub fn speak_piper(
     rate: f32,
     volume: f32,
     output_device_id: &str,
+    playback_control: Option<Arc<TtsPlaybackControl>>,
 ) -> Result<(), String> {
     let mut last_daemon_error: Option<String> = None;
     for attempt in 0..=PIPER_DAEMON_RETRY_LIMIT {
@@ -2430,6 +2475,7 @@ pub fn speak_piper(
             rate,
             volume,
             output_device_id,
+            playback_control.clone(),
         ) {
             Ok(()) => return Ok(()),
             Err(error) => {
@@ -2452,6 +2498,7 @@ pub fn speak_piper(
         rate,
         volume,
         output_device_id,
+        playback_control,
     ) {
         Ok(()) => Ok(()),
         Err(legacy_error) => Err(format!(
@@ -2462,7 +2509,12 @@ pub fn speak_piper(
     }
 }
 
-pub fn play_wav_bytes(bytes: &[u8], volume: f32, output_device_id: &str) -> Result<(), String> {
+pub fn play_wav_bytes(
+    bytes: &[u8],
+    volume: f32,
+    output_device_id: &str,
+    playback_control: Option<Arc<TtsPlaybackControl>>,
+) -> Result<(), String> {
     if bytes.is_empty() {
         return Err("WAV payload is empty.".to_string());
     }
@@ -2475,7 +2527,7 @@ pub fn play_wav_bytes(bytes: &[u8], volume: f32, output_device_id: &str) -> Resu
     ));
     std::fs::write(&temp_path, bytes)
         .map_err(|error| format!("Failed to write temporary WAV file: {error}"))?;
-    let play_result = play_wav_blocking(&temp_path, volume, output_device_id);
+    let play_result = play_wav_blocking(&temp_path, volume, output_device_id, playback_control);
     let _ = std::fs::remove_file(&temp_path);
     play_result
 }
@@ -2870,10 +2922,19 @@ fn play_interleaved_samples<T: cpal::SizedSample + Copy + Send + Sync + 'static>
     samples: Vec<T>,
     silence: T,
     stream_label: &'static str,
+    playback_control: Option<Arc<TtsPlaybackControl>>,
 ) -> Result<(), String> {
     use cpal::traits::{DeviceTrait, StreamTrait};
 
     if samples.is_empty() {
+        return Ok(());
+    }
+
+    if playback_control
+        .as_ref()
+        .map(|control| control.is_cancelled())
+        .unwrap_or(false)
+    {
         return Ok(());
     }
 
@@ -2882,6 +2943,7 @@ fn play_interleaved_samples<T: cpal::SizedSample + Copy + Send + Sync + 'static>
     let sample_rate = stream_config.sample_rate.0.max(1);
 
     let samples = Arc::new(samples);
+    let playback_control = playback_control.clone();
     let position = Arc::new(AtomicUsize::new(0));
     let (done_tx, done_rx) = std::sync::mpsc::sync_channel::<()>(1);
 
@@ -2891,8 +2953,19 @@ fn play_interleaved_samples<T: cpal::SizedSample + Copy + Send + Sync + 'static>
 
     let stream = device
         .build_output_stream(
-            stream_config,
-            move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+        stream_config,
+        move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+                if playback_control
+                    .as_ref()
+                    .map(|control| control.is_cancelled())
+                    .unwrap_or(false)
+                {
+                    for out in data.iter_mut() {
+                        *out = silence;
+                    }
+                    let _ = done_tx.try_send(());
+                    return;
+                }
                 for out in data.iter_mut() {
                     let sample_index = callback_pos.fetch_add(1, Ordering::Relaxed);
                     *out = if sample_index < total_samples {
@@ -2926,6 +2999,7 @@ fn play_wav_blocking(
     path: &std::path::Path,
     volume: f32,
     output_device_id: &str,
+    playback_control: Option<Arc<TtsPlaybackControl>>,
 ) -> Result<(), String> {
     let reader = hound::WavReader::open(path).map_err(|e| format!("Cannot read WAV: {e}"))?;
     let spec = reader.spec();
@@ -2972,6 +3046,7 @@ fn play_wav_blocking(
                 prepared,
                 0.0_f32,
                 "f32",
+                playback_control.clone(),
             ),
             cpal::SampleFormat::I16 => play_interleaved_samples(
                 &device,
@@ -2979,6 +3054,7 @@ fn play_wav_blocking(
                 convert_f32_to_i16(&prepared),
                 0_i16,
                 "i16",
+                playback_control.clone(),
             ),
             cpal::SampleFormat::U16 => play_interleaved_samples(
                 &device,
@@ -2986,6 +3062,7 @@ fn play_wav_blocking(
                 convert_f32_to_u16(&prepared),
                 u16::MAX / 2,
                 "u16",
+                playback_control.clone(),
             ),
             unsupported => Err(format!(
                 "Unsupported output sample format '{}'.",
@@ -3104,7 +3181,7 @@ mod tests {
 
     #[test]
     fn tts_fallback_matrix_uses_primary_when_available() {
-        let outcome = execute_tts_with_fallback("windows_native", "local_custom", |provider| {
+        let outcome = execute_tts_with_fallback("windows_native", "local_custom", None, |provider| {
             if provider == "windows_native" {
                 Ok(())
             } else {
@@ -3120,7 +3197,7 @@ mod tests {
 
     #[test]
     fn tts_fallback_matrix_uses_fallback_when_primary_fails() {
-        let outcome = execute_tts_with_fallback("windows_native", "local_custom", |provider| {
+        let outcome = execute_tts_with_fallback("windows_native", "local_custom", None, |provider| {
             if provider == "windows_native" {
                 Err("powershell unavailable".to_string())
             } else {
@@ -3139,7 +3216,7 @@ mod tests {
 
     #[test]
     fn tts_fallback_matrix_reports_both_failures() {
-        let error = execute_tts_with_fallback("windows_native", "local_custom", |provider| {
+        let error = execute_tts_with_fallback("windows_native", "local_custom", None, |provider| {
             if provider == "windows_native" {
                 Err("primary failed".to_string())
             } else {
@@ -3155,7 +3232,7 @@ mod tests {
 
     #[test]
     fn tts_fallback_matrix_reports_missing_alternative_fallback() {
-        let error = execute_tts_with_fallback("windows_native", "windows_native", |_provider| {
+        let error = execute_tts_with_fallback("windows_native", "windows_native", None, |_provider| {
             Err("primary failed".to_string())
         })
         .expect_err("no alternative fallback configured");
@@ -3166,7 +3243,7 @@ mod tests {
 
     #[test]
     fn tts_fallback_audio_device_error_short_circuits_windows_chain() {
-        let error = execute_tts_with_fallback("windows_native", "windows_natural", |provider| {
+        let error = execute_tts_with_fallback("windows_native", "windows_natural", None, |provider| {
             if provider == "windows_native" {
                 Err("Windows TTS failed: Speak AudioException - Error Code: 0x2".to_string())
             } else {

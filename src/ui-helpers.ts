@@ -55,6 +55,73 @@ export function formatTime(timestamp: number) {
   return `${base}.${hundredths}`;
 }
 
+// Human-readable display labels for hotkey key-names that would otherwise be cryptic.
+// The stored/backend key string is unchanged; this map is only for display.
+const KEY_DISPLAY_NAMES: Record<string, string> = {
+  IntlBackslash:      "< >",
+  IntlRo:             "Ro",
+  IntlYen:            "¥",
+  Space:              "Space",
+  Enter:              "Enter",
+  Escape:             "Esc",
+  Backspace:          "Backspace",
+  Tab:                "Tab",
+  Delete:             "Del",
+  Insert:             "Ins",
+  Home:               "Home",
+  End:                "End",
+  ArrowUp:            "↑",
+  ArrowDown:          "↓",
+  ArrowLeft:          "←",
+  ArrowRight:         "→",
+  PageUp:             "PgUp",
+  PageDown:           "PgDn",
+  PrintScreen:        "PrtSc",
+  ScrollLock:         "ScrLk",
+  NumLock:            "NumLk",
+  CapsLock:           "CapsLk",
+  NumpadAdd:          "Num+",
+  NumpadSubtract:     "Num-",
+  NumpadMultiply:     "Num*",
+  NumpadDivide:       "Num/",
+  NumpadDecimal:      "Num.",
+  NumpadEnter:        "NumEnter",
+  Numpad0: "Num0", Numpad1: "Num1", Numpad2: "Num2", Numpad3: "Num3",
+  Numpad4: "Num4", Numpad5: "Num5", Numpad6: "Num6", Numpad7: "Num7",
+  Numpad8: "Num8", Numpad9: "Num9",
+  MediaPlayPause:     "⏯",
+  MediaStop:          "⏹",
+  MediaTrackNext:     "⏭",
+  MediaTrackPrevious: "⏮",
+  AudioVolumeUp:      "Vol+",
+  AudioVolumeDown:    "Vol-",
+  AudioVolumeMute:    "Mute",
+};
+
+/** Formats a stored hotkey string for human-readable display.
+ *  e.g. "Ctrl+IntlBackslash" → "Ctrl + < >"
+ *  The stored value is unchanged; this is only for UI display. */
+export function formatHotkeyForDisplay(hotkey: string): string {
+  if (!hotkey) return "";
+  return hotkey
+    .split("+")
+    .map(part => KEY_DISPLAY_NAMES[part] ?? part)
+    .join(" + ");
+}
+
+export function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const digits = size >= 100 ? 0 : size >= 10 ? 1 : 2;
+  return `${size.toFixed(digits)} ${units[unitIndex]}`;
+}
+
 export function formatSize(sizeMb: number) {
   if (sizeMb >= 1024) {
     return `${(sizeMb / 1024).toFixed(1)} GB`;

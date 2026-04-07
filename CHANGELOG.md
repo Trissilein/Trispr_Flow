@@ -9,6 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Vocabulary Learning (Block J, Tasks 44a–44b)**:
+  - Automatic detection of recurring AI corrections via LCS word-diff algorithm.
+  - Configurable threshold (1–10 repetitions, default 3) for when corrections become suggestions.
+  - Optional auto-add mode: corrections are automatically added to custom vocabulary without review.
+  - Review dialog with accept/dismiss controls for each suggestion pair.
+  - Settings UI with Enable toggle, Auto-add checkbox, Threshold input, candidate status line, and Reset button.
+  - Persistent candidate tracking via localStorage (max 200 entries).
+  - Suggestion banner in history panel when corrections reach threshold.
+- **Custom Vocabulary UI redesign**:
+  - Flattened nesting structure: moved from "Rule-Based Details" to peer section before "Topic Detection".
+  - Compact vocab table with reduced padding (7px→4px) and smaller fonts (13px→12px).
+  - Arrow separators between input columns for visual clarity.
+  - Vocabulary Learning integrated as sub-toggle within Custom Vocabulary expander (progressive disclosure).
+- **Keep-Alive duration increase**:
+  - Ollama refinement keep-alive duration increased from 20 minutes to 60 minutes default.
+  - Configurable via `TRISPR_OLLAMA_KEEP_ALIVE` environment variable.
+  - Reduces cold-start latency for refinement requests after idle periods.
+- **Hotkey system overhaul**:
+  - ISO `<`/`>` key (`IntlBackslash` / `VK_OEM_102`) is now a valid hotkey on DE/EU keyboard layouts.
+    - Implemented via a local Cargo vendor patch for `global-hotkey v0.7.0` (`vendor/global-hotkey-0.7.0/`) with no upstream fork required.
+    - Added `IntlBackslash`, `IntlRo`, `IntlYen` to `parse_key()` and `key_to_vk()` in the patched crate.
+  - Hotkey recorder now uses a hybrid `event.code` / `event.key` strategy: letter keys use `event.key` (fixes Y ↔ Z swap on DE layout), special/symbol keys use `event.code` via an explicit `CODE_TO_KEY` lookup (layout-independent).
+  - Extended recordable key surface: Numpad keys (Num0–9, NumAdd/Sub/Mul/Div/Decimal/Enter), Media keys (Play/Pause/Stop/Next/Prev), Volume keys (Up/Down/Mute), and lock/system keys (CapsLock, NumLock, ScrollLock, Pause, PrintScreen).
+  - Media/Volume keys can be bound as standalone hotkeys (no modifier required) — `validate_hotkey_format()` now permits modifier-free bindings for this key class.
+  - Hotkey inputs now display human-readable labels via `formatHotkeyForDisplay()` (e.g. `IntlBackslash` → `< >`, `ArrowUp` → `↑`, `MediaPlayPause` → `⏯`).
+  - `formatHotkeyForDisplay()` extracted to `src/ui-helpers.ts` to avoid circular imports between `hotkeys.ts` and `settings.ts`.
+- **Gemma 4 model variant matrix**:
+  - Ollama model picker now lists all useful Gemma 4 quantization variants with explicit VRAM requirements:
+    - `gemma4:e2b` — Fast Q4, ~3.2 GB VRAM
+    - `gemma4:e2b-it-q8_0` — Balanced Q8, ~4.6 GB VRAM
+    - `gemma4:e4b` — Standard Q4, ~5 GB VRAM (default recommendation)
+    - `gemma4:e4b-it-q8_0` — High Quality Q8, ~7.5 GB VRAM
+    - `gemma4:e4b-it-bf16` — Maximum BF16, ~15 GB VRAM
+  - Model cards show `size_gb · ~vram_gb VRAM` label when `vram_gb` metadata is present.
+- **Model-family-specific refinement prompts**:
+  - `resolveEffectiveRefinementPrompt()` accepts an optional `model` parameter and adapts the prompt for the detected model family.
+  - Gemma 4 (`gemma*` prefix): `wording` preset receives an explicit anglicism/brand-name preservation instruction appended after the base prompt, preventing Gemma's tendency to silently remove foreign-language terms.
+  - `detectModelFamily()` uses a simple lowercase prefix heuristic (`gemma`, `qwen`, `generic`).
+  - `llm_prompt` preset continues to bypass both language guard and model-family addons (always outputs English).
+- **Ollama download progress popup**:
+  - Download progress is now shown in a modal popup during Ollama model pulls with MB counter and percentage.
+
+### Fixed
+
+- **TTS-Stop default hotkey conflict**: Changed default from `CommandOrControl+Shift+Escape` to `CommandOrControl+Shift+F12` to avoid conflict with Windows Task Manager shortcut.
+- **Hotkey UI badge strings**: Registration status badges now use English labels ("Conflict", "Hotkey registered") consistent with the rest of the UI.
+
+### Changed
+
+- **Ollama runtime**: Updated target/tested runtime to v0.20.2.
+
 - **Installer variant matrix (Windows)**:
   - New multi-variant build pipeline (`scripts/windows/build-installers.bat`) for:
     - `vulkan-only`

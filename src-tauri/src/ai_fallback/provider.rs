@@ -1211,7 +1211,7 @@ impl AIProvider for OllamaProvider {
         let keep_alive = std::env::var("TRISPR_OLLAMA_KEEP_ALIVE")
             .ok()
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "20m".to_string());
+            .unwrap_or_else(|| "60m".to_string());
 
         let chat_body = serde_json::json!({
             "model": model,

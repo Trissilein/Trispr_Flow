@@ -761,10 +761,8 @@ FunctionEnd
         nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\download-piper-voices.ps1" -SelectedFile "$TEMP\trispr-piper-selected-voices.txt" -ExtraFile "$TEMP\trispr-piper-extra-voices.txt" -VoicesDir "$INSTDIR\resources\bin\piper\voices" -InvalidOut "$TEMP\trispr-piper-invalid-keys.txt" -FailedOut "$TEMP\trispr-piper-failed-keys.txt"'
         Pop $0
         ${If} $0 != 0
-          MessageBox MB_OK|MB_ICONEXCLAMATION "Voice-Pack Download meldete einen Fehler.$\r$\nDie Installation wird fortgesetzt."
+          MessageBox MB_OK|MB_ICONEXCLAMATION "Voice-Pack Download fehlgeschlagen. Installation wird fortgesetzt."
         ${EndIf}
-      ${Else}
-        MessageBox MB_OK|MB_ICONWARNING "Voice-Pack Downloader nicht verfuegbar (download-piper-voices.ps1 nicht gefunden).$\r$\nVoice-Packs muessen manuell heruntergeladen werden."
       ${EndIf}
 
       nsExec::ExecToStack 'powershell -NoProfile -Command "if(Test-Path \"$TEMP\trispr-piper-invalid-keys.txt\"){Get-Content -Path \"$TEMP\trispr-piper-invalid-keys.txt\" -Raw}"'

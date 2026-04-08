@@ -1500,6 +1500,8 @@ window.addEventListener("DOMContentLoaded", () => {
       initWindowStatePersistence();
       // Start GPU VRAM monitoring (update every 2 seconds)
       startGpuVramMonitoring();
+      // Start refinement model keep-alive ping (every 15 minutes)
+      startRefinementModelKeepalive();
       return Promise.all([checkModelOnStartup(), checkDependencyPreflightOnStartup()]);
     })
     .catch((error) => {
@@ -1540,6 +1542,24 @@ function startGpuVramMonitoring() {
   setInterval(() => {
     void updateVramDisplay();
   }, 2000);
+}
+
+// Refinement model keep-alive ping to prevent cold-start latency
+function startRefinementModelKeepalive() {
+  const PING_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+
+  setInterval(async () => {
+    if (!settings?.ai_fallback?.enabled) return;
+    if (settings?.ai_fallback?.provider !== "ollama" && settings?.ai_fallback?.provider !== "lm_studio" && settings?.ai_fallback?.provider !== "oobabooga") {
+      return;
+    }
+
+    try {
+      await invoke<boolean>("ping_refinement_model");
+    } catch (error) {
+      // Silent fail - keep-alive ping is non-critical
+    }
+  }, PING_INTERVAL_MS);
 }
 
 // Cleanup event listeners on window unload to prevent memory leaks

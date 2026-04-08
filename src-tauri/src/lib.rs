@@ -1787,6 +1787,48 @@ async fn refine_transcript(
     serde_json::to_value(&result).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn ping_refinement_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let settings_snapshot = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+
+    // Only ping if AI Refinement is enabled and provider is local (Ollama or LM Studio)
+    if !settings_snapshot.ai_fallback.enabled {
+        return Ok(false);
+    }
+
+    let provider = &settings_snapshot.ai_fallback.provider;
+    if provider != "ollama" && provider != "lm_studio" && provider != "oobabooga" {
+        return Ok(false);
+    }
+
+    // Prepare refinement setup (validates model, endpoint, etc.)
+    let setup = match prepare_refinement(&app, &settings_snapshot) {
+        Ok(s) => s,
+        Err(_) => return Ok(false), // Silent fail - model not ready
+    };
+
+    // Send a minimal ping (single dot character)
+    let ping_text = ".";
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        setup
+            .provider
+            .refine_transcript(ping_text, &setup.model, &setup.options, &setup.api_key)
+    })
+    .await
+    .map_err(|e| format!("ping_refinement_model task failed: {}", e))?;
+
+    // Return true if ping succeeded, false if it failed (but don't propagate the error)
+    Ok(result.is_ok())
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(default)]
 struct LatencyBenchmarkRequest {
@@ -11713,6 +11755,7 @@ pub fn run() {
             import_ollama_model_from_file,
             set_strict_local_mode,
             refine_transcript,
+            ping_refinement_model,
             run_latency_benchmark,
             run_tts_benchmark,
             get_runtime_metrics_snapshot,

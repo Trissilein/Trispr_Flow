@@ -76,7 +76,10 @@
           "German"
         ],
         "installMode": "currentUser",
-        "installerHooks": "nsis/hooks.nsh"
+        "installerHooks": "nsis/hooks.nsh",
+        "extraBundleFiles": [
+          ["nsis/download-piper-voices.ps1", "$PLUGINSDIR/download-piper-voices.ps1"]
+        ]
       }
     }
   }

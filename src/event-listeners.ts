@@ -1131,7 +1131,7 @@ export function renderVocabulary() {
     const emptyState = document.createElement("div");
     emptyState.className = "vocab-empty-state";
     emptyState.innerHTML = `
-      <div class="vocab-empty-icon">📝</div>
+      <div class="vocab-empty-icon">◻</div>
       <div class="vocab-empty-text">No vocabulary entries yet</div>
       <div class="vocab-empty-hint">Click "Add Entry" to define custom word replacements</div>
     `;

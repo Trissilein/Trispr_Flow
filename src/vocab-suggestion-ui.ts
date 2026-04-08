@@ -189,4 +189,7 @@ export function renderVocabCandidatesStatus(): void {
   } else {
     el.textContent = `${all.length} tracked · ${ready.length} ready to suggest`;
   }
+  if (dom.vocabResetCandidates) {
+    dom.vocabResetCandidates.style.display = all.length > 0 ? "" : "none";
+  }
 }

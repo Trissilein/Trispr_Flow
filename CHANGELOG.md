@@ -5,9 +5,23 @@ All notable changes to Trispr Flow will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.3] - 2026-04-08
 
 ### Added
+
+- **Models section redesign (AI Refinement)**:
+  - Installed models now appear above available catalog for management-first UX.
+  - Installed section converted to `.qwen-model-card` layout (same card component as curated available models).
+  - Available models section now has explicit "Available Models" header with visual separator.
+  - Curated models filtered: no longer appear in "Available Models" if already installed/active.
+
+- **Custom Vocabulary Auto-Learn layout redesign**:
+  - Settings restructured into inset sub-block (`vocab-learn-block`) with clear visual hierarchy.
+  - Threshold + Auto-Add controls compact and vertically stacked; status text + Reset button in footer.
+  - Reset button demoted to link-style (destructive action visual weight reduced).
+  - Visual separator between vocabulary table and learning sub-section (`border-top` + `margin-top`).
+  - `+ Add` button width corrected to `auto` (was full-width, competing with primary actions).
+  - Reset button now hidden when no candidates exist (via `renderVocabCandidatesStatus()`).
 
 - **Vocabulary Learning (Block J, Tasks 44a–44b)**:
   - Automatic detection of recurring AI corrections via LCS word-diff algorithm.
@@ -53,11 +67,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Vocabulary learning casing bug**: Corrections where only capitalisation differs (e.g., "trispr" → "Trispr" for proper nouns) were silently discarded by an overly aggressive lowercase equality check. Now tracked correctly (`vocab-candidates.ts:147`).
 - **TTS-Stop default hotkey conflict**: Changed default from `CommandOrControl+Shift+Escape` to `CommandOrControl+Shift+F12` to avoid conflict with Windows Task Manager shortcut.
 - **Hotkey UI badge strings**: Registration status badges now use English labels ("Conflict", "Hotkey registered") consistent with the rest of the UI.
 
 ### Changed
 
+- **Installed models section header**: Simplified from "Installed locally" + explanatory note to concise "Your Models" label.
+- **Vocabulary UI polish**:
+  - `vocab-input:hover/focus` lift animation (`transform: translateY(-1px)`) removed — wrong interaction pattern for text inputs.
+  - Decorative gradient overlay (`::before`) on `.custom-vocab-table` removed (opacity 0.03 — invisible, no functional benefit).
+  - Custom vocabulary table container now uses explicit `flex-direction: column` for clarity.
 - **Ollama runtime**: Updated target/tested runtime to v0.20.2.
 
 - **Installer variant matrix (Windows)**:

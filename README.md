@@ -2,7 +2,7 @@
 
 > Offline-first dictation and system-audio transcription with local AI refinement.
 
-[![Version](https://img.shields.io/badge/version-0.7.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.3-blue.svg)](CHANGELOG.md)
 [![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
 [![macOS](https://img.shields.io/badge/macOS-planned-lightgrey?style=flat&logo=apple)](ROADMAP.md)
 [![Notices](https://img.shields.io/badge/license-notices-blue.svg)](THIRD_PARTY_NOTICES.md)
@@ -83,8 +83,9 @@ Installer build/upload shortcuts:
 | --- | --- | --- |
 | `v0.7.0` | Released | Stable baseline for local-first transcription |
 | `v0.7.1` | Released | Stabilization, UX consistency, reliability hardening |
-| `v0.7.2` | Active | Repo cleanup, Ollama hardening, WebView recovery watchdog |
-| `v0.7.3+` | Planned | Cloud lane activation and broader module rollout |
+| `v0.7.2` | Released | Repo cleanup, Ollama hardening, WebView recovery watchdog |
+| `v0.7.3` | Released | UI redesigns, vocabulary learning, casing bug fix |
+| `v0.8.x` | Planned | Block U (assistant UX) + cloud lane activation |
 
 Canonical planning docs:
 - [ROADMAP.md](ROADMAP.md)

@@ -1,13 +1,13 @@
 # Trispr Flow - Status
 
-Last updated: 2026-04-07
+Last updated: 2026-04-08
 
 ## Snapshot
 
-- Current release: `v0.7.2`
-- Current planning phase: `v0.8.x active — Block U (assistant UX + soak + release gate) in progress`
+- Current release: `v0.7.3`
+- Current planning phase: `v0.8.x — Block U (assistant UX + soak + release gate) in progress`
 - Canonical next steps: `ROADMAP.md`
-- Current readiness: development-active, not release-ready
+- Current readiness: v0.7.3 released, v0.8.x in active development
 
 ## Current Blockers
 
@@ -23,6 +23,15 @@ Last updated: 2026-04-07
 4. Keep baseline gates green while iterating (`cargo test --lib`, `npm test`, `npm run build`).
 
 ## Working State
+
+- **Recent (2026-04-08)**:
+  - **v0.7.3 Release**: UI audit and redesigns complete.
+    - **Models section redesign**: Installed models moved to top (management-first UX), converted to `.qwen-model-card` layout; curated catalog below with "Available Models" section header. Installed/active models filtered from catalog.
+    - **Custom Vocabulary Auto-Learn redesign**: Settings restructured into inset `vocab-learn-block` sub-card with visual separator from table; threshold + auto-add stacked vertically; Reset button demoted to link-style and hidden when no candidates.
+    - **Vocabulary learning casing bug fixed**: Corrections differing only in capitalisation (e.g., "trispr" → "Trispr") now tracked correctly; was silently discarded by overly strict lowercase equality check.
+    - **Polish**: Removed `vocab-input` hover lift animation (wrong pattern for text inputs); removed invisible gradient overlay on vocab table; simplified "Installed locally" header to "Your Models".
+    - **Build + Tests**: `npm run build` green, 219 tests pass. Ready for release candidate.
+  - Block U soak testing: Delayed to v0.8.x release cycle; observed data collection continues parallel to development.
 
 - **Recent (2026-04-07)**:
   - **Vocabulary Learning (Tasks 44a–44b) complete**: LLM-diff-based word correction tracking now live. Users can collect recurring AI corrections with configurable threshold (1–10 repetitions, default 3), optional auto-add, and review dialog. Settings: enable learning toggle + threshold + auto-add controls + reset button. Banner + modal UI for suggesting newly-detected corrections. Persistence via localStorage with max 200 candidates.

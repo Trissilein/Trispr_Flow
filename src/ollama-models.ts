@@ -1416,7 +1416,15 @@ export async function detectOllamaRuntime(): Promise<void> {
 
 function renderModelsSection(container: HTMLElement): void {
   const section = document.createElement("div");
-  section.className = "ollama-models-section";
+  section.className = "ollama-models-section ollama-curated-section";
+
+  // Section header for available models
+  const heading = document.createElement("div");
+  heading.className = "ollama-curated-header";
+  heading.innerHTML = `
+    <div class="ollama-curated-title">Available Models</div>
+  `;
+  section.appendChild(heading);
 
   const activeModel = settings?.ai_fallback?.model
     ? normalizeModelTag(settings.ai_fallback.model)
@@ -1431,11 +1439,13 @@ function renderModelsSection(container: HTMLElement): void {
     const progress = ollamaPullProgress.get(spec.name);
 
     const state = resolveCuratedModelState(spec.name, activeModel, installed, isPulling);
-    const sizeLabel = installed
-      ? formatBytesGb(getInstalledSize(spec.name))
-      : spec.vram_gb != null
-        ? `${spec.size_gb?.toFixed(1) ?? "?"} GB · ~${spec.vram_gb.toFixed(1)} GB VRAM`
-        : `${spec.size_gb?.toFixed(1) ?? "?"} GB`;
+
+    // Only show models not yet installed — installed/active ones appear in the top section
+    if (state === "active" || state === "installed") continue;
+
+    const sizeLabel = spec.vram_gb != null
+      ? `${spec.size_gb?.toFixed(1) ?? "?"} GB · ~${spec.vram_gb.toFixed(1)} GB VRAM`
+      : `${spec.size_gb?.toFixed(1) ?? "?"} GB`;
 
     const card = document.createElement("div");
     card.className = "qwen-model-card";
@@ -1443,20 +1453,14 @@ function renderModelsSection(container: HTMLElement): void {
     card.dataset.state = state;
 
     const badgeHtml =
-      state === "active" ? `<span class="qwen-card-badge qwen-card-badge--active">Aktiv</span>` :
-      state === "installed" ? `<span class="qwen-card-badge qwen-card-badge--installed">Installiert</span>` :
       state === "missing" ? `<span class="qwen-card-badge qwen-card-badge--missing">Fehlt</span>` :
       state === "downloading" ? `<span class="qwen-card-badge qwen-card-badge--loading">Lädt…</span>` :
       "";
 
     let btnHtml: string;
-    if (state === "active") {
-      btnHtml = `<button class="qwen-card-btn qwen-card-btn--current" disabled>Aktiv ✓</button>`;
-    } else if (state === "downloading") {
+    if (state === "downloading") {
       const pct = progress ? computeOllamaPercent(progress) : 0;
       btnHtml = `<button class="qwen-card-btn qwen-card-btn--loading" disabled>Lädt… ${pct}%</button>`;
-    } else if (state === "installed") {
-      btnHtml = `<button class="qwen-card-btn qwen-card-btn--activate" data-action="activate" data-model="${spec.name}">Aktivieren</button>`;
     } else if (state === "missing") {
       btnHtml = `<button class="qwen-card-btn qwen-card-btn--download" data-action="download" data-model="${spec.name}">Neu installieren</button>`;
     } else {
@@ -1507,16 +1511,11 @@ function renderInstalledModelsSection(container: HTMLElement): void {
 
   const heading = document.createElement("div");
   heading.className = "ollama-installed-header";
-  heading.innerHTML = `
-    <div>
-      <div class="ollama-installed-title">Installed locally</div>
-      <p class="ollama-installed-note">Manage all local Ollama refinement models, including imported and older tags.</p>
-    </div>
-  `;
+  heading.innerHTML = `<div class="ollama-installed-title">Your Models</div>`;
   section.appendChild(heading);
 
   const list = document.createElement("div");
-  list.className = "ollama-installed-list";
+  list.className = "qwen-model-cards";
 
   const inventory = buildInstalledOllamaInventory(installedOllamaModels, settings?.ai_fallback?.model);
   if (inventory.length === 0) {
@@ -1532,21 +1531,23 @@ function renderInstalledModelsSection(container: HTMLElement): void {
   for (const item of inventory) {
     const title = item.curated_spec?.label ?? item.name;
     const curatedBadge = item.is_curated
-      ? `<span class="ollama-installed-badge ollama-installed-badge--curated">Curated</span>`
+      ? `<span class="qwen-card-badge qwen-card-badge--curated">Curated</span>`
       : "";
     const statusBadge = item.is_active
-      ? `<span class="ollama-installed-badge ollama-installed-badge--active">Active</span>`
-      : `<span class="ollama-installed-badge ollama-installed-badge--installed">Installed</span>`;
+      ? `<span class="qwen-card-badge qwen-card-badge--active">Aktiv</span>`
+      : `<span class="qwen-card-badge qwen-card-badge--installed">Installiert</span>`;
     const deleting = activeOllamaDeletes.has(item.name);
 
-    let actionsHtml = "";
+    let footerHtml = "";
     if (item.is_active) {
-      actionsHtml = `
-        <button class="qwen-card-btn qwen-card-btn--current" disabled>Active ✓</button>
-        <span class="ollama-installed-hint">Activate another model to uninstall this one.</span>
+      footerHtml = `
+        <div style="width: 100%;">
+          <button class="qwen-card-btn qwen-card-btn--current" disabled>Active ✓</button>
+          <div class="qwen-card-hint">Activate another model to uninstall this one.</div>
+        </div>
       `;
     } else {
-      actionsHtml = `
+      footerHtml = `
         <button class="qwen-card-btn qwen-card-btn--activate" data-action="activate" data-model="${item.name}">Activate</button>
         <button class="qwen-card-btn qwen-card-btn--delete" data-action="delete" data-model="${item.name}"${deleting ? " disabled" : ""}>
           ${deleting ? "Removing…" : "Uninstall"}
@@ -1554,23 +1555,21 @@ function renderInstalledModelsSection(container: HTMLElement): void {
       `;
     }
 
-    const row = document.createElement("article");
-    row.className = "ollama-installed-item";
-    row.dataset.state = item.is_active ? "active" : "installed";
-    row.innerHTML = `
-      <div class="ollama-installed-main">
-        <div class="ollama-installed-top">
-          <div class="ollama-installed-name">${title}</div>
-          <div class="ollama-installed-badges">${statusBadge}${curatedBadge}</div>
-        </div>
-        <div class="ollama-installed-meta">
-          <code class="ollama-installed-tag">${item.name}</code>
-          <span class="ollama-installed-size">${item.size_label}</span>
-        </div>
+    const card = document.createElement("article");
+    card.className = "qwen-model-card";
+    card.dataset.state = item.is_active ? "active" : "installed";
+    card.innerHTML = `
+      <div class="qwen-card-header">
+        <span class="qwen-card-name">${title}</span>
+        ${statusBadge}${curatedBadge}
+        <span class="qwen-card-size">${item.size_label}</span>
       </div>
-      <div class="ollama-installed-actions">${actionsHtml}</div>
+      <div class="qwen-card-meta">
+        <code class="qwen-card-tag">${item.name}</code>
+      </div>
+      <div class="qwen-card-footer">${footerHtml}</div>
     `;
-    list.appendChild(row);
+    list.appendChild(card);
   }
 
   list.addEventListener("click", (e) => {
@@ -1597,8 +1596,8 @@ function renderOllamaModelManagerNow(): void {
   if (!isOllama) return;
 
   container.innerHTML = "";
-  renderModelsSection(container);
   renderInstalledModelsSection(container);
+  renderModelsSection(container);
 }
 
 export function renderOllamaModelManager(): void {

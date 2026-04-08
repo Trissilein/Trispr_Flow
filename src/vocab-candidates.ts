@@ -144,8 +144,9 @@ export function recordRefinementDiff(
     const fromKey = pair.from.toLowerCase();
     const toKey = pair.to.toLowerCase();
 
-    // Skip if the pair is just a casing difference (e.g. "API" → "api")
-    if (fromKey === toKey) continue;
+    // Allow casing-only corrections (e.g. "trispr" → "Trispr" for proper nouns)
+    // but skip if completely identical
+    if (pair.from === pair.to) continue;
 
     const existing = candidates.find(
       (c) => c.from.toLowerCase() === fromKey && c.to.toLowerCase() === toKey

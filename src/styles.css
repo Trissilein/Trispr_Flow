@@ -3602,6 +3602,12 @@ input[type="range"]:focus-visible {
   margin-top: 8px;
 }
 
+/* Custom vocabulary config container */
+#postproc-custom-vocab-config {
+  display: flex;
+  flex-direction: column;
+}
+
 /* Custom vocabulary table - Compact */
 .custom-vocab-table {
   display: flex;
@@ -3613,16 +3619,8 @@ input[type="range"]:focus-visible {
   border-radius: var(--radius-sm);
   padding: 6px;
   position: relative;
-  overflow: hidden;
 }
 
-.custom-vocab-table::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(var(--accent-2-rgb), 0.03) 0%, transparent 50%);
-  pointer-events: none;
-}
 
 .vocab-row {
   display: grid;
@@ -3674,7 +3672,6 @@ input[type="range"]:focus-visible {
 .vocab-input:hover {
   border-color: var(--stroke-strong);
   background: rgba(30, 35, 42, 0.9);
-  transform: translateY(-1px);
 }
 
 .vocab-input:focus {
@@ -3682,7 +3679,6 @@ input[type="range"]:focus-visible {
   border-color: var(--accent-2);
   background: rgba(30, 35, 42, 1);
   box-shadow: 0 0 0 3px rgba(var(--accent-2-rgb), 0.1);
-  transform: translateY(-1px);
 }
 
 .vocab-row-arrow {
@@ -3735,6 +3731,7 @@ input[type="range"]:focus-visible {
   font-size: 12px;
   padding: 4px 10px;
   opacity: 0.8;
+  align-self: flex-start;
 }
 
 .vocab-add-btn:hover {
@@ -4884,6 +4881,12 @@ input[type="range"]:focus-visible {
   border: 1px solid rgba(251, 113, 133, 0.3);
 }
 
+.qwen-card-badge--curated {
+  background: rgba(168, 85, 247, 0.12);
+  color: #d8b4fe;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
 .qwen-card-desc {
   font-size: 0.72rem;
   color: var(--muted);
@@ -4891,9 +4894,31 @@ input[type="range"]:focus-visible {
   margin: 0 0 6px;
 }
 
+.qwen-card-meta {
+  font-size: 0.68rem;
+  margin-bottom: 6px;
+}
+
+.qwen-card-tag {
+  font-family: "Space Grotesk", monospace;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.qwen-card-hint {
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.3;
+}
+
 .qwen-card-footer {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
+  align-items: flex-start;
 }
 
 .qwen-card-btn {
@@ -4974,6 +4999,24 @@ input[type="range"]:focus-visible {
   font-size: 0.68rem;
   color: var(--muted);
   font-family: "Space Grotesk", monospace;
+}
+
+.ollama-curated-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ollama-curated-header {
+  margin-bottom: 10px;
+}
+
+.ollama-curated-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .ollama-installed-section {
@@ -5971,8 +6014,10 @@ input[type="range"]:focus-visible {
 #vocab-learning-config {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 2px;
+  gap: 4px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .vocab-candidates-status {
@@ -6007,6 +6052,58 @@ input[type="range"]:focus-visible {
 .field-unit {
   font-size: 12px;
   color: var(--muted);
+}
+
+.field-label-sm {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.field-compact {
+  gap: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+.vocab-learn-block {
+  padding: 8px 10px;
+  border-left: 2px solid var(--stroke-strong);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vocab-learn-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vocab-learn-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-family: inherit;
+  transition: color 0.15s;
+}
+
+.btn-danger-soft {
+  color: rgba(251, 113, 133, 0.65);
+}
+
+.btn-danger-soft:hover {
+  color: #fb7185;
 }
 
 .btn-ghost {

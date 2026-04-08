@@ -17,6 +17,9 @@ dist
 dist-ssr
 *.local
 
+# Local project files
+mempalace.yaml
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

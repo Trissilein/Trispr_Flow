@@ -1793,31 +1793,33 @@
                         <div class="custom-vocab-table">
                           <div id="postproc-vocab-rows"></div>
                         </div>
-                        <button id="postproc-vocab-add" class="btn-ghost btn-small vocab-add-btn" style="width: 100%; margin-top: 6px;">+ Add</button>
+                        <button id="postproc-vocab-add" class="btn-ghost btn-small vocab-add-btn">+ Add</button>
                       </div>
                       <div id="vocab-learning-config" style="display: none;" class="span-2">
                         <label class="field toggle span-2">
                           <span class="toggle-row">
-                            <span class="field-label">Auto-learn</span>
+                            <span class="field-label">Vocabulary Learning</span>
                             <input id="vocab-learning-enabled" type="checkbox" title="Collect recurring AI corrections" />
                             <span class="toggle-track"><span class="toggle-thumb"></span></span>
                           </span>
                         </label>
-                        <div id="vocab-learning-settings" style="display: none;">
-                          <label class="field toggle">
+                        <div id="vocab-learning-settings" style="display: none;" class="vocab-learn-block">
+                          <div class="vocab-learn-row">
+                            <span class="field-label-sm">Learn after</span>
+                            <input id="vocab-threshold" type="number" min="1" max="10" value="3" class="input-small" />
+                            <span class="field-unit">corrections</span>
+                          </div>
+                          <label class="field toggle field-compact">
                             <span class="toggle-row">
-                              <span class="field-label">Auto-add</span>
+                              <span class="field-label-sm">Auto-add to vocabulary</span>
                               <input id="vocab-auto-add" type="checkbox" />
                               <span class="toggle-track"><span class="toggle-thumb"></span></span>
                             </span>
                           </label>
-                          <label class="field">
-                            <span class="field-label">Threshold</span>
-                            <input id="vocab-threshold" type="number" min="1" max="10" value="3" class="input-small" />
-                            <span class="field-unit">times</span>
-                          </label>
-                          <div class="vocab-candidates-status" id="vocab-candidates-status"></div>
-                          <button id="vocab-reset-candidates" class="btn-ghost btn-small" style="width: 100%; margin-top: 4px;">Reset</button>
+                          <div class="vocab-learn-footer">
+                            <div class="vocab-candidates-status" id="vocab-candidates-status"></div>
+                            <button id="vocab-reset-candidates" class="btn-link btn-danger-soft">Reset</button>
+                          </div>
                         </div>
                       </div>
                     </div>

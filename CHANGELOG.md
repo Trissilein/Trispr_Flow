@@ -5,6 +5,33 @@ All notable changes to Trispr Flow will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-04-12
+
+### Added
+
+- **Release runtime hydration for GitHub Actions**:
+  - Added `scripts/hydrate-whisper-runtime-from-release.ps1`.
+  - Windows release CI now hydrates ignored Whisper runtime payloads from a published installer before building.
+  - Tag builds skip the current tag and fall back to the previous published release asset set.
+
+### Changed
+
+- **Release publishing order**:
+  - `release.bat` now pushes branch and tag before creating/uploading the GitHub release.
+  - `scripts/windows/upload-release-assets.ps1` now creates a public release when missing and can mark it as `latest`.
+- **Installer/runtime path normalization**:
+  - Tooling and NSIS hooks now consistently treat `<install-dir>\bin\...` as the installed runtime root.
+  - `scripts/first-run.ps1` still accepts legacy `resources/bin` layouts as fallback when hydrating from an existing app install.
+
+### Fixed
+
+- **Windows release CI failure on clean runners**:
+  - `.github/workflows/windows-release-installers.yml` now hydrates Whisper runtime payloads and validates them before `build-installers.bat`.
+  - Added `contents: write` permission so the workflow can upload assets to GitHub Releases.
+- **NSIS silent-install blocker**:
+  - Fixed Piper/FFmpeg/Ollama post-install hooks that assumed `$INSTDIR\resources\bin\...` instead of `$INSTDIR\bin\...`.
+  - Silent installs no longer block on Piper/Ollama warning dialogs during headless hydration paths.
+
 ## [0.7.3] - 2026-04-08
 
 ### Added
@@ -137,7 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **First-Run Bootstrap (Windows)**:
   - Added `FIRST_RUN.bat` + `scripts/first-run.ps1` for post-clone onboarding.
   - Bootstrap now installs npm dependencies and reports local runtime readiness for transcription/quantization.
-  - Includes best-effort runtime hydration from an installed app (`resources/bin` -> `src-tauri/bin`).
+  - Includes best-effort runtime hydration from an installed app (`bin` -> `src-tauri/bin`, with legacy `resources/bin` fallback).
 - **GPU VRAM Monitoring & Management**:
   - Real-time VRAM usage display in header status bar (updated every 2s via nvidia-smi).
   - Format: "2.1 GB / 8.0 GB" showing used/total VRAM.

@@ -24,10 +24,11 @@ Compatibility wrapper:
 What it does:
 - runs `npm install`
 - tries to copy runtime files from an existing installed app:
-  - `%LOCALAPPDATA%\Programs\Trispr Flow\resources\bin\cuda`
-  - `%LOCALAPPDATA%\Programs\Trispr Flow\resources\bin\vulkan`
-  - `%LOCALAPPDATA%\Programs\Trispr Flow\resources\bin\quantize.exe`
-  - `%LOCALAPPDATA%\Programs\Trispr Flow\resources\bin\ffmpeg\ffmpeg.exe`
+  - `%LOCALAPPDATA%\Programs\Trispr Flow\bin\cuda`
+  - `%LOCALAPPDATA%\Programs\Trispr Flow\bin\vulkan`
+  - `%LOCALAPPDATA%\Programs\Trispr Flow\bin\quantize.exe`
+  - `%LOCALAPPDATA%\Programs\Trispr Flow\bin\ffmpeg\ffmpeg.exe`
+- falls nötig zusätzlich aus älteren Layouts unter `resources\bin\...`
 - prints runtime readiness summary for transcription, quantization, and FFmpeg
 
 Optional flags:
@@ -36,6 +37,25 @@ Optional flags:
 - `scripts\windows\FIRST_RUN.bat -RequireWhisperRuntime` (fail with exit code 2 if no local Whisper runtime is detected)
 
 If no runtime is found, the script prints actionable instructions and continues by default.
+
+## Windows release pipeline
+
+- The installer workflow lives at `.github/workflows/windows-release-installers.yml`.
+- `src-tauri/bin/cuda` and `src-tauri/bin/vulkan` are intentionally ignored and are not available in a clean GitHub checkout.
+- Release CI therefore hydrates Whisper runtime payloads from the latest published installer before building:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/hydrate-whisper-runtime-from-release.ps1 -SkipTag vX.Y.Z
+```
+
+- The hydration script downloads a published installer asset, runs a silent install into a temp directory, copies `bin/cuda`, `bin/vulkan`, and `bin/quantize.exe` back into `src-tauri/bin`, and terminates the installer if NSIS stays alive after the payload has materialized.
+- Tag builds skip the current tag and rehydrate from the previous published release, so `vX.Y.Z` can bootstrap itself from the last stable installer set.
+
+## Release publishing
+
+- `release.bat` now pushes `main` and the version tag before creating the GitHub release.
+- `scripts/windows/upload-release-assets.ps1` creates a public release when missing and can mark it as `latest`.
+- This avoids the broken state where assets were uploaded against an unpublished draft while the tag was already visible.
 
 Notes:
 - `npm run dev` starts the desktop app (`tauri dev`) and reuses an already running Trispr Vite server on `http://localhost:1420`.

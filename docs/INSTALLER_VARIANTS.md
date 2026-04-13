@@ -4,6 +4,17 @@ Last updated: 2026-03-27
 
 This document describes the current Windows installer packaging in Trispr Flow mainline.
 
+## Installed Layout
+
+- The NSIS installer materializes bundled runtime payloads under `<install-dir>\bin\...`.
+- Current important paths:
+  - `<install-dir>\bin\cuda`
+  - `<install-dir>\bin\vulkan`
+  - `<install-dir>\bin\ffmpeg`
+  - `<install-dir>\bin\piper`
+  - `<install-dir>\bin\quantize.exe`
+- Older tooling sometimes assumed `<install-dir>\resources\bin\...`; that is now treated only as a legacy fallback for hydration/bootstrap logic.
+
 ## Mainline Packaging (Three Variants)
 
 - Config: `src-tauri/tauri.conf.json`
@@ -81,6 +92,19 @@ upload_release_assets.bat -Tag vX.Y.Z -CreateReleaseIfMissing -Clobber
 
 By default, the uploader selects the newest artifact per variant (`vulkan-only`, `cuda-lite`, `cuda-complete`) for the given tag.  
 To upload all files matching a glob, pass `-LatestPerVariant:$false`.
+
+`release.bat` now pushes the branch and tag before it creates/uploads the GitHub release. That order matters because `gh release create --verify-tag` expects the tag to exist remotely.
+
+## GitHub Actions Release Build
+
+- Workflow: `.github/workflows/windows-release-installers.yml`
+- Purpose: build all Windows installer variants on tag push and upload them to the matching GitHub release.
+- Constraint: Whisper runtime payloads are ignored in git (`src-tauri/bin/cuda`, `src-tauri/bin/vulkan`) and are therefore missing on GitHub runners.
+- Solution: the workflow now runs `scripts/hydrate-whisper-runtime-from-release.ps1` before `build-installers.bat`.
+  - It downloads a published installer asset from the latest non-draft/non-prerelease release.
+  - It skips the current tag when the workflow is building `vX.Y.Z`.
+  - It performs a silent install into a temp directory, copies `bin/cuda`, `bin/vulkan`, and `bin/quantize.exe` into `src-tauri/bin`, and validates the payload before the actual build starts.
+- Result: the runner no longer depends on local untracked binaries and can reproduce the installer build from a clean checkout.
 
 ## Notes
 

@@ -31,9 +31,6 @@ mempalace.yaml
 *.sln
 *.sw?
 
-# Claude workspace
-.claude/
-
 # Claude
 .claude/
 

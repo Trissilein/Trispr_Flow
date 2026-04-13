@@ -126,11 +126,17 @@ function Get-ResourceBinCandidates {
   $candidates = New-Object System.Collections.Generic.List[string]
 
   if ($env:LOCALAPPDATA) {
+    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Trispr Flow\bin"))
+    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Trispr_Flow\bin"))
+    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\trispr-flow\bin"))
+    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\com.trispr.flow\bin"))
     $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Trispr Flow\resources\bin"))
     $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Trispr_Flow\resources\bin"))
     $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\trispr-flow\resources\bin"))
     $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\com.trispr.flow\resources\bin"))
+    $candidates.Add((Join-Path $env:LOCALAPPDATA "Trispr Flow\bin"))
     $candidates.Add((Join-Path $env:LOCALAPPDATA "Trispr Flow\resources\bin"))
+    $candidates.Add((Join-Path $env:LOCALAPPDATA "com.trispr.flow\bin"))
     $candidates.Add((Join-Path $env:LOCALAPPDATA "com.trispr.flow\resources\bin"))
 
     $programsRoot = Join-Path $env:LOCALAPPDATA "Programs"
@@ -138,16 +144,21 @@ function Get-ResourceBinCandidates {
       Get-ChildItem -Path $programsRoot -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -match "(?i)trispr" } |
         ForEach-Object {
+          $candidates.Add((Join-Path $_.FullName "bin"))
           $candidates.Add((Join-Path $_.FullName "resources\bin"))
         }
     }
   }
   if ($env:ProgramFiles) {
+    $candidates.Add((Join-Path $env:ProgramFiles "Trispr Flow\bin"))
     $candidates.Add((Join-Path $env:ProgramFiles "Trispr Flow\resources\bin"))
+    $candidates.Add((Join-Path $env:ProgramFiles "Trispr_Flow\bin"))
     $candidates.Add((Join-Path $env:ProgramFiles "Trispr_Flow\resources\bin"))
   }
   if (${env:ProgramFiles(x86)}) {
+    $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Trispr Flow\bin"))
     $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Trispr Flow\resources\bin"))
+    $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Trispr_Flow\bin"))
     $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Trispr_Flow\resources\bin"))
   }
 

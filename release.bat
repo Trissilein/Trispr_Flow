@@ -5,8 +5,8 @@
 ::    1. Bumps the patch version in package.json / tauri.conf.json / Cargo.toml
 ::    2. Builds all installer variants (vulkan · cuda-lite · cuda-complete)
 ::    3. Commits the version bump and creates a git tag
-::    4. Creates a GitHub release and uploads the installers
-::    5. Pushes commits + tag to remote
+::    4. Pushes commits + tag to remote
+::    5. Creates a GitHub release and uploads the installers
 ::
 ::  Requires: node, git, gh (GitHub CLI)
 ::  Output:   release-build.log  (full build log)
@@ -65,22 +65,23 @@ git -C "%SCRIPT_DIR%." tag "v!NEW_VERSION!" >>"%LOG%" 2>&1
 if errorlevel 1 ( echo  [ERROR] git tag failed. Check if tag already exists. & goto :fail )
 echo         Tagged v!NEW_VERSION!.
 
-:: ── 4. Upload to GitHub Releases ─────────────────────────────────────────
-echo  [4/5] Creating GitHub release and uploading assets ...
-powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\windows\upload-release-assets.ps1" ^
-  -Tag "v!NEW_VERSION!" ^
-  -Repo "%REPO%" ^
-  -CreateReleaseIfMissing ^
-  -Clobber >>"%LOG%" 2>&1
-if errorlevel 1 ( echo  [ERROR] Upload failed. Assets may be partially uploaded. & goto :fail )
-echo         Assets uploaded to GitHub.
-
-:: ── 5. Push commits and tag ───────────────────────────────────────────────
-echo  [5/5] Pushing to remote ...
+:: ── 4. Push commits and tag ───────────────────────────────────────────────
+echo  [4/5] Pushing to remote ...
 git -C "%SCRIPT_DIR%." push >>"%LOG%" 2>&1
 if errorlevel 1 ( echo  [WARNING] git push failed -- push manually: git push & echo. )
 git -C "%SCRIPT_DIR%." push origin "v!NEW_VERSION!" >>"%LOG%" 2>&1
 if errorlevel 1 ( echo  [WARNING] Tag push failed -- push manually: git push origin v!NEW_VERSION! & echo. )
+
+:: ── 5. Upload to GitHub Releases ─────────────────────────────────────────
+echo  [5/5] Creating GitHub release and uploading assets ...
+powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\windows\upload-release-assets.ps1" ^
+  -Tag "v!NEW_VERSION!" ^
+  -Repo "%REPO%" ^
+  -CreateReleaseIfMissing ^
+  -Latest ^
+  -Clobber >>"%LOG%" 2>&1
+if errorlevel 1 ( echo  [ERROR] Upload failed. Assets may be partially uploaded. & goto :fail )
+echo         Assets uploaded to GitHub.
 
 :: ── Success ───────────────────────────────────────────────────────────────
 echo.

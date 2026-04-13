@@ -1,5 +1,8 @@
 name: Windows Release Installers
 
+permissions:
+  contents: write
+
 on:
   push:
     tags:
@@ -36,6 +39,15 @@ jobs:
 
       - name: Install NPM dependencies
         run: npm ci
+
+      - name: Hydrate Whisper runtime from published release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .\scripts\hydrate-whisper-runtime-from-release.ps1 -SkipTag '${{ github.ref_name }}'
+
+      - name: Validate hydrated runtime
+        run: node scripts/validate-whisper-runtime.mjs --variant cuda-complete
 
       - name: Build installer variants
         shell: cmd

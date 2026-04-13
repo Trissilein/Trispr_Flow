@@ -678,25 +678,27 @@ FunctionEnd
 
   ; --- FFmpeg download (via PowerShell for better reliability) ---
   ${If} $ComponentFFmpegSelected == "1"
-    CreateDirectory "$INSTDIR\resources\bin\ffmpeg"
+    CreateDirectory "$INSTDIR\bin\ffmpeg"
     DetailPrint "Lade FFmpeg herunter..."
     nsExec::ExecToStack 'powershell -NoProfile -Command "Try{$ProgressPreference=\"SilentlyContinue\";Invoke-WebRequest -Uri \"https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip\" -OutFile \"$TEMP\trispr-ffmpeg.zip\" -UseBasicParsing}Catch{Exit 1}"'
     Pop $0
     ${If} $0 != 0
-      MessageBox MB_OK|MB_ICONEXCLAMATION "FFmpeg konnte nicht heruntergeladen werden.$\r$\nOPUS-Aufnahme wird nicht verfügbar sein.$\r$\nManuelle Installation: ffmpeg.exe nach$\r$\n$INSTDIR\resources\bin\ffmpeg\ kopieren."
+      IfSilent +2 0
+      MessageBox MB_OK|MB_ICONEXCLAMATION "FFmpeg konnte nicht heruntergeladen werden.$\r$\nOPUS-Aufnahme wird nicht verfügbar sein.$\r$\nManuelle Installation: ffmpeg.exe nach$\r$\n$INSTDIR\bin\ffmpeg\ kopieren."
       Goto FFmpegDownloadDone
     ${EndIf}
     DetailPrint "Entpacke FFmpeg..."
-    nsExec::ExecToStack 'powershell -NoProfile -Command "Expand-Archive -Path \"$TEMP\trispr-ffmpeg.zip\" -DestinationPath \"$TEMP\trispr-ffmpeg-ext\" -Force; Get-ChildItem -Path \"$TEMP\trispr-ffmpeg-ext\" -Filter ffmpeg.exe -Recurse | Where-Object { $_.Directory.Name -eq $\"bin$\" } | Select-Object -First 1 | Copy-Item -Destination \"$INSTDIR\resources\bin\ffmpeg\ffmpeg.exe\""'
+    nsExec::ExecToStack 'powershell -NoProfile -Command "Expand-Archive -Path \"$TEMP\trispr-ffmpeg.zip\" -DestinationPath \"$TEMP\trispr-ffmpeg-ext\" -Force; Get-ChildItem -Path \"$TEMP\trispr-ffmpeg-ext\" -Filter ffmpeg.exe -Recurse | Where-Object { $_.Directory.Name -eq $\"bin$\" } | Select-Object -First 1 | Copy-Item -Destination \"$INSTDIR\bin\ffmpeg\ffmpeg.exe\""'
     Pop $0
     Pop $1
     ; SHA256 verify
-    nsExec::ExecToStack 'powershell -NoProfile -Command "(Get-FileHash -Path \"$INSTDIR\resources\bin\ffmpeg\ffmpeg.exe\" -Algorithm SHA256).Hash.ToLower()"'
+    nsExec::ExecToStack 'powershell -NoProfile -Command "(Get-FileHash -Path \"$INSTDIR\bin\ffmpeg\ffmpeg.exe\" -Algorithm SHA256).Hash.ToLower()"'
     Pop $0
     Pop $2
     StrCmp $2 "b90225987bdd042cca09a1efb5e34e9848f2d1dbf5fbcd388753a44145522997" FFmpegHashOK
+      IfSilent +2 0
       MessageBox MB_OK|MB_ICONEXCLAMATION "FFmpeg-Prüfsumme ungültig — Datei möglicherweise beschädigt.$\r$\nBitte FFmpeg manuell installieren."
-      Delete "$INSTDIR\resources\bin\ffmpeg\ffmpeg.exe"
+      Delete "$INSTDIR\bin\ffmpeg\ffmpeg.exe"
       Goto FFmpegCleanup
     FFmpegHashOK:
       DetailPrint "FFmpeg OK (SHA256 verifiziert, libopus enthalten)"
@@ -708,16 +710,17 @@ FunctionEnd
 
   ; --- Piper TTS Runtime download (via PowerShell for better reliability) ---
   ${If} $ComponentPiperSelected == "1"
-    CreateDirectory "$INSTDIR\resources\bin\piper"
+    CreateDirectory "$INSTDIR\bin\piper"
     DetailPrint "Lade Piper TTS Runtime herunter..."
     nsExec::ExecToStack 'powershell -NoProfile -Command "Try{$ProgressPreference=\"SilentlyContinue\";Invoke-WebRequest -Uri \"https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip\" -OutFile \"$TEMP\trispr-piper.zip\" -UseBasicParsing}Catch{Exit 1}"'
     Pop $0
     ${If} $0 != 0
+      IfSilent +2 0
       MessageBox MB_OK|MB_ICONEXCLAMATION "Piper TTS Runtime konnte nicht heruntergeladen werden.$\r$\nSprachausgabe wird nicht verfügbar sein."
       Goto PiperDownloadDone
     ${EndIf}
     DetailPrint "Entpacke Piper TTS Runtime..."
-    nsExec::ExecToStack 'powershell -NoProfile -Command "$files=@(\"piper.exe\",\"onnxruntime.dll\",\"onnxruntime_providers_shared.dll\",\"espeak-ng.dll\",\"piper_phonemize.dll\",\"libtashkeel_model.ort\"); $zip=[System.IO.Compression.ZipFile]::OpenRead(\"$TEMP\trispr-piper.zip\"); foreach($e in $zip.Entries){$n=$e.Name; if($files -contains $n -or $e.FullName -match \"espeak-ng-data\"){$out=\"$INSTDIR\resources\bin\piper\\\"+($e.FullName -replace \"^piper/\",\"\"); $dir=[System.IO.Path]::GetDirectoryName($out); if(-not(Test-Path $dir)){New-Item -ItemType Directory -Path $dir -Force|Out-Null}; if(-not $e.FullName.EndsWith(\"/\")){[System.IO.Compression.ZipFileExtensions]::ExtractToFile($e,$out,$true)}}}; $zip.Dispose()"'
+    nsExec::ExecToStack 'powershell -NoProfile -Command "$files=@(\"piper.exe\",\"onnxruntime.dll\",\"onnxruntime_providers_shared.dll\",\"espeak-ng.dll\",\"piper_phonemize.dll\",\"libtashkeel_model.ort\"); $zip=[System.IO.Compression.ZipFile]::OpenRead(\"$TEMP\trispr-piper.zip\"); foreach($e in $zip.Entries){$n=$e.Name; if($files -contains $n -or $e.FullName -match \"espeak-ng-data\"){$out=\"$INSTDIR\bin\piper\\\"+($e.FullName -replace \"^piper/\",\"\"); $dir=[System.IO.Path]::GetDirectoryName($out); if(-not(Test-Path $dir)){New-Item -ItemType Directory -Path $dir -Force|Out-Null}; if(-not $e.FullName.EndsWith(\"/\")){[System.IO.Compression.ZipFileExtensions]::ExtractToFile($e,$out,$true)}}}; $zip.Dispose()"'
     Pop $0
     Pop $1
     DetailPrint "Piper TTS Runtime installiert"
@@ -734,14 +737,15 @@ FunctionEnd
   StrCpy $R7 $ComponentPiperSelected
 !endif
   ${If} $R7 == "1"
-    IfFileExists "$INSTDIR\resources\bin\piper\piper.exe" PiperVoicesRuntimeReady PiperVoicesRuntimeMissing
+    IfFileExists "$INSTDIR\bin\piper\piper.exe" PiperVoicesRuntimeReady PiperVoicesRuntimeMissing
 
     PiperVoicesRuntimeMissing:
+      IfSilent +2 0
       MessageBox MB_OK|MB_ICONEXCLAMATION "Piper Runtime wurde nicht gefunden.$\r$\nVoice-Packs konnten nicht heruntergeladen werden."
       Goto PiperVoicesDone
 
     PiperVoicesRuntimeReady:
-      CreateDirectory "$INSTDIR\resources\bin\piper\voices"
+      CreateDirectory "$INSTDIR\bin\piper\voices"
       DetailPrint "Verarbeite Piper Voice-Packs..."
 
       FileOpen $0 "$TEMP\trispr-piper-selected-voices.txt" w
@@ -758,9 +762,10 @@ FunctionEnd
       File "/nonfatal" "/oname=$PLUGINSDIR\download-piper-voices.ps1" "${__FILEDIR__}\download-piper-voices.ps1"
 
       ${If} ${FileExists} "$PLUGINSDIR\download-piper-voices.ps1"
-        nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\download-piper-voices.ps1" -SelectedFile "$TEMP\trispr-piper-selected-voices.txt" -ExtraFile "$TEMP\trispr-piper-extra-voices.txt" -VoicesDir "$INSTDIR\resources\bin\piper\voices" -InvalidOut "$TEMP\trispr-piper-invalid-keys.txt" -FailedOut "$TEMP\trispr-piper-failed-keys.txt"'
+        nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\download-piper-voices.ps1" -SelectedFile "$TEMP\trispr-piper-selected-voices.txt" -ExtraFile "$TEMP\trispr-piper-extra-voices.txt" -VoicesDir "$INSTDIR\bin\piper\voices" -InvalidOut "$TEMP\trispr-piper-invalid-keys.txt" -FailedOut "$TEMP\trispr-piper-failed-keys.txt"'
         Pop $0
         ${If} $0 != 0
+          IfSilent +2 0
           MessageBox MB_OK|MB_ICONEXCLAMATION "Voice-Pack Download fehlgeschlagen. Installation wird fortgesetzt."
         ${EndIf}
       ${EndIf}
@@ -769,6 +774,7 @@ FunctionEnd
       Pop $0
       Pop $1
       ${If} $1 != ""
+        IfSilent +2 0
         MessageBox MB_OK|MB_ICONEXCLAMATION "Ungueltige Piper Voice-Keys wurden uebersprungen:$\r$\n$1"
       ${EndIf}
 
@@ -776,6 +782,7 @@ FunctionEnd
       Pop $0
       Pop $1
       ${If} $1 != ""
+        IfSilent +2 0
         MessageBox MB_OK|MB_ICONEXCLAMATION "Folgende Voice-Keys konnten nicht geladen werden:$\r$\n$1$\r$\nDie Installation wurde trotzdem abgeschlossen."
       ${EndIf}
 
@@ -801,6 +808,7 @@ FunctionEnd
     nsExec::ExecToLog 'powershell -NoProfile -Command "Try{$ProgressPreference=\"SilentlyContinue\";Invoke-WebRequest -Uri \"https://ollama.com/download/OllamaSetup.exe\" -OutFile \"$TEMP\OllamaSetup.exe\" -UseBasicParsing;Exit 0}Catch{Write-Error $_.Exception.Message;Exit 1}"'
     Pop $0
     ${If} $0 != 0
+      IfSilent +2 0
       MessageBox MB_OK|MB_ICONEXCLAMATION "Ollama konnte nicht heruntergeladen werden.$\r$\nManuelle Installation: ollama.com$\r$\nKI-Verfeinerung wird ohne Ollama nicht funktionieren."
       Goto OllamaDone
     ${EndIf}
@@ -810,6 +818,7 @@ FunctionEnd
     nsExec::ExecToLog '"$TEMP\OllamaSetup.exe" /S'
     Pop $0
     ${If} $0 != 0
+      IfSilent +2 0
       MessageBox MB_OK|MB_ICONEXCLAMATION "Ollama-Installation fehlgeschlagen.$\r$\nManuelle Installation: ollama.com"
       Delete "$TEMP\OllamaSetup.exe"
       Goto OllamaDone
@@ -822,6 +831,7 @@ FunctionEnd
     nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath \"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe\" -ArgumentList \"serve\" -WindowStyle Hidden; Start-Sleep -Seconds 5; $env:OLLAMA_HOST=\"http://127.0.0.1:11434\"; & \"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe\" pull qwen3.5:4b"'
     Pop $0
     ${If} $0 != 0
+      IfSilent +2 0
       MessageBox MB_OK|MB_ICONEXCLAMATION "Ollama-Modell konnte nicht heruntergeladen werden.$\r$\nDu kannst es später manuell laden:$\r$\nollama pull qwen3.5:4b"
     ${Else}
       DetailPrint "Ollama + qwen3.5:4b erfolgreich installiert"

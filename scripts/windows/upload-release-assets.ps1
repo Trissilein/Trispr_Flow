@@ -5,6 +5,7 @@ param(
   [string]$AssetGlob = "installers\*.exe",
   [bool]$LatestPerVariant = $true,
   [switch]$CreateReleaseIfMissing,
+  [switch]$Latest,
   [switch]$Clobber
 )
 
@@ -126,8 +127,12 @@ if (-not $releaseExists) {
   if (-not $CreateReleaseIfMissing) {
     throw "Release '$Tag' does not exist. Re-run with -CreateReleaseIfMissing or create release manually."
   }
-  Write-Host "Release '$Tag' not found. Creating draft release..." -ForegroundColor Yellow
-  Invoke-Gh -GhArgs @("release", "create", $Tag, "--repo", $Repo, "--title", $Tag, "--notes", "Installer assets upload.")
+  Write-Host "Release '$Tag' not found. Creating public release..." -ForegroundColor Yellow
+  $createArgs = @("release", "create", $Tag, "--repo", $Repo, "--verify-tag", "--title", $Tag, "--notes", "Installer assets upload.")
+  if ($Latest) {
+    $createArgs += "--latest"
+  }
+  Invoke-Gh -GhArgs $createArgs
 }
 
 $uploadArgs = @("release", "upload", $Tag, "--repo", $Repo)
@@ -136,5 +141,9 @@ if ($Clobber) {
 }
 $uploadArgs += $assets.FullName
 Invoke-Gh -GhArgs $uploadArgs
+
+if ($Latest) {
+  Invoke-Gh -GhArgs @("release", "edit", $Tag, "--repo", $Repo, "--latest")
+}
 
 Write-Host "Upload complete." -ForegroundColor Green

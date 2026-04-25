@@ -36,6 +36,7 @@ export default defineConfig(async () => ({
       input: {
         main: resolve(rootDir, "index.html"),
         overlay: resolve(rootDir, "overlay.html"),
+        "assistant-presence": resolve(rootDir, "assistant-presence.html"),
       },
       output: {
         // Ensure all HTML files output with simple names (no paths)

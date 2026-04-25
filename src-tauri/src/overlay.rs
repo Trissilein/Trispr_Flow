@@ -464,14 +464,19 @@ fn apply_overlay_tts_stop_to_window(
     active: bool,
     settings: Option<&OverlaySettings>,
 ) -> Result<(), String> {
-    let effective_active = settings.map(|value| active && value.tts_stop_enabled).unwrap_or(active);
+    let effective_active = settings
+        .map(|value| active && value.tts_stop_enabled)
+        .unwrap_or(active);
     with_overlay_controller(app, |controller| {
         controller.tts_stop_visible = effective_active;
     });
 
     if let Some(settings) = settings {
         let should_show = effective_active
-            || !matches!(overlay_controller_snapshot(app).desired_state, OverlayState::Hidden);
+            || !matches!(
+                overlay_controller_snapshot(app).desired_state,
+                OverlayState::Hidden
+            );
         if should_show {
             let _ = window.show();
             let _ = window.set_always_on_top(true);
@@ -482,8 +487,13 @@ fn apply_overlay_tts_stop_to_window(
         let js = format!(
             "if(window.setOverlayTtsStopVisible){{window.setOverlayTtsStopVisible({}, {}, {});}}",
             if effective_active { "true" } else { "false" },
-            if settings.tts_stop_enabled { "true" } else { "false" },
-            serde_json::to_string(&settings.tts_stop_shape).unwrap_or_else(|_| "\"compact\"".to_string())
+            if settings.tts_stop_enabled {
+                "true"
+            } else {
+                "false"
+            },
+            serde_json::to_string(&settings.tts_stop_shape)
+                .unwrap_or_else(|_| "\"compact\"".to_string())
         );
         window
             .eval(&js)
@@ -514,7 +524,12 @@ fn replay_overlay_controller_to_window(
     }
     apply_overlay_state_to_window(app, window, controller.desired_state.clone())?;
     apply_overlay_refining_to_window(app, window, controller.refining_active)?;
-    apply_overlay_tts_stop_to_window(app, window, controller.tts_stop_visible, controller.desired_settings.as_ref())?;
+    apply_overlay_tts_stop_to_window(
+        app,
+        window,
+        controller.tts_stop_visible,
+        controller.desired_settings.as_ref(),
+    )?;
     let replay_level = if matches!(controller.desired_state, OverlayState::Recording) {
         controller.last_level
     } else {
@@ -691,12 +706,17 @@ pub fn update_overlay_tts_stop_visibility(app: &AppHandle, active: bool) -> Resu
         "if(window.setOverlayTtsStopVisible){{window.setOverlayTtsStopVisible({}, {}, {});}}",
         if effective_active { "true" } else { "false" },
         if let Some(settings) = controller.desired_settings.as_ref() {
-            if settings.tts_stop_enabled { "true" } else { "false" }
+            if settings.tts_stop_enabled {
+                "true"
+            } else {
+                "false"
+            }
         } else {
             "false"
         },
         if let Some(settings) = controller.desired_settings.as_ref() {
-            serde_json::to_string(&settings.tts_stop_shape).unwrap_or_else(|_| "\"compact\"".to_string())
+            serde_json::to_string(&settings.tts_stop_shape)
+                .unwrap_or_else(|_| "\"compact\"".to_string())
         } else {
             "\"compact\"".to_string()
         }
@@ -905,7 +925,11 @@ fn apply_overlay_settings_to_window(
         .unwrap_or_else(|_| "\"#4be0d4\"".to_string());
     let tts_js = format!(
         "if(window.setOverlayTtsStopConfig){{window.setOverlayTtsStopConfig({},{},{});}}",
-        if settings.tts_stop_enabled { "true" } else { "false" },
+        if settings.tts_stop_enabled {
+            "true"
+        } else {
+            "false"
+        },
         tts_shape,
         tts_color
     );

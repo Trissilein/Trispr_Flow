@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width={{WIDTH}}, height={{HEIGHT}}" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        width: {{WIDTH}}px;
+        height: {{HEIGHT}}px;
+        overflow: hidden;
+        background: #0b0e14;
+        color: #f8fafc;
+        font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+      }
+      #root { position: relative; width: 100%; height: 100%; }
+      #caption-stage {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 8%;
+      }
+      #caption {
+        font-size: 5.2vw;
+        line-height: 1.25;
+        font-weight: 600;
+        text-align: center;
+        letter-spacing: -0.01em;
+      }
+      .word { display: inline-block; opacity: 0.25; margin-right: 0.3em; }
+      .word.visible { opacity: 1; color: #7dd3fc; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="{{DURATION}}"
+      data-width="{{WIDTH}}"
+      data-height="{{HEIGHT}}"
+    >
+      <div
+        id="caption-stage"
+        class="clip"
+        data-start="0"
+        data-duration="{{DURATION}}"
+        data-track-index="1"
+      >
+        <div id="caption"></div>
+      </div>
+    </div>
+
+    <script id="trispr-items" type="application/json">{{ITEMS_JSON}}</script>
+    <script id="trispr-brief" type="application/json">{{BRIEF_JSON}}</script>
+
+    <script>
+      (function () {
+        var items = JSON.parse(document.getElementById("trispr-items").textContent || "[]");
+        var text = items
+          .filter(function (i) { return i.kind === "content" || i.kind === "hybrid"; })
+          .map(function (i) { return (i.extracted_text || "").trim(); })
+          .filter(function (t) { return t.length > 0; })
+          .join(" \u2014 ")
+          .replace(/\s+/g, " ");
+
+        var caption = document.getElementById("caption");
+        var words = text.split(/\s+/).filter(Boolean);
+        words.forEach(function (w) {
+          var span = document.createElement("span");
+          span.className = "word";
+          span.textContent = w;
+          caption.appendChild(span);
+        });
+
+        window.__timelines = window.__timelines || {};
+        var duration = {{DURATION}};
+        var perWord = words.length > 0 ? (duration / words.length) : duration;
+        var tl = gsap.timeline({ paused: true });
+        var spans = caption.querySelectorAll(".word");
+        spans.forEach(function (span, idx) {
+          tl.set(span, { className: "word visible" }, idx * perWord);
+        });
+        window.__timelines["main"] = tl;
+      })();
+    </script>
+  </body>
+</html>

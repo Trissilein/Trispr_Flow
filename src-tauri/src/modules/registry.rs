@@ -1,6 +1,18 @@
 use std::collections::HashSet;
 
-use super::{ModuleDescriptor, ModuleSettings};
+use super::{
+    canonicalize_module_id, AssistantActionDescriptor, ModuleDescriptor, ModuleSettings,
+    ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID,
+};
+
+#[derive(Debug, Clone, Copy)]
+pub struct AssistantActionManifest {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub risk_level: &'static str,
+    pub requires_online: bool,
+    pub allowlist_eligible: bool,
+}
 
 #[derive(Debug, Clone)]
 pub struct ModuleManifest {
@@ -13,9 +25,50 @@ pub struct ModuleManifest {
     pub restart_required_on_enable: bool,
     pub dependencies: &'static [&'static str],
     pub permissions: &'static [&'static str],
+    pub surface: &'static str,
+    pub assistant_capable: bool,
+    pub assistant_actions: &'static [AssistantActionManifest],
 }
 
 pub fn manifests() -> Vec<ModuleManifest> {
+    const GDD_ACTIONS: &[AssistantActionManifest] = &[AssistantActionManifest {
+        id: "gdd.generate_publish",
+        label: "Generate GDD Draft",
+        risk_level: "medium",
+        requires_online: false,
+        allowlist_eligible: false,
+    }];
+    const ASSISTANT_CORE_ACTIONS: &[AssistantActionManifest] = &[
+        AssistantActionManifest {
+            id: "web.search",
+            label: "Web Search",
+            risk_level: "low",
+            requires_online: true,
+            allowlist_eligible: true,
+        },
+        AssistantActionManifest {
+            id: "app.open",
+            label: "Open App",
+            risk_level: "low",
+            requires_online: false,
+            allowlist_eligible: true,
+        },
+        AssistantActionManifest {
+            id: "module.open",
+            label: "Open Trispr Surface",
+            risk_level: "low",
+            requires_online: false,
+            allowlist_eligible: true,
+        },
+        AssistantActionManifest {
+            id: "gdd.generate_publish",
+            label: "Generate GDD Draft",
+            risk_level: "medium",
+            requires_online: false,
+            allowlist_eligible: false,
+        },
+    ];
+
     vec![
         ModuleManifest {
             id: "gdd",
@@ -27,6 +80,9 @@ pub fn manifests() -> Vec<ModuleManifest> {
             restart_required_on_enable: false,
             dependencies: &["integrations_confluence"],
             permissions: &[],
+            surface: "shared",
+            assistant_capable: true,
+            assistant_actions: GDD_ACTIONS,
         },
         ModuleManifest {
             id: "analysis",
@@ -38,6 +94,9 @@ pub fn manifests() -> Vec<ModuleManifest> {
             restart_required_on_enable: true,
             dependencies: &[],
             permissions: &["filesystem_history", "filesystem_exports"],
+            surface: "shared",
+            assistant_capable: false,
+            assistant_actions: &[],
         },
         ModuleManifest {
             id: "ai_refinement",
@@ -49,6 +108,9 @@ pub fn manifests() -> Vec<ModuleManifest> {
             restart_required_on_enable: false,
             dependencies: &[],
             permissions: &[],
+            surface: "shared",
+            assistant_capable: true,
+            assistant_actions: &[],
         },
         ModuleManifest {
             id: "integrations_confluence",
@@ -60,10 +122,13 @@ pub fn manifests() -> Vec<ModuleManifest> {
             restart_required_on_enable: false,
             dependencies: &[],
             permissions: &[],
+            surface: "shared",
+            assistant_capable: true,
+            assistant_actions: &[],
         },
         ModuleManifest {
-            id: "workflow_agent",
-            name: "Workflow Agent",
+            id: ASSISTANT_CORE_MODULE_ID,
+            name: "Assistant Core",
             version: "0.1.0",
             bundled: true,
             core_always_on: false,
@@ -76,6 +141,23 @@ pub fn manifests() -> Vec<ModuleManifest> {
                 "network_confluence",
                 "keyring_access",
             ],
+            surface: "assistant",
+            assistant_capable: true,
+            assistant_actions: ASSISTANT_CORE_ACTIONS,
+        },
+        ModuleManifest {
+            id: ASSISTANT_PRESENCE_MODULE_ID,
+            name: "Assistant Presence",
+            version: "0.1.0",
+            bundled: true,
+            core_always_on: false,
+            installed_by_default: true,
+            restart_required_on_enable: false,
+            dependencies: &[ASSISTANT_CORE_MODULE_ID],
+            permissions: &[],
+            surface: "ui",
+            assistant_capable: false,
+            assistant_actions: &[],
         },
         ModuleManifest {
             id: "input_vision",
@@ -85,8 +167,11 @@ pub fn manifests() -> Vec<ModuleManifest> {
             core_always_on: false,
             installed_by_default: false,
             restart_required_on_enable: false,
-            dependencies: &["workflow_agent"],
+            dependencies: &[ASSISTANT_CORE_MODULE_ID],
             permissions: &["screen_capture"],
+            surface: "assistant",
+            assistant_capable: true,
+            assistant_actions: &[],
         },
         ModuleManifest {
             id: "output_voice_tts",
@@ -96,13 +181,34 @@ pub fn manifests() -> Vec<ModuleManifest> {
             core_always_on: false,
             installed_by_default: true,
             restart_required_on_enable: false,
-            dependencies: &["workflow_agent"],
+            dependencies: &[ASSISTANT_CORE_MODULE_ID],
             permissions: &["audio_output"],
+            surface: "assistant",
+            assistant_capable: true,
+            assistant_actions: &[],
+        },
+        ModuleManifest {
+            // Phase 1a: installed_by_default=true because hyperframes+Node are
+            // present in the dev environment. Phase 1b will flip this to false
+            // and introduce an explicit install flow via video_install_sidecar.
+            id: "output_video_generation",
+            name: "Video Generation",
+            version: "0.1.0",
+            bundled: false,
+            core_always_on: false,
+            installed_by_default: true,
+            restart_required_on_enable: false,
+            dependencies: &[],
+            permissions: &["filesystem_exports"],
+            surface: "shared",
+            assistant_capable: false,
+            assistant_actions: &[],
         },
     ]
 }
 
 pub fn find_manifest(module_id: &str) -> Option<ModuleManifest> {
+    let module_id = canonicalize_module_id(module_id);
     manifests()
         .into_iter()
         .find(|manifest| manifest.id == module_id)
@@ -124,15 +230,20 @@ pub fn set_last_error(settings: &mut ModuleSettings, module_id: &str, error: &st
 }
 
 fn module_is_enabled(settings: &ModuleSettings, module_id: &str) -> bool {
+    let module_id = canonicalize_module_id(module_id);
     if let Some(manifest) = find_manifest(module_id) {
         if manifest.core_always_on {
             return true;
         }
     }
-    settings.enabled_modules.contains(module_id)
+    settings
+        .enabled_modules
+        .iter()
+        .any(|enabled| canonicalize_module_id(enabled) == module_id)
 }
 
 pub fn module_is_installed(settings: &ModuleSettings, module_id: &str) -> bool {
+    let module_id = canonicalize_module_id(module_id);
     if let Some(manifest) = find_manifest(module_id) {
         if manifest.installed_by_default {
             return true;
@@ -205,6 +316,19 @@ pub fn modules_as_descriptors(settings: &ModuleSettings) -> Vec<ModuleDescriptor
                 bundled: manifest.bundled,
                 core: manifest.core_always_on,
                 toggleable: !manifest.core_always_on,
+                surface: manifest.surface.to_string(),
+                assistant_capable: manifest.assistant_capable,
+                assistant_actions: manifest
+                    .assistant_actions
+                    .iter()
+                    .map(|action| AssistantActionDescriptor {
+                        id: action.id.to_string(),
+                        label: action.label.to_string(),
+                        risk_level: action.risk_level.to_string(),
+                        requires_online: action.requires_online,
+                        allowlist_eligible: action.allowlist_eligible,
+                    })
+                    .collect(),
             }
         })
         .collect()

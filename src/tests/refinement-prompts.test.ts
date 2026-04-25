@@ -1,15 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   findUserRefinementPromptPresetByOptionId,
+  getFactoryPresetPrompt,
+  hasPresetOverride,
   NEW_REFINEMENT_PROMPT_OPTION_ID,
   normalizeActiveRefinementPromptPresetId,
   normalizePersistedRefinementPromptPresetId,
   normalizeRefinementPromptPreset,
   normalizeUserRefinementPromptPresets,
+  removePresetOverride,
   resolveEffectiveRefinementPrompt,
   resolveRefinementPresetPrompt,
+  setPresetOverride,
   toUserRefinementPromptOptionId,
 } from "../refinement-prompts";
+import type { PromptPresetOverrides } from "../types";
 
 describe("refinement prompt presets", () => {
   it("normalizes unknown profile to wording", () => {
@@ -110,5 +115,75 @@ describe("refinement prompt presets", () => {
       toUserRefinementPromptOptionId("ops")
     );
     expect(selected?.name).toBe("Ops");
+  });
+
+  describe("built-in preset overrides", () => {
+    it("override replaces factory default regardless of language", () => {
+      const overrides: PromptPresetOverrides = { wording: "MY CUSTOM WORDING" };
+      expect(resolveRefinementPresetPrompt("wording", "en", overrides)).toBe(
+        "MY CUSTOM WORDING"
+      );
+      expect(resolveRefinementPresetPrompt("wording", "de", overrides)).toBe(
+        "MY CUSTOM WORDING"
+      );
+    });
+
+    it("empty override string falls back to factory default", () => {
+      const overrides: PromptPresetOverrides = { wording: "   " };
+      const factory = getFactoryPresetPrompt("wording", "en");
+      expect(resolveRefinementPresetPrompt("wording", "en", overrides)).toBe(factory);
+    });
+
+    it("resolveEffectiveRefinementPrompt appends language-lock guard after override", () => {
+      const overrides: PromptPresetOverrides = {
+        wording: "Do one specific thing.",
+      };
+      const prompt = resolveEffectiveRefinementPrompt(
+        "wording",
+        "en",
+        "",
+        true,
+        null,
+        overrides
+      );
+      expect(prompt).toContain("Do one specific thing.");
+      expect(prompt).toContain("Keep the output in the same language as the input");
+    });
+
+    it("Gemma anglicism addon is appended to wording override", () => {
+      const overrides: PromptPresetOverrides = { wording: "Short custom wording." };
+      const prompt = resolveEffectiveRefinementPrompt(
+        "wording",
+        "en",
+        "",
+        true,
+        "gemma3:4b",
+        overrides
+      );
+      expect(prompt).toContain("Short custom wording.");
+      expect(prompt).toContain("Do not remove, replace, or translate anglicisms");
+    });
+
+    it("setPresetOverride trims and removes empty values", () => {
+      const overrides: PromptPresetOverrides = {};
+      setPresetOverride(overrides, "summary", "  hello  ");
+      expect(overrides.summary).toBe("hello");
+      setPresetOverride(overrides, "summary", "   ");
+      expect(overrides.summary).toBeUndefined();
+    });
+
+    it("removePresetOverride deletes the entry", () => {
+      const overrides: PromptPresetOverrides = { wording: "x", summary: "y" };
+      removePresetOverride(overrides, "wording");
+      expect(overrides.wording).toBeUndefined();
+      expect(overrides.summary).toBe("y");
+    });
+
+    it("hasPresetOverride treats whitespace as no override", () => {
+      expect(hasPresetOverride({ wording: "  " }, "wording")).toBe(false);
+      expect(hasPresetOverride({ wording: "x" }, "wording")).toBe(true);
+      expect(hasPresetOverride(undefined, "wording")).toBe(false);
+      expect(hasPresetOverride({ wording: "x" }, "custom")).toBe(false);
+    });
   });
 });

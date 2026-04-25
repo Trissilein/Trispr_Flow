@@ -8,6 +8,17 @@ use std::collections::{HashMap, HashSet};
 
 use crate::gdd::GddPresetClone;
 
+pub const ASSISTANT_CORE_MODULE_ID: &str = "assistant_core";
+pub const ASSISTANT_PRESENCE_MODULE_ID: &str = "assistant_presence";
+pub const LEGACY_WORKFLOW_AGENT_MODULE_ID: &str = "workflow_agent";
+
+pub fn canonicalize_module_id(module_id: &str) -> &str {
+    match module_id.trim() {
+        LEGACY_WORKFLOW_AGENT_MODULE_ID => ASSISTANT_CORE_MODULE_ID,
+        other => other,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleDescriptor {
     pub id: String,
@@ -21,6 +32,18 @@ pub struct ModuleDescriptor {
     pub bundled: bool,
     pub core: bool,
     pub toggleable: bool,
+    pub surface: String,
+    pub assistant_capable: bool,
+    pub assistant_actions: Vec<AssistantActionDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantActionDescriptor {
+    pub id: String,
+    pub label: String,
+    pub risk_level: String,
+    pub requires_online: bool,
+    pub allowlist_eligible: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,6 +154,9 @@ pub struct WorkflowAgentSettings {
     pub reply_mode: String,
     pub online_enabled: bool,
     pub voice_feedback_enabled: bool,
+    pub activation_mode: String,
+    pub trusted_action_allowlist: Vec<String>,
+    pub expert_yolo_enabled: bool,
 }
 
 impl Default for WorkflowAgentSettings {
@@ -188,6 +214,9 @@ impl Default for WorkflowAgentSettings {
             reply_mode: "rule_only".to_string(),
             online_enabled: false,
             voice_feedback_enabled: false,
+            activation_mode: "hotkey_first".to_string(),
+            trusted_action_allowlist: Vec::new(),
+            expert_yolo_enabled: false,
         }
     }
 }
@@ -304,13 +333,17 @@ pub fn normalize_module_settings(settings: &mut ModuleSettings) {
     let enabled = settings
         .enabled_modules
         .iter()
-        .filter_map(|module_id| registry::find_manifest(module_id).map(|_| module_id.clone()))
+        .filter_map(|module_id| {
+            let normalized = canonicalize_module_id(module_id);
+            registry::find_manifest(normalized).map(|_| normalized.to_string())
+        })
         .collect::<HashSet<_>>();
     settings.enabled_modules = enabled;
 
     let mut normalized_permissions: HashMap<String, HashSet<String>> = HashMap::new();
     for (module_id, permissions) in &settings.consented_permissions {
-        if let Some(manifest) = registry::find_manifest(module_id) {
+        let normalized_module_id = canonicalize_module_id(module_id).to_string();
+        if let Some(manifest) = registry::find_manifest(&normalized_module_id) {
             let allowed = manifest
                 .permissions
                 .iter()
@@ -321,10 +354,26 @@ pub fn normalize_module_settings(settings: &mut ModuleSettings) {
                 .filter(|permission| allowed.contains(*permission))
                 .cloned()
                 .collect::<HashSet<_>>();
-            normalized_permissions.insert(module_id.clone(), kept);
+            normalized_permissions
+                .entry(normalized_module_id)
+                .and_modify(|existing| existing.extend(kept.clone()))
+                .or_insert(kept);
         }
     }
     settings.consented_permissions = normalized_permissions;
+
+    let normalized_overrides = settings
+        .module_overrides
+        .iter()
+        .map(|(key, value)| {
+            if let Some(rest) = key.strip_prefix(&format!("{LEGACY_WORKFLOW_AGENT_MODULE_ID}.")) {
+                (format!("{ASSISTANT_CORE_MODULE_ID}.{rest}"), value.clone())
+            } else {
+                (key.clone(), value.clone())
+            }
+        })
+        .collect::<HashMap<_, _>>();
+    settings.module_overrides = normalized_overrides;
 }
 
 pub fn normalize_gdd_module_settings(settings: &mut GddModuleSettings) {
@@ -408,6 +457,18 @@ pub fn normalize_workflow_agent_settings(settings: &mut WorkflowAgentSettings) {
         "hybrid_local_llm" => "hybrid_local_llm".to_string(),
         _ => "rule_only".to_string(),
     };
+    settings.activation_mode = match settings.activation_mode.as_str() {
+        "wakeword_optional" => "wakeword_optional".to_string(),
+        _ => "hotkey_first".to_string(),
+    };
+    settings.trusted_action_allowlist = settings
+        .trusted_action_allowlist
+        .iter()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect();
+    settings.trusted_action_allowlist.sort();
+    settings.trusted_action_allowlist.dedup();
 
     let defaults = WorkflowAgentSettings::default().intent_keywords;
     if settings.intent_keywords.is_empty() {
@@ -504,5 +565,94 @@ pub fn normalize_voice_output_settings(settings: &mut VoiceOutputSettings) {
     settings.voice_id_local = settings.voice_id_local.trim().to_string();
     if is_removed_piper_model_key(&settings.voice_id_local) {
         settings.voice_id_local = DEFAULT_PIPER_MODEL_KEY.to_string();
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoGenerationSettings {
+    pub enabled: bool,
+    /// Output directory for rendered MP4 files. Empty = resolved via paths::resolve_video_output_dir().
+    pub output_dir: String,
+    /// Target resolution for new jobs: "1920x1080" | "1080x1920" | "1080x1080".
+    pub default_resolution: String,
+    /// Target frame rate for new jobs: 30 | 60.
+    pub default_fps: u32,
+    /// Default composition style: "caption" | "slideshow" | "diagram" | "game_viz".
+    pub default_style: String,
+    /// TTS provider for voiceover: "none" | "piper" | "windows_native".
+    pub tts_provider: String,
+    /// Full path to node.exe. Empty = resolved from bundled bin/node/.
+    pub node_binary_path: String,
+    /// Working directory for hyperframes CLI. Empty = resolved from bundled bin/hyperframes/.
+    pub hyperframes_cwd: String,
+    /// Upper bound (MB) for a single file accepted via drag & drop.
+    pub max_upload_mb: u32,
+    /// Ask hyperframes to use GPU-accelerated FFmpeg encoding (NVENC on
+    /// NVIDIA, AMF on AMD, QSV on Intel). Skips CPU libx264 and dramatically
+    /// reduces encode-phase CPU load. Driver support required.
+    pub gpu_encoding: bool,
+    /// Quality preset passed to hyperframes render: "draft" | "standard" | "high".
+    /// Lower quality = faster render, smaller file. "draft" is ~3x faster
+    /// than "standard" and good enough for iteration.
+    pub render_quality: String,
+    /// Parallel Chrome workers for frame capture. 0 = hyperframes default
+    /// ("auto" = ~50% of CPU cores). Lowering this cuts CPU + RAM at the
+    /// cost of slower renders. Each worker is roughly 250 MB RAM.
+    pub render_workers: u32,
+}
+
+impl Default for VideoGenerationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            output_dir: String::new(),
+            default_resolution: "1920x1080".to_string(),
+            default_fps: 30,
+            default_style: "slideshow".to_string(),
+            tts_provider: "none".to_string(),
+            node_binary_path: String::new(),
+            hyperframes_cwd: String::new(),
+            max_upload_mb: 500,
+            gpu_encoding: false,
+            render_quality: "standard".to_string(),
+            render_workers: 0,
+        }
+    }
+}
+
+pub fn normalize_video_generation_settings(settings: &mut VideoGenerationSettings) {
+    settings.output_dir = settings.output_dir.trim().to_string();
+    settings.default_resolution = match settings.default_resolution.as_str() {
+        "1080x1920" => "1080x1920".to_string(),
+        "1080x1080" => "1080x1080".to_string(),
+        _ => "1920x1080".to_string(),
+    };
+    settings.default_fps = match settings.default_fps {
+        60 => 60,
+        _ => 30,
+    };
+    settings.default_style = match settings.default_style.as_str() {
+        "caption" => "caption".to_string(),
+        "diagram" => "diagram".to_string(),
+        "game_viz" => "game_viz".to_string(),
+        _ => "slideshow".to_string(),
+    };
+    settings.tts_provider = match settings.tts_provider.as_str() {
+        "piper" => "piper".to_string(),
+        "windows_native" => "windows_native".to_string(),
+        _ => "none".to_string(),
+    };
+    settings.node_binary_path = settings.node_binary_path.trim().to_string();
+    settings.hyperframes_cwd = settings.hyperframes_cwd.trim().to_string();
+    settings.max_upload_mb = settings.max_upload_mb.clamp(10, 4096);
+    settings.render_quality = match settings.render_quality.as_str() {
+        "draft" => "draft".to_string(),
+        "high" => "high".to_string(),
+        _ => "standard".to_string(),
+    };
+    // 0 means "use hyperframes default (auto)"; otherwise clamp to a sane range.
+    if settings.render_workers != 0 {
+        settings.render_workers = settings.render_workers.clamp(1, 16);
     }
 }

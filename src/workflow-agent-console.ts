@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import * as dom from "./dom-refs";
-import { settings } from "./state";
+import { isAssistantCoreAvailable, settings } from "./state";
 import { showToast } from "./toast";
 import { isAmbiguousSelection, isValidTargetLanguage } from "./workflow-agent-policy";
 import type {
@@ -113,13 +113,9 @@ export function handleTtsSpeechFinished(): void {
   ttsSpeaking = false;
 }
 
-function isModuleEnabled(moduleId: string): boolean {
-  return settings?.module_settings?.enabled_modules?.includes(moduleId) ?? false;
-}
-
 function isWorkflowAgentEnabled(): boolean {
   ensureWorkflowAgentDefaults();
-  return isModuleEnabled("workflow_agent") && Boolean(settings?.workflow_agent?.enabled);
+  return isAssistantCoreAvailable();
 }
 
 function isAssistantModeEnabled(): boolean {
@@ -132,8 +128,9 @@ function capabilityLabel(capabilityId: string): string {
       return "Voice Output (TTS)";
     case "input_vision":
       return "Vision Input";
+    case "assistant_core":
     case "workflow_agent":
-      return "Workflow Agent";
+      return "Assistant Core";
     case "product_mode_assistant":
       return "Assistant Product Mode";
     default:
@@ -150,8 +147,9 @@ function assistantReasonGuidance(reason: string | null | undefined): string {
   switch ((reason ?? "").trim()) {
     case "product_mode_transcribe":
       return "Switch Product mode to Assistant.";
+    case "assistant_core_unavailable":
     case "workflow_agent_unavailable":
-      return "Enable Workflow Agent module and settings.";
+      return "Enable Assistant Core module and settings.";
     case "assistant_degraded_capability":
       return "Assistant is running with reduced capabilities.";
     default:
@@ -163,13 +161,67 @@ function requireAssistantInteraction(actionLabel: string): boolean {
   if (!isWorkflowAgentEnabled()) {
     showToast({
       type: "warning",
-      title: "Workflow Agent disabled",
-      message: `Enable Workflow Agent before ${actionLabel}.`,
+      title: "Assistant Core disabled",
+      message: `Enable Assistant Core before ${actionLabel}.`,
       duration: 3200,
     });
     return false;
   }
   return true;
+}
+
+function emitAssistantEvent(eventName: string, payload: Record<string, unknown>): void {
+  const emitter = window.__TAURI__?.event?.emit;
+  if (typeof emitter !== "function") return;
+  try {
+    const result = emitter(eventName, payload);
+    if (result && typeof (result as Promise<void>).catch === "function") {
+      void (result as Promise<void>).catch(() => {});
+    }
+  } catch {
+    // Ignore auxiliary event bridge failures.
+  }
+}
+
+function emitAssistantReplyDraft(
+  text: string,
+  reason: string,
+  intent?: string | null
+): void {
+  emitAssistantEvent("assistant:reply-draft", {
+    text,
+    reason,
+    intent: intent ?? null,
+  });
+}
+
+function emitAssistantReplyFinal(
+  text: string,
+  reason: string,
+  intent?: string | null,
+  source?: string | null
+): void {
+  emitAssistantEvent("assistant:reply-final", {
+    text,
+    reason,
+    intent: intent ?? null,
+    source: source ?? null,
+  });
+}
+
+function immediateDraftForIntent(intent: string | null | undefined): string {
+  switch ((intent ?? "").trim()) {
+    case "web_search":
+      return "Checking the best web route for that.";
+    case "open_module":
+      return "Opening the matching Trispr surface.";
+    case "open_app":
+      return "Launching that app.";
+    case "gdd_generate_publish":
+      return "Matching the right transcript session.";
+    default:
+      return "Working on that now.";
+  }
 }
 
 function suggestionLevelFromMaxCandidates(maxCandidates: number): "low" | "standard" | "high" {
@@ -609,8 +661,8 @@ function renderStatus(): void {
   if (!dom.workflowAgentStatus) return;
   if (!enabled) {
     dom.workflowAgentStatus.textContent =
-      "Workflow Agent disabled. Enable module + setting to use assistant actions.";
-    setAgentPipelineStage("idle", "Workflow Agent disabled.");
+      "Assistant Core disabled. Enable module + setting to use assistant actions.";
+    setAgentPipelineStage("idle", "Assistant Core disabled.");
     renderReviewGate();
     renderActionLane();
     renderConfiguration();
@@ -789,6 +841,7 @@ function buildUnknownRuleReply(commandText: string): string {
 }
 
 async function composeUnknownReply(commandText: string): Promise<void> {
+  emitAssistantReplyDraft(immediateDraftForIntent("unknown"), "unknown_reply:start", "unknown");
   try {
     const reply = await invoke<AgentReplyResult>("agent_compose_unknown_reply", {
       request: {
@@ -804,6 +857,28 @@ async function composeUnknownReply(commandText: string): Promise<void> {
     appendLog(`Unknown intent fallback reply -> ${String(error)}`);
   }
   renderLiveState();
+  emitAssistantReplyFinal(latestReplyLine, "unknown_reply:complete", "unknown");
+  await maybeSpeakAgentReply(latestReplyLine);
+}
+
+async function executeDirectAction(intent: string, commandText: string): Promise<void> {
+  emitAssistantReplyDraft(immediateDraftForIntent(intent), "direct_action:start", intent);
+  setAgentPipelineStage("executing", "Executing direct assistant action…");
+  const result = await invoke<AgentExecutionResult>("assistant_execute_direct_action", {
+    request: {
+      intent,
+      command_text: commandText,
+    },
+  });
+  latestReplyLine = result.message;
+  renderLiveState();
+  appendLog(`Direct action -> ${intent}: ${result.status}`);
+  emitAssistantReplyFinal(latestReplyLine, "direct_action:complete", intent);
+  setAgentPipelineStage(
+    result.status === "failed" ? "recovering" : "listening",
+    result.status === "failed" ? "Direct action failed." : "Direct action finished.",
+    result.status === "failed" ? 0 : 1600
+  );
   await maybeSpeakAgentReply(latestReplyLine);
 }
 
@@ -825,6 +900,7 @@ async function parseCommand(
     });
     return;
   }
+  emitAssistantReplyDraft(immediateDraftForIntent(null), "parse_command:start");
   const parsed = await invoke<AgentCommandParseResult>("agent_parse_command", {
     request: {
       command_text: commandText,
@@ -879,6 +955,7 @@ async function parseCommand(
     latestReplyLine = reply;
     appendLog(`Plan status reply -> ${reply}`);
     renderLiveState();
+    emitAssistantReplyFinal(reply, "plan_status:complete", parsed.intent);
     await maybeSpeakAgentReply(reply);
     return;
   }
@@ -892,6 +969,7 @@ async function parseCommand(
     latestReplyLine = reply;
     appendLog(`Session recap reply -> ${reply}`);
     renderLiveState();
+    emitAssistantReplyFinal(reply, "session_recap:complete", parsed.intent);
     await maybeSpeakAgentReply(reply);
     return;
   }
@@ -909,7 +987,13 @@ async function parseCommand(
     }
     appendLog(`Confirm/cancel intent reply -> ${latestReplyLine}`);
     renderLiveState();
+    emitAssistantReplyFinal(latestReplyLine, "confirm_or_cancel:complete", parsed.intent);
     await maybeSpeakAgentReply(latestReplyLine);
+    return;
+  }
+
+  if (parsed.intent === "web_search" || parsed.intent === "open_module" || parsed.intent === "open_app") {
+    await executeDirectAction(parsed.intent, parsed.command_text);
     return;
   }
 
@@ -1067,9 +1151,14 @@ async function executePlan(confirmationToken?: string): Promise<void> {
   renderActionLane();
   renderLiveState();
   appendLog(`Execution result -> ${result.status}: ${result.message}`);
+  emitAssistantReplyFinal(
+    result.message,
+    "execute_plan:complete",
+    currentPlan?.intent ?? "gdd_generate_publish"
+  );
   showToast({
     type: result.status === "failed" ? "error" : result.status === "queued" ? "warning" : "success",
-    title: "Workflow Agent",
+    title: "Assistant Core",
     message: result.message,
     duration: 4200,
   });
@@ -1091,8 +1180,8 @@ function bindUi(): void {
     if (!isWorkflowAgentEnabled()) {
       showToast({
         type: "info",
-        title: "Workflow Agent disabled",
-        message: "Enable Workflow Agent before arming Agent PTT.",
+        title: "Assistant Core disabled",
+        message: "Enable Assistant Core before arming Agent PTT.",
         duration: 3200,
       });
       return;
@@ -1251,10 +1340,10 @@ async function handleWorkflowAgentTranscriptInput(
   const wakewordPreview = matchesWakeword(spoken);
 
   if (!isWorkflowAgentEnabled()) {
-    setGateReason("module_disabled", "workflow_agent not enabled");
-    setAgentPipelineStage("idle", "Workflow Agent disabled.");
+    setGateReason("module_disabled", "assistant_core not enabled");
+    setAgentPipelineStage("idle", "Assistant Core disabled.");
     if (wakewordPreview) {
-      maybeShowGateToast("Workflow Agent disabled", "Enable the Workflow Agent module to receive replies.");
+      maybeShowGateToast("Assistant Core disabled", "Enable the Assistant Core module to receive replies.");
     }
     return;
   }
@@ -1415,6 +1504,7 @@ export function handleAssistantPlanReady(payload: AssistantPlanReadyEvent): void
   renderPlanPreview();
   renderActionLane();
   renderLiveState();
+  emitAssistantReplyFinal(latestReplyLine, payload.reason || "assistant_plan_ready", payload.plan.intent);
 }
 
 export function handleAssistantAwaitingConfirmation(payload: AssistantAwaitingConfirmationEvent): void {
@@ -1451,6 +1541,12 @@ export function handleAssistantActionResult(
     clearPendingConfirmationState();
     latestConfirmationLine = "No pending confirmation.";
   }
+  latestReplyLine = payload.result.message;
   renderActionLane();
   renderLiveState();
+  emitAssistantReplyFinal(
+    payload.result.message,
+    "assistant_action_result",
+    currentPlan?.intent ?? null
+  );
 }

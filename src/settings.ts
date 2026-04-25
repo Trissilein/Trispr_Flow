@@ -1,11 +1,17 @@
 // Settings persistence and UI rendering
 import { invoke } from "@tauri-apps/api/core";
-import { overlayHealth, outputDevices, runtimeDiagnostics, settings, startupStatus } from "./state";
+import {
+  isAssistantCoreAvailable,
+  overlayHealth,
+  outputDevices,
+  runtimeDiagnostics,
+  settings,
+  startupStatus,
+} from "./state";
 import * as dom from "./dom-refs";
 import { thresholdToDb, VAD_DB_FLOOR, formatBytes } from "./ui-helpers";
 import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "./utils";
-import { renderVocabulary } from "./event-listeners";
-import { renderVocabCandidatesStatus, renderVocabSuggestionBanner } from "./vocab-suggestion-ui";
+import { renderVocabulary, renderLearnedVocabChips } from "./event-listeners";
 import { DEFAULT_TOPICS, setTopicKeywords, type TopicKeywords } from "./history";
 import { formatHotkeyForDisplay } from "./ui-helpers";
 import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
@@ -20,6 +26,7 @@ import {
   BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS,
   DEFAULT_REFINEMENT_PROMPT_PRESET,
   findUserRefinementPromptPresetByOptionId,
+  hasPresetOverride,
   NEW_REFINEMENT_PROMPT_OPTION_ID,
   normalizeActiveRefinementPromptPresetId,
   normalizePersistedRefinementPromptPresetId,
@@ -27,6 +34,7 @@ import {
   normalizeUserRefinementPromptPresets,
   resolveEffectiveRefinementPrompt,
   toUserRefinementPromptOptionId,
+  type BuiltInRefinementPromptPreset,
 } from "./refinement-prompts";
 import type {
   AIProviderSettings,
@@ -729,6 +737,8 @@ function renderPromptPresetCards(
   const effectiveActiveId =
     activePresetId === "custom" ? DEFAULT_REFINEMENT_PROMPT_PRESET : activePresetId;
 
+  const overrides = settings?.ai_fallback?.prompt_preset_overrides;
+
   const makeChip = (
     presetId: string,
     label: string,
@@ -757,7 +767,11 @@ function renderPromptPresetCards(
   // Built-in chips
   for (const preset of BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS) {
     const isActive = effectiveActiveId === preset.id;
-    container.appendChild(makeChip(preset.id, preset.label, isActive, "", "use-preset", false));
+    const modified = hasPresetOverride(overrides, preset.id);
+    const extra = modified ? "preset-chip--modified" : "";
+    const chip = makeChip(preset.id, preset.label, isActive, extra, "use-preset", false);
+    if (modified) chip.title = "Customized — saved";
+    container.appendChild(chip);
   }
 
   // User preset chips
@@ -1236,6 +1250,8 @@ export function renderAIFallbackSettingsUi() {
   }
   const userPromptPresets = normalizeUserRefinementPromptPresets(ai?.prompt_presets);
   ai.prompt_presets = userPromptPresets;
+  ai.prompt_preset_overrides ??= {};
+  const overrides = ai.prompt_preset_overrides;
   const activePromptPresetId = normalizeActiveRefinementPromptPresetId(
     ai?.active_prompt_preset_id,
     ai?.prompt_profile,
@@ -1262,17 +1278,30 @@ export function renderAIFallbackSettingsUi() {
     effectiveLanguageHint,
     ai?.custom_prompt,
     Boolean(ai?.preserve_source_language ?? true),
-    ai?.model
+    ai?.model,
+    overrides
   );
   const isCustomPrompt = activePromptPresetId === "custom";
   const isUserPrompt = Boolean(selectedUserPromptPreset);
   const isBuiltInPrompt = !isCustomPrompt && !isUserPrompt && !isNewPresetMode;
+  const builtInId = isBuiltInPrompt
+    ? (normalizeRefinementPromptPreset(activePromptPresetId) as BuiltInRefinementPromptPreset)
+    : null;
+  const builtInHasOverride = Boolean(
+    builtInId && typeof overrides[builtInId] === "string" && overrides[builtInId]!.trim().length > 0
+  );
+  const userHasPrevious = Boolean(
+    selectedUserPromptPreset?.previous_prompt &&
+      selectedUserPromptPreset.previous_prompt.trim().length > 0
+  );
   const shownPrompt = isBuiltInPrompt
     ? promptPreview
     : ai?.custom_prompt || selectedUserPromptPreset?.prompt || "";
   if (dom.aiFallbackPromptPreviewLabel) {
     dom.aiFallbackPromptPreviewLabel.textContent = isBuiltInPrompt
-      ? "Prompt preview"
+      ? builtInHasOverride
+        ? "Prompt (customized)"
+        : "Prompt preview"
       : isUserPrompt
         ? "User preset"
         : isNewPresetMode
@@ -1281,23 +1310,44 @@ export function renderAIFallbackSettingsUi() {
   }
   if (dom.aiFallbackPromptPreviewHint) {
     dom.aiFallbackPromptPreviewHint.textContent = isBuiltInPrompt
-      ? "Built-in preset is read-only and acts as source of truth."
+      ? builtInHasOverride
+        ? "Customized — saved. Override replaces EN and DE defaults."
+        : "Built-in preset — edit to customize."
       : isUserPrompt
-        ? "User presets are editable. Save explicitly or switch presets to auto-save."
+        ? userHasPrevious
+          ? "User preset — previous saved version available via Revert."
+          : "User preset — Save to persist changes."
         : isNewPresetMode
-          ? "Start with an empty name and prompt, then click New."
+          ? "Start with a name and prompt, then click Save."
           : "Custom prompt is editable and sent as-is.";
   }
   if (dom.aiFallbackCustomPrompt) {
-    dom.aiFallbackCustomPrompt.value = shownPrompt;
-    dom.aiFallbackCustomPrompt.readOnly = isBuiltInPrompt;
-    dom.aiFallbackCustomPrompt.classList.toggle("is-readonly", isBuiltInPrompt);
+    const textarea = dom.aiFallbackCustomPrompt;
+    const isFocused = document.activeElement === textarea;
+    const currentValue = textarea.value;
+    const externalDirty =
+      !isFocused
+      && (isBuiltInPrompt || isUserPrompt)
+      && currentValue.trim().length > 0
+      && currentValue.trim() !== (shownPrompt || "").trim();
+    if (!isFocused && !externalDirty) {
+      textarea.value = shownPrompt;
+      textarea.classList.remove("has-unsaved-edits");
+    } else if (externalDirty) {
+      textarea.classList.add("has-unsaved-edits");
+    }
+    textarea.readOnly = false;
+    textarea.classList.remove("is-readonly");
   }
-  // Show the name/save/delete row only when editing is possible
+  // Button/name row is always visible when any chip is selected (built-in, user, or new).
   if (dom.aiFallbackPresetNameField) {
-    dom.aiFallbackPresetNameField.hidden = !(isUserPrompt || isNewPresetMode);
+    dom.aiFallbackPresetNameField.hidden = isCustomPrompt;
+  }
+  if (dom.aiFallbackPresetNameInputWrap) {
+    dom.aiFallbackPresetNameInputWrap.hidden = !(isUserPrompt || isNewPresetMode);
   }
   if (dom.aiFallbackPromptPresetName) {
+    dom.aiFallbackPromptPresetName.hidden = !(isUserPrompt || isNewPresetMode);
     if (document.activeElement !== dom.aiFallbackPromptPresetName) {
       if (isUserPrompt) {
         dom.aiFallbackPromptPresetName.value = selectedUserPromptPreset?.name || "";
@@ -1306,19 +1356,41 @@ export function renderAIFallbackSettingsUi() {
       }
     }
   }
+  const textareaDirty = isTextareaDirtyAgainstEffective(shownPrompt);
   if (dom.aiFallbackPromptPresetSave) {
-    if (isUserPrompt) {
-      dom.aiFallbackPromptPresetSave.textContent = "Save";
-      dom.aiFallbackPromptPresetSave.disabled = false;
-      dom.aiFallbackPromptPresetSave.title = "Save changes to this user preset";
-    } else if (isNewPresetMode) {
+    if (isNewPresetMode) {
       dom.aiFallbackPromptPresetSave.textContent = "Save new preset";
       dom.aiFallbackPromptPresetSave.disabled = false;
       dom.aiFallbackPromptPresetSave.title = "Create a new user preset";
-    } else {
+      dom.aiFallbackPromptPresetSave.hidden = false;
+    } else if (isUserPrompt) {
       dom.aiFallbackPromptPresetSave.textContent = "Save";
-      dom.aiFallbackPromptPresetSave.disabled = true;
+      dom.aiFallbackPromptPresetSave.disabled = !textareaDirty;
+      dom.aiFallbackPromptPresetSave.title = "Save changes to this user preset";
+      dom.aiFallbackPromptPresetSave.hidden = false;
+    } else if (isBuiltInPrompt) {
+      dom.aiFallbackPromptPresetSave.textContent = "Save";
+      dom.aiFallbackPromptPresetSave.disabled = !textareaDirty;
+      dom.aiFallbackPromptPresetSave.title = "Save override for this built-in preset";
+      dom.aiFallbackPromptPresetSave.hidden = false;
+    } else {
+      dom.aiFallbackPromptPresetSave.hidden = true;
     }
+  }
+  if (dom.aiFallbackPromptPresetReset) {
+    const show = isBuiltInPrompt && builtInHasOverride;
+    dom.aiFallbackPromptPresetReset.hidden = !show;
+    dom.aiFallbackPromptPresetReset.disabled = !show;
+  }
+  if (dom.aiFallbackPromptPresetRevert) {
+    const show = isUserPrompt && userHasPrevious;
+    dom.aiFallbackPromptPresetRevert.hidden = !show;
+    dom.aiFallbackPromptPresetRevert.disabled = !show;
+  }
+  if (dom.aiFallbackPromptPresetDiscard) {
+    const show = textareaDirty && (isBuiltInPrompt || isUserPrompt);
+    dom.aiFallbackPromptPresetDiscard.hidden = !show;
+    dom.aiFallbackPromptPresetDiscard.disabled = !show;
   }
   if (dom.aiFallbackPromptPresetDelete) {
     dom.aiFallbackPromptPresetDelete.disabled = !isUserPrompt;
@@ -1326,12 +1398,24 @@ export function renderAIFallbackSettingsUi() {
   }
 }
 
+function isTextareaDirtyAgainstEffective(effective: string): boolean {
+  const textarea = dom.aiFallbackCustomPrompt;
+  if (!textarea) return false;
+  if (document.activeElement !== textarea) return false;
+  return textarea.value.trim() !== (effective || "").trim();
+}
+
 function renderProductModeSettings(): void {
   if (!settings) return;
+  const assistantCoreAvailable = isAssistantCoreAvailable();
+  if (!assistantCoreAvailable) {
+    settings.product_mode = "transcribe";
+  }
   const productMode = settings.product_mode === "assistant" ? "assistant" : "transcribe";
   settings.product_mode = productMode;
   const transcribeActive = productMode === "transcribe";
   const assistantActive = productMode === "assistant";
+  dom.productModeControl?.toggleAttribute("hidden", !assistantCoreAvailable);
   if (dom.productModeTranscribeBtn) {
     dom.productModeTranscribeBtn.classList.toggle("is-active", transcribeActive);
     dom.productModeTranscribeBtn.setAttribute("aria-pressed", transcribeActive ? "true" : "false");
@@ -1339,8 +1423,12 @@ function renderProductModeSettings(): void {
   if (dom.productModeAssistantBtn) {
     dom.productModeAssistantBtn.classList.toggle("is-active", assistantActive);
     dom.productModeAssistantBtn.setAttribute("aria-pressed", assistantActive ? "true" : "false");
+    dom.productModeAssistantBtn.disabled = !assistantCoreAvailable;
   }
-  dom.globalOnlineControl?.toggleAttribute("hidden", productMode !== "assistant");
+  dom.globalOnlineControl?.toggleAttribute(
+    "hidden",
+    !assistantCoreAvailable || productMode !== "assistant"
+  );
 }
 
 function renderGlobalOnlineModeSettings(): void {
@@ -1706,24 +1794,7 @@ export function renderSettings() {
   }
   renderVocabulary();
 
-  // Vocabulary Learning settings
-  if (dom.vocabLearningConfig) {
-    dom.vocabLearningConfig.style.display = dom.postprocCustomVocabEnabled?.checked ? "flex" : "none";
-  }
-  if (dom.vocabLearningEnabled) {
-    dom.vocabLearningEnabled.checked = settings.vocab_learning_enabled ?? true;
-  }
-  if (dom.vocabLearningSettings) {
-    dom.vocabLearningSettings.style.display = (settings.vocab_learning_enabled ?? true) ? "flex" : "none";
-  }
-  if (dom.vocabAutoAdd) {
-    dom.vocabAutoAdd.checked = settings.vocab_auto_add ?? false;
-  }
-  if (dom.vocabThreshold) {
-    dom.vocabThreshold.value = String(settings.vocab_suggestion_threshold ?? 3);
-  }
-  renderVocabCandidatesStatus();
-  renderVocabSuggestionBanner();
+  renderLearnedVocabChips();
 
   renderAIRefinementTab();
   renderVoiceOutputSettings();

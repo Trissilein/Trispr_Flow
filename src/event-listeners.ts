@@ -18,7 +18,13 @@ import {
   isVerifiedAuthStatus,
   normalizeAIFallbackProvider,
 } from "./ai-provider-utils";
-import { settings, currentHistoryTab, history, transcribeHistory } from "./state";
+import {
+  currentHistoryTab,
+  history,
+  isAssistantCoreAvailable,
+  settings,
+  transcribeHistory,
+} from "./state";
 import * as dom from "./dom-refs";
 import {
   persistSettings,
@@ -49,14 +55,18 @@ import { showToast } from "./toast";
 import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
 import { applyAccentColor, DEFAULT_ACCENT_COLOR } from "./utils";
 import {
+  BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS,
   DEFAULT_REFINEMENT_PROMPT_PRESET,
   findUserRefinementPromptPresetByOptionId,
   NEW_REFINEMENT_PROMPT_OPTION_ID,
   normalizeActiveRefinementPromptPresetId,
   normalizeRefinementPromptPreset,
   normalizeUserRefinementPromptPresets,
+  removePresetOverride,
   resolveEffectiveRefinementPrompt,
+  setPresetOverride,
   toUserRefinementPromptOptionId,
+  type BuiltInRefinementPromptPreset,
 } from "./refinement-prompts";
 import {
   autoStartLocalRuntimeIfNeeded,
@@ -79,8 +89,6 @@ import { openExportDialog } from "./export-dialog";
 import { openArchiveBrowser } from "./archive-browser";
 import { normalizeModelTag } from "./ollama-tag-utils";
 import { syncWorkflowAgentConsoleState } from "./workflow-agent-console";
-import { clearAllCandidates } from "./vocab-candidates";
-import { renderVocabSuggestionBanner, renderVocabCandidatesStatus } from "./vocab-suggestion-ui";
 
 // Cleanup registry for window-level listeners added by wireEvents()
 const _windowCleanups: Array<() => void> = [];
@@ -280,7 +288,8 @@ function refreshResolvedRefinementPromptInSettings() {
     resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
     settings.ai_fallback.custom_prompt,
     settings.ai_fallback.preserve_source_language,
-    settings.ai_fallback.model
+    settings.ai_fallback.model,
+    settings.ai_fallback.prompt_preset_overrides
   );
 }
 
@@ -355,15 +364,28 @@ function applyPendingUserPresetEditsFromEditor(): boolean {
     return false;
   }
 
+  const nextPrevious =
+    nextPrompt !== selectedUserPreset.prompt ? selectedUserPreset.prompt : selectedUserPreset.previous_prompt;
+
   ai.prompt_presets = ai.prompt_presets.map((preset) =>
     preset.id === selectedUserPreset.id
-      ? { ...preset, name: nextName, prompt: nextPrompt }
+      ? { ...preset, name: nextName, prompt: nextPrompt, previous_prompt: nextPrevious }
       : preset
   );
   ai.active_prompt_preset_id = toUserRefinementPromptOptionId(selectedUserPreset.id);
   syncActivePromptPresetSelection();
   refreshResolvedRefinementPromptInSettings();
   return true;
+}
+
+/** Returns true if the user confirmed (or no confirmation was needed), false if cancelled. */
+function confirmDiscardBuiltInEdits(): boolean {
+  if (!dom.aiFallbackCustomPrompt) return true;
+  // `.has-unsaved-edits` is the authoritative dirty flag: the `input` listener
+  // adds it on keystroke, the renderer removes it when the textarea is re-sourced
+  // from the effective prompt. No flag → no unsaved edits → no confirmation.
+  if (!dom.aiFallbackCustomPrompt.classList.contains("has-unsaved-edits")) return true;
+  return window.confirm("Discard unsaved changes to this preset?");
 }
 
 function ensureAIFallbackSettingsDefaults() {
@@ -479,7 +501,8 @@ function ensureAIFallbackSettingsDefaults() {
     effectiveLanguageHint,
     settings.ai_fallback.custom_prompt,
     settings.ai_fallback.preserve_source_language,
-    settings.ai_fallback.model
+    settings.ai_fallback.model,
+    settings.ai_fallback.prompt_preset_overrides
   );
   settings.topic_keywords = normalizeTopicKeywordsInput(settings.topic_keywords);
   setTopicKeywords(settings.topic_keywords);
@@ -805,6 +828,242 @@ async function verifyProviderCredentials(provider: CloudAIFallbackProvider): Pro
 }
 
 // Custom vocabulary helper functions
+
+/**
+ * Render both the learned-vocabulary chip list and the observing-candidates
+ * list. Learned chips that originated from a multi-variant cluster expose an
+ * expand affordance revealing the individual variant spellings (each with its
+ * own × to split it off). Observing chips show progress toward the promotion
+ * threshold.
+ */
+export function renderLearnedVocabChips(): void {
+  renderLearnedVocabChipsInternal();
+  renderObservingCandidateChips();
+}
+
+function renderLearnedVocabChipsInternal(): void {
+  const container = dom.vocabTermsList;
+  if (!container) return;
+  const terms = Array.isArray(settings?.vocab_terms) ? [...settings!.vocab_terms] : [];
+  terms.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+  const candidates = Array.isArray(settings?.vocab_term_candidates)
+    ? settings!.vocab_term_candidates
+    : [];
+
+  updateVocabCountBadge(terms.length, candidates.length);
+  container.innerHTML = "";
+
+  for (const term of terms) {
+    const chip = buildLearnedChip(term);
+    container.appendChild(chip);
+  }
+}
+
+function renderObservingCandidateChips(): void {
+  const container = dom.vocabObservingList;
+  if (!container) return;
+  const candidates = Array.isArray(settings?.vocab_term_candidates)
+    ? [...settings!.vocab_term_candidates]
+    : [];
+  // Newest-first so recently-active terms surface at the top.
+  candidates.sort((a, b) => b.last_seen_ms - a.last_seen_ms);
+
+  container.innerHTML = "";
+  for (const cand of candidates) {
+    container.appendChild(buildObservingChip(cand));
+  }
+}
+
+function updateVocabCountBadge(learned: number, observed: number): void {
+  if (!dom.vocabTermsCount) return;
+  if (learned === 0 && observed === 0) {
+    dom.vocabTermsCount.textContent = "";
+    return;
+  }
+  const parts: string[] = [];
+  if (learned > 0) parts.push(`${learned} learned`);
+  if (observed > 0) parts.push(`${observed} observed`);
+  dom.vocabTermsCount.textContent = parts.join(" · ");
+}
+
+function buildLearnedChip(term: string): DocumentFragment {
+  const frag = document.createDocumentFragment();
+
+  // Look up the original cluster by term (case-insensitive) so we can show
+  // variant spellings even though `vocab_terms` only stores the canonical form.
+  const cluster = findClusterByTerm(term);
+  const variants = cluster?.variants ?? null;
+  const hasMultipleVariants =
+    !!variants && Object.keys(variants).filter((v) => v !== term).length > 0;
+
+  const chip = document.createElement("span");
+  chip.className = "vocab-term-chip";
+  chip.dataset.term = term;
+  chip.setAttribute("role", "listitem");
+
+  const label = document.createElement("span");
+  label.textContent = term;
+  chip.appendChild(label);
+
+  if (hasMultipleVariants) {
+    chip.classList.add("cluster");
+    chip.setAttribute("tabindex", "0");
+    const totalCount = Object.values(variants!).reduce((sum, n) => sum + n, 0);
+    const count = document.createElement("span");
+    count.className = "vocab-chip-count";
+    count.textContent = `×${totalCount}`;
+    chip.appendChild(count);
+    const expand = document.createElement("span");
+    expand.className = "vocab-chip-expand";
+    expand.textContent = "▸";
+    expand.setAttribute("aria-hidden", "true");
+    chip.appendChild(expand);
+  }
+
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "vocab-term-chip-dismiss";
+  dismiss.title = "Remove this term";
+  dismiss.setAttribute("aria-label", `Remove learned term ${term}`);
+  dismiss.textContent = "×";
+  dismiss.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    const { dismissLearnedTerm } = await import("./vocab-auto-learn");
+    await dismissLearnedTerm(term);
+    renderLearnedVocabChips();
+  });
+  chip.appendChild(dismiss);
+  frag.appendChild(chip);
+
+  if (hasMultipleVariants) {
+    const variantsBox = document.createElement("span");
+    variantsBox.className = "vocab-chip-variants";
+    variantsBox.setAttribute("role", "list");
+    variantsBox.setAttribute("aria-label", `Variants of ${term}`);
+    for (const [variant, vCount] of Object.entries(variants!)) {
+      if (variant === term) continue;
+      variantsBox.appendChild(buildVariantChip(term, variant, vCount));
+    }
+    frag.appendChild(variantsBox);
+
+    const toggle = () => {
+      const nowExpanded = chip.classList.toggle("expanded");
+      chip.setAttribute("aria-expanded", nowExpanded ? "true" : "false");
+    };
+    chip.setAttribute("aria-expanded", "false");
+    chip.addEventListener("click", (ev) => {
+      if ((ev.target as HTMLElement).closest(".vocab-term-chip-dismiss")) return;
+      toggle();
+    });
+    chip.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        toggle();
+      }
+    });
+  }
+
+  return frag;
+}
+
+function buildVariantChip(
+  clusterTerm: string,
+  variant: string,
+  count: number,
+): HTMLSpanElement {
+  const chip = document.createElement("span");
+  chip.className = "vocab-variant-chip";
+  chip.setAttribute("role", "listitem");
+
+  const label = document.createElement("span");
+  label.textContent = variant;
+  chip.appendChild(label);
+
+  if (count > 1) {
+    const countSpan = document.createElement("span");
+    countSpan.className = "vocab-variant-chip-count";
+    countSpan.textContent = `×${count}`;
+    chip.appendChild(countSpan);
+  }
+
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "vocab-variant-chip-dismiss";
+  dismiss.title = `Remove variant ${variant} from this cluster`;
+  dismiss.setAttribute("aria-label", `Remove variant ${variant} from ${clusterTerm}`);
+  dismiss.textContent = "×";
+  dismiss.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    const { dismissCandidateVariant } = await import("./vocab-auto-learn");
+    await dismissCandidateVariant(clusterTerm, variant);
+    renderLearnedVocabChips();
+  });
+  chip.appendChild(dismiss);
+  return chip;
+}
+
+function buildObservingChip(cand: {
+  term: string;
+  count: number;
+  variants?: Record<string, number>;
+}): HTMLSpanElement {
+  const chip = document.createElement("span");
+  chip.className = "vocab-term-chip observing";
+  chip.dataset.term = cand.term;
+  chip.setAttribute("role", "listitem");
+
+  const label = document.createElement("span");
+  label.textContent = cand.term;
+  chip.appendChild(label);
+
+  const progress = document.createElement("span");
+  progress.className = "vocab-chip-progress";
+  // Compute threshold lazily — import is cheap here since the module is
+  // already loaded by the auto-learner pipeline.
+  const threshold = guessPromotionThreshold(cand.term);
+  progress.textContent = `${cand.count}/${threshold}`;
+  progress.title = `Will be learned after ${threshold} sightings`;
+  chip.appendChild(progress);
+
+  const variantKeys = cand.variants ? Object.keys(cand.variants) : [];
+  if (variantKeys.length > 1) {
+    const variantHint = document.createElement("span");
+    variantHint.className = "vocab-chip-count";
+    variantHint.textContent = `(${variantKeys.length} spellings)`;
+    variantHint.title = variantKeys.join(", ");
+    chip.appendChild(variantHint);
+  }
+
+  return chip;
+}
+
+function findClusterByTerm(term: string) {
+  if (!settings?.vocab_term_candidates) return null;
+  const lower = term.toLowerCase();
+  return (
+    settings.vocab_term_candidates.find(
+      (c) =>
+        c.term.toLowerCase() === lower
+        || (c.variants && Object.keys(c.variants).some((v) => v.toLowerCase() === lower)),
+    ) ?? null
+  );
+}
+
+/**
+ * Mirrors `classifyCandidateKind` from vocab-auto-learn.ts. Kept local so the
+ * UI doesn't have to import the full auto-learner module just to render a
+ * progress badge — the classification is cheap and deterministic.
+ */
+function guessPromotionThreshold(term: string): number {
+  const hasUpper = /[A-ZÄÖÜ]/.test(term);
+  const hasLower = /[a-zäöüß]/.test(term);
+  const isCamel = hasUpper && hasLower && /[a-zäöüß][A-ZÄÖÜ]/.test(term);
+  const isAcronym = /^[A-ZÄÖÜ]{2,6}([0-9A-ZÄÖÜ]{0,3})?$/.test(term);
+  const isHyphenMixed = /-/.test(term) && hasUpper;
+  return isCamel || isAcronym || isHyphenMixed ? 3 : 8;
+}
+
 function addVocabRow(original: string, replacement: string) {
   if (!dom.postprocVocabRows) return;
 
@@ -867,24 +1126,40 @@ function addVocabRow(original: string, replacement: string) {
   dom.postprocVocabRows.appendChild(row);
 }
 
-/** Add a vocabulary entry directly from a learned suggestion (skips DOM row creation). */
-export async function addVocabEntryFromSuggestion(from: string, to: string): Promise<void> {
-  if (!settings) return;
+/**
+ * Install one or more find-replace rules into `postproc_custom_vocab`.
+ * Called from the vocab auto-learner when a cluster is promoted — each
+ * non-canonical variant (and, if applicable, its lowercased form) becomes
+ * a rewrite pair. Enables the custom-vocab feature if it was off.
+ * Existing rules for the same `from` are overwritten.
+ */
+export async function addVocabEntriesFromSuggestions(
+  pairs: Array<[string, string]>,
+): Promise<void> {
+  if (!settings || pairs.length === 0) return;
   const vocab = { ...(settings.postproc_custom_vocab ?? {}) };
-  vocab[from] = to;
+  let mutated = false;
+  for (const [from, to] of pairs) {
+    if (!from || !to || from === to) continue;
+    if (vocab[from] === to) continue;
+    vocab[from] = to;
+    mutated = true;
+  }
+  if (!mutated) return;
   settings.postproc_custom_vocab = vocab;
-  // Enable custom vocab if it wasn't already
   if (!settings.postproc_custom_vocab_enabled) {
     settings.postproc_custom_vocab_enabled = true;
   }
   await persistSettings();
-  // Sync the vocab rows UI if it is currently visible
+  // Sync the vocab rows UI if it is currently visible.
   if (dom.postprocVocabRows) {
     dom.postprocVocabRows.innerHTML = "";
     for (const [original, replacement] of Object.entries(vocab)) {
       addVocabRow(original, replacement);
     }
   }
+  // Let the Learned Vocabulary chip list refresh so newly-promoted terms appear.
+  renderLearnedVocabChips();
 }
 
 // Main tab switching
@@ -893,6 +1168,7 @@ type MainTab =
   | "settings"
   | "ai-refinement"
   | "voice-output"
+  | "video"
   | "agent"
   | "modules";
 let aiRefinementTabRefreshInFlight: Promise<void> | null = null;
@@ -905,14 +1181,18 @@ function voiceOutputTabAvailable(): boolean {
   return settings?.module_settings?.enabled_modules?.includes("output_voice_tts") ?? false;
 }
 
+function videoTabAvailable(): boolean {
+  return settings?.module_settings?.enabled_modules?.includes("output_video_generation") ?? false;
+}
+
 function agentTabAvailable(): boolean {
-  const moduleEnabled = settings?.module_settings?.enabled_modules?.includes("workflow_agent") ?? false;
-  return moduleEnabled && Boolean(settings?.workflow_agent?.enabled);
+  return isAssistantCoreAvailable();
 }
 
 function syncMainTabAvailability(): void {
   const aiAvailable = aiRefinementTabAvailable();
   const voiceAvailable = voiceOutputTabAvailable();
+  const videoAvailable = videoTabAvailable();
   const agentAvailable = agentTabAvailable();
   if (dom.tabBtnAiRefinement) {
     dom.tabBtnAiRefinement.hidden = !aiAvailable;
@@ -944,6 +1224,21 @@ function syncMainTabAvailability(): void {
       dom.tabVoiceOutput.classList.remove("active");
     }
   }
+  if (dom.tabBtnVideo) {
+    dom.tabBtnVideo.hidden = !videoAvailable;
+    dom.tabBtnVideo.setAttribute("aria-hidden", (!videoAvailable).toString());
+    if (videoAvailable) {
+      dom.tabBtnVideo.removeAttribute("tabindex");
+    } else {
+      dom.tabBtnVideo.setAttribute("tabindex", "-1");
+    }
+  }
+  if (dom.tabVideo) {
+    dom.tabVideo.hidden = !videoAvailable;
+    if (!videoAvailable) {
+      dom.tabVideo.classList.remove("active");
+    }
+  }
   if (dom.tabBtnAgent) {
     dom.tabBtnAgent.hidden = !agentAvailable;
     dom.tabBtnAgent.setAttribute("aria-hidden", (!agentAvailable).toString());
@@ -965,6 +1260,7 @@ function getActiveMainTabFromDom(): MainTab {
   if (dom.tabBtnSettings?.classList.contains("active")) return "settings";
   if (dom.tabBtnAiRefinement?.classList.contains("active")) return "ai-refinement";
   if (dom.tabBtnVoiceOutput?.classList.contains("active")) return "voice-output";
+  if (dom.tabBtnVideo?.classList.contains("active")) return "video";
   if (dom.tabBtnAgent?.classList.contains("active")) return "agent";
   if (dom.tabBtnModules?.classList.contains("active")) return "modules";
   return "transcription";
@@ -1024,6 +1320,9 @@ function switchMainTab(tab: MainTab) {
   if (resolvedTab === "voice-output" && !voiceOutputTabAvailable()) {
     resolvedTab = "transcription";
   }
+  if (resolvedTab === "video" && !videoTabAvailable()) {
+    resolvedTab = "transcription";
+  }
   if (resolvedTab === "agent" && !agentTabAvailable()) {
     resolvedTab = "transcription";
   }
@@ -1032,6 +1331,7 @@ function switchMainTab(tab: MainTab) {
   const isSettings = resolvedTab === "settings";
   const isAiRefinement = resolvedTab === "ai-refinement";
   const isVoiceOutput = resolvedTab === "voice-output";
+  const isVideo = resolvedTab === "video";
   const isAgent = resolvedTab === "agent";
   const isModules = resolvedTab === "modules";
 
@@ -1039,6 +1339,7 @@ function switchMainTab(tab: MainTab) {
   dom.tabBtnSettings?.classList.toggle("active", isSettings);
   dom.tabBtnAiRefinement?.classList.toggle("active", isAiRefinement);
   dom.tabBtnVoiceOutput?.classList.toggle("active", isVoiceOutput);
+  dom.tabBtnVideo?.classList.toggle("active", isVideo);
   dom.tabBtnAgent?.classList.toggle("active", isAgent);
   dom.tabBtnModules?.classList.toggle("active", isModules);
 
@@ -1046,6 +1347,7 @@ function switchMainTab(tab: MainTab) {
   dom.tabBtnSettings?.setAttribute("aria-selected", isSettings.toString());
   dom.tabBtnAiRefinement?.setAttribute("aria-selected", isAiRefinement.toString());
   dom.tabBtnVoiceOutput?.setAttribute("aria-selected", isVoiceOutput.toString());
+  dom.tabBtnVideo?.setAttribute("aria-selected", isVideo.toString());
   dom.tabBtnAgent?.setAttribute("aria-selected", isAgent.toString());
   dom.tabBtnModules?.setAttribute("aria-selected", isModules.toString());
 
@@ -1065,6 +1367,10 @@ function switchMainTab(tab: MainTab) {
   if (dom.tabVoiceOutput) {
     dom.tabVoiceOutput.style.removeProperty("display");
     dom.tabVoiceOutput.classList.toggle("active", isVoiceOutput);
+  }
+  if (dom.tabVideo) {
+    dom.tabVideo.style.removeProperty("display");
+    dom.tabVideo.classList.toggle("active", isVideo);
   }
   if (dom.tabAgent) {
     dom.tabAgent.style.removeProperty("display");
@@ -1103,6 +1409,7 @@ export function initMainTab() {
       savedTab === "transcription" ||
       savedTab === "ai-refinement" ||
       savedTab === "voice-output" ||
+      savedTab === "video" ||
       savedTab === "agent" ||
       savedTab === "modules"
     ) {
@@ -1176,6 +1483,9 @@ export function wireEvents() {
   dom.tabBtnVoiceOutput?.addEventListener("click", () => {
     switchMainTab("voice-output");
   });
+  dom.tabBtnVideo?.addEventListener("click", () => {
+    switchMainTab("video");
+  });
   dom.tabBtnAgent?.addEventListener("click", () => {
     switchMainTab("agent");
   });
@@ -1208,6 +1518,12 @@ export function wireEvents() {
 
   const setProductMode = async (nextMode: "transcribe" | "assistant") => {
     if (!settings) return;
+    if (nextMode === "assistant" && !isAssistantCoreAvailable()) {
+      settings.product_mode = "transcribe";
+      renderSettings();
+      renderHero();
+      return;
+    }
     settings.product_mode = nextMode;
     renderSettings();
     syncWorkflowAgentConsoleState();
@@ -1847,48 +2163,12 @@ export function wireEvents() {
     if (dom.postprocCustomVocabConfig) {
       dom.postprocCustomVocabConfig.style.display = settings.postproc_custom_vocab_enabled ? "flex" : "none";
     }
-    if (dom.vocabLearningConfig) {
-      dom.vocabLearningConfig.style.display = settings.postproc_custom_vocab_enabled ? "flex" : "none";
-    }
     await persistSettings();
     scheduleSettingsRender();
   });
 
   dom.postprocVocabAdd?.addEventListener("click", () => {
     addVocabRow("", "");
-  });
-
-  // Vocabulary Learning event listeners
-  dom.vocabLearningEnabled?.addEventListener("change", async () => {
-    if (!settings) return;
-    settings.vocab_learning_enabled = dom.vocabLearningEnabled!.checked;
-    if (dom.vocabLearningSettings) {
-      dom.vocabLearningSettings.style.display = settings.vocab_learning_enabled ? "flex" : "none";
-    }
-    await persistSettings();
-  });
-
-  dom.vocabAutoAdd?.addEventListener("change", async () => {
-    if (!settings) return;
-    settings.vocab_auto_add = dom.vocabAutoAdd!.checked;
-    await persistSettings();
-  });
-
-  dom.vocabThreshold?.addEventListener("change", async () => {
-    if (!settings) return;
-    const val = parseInt(dom.vocabThreshold!.value, 10);
-    if (val >= 1 && val <= 10) {
-      settings.vocab_suggestion_threshold = val;
-      await persistSettings();
-      renderVocabSuggestionBanner();
-      renderVocabCandidatesStatus();
-    }
-  });
-
-  dom.vocabResetCandidates?.addEventListener("click", () => {
-    clearAllCandidates();
-    renderVocabCandidatesStatus();
-    renderVocabSuggestionBanner();
   });
 
   // AI fallback event listeners
@@ -2463,6 +2743,7 @@ export function wireEvents() {
     ensureAIFallbackSettingsDefaults();
 
     if (action === "use-preset") {
+      if (!confirmDiscardBuiltInEdits()) return;
       const hasPendingUserChanges = applyPendingUserPresetEditsFromEditor();
       if (hasPendingUserChanges) await persistSettings();
       settings.ai_fallback.active_prompt_preset_id = presetId;
@@ -2471,6 +2752,7 @@ export function wireEvents() {
       await persistSettings();
       renderAIFallbackSettingsUi();
     } else if (action === "new-preset") {
+      if (!confirmDiscardBuiltInEdits()) return;
       const hasPendingUserChanges = applyPendingUserPresetEditsFromEditor();
       if (hasPendingUserChanges) await persistSettings();
       settings.ai_fallback.active_prompt_preset_id = NEW_REFINEMENT_PROMPT_OPTION_ID;
@@ -2515,7 +2797,7 @@ export function wireEvents() {
       showToast({
         type: "warning",
         title: "Prompt is empty",
-        message: "Enter a prompt before saving a preset.",
+        message: "Enter a prompt, or use Reset to restore the factory default.",
         duration: 3000,
       });
       return;
@@ -2523,6 +2805,7 @@ export function wireEvents() {
 
     const ai = settings.ai_fallback;
     ai.prompt_presets = normalizeUserRefinementPromptPresets(ai.prompt_presets);
+    ai.prompt_preset_overrides ??= {};
     ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
       ai.active_prompt_preset_id,
       ai.prompt_profile,
@@ -2533,14 +2816,22 @@ export function wireEvents() {
       ai.prompt_presets,
       ai.active_prompt_preset_id
     );
-    const activePresetSelection = dom.aiFallbackPromptPreset?.value || ai.active_prompt_preset_id;
+    const activePresetSelection = ai.active_prompt_preset_id;
+    const isBuiltIn =
+      activePresetSelection !== "custom"
+      && activePresetSelection !== NEW_REFINEMENT_PROMPT_OPTION_ID
+      && !activePresetSelection.startsWith("user:");
     const requestedName = dom.aiFallbackPromptPresetName.value.trim();
 
     if (selectedUserPreset) {
       const nextName = requestedName || selectedUserPreset.name;
+      const nextPrevious =
+        prompt !== selectedUserPreset.prompt
+          ? selectedUserPreset.prompt
+          : selectedUserPreset.previous_prompt;
       ai.prompt_presets = ai.prompt_presets.map((preset) =>
         preset.id === selectedUserPreset.id
-          ? { ...preset, name: nextName, prompt }
+          ? { ...preset, name: nextName, prompt, previous_prompt: nextPrevious }
           : preset
       );
       ai.active_prompt_preset_id = toUserRefinementPromptOptionId(selectedUserPreset.id);
@@ -2574,11 +2865,25 @@ export function wireEvents() {
         message: `Saved "${requestedName}".`,
         duration: 2600,
       });
+    } else if (isBuiltIn) {
+      const builtInId = normalizeRefinementPromptPreset(
+        activePresetSelection
+      ) as BuiltInRefinementPromptPreset;
+      setPresetOverride(ai.prompt_preset_overrides, builtInId, prompt);
+      const label =
+        BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS.find((p) => p.id === builtInId)?.label
+          ?? builtInId;
+      showToast({
+        type: "success",
+        title: "Override saved",
+        message: `Customized "${label}".`,
+        duration: 2600,
+      });
     } else {
       showToast({
         type: "info",
-        title: "Select New Preset",
-        message: "Choose 'New Preset…' in the dropdown to create a new user preset.",
+        title: "Nothing to save",
+        message: "Select a preset or '+ New' to save changes.",
         duration: 3000,
       });
       return;
@@ -2587,6 +2892,89 @@ export function wireEvents() {
     syncActivePromptPresetSelection();
     refreshResolvedRefinementPromptInSettings();
     await persistSettings();
+    renderAIFallbackSettingsUi();
+  });
+
+  dom.aiFallbackPromptPresetReset?.addEventListener("click", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    const ai = settings.ai_fallback;
+    ai.prompt_preset_overrides ??= {};
+    const activeId = normalizeActiveRefinementPromptPresetId(
+      ai.active_prompt_preset_id,
+      ai.prompt_profile,
+      ai.prompt_presets
+    );
+    const isBuiltIn =
+      activeId !== "custom"
+      && activeId !== NEW_REFINEMENT_PROMPT_OPTION_ID
+      && !activeId.startsWith("user:");
+    if (!isBuiltIn) return;
+    const builtInId = normalizeRefinementPromptPreset(activeId) as BuiltInRefinementPromptPreset;
+    const label =
+      BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS.find((p) => p.id === builtInId)?.label
+        ?? builtInId;
+    const hasOverride =
+      typeof ai.prompt_preset_overrides[builtInId] === "string"
+      && ai.prompt_preset_overrides[builtInId]!.trim().length > 0;
+    if (!hasOverride) return;
+    if (!window.confirm(`Remove your customization for "${label}" and restore the factory default?`)) {
+      return;
+    }
+    removePresetOverride(ai.prompt_preset_overrides, builtInId);
+    refreshResolvedRefinementPromptInSettings();
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+    showToast({
+      type: "info",
+      title: "Restored to default",
+      message: `"${label}" reset to factory default.`,
+      duration: 2600,
+    });
+  });
+
+  dom.aiFallbackPromptPresetRevert?.addEventListener("click", async () => {
+    if (!settings) return;
+    ensureAIFallbackSettingsDefaults();
+    const ai = settings.ai_fallback;
+    ai.prompt_presets = normalizeUserRefinementPromptPresets(ai.prompt_presets);
+    ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
+      ai.active_prompt_preset_id,
+      ai.prompt_profile,
+      ai.prompt_presets
+    );
+    const selectedUserPreset = findUserRefinementPromptPresetByOptionId(
+      ai.prompt_presets,
+      ai.active_prompt_preset_id
+    );
+    if (!selectedUserPreset) return;
+    const previous = selectedUserPreset.previous_prompt?.trim();
+    if (!previous) return;
+    if (!window.confirm(`Restore previous saved version of "${selectedUserPreset.name}"?`)) {
+      return;
+    }
+    ai.prompt_presets = ai.prompt_presets.map((preset) =>
+      preset.id === selectedUserPreset.id
+        ? { ...preset, prompt: previous, previous_prompt: preset.prompt }
+        : preset
+    );
+    ai.active_prompt_preset_id = toUserRefinementPromptOptionId(selectedUserPreset.id);
+    syncActivePromptPresetSelection();
+    refreshResolvedRefinementPromptInSettings();
+    await persistSettings();
+    renderAIFallbackSettingsUi();
+    showToast({
+      type: "info",
+      title: "Reverted",
+      message: `"${selectedUserPreset.name}" restored to previous version.`,
+      duration: 2600,
+    });
+  });
+
+  dom.aiFallbackPromptPresetDiscard?.addEventListener("click", () => {
+    if (!settings) return;
+    // Simply re-render to re-source the textarea from the effective prompt,
+    // which discards any unsaved edits.
     renderAIFallbackSettingsUi();
   });
 
@@ -2638,17 +3026,43 @@ export function wireEvents() {
       settings.ai_fallback.prompt_presets
     );
     const isUserPreset = activePresetId.startsWith("user:");
-    const isEditablePreset =
-      activePresetId === "custom"
-      || activePresetId === NEW_REFINEMENT_PROMPT_OPTION_ID
-      || isUserPreset;
-    if (!isEditablePreset) return;
+    const isBuiltIn =
+      activePresetId !== "custom"
+      && activePresetId !== NEW_REFINEMENT_PROMPT_OPTION_ID
+      && !isUserPreset;
+    if (isBuiltIn) {
+      // Built-in edits are only persisted on Save. Just re-render for button-state updates.
+      dom.aiFallbackCustomPrompt.classList.add("has-unsaved-edits");
+      renderAIFallbackSettingsUi();
+      return;
+    }
     settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value;
     settings.ai_fallback.active_prompt_preset_id = activePresetId;
     settings.ai_fallback.prompt_profile = "custom";
     settings.ai_fallback.custom_prompt_enabled = true;
     settings.ai_fallback.use_default_prompt = false;
     refreshResolvedRefinementPromptInSettings();
+    dom.aiFallbackCustomPrompt.classList.add("has-unsaved-edits");
+    renderAIFallbackSettingsUi();
+  });
+
+  dom.aiFallbackCustomPrompt?.addEventListener("keydown", (e) => {
+    if (!dom.aiFallbackCustomPrompt) return;
+    const isSave = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s";
+    if (isSave) {
+      e.preventDefault();
+      if (dom.aiFallbackPromptPresetSave && !dom.aiFallbackPromptPresetSave.disabled) {
+        dom.aiFallbackPromptPresetSave.click();
+      }
+      return;
+    }
+    if (e.key === "Escape") {
+      const discard = dom.aiFallbackPromptPresetDiscard;
+      if (discard && !discard.hidden && !discard.disabled) {
+        e.preventDefault();
+        discard.click();
+      }
+    }
   });
 
   dom.aiFallbackCustomPrompt?.addEventListener("change", async () => {

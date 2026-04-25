@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trispr Assistant Presence</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+    />
+    <style>
+      :root {
+        --bg: #07131e;
+        --panel: rgba(11, 24, 37, 0.92);
+        --panel-border: rgba(156, 201, 228, 0.16);
+        --text: #f5fbff;
+        --muted: rgba(220, 236, 247, 0.68);
+        --line: rgba(124, 182, 219, 0.2);
+        --accent: #69d4ff;
+        --accent-soft: rgba(105, 212, 255, 0.24);
+        --success: #91f39f;
+        --warn: #ffd36d;
+        --danger: #ff8668;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 15% 15%, rgba(105, 212, 255, 0.18), transparent 30%),
+          radial-gradient(circle at 85% 12%, rgba(255, 179, 90, 0.15), transparent 26%),
+          linear-gradient(180deg, #08111a 0%, #04080d 100%);
+        font-family: "IBM Plex Mono", monospace;
+        overflow: hidden;
+      }
+
+      .shell {
+        height: 100vh;
+        padding: 16px;
+        display: grid;
+        grid-template-rows: 1fr auto auto;
+        gap: 12px;
+      }
+
+      .drag-bar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 18px;
+        margin-bottom: 6px;
+        border-radius: 999px;
+        cursor: grab;
+        user-select: none;
+        -webkit-app-region: drag;
+      }
+
+      .drag-bar:active {
+        cursor: grabbing;
+      }
+
+      .drag-pill {
+        width: 72px;
+        height: 6px;
+        border-radius: 999px;
+        background: rgba(220, 236, 247, 0.2);
+        box-shadow: inset 0 0 0 1px rgba(156, 201, 228, 0.1);
+      }
+
+      .panel {
+        position: relative;
+        border: 1px solid var(--panel-border);
+        background: var(--panel);
+        border-radius: 24px;
+        backdrop-filter: blur(18px);
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+      }
+
+      .presence {
+        padding: 18px;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 12px;
+        overflow: hidden;
+      }
+
+      .presence-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        cursor: grab;
+        user-select: none;
+        -webkit-app-region: drag;
+      }
+
+      .presence-header:active {
+        cursor: grabbing;
+      }
+
+      .eyebrow {
+        font: 500 11px/1.2 "IBM Plex Mono", monospace;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .title {
+        font: 700 24px/1 "Space Grotesk", sans-serif;
+        letter-spacing: -0.04em;
+      }
+
+      .status-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 11px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .status-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 14px currentColor;
+      }
+
+      .orb-wrap {
+        position: relative;
+        min-height: 150px;
+        border-radius: 22px;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at center, rgba(105, 212, 255, 0.08), transparent 48%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+        border: 1px solid rgba(156, 201, 228, 0.08);
+      }
+
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      .transcript {
+        position: absolute;
+        left: 14px;
+        right: 14px;
+        bottom: 14px;
+        padding: 10px 12px;
+        border-radius: 16px;
+        background: rgba(3, 9, 14, 0.72);
+        border: 1px solid rgba(124, 182, 219, 0.14);
+      }
+
+      .lane-label {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+
+      .lane-text {
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--text);
+      }
+
+      .lane-text.is-muted {
+        color: var(--muted);
+      }
+
+      .reply,
+      .action {
+        padding: 14px 16px;
+      }
+
+      .reply .lane-text {
+        min-height: 38px;
+      }
+
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px 14px;
+      }
+
+      .meta-item {
+        padding-top: 10px;
+        border-top: 1px solid var(--line);
+      }
+
+      .meta-item strong {
+        display: block;
+        margin-top: 6px;
+        font-weight: 500;
+        font-size: 13px;
+        color: var(--text);
+      }
+
+      .meta-item span {
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.11em;
+      }
+
+      @media (max-width: 520px) {
+        .shell {
+          padding: 12px;
+          gap: 10px;
+        }
+
+        .presence {
+          padding: 14px;
+        }
+
+        .title {
+          font-size: 20px;
+        }
+
+        .meta-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel presence">
+        <div class="drag-bar" data-tauri-drag-region>
+          <div class="drag-pill"></div>
+        </div>
+
+        <div class="presence-header" data-tauri-drag-region>
+          <div>
+            <div class="eyebrow">Assistant Presence</div>
+            <div class="title">Trispr Assistant</div>
+          </div>
+          <div class="status-chip">
+            <span id="state-dot" class="status-dot"></span>
+            <span id="state-label">Idle</span>
+          </div>
+        </div>
+
+        <div class="orb-wrap">
+          <canvas id="presence-canvas"></canvas>
+          <div class="transcript">
+            <span class="lane-label">Last Heard</span>
+            <div id="last-heard" class="lane-text is-muted">No utterance captured yet.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel reply">
+        <span class="lane-label">Reply Lane</span>
+        <div id="reply-text" class="lane-text is-muted">Waiting for the next assistant event.</div>
+      </section>
+
+      <section class="panel action">
+        <div class="meta-grid">
+          <div class="meta-item">
+            <span>Intent</span>
+            <strong id="intent-text">No intent detected yet.</strong>
+          </div>
+          <div class="meta-item">
+            <span>Action / Trust</span>
+            <strong id="action-text">No pending action.</strong>
+          </div>
+          <div class="meta-item">
+            <span>Capabilities</span>
+            <strong id="capability-text">Assistant baseline unavailable.</strong>
+          </div>
+          <div class="meta-item">
+            <span>Reason</span>
+            <strong id="reason-text">No gate decision yet.</strong>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/assistant-presence.js"></script>
+  </body>
+</html>

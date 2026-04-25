@@ -8,11 +8,15 @@ export type ProductMode = "transcribe" | "assistant";
 export type AIProviderAuthStatus = "locked" | "verified_api_key" | "verified_oauth";
 export type AIProviderAuthMethodPreference = "api_key" | "oauth";
 export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
+export type ModuleSurface = "assistant" | "transcription" | "shared" | "ui";
+export type AssistantActionRisk = "low" | "medium" | "high";
 export type ModuleId =
   | "gdd"
   | "analysis"
   | "ai_refinement"
   | "integrations_confluence"
+  | "assistant_core"
+  | "assistant_presence"
   | "workflow_agent"
   | "input_vision"
   | "output_voice_tts";
@@ -29,6 +33,9 @@ export type AgentIntent =
   | "session_recap"
   | "plan_status"
   | "confirm_or_cancel"
+  | "web_search"
+  | "open_module"
+  | "open_app"
   | "unknown";
 export type AssistantOrchestratorState =
   | "idle"
@@ -67,18 +74,30 @@ export interface UserRefinementPromptPreset {
   id: string;
   name: string;
   prompt: string;
+  previous_prompt?: string;
 }
 
-/** A single word-substitution candidate learned from AI refinement diffs. */
-export interface VocabCandidate {
-  /** Whisper-transcribed token (incorrect form) */
-  from: string;
-  /** AI-corrected token (desired form) */
-  to: string;
-  /** Number of times this exact substitution was observed */
+/** Per-built-in override strings. Replaces factory default for both EN and DE when present. */
+export type PromptPresetOverrides = Partial<
+  Record<Exclude<RefinementPromptPreset, "custom">, string>
+>;
+
+/** Per-token counter used by the vocabulary auto-learning heuristic. */
+export interface VocabTermCandidate {
+  /** Canonical form — dynamically re-elected to whichever variant is most frequent. */
+  term: string;
+  /** Sum across all variants — drives the promotion threshold. */
   count: number;
-  /** Timestamp of the last observed occurrence (ms since epoch) */
+  /** First observation timestamp (ms since epoch). */
+  first_seen_ms: number;
+  /** Last observation timestamp (ms since epoch). */
   last_seen_ms: number;
+  /**
+   * Exact spelling → per-variant sighting count. Absent on legacy candidates
+   * created before clustering was introduced; the ingestion loop treats that
+   * as `{ term: count }` implicitly and rebuilds the map on the next sighting.
+   */
+  variants?: Record<string, number>;
 }
 
 export interface ModuleDescriptor {
@@ -93,6 +112,17 @@ export interface ModuleDescriptor {
   bundled: boolean;
   core: boolean;
   toggleable: boolean;
+  surface?: ModuleSurface;
+  assistant_capable?: boolean;
+  assistant_actions?: AssistantActionDescriptor[];
+}
+
+export interface AssistantActionDescriptor {
+  id: string;
+  label: string;
+  risk_level: AssistantActionRisk;
+  requires_online: boolean;
+  allowlist_eligible: boolean;
 }
 
 export interface ModuleSettings {
@@ -261,6 +291,9 @@ export interface WorkflowAgentSettings {
   reply_mode?: "rule_only" | "hybrid_local_llm";
   online_enabled?: boolean;
   voice_feedback_enabled?: boolean;
+  activation_mode?: "hotkey_first" | "wakeword_optional";
+  trusted_action_allowlist?: string[];
+  expert_yolo_enabled?: boolean;
 }
 
 export interface VisionInputSettings {
@@ -371,7 +404,8 @@ export interface AgentReplyResult {
 export interface AssistantCapabilitySnapshot {
   product_mode: ProductMode;
   assistant_mode: boolean;
-  workflow_agent_available: boolean;
+  assistant_core_available?: boolean;
+  workflow_agent_available?: boolean;
   tts_available: boolean;
   vision_available: boolean;
   degraded: boolean;
@@ -424,6 +458,24 @@ export interface AssistantActionResultEvent {
   reason: string;
   result: AgentExecutionResult;
   capability: AssistantCapabilitySnapshot;
+}
+
+export interface AssistantReplyDraftEvent {
+  text: string;
+  reason: string;
+  intent?: AgentIntent | string | null;
+}
+
+export interface AssistantReplyFinalEvent {
+  text: string;
+  reason: string;
+  intent?: AgentIntent | string | null;
+  source?: string | null;
+}
+
+export interface AssistantModuleOpenEvent {
+  target: string;
+  reason: string;
 }
 
 export interface VisionSourceInfo {
@@ -522,6 +574,7 @@ export interface AIFallbackSettings {
   use_default_prompt: boolean;
   prompt_presets?: UserRefinementPromptPreset[];
   active_prompt_preset_id?: string;
+  prompt_preset_overrides?: PromptPresetOverrides;
 }
 
 export interface AIProviderSettings {
@@ -588,6 +641,13 @@ export interface Settings {
   workflow_agent?: WorkflowAgentSettings;
   vision_input_settings?: VisionInputSettings;
   voice_output_settings?: VoiceOutputSettings;
+  assistant_presence_enabled?: boolean;
+  assistant_presence_pinned?: boolean;
+  assistant_presence_window_x?: number | null;
+  assistant_presence_window_y?: number | null;
+  assistant_presence_window_width?: number | null;
+  assistant_presence_window_height?: number | null;
+  assistant_presence_window_monitor?: string | null;
   audio_cues: boolean;
   audio_cues_volume: number;
   ptt_use_vad: boolean;
@@ -654,9 +714,15 @@ export interface Settings {
   postproc_numbers_enabled: boolean;
   postproc_custom_vocab_enabled: boolean;
   postproc_custom_vocab: Record<string, string>;
-  vocab_learning_enabled: boolean;
-  vocab_auto_add: boolean;
-  vocab_suggestion_threshold: number;
+  /**
+   * Auto-learned proper nouns, acronyms, and project-specific terms.
+   * Populated by the auto-learning heuristic as the user dictates — no
+   * manual entry required. Injected as whisper-cli `--prompt` and forwarded
+   * to the LLM refinement prompt as terms to preserve verbatim.
+   */
+  vocab_terms: string[];
+  /** Running counters for the auto-learning heuristic. */
+  vocab_term_candidates?: VocabTermCandidate[];
   postproc_llm_enabled: boolean;
   postproc_llm_provider: string;
   postproc_llm_api_key: string;

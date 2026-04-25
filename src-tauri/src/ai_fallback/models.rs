@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use super::provider::default_models_for_provider;
 
@@ -22,6 +22,8 @@ pub struct UserPromptPreset {
     pub id: String,
     pub name: String,
     pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_prompt: Option<String>,
 }
 
 impl Default for UserPromptPreset {
@@ -30,6 +32,7 @@ impl Default for UserPromptPreset {
             id: String::new(),
             name: String::new(),
             prompt: String::new(),
+            previous_prompt: None,
         }
     }
 }
@@ -53,6 +56,10 @@ pub struct AIFallbackSettings {
     pub use_default_prompt: bool,
     pub prompt_presets: Vec<UserPromptPreset>,
     pub active_prompt_preset_id: String, // "wording" | "summary" | ... | "custom" | "user:<id>"
+    /// Per-built-in override strings. Keyed by built-in preset id (e.g. "wording").
+    /// When present, replaces the factory default prompt for both EN and DE.
+    #[serde(default)]
+    pub prompt_preset_overrides: BTreeMap<String, String>,
 }
 
 impl Default for AIFallbackSettings {
@@ -80,6 +87,7 @@ impl Default for AIFallbackSettings {
             use_default_prompt: true,
             prompt_presets: Vec::new(),
             active_prompt_preset_id: DEFAULT_PROMPT_PROFILE.to_string(),
+            prompt_preset_overrides: BTreeMap::new(),
         }
     }
 }
@@ -131,6 +139,8 @@ impl AIFallbackSettings {
         }
         self.prompt_presets =
             normalize_user_prompt_presets(std::mem::take(&mut self.prompt_presets));
+        self.prompt_preset_overrides =
+            normalize_prompt_preset_overrides(std::mem::take(&mut self.prompt_preset_overrides));
         self.active_prompt_preset_id = normalize_active_prompt_preset_id(
             &self.active_prompt_preset_id,
             &self.prompt_profile,
@@ -459,6 +469,7 @@ pub struct RefinementOptions {
     pub language: Option<String>,
     pub custom_prompt: Option<String>,
     pub enforce_language_guard: bool,
+    pub prompt_profile: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -527,7 +538,35 @@ fn normalize_user_prompt_presets(presets: Vec<UserPromptPreset>) -> Vec<UserProm
         if !seen_ids.insert(id.clone()) {
             continue;
         }
-        cleaned.push(UserPromptPreset { id, name, prompt });
+        let previous_prompt = preset
+            .previous_prompt
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty() && p != &prompt);
+        cleaned.push(UserPromptPreset {
+            id,
+            name,
+            prompt,
+            previous_prompt,
+        });
+    }
+    cleaned
+}
+
+fn normalize_prompt_preset_overrides(
+    overrides: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut cleaned: BTreeMap<String, String> = BTreeMap::new();
+    for (key, value) in overrides {
+        let id = normalize_prompt_profile_id(&key);
+        // Only keep overrides for built-in preset ids; never allow "custom" as an override key.
+        if id.is_empty() || id == "custom" {
+            continue;
+        }
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+        cleaned.insert(id.to_string(), trimmed);
     }
     cleaned
 }

@@ -49,6 +49,7 @@ import type {
   AssistantAwaitingConfirmationEvent,
   AssistantConfirmationExpiredEvent,
   AssistantIntentDetectedEvent,
+  AssistantModuleOpenEvent,
   AssistantPlanReadyEvent,
   AssistantStateChangedEvent,
   PiperVoiceDownloadProgress,
@@ -92,6 +93,7 @@ import {
   wireEvents,
   initMainTab,
   cleanupWindowListeners,
+  openMainTab,
   scheduleSettingsRender,
   reconcileMainTabVisibility,
 } from "./event-listeners";
@@ -104,7 +106,7 @@ import { initExportDialog } from "./export-dialog";
 import { initArchiveBrowser } from "./archive-browser";
 import { initExpertMode } from "./expert-mode";
 import { initModulesHub, refreshModulesHub } from "./modules-hub";
-import { initGddFlow } from "./gdd-flow";
+import { initGddFlow, openGddFlow } from "./gdd-flow";
 import { initOnboardingWizard } from "./onboarding-wizard";
 import { initPipelineStatus } from "./pipeline-status";
 import {
@@ -123,9 +125,9 @@ import {
   syncWorkflowAgentConsoleState,
 } from "./workflow-agent-console";
 import { syncVoiceOutputConsoleState } from "./voice-output-console";
-import { recordRefinementDiff, getPendingSuggestionCount, removeCandidateByPair } from "./vocab-candidates";
-import { renderVocabSuggestionBanner, renderVocabCandidatesStatus, initVocabSuggestionBanner } from "./vocab-suggestion-ui";
-import { addVocabEntryFromSuggestion } from "./event-listeners";
+import { initVideoGenerationPanel } from "./video-generation";
+import { ingestTranscriptForAutoLearning } from "./vocab-auto-learn";
+import { renderLearnedVocabChips } from "./event-listeners";
 import {
   handleRefinementFailureForInspector,
   handleRefinementStartedForInspector,
@@ -705,7 +707,7 @@ async function bootstrap() {
   initOnboardingWizard();
   initPipelineStatus();
   syncVoiceOutputConsoleState();
-  initVocabSuggestionBanner();
+  void initVideoGenerationPanel();
 
   if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Rendering interface…";
   traceFrontendInfo("bootstrap", "rendering primary interface");
@@ -901,6 +903,9 @@ async function bootstrap() {
     }),
     listen<HistoryEntry[]>("history:updated", makeHistoryUpdateHandler(setHistory)),
     listen<HistoryEntry[]>("transcribe:history-updated", makeHistoryUpdateHandler(setTranscribeHistory)),
+    listen<{ pasted: string; submitted: string }>("enter_capture:edit_detected", (event) => {
+      ingestTranscriptForAutoLearning(event.payload.submitted);
+    }),
     listen("module:state-changed", () => {
       reconcileMainTabVisibility();
       refreshModulesHub();
@@ -965,6 +970,12 @@ async function bootstrap() {
       const jobId = typeof payload?.job_id === "string" ? payload.job_id.trim() : "";
       const pasteDeferred = Boolean(payload?.paste_deferred && jobId);
       if (!pasteDeferred) {
+        // No refinement in this flow — the raw text is the final text, so
+        // feed it to the auto-learner now. When refinement IS deferred, we
+        // skip here and let the transcription:refined listener learn from
+        // the preferred (casing-corrected) text instead.
+        ingestTranscriptForAutoLearning(payload.text);
+        renderLearnedVocabChips();
         queueTranscriptPaste(payload.text, `raw:${jobId || "unknown"}`);
         return;
       }
@@ -1042,6 +1053,32 @@ async function bootstrap() {
         `Event assistant:action-result -> status=${event.payload.result.status}, reason=${event.payload.reason}`
       );
     }),
+    listen<AssistantModuleOpenEvent>("assistant:open-module", (event) => {
+      const target = event.payload?.target?.trim();
+      if (!target) return;
+      if (target === "gdd_flow") {
+        void openGddFlow();
+        return;
+      }
+      if (target === "voice-output") {
+        openMainTab("voice-output");
+        syncVoiceOutputConsoleState();
+        return;
+      }
+      if (target === "agent") {
+        openMainTab("agent");
+        syncWorkflowAgentConsoleState();
+        return;
+      }
+      if (
+        target === "transcription"
+        || target === "settings"
+        || target === "ai-refinement"
+        || target === "modules"
+      ) {
+        openMainTab(target);
+      }
+    }),
     listen<TranscriptionRefinementStartedEvent>("transcription:refinement-started", (event) => {
       markRefinementJobStarted(event.payload?.job_id || "");
       handlePipelineRefinementStarted(event.payload);
@@ -1052,22 +1089,12 @@ async function bootstrap() {
     listen<TranscriptionRefinedEvent>("transcription:refined", async (event) => {
       handleRefinementSuccessForInspector(event.payload);
       scheduleHistoryRender();
-      // Record word-level substitutions for vocabulary learning
-      if (event.payload.original && event.payload.refined && event.payload.original !== event.payload.refined) {
-        const newSuggestions = recordRefinementDiff(event.payload.original, event.payload.refined);
-        if (newSuggestions.length > 0) {
-          if (settings?.vocab_auto_add) {
-            // Auto-add mode: add directly without user review
-            for (const s of newSuggestions) {
-              await addVocabEntryFromSuggestion(s.from, s.to);
-              removeCandidateByPair(s.from, s.to);
-            }
-          }
-          renderVocabCandidatesStatus();
-        }
-        if (getPendingSuggestionCount() > 0) {
-          renderVocabSuggestionBanner();
-        }
+      // Refined text is the preferred source for auto-learning — casing is
+      // stabilized (sentence starts, proper-noun capitalization) which makes
+      // the mid-sentence heuristic more reliable.
+      if (event.payload.refined) {
+        ingestTranscriptForAutoLearning(event.payload.refined);
+        renderLearnedVocabChips();
       }
       const { refined, model, execution_time_ms, job_id: jobId } = event.payload;
       markRefinementJobFinished(jobId);

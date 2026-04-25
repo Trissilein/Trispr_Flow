@@ -45,13 +45,13 @@ fn refinement_agent(input_text: &str, system_prompt: &str) -> ureq::Agent {
 
 // Prompt templates optimized for local models (Ollama: qwen3, mistral-small).
 // Guidelines: no translation, no explanations, preserve register and proper nouns.
-pub const OLLAMA_PROMPT_EN: &str = "You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors in the text below. Rules: do NOT translate; do NOT add explanations or commentary; preserve all proper nouns and technical terms exactly; preserve the original register (formal/informal); do NOT add line breaks, paragraph breaks, or tabs that are not in the original. Output ONLY the corrected text with no preamble.";
+pub const OLLAMA_PROMPT_EN: &str = "You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors in the transcript provided in the <transcript> tags. Rules: do NOT translate; do NOT add explanations or commentary; preserve all proper nouns and technical terms exactly; preserve the original register (formal/informal); do NOT add line breaks, paragraph breaks, or tabs that are not in the original. Output ONLY the corrected text with no preamble.";
 
-pub const OLLAMA_PROMPT_DE: &str = "Du bist ein Transkript-Editor. Korrigiere Zeichensetzung, Groß-/Kleinschreibung und offensichtliche Sprache-zu-Text-Fehler im Text unten. Regeln: NICHT übersetzen; KEINE Erklärungen oder Kommentare hinzufügen; alle Eigennamen und Fachbegriffe exakt beibehalten; Anredeform (Du/Sie) aus dem Original beibehalten; KEINE zusätzlichen Zeilenumbrüche, Absätze oder Tabulatoren einfügen. Gib NUR den korrigierten Text aus, ohne Einleitung.";
+pub const OLLAMA_PROMPT_DE: &str = "Du bist ein Transkript-Editor. Korrigiere Zeichensetzung, Groß-/Kleinschreibung und offensichtliche Sprache-zu-Text-Fehler im Transkript in den <transcript> Tags. Regeln: NICHT übersetzen; KEINE Erklärungen oder Kommentare hinzufügen; alle Eigennamen und Fachbegriffe exakt beibehalten; Anredeform (Du/Sie) aus dem Original beibehalten; KEINE zusätzlichen Zeilenumbrüche, Absätze oder Tabulatoren einfügen. Gib NUR den korrigierten Text aus, ohne Einleitung.";
 
 // Used when Whisper language is set to auto-detect. Language-neutral phrasing avoids
 // the model inferring "output in English" from an English-only system prompt.
-pub const OLLAMA_PROMPT_AUTO: &str = "IMPORTANT: Detect the language of the input text and output in that SAME language — never translate. You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors. Rules: do NOT translate under any circumstances; do NOT add explanations; preserve all proper nouns and technical terms exactly; preserve the original register; do NOT add line breaks, paragraph breaks, or tabs not present in the original. Output ONLY the corrected text with no preamble.";
+pub const OLLAMA_PROMPT_AUTO: &str = "IMPORTANT: Detect the language of the input text and output in that SAME language — never translate. You are a transcript editor. Fix punctuation, capitalization, and obvious speech-to-text errors in the transcript provided in the <transcript> tags. Rules: do NOT translate under any circumstances; do NOT add explanations; preserve all proper nouns and technical terms exactly; preserve the original register; do NOT add line breaks, paragraph breaks, or tabs not present in the original. Output ONLY the corrected text with no preamble.";
 
 const OLLAMA_PROMPT_SUMMARY_EN: &str = "Summarize this transcript into 3 to 6 concise bullet points. Preserve key facts, numbers, names, and decisions. Do not invent information. If something is uncertain, state it cautiously. Return only the bullet list.";
 
@@ -65,9 +65,9 @@ const OLLAMA_PROMPT_ACTION_ITEMS_EN: &str = "Convert this transcript into action
 
 const OLLAMA_PROMPT_ACTION_ITEMS_DE: &str = "Wandle dieses Transkript in konkrete Aufgaben um. Nutze Stichpunkte im Format: [Aktion] [Owner?] [Faellig?] [Hinweise]. Behalte technische Begriffe und Rahmenbedingungen bei. Wenn Owner oder Datum fehlen, mit unknown markieren. Gib nur die Aufgabenliste zurueck.";
 
-const OLLAMA_PROMPT_LLM_PROMPT_EN: &str = "You are an expert prompt engineer. Convert the following spoken dictation into a precise, high-quality prompt for a large language model.\n\nA well-structured prompt must include:\n1. A clear role or persona (e.g. \"You are a...\")\n2. An unambiguous task description\n3. Relevant context, background, or constraints\n4. Desired output format (if applicable)\n\nRules:\n- Always write the resulting prompt in English, regardless of the input language.\n- Do not explain, comment, or add preamble.\n- Do not address the speaker or reference this conversation.\n- Return only the final ready-to-use prompt, nothing else.";
+const OLLAMA_PROMPT_LLM_PROMPT_EN: &str = "You are an expert prompt engineer. Convert the transcript in the <transcript> tags into a precise, high-quality prompt for a large language model.\n\nA well-structured prompt must include:\n1. A clear role or persona (e.g. \"You are a...\")\n2. An unambiguous task description\n3. Relevant context, background, or constraints\n4. Desired output format (if applicable)\n\nRules:\n- Always write the resulting prompt in English, regardless of the input language.\n- Do not explain, comment, or add preamble.\n- Do not address the speaker or reference this conversation.\n- Return only the final ready-to-use prompt, nothing else.";
 
-const OLLAMA_PROMPT_LLM_PROMPT_DE: &str = "Du bist ein erfahrener Prompt-Engineer. Wandle die folgende gesprochene Eingabe in einen praezisen, einsatzbereiten Prompt fuer ein grosses Sprachmodell um.\n\nEin guter Prompt enthaelt:\n1. Eine klare Rolle oder Persona (z.B. \"You are a...\")\n2. Eine eindeutige Aufgabenbeschreibung\n3. Relevanten Kontext, Hintergrund oder Einschraenkungen\n4. Das gewuenschte Ausgabeformat (falls zutreffend)\n\nRegeln:\n- Schreibe den fertigen Prompt immer auf Englisch, unabhaengig von der Eingabesprache.\n- Keine Erklaerungen, Kommentare oder Vorbemerkungen.\n- Den Sprecher nicht adressieren und nicht auf dieses Gespraech verweisen.\n- Gib nur den fertigen Prompt zurueck, nichts weiteres.";
+const OLLAMA_PROMPT_LLM_PROMPT_DE: &str = "Du bist ein erfahrener Prompt-Engineer. Wandle das Transkript in den <transcript> Tags in einen praezisen, einsatzbereiten Prompt fuer ein grosses Sprachmodell um.\n\nEin guter Prompt enthaelt:\n1. Eine klare Rolle oder Persona (z.B. \"You are a...\")\n2. Eine eindeutige Aufgabenbeschreibung\n3. Relevanten Kontext, Hintergrund oder Einschraenkungen\n4. Das gewuenschte Ausgabeformat (falls zutreffend)\n\nRegeln:\n- Schreibe den fertigen Prompt immer auf Englisch, unabhaengig von der Eingabesprache.\n- Keine Erklaerungen, Kommentare oder Vorbemerkungen.\n- Den Sprecher nicht adressieren und nicht auf dieses Gespraech verweisen.\n- Gib nur den fertigen Prompt zurueck, nichts weiteres.";
 
 pub trait AIProvider: Send + Sync {
     fn id(&self) -> &'static str;
@@ -497,9 +497,17 @@ pub fn prompt_for_profile(
     if normalize_prompt_profile(profile) == "custom" {
         let normalized = custom_prompt.unwrap_or("").trim();
         if normalized.is_empty() {
-            return Some(default_prompt_for_language(language).to_string());
+            return Some(with_language_lock(
+                default_prompt_for_language(language),
+                language,
+                preserve_source_language,
+            ));
         }
-        return Some(normalized.to_string());
+        return Some(with_language_lock(
+            normalized,
+            language,
+            preserve_source_language,
+        ));
     }
 
     let base = match normalize_prompt_profile(profile) {
@@ -725,6 +733,33 @@ fn build_ollama_options_payload(
     }
 
     serde_json::Value::Object(payload)
+}
+
+fn wrap_transcript_in_xml(text: &str) -> String {
+    // Use HTML entity escaping to prevent XML tag injection through spoken text
+    let escaped = text.replace("</transcript>", "&lt;/transcript&gt;");
+    format!("<transcript>\n{}\n</transcript>", escaped)
+}
+
+fn collapse_single_newlines(text: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in lines.iter().enumerate() {
+        if i == 0 {
+            out.push_str(line);
+        } else {
+            let prev_empty = lines[i - 1].trim().is_empty();
+            let curr_empty = line.trim().is_empty();
+            if prev_empty || curr_empty {
+                out.push('\n');
+                out.push_str(line);
+            } else {
+                out.push(' ');
+                out.push_str(line.trim_start());
+            }
+        }
+    }
+    out
 }
 
 fn collapse_excessive_blank_lines(text: &str) -> String {
@@ -1027,7 +1062,12 @@ fn sanitize_ollama_refinement_output(
         .replace("\r\n", "\n")
         .replace('\r', "\n")
         .replace('\t', " "); // Tabs → Space (Modell soll keine Tabs einfügen)
-    let collapsed = collapse_excessive_blank_lines(normalized.trim());
+    let profile = normalize_prompt_profile(&options.prompt_profile);
+    let collapsed = if matches!(profile, "wording" | "custom") {
+        collapse_single_newlines(&collapse_excessive_blank_lines(normalized.trim()))
+    } else {
+        collapse_excessive_blank_lines(normalized.trim())
+    };
     if suspicious_refinement_shape(original, &collapsed) {
         warn!(
             "Ignoring suspicious Ollama refinement output and keeping original transcript (orig_len={}, refined_len={})",
@@ -1219,7 +1259,7 @@ impl AIProvider for OllamaProvider {
             "think": false,
             "messages": [
                 { "role": "system", "content": system_prompt },
-                { "role": "user", "content": text }
+                { "role": "user", "content": wrap_transcript_in_xml(text) }
             ],
             "options": ollama_options.clone(),
             "keep_alive": keep_alive.clone()
@@ -1227,7 +1267,7 @@ impl AIProvider for OllamaProvider {
 
         let generate_body = serde_json::json!({
             "model": model,
-            "prompt": format!("{}\n\n{}", system_prompt, text),
+            "prompt": format!("{}\n\n{}", system_prompt, wrap_transcript_in_xml(text)),
             "stream": false,
             "think": false,
             "options": ollama_options,
@@ -1467,7 +1507,7 @@ impl AIProvider for OpenAICompatProvider {
             "stream": false,
             "messages": [
                 { "role": "system", "content": system_prompt },
-                { "role": "user", "content": effective_text }
+                { "role": "user", "content": wrap_transcript_in_xml(&effective_text) }
             ],
             "temperature": options.temperature,
             "max_tokens": options.max_tokens,
@@ -1842,6 +1882,7 @@ mod tests {
             language: Some("en".to_string()),
             custom_prompt: None,
             enforce_language_guard,
+            prompt_profile: "wording".to_string(),
         }
     }
 

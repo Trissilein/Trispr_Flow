@@ -1,6 +1,6 @@
 # Roadmap - Trispr Flow
 
-Last updated: 2026-04-07 (Vocabulary learning (44a/44b) complete; Keep-Alive 20m→60m; UI redesign: Custom Vocabulary flat + compact)
+Last updated: 2026-04-11 (Block W planned: Assistant Presence Window with 3D dot-cloud + TTS text panel, after Block U)
 
 This file is the canonical source for priorities and execution order.
 
@@ -38,6 +38,7 @@ This file is the canonical source for priorities and execution order.
 | T | Assistant Pivot Foundation (`v0.8.0`) | Extra High | S, M | Complete ✅ (`T1-T5`) |
 | V | GDD Copilot Loop (`v0.8.x`) | Extra High | T, L, M, N | Complete ✅ (`V1-V6`) |
 | U | Assistant UX + Soak + Release Gate (`v0.8.x`) | Extra High | T, V | Active ♻️ |
+| W | Assistant Presence Window (3D Dot-Cloud + TTS Text Panel) | High | U, T, V | Planned |
 
 ## v0.7 Task Ledger
 

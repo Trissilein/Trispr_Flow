@@ -2,6 +2,7 @@
 #![allow(clippy::needless_return)]
 
 mod ai_fallback;
+mod assistant_presence;
 mod audio;
 mod confluence;
 mod constants;
@@ -22,7 +23,10 @@ mod postprocessing;
 mod session_manager;
 mod state;
 mod transcription;
+mod uiautomation_capture;
 mod util;
+mod video_generation;
+mod video_ingest;
 mod whisper_server;
 mod workflow_agent;
 
@@ -89,10 +93,11 @@ use crate::models::{
     hide_external_model, list_models, pick_model_dir, quantize_model, remove_model,
 };
 use crate::modules::{
-    health as module_health, lifecycle as module_lifecycle, normalize_confluence_settings,
-    normalize_gdd_module_settings, normalize_module_settings, normalize_vision_input_settings,
-    normalize_voice_output_settings, normalize_workflow_agent_settings,
-    registry as module_registry,
+    canonicalize_module_id, health as module_health, lifecycle as module_lifecycle,
+    normalize_confluence_settings, normalize_gdd_module_settings, normalize_module_settings,
+    normalize_vision_input_settings, normalize_voice_output_settings,
+    normalize_workflow_agent_settings, registry as module_registry, ASSISTANT_CORE_MODULE_ID,
+    ASSISTANT_PRESENCE_MODULE_ID,
 };
 use crate::ollama_runtime::{
     detect_ollama_runtime, download_ollama_runtime, fetch_ollama_online_versions,
@@ -102,6 +107,7 @@ use crate::ollama_runtime::{
 use crate::state::{
     get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
     normalize_ai_fallback_fields, normalize_ai_refinement_module_binding,
+    normalize_assistant_core_binding, normalize_assistant_presence_binding,
     normalize_continuous_dump_fields, normalize_history_alias_fields, normalize_product_mode_field,
     push_history_entry_inner, push_transcribe_entry_inner, record_refinement_fallback_timed_out,
     record_refinement_timeout, save_settings_file, sync_model_dir_env, AI_REFINEMENT_MODULE_ID,
@@ -709,6 +715,7 @@ pub(crate) fn cleanup_managed_processes(app: &AppHandle, state: &AppState) {
         "managed Whisper-Server runtime",
         &state.managed_whisper_server_child,
     );
+    crate::uiautomation_capture::shutdown(&state.enter_capture);
 }
 
 /// Guard that rejects requests when strict-local-mode is active and the
@@ -752,6 +759,45 @@ pub(crate) struct RefinementSetup {
     pub model: String,
     pub repaired: bool,
     pub options: RefinementOptions,
+}
+
+/// Append a "preserve these terms verbatim" clause to the refinement system
+/// prompt. This prevents the LLM from mangling user-specific proper nouns
+/// and acronyms during refinement (e.g. "MemPalace" → "Mem Palace",
+/// "XPBar" → "xp bar"). Returns None if neither the base prompt nor the
+/// terms list produce usable content.
+fn augment_prompt_with_vocab_terms(base: Option<String>, terms: &[String]) -> Option<String> {
+    let mut cleaned: Vec<&str> = terms
+        .iter()
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if cleaned.is_empty() {
+        return base;
+    }
+    let mut seen = std::collections::HashSet::new();
+    cleaned.retain(|t| seen.insert(t.to_lowercase()));
+    const MAX_TERMS_CHARS: usize = 600;
+    let mut joined = String::new();
+    for term in cleaned {
+        let delim = if joined.is_empty() { "" } else { ", " };
+        if joined.len() + delim.len() + term.len() > MAX_TERMS_CHARS {
+            break;
+        }
+        joined.push_str(delim);
+        joined.push_str(term);
+    }
+    if joined.is_empty() {
+        return base;
+    }
+    let suffix = format!(
+        "\n\nKnown terms (proper nouns, acronyms, product names) — preserve these exactly as written, do not translate or normalize them: {}",
+        joined
+    );
+    match base {
+        Some(b) if !b.trim().is_empty() => Some(format!("{}{}", b, suffix)),
+        _ => Some(suffix.trim_start().to_string()),
+    }
 }
 
 /// Shared refinement-context preparation used by the Tauri command, the
@@ -879,22 +925,24 @@ pub(crate) fn prepare_refinement(
     } else {
         "auto".to_string()
     };
-    let enforce_language_guard = ai.preserve_source_language
-        && ai.prompt_profile != "custom"
-        && ai.prompt_profile != "llm_prompt";
+    let enforce_language_guard = ai.preserve_source_language && ai.prompt_profile != "llm_prompt";
 
     let options = RefinementOptions {
         temperature: ai.temperature,
         max_tokens: ai.max_tokens,
         low_latency_mode: ai.low_latency_mode,
         language: Some(effective_language.clone()),
-        custom_prompt: prompt_for_profile(
-            &ai.prompt_profile,
-            &effective_language,
-            Some(ai.custom_prompt.as_str()),
-            ai.preserve_source_language,
+        custom_prompt: augment_prompt_with_vocab_terms(
+            prompt_for_profile(
+                &ai.prompt_profile,
+                &effective_language,
+                Some(ai.custom_prompt.as_str()),
+                ai.preserve_source_language,
+            ),
+            &settings.vocab_terms,
         ),
         enforce_language_guard,
+        prompt_profile: ai.prompt_profile.clone(),
     };
 
     Ok(RefinementSetup {
@@ -941,6 +989,41 @@ fn schedule_backlog_auto_expand(app: AppHandle, cancel_item: MenuItem<Wry>) {
     });
 }
 
+/// Returns a human-readable reason if the hotkey is reserved by the OS and
+/// therefore cannot be captured via a global shortcut — regardless of what
+/// other applications are doing. These keys always fail to register and would
+/// produce a scary "already registered" error on every registration pass.
+fn os_reserved_hotkey_reason(key: &str) -> Option<&'static str> {
+    let normalized = key
+        .to_ascii_lowercase()
+        .replace("commandorcontrol", "ctrl")
+        .replace("command", "ctrl")
+        .replace("super", "win");
+    let flat = normalized.replace(' ', "");
+    // Ctrl+Shift+Esc opens Windows Task Manager; Win cannot yield it.
+    if flat.contains("ctrl+shift+escape") || flat.contains("ctrl+shift+esc") {
+        return Some("Ctrl+Shift+Esc is reserved by Windows for Task Manager");
+    }
+    // Ctrl+Alt+Del is the Secure Attention Sequence and cannot be intercepted.
+    if flat.contains("ctrl+alt+delete") || flat.contains("ctrl+alt+del") {
+        return Some("Ctrl+Alt+Del is reserved by Windows as the Secure Attention Sequence");
+    }
+    // Win+L locks the workstation and is reserved.
+    if flat.contains("win+l") {
+        return Some("Win+L is reserved by Windows for lock workstation");
+    }
+    None
+}
+
+/// Pattern-matches the error returned by `GlobalShortcutManager` when the key
+/// is already held by another application in the current session. We use this
+/// to downgrade the user-facing modal to a quieter inline warning, since the
+/// app keeps working — the shortcut just won't fire.
+fn is_already_registered_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("already registered") || lower.contains("hotkey already")
+}
+
 fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     let manager = app.global_shortcut();
 
@@ -957,9 +1040,40 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
     // Collect registration errors instead of failing early
     let mut errors = Vec::new();
 
+    // Track which keys are claimed during THIS registration pass. Prevents
+    // the scary "HotKey already registered" modal when two Trispr slots map
+    // to the same combination — the first one wins, later ones log and skip.
+    let claimed: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+
+    // Returns true if the caller should proceed with registration. Returns
+    // false (and logs at INFO) for internal duplicates or OS-reserved keys.
+    let try_claim = |key: &str, slot: &'static str| -> bool {
+        if key.is_empty() {
+            return false;
+        }
+        if let Some(reason) = os_reserved_hotkey_reason(key) {
+            info!("Skipping {} hotkey '{}': {}.", slot, key, reason);
+            return false;
+        }
+        let mut set = claimed.borrow_mut();
+        if set.contains(key) {
+            info!(
+                "Skipping {} hotkey '{}': already claimed by another Trispr slot in this registration pass.",
+                slot, key
+            );
+            return false;
+        }
+        set.insert(key.to_string());
+        true
+    };
+
     let register_ptt = || -> Result<(), String> {
         let ptt = settings.hotkey_ptt.trim();
         if ptt.is_empty() {
+            return Ok(());
+        }
+        if !try_claim(ptt, "PTT") {
             return Ok(());
         }
         info!("Registering PTT hotkey (hold): {}", ptt);
@@ -1036,6 +1150,9 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         if toggle.is_empty() {
             return Ok(());
         }
+        if !try_claim(toggle, "Toggle") {
+            return Ok(());
+        }
         info!("Registering Toggle hotkey (click): {}", toggle);
         match manager.on_shortcut(toggle, |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
@@ -1070,23 +1187,31 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         if hotkey.is_empty() {
             return Ok(());
         }
+        if !try_claim(hotkey, "Transcribe") {
+            return Ok(());
+        }
         info!("Registering Transcribe hotkey (toggle): {}", hotkey);
         match manager.on_shortcut(hotkey, |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
                 let app = app.clone();
-                let enabled = app
+                let was_enabled = app
                     .state::<AppState>()
                     .settings
                     .read()
                     .map(|settings| settings.transcribe_enabled)
                     .unwrap_or(false);
-                let target_enabled = !enabled;
-                if let Err(err) = set_transcribe_enabled(&app, target_enabled) {
-                    emit_error(&app, AppError::AudioDevice(err), Some("System Audio"));
-                    return;
+                let target_enabled = !was_enabled;
+                let effective_enabled = match set_transcribe_enabled(&app, target_enabled) {
+                    Ok(enabled) => enabled,
+                    Err(err) => {
+                        emit_error(&app, AppError::AudioDevice(err), Some("System Audio"));
+                        return;
+                    }
+                };
+                if effective_enabled != was_enabled {
+                    let cue = if effective_enabled { "start" } else { "stop" };
+                    let _ = app.emit("audio:cue", cue);
                 }
-                let cue = if target_enabled { "start" } else { "stop" };
-                let _ = app.emit("audio:cue", cue);
             }
         }) {
             Ok(_) => {
@@ -1115,6 +1240,9 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         if hotkey.is_empty() {
             return Ok(());
         }
+        if !try_claim(hotkey, "Product Mode") {
+            return Ok(());
+        }
         info!("Registering Product Mode hotkey (toggle): {}", hotkey);
         match manager.on_shortcut(hotkey, |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
@@ -1126,16 +1254,28 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to register Product Mode hotkey '{}': {}", hotkey, e);
-                emit_error(
-                    app,
-                    AppError::Hotkey(format!(
-                        "Could not register Product Mode hotkey '{}': {}",
-                        hotkey, e
-                    )),
-                    Some("Hotkey Registration"),
-                );
-                Err(e.to_string())
+                let err_str = e.to_string();
+                if is_already_registered_error(&err_str) {
+                    warn!(
+                        "Product Mode hotkey '{}' is already held by another application — shortcut will not fire.",
+                        hotkey
+                    );
+                    Ok(())
+                } else {
+                    error!(
+                        "Failed to register Product Mode hotkey '{}': {}",
+                        hotkey, err_str
+                    );
+                    emit_error(
+                        app,
+                        AppError::Hotkey(format!(
+                            "Could not register Product Mode hotkey '{}': {}",
+                            hotkey, err_str
+                        )),
+                        Some("Hotkey Registration"),
+                    );
+                    Err(err_str)
+                }
             }
         }
     };
@@ -1143,6 +1283,9 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
     let register_tts_stop = || -> Result<(), String> {
         let hotkey = settings.hotkey_tts_stop.trim();
         if hotkey.is_empty() {
+            return Ok(());
+        }
+        if !try_claim(hotkey, "TTS Stop") {
             return Ok(());
         }
         info!("Registering TTS Stop hotkey: {}", hotkey);
@@ -1157,16 +1300,28 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to register TTS Stop hotkey '{}': {}", hotkey, e);
-                emit_error(
-                    app,
-                    AppError::Hotkey(format!(
-                        "Could not register TTS Stop hotkey '{}': {}",
-                        hotkey, e
-                    )),
-                    Some("Hotkey Registration"),
-                );
-                Err(e.to_string())
+                let err_str = e.to_string();
+                if is_already_registered_error(&err_str) {
+                    warn!(
+                        "TTS Stop hotkey '{}' is already held by another application — shortcut will not fire.",
+                        hotkey
+                    );
+                    Ok(())
+                } else {
+                    error!(
+                        "Failed to register TTS Stop hotkey '{}': {}",
+                        hotkey, err_str
+                    );
+                    emit_error(
+                        app,
+                        AppError::Hotkey(format!(
+                            "Could not register TTS Stop hotkey '{}': {}",
+                            hotkey, err_str
+                        )),
+                        Some("Hotkey Registration"),
+                    );
+                    Err(err_str)
+                }
             }
         }
     };
@@ -1203,7 +1358,7 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
 
     // Register Toggle Activation Words hotkey
     let hotkey = settings.hotkey_toggle_activation_words.trim();
-    if !hotkey.is_empty() {
+    if !hotkey.is_empty() && try_claim(hotkey, "Toggle Activation Words") {
         match manager.on_shortcut(hotkey, |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
                 toggle_activation_words_async(app.clone());
@@ -1213,19 +1368,27 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
                 info!("Toggle Activation Words hotkey registered successfully");
             }
             Err(e) => {
-                error!(
-                    "Failed to register Toggle Activation Words hotkey '{}': {}",
-                    hotkey, e
-                );
-                errors.push(format!("Toggle Activation Words: {}", e));
-                emit_error(
-                    app,
-                    AppError::Hotkey(format!(
-                        "Could not register Toggle Activation Words hotkey '{}': {}",
-                        hotkey, e
-                    )),
-                    Some("Hotkey Registration"),
-                );
+                let err_str = e.to_string();
+                if is_already_registered_error(&err_str) {
+                    warn!(
+                        "Toggle Activation Words hotkey '{}' is already held by another application — shortcut will not fire.",
+                        hotkey
+                    );
+                } else {
+                    error!(
+                        "Failed to register Toggle Activation Words hotkey '{}': {}",
+                        hotkey, err_str
+                    );
+                    errors.push(format!("Toggle Activation Words: {}", err_str));
+                    emit_error(
+                        app,
+                        AppError::Hotkey(format!(
+                            "Could not register Toggle Activation Words hotkey '{}': {}",
+                            hotkey, err_str
+                        )),
+                        Some("Hotkey Registration"),
+                    );
+                }
             }
         }
     }
@@ -1788,10 +1951,7 @@ async fn refine_transcript(
 }
 
 #[tauri::command]
-async fn ping_refinement_model(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<bool, String> {
+async fn ping_refinement_model(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
     let settings_snapshot = state
         .settings
         .read()
@@ -3851,21 +4011,43 @@ fn log_frontend_event(level: String, context: String, message: String) -> Result
     Ok(())
 }
 
-fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
+fn assistant_requires_transcribe(settings: &Settings) -> bool {
+    settings
+        .product_mode
+        .trim()
+        .eq_ignore_ascii_case("assistant")
+        && capability_enabled(settings, RuntimeCapability::WorkflowAgent)
+        && settings.workflow_agent.hands_free_enabled
+}
+
+fn reconcile_assistant_transcribe_flag(settings: &mut Settings) -> bool {
+    if assistant_requires_transcribe(settings) && !settings.transcribe_enabled {
+        settings.transcribe_enabled = true;
+        return true;
+    }
+    false
+}
+
+fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String> {
     let state = app.state::<AppState>();
-    let settings = {
+    let (settings, effective_enabled) = {
         let mut current = state
             .settings
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if current.transcribe_enabled == enabled {
-            return Ok(());
+        let requested = if assistant_requires_transcribe(&current) {
+            true
+        } else {
+            enabled
+        };
+        if current.transcribe_enabled == requested {
+            return Ok(current.transcribe_enabled);
         }
-        current.transcribe_enabled = enabled;
-        current.clone()
+        current.transcribe_enabled = requested;
+        (current.clone(), requested)
     };
 
-    if enabled {
+    if effective_enabled {
         if let Err(err) = start_transcribe_monitor(app, &state, &settings) {
             let reverted = {
                 let mut current = state
@@ -3884,8 +4066,8 @@ fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> 
     }
 
     let _ = app.emit("settings-changed", settings.clone());
-    let _ = app.emit("menu:update-transcribe", enabled);
-    Ok(())
+    let _ = app.emit("menu:update-transcribe", effective_enabled);
+    Ok(effective_enabled)
 }
 
 #[tauri::command]
@@ -4121,14 +4303,17 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
     normalize_ai_fallback_fields(settings);
     normalize_continuous_dump_fields(settings);
     normalize_history_alias_fields(settings);
-    normalize_product_mode_field(settings);
     normalize_module_settings(&mut settings.module_settings);
+    normalize_assistant_core_binding(settings);
+    normalize_product_mode_field(settings);
     normalize_ai_refinement_module_binding(settings);
     normalize_gdd_module_settings(&mut settings.gdd_module_settings);
     normalize_confluence_settings(&mut settings.confluence_settings);
     normalize_workflow_agent_settings(&mut settings.workflow_agent);
+    normalize_assistant_presence_binding(settings);
     normalize_vision_input_settings(&mut settings.vision_input_settings);
     normalize_voice_output_settings(&mut settings.voice_output_settings);
+    reconcile_assistant_transcribe_flag(settings);
 
     info!("[DIAG] save_settings_inner: acquiring settings lock (write)");
     {
@@ -4316,6 +4501,7 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
 
     info!("[DIAG] save_settings_inner: emitting settings-changed");
     let _ = app.emit("settings-changed", settings.clone());
+    assistant_presence::reconcile_assistant_presence_window(app, settings);
     let _ = emit_assistant_baseline_state(app, state.inner(), settings, "save_settings");
     let _ = app.emit("menu:update-mic", settings.capture_enabled);
     let _ = app.emit("menu:update-transcribe", settings.transcribe_enabled);
@@ -4473,22 +4659,31 @@ fn enable_module(
     grant_permissions: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
     guarded_command!("enable_module", {
-        let module_id = module_id.trim().to_string();
+        let module_id = canonicalize_module_id(module_id.trim()).to_string();
         if module_id.is_empty() {
             return Err("Module id cannot be empty.".to_string());
         }
 
         let grants = grant_permissions.unwrap_or_default();
-        let (result, snapshot, descriptors) = {
+        let (result, snapshot, descriptors, prev_transcribe_enabled) = {
             let mut settings = state
                 .settings
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let prev_transcribe_enabled = settings.transcribe_enabled;
             let result =
                 module_lifecycle::enable_module(&mut settings.module_settings, &module_id, &grants);
             if result.is_ok() {
-                if module_id == "workflow_agent" {
+                if module_id == ASSISTANT_CORE_MODULE_ID {
                     settings.workflow_agent.enabled = true;
+                    settings.assistant_presence_enabled = true;
+                    settings
+                        .module_settings
+                        .enabled_modules
+                        .insert(ASSISTANT_PRESENCE_MODULE_ID.to_string());
+                }
+                if module_id == ASSISTANT_PRESENCE_MODULE_ID {
+                    settings.assistant_presence_enabled = true;
                 }
                 if module_id == "input_vision" {
                     settings.vision_input_settings.enabled = true;
@@ -4502,14 +4697,23 @@ fn enable_module(
                 }
             }
             normalize_module_settings(&mut settings.module_settings);
+            normalize_assistant_core_binding(&mut settings);
+            normalize_product_mode_field(&mut settings);
             normalize_ai_refinement_module_binding(&mut settings);
             normalize_gdd_module_settings(&mut settings.gdd_module_settings);
             normalize_confluence_settings(&mut settings.confluence_settings);
             normalize_workflow_agent_settings(&mut settings.workflow_agent);
+            normalize_assistant_presence_binding(&mut settings);
             normalize_vision_input_settings(&mut settings.vision_input_settings);
             normalize_voice_output_settings(&mut settings.voice_output_settings);
+            reconcile_assistant_transcribe_flag(&mut settings);
             let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
-            (result, settings.clone(), descriptors)
+            (
+                result,
+                settings.clone(),
+                descriptors,
+                prev_transcribe_enabled,
+            )
         };
 
         save_settings_file(&app, &snapshot)?;
@@ -4520,8 +4724,17 @@ fn enable_module(
                 "enable_module",
             );
         }
-        let _ = app.emit("settings-changed", snapshot);
+        if result.is_ok() {
+            if snapshot.transcribe_enabled && !prev_transcribe_enabled {
+                let _ = start_transcribe_monitor(&app, &state, &snapshot);
+            } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
+                stop_transcribe_monitor(&app, &state);
+            }
+        }
+        let _ = app.emit("settings-changed", snapshot.clone());
+        let _ = app.emit("menu:update-transcribe", snapshot.transcribe_enabled);
         let _ = app.emit("module:state-changed", descriptors);
+        assistant_presence::reconcile_assistant_presence_window(&app, &snapshot);
         let _ = emit_assistant_runtime_state_from_current_settings(
             &app,
             state.inner(),
@@ -4551,21 +4764,25 @@ fn disable_module(
     module_id: String,
 ) -> Result<serde_json::Value, String> {
     guarded_command!("disable_module", {
-        let module_id = module_id.trim().to_string();
+        let module_id = canonicalize_module_id(module_id.trim()).to_string();
         if module_id.is_empty() {
             return Err("Module id cannot be empty.".to_string());
         }
 
-        let (result, snapshot, descriptors) = {
+        let (result, snapshot, descriptors, prev_transcribe_enabled) = {
             let mut settings = state
                 .settings
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let prev_transcribe_enabled = settings.transcribe_enabled;
             let result =
                 module_lifecycle::disable_module(&mut settings.module_settings, &module_id);
             if result.is_ok() {
-                if module_id == "workflow_agent" {
+                if module_id == ASSISTANT_CORE_MODULE_ID {
                     settings.workflow_agent.enabled = false;
+                }
+                if module_id == ASSISTANT_PRESENCE_MODULE_ID {
+                    settings.assistant_presence_enabled = false;
                 }
                 if module_id == "input_vision" {
                     settings.vision_input_settings.enabled = false;
@@ -4579,14 +4796,23 @@ fn disable_module(
                 }
             }
             normalize_module_settings(&mut settings.module_settings);
+            normalize_assistant_core_binding(&mut settings);
+            normalize_product_mode_field(&mut settings);
             normalize_ai_refinement_module_binding(&mut settings);
             normalize_gdd_module_settings(&mut settings.gdd_module_settings);
             normalize_confluence_settings(&mut settings.confluence_settings);
             normalize_workflow_agent_settings(&mut settings.workflow_agent);
+            normalize_assistant_presence_binding(&mut settings);
             normalize_vision_input_settings(&mut settings.vision_input_settings);
             normalize_voice_output_settings(&mut settings.voice_output_settings);
+            reconcile_assistant_transcribe_flag(&mut settings);
             let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
-            (result, settings.clone(), descriptors)
+            (
+                result,
+                settings.clone(),
+                descriptors,
+                prev_transcribe_enabled,
+            )
         };
 
         if result.is_ok() {
@@ -4615,11 +4841,18 @@ fn disable_module(
                 }
                 _ => {}
             }
+            if snapshot.transcribe_enabled && !prev_transcribe_enabled {
+                let _ = start_transcribe_monitor(&app, &state, &snapshot);
+            } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
+                stop_transcribe_monitor(&app, &state);
+            }
         }
 
         save_settings_file(&app, &snapshot)?;
-        let _ = app.emit("settings-changed", snapshot);
+        let _ = app.emit("settings-changed", snapshot.clone());
+        let _ = app.emit("menu:update-transcribe", snapshot.transcribe_enabled);
         let _ = app.emit("module:state-changed", descriptors);
+        assistant_presence::reconcile_assistant_presence_window(&app, &snapshot);
         let _ = emit_assistant_runtime_state_from_current_settings(
             &app,
             state.inner(),
@@ -4699,7 +4932,12 @@ fn collect_all_transcript_entries(state: &AppState) -> Vec<HistoryEntry> {
 }
 
 fn module_enabled(settings: &Settings, module_id: &str) -> bool {
-    settings.module_settings.enabled_modules.contains(module_id)
+    let module_id = canonicalize_module_id(module_id);
+    settings
+        .module_settings
+        .enabled_modules
+        .iter()
+        .any(|enabled| canonicalize_module_id(enabled) == module_id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4714,7 +4952,7 @@ impl RuntimeCapability {
     fn module_id(self) -> &'static str {
         match self {
             Self::AiRefinement => AI_REFINEMENT_MODULE_ID,
-            Self::WorkflowAgent => "workflow_agent",
+            Self::WorkflowAgent => ASSISTANT_CORE_MODULE_ID,
             Self::VisionInput => "input_vision",
             Self::VoiceOutputTts => "output_voice_tts",
         }
@@ -4735,7 +4973,7 @@ impl RuntimeCapability {
                 "AI Refinement module is disabled. Enable module 'ai_refinement' first."
             }
             Self::WorkflowAgent => {
-                "Workflow Agent module is disabled. Enable module 'workflow_agent' first."
+                "Assistant Core module is disabled. Enable module 'assistant_core' first."
             }
             Self::VisionInput => {
                 "Vision input module is disabled. Enable module 'input_vision' first."
@@ -4749,7 +4987,7 @@ impl RuntimeCapability {
     fn setting_disabled_message(self) -> &'static str {
         match self {
             Self::AiRefinement => "AI refinement is disabled in settings.",
-            Self::WorkflowAgent => "Workflow Agent is disabled in settings.",
+            Self::WorkflowAgent => "Assistant Core is disabled in settings.",
             Self::VisionInput => "Vision input is disabled in settings.",
             Self::VoiceOutputTts => "Voice output is disabled in settings.",
         }
@@ -4778,6 +5016,7 @@ fn require_capability_enabled(
 struct AssistantCapabilitySnapshot {
     product_mode: String,
     assistant_mode: bool,
+    assistant_core_available: bool,
     workflow_agent_available: bool,
     tts_available: bool,
     vision_available: bool,
@@ -4956,15 +5195,15 @@ fn assistant_product_mode(settings: &Settings) -> &'static str {
 
 fn assistant_capability_snapshot(settings: &Settings) -> AssistantCapabilitySnapshot {
     let assistant_mode = assistant_product_mode(settings) == "assistant";
-    let workflow_agent_available = capability_enabled(settings, RuntimeCapability::WorkflowAgent);
+    let assistant_core_available = capability_enabled(settings, RuntimeCapability::WorkflowAgent);
     let tts_available = capability_enabled(settings, RuntimeCapability::VoiceOutputTts);
     let vision_available = capability_enabled(settings, RuntimeCapability::VisionInput);
     let mut missing_capabilities: Vec<String> = Vec::new();
     if !assistant_mode {
         missing_capabilities.push("product_mode_assistant".to_string());
     }
-    if !workflow_agent_available {
-        missing_capabilities.push("workflow_agent".to_string());
+    if !assistant_core_available {
+        missing_capabilities.push(ASSISTANT_CORE_MODULE_ID.to_string());
     }
     if !tts_available {
         missing_capabilities.push("output_voice_tts".to_string());
@@ -4975,13 +5214,14 @@ fn assistant_capability_snapshot(settings: &Settings) -> AssistantCapabilitySnap
     AssistantCapabilitySnapshot {
         product_mode: assistant_product_mode(settings).to_string(),
         assistant_mode,
-        workflow_agent_available,
+        assistant_core_available,
+        workflow_agent_available: assistant_core_available,
         tts_available,
         vision_available,
         degraded: assistant_mode
-            && workflow_agent_available
+            && assistant_core_available
             && (!tts_available || !vision_available),
-        hard_blocked: !assistant_mode || !workflow_agent_available,
+        hard_blocked: !assistant_mode || !assistant_core_available,
         missing_capabilities,
     }
 }
@@ -4992,10 +5232,10 @@ fn assistant_baseline_state(
     if !capability.assistant_mode {
         return (AssistantOrchestratorState::Idle, "product_mode_transcribe");
     }
-    if !capability.workflow_agent_available {
+    if !capability.assistant_core_available {
         return (
             AssistantOrchestratorState::Idle,
-            "workflow_agent_unavailable",
+            "assistant_core_unavailable",
         );
     }
     if capability.degraded {
@@ -5384,7 +5624,7 @@ mod assistant_orchestrator_tests {
         let settings = settings_for_assistant_mode("assistant", true, false, true);
         let capability = assistant_capability_snapshot(&settings);
         assert!(capability.assistant_mode);
-        assert!(capability.workflow_agent_available);
+        assert!(capability.assistant_core_available);
         assert!(capability.degraded);
         assert!(!capability.hard_blocked);
         assert!(capability
@@ -5401,11 +5641,11 @@ mod assistant_orchestrator_tests {
         let settings = settings_for_assistant_mode("assistant", false, true, true);
         let capability = assistant_capability_snapshot(&settings);
         assert!(capability.assistant_mode);
-        assert!(!capability.workflow_agent_available);
+        assert!(!capability.assistant_core_available);
         assert!(capability.hard_blocked);
         let (state, reason) = assistant_baseline_state(&capability);
         assert_eq!(state, AssistantOrchestratorState::Idle);
-        assert_eq!(reason, "workflow_agent_unavailable");
+        assert_eq!(reason, "assistant_core_unavailable");
     }
 }
 
@@ -5416,7 +5656,284 @@ fn agent_list_supported_actions() -> Vec<String> {
         "session_recap".to_string(),
         "plan_status".to_string(),
         "confirm_or_cancel".to_string(),
+        "web_search".to_string(),
+        "open_module".to_string(),
+        "open_app".to_string(),
     ]
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct AssistantExecuteDirectActionRequest {
+    intent: String,
+    command_text: String,
+}
+
+fn normalize_assistant_action_text(text: &str) -> String {
+    text.trim()
+        .to_lowercase()
+        .chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() || ch.is_whitespace() {
+                ch
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+}
+
+fn open_external_target(target: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", target])
+            .spawn()
+            .map_err(|err| format!("Failed to open target '{target}': {err}"))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(target)
+            .spawn()
+            .map_err(|err| format!("Failed to open target '{target}': {err}"))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map_err(|err| format!("Failed to open target '{target}': {err}"))?;
+        return Ok(());
+    }
+}
+
+fn extract_web_search_query(command_text: &str) -> String {
+    let lower = normalize_assistant_action_text(command_text);
+    let stripped = lower
+        .replace("hey trispr", " ")
+        .replace("trispr agent", " ")
+        .replace("trispr", " ")
+        .replace("search for", " ")
+        .replace("look up", " ")
+        .replace("google", " ")
+        .replace("find online", " ")
+        .replace("search", " ");
+    let cleaned = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.is_empty() {
+        command_text.trim().to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn resolve_module_target(command_text: &str) -> Option<(&'static str, &'static str)> {
+    let text = normalize_assistant_action_text(command_text);
+    if text.contains("gdd") || text.contains("game design") {
+        return Some(("gdd_flow", "GDD Flow"));
+    }
+    if text.contains("voice output") || text.contains("tts") {
+        return Some(("voice-output", "Voice Output"));
+    }
+    if text.contains("refinement") || text.contains("ai refinement") {
+        return Some(("ai-refinement", "AI Refinement"));
+    }
+    if text.contains("assistant debug")
+        || text.contains("assistant tab")
+        || text.contains("agent tab")
+    {
+        return Some(("agent", "Assistant Debug"));
+    }
+    if text.contains("settings") {
+        return Some(("settings", "Settings"));
+    }
+    if text.contains("module") {
+        return Some(("modules", "Modules"));
+    }
+    if text.contains("transcription") || text.contains("transcribe") {
+        return Some(("transcription", "Transcription"));
+    }
+    None
+}
+
+fn launch_named_app(command_text: &str) -> Result<&'static str, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let text = normalize_assistant_action_text(command_text);
+        let launch =
+            |program: &str, args: &[&str], label: &'static str| -> Result<&'static str, String> {
+                std::process::Command::new(program)
+                    .args(args)
+                    .spawn()
+                    .map_err(|err| format!("Failed to launch {label}: {err}"))?;
+                Ok(label)
+            };
+
+        if text.contains("explorer") || text.contains("file explorer") || text.contains("files") {
+            return launch("explorer", &[], "File Explorer");
+        }
+        if text.contains("notepad") {
+            return launch("notepad.exe", &[], "Notepad");
+        }
+        if text.contains("calculator") || text.contains("calc") {
+            return launch("calc.exe", &[], "Calculator");
+        }
+        if text.contains("terminal") || text.contains("powershell") {
+            return launch("powershell.exe", &[], "Terminal");
+        }
+        if text.contains("cursor") {
+            return launch("cmd", &["/C", "start", "", "cursor"], "Cursor");
+        }
+        if text.contains("browser") || text.contains("chrome") || text.contains("edge") {
+            open_external_target("https://www.google.com")?;
+            return Ok("Default Browser");
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = command_text;
+
+    Err("No supported desktop app target was detected.".to_string())
+}
+
+#[tauri::command]
+fn assistant_execute_direct_action(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: AssistantExecuteDirectActionRequest,
+) -> Result<crate::workflow_agent::AgentExecutionResult, String> {
+    guarded_command!("assistant_execute_direct_action", {
+        let settings_snapshot = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
+            settings.clone()
+        };
+
+        let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
+        if assistant_mode {
+            let _ = transition_assistant_state_with_settings(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                AssistantOrchestratorState::Executing,
+                "assistant_execute_direct_action:start",
+            );
+        }
+
+        let result = match request.intent.trim() {
+            "web_search" => {
+                if !settings_snapshot.workflow_agent.online_enabled {
+                    crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "Web search is disabled in Offline mode.".to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("online_disabled".to_string()),
+                    }
+                } else {
+                    let query = extract_web_search_query(&request.command_text);
+                    let encoded: String =
+                        url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+                    let target = format!("https://www.google.com/search?q={encoded}");
+                    open_external_target(&target)?;
+                    crate::workflow_agent::AgentExecutionResult {
+                        status: "completed".to_string(),
+                        message: format!("Opened web search for “{}”.", query.trim()),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: None,
+                    }
+                }
+            }
+            "open_module" => match resolve_module_target(&request.command_text) {
+                Some((target, label)) => {
+                    show_main_window(&app);
+                    let _ = app.emit(
+                        "assistant:open-module",
+                        serde_json::json!({
+                            "target": target,
+                            "reason": "assistant_execute_direct_action",
+                        }),
+                    );
+                    crate::workflow_agent::AgentExecutionResult {
+                        status: "completed".to_string(),
+                        message: format!("Opened {}.", label),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: None,
+                    }
+                }
+                None => crate::workflow_agent::AgentExecutionResult {
+                    status: "failed".to_string(),
+                    message: "No supported Trispr surface was detected in that request."
+                        .to_string(),
+                    draft: None,
+                    publish_result: None,
+                    queued_job: None,
+                    error: Some("module_target_missing".to_string()),
+                },
+            },
+            "open_app" => match launch_named_app(&request.command_text) {
+                Ok(label) => crate::workflow_agent::AgentExecutionResult {
+                    status: "completed".to_string(),
+                    message: format!("Opened {}.", label),
+                    draft: None,
+                    publish_result: None,
+                    queued_job: None,
+                    error: None,
+                },
+                Err(error) => crate::workflow_agent::AgentExecutionResult {
+                    status: "failed".to_string(),
+                    message: error.clone(),
+                    draft: None,
+                    publish_result: None,
+                    queued_job: None,
+                    error: Some(error),
+                },
+            },
+            _ => crate::workflow_agent::AgentExecutionResult {
+                status: "failed".to_string(),
+                message: "Unsupported direct assistant action.".to_string(),
+                draft: None,
+                publish_result: None,
+                queued_job: None,
+                error: Some("unsupported_direct_action".to_string()),
+            },
+        };
+
+        if assistant_mode {
+            let assistant_state = if result.status == "failed" {
+                AssistantOrchestratorState::Recovering
+            } else {
+                AssistantOrchestratorState::Listening
+            };
+            emit_assistant_action_result(
+                &app,
+                &settings_snapshot,
+                assistant_state,
+                &result,
+                "assistant_execute_direct_action",
+            );
+            let _ = emit_assistant_baseline_state(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                "assistant_execute_direct_action:complete",
+            );
+        }
+
+        Ok(result)
+    })
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -5692,7 +6209,12 @@ fn fetch_live_weather_reply(command_text: &str) -> Result<String, String> {
     let location = geocode_response
         .results
         .and_then(|mut entries| entries.drain(..).next())
-        .ok_or_else(|| format!("weather geocoding returned no result for '{}'", location_query))?;
+        .ok_or_else(|| {
+            format!(
+                "weather geocoding returned no result for '{}'",
+                location_query
+            )
+        })?;
 
     let forecast_days = std::cmp::max(3, day_offset + 1);
     let forecast_url = format!(
@@ -5721,7 +6243,11 @@ fn fetch_live_weather_reply(command_text: &str) -> Result<String, String> {
     let min_temps = daily
         .temperature_2m_min
         .ok_or_else(|| "min temperatures missing in forecast response".to_string())?;
-    if daily.time.is_empty() || weather_codes.is_empty() || max_temps.is_empty() || min_temps.is_empty() {
+    if daily.time.is_empty()
+        || weather_codes.is_empty()
+        || max_temps.is_empty()
+        || min_temps.is_empty()
+    {
         return Err("weather forecast response is empty".to_string());
     }
 
@@ -5743,7 +6269,9 @@ fn fetch_live_weather_reply(command_text: &str) -> Result<String, String> {
         .unwrap_or(0.0);
 
     let location_display = match (&location.admin1, &location.country) {
-        (Some(region), Some(country)) if !region.trim().is_empty() && !country.trim().is_empty() => {
+        (Some(region), Some(country))
+            if !region.trim().is_empty() && !country.trim().is_empty() =>
+        {
             format!("{}, {}, {}", location.name, region, country)
         }
         (_, Some(country)) if !country.trim().is_empty() => {
@@ -6117,11 +6645,7 @@ fn agent_parse_command(
             .cloned()
             .unwrap_or_default();
         let wakewords = merged_workflow_wakewords(&workflow_settings);
-        let parsed = crate::workflow_agent::parse_command(
-            &request,
-            &wakewords,
-            &intent_keywords,
-        );
+        let parsed = crate::workflow_agent::parse_command(&request, &wakewords, &intent_keywords);
         if parsed.detected || parsed.wakeword_matched {
             let _ = app.emit("agent:command-detected", &parsed);
             if assistant_mode {
@@ -7380,9 +7904,8 @@ fn speak_tts_internal(
         .tts_session_counter
         .fetch_add(1, Ordering::AcqRel)
         .saturating_add(1);
-    let playback_control = std::sync::Arc::new(crate::multimodal_io::TtsPlaybackControl::new(
-        session_id,
-    ));
+    let playback_control =
+        std::sync::Arc::new(crate::multimodal_io::TtsPlaybackControl::new(session_id));
     if let Some(previous) =
         replace_tts_playback_control(state, Some(std::sync::Arc::clone(&playback_control)))
     {
@@ -8504,6 +9027,28 @@ fn save_window_state(
 }
 
 #[tauri::command]
+fn show_assistant_presence_window(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let snapshot = {
+        let mut settings = state
+            .settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        settings.assistant_presence_enabled = true;
+        normalize_module_settings(&mut settings.module_settings);
+        normalize_workflow_agent_settings(&mut settings.workflow_agent);
+        normalize_assistant_presence_binding(&mut settings);
+        settings.clone()
+    };
+    save_settings_file(&app, &snapshot)?;
+    let _ = app.emit("settings-changed", snapshot.clone());
+    assistant_presence::reconcile_assistant_presence_window(&app, &snapshot);
+    Ok(())
+}
+
+#[tauri::command]
 fn get_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
     state
         .history
@@ -8690,8 +9235,8 @@ fn expand_transcribe_backlog(
 }
 
 #[tauri::command]
-fn paste_transcript_text(text: String) -> Result<(), String> {
-    paste_text(&text)
+fn paste_transcript_text(app: AppHandle, text: String) -> Result<(), String> {
+    paste_text(&app, &text)
 }
 
 #[tauri::command]
@@ -9856,25 +10401,39 @@ fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
 
 fn init_logging() {
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
-    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+    use tracing_subscriber::{
+        filter::LevelFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
+    };
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    // Write logs to %LOCALAPPDATA%\Trispr Flow\logs\trispr-flow.YYYY-MM-DD.txt (daily rotation)
+    // Logs go to %LOCALAPPDATA%\Trispr Flow\logs\:
+    //   - trispr-flow.YYYY-MM-DD.txt         (all levels, daily rotation, 30-day retention)
+    //   - trispr-flow-errors.YYYY-MM-DD.txt  (WARN+ERROR only — compact scan surface)
     let log_dir = std::env::var("LOCALAPPDATA")
         .map(|d| std::path::PathBuf::from(d).join("Trispr Flow").join("logs"))
         .unwrap_or_else(|_| std::path::PathBuf::from("logs"));
     let _ = std::fs::create_dir_all(&log_dir);
-    let file_appender = RollingFileAppender::builder()
+
+    let main_appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
         .filename_prefix("trispr-flow")
         .filename_suffix("txt")
+        .max_log_files(30)
         .build(&log_dir)
-        .expect("failed to initialize log appender");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+        .expect("failed to initialize main log appender");
+    let (main_nb, main_guard) = tracing_appender::non_blocking(main_appender);
+    std::mem::forget(main_guard);
 
-    // Keep the guard alive for the process lifetime
-    std::mem::forget(_guard);
+    let errors_appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("trispr-flow-errors")
+        .filename_suffix("txt")
+        .max_log_files(30)
+        .build(&log_dir)
+        .expect("failed to initialize errors log appender");
+    let (errors_nb, errors_guard) = tracing_appender::non_blocking(errors_appender);
+    std::mem::forget(errors_guard);
 
     tracing_subscriber::registry()
         .with(filter)
@@ -9884,8 +10443,18 @@ fn init_logging() {
                 .with_thread_ids(false)
                 .with_file(true)
                 .with_line_number(true)
-                .with_writer(non_blocking)
+                .with_writer(main_nb)
                 .with_ansi(false),
+        )
+        .with(
+            fmt::layer()
+                .with_target(false)
+                .with_thread_ids(false)
+                .with_file(true)
+                .with_line_number(true)
+                .with_writer(errors_nb)
+                .with_ansi(false)
+                .with_filter(LevelFilter::WARN),
         )
         .init();
 
@@ -10224,9 +10793,13 @@ fn restore_snapshot_with_retry(snapshot: ClipboardSnapshot) -> Result<(), String
     }
 }
 
-pub(crate) fn paste_text(text: &str) -> Result<(), String> {
+pub(crate) fn paste_text(app_handle: &AppHandle, text: &str) -> Result<(), String> {
     let snapshot = capture_clipboard_snapshot_with_retry();
     set_clipboard_text_with_retry(text)?;
+    {
+        let ec_state = app_handle.state::<crate::state::AppState>();
+        crate::uiautomation_capture::record_paste(&ec_state.enter_capture, text);
+    }
 
     if let Err(paste_error) = send_paste_keystroke() {
         if let Err(restore_error) = restore_snapshot_with_retry(snapshot) {
@@ -10709,26 +11282,67 @@ pub(crate) fn toggle_activation_words_async(app: AppHandle) {
 pub(crate) fn toggle_product_mode_async(app: AppHandle) {
     crate::util::spawn_guarded("toggle_product_mode", move || {
         let state = app.state::<AppState>();
-        let (next_mode, snapshot) = {
+        let toggled = {
             let mut settings = state
                 .settings
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            settings.product_mode = if settings.product_mode.trim().eq_ignore_ascii_case("assistant") {
+            let prev_transcribe_enabled = settings.transcribe_enabled;
+            let assistant_core_available =
+                capability_enabled(&settings, RuntimeCapability::WorkflowAgent);
+            if !assistant_core_available {
+                normalize_product_mode_field(&mut settings);
+                let snapshot = settings.clone();
+                let _ = save_settings_file(&app, &settings);
+                let _ = app.emit("settings-changed", snapshot.clone());
+                assistant_presence::reconcile_assistant_presence_window(&app, &snapshot);
+                let _ = emit_assistant_baseline_state(
+                    &app,
+                    state.inner(),
+                    &snapshot,
+                    "hotkey_toggle_product_mode_blocked",
+                );
+                info!("Product mode toggle ignored because Assistant Core is unavailable.");
+                return;
+            }
+            settings.product_mode = if settings
+                .product_mode
+                .trim()
+                .eq_ignore_ascii_case("assistant")
+            {
                 "transcribe".to_string()
             } else {
                 "assistant".to_string()
             };
             normalize_product_mode_field(&mut settings);
+            reconcile_assistant_transcribe_flag(&mut settings);
             let next_mode = settings.product_mode.clone();
             let snapshot = settings.clone();
             let _ = save_settings_file(&app, &settings);
-            (next_mode, snapshot)
+            (next_mode, snapshot, prev_transcribe_enabled)
         };
+        let (next_mode, snapshot, prev_transcribe_enabled) = toggled;
+
+        if snapshot.transcribe_enabled && !prev_transcribe_enabled {
+            let _ = start_transcribe_monitor(&app, &state, &snapshot);
+        } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
+            stop_transcribe_monitor(&app, &state);
+        }
 
         let _ = app.emit("settings-changed", snapshot.clone());
-        let _ = emit_assistant_baseline_state(&app, state.inner(), &snapshot, "hotkey_toggle_product_mode");
-        let cue = if next_mode == "assistant" { "start" } else { "stop" };
+        let _ = app.emit("menu:update-transcribe", snapshot.transcribe_enabled);
+        assistant_presence::reconcile_assistant_presence_window(&app, &snapshot);
+        let _ = emit_assistant_baseline_state(
+            &app,
+            state.inner(),
+            &snapshot,
+            "hotkey_toggle_product_mode",
+        );
+        let cue = if next_mode == "assistant" {
+            "start"
+        } else {
+            "stop"
+        };
         let _ = app.emit("audio:cue", cue);
         info!("Product mode toggled to: {}", next_mode);
     });
@@ -10769,6 +11383,99 @@ pub(crate) fn format_panic_payload(payload: &(dyn std::any::Any + Send)) -> Stri
     }
 }
 
+#[tauri::command]
+async fn video_ingest_sources(
+    paths: Vec<String>,
+    app: AppHandle,
+) -> Result<Vec<crate::video_ingest::SourceItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let max_mb = state
+            .settings
+            .read()
+            .map(|s| s.video_generation_settings.max_upload_mb)
+            .unwrap_or(500);
+
+        // Transient workdir: ingest classifies + extracts text only; the real
+        // render creates its own workdir and calls materialize_assets().
+        let workdir = crate::video_ingest::JobWorkdir::create(&app)
+            .map_err(|e| format!("prepare ingest workdir: {}", e))?;
+        let outcome = crate::video_ingest::ingest_dropped_paths(
+            paths.into_iter().map(std::path::PathBuf::from).collect(),
+            &workdir,
+            0,
+            max_mb,
+        );
+        workdir.cleanup();
+
+        if outcome.items.is_empty() && !outcome.errors.is_empty() {
+            return Err(outcome.errors.join("; "));
+        }
+        if !outcome.errors.is_empty() {
+            warn!(
+                "[video-ingest] {} items ingested, {} errors: {}",
+                outcome.items.len(),
+                outcome.errors.len(),
+                outcome.errors.join("; ")
+            );
+        }
+        Ok(outcome.items)
+    })
+    .await
+    .map_err(|e| format!("ingest join error: {}", e))?
+}
+
+#[tauri::command]
+async fn video_ingest_history_entry(
+    entry_id: String,
+    app: AppHandle,
+) -> Result<crate::video_ingest::SourceItem, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        crate::video_ingest::ingest_history_entry(&entry_id, state.inner(), 0)
+    })
+    .await
+    .map_err(|e| format!("history ingest join error: {}", e))?
+}
+
+#[tauri::command]
+async fn video_generate(
+    request: crate::video_generation::VideoJobRequest,
+    app: AppHandle,
+) -> Result<crate::video_generation::VideoJobResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::video_generation::render_video(&app, request)
+    })
+    .await
+    .map_err(|e| format!("video_generate join error: {}", e))?
+}
+
+#[tauri::command]
+fn video_get_output_dir(app: AppHandle) -> Result<String, String> {
+    let dir = crate::paths::resolve_video_output_dir(&app);
+    Ok(dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn video_open_output_dir(app: AppHandle) -> Result<(), String> {
+    let dir = crate::paths::resolve_video_output_dir(&app);
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("open explorer: {}", e))?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = dir; // not used on other OSes in Phase 1
+        return Err(
+            "Opening the output directory is only wired for Windows in Phase 1.".to_string(),
+        );
+    }
+    Ok(())
+}
+
 pub fn run() {
     init_logging();
     load_local_env();
@@ -10787,7 +11494,11 @@ pub fn run() {
             .cloned()
             .or_else(|| info.payload().downcast_ref::<&str>().map(|s| s.to_string()))
             .unwrap_or_else(|| "non-string panic".to_string());
-        error!("PANIC at {}: {}", location, payload);
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        error!(
+            "PANIC at {}: {}\nBacktrace:\n{}",
+            location, payload, backtrace
+        );
         default_hook(info);
     }));
 
@@ -10822,7 +11533,8 @@ pub fn run() {
                 });
             }
 
-            let settings = load_settings(app.handle());
+            let mut settings = load_settings(app.handle());
+            reconcile_assistant_transcribe_flag(&mut settings);
 
             // Compute partition base directories and legacy paths for migration.
             let app_data_dir = crate::paths::resolve_base_dir(app.handle());
@@ -10886,11 +11598,14 @@ pub fn run() {
                 tts_session_counter: AtomicU64::new(0),
                 tts_playback_control: Mutex::new(None),
                 piper_daemon: crate::multimodal_io::PiperDaemonState::default(),
+                enter_capture: crate::state::EnterCaptureState::default(),
                 #[cfg(target_os = "windows")]
                 system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
                 #[cfg(target_os = "windows")]
                 managed_process_job: create_managed_process_job(),
             });
+
+            crate::uiautomation_capture::start_hook_thread(app.handle().clone());
 
             {
                 let state = app.state::<AppState>();
@@ -11106,9 +11821,24 @@ pub fn run() {
 
             info!("[DIAG] setup: registering hotkeys...");
             if let Err(err) = register_hotkeys(app.handle(), &settings) {
-                eprintln!("⚠ Failed to register hotkeys: {}", err);
+                warn!("Failed to register hotkeys: {}", err);
             }
             info!("[DIAG] setup: hotkeys done");
+
+            if settings.transcribe_enabled {
+                let state = app.state::<AppState>();
+                if let Err(err) = start_transcribe_monitor(app.handle(), &state, &settings) {
+                    warn!("Failed to start transcribe monitor during setup: {}", err);
+                    settings.transcribe_enabled = false;
+                    {
+                        let mut current = state
+                            .settings
+                            .write()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        current.transcribe_enabled = false;
+                    }
+                }
+            }
 
             // Heartbeat watchdog: logs alive status every 30s to detect event-loop freezes
             crate::util::spawn_guarded("heartbeat", || {
@@ -11349,7 +12079,7 @@ pub fn run() {
                     if let Err(err) =
                         crate::audio::start_vad_monitor(&app_handle, &state, &settings_clone)
                     {
-                        eprintln!("⚠ Failed to start VAD monitor: {}", err);
+                        warn!("Failed to start VAD monitor: {}", err);
                     }
                 });
             }
@@ -11379,6 +12109,7 @@ pub fn run() {
                 overlay::preload_overlay_window(&app.handle());
                 info!("[DIAG] setup: overlay state primed + window pre-warmed, building tray...");
             }
+            assistant_presence::reconcile_assistant_presence_window(&app.handle(), &settings);
 
             let icon = {
                 let paths = [
@@ -11654,6 +12385,7 @@ pub fn run() {
             save_settings,
             save_window_state,
             save_window_visibility_state,
+            show_assistant_presence_window,
             list_modules,
             enable_module,
             disable_module,
@@ -11662,6 +12394,7 @@ pub fn run() {
             agent_list_supported_actions,
             agent_parse_command,
             agent_compose_unknown_reply,
+            assistant_execute_direct_action,
             search_transcript_sessions,
             agent_build_execution_plan,
             agent_execute_gdd_plan,
@@ -11771,6 +12504,11 @@ pub fn run() {
             purge_gpu_memory,
             stop_ollama_runtime,
             install_lm_studio,
+            video_ingest_sources,
+            video_ingest_history_entry,
+            video_generate,
+            video_get_output_dir,
+            video_open_output_dir,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

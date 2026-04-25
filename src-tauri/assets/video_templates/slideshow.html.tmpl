@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width={{WIDTH}}, height={{HEIGHT}}" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        width: {{WIDTH}}px;
+        height: {{HEIGHT}}px;
+        overflow: hidden;
+        background: #0b0e14;
+        color: #f8fafc;
+        font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+      }
+      #root { position: relative; width: 100%; height: 100%; }
+      .slide {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 4%;
+        opacity: 0;
+      }
+      .slide .index {
+        position: absolute;
+        top: 3%;
+        right: 4%;
+        font-size: 1.2vw;
+        font-weight: 700;
+        color: #7dd3fc;
+        letter-spacing: 0.08em;
+        opacity: 0.7;
+      }
+      .slide .heading {
+        font-size: 2.4vw;
+        font-weight: 700;
+        color: #7dd3fc;
+        margin-bottom: 0.8em;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        text-align: center;
+      }
+      .slide .body {
+        font-size: 3.2vw;
+        line-height: 1.3;
+        font-weight: 500;
+        text-align: center;
+        max-width: 85%;
+      }
+      .slide .image-primary {
+        max-width: 92%;
+        max-height: 78%;
+        object-fit: contain;
+        border-radius: 0.6vw;
+        box-shadow: 0 1vw 3vw rgba(0, 0, 0, 0.6);
+      }
+      .slide .caption {
+        font-size: 1.8vw;
+        font-weight: 500;
+        color: #cbd5e1;
+        margin-top: 1em;
+        text-align: center;
+        max-width: 80%;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="{{DURATION}}"
+      data-width="{{WIDTH}}"
+      data-height="{{HEIGHT}}"
+    ></div>
+
+    <script id="trispr-items" type="application/json">{{ITEMS_JSON}}</script>
+    <script id="trispr-brief" type="application/json">{{BRIEF_JSON}}</script>
+
+    <script>
+      (function () {
+        var items = JSON.parse(document.getElementById("trispr-items").textContent || "[]");
+        items.sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+
+        // Every dropped source becomes a slide — content, asset, or hybrid.
+        // Image-bearing items show the image prominently; text-only items show
+        // their extracted text as body copy. This replaces the earlier
+        // design where images were only used as dim blurred backgrounds.
+        var slides = items.filter(function (i) {
+          return (
+            (i.kind === "content" || i.kind === "hybrid") ||
+            (i.kind === "asset" && i.asset_path && /\.(png|jpe?g|webp|gif|svg)$/i.test(i.asset_path))
+          );
+        });
+
+        if (slides.length === 0) {
+          slides = [{ id: "placeholder", kind: "content", display_name: "empty", extracted_text: "No sources in queue", order: 0 }];
+        }
+
+        var isImage = function (path) {
+          return !!path && /\.(png|jpe?g|webp|gif|svg)$/i.test(path);
+        };
+
+        var root = document.getElementById("root");
+        var total = {{DURATION}};
+        var perSlide = total / slides.length;
+        // Fade durations shrink with very short slides so the "hold at full
+        // brightness" phase never collapses to zero. Minimum 60% of each slide
+        // is at full opacity.
+        var fadeDur = Math.min(0.4, perSlide * 0.2);
+
+        window.__timelines = window.__timelines || {};
+        var tl = gsap.timeline({ paused: true });
+
+        slides.forEach(function (item, idx) {
+          var start = idx * perSlide;
+          var slide = document.createElement("div");
+          slide.className = "slide clip";
+          slide.setAttribute("data-start", start.toString());
+          slide.setAttribute("data-duration", perSlide.toString());
+          slide.setAttribute("data-track-index", "1");
+
+          // Slide-number badge, always present.
+          var indexBadge = document.createElement("div");
+          indexBadge.className = "index";
+          indexBadge.textContent = (idx + 1) + " / " + slides.length;
+          slide.appendChild(indexBadge);
+
+          var hasImage = isImage(item.asset_path);
+          var hasText = !!(item.extracted_text && item.extracted_text.trim().length > 0);
+
+          if (hasImage) {
+            // Image-primary layout: big centered image, optional caption under it.
+            var img = document.createElement("img");
+            img.className = "image-primary";
+            img.src = item.asset_path;
+            img.alt = item.display_name || "";
+            slide.appendChild(img);
+
+            var caption = document.createElement("div");
+            caption.className = "caption";
+            caption.textContent = hasText
+              ? item.extracted_text.trim().slice(0, 280)
+              : (item.display_name || "");
+            slide.appendChild(caption);
+          } else {
+            // Text-primary layout: heading + body.
+            var heading = document.createElement("div");
+            heading.className = "heading";
+            heading.textContent = item.display_name || ("Source " + (idx + 1));
+            slide.appendChild(heading);
+
+            var body = document.createElement("div");
+            body.className = "body";
+            body.textContent = (item.extracted_text || "").trim().slice(0, 600)
+              || "(no text extracted)";
+            slide.appendChild(body);
+          }
+
+          root.appendChild(slide);
+
+          // Timeline: fade in → hold at full opacity → fade out at slide end.
+          // Explicit `set` at `start + fadeDur` pins opacity to 1 so the hold
+          // phase can't drift if other tweens interact with the same prop.
+          tl.set(slide, { opacity: 0 }, start);
+          tl.to(slide, { opacity: 1, duration: fadeDur }, start);
+          tl.set(slide, { opacity: 1 }, start + fadeDur);
+          tl.to(slide, { opacity: 0, duration: fadeDur }, start + perSlide - fadeDur);
+        });
+
+        window.__timelines["main"] = tl;
+      })();
+    </script>
+  </body>
+</html>

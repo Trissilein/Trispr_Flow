@@ -1,4 +1,8 @@
-import type { RefinementPromptPreset, UserRefinementPromptPreset } from "./types";
+import type {
+  PromptPresetOverrides,
+  RefinementPromptPreset,
+  UserRefinementPromptPreset,
+} from "./types";
 
 export const DEFAULT_REFINEMENT_PROMPT_PRESET: RefinementPromptPreset = "wording";
 export const NEW_REFINEMENT_PROMPT_OPTION_ID = "__new_preset__" as const;
@@ -227,11 +231,55 @@ const MODEL_FAMILY_PROMPT_ADDONS: Partial<Record<
   },
 };
 
+export function getFactoryPresetPrompt(
+  preset: BuiltInRefinementPromptPreset,
+  locale: "en" | "de"
+): string {
+  return PRESET_PROMPTS[preset][locale];
+}
+
+export function hasPresetOverride(
+  overrides: PromptPresetOverrides | null | undefined,
+  preset: RefinementPromptPreset
+): boolean {
+  if (preset === "custom") return false;
+  if (!overrides) return false;
+  const value = overrides[preset as BuiltInRefinementPromptPreset];
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+export function setPresetOverride(
+  overrides: PromptPresetOverrides,
+  preset: BuiltInRefinementPromptPreset,
+  value: string
+): PromptPresetOverrides {
+  const trimmed = (value || "").trim();
+  if (!trimmed) {
+    delete overrides[preset];
+    return overrides;
+  }
+  overrides[preset] = trimmed;
+  return overrides;
+}
+
+export function removePresetOverride(
+  overrides: PromptPresetOverrides,
+  preset: BuiltInRefinementPromptPreset
+): PromptPresetOverrides {
+  delete overrides[preset];
+  return overrides;
+}
+
 export function resolveRefinementPresetPrompt(
   preset: RefinementPromptPreset,
-  language: string | null | undefined
+  language: string | null | undefined,
+  overrides?: PromptPresetOverrides | null
 ): string | null {
   if (preset === "custom") return null;
+  const override = overrides?.[preset as BuiltInRefinementPromptPreset];
+  if (typeof override === "string" && override.trim().length > 0) {
+    return override;
+  }
   const locale = isGermanLanguage(language) ? "de" : "en";
   return PRESET_PROMPTS[preset][locale];
 }
@@ -241,17 +289,18 @@ export function resolveEffectiveRefinementPrompt(
   language: string | null | undefined,
   customPrompt: string | null | undefined,
   preserveSourceLanguage: boolean,
-  model?: string | null
+  model?: string | null,
+  overrides?: PromptPresetOverrides | null
 ): string {
   if (preset === "custom") {
     const normalized = (customPrompt || "").trim();
     if (normalized.length > 0) {
       return normalized;
     }
-    return resolveRefinementPresetPrompt(DEFAULT_REFINEMENT_PROMPT_PRESET, language) || "";
+    return resolveRefinementPresetPrompt(DEFAULT_REFINEMENT_PROMPT_PRESET, language, overrides) || "";
   }
 
-  const base = resolveRefinementPresetPrompt(preset, language) || "";
+  const base = resolveRefinementPresetPrompt(preset, language, overrides) || "";
 
   // llm_prompt always outputs in English, so skip language guard and model addons
   if (preset === "llm_prompt") {

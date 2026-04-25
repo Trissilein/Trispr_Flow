@@ -123,7 +123,7 @@
       <!-- Expert Mode global toggle -->
       <div id="expert-mode-global-bar" class="expert-mode-global-bar">
         <div class="global-control-group">
-          <div class="global-mode-control">
+          <div id="product-mode-control" class="global-mode-control">
             <span class="global-mode-label">Product mode</span>
             <div class="global-mode-toggle" role="group" aria-label="Product mode toggle">
               <button
@@ -206,8 +206,11 @@
         <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output">
           Voice Output
         </button>
+        <button id="tab-btn-video" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-video">
+          Video
+        </button>
         <button id="tab-btn-agent" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-agent">
-          Agent
+          Assistant Debug
         </button>
         <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules">
           Modules
@@ -318,7 +321,6 @@
                      title="Filter transcripts by keyword" />
               <button id="history-search-clear" class="history-search-clear" title="Clear search">×</button>
             </div>
-            <div id="vocab-suggestion-banner" class="vocab-suggestion-banner" style="display: none;" role="status" aria-live="polite"></div>
             <div id="history-list" class="history-list"></div>
             <details id="refinement-inspector" class="expander refinement-inspector" open>
               <summary>Refinement Inspector (Latest)</summary>
@@ -1331,18 +1333,32 @@
                     </div>
                   </div>
 
-                  <div id="ai-fallback-preset-name-field" class="field span-2" hidden>
-                    <span class="field-label">Preset name</span>
+                  <div id="ai-fallback-preset-name-field" class="field span-2">
+                    <div id="ai-fallback-preset-name-input-wrap" hidden>
+                      <span class="field-label">Preset name</span>
+                    </div>
                     <div class="preset-name-row">
                       <input id="ai-fallback-prompt-preset-name" type="text"
                              placeholder="Enter a name for this preset"
-                             title="Name for the user preset" />
+                             title="Name for the user preset" hidden />
                       <button id="ai-fallback-prompt-preset-save" type="button" class="primary"
-                              title="Save this user preset">
+                              title="Save this preset">
                         Save
                       </button>
+                      <button id="ai-fallback-prompt-preset-reset" type="button" class="secondary"
+                              title="Restore factory default for this preset" hidden>
+                        Reset to default
+                      </button>
+                      <button id="ai-fallback-prompt-preset-revert" type="button" class="secondary"
+                              title="Restore previous saved version" hidden>
+                        Revert to previous
+                      </button>
+                      <button id="ai-fallback-prompt-preset-discard" type="button" class="ghost"
+                              title="Discard unsaved changes" hidden>
+                        Discard
+                      </button>
                       <button id="ai-fallback-prompt-preset-delete" type="button" class="danger"
-                              title="Delete this user preset">
+                              title="Delete this user preset" hidden>
                         Delete
                       </button>
                     </div>
@@ -1353,7 +1369,7 @@
                     <textarea id="ai-fallback-custom-prompt" rows="6" placeholder="Define your custom refinement prompt..."
                               title="Prompt sent to the AI before each refinement"></textarea>
                     <span id="ai-fallback-prompt-preview-hint" class="field-hint">
-                      Built-ins are read-only. User and custom prompts are editable.
+                      Edit any preset. Save persists changes, Reset restores the factory default.
                     </span>
                   </div>
                 </div>
@@ -1795,31 +1811,23 @@
                         </div>
                         <button id="postproc-vocab-add" class="btn-ghost btn-small vocab-add-btn">+ Add</button>
                       </div>
-                      <div id="vocab-learning-config" style="display: none;" class="span-2">
-                        <label class="field toggle span-2">
-                          <span class="toggle-row">
-                            <span class="field-label">Vocabulary Learning</span>
-                            <input id="vocab-learning-enabled" type="checkbox" title="Collect recurring AI corrections" />
-                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                          </span>
-                        </label>
-                        <div id="vocab-learning-settings" style="display: none;" class="vocab-learn-block">
-                          <div class="vocab-learn-row">
-                            <span class="field-label-sm">Learn after</span>
-                            <input id="vocab-threshold" type="number" min="1" max="10" value="3" class="input-small" />
-                            <span class="field-unit">corrections</span>
-                          </div>
-                          <label class="field toggle field-compact">
-                            <span class="toggle-row">
-                              <span class="field-label-sm">Auto-add to vocabulary</span>
-                              <input id="vocab-auto-add" type="checkbox" />
-                              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                            </span>
-                          </label>
-                          <div class="vocab-learn-footer">
-                            <div class="vocab-candidates-status" id="vocab-candidates-status"></div>
-                            <button id="vocab-reset-candidates" class="btn-link btn-danger-soft">Reset</button>
-                          </div>
+                      <div class="vocab-terms-block span-2">
+                        <div class="vocab-terms-header">
+                          <span class="field-label">Learned Vocabulary</span>
+                          <span class="vocab-terms-count" id="vocab-terms-count"></span>
+                        </div>
+                        <div class="vocab-terms-hint">
+                          Proper nouns, acronyms, and project-specific terms the app learns from your dictations. Once a term is learned, its variant spellings are automatically corrected in future transcripts. Click × on anything that looks wrong — you never need to add terms yourself.
+                        </div>
+
+                        <div class="vocab-subsection">
+                          <span class="vocab-subsection-label">Learned</span>
+                          <div id="vocab-terms-list" class="vocab-terms-list" role="list" aria-label="Learned vocabulary terms"></div>
+                        </div>
+
+                        <div class="vocab-subsection">
+                          <span class="vocab-subsection-label">Observing<span class="vocab-subsection-hint"> — terms we're still not sure about; they move up to Learned once they show up consistently</span></span>
+                          <div id="vocab-observing-list" class="vocab-terms-list vocab-observing" role="list" aria-label="Observed vocabulary candidates"></div>
                         </div>
                       </div>
                     </div>
@@ -2055,20 +2063,128 @@
           </section>
         </div>
 
+        <!-- Video Tab -->
+        <div id="tab-video" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-video">
+          <section class="panel" data-panel="video" style="--delay: 0.12s">
+            <div class="panel-header">
+              <div class="panel-title">
+                <h2>Video Generation</h2>
+                <p>Drop concept sources — transcripts, docs, images, audio — and render a composed MP4.</p>
+              </div>
+            </div>
+            <div class="panel-body">
+              <section id="video-panel-root" class="module-agent-console">
+                <div id="video-install-banner" class="video-banner" hidden>
+                  <span id="video-install-banner-text">Node runtime not detected. Phase 1a requires Node 22+ on PATH.</span>
+                </div>
+
+                <details class="expander" open>
+                  <summary><h4 class="ai-refine-section-title">Sources</h4></summary>
+                  <div class="expander-body">
+                    <div id="video-drop-zone" class="video-drop-zone">
+                      <div class="video-drop-zone-hint">
+                        Drop files here
+                        <span class="field-hint">Markdown, TXT, JSON, YAML, HTML, SRT, PNG/JPG/SVG, MP3/WAV, MP4/MOV</span>
+                      </div>
+                      <div class="video-drop-zone-actions">
+                        <button id="video-pick-files-btn" class="btn">Pick Files...</button>
+                        <button id="video-add-history-btn" class="btn secondary">Add History Entry...</button>
+                      </div>
+                    </div>
+
+                    <div class="video-queue-header">
+                      <span class="field-label">Queue</span>
+                      <span id="video-queue-count" class="field-hint">0 items</span>
+                      <button id="video-queue-clear-btn" class="btn ghost small">Clear</button>
+                    </div>
+                    <ol id="video-queue-list" class="video-queue-list">
+                      <li class="video-queue-empty field-hint">Queue is empty. Drop files above or pick from history.</li>
+                    </ol>
+                  </div>
+                </details>
+
+                <details class="expander" open>
+                  <summary><h4 class="ai-refine-section-title">Brief &amp; Style</h4></summary>
+                  <div class="expander-body">
+                    <div class="panel-grid">
+                      <label class="field">
+                        <span class="field-label">Style</span>
+                        <select id="video-style-select" title="Composition style">
+                          <option value="slideshow">Slideshow</option>
+                          <option value="caption">Caption (karaoke)</option>
+                          <option value="diagram">Diagram (Phase 4)</option>
+                          <option value="game_viz">Game Viz (Phase 4)</option>
+                        </select>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Resolution</span>
+                        <select id="video-resolution-select" title="Output resolution">
+                          <option value="1920x1080">1920x1080 (16:9)</option>
+                          <option value="1080x1920">1080x1920 (9:16)</option>
+                          <option value="1080x1080">1080x1080 (1:1)</option>
+                        </select>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">Frame Rate</span>
+                        <select id="video-fps-select" title="Frames per second">
+                          <option value="30">30 fps</option>
+                          <option value="60">60 fps</option>
+                        </select>
+                      </label>
+                      <label class="field">
+                        <span class="field-label">TTS Voiceover</span>
+                        <select id="video-tts-select" title="Voiceover provider">
+                          <option value="off">Off</option>
+                          <option value="piper" disabled>Piper (Phase 4)</option>
+                          <option value="windows_native" disabled>Windows Native (Phase 4)</option>
+                        </select>
+                      </label>
+                      <label class="field span-2">
+                        <span class="field-label">Brief (optional)</span>
+                        <textarea id="video-brief-textarea" rows="3"
+                          placeholder="Focus on the economy flow, keep runtime under 30s, use dark background."></textarea>
+                      </label>
+                    </div>
+                  </div>
+                </details>
+
+                <div class="video-actions">
+                  <button id="video-generate-btn" class="btn primary">Generate Video</button>
+                  <button id="video-open-folder-btn" class="btn secondary">Open Output Folder</button>
+                </div>
+
+                <div id="video-progress" class="video-progress" hidden>
+                  <div class="video-progress-phase" id="video-progress-phase">idle</div>
+                  <div class="video-progress-bar"><div id="video-progress-fill" class="video-progress-fill"></div></div>
+                  <pre id="video-progress-log" class="video-progress-log"></pre>
+                </div>
+
+                <div id="video-result" class="video-result" hidden>
+                  <div class="video-result-header">
+                    <span class="field-label">Last render</span>
+                    <span id="video-result-path" class="field-hint"></span>
+                  </div>
+                  <video id="video-result-player" controls preload="metadata"></video>
+                </div>
+              </section>
+            </div>
+          </section>
+        </div>
+
         <!-- Agent Tab -->
         <div id="tab-agent" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-agent">
           <section class="panel" data-panel="agent" style="--delay: 0.12s">
             <div class="panel-header">
               <div class="panel-title">
-                <h2>Agent</h2>
-                <p>Interactive workflow copilot with explicit plan-and-confirm execution lanes.</p>
+                <h2>Assistant Debug</h2>
+                <p>Expert console for the desktop assistant core, pipeline state, and confirm lanes.</p>
               </div>
             </div>
             <div class="panel-body">
               <section id="workflow-agent-console" class="module-agent-console" hidden>
                 <div class="module-agent-console-header">
-                  <h3>Workflow Agent</h3>
-                  <span id="workflow-agent-status" class="field-hint">Workflow Agent disabled. Enable module + Assistant mode.</span>
+                  <h3>Assistant Core</h3>
+                  <span id="workflow-agent-status" class="field-hint">Assistant Core disabled. Enable module + Assistant mode.</span>
                 </div>
                 <details class="expander" open>
                   <summary><h4 class="ai-refine-section-title">Conversation</h4></summary>

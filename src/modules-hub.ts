@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import * as dom from "./dom-refs";
-import { settings } from "./state";
+import { ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID, isAssistantCoreAvailable, settings } from "./state";
 import { showToast } from "./toast";
 import { openGddFlow } from "./gdd-flow";
 import { openMainTab } from "./event-listeners";
@@ -126,10 +126,16 @@ function moduleGuide(moduleId: string): { description: string; usage: string } {
       usage: "Use: Configure Confluence connection in GDD Flow before publishing.",
     };
   }
-  if (moduleId === "workflow_agent") {
+  if (moduleId === ASSISTANT_CORE_MODULE_ID || moduleId === "workflow_agent") {
     return {
-      description: "Parses wakeword voice commands into confirmable GDD execution plans.",
-      usage: "Use: Enable, open Agent tab, parse command, confirm and execute.",
+      description: "Desktop assistant runtime for conversation, direct actions, and confirmable GDD plans.",
+      usage: "Use: Enable Assistant mode, open Assistant Debug, then parse commands or voice actions.",
+    };
+  }
+  if (moduleId === ASSISTANT_PRESENCE_MODULE_ID) {
+    return {
+      description: "Floating assistant presence window with live transcript, state, and action feedback.",
+      usage: "Use: Keep Assistant mode active to auto-show the Presence window as the primary assistant surface.",
     };
   }
   if (moduleId === "analysis") {
@@ -219,21 +225,31 @@ function openModuleConfig(moduleId: string): void {
     return;
   }
 
-  if (moduleId === "workflow_agent") {
-    const enabled =
-      (settings?.module_settings?.enabled_modules?.includes("workflow_agent") ?? false)
-      && Boolean(settings?.workflow_agent?.enabled);
+  if (moduleId === ASSISTANT_CORE_MODULE_ID || moduleId === "workflow_agent") {
+    const enabled = isAssistantCoreAvailable();
     if (!enabled) {
       showToast({
         type: "info",
         title: "Enable module first",
-        message: "Enable Workflow Agent to open its Agent tab.",
+        message: "Enable Assistant Core to open its debug tab.",
         duration: 3200,
       });
       return;
     }
     openMainTab("agent");
     focusWorkflowAgentConsole();
+    return;
+  }
+
+  if (moduleId === ASSISTANT_PRESENCE_MODULE_ID) {
+    void invoke("show_assistant_presence_window").catch((error) => {
+      showToast({
+        type: "warning",
+        title: "Presence unavailable",
+        message: String(error),
+        duration: 3200,
+      });
+    });
     return;
   }
 

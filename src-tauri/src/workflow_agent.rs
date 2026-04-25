@@ -404,6 +404,41 @@ pub fn parse_command(
         "fasse zusammen",
         "session recap",
     ];
+    let web_search_keywords = [
+        "search",
+        "search for",
+        "look up",
+        "google",
+        "weather",
+        "wetter",
+        "news",
+        "online",
+    ];
+    let open_module_keywords = [
+        "open gdd",
+        "open settings",
+        "open modules",
+        "open module",
+        "open voice output",
+        "open tts",
+        "open refinement",
+        "open assistant",
+        "open agent tab",
+        "show settings",
+    ];
+    let open_app_keywords = [
+        "open explorer",
+        "open files",
+        "open browser",
+        "open chrome",
+        "open edge",
+        "open cursor",
+        "open terminal",
+        "open notepad",
+        "open calculator",
+        "start explorer",
+        "launch cursor",
+    ];
     let plan_status_keywords = [
         "plan status",
         "status",
@@ -423,6 +458,15 @@ pub fn parse_command(
     let recap_hit = recap_keywords
         .iter()
         .any(|keyword| normalized.contains(keyword));
+    let web_search_hit = web_search_keywords
+        .iter()
+        .any(|keyword| normalized.contains(keyword));
+    let open_module_hit = open_module_keywords
+        .iter()
+        .any(|keyword| normalized.contains(keyword));
+    let open_app_hit = open_app_keywords
+        .iter()
+        .any(|keyword| normalized.contains(keyword));
     let plan_status_hit = plan_status_keywords
         .iter()
         .any(|keyword| normalized.contains(keyword));
@@ -436,6 +480,12 @@ pub fn parse_command(
         (true, "plan_status".to_string())
     } else if wakeword_matched && recap_hit {
         (true, "session_recap".to_string())
+    } else if wakeword_matched && open_module_hit {
+        (true, "open_module".to_string())
+    } else if wakeword_matched && open_app_hit {
+        (true, "open_app".to_string())
+    } else if wakeword_matched && web_search_hit {
+        (true, "web_search".to_string())
     } else if wakeword_matched && gdd_keyword_hits > 0 {
         (true, "gdd_generate_publish".to_string())
     } else {
@@ -451,7 +501,14 @@ pub fn parse_command(
     if wakeword_matched {
         confidence += 0.45;
     }
-    if gdd_keyword_hits > 0 || recap_hit || plan_status_hit || confirm_cancel_hit {
+    if gdd_keyword_hits > 0
+        || recap_hit
+        || plan_status_hit
+        || confirm_cancel_hit
+        || web_search_hit
+        || open_module_hit
+        || open_app_hit
+    {
         confidence += 0.35;
     }
     if temporal_hint.is_some() {
@@ -470,8 +527,16 @@ pub fn parse_command(
         temporal_hint,
         topic_hint,
         reasoning: format!(
-            "wakeword={}, gdd_keywords={}, recap={}, plan_status={}, confirm_cancel={}, publish_hint={}",
-            wakeword_matched, gdd_keyword_hits, recap_hit, plan_status_hit, confirm_cancel_hit, publish_requested
+            "wakeword={}, gdd_keywords={}, recap={}, plan_status={}, confirm_cancel={}, web_search={}, open_module={}, open_app={}, publish_hint={}",
+            wakeword_matched,
+            gdd_keyword_hits,
+            recap_hit,
+            plan_status_hit,
+            confirm_cancel_hit,
+            web_search_hit,
+            open_module_hit,
+            open_app_hit,
+            publish_requested
         ),
         command_text: text,
     }
@@ -873,6 +938,28 @@ mod tests {
         let result = parse_command(&req, &make_wakewords(), &make_keywords());
         assert!(result.detected);
         assert_eq!(result.intent, "confirm_or_cancel");
+    }
+
+    #[test]
+    fn detects_web_search_intent() {
+        let req = AgentParseCommandRequest {
+            command_text: "hey trispr search for weather in Berlin".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(result.detected);
+        assert_eq!(result.intent, "web_search");
+    }
+
+    #[test]
+    fn detects_open_module_intent() {
+        let req = AgentParseCommandRequest {
+            command_text: "hey trispr open settings".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(result.detected);
+        assert_eq!(result.intent, "open_module");
     }
 
     #[test]

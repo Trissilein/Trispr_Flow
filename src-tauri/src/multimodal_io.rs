@@ -1294,7 +1294,8 @@ fn speak_windows_sapi(
             )
         });
     }
-    let wav_path = synthesize_windows_sapi_to_wav(text, rate, volume, natural_only, selected_voice)?;
+    let wav_path =
+        synthesize_windows_sapi_to_wav(text, rate, volume, natural_only, selected_voice)?;
     let play_result = play_wav_blocking(&wav_path, volume, output_device_id, playback_control);
     let _ = std::fs::remove_file(&wav_path);
     play_result
@@ -2953,8 +2954,8 @@ fn play_interleaved_samples<T: cpal::SizedSample + Copy + Send + Sync + 'static>
 
     let stream = device
         .build_output_stream(
-        stream_config,
-        move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+            stream_config,
+            move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
                 if playback_control
                     .as_ref()
                     .map(|control| control.is_cancelled())
@@ -3103,10 +3104,9 @@ fn play_wav_blocking(
 mod tests {
     use super::{
         convert_f32_to_i16, convert_f32_to_u16, execute_tts_with_fallback,
-        format_stream_config_mismatch_error, is_tts_audio_device_unavailable_tagged,
-        is_removed_piper_voice_key, is_tts_policy_allowed, normalize_piper_rate,
-        piper_hf_path_from_voice_key,
-        remap_channels_interleaved, resample_interleaved_linear,
+        format_stream_config_mismatch_error, is_removed_piper_voice_key,
+        is_tts_audio_device_unavailable_tagged, is_tts_policy_allowed, normalize_piper_rate,
+        piper_hf_path_from_voice_key, remap_channels_interleaved, resample_interleaved_linear,
         select_voice_from_candidates_for_language, windows_audio_device_error_hint,
         windows_natural_voice_priority, windows_voice_matches_natural_profile,
         OutputStreamCandidate, PiperDaemonConfig, TtsVoiceInfo, VisionFrame, VisionFrameBuffer,
@@ -3181,14 +3181,15 @@ mod tests {
 
     #[test]
     fn tts_fallback_matrix_uses_primary_when_available() {
-        let outcome = execute_tts_with_fallback("windows_native", "local_custom", None, |provider| {
-            if provider == "windows_native" {
-                Ok(())
-            } else {
-                Err("unexpected fallback".to_string())
-            }
-        })
-        .expect("primary provider should succeed");
+        let outcome =
+            execute_tts_with_fallback("windows_native", "local_custom", None, |provider| {
+                if provider == "windows_native" {
+                    Ok(())
+                } else {
+                    Err("unexpected fallback".to_string())
+                }
+            })
+            .expect("primary provider should succeed");
 
         assert_eq!(outcome.provider_used, "windows_native");
         assert!(!outcome.used_fallback);
@@ -3197,14 +3198,15 @@ mod tests {
 
     #[test]
     fn tts_fallback_matrix_uses_fallback_when_primary_fails() {
-        let outcome = execute_tts_with_fallback("windows_native", "local_custom", None, |provider| {
-            if provider == "windows_native" {
-                Err("powershell unavailable".to_string())
-            } else {
-                Ok(())
-            }
-        })
-        .expect("fallback provider should succeed");
+        let outcome =
+            execute_tts_with_fallback("windows_native", "local_custom", None, |provider| {
+                if provider == "windows_native" {
+                    Err("powershell unavailable".to_string())
+                } else {
+                    Ok(())
+                }
+            })
+            .expect("fallback provider should succeed");
 
         assert_eq!(outcome.provider_used, "local_custom");
         assert!(outcome.used_fallback);
@@ -3232,10 +3234,11 @@ mod tests {
 
     #[test]
     fn tts_fallback_matrix_reports_missing_alternative_fallback() {
-        let error = execute_tts_with_fallback("windows_native", "windows_native", None, |_provider| {
-            Err("primary failed".to_string())
-        })
-        .expect_err("no alternative fallback configured");
+        let error =
+            execute_tts_with_fallback("windows_native", "windows_native", None, |_provider| {
+                Err("primary failed".to_string())
+            })
+            .expect_err("no alternative fallback configured");
 
         assert!(error.contains("tts_fallback_no_alternative"));
         assert!(error.contains("primary failed"));
@@ -3243,14 +3246,15 @@ mod tests {
 
     #[test]
     fn tts_fallback_audio_device_error_short_circuits_windows_chain() {
-        let error = execute_tts_with_fallback("windows_native", "windows_natural", None, |provider| {
-            if provider == "windows_native" {
-                Err("Windows TTS failed: Speak AudioException - Error Code: 0x2".to_string())
-            } else {
-                Err("fallback should not be attempted".to_string())
-            }
-        })
-        .expect_err("audio device error should be surfaced directly");
+        let error =
+            execute_tts_with_fallback("windows_native", "windows_natural", None, |provider| {
+                if provider == "windows_native" {
+                    Err("Windows TTS failed: Speak AudioException - Error Code: 0x2".to_string())
+                } else {
+                    Err("fallback should not be attempted".to_string())
+                }
+            })
+            .expect_err("audio device error should be surfaced directly");
 
         assert!(error.contains("tts_audio_device_unavailable"));
         assert!(!error.contains("fallback should not be attempted"));

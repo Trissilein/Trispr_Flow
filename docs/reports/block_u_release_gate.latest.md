@@ -1,34 +1,33 @@
 # Block U Release Gate Report
 
-Generated: 2026-03-29T15:51:27.135Z
-Commit: 8727388471a4896d677c0facd174159e5de60697
+Generated: 2026-04-29T08:07:18.484Z
+Commit: b3db990c3704978a1204e1704dc28d3e15a7c742
 Overall gate pass: yes
 
 ## Gate Summary
 
 - Automated checks: pass
-- Benchmark linkage: fail
+- Benchmark linkage: pass
 - Soak evidence attached: no
 - Soak required: no
 
 ## Warnings
 
-- TTS benchmark report (bench/results/tts.latest.json) missing.
 - 8h soak evidence not attached.
 - 24h soak evidence not attached.
 
 ## Steps
 
-- build: pass (2347 ms)
-- test: pass (3233 ms)
+- build: pass (2514 ms)
+- test: pass (6384 ms)
 - cargo-test-lib: skipped (skip-rust-lib-tests)
 
 ## Bench Reports
 
 - Latency report present: yes
-- TTS report present: no
-- TTS release gate pass: no
-- TTS provider consistency: no
+- TTS report present: yes
+- TTS release gate pass: yes
+- TTS provider consistency: yes
 - TTS uncategorized failures: 0
 
 ## Soak Evidence

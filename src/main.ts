@@ -126,8 +126,7 @@ import {
 } from "./workflow-agent-console";
 import { syncVoiceOutputConsoleState } from "./voice-output-console";
 import { initVideoGenerationPanel } from "./video-generation";
-import { ingestTranscriptForAutoLearning } from "./vocab-auto-learn";
-import { renderLearnedVocabChips } from "./event-listeners";
+import { ingestEditDelta } from "./vocab-auto-learn";
 import {
   handleRefinementFailureForInspector,
   handleRefinementStartedForInspector,
@@ -903,9 +902,12 @@ async function bootstrap() {
     }),
     listen<HistoryEntry[]>("history:updated", makeHistoryUpdateHandler(setHistory)),
     listen<HistoryEntry[]>("transcribe:history-updated", makeHistoryUpdateHandler(setTranscribeHistory)),
-    listen<{ pasted: string; submitted: string }>("enter_capture:edit_detected", (event) => {
-      ingestTranscriptForAutoLearning(event.payload.submitted);
-    }),
+    listen<{ pasted: string; submitted: string; same_target: boolean; pattern_used: string }>(
+      "enter_capture:edit_detected",
+      (event) => {
+        ingestEditDelta(event.payload.pasted, event.payload.submitted);
+      },
+    ),
     listen("module:state-changed", () => {
       reconcileMainTabVisibility();
       refreshModulesHub();
@@ -970,12 +972,6 @@ async function bootstrap() {
       const jobId = typeof payload?.job_id === "string" ? payload.job_id.trim() : "";
       const pasteDeferred = Boolean(payload?.paste_deferred && jobId);
       if (!pasteDeferred) {
-        // No refinement in this flow — the raw text is the final text, so
-        // feed it to the auto-learner now. When refinement IS deferred, we
-        // skip here and let the transcription:refined listener learn from
-        // the preferred (casing-corrected) text instead.
-        ingestTranscriptForAutoLearning(payload.text);
-        renderLearnedVocabChips();
         queueTranscriptPaste(payload.text, `raw:${jobId || "unknown"}`);
         return;
       }
@@ -1089,13 +1085,6 @@ async function bootstrap() {
     listen<TranscriptionRefinedEvent>("transcription:refined", async (event) => {
       handleRefinementSuccessForInspector(event.payload);
       scheduleHistoryRender();
-      // Refined text is the preferred source for auto-learning — casing is
-      // stabilized (sentence starts, proper-noun capitalization) which makes
-      // the mid-sentence heuristic more reliable.
-      if (event.payload.refined) {
-        ingestTranscriptForAutoLearning(event.payload.refined);
-        renderLearnedVocabChips();
-      }
       const { refined, model, execution_time_ms, job_id: jobId } = event.payload;
       markRefinementJobFinished(jobId);
       const priorOutcome = deferredPasteOutcomes.get(jobId);

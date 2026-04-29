@@ -1,13 +1,13 @@
 # Trispr Flow - Status
 
-Last updated: 2026-04-08
+Last updated: 2026-04-29
 
 ## Snapshot
 
-- Current release: `v0.7.3`
-- Current planning phase: `v0.8.x — Block U (assistant UX + soak + release gate) in progress`
-- Canonical next steps: `ROADMAP.md`
-- Current readiness: v0.7.3 released, v0.8.x in active development
+- Current release: `v0.8.0`
+- Current planning phase: Block B (UX/UI consistency + R5 picker-unification) — see `ROADMAP.md`
+- Canonical next steps: `ROADMAP.md` (A → F active zone, Z1-Z4 deferred)
+- Current readiness: v0.8.0 cut, gate green via `--strict-benchmark` (soak runs intentionally skipped)
 
 ## Current Blockers
 

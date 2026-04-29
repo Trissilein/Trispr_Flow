@@ -81,7 +81,9 @@ function runOrSkip(steps, name, command, skip = false, skipReason = null) {
 
 function readJsonIfExists(filePath) {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const raw = fs.readFileSync(filePath, "utf8");
+    // Strip UTF-8 BOM (PowerShell writes it by default; JSON.parse rejects it).
+    return JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
   } catch {
     return null;
   }

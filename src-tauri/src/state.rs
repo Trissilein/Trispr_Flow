@@ -418,11 +418,12 @@ pub(crate) struct Settings {
     /// the LLM refinement prompt so the refiner preserves them verbatim.
     #[serde(default)]
     pub(crate) vocab_terms: Vec<String>,
-    /// Running per-token counters used by the auto-learning heuristic. Tokens
-    /// that pass the promotion gate end up in `vocab_terms`; unpromoted
-    /// candidates stay here so the count can accumulate across sessions.
+    /// Substitution pairs observed from user edits, accumulating toward auto-promotion.
     #[serde(default)]
-    pub(crate) vocab_term_candidates: Vec<VocabTermCandidate>,
+    pub(crate) edit_substitutions: Vec<EditSubstitution>,
+    /// Set to true after the one-time migration that clears legacy heuristic data.
+    #[serde(default)]
+    pub(crate) edit_delta_migrated: bool,
     pub(crate) postproc_llm_enabled: bool,
     pub(crate) postproc_llm_provider: String,
     #[serde(skip_serializing)]
@@ -573,7 +574,8 @@ impl Default for Settings {
       postproc_custom_vocab_enabled: false,
       postproc_custom_vocab: HashMap::new(),
       vocab_terms: Vec::new(),
-      vocab_term_candidates: Vec::new(),
+      edit_substitutions: Vec::new(),
+      edit_delta_migrated: false,
       postproc_llm_enabled: false,
       postproc_llm_provider: "ollama".to_string(),
       postproc_llm_api_key: String::new(),
@@ -616,24 +618,18 @@ impl Default for Settings {
     }
 }
 
-/// Per-token counter kept while the auto-learning heuristic decides whether
-/// a token is stable enough to be promoted into `vocab_terms`.
-/// Mirrors `src/types.ts::VocabTermCandidate`.
+/// A correction the user made by editing the pasted refinement output before submitting.
+/// Mirrors `src/types.ts::EditSubstitution`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct VocabTermCandidate {
-    /// Canonical form — re-elected to whichever variant is most frequent.
-    pub(crate) term: String,
-    /// Sum across all variants — drives the promotion threshold.
+pub(crate) struct EditSubstitution {
+    /// Original token as it appeared in the refinement output.
+    pub(crate) from: String,
+    /// What the user typed instead.
+    pub(crate) to: String,
+    /// Number of times this correction has been observed.
     pub(crate) count: u32,
-    /// First observation timestamp (ms since epoch).
     pub(crate) first_seen_ms: u64,
-    /// Last observation timestamp (ms since epoch).
     pub(crate) last_seen_ms: u64,
-    /// Exact spelling → per-variant count. Absent on legacy candidates written
-    /// before clustering landed; the TS ingestion loop rebuilds the map on the
-    /// next sighting.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub(crate) variants: HashMap<String, u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -846,10 +842,23 @@ impl Default for AssistantOrchestratorStatus {
     }
 }
 
+/// Window/control identity captured at paste time. Used by the Enter-handler
+/// to validate that the user has not switched to a different target before
+/// pressing Enter — without this, any focused window would feed the learner.
+#[derive(Debug, Clone)]
+pub struct TargetIdentity {
+    pub hwnd: isize,
+    pub pid: u32,
+    #[allow(dead_code)]
+    pub timestamp_ms: u64,
+}
+
 #[derive(Default)]
 pub struct EnterCaptureState {
     /// Text + timestamp together: prevents a race between Load and Lock.
     pub last_paste: std::sync::Mutex<Option<(String, u64)>>,
+    /// Foreground window/process at paste time. Cleared on Enter-mismatch.
+    pub last_paste_target: std::sync::Mutex<Option<TargetIdentity>>,
     /// Shutdown signal sender. Dropping this lets the worker thread exit cleanly.
     pub shutdown_tx: std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>,
     /// Hook-thread ID for PostThreadMessageW(WM_QUIT) on exit. 0 = not set.

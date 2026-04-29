@@ -82,22 +82,16 @@ export type PromptPresetOverrides = Partial<
   Record<Exclude<RefinementPromptPreset, "custom">, string>
 >;
 
-/** Per-token counter used by the vocabulary auto-learning heuristic. */
-export interface VocabTermCandidate {
-  /** Canonical form — dynamically re-elected to whichever variant is most frequent. */
-  term: string;
-  /** Sum across all variants — drives the promotion threshold. */
+/** A correction the user made by editing the pasted refinement output before submitting. */
+export interface EditSubstitution {
+  /** Original token as it appeared in the refinement output. */
+  from: string;
+  /** What the user typed instead. */
+  to: string;
+  /** Number of times this correction has been observed. */
   count: number;
-  /** First observation timestamp (ms since epoch). */
   first_seen_ms: number;
-  /** Last observation timestamp (ms since epoch). */
   last_seen_ms: number;
-  /**
-   * Exact spelling → per-variant sighting count. Absent on legacy candidates
-   * created before clustering was introduced; the ingestion loop treats that
-   * as `{ term: count }` implicitly and rebuilds the map on the next sighting.
-   */
-  variants?: Record<string, number>;
 }
 
 export interface ModuleDescriptor {
@@ -721,8 +715,10 @@ export interface Settings {
    * to the LLM refinement prompt as terms to preserve verbatim.
    */
   vocab_terms: string[];
-  /** Running counters for the auto-learning heuristic. */
-  vocab_term_candidates?: VocabTermCandidate[];
+  /** Substitution pairs observed from user edits, accumulating toward auto-promotion. */
+  edit_substitutions?: EditSubstitution[];
+  /** Set to true after the one-time migration that clears legacy heuristic data. */
+  edit_delta_migrated?: boolean;
   postproc_llm_enabled: boolean;
   postproc_llm_provider: string;
   postproc_llm_api_key: string;

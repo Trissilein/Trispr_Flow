@@ -16,17 +16,46 @@ use windows::{
 };
 
 pub use crate::state::EnterCaptureState;
+#[cfg(target_os = "windows")]
+use crate::state::TargetIdentity;
 
 const VK_RETURN_CODE: u32 = 0x0D;
 
-/// Called from paste_text() in lib.rs.
+/// Called from paste_text() in lib.rs. Captures both the pasted text and the
+/// foreground window/process identity, so the Enter-handler can validate the
+/// user is still editing the same target. Pastes into Trispr's own window are
+/// ignored — we never want to learn from edits in our own UI.
 pub fn record_paste(state: &EnterCaptureState, text: &str) {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
+
+    #[cfg(target_os = "windows")]
+    let target = unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return;
+        }
+        let mut pid: u32 = 0;
+        let _tid = GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        let our_pid = std::process::id();
+        if pid == our_pid || pid == 0 {
+            return;
+        }
+        TargetIdentity {
+            hwnd: hwnd.0 as isize,
+            pid,
+            timestamp_ms: now_ms,
+        }
+    };
+
     if let Ok(mut guard) = state.last_paste.lock() {
         *guard = Some((text.to_owned(), now_ms));
+    }
+    #[cfg(target_os = "windows")]
+    if let Ok(mut guard) = state.last_paste_target.lock() {
+        *guard = Some(target);
     }
 }
 
@@ -164,7 +193,36 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
         return;
     }
 
-    let current_text = match unsafe { read_focused_value(automation) } {
+    // Identity-Validation: only emit if the user is still in the same window/process
+    // as at paste-time. Without this, pressing Enter in any window after pasting
+    // somewhere would feed the learner with unrelated focused text.
+    let stored_target = state
+        .enter_capture
+        .last_paste_target
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+    let Some(stored_target) = stored_target else {
+        return;
+    };
+    let same_target = unsafe {
+        let current_hwnd = GetForegroundWindow();
+        if current_hwnd.0.is_null() {
+            false
+        } else {
+            let mut current_pid: u32 = 0;
+            let _ = GetWindowThreadProcessId(current_hwnd, Some(&mut current_pid));
+            current_hwnd.0 as isize == stored_target.hwnd && current_pid == stored_target.pid
+        }
+    };
+    if !same_target {
+        if let Ok(mut guard) = state.enter_capture.last_paste_target.lock() {
+            *guard = None;
+        }
+        return;
+    }
+
+    let (current_text, pattern_used) = match unsafe { read_focused_value(automation) } {
         Some(t) => t,
         None => return,
     };
@@ -175,11 +233,16 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
     if let Ok(mut guard) = state.enter_capture.last_paste.lock() {
         *guard = None;
     }
+    if let Ok(mut guard) = state.enter_capture.last_paste_target.lock() {
+        *guard = None;
+    }
 
     #[derive(Clone, serde::Serialize)]
     struct EditPayload {
         pasted: String,
         submitted: String,
+        same_target: bool,
+        pattern_used: String,
     }
 
     use tauri::Emitter;
@@ -188,14 +251,27 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
         EditPayload {
             pasted,
             submitted: current_text,
+            same_target: true,
+            pattern_used: pattern_used.to_string(),
         },
     ) {
         warn!("[enter-capture] emit failed: {e}");
     }
 }
 
+/// Read the user-visible text of the focused element. Returns the text plus a
+/// label identifying which UIA pattern produced it — useful for diagnostics
+/// and for downstream confidence weighting.
+///
+/// Strategy hierarchy:
+/// 1. **ValuePattern** — plain inputs (Slack/Teams chat fields, browser inputs).
+/// 2. **TextPattern + GetSelection + ExpandToEnclosingUnit(Line)** — Monaco /
+///    VS-Code / Antigravity: returns just the line containing the caret instead
+///    of the entire document, sidesteps the `findEditWindow` heuristic.
+/// 3. **TextPattern + DocumentRange** — fallback; downstream `findEditWindow`
+///    in vocab-auto-learn shrinks oversized output.
 #[cfg(target_os = "windows")]
-unsafe fn read_focused_value(automation: &IUIAutomation2) -> Option<String> {
+unsafe fn read_focused_value(automation: &IUIAutomation2) -> Option<(String, &'static str)> {
     let element = automation.GetFocusedElement().ok()?;
 
     if let Ok(raw) = element.GetCurrentPattern(UIA_ValuePatternId) {
@@ -203,7 +279,7 @@ unsafe fn read_focused_value(automation: &IUIAutomation2) -> Option<String> {
             if let Ok(bstr) = vp.CurrentValue() {
                 let s = bstr.to_string();
                 if !s.is_empty() {
-                    return Some(s);
+                    return Some((s, "value"));
                 }
             }
         }
@@ -211,11 +287,26 @@ unsafe fn read_focused_value(automation: &IUIAutomation2) -> Option<String> {
 
     if let Ok(raw) = element.GetCurrentPattern(UIA_TextPatternId) {
         if let Ok(tp) = raw.cast::<IUIAutomationTextPattern>() {
+            if let Ok(selection) = tp.GetSelection() {
+                if let Ok(count) = selection.Length() {
+                    if count > 0 {
+                        if let Ok(range) = selection.GetElement(0) {
+                            let _ = range.ExpandToEnclosingUnit(TextUnit_Line);
+                            if let Ok(bstr) = range.GetText(-1) {
+                                let s = bstr.to_string();
+                                if !s.is_empty() {
+                                    return Some((s, "selection-line"));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if let Ok(doc) = tp.DocumentRange() {
                 if let Ok(bstr) = doc.GetText(-1) {
                     let s = bstr.to_string();
                     if !s.is_empty() {
-                        return Some(s);
+                        return Some((s, "document"));
                     }
                 }
             }

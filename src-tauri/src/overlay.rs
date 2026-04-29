@@ -122,10 +122,25 @@ fn set_overlay_create_cooldown(duration_ms: u64) {
     OVERLAY_CREATE_COOLDOWN_UNTIL_MS.store(until, Ordering::Release);
 }
 
+/// Force a fresh `SetWindowPos(HWND_TOPMOST, ...)` call. Toggling false→true
+/// bypasses Tauri's cached state which otherwise short-circuits when the flag
+/// is already true at the API level but has been silently demoted by Windows
+/// (e.g. after a focus steal or another topmost window competing for Z-order).
+fn reassert_overlay_topmost(window: &WebviewWindow) {
+    let _ = window.set_always_on_top(false);
+    let _ = window.set_always_on_top(true);
+}
+
 pub fn mark_overlay_heartbeat(app: &AppHandle) {
-    with_overlay_controller(app, |controller| {
+    let should_reassert = with_overlay_controller(app, |controller| {
         controller.last_heartbeat_ms = now_ms();
+        !matches!(controller.desired_state, OverlayState::Hidden) || controller.tts_stop_visible
     });
+    if should_reassert {
+        if let Some(window) = app.get_webview_window("overlay") {
+            reassert_overlay_topmost(&window);
+        }
+    }
 }
 
 fn overlay_heartbeat_stale(controller: &OverlayController) -> bool {
@@ -410,7 +425,7 @@ fn apply_overlay_state_to_window(
         window
             .show()
             .map_err(|e| format!("Failed to show overlay: {}", e))?;
-        let _ = window.set_always_on_top(true);
+        reassert_overlay_topmost(window);
     } else {
         let _ = window.hide();
     }
@@ -441,7 +456,7 @@ fn apply_overlay_refining_to_window(
 
     if active || !matches!(desired_state, OverlayState::Hidden) {
         let _ = window.show();
-        let _ = window.set_always_on_top(true);
+        reassert_overlay_topmost(window);
     }
 
     let _ = window.emit("overlay:refining", active);
@@ -479,7 +494,7 @@ fn apply_overlay_tts_stop_to_window(
             );
         if should_show {
             let _ = window.show();
-            let _ = window.set_always_on_top(true);
+            reassert_overlay_topmost(window);
         } else {
             let _ = window.hide();
         }
@@ -697,7 +712,7 @@ pub fn update_overlay_tts_stop_visibility(app: &AppHandle, active: bool) -> Resu
     let should_show = effective_active || !matches!(controller.desired_state, OverlayState::Hidden);
     if should_show {
         let _ = window.show();
-        let _ = window.set_always_on_top(true);
+        reassert_overlay_topmost(&window);
     } else {
         let _ = window.hide();
     }

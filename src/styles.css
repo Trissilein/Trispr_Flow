@@ -178,6 +178,38 @@ h1 {
   border-color: rgba(var(--accent-rgb), 0.5);
 }
 
+#gpu-backend-cuda {
+  color: rgba(118, 185, 0, 0.55);
+  border-color: rgba(118, 185, 0, 0.30);
+}
+
+#gpu-backend-cuda:hover {
+  color: rgba(118, 185, 0, 0.85);
+  border-color: rgba(118, 185, 0, 0.65);
+}
+
+#gpu-backend-cuda.is-active {
+  color: #0b0f0a;
+  background: #76B900;
+  border-color: #76B900;
+}
+
+#gpu-backend-vulkan {
+  color: rgba(237, 28, 36, 0.55);
+  border-color: rgba(237, 28, 36, 0.30);
+}
+
+#gpu-backend-vulkan:hover {
+  color: rgba(237, 28, 36, 0.85);
+  border-color: rgba(237, 28, 36, 0.65);
+}
+
+#gpu-backend-vulkan.is-active {
+  color: #fff;
+  background: #ED1C24;
+  border-color: #ED1C24;
+}
+
 .gpu-backend-btn:disabled,
 .gpu-purge-btn:disabled {
   opacity: 0.6;

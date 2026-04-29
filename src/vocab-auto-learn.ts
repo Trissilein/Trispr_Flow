@@ -1,531 +1,320 @@
 /**
- * Vocabulary auto-learning with variant clustering.
+ * Edit-Delta Vocabulary Learning.
  *
- * Observes final transcripts (refined if available, raw otherwise), extracts
- * tokens that look like proper nouns, acronyms, or project-specific terms,
- * clusters variants of the same word together (so "Trispa", "Trisper",
- * "TrisperFlow" all feed one counter for "Trispr"), and promotes clusters
- * into `settings.vocab_terms` once their summed count crosses the threshold.
+ * Learns from what the user explicitly corrects: the diff between `pasted`
+ * (refinement output pasted into the input field) and `submitted` (what the
+ * user actually sends with Enter). Substitutions that repeat 3× are promoted
+ * to `postproc_custom_vocab` (find-replace before the next Whisper/LLM pass)
+ * and to `vocab_terms` (Whisper hint + LLM refinement context).
  *
- * On promotion, variant spellings (count ≥ 2) are also written back as
- * `postproc_custom_vocab` find-replace rules so already-misheard tokens get
- * corrected on the next transcript — not just biased away from via Whisper
- * hints.
- *
- * Signal sources:
- *  - Structural: CamelCase / acronym / hyphen-compound-with-caps — these
- *    shapes are effectively never regular vocabulary. Promoted after 3
- *    sightings (summed across variants).
- *  - Plain capitalized: single-capital nouns mid-sentence, minus a small
- *    stopword list of common German/English generic nouns and frequent
- *    sentence-start words. Promoted after 8 sightings.
- *
- * Everything else (all-lowercase words, punctuation, numbers, sentence-start
- * capitals without mid-sentence confirmation) is ignored — no counter, no
- * state churn.
+ * No heuristics, no STOPWORDS, no Levenshtein clustering. Every signal is an
+ * explicit user correction, so false positives are structurally impossible.
  */
 
-import type { VocabTermCandidate } from "./types";
+import type { EditSubstitution } from "./types";
 import { settings } from "./state";
 import { persistSettings } from "./settings";
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
-const PROMOTION_THRESHOLD_STRUCTURAL = 3;
-const PROMOTION_THRESHOLD_PLAIN = 8;
-const MAX_CANDIDATES = 500;
-const MAX_TERMS = 200;
-
-/** Minimum per-variant count required for it to become a rewrite rule on promotion. */
-const REWRITE_MIN_VARIANT_COUNT = 2;
-
-/** Similarity thresholds for variant clustering. */
-const MIN_TOKEN_LEN_FOR_CLUSTER = 3;
-const MIN_COMMON_PREFIX_HARD_CAP = 4;
-const MAX_NORMALIZED_LEV_DISTANCE = 0.34;
-
-const STOPWORDS = new Set<string>([
-  "Also", "Ich", "Du", "Er", "Sie", "Wir", "Ihr", "Es", "Man",
-  "Das", "Der", "Die", "Ein", "Eine", "Einen", "Einer", "Einem", "Eines",
-  "Und", "Aber", "Oder", "Wenn", "Weil", "Denn", "Doch", "Noch", "Schon",
-  "Ja", "Nein", "Ok", "Okay", "Hallo", "Tschüss", "Danke", "Bitte",
-  "Vielleicht", "Eigentlich", "Wirklich", "Irgendwie", "Überhaupt",
-  "Heute", "Gestern", "Morgen", "Jetzt", "Dann", "Hier", "Dort", "Da",
-  "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag",
-  "Januar", "Februar", "März", "April", "Mai", "Juni", "Juli",
-  "August", "September", "Oktober", "November", "Dezember",
-  "Ganze", "Sinn", "Dinge", "Ding", "Problem", "Fall", "Ende", "Anfang",
-  "Mitte", "Beispiel", "Mal", "Konzept", "Variante", "Versionen", "Version",
-  "Text", "Fehler", "Punkt", "Plan", "Session", "System", "Spiel",
-  "Modell", "Modul", "Bilder", "Bild", "Moment", "Sache", "Sachen",
-  "Informationen", "Information", "Screenshot", "Screenshots",
-  "Sprachausgabe", "Wetter", "Wetterdaten", "Schritt", "Schritte", "Weise",
-  "Job", "Jobs", "Welt", "Ort", "Richtung", "Minute", "Minuten",
-  "Stunde", "Stunden", "Tag", "Jahr", "Haus", "Leute", "Mensch", "Person", "Leben",
-  "Name", "Nummer", "Wort", "Worte", "Wörter", "Satz", "Sätze",
-  "Arbeit", "Kollege", "Kollegen", "Freund", "Freunde", "Gruppe",
-  "Stelle", "Stellen", "Lösung", "Lösungen", "Grund", "Gründe",
-  "Teil", "Teile", "Frage", "Fragen", "Antwort", "Antworten",
-  "Ansatz", "Ansätze", "Idee", "Ideen", "Aspekt", "Aspekte",
-  "Ausgabe", "Ausgang", "Eingabe", "Eingang", "Art", "Seite", "Seiten",
-  "Zeit", "Zeiten", "Stück", "Stücke", "Weg", "Wege",
-  "Anforderung", "Anforderungen", "Änderung", "Änderungen",
-  "Aufnahme", "Aufnahmen", "Anweisung", "Anweisungen",
-  "Beschreibung", "Beschreibungen", "Aussage", "Aussagen",
-  "Auswahl", "Analyse", "Analysen", "Agent", "Agenten", "Agents",
-  "Alternative", "Alternativen", "Animation", "Anleitung",
-  "Abschnitt", "Abschnitte", "Account", "Accounts",
-  "Ahnung", "Architektur",
-  "The", "A", "An", "I", "You", "He", "She", "We", "They", "It",
-  "This", "That", "These", "Those",
-  "And", "But", "Or", "Not", "If", "Then", "So", "Because",
-  "Yes", "No", "Hello", "Thanks", "Please",
-  "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
-  "Actually", "Additional", "Another", "Storage", "Environment", "Review",
-  "Add", "Subscription", "Wrapper", "Patch", "Germany", "Zero", "Hero",
-  "NOT", "AND", "OR", "ONLY", "SAME", "NEVER", "ALWAYS", "IMPORTANT",
-  "NOTE", "WARNING", "TODO", "TBD", "FIXME", "OK", "YES",
-  "DO", "IS", "ARE", "BE", "AS", "AT", "IN", "ON", "OF", "TO", "FOR",
-  "Do", "Is", "Are", "Be", "As", "At", "In", "On", "Of", "To", "For",
-  "Can", "Will", "Would", "Should", "Could", "Must", "May", "Might",
-  "Liste", "Listen", "Modelle", "Komplexität", "Interface", "Interfaces",
-  "Hamburg", "Toggle", "Zugriff", "Datei", "Dateien", "Code", "Level",
-  "Projekt", "Projekte", "Mode", "Modus", "Studio", "Request", "Requests",
-  "Roadmap", "Balancing", "Punkte", "Upgrades", "Upgrade", "Constraint",
-  "Constraints", "Haiku", "Punctuation", "Detect", "Wait",
-]);
+const PROMOTION_THRESHOLD = 3;
 
 // ---------------------------------------------------------------------------
-// Token classification
+// Word-level diff
 // ---------------------------------------------------------------------------
+
+interface SubstitutionPair {
+  from: string;
+  to: string;
+}
+
+function tokenize(text: string): string[] {
+  return text.split(/\s+/).filter((t) => t.length > 0);
+}
 
 const EDGE_PUNCT_RE = /^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu;
-function stripEdgePunct(token: string): string {
-  return token.replace(EDGE_PUNCT_RE, "");
-}
-
-function isCamelCase(t: string): boolean {
-  if (!/[A-ZÄÖÜ]/.test(t) || !/[a-zäöüß]/.test(t)) return false;
-  return /[a-zäöüß][A-ZÄÖÜ]/.test(t);
-}
-
-function isAcronym(t: string): boolean {
-  return /^[A-ZÄÖÜ]{2,6}([0-9A-ZÄÖÜ]{0,3})?$/.test(t);
-}
-
-function isHyphenMixed(t: string): boolean {
-  if (!/-/.test(t)) return false;
-  const parts = t.split("-");
-  if (parts.length < 2 || parts.some((p) => p.length === 0)) return false;
-  if (!/[A-ZÄÖÜ]/.test(t)) return false;
-  return parts.some((p) => /[A-ZÄÖÜ]/.test(p));
-}
-
-function isPlainCapitalized(t: string): boolean {
-  return /^[A-ZÄÖÜ][a-zäöüß]+$/.test(t);
-}
-
-export type SeenKind = "structural" | "plain";
-
-type Classification =
-  | { kind: "reject" }
-  | { kind: "structural"; canonical: string }
-  | { kind: "plain"; canonical: string };
-
-function classifyToken(raw: string, isSentenceStart: boolean): Classification {
-  const clean = stripEdgePunct(raw);
-  if (clean.length < 2) return { kind: "reject" };
-
-  if (isCamelCase(clean) || isAcronym(clean) || isHyphenMixed(clean)) {
-    if (STOPWORDS.has(clean)) return { kind: "reject" };
-    return { kind: "structural", canonical: clean };
-  }
-
-  if (isPlainCapitalized(clean) && !isSentenceStart && !STOPWORDS.has(clean)) {
-    return { kind: "plain", canonical: clean };
-  }
-
-  return { kind: "reject" };
-}
-
-// ---------------------------------------------------------------------------
-// Similarity — variant clustering
-// ---------------------------------------------------------------------------
-
-/** Length of the longest common lowercase prefix. */
-export function commonPrefixLen(a: string, b: string): number {
-  const al = a.toLowerCase();
-  const bl = b.toLowerCase();
-  const max = Math.min(al.length, bl.length);
-  let i = 0;
-  while (i < max && al.charCodeAt(i) === bl.charCodeAt(i)) i += 1;
-  return i;
-}
+const NUMERIC_RE = /^[\d.,]+$/;
 
 /**
- * Classic Levenshtein with a two-row rolling buffer. Operates on the strings
- * as-is (caller is expected to lowercase both sides if case-insensitivity
- * is wanted).
+ * Length of LCS between two token sequences. Plain DP, only the length is
+ * needed for window scoring — backtracking is reserved for the main wordDiff.
  */
-export function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
+function lcsLength(a: string[], b: string[]): number {
   const m = a.length;
   const n = b.length;
-  let prev = new Array<number>(n + 1);
-  let curr = new Array<number>(n + 1);
-  for (let j = 0; j <= n; j += 1) prev[j] = j;
-  for (let i = 1; i <= m; i += 1) {
-    curr[0] = i;
-    const ca = a.charCodeAt(i - 1);
-    for (let j = 1; j <= n; j += 1) {
-      const cost = ca === b.charCodeAt(j - 1) ? 0 : 1;
-      const del = prev[j] + 1;
-      const ins = curr[j - 1] + 1;
-      const sub = prev[j - 1] + cost;
-      curr[j] = del < ins ? (del < sub ? del : sub) : ins < sub ? ins : sub;
+  if (m === 0 || n === 0) return 0;
+  let prev = new Array<number>(n + 1).fill(0);
+  let curr = new Array<number>(n + 1).fill(0);
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      curr[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], curr[j - 1]);
     }
     [prev, curr] = [curr, prev];
+    curr.fill(0);
   }
   return prev[n];
 }
 
 /**
- * Strip compound suffixes so variant heads can be compared against cluster
- * representatives. "Trispa-Flow" → "Trispa"; "TrisperFlow" → "Trisper".
+ * When submitted is much larger than pasted (typical for UIAutomation reads
+ * out of Monaco / VS-Code-style editors that return the entire document),
+ * shrink submitted to the best-matching window so the 50% rewrite heuristic
+ * does not discard a real edit signal.
  *
- * - Everything after the first "-" is dropped.
- * - A trailing CamelHump of ≤ 5 letters is dropped if what remains is still
- *   ≥ 4 letters (so "TrisperFlow" → "Trisper" but "XPBar" stays "XPBar").
+ * Strategy:
+ * 1. If submitted is at most 2x pasted in token count, return as-is.
+ * 2. If pasted appears as an exact contiguous subsequence in submitted, the
+ *    user did not edit — return submitted as-is so wordDiff sees identical
+ *    content within the matching span.
+ * 3. Otherwise slide a window of size ~1.5x pasted across submitted and pick
+ *    the window with the highest LCS against pasted.
  */
-export function canonicalHead(token: string): string {
-  let head = token;
-  const hyphenIdx = head.indexOf("-");
-  if (hyphenIdx > 0) head = head.slice(0, hyphenIdx);
-  const camelMatch = /^([A-ZÄÖÜ][a-zäöüß]+)([A-ZÄÖÜ][A-Za-zÄÖÜäöüß]{0,4})$/.exec(head);
-  if (camelMatch && camelMatch[1].length >= 4) {
-    head = camelMatch[1];
-  }
-  return head;
-}
+function findEditWindow(pastedTokens: string[], submittedTokens: string[]): string[] {
+  const m = pastedTokens.length;
+  const n = submittedTokens.length;
+  if (m === 0 || n === 0) return submittedTokens;
+  if (n <= m * 2) return submittedTokens;
 
-/**
- * True if a and b look like spellings of the same word. Two-stage:
- *   1. Common prefix ≥ min(4, min_len − 1) — kills "Trispr" vs "Trippe".
- *   2. Normalized Levenshtein ≤ 0.34 — kills "TrisperFlow" vs "Flow".
- *
- * Both stages try the raw token AND its `canonicalHead`, so hyphen/compound
- * variants collapse onto the head word.
- */
-export function isSimilar(a: string, b: string): boolean {
-  if (a === b) return true;
-  if (a.length < MIN_TOKEN_LEN_FOR_CLUSTER || b.length < MIN_TOKEN_LEN_FOR_CLUSTER) {
-    return false;
+  for (let i = 0; i + m <= n; i++) {
+    let match = true;
+    for (let j = 0; j < m; j++) {
+      if (submittedTokens[i + j] !== pastedTokens[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return submittedTokens;
   }
-  const aHeads = new Set<string>([a, canonicalHead(a)]);
-  const bHeads = new Set<string>([b, canonicalHead(b)]);
-  for (const ah of aHeads) {
-    for (const bh of bHeads) {
-      if (pairIsSimilar(ah, bh)) return true;
+
+  const windowSize = Math.min(n, Math.max(m + 4, Math.ceil(m * 1.5)));
+  const step = Math.max(1, Math.floor(windowSize / 4));
+  let bestStart = 0;
+  let bestScore = -1;
+  for (let start = 0; start + windowSize <= n; start += step) {
+    const window = submittedTokens.slice(start, start + windowSize);
+    const score = lcsLength(pastedTokens, window);
+    if (score > bestScore) {
+      bestScore = score;
+      bestStart = start;
     }
   }
+
+  return submittedTokens.slice(bestStart, bestStart + windowSize);
+}
+
+function stripEdgePunct(t: string): string {
+  return t.replace(EDGE_PUNCT_RE, "");
+}
+
+function isUselessToken(t: string): boolean {
+  if (t.length < 3) return true;
+  if (NUMERIC_RE.test(t)) return true;
+  if (/^[\p{P}\p{S}]+$/u.test(t)) return true;
   return false;
 }
 
-function pairIsSimilar(a: string, b: string): boolean {
-  const minLen = Math.min(a.length, b.length);
-  if (minLen < MIN_TOKEN_LEN_FOR_CLUSTER) return false;
-  const prefixNeeded = Math.min(MIN_COMMON_PREFIX_HARD_CAP, minLen - 1);
-  if (commonPrefixLen(a, b) < prefixNeeded) return false;
-  const dist = levenshtein(a.toLowerCase(), b.toLowerCase());
-  const normalized = dist / Math.max(a.length, b.length);
-  return normalized <= MAX_NORMALIZED_LEV_DISTANCE;
-}
-
 /**
- * Elect the canonical form of a cluster:
- * 1. Most-frequent variant wins.
- * 2. Tie → longest.
- * 3. Tie → first inserted (iteration order of the variants object).
+ * Compute 1-to-1 substitution pairs between pasted and submitted.
+ *
+ * 1. Tokenize both strings.
+ * 2. Bail if identical, or > 50% of tokens are in the diff (complete rewrite).
+ * 3. LCS DP to find the unchanged spine.
+ * 4. Walk the edit script; consecutive equal-length delete+insert runs are
+ *    1:1 substitution candidates.
+ * 5. Filter out tokens that are too short, purely numeric, or punctuation.
  */
-export function pickCanonical(variants: Record<string, number>): string {
-  const entries = Object.entries(variants);
-  if (entries.length === 0) return "";
-  let bestForm = entries[0][0];
-  let bestCount = entries[0][1];
-  for (let i = 1; i < entries.length; i += 1) {
-    const [form, count] = entries[i];
-    if (count > bestCount) {
-      bestForm = form;
-      bestCount = count;
+export function wordDiff(pasted: string, submitted: string): SubstitutionPair[] {
+  if (pasted === submitted) return [];
+  const pa = tokenize(pasted);
+  const suRaw = tokenize(submitted);
+  if (pa.length === 0 || suRaw.length === 0) return [];
+
+  const su = findEditWindow(pa, suRaw);
+
+  const m = pa.length;
+  const n = su.length;
+
+  // Full DP for LCS + backtracking.
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] =
+        pa[i - 1] === su[j - 1]
+          ? dp[i - 1][j - 1] + 1
+          : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+
+  const lcs = dp[m][n];
+  const changed = m + n - 2 * lcs;
+  if (changed > (m + n) * 0.5) return [];
+
+  // Backtrack to produce the edit script.
+  type Op = { type: "equal" | "delete" | "insert"; token: string };
+  const ops: Op[] = [];
+  let i = m;
+  let j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && pa[i - 1] === su[j - 1]) {
+      ops.push({ type: "equal", token: pa[i - 1] });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      ops.push({ type: "insert", token: su[j - 1] });
+      j--;
+    } else {
+      ops.push({ type: "delete", token: pa[i - 1] });
+      i--;
+    }
+  }
+  ops.reverse();
+
+  // Pair consecutive delete-runs with immediately-following insert-runs.
+  const pairs: SubstitutionPair[] = [];
+  let k = 0;
+  while (k < ops.length) {
+    if (ops[k].type !== "delete") {
+      k++;
       continue;
     }
-    if (count === bestCount && form.length > bestForm.length) {
-      bestForm = form;
-      bestCount = count;
+    const dels: string[] = [];
+    while (k < ops.length && ops[k].type === "delete") {
+      dels.push(ops[k].token);
+      k++;
     }
-    // Equal count and equal length → keep earlier (stable).
+    const ins: string[] = [];
+    while (k < ops.length && ops[k].type === "insert") {
+      ins.push(ops[k].token);
+      k++;
+    }
+    if (dels.length !== ins.length) continue; // not 1:1
+    for (let p = 0; p < dels.length; p++) {
+      const from = stripEdgePunct(dels[p]);
+      const to = stripEdgePunct(ins[p]);
+      if (from === to) continue;
+      if (isUselessToken(from) || isUselessToken(to)) continue;
+      pairs.push({ from, to });
+    }
   }
-  return bestForm;
+  return pairs;
 }
 
 // ---------------------------------------------------------------------------
-// Per-transcript ingestion
+// One-time migration from the old heuristic system
 // ---------------------------------------------------------------------------
-
-function splitSentences(text: string): string[] {
-  return text.split(/(?<=[.!?])[\s"'»”›]*\s+/).filter((s) => s.trim().length > 0);
-}
-
-function collectCandidates(text: string): Map<string, { canonical: string; kind: SeenKind }> {
-  const out = new Map<string, { canonical: string; kind: SeenKind }>();
-  for (const sentence of splitSentences(text)) {
-    const tokens = sentence.split(/\s+/).filter((t) => t.length > 0);
-    for (let i = 0; i < tokens.length; i += 1) {
-      const res = classifyToken(tokens[i], i === 0);
-      if (res.kind === "reject") continue;
-      const key = res.canonical.toLowerCase();
-      const prev = out.get(key);
-      if (!prev || (prev.kind === "plain" && res.kind === "structural")) {
-        out.set(key, { canonical: res.canonical, kind: res.kind });
-      }
-    }
-  }
-  return out;
-}
-
-/** Find an existing candidate whose canonical OR any recorded variant is similar. */
-function findMatchingCandidate(
-  token: string,
-  candidates: VocabTermCandidate[],
-): VocabTermCandidate | undefined {
-  for (const c of candidates) {
-    if (isSimilar(token, c.term)) return c;
-    if (c.variants) {
-      for (const v of Object.keys(c.variants)) {
-        if (v === c.term) continue;
-        if (isSimilar(token, v)) return c;
-      }
-    }
-  }
-  return undefined;
-}
-
-/** Find a promoted term similar to the token. Returns the exact string stored in vocab_terms. */
-function findMatchingPromoted(token: string, terms: string[]): string | undefined {
-  for (const t of terms) {
-    if (isSimilar(token, t)) return t;
-  }
-  return undefined;
-}
-
-interface IngestResult {
-  /** Rewrite pairs (from → to) to install into postproc_custom_vocab. */
-  rewrites: Array<[string, string]>;
-}
 
 /**
- * Entry point called from the transcription event listeners. Updates the
- * candidate counters, merges variants into clusters, and promotes anything
- * whose summed count crosses the threshold. Fire-and-forget: persistSettings
- * handles its own errors. Auto-rewrites are installed asynchronously via a
- * dynamic import to avoid a circular dependency with event-listeners.ts.
+ * On first run with the new Edit-Delta system: clear the legacy heuristic
+ * data (postproc_custom_vocab contained wrong auto-generated entries) and set
+ * the migration flag so this never runs again.
  */
-export function ingestTranscriptForAutoLearning(text: string): void {
+export function runMigrationIfNeeded(): void {
   if (!settings) return;
-  if (!text || text.trim().length === 0) return;
-
-  const candidates = collectCandidates(text);
-  if (candidates.size === 0) return;
-
-  const result = applyCandidatesToState(candidates);
-  void persistSettings();
-  if (result.rewrites.length > 0) {
-    void installAutoRewrites(result.rewrites);
-  }
+  if (settings.edit_delta_migrated) return;
+  settings.postproc_custom_vocab = {};
+  // vocab_term_candidates may exist in old settings.json — drop it.
+  (settings as unknown as Record<string, unknown>)["vocab_term_candidates"] = undefined;
+  settings.edit_substitutions = [];
+  settings.edit_delta_migrated = true;
 }
 
+// ---------------------------------------------------------------------------
+// Ingestion entry point
+// ---------------------------------------------------------------------------
+
 /**
- * Pure state-mutation step. Exposed for tests so they can drive the ingest
- * logic without needing the full `ingestTranscriptForAutoLearning` IO path.
+ * Called from the `enter_capture:edit_detected` event with both sides of the
+ * user's edit. Accumulates substitution pairs and promotes any that have
+ * reached the threshold.
  */
-export function applyCandidatesToState(
-  candidates: Map<string, { canonical: string; kind: SeenKind }>,
-): IngestResult {
-  if (!settings) return { rewrites: [] };
+export function ingestEditDelta(pasted: string, submitted: string): void {
+  if (!settings) return;
+  runMigrationIfNeeded();
+
+  const pairs = wordDiff(pasted, submitted);
+  if (pairs.length === 0) return;
 
   const now = Date.now();
-  const list: VocabTermCandidate[] = Array.isArray(settings.vocab_term_candidates)
-    ? [...settings.vocab_term_candidates]
+  const list: EditSubstitution[] = Array.isArray(settings.edit_substitutions)
+    ? [...settings.edit_substitutions]
     : [];
-  const termsList = Array.isArray(settings.vocab_terms) ? [...settings.vocab_terms] : [];
-  const termsSet = new Set(termsList.map((t) => t.toLowerCase()));
-  const rewrites: Array<[string, string]> = [];
 
-  for (const { canonical } of candidates.values()) {
-    // Already-promoted-cluster match? Record the variant as a rewrite and skip counter work.
-    const promotedMatch = findMatchingPromoted(canonical, termsList);
-    if (promotedMatch && promotedMatch !== canonical) {
-      pushRewritePair(rewrites, canonical, promotedMatch);
-      continue;
-    }
-    if (promotedMatch === canonical) {
-      continue; // already the canonical form of a promoted cluster
-    }
+  const promoted: Array<[string, string]> = [];
 
-    // Existing candidate (exact term or variant) → merge.
-    const existing = findMatchingCandidate(canonical, list);
+  for (const { from, to } of pairs) {
+    const existing = list.find((s) => s.from === from && s.to === to);
     if (existing) {
-      const variants = ensureVariants(existing);
-      variants[canonical] = (variants[canonical] ?? 0) + 1;
       existing.count += 1;
       existing.last_seen_ms = now;
-      existing.term = pickCanonical(variants);
-    } else {
-      const fresh: VocabTermCandidate = {
-        term: canonical,
-        count: 1,
-        first_seen_ms: now,
-        last_seen_ms: now,
-        variants: { [canonical]: 1 },
-      };
-      list.push(fresh);
-    }
-  }
-
-  // Promote anything that crossed its threshold.
-  const survivors: VocabTermCandidate[] = [];
-  for (const entry of list) {
-    const effectiveKind = classifyCandidateKind(entry.term);
-    const threshold =
-      effectiveKind === "structural"
-        ? PROMOTION_THRESHOLD_STRUCTURAL
-        : PROMOTION_THRESHOLD_PLAIN;
-    if (entry.count >= threshold && !termsSet.has(entry.term.toLowerCase())) {
-      termsList.push(entry.term);
-      termsSet.add(entry.term.toLowerCase());
-      if (entry.variants) {
-        for (const [variant, count] of Object.entries(entry.variants)) {
-          if (variant === entry.term) continue;
-          if (count < REWRITE_MIN_VARIANT_COUNT) continue;
-          pushRewritePair(rewrites, variant, entry.term);
-        }
+      if (existing.count >= PROMOTION_THRESHOLD) {
+        promoted.push([from, to]);
       }
-      continue; // drop promoted entry from candidates
+    } else {
+      list.push({ from, to, count: 1, first_seen_ms: now, last_seen_ms: now });
     }
-    survivors.push(entry);
   }
 
-  // Cap sizes to keep settings JSON compact.
-  let cappedList = survivors;
-  if (survivors.length > MAX_CANDIDATES) {
-    cappedList = survivors
-      .slice()
-      .sort((a, b) => b.last_seen_ms - a.last_seen_ms)
-      .slice(0, MAX_CANDIDATES);
-  }
-  let cappedTerms = termsList;
-  if (termsList.length > MAX_TERMS) {
-    cappedTerms = termsList.slice(termsList.length - MAX_TERMS);
+  settings.edit_substitutions = list.filter(
+    (s) => !promoted.some(([f, t]) => s.from === f && s.to === t),
+  );
+
+  if (promoted.length > 0) {
+    applyPromotions(promoted);
   }
 
-  settings.vocab_term_candidates = cappedList;
-  settings.vocab_terms = cappedTerms;
-
-  return { rewrites };
+  void persistSettings();
 }
 
-function ensureVariants(entry: VocabTermCandidate): Record<string, number> {
-  if (entry.variants && typeof entry.variants === "object") return entry.variants;
-  // Legacy entry: interpret the existing term/count as a single-variant cluster.
-  const seeded: Record<string, number> = { [entry.term]: entry.count };
-  entry.variants = seeded;
-  return seeded;
-}
+function applyPromotions(pairs: Array<[string, string]>): void {
+  if (!settings) return;
+  const vocab = { ...(settings.postproc_custom_vocab ?? {}) };
+  const terms = Array.isArray(settings.vocab_terms) ? [...settings.vocab_terms] : [];
+  const termsLower = new Set(terms.map((t) => t.toLowerCase()));
 
-function classifyCandidateKind(term: string): SeenKind {
-  if (isCamelCase(term) || isAcronym(term) || isHyphenMixed(term)) return "structural";
-  return "plain";
-}
-
-/**
- * Install a from → to pair plus, if `from` starts uppercase, also its
- * lowercased form. Keeps `apply_custom_vocabulary` semantics case-sensitive
- * while covering the two forms that actually matter for transcripts.
- */
-function pushRewritePair(
-  out: Array<[string, string]>,
-  from: string,
-  to: string,
-): void {
-  if (from === to) return;
-  out.push([from, to]);
-  const lowered = from.toLowerCase();
-  if (lowered !== from && lowered !== to.toLowerCase()) {
-    out.push([lowered, to]);
+  for (const [from, to] of pairs) {
+    vocab[from] = to;
+    const lowered = from.toLowerCase();
+    if (lowered !== from) vocab[lowered] = to;
+    if (!termsLower.has(to.toLowerCase())) {
+      terms.push(to);
+      termsLower.add(to.toLowerCase());
+    }
   }
-}
 
-async function installAutoRewrites(pairs: Array<[string, string]>): Promise<void> {
-  try {
-    const { addVocabEntriesFromSuggestions } = await import("./event-listeners");
-    await addVocabEntriesFromSuggestions(pairs);
-  } catch (err) {
-    console.warn("[vocab-auto-learn] failed to install auto-rewrite rules", err);
-  }
+  settings.postproc_custom_vocab = vocab;
+  settings.postproc_custom_vocab_enabled = true;
+  settings.vocab_terms = terms;
+
+  void import("./event-listeners")
+    .then(({ renderLearnedVocabChips }) => {
+      renderLearnedVocabChips();
+    })
+    .catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
 // UI helpers
 // ---------------------------------------------------------------------------
 
-/** Remove a learned term (and any matching candidate). Used by the UI × button. */
+/** Remove a learned term from vocab_terms. Called by the UI × button. */
 export async function dismissLearnedTerm(term: string): Promise<void> {
   if (!settings) return;
   const key = term.toLowerCase();
-  const nextTerms = (settings.vocab_terms ?? []).filter((t) => t.toLowerCase() !== key);
-  const nextCandidates = (settings.vocab_term_candidates ?? []).filter(
-    (c) => c.term.toLowerCase() !== key
-  );
-  const changed =
-    nextTerms.length !== (settings.vocab_terms ?? []).length
-    || nextCandidates.length !== (settings.vocab_term_candidates ?? []).length;
-  if (!changed) return;
-  settings.vocab_terms = nextTerms;
-  settings.vocab_term_candidates = nextCandidates;
+  const next = (settings.vocab_terms ?? []).filter((t) => t.toLowerCase() !== key);
+  if (next.length === (settings.vocab_terms ?? []).length) return;
+  settings.vocab_terms = next;
   await persistSettings();
 }
 
-/** Remove a single variant from a cluster candidate. If the cluster empties, drop it. */
-export async function dismissCandidateVariant(
-  clusterTerm: string,
-  variant: string,
-): Promise<void> {
+/** Discard a pending substitution before it reaches the promotion threshold. */
+export async function dismissPendingSubstitution(from: string, to: string): Promise<void> {
   if (!settings) return;
-  const list = settings.vocab_term_candidates ?? [];
-  const clusterKey = clusterTerm.toLowerCase();
-  const entry = list.find((c) => c.term.toLowerCase() === clusterKey);
-  if (!entry) return;
-  const variants = entry.variants ? { ...entry.variants } : {};
-  const removedCount = variants[variant] ?? 0;
-  if (removedCount === 0) return;
-  delete variants[variant];
-  const remaining = Object.keys(variants).length;
-  if (remaining === 0) {
-    settings.vocab_term_candidates = list.filter((c) => c !== entry);
-  } else {
-    entry.variants = variants;
-    entry.count = Math.max(0, entry.count - removedCount);
-    entry.term = pickCanonical(variants);
-    settings.vocab_term_candidates = [...list];
-  }
+  const before = (settings.edit_substitutions ?? []).length;
+  settings.edit_substitutions = (settings.edit_substitutions ?? []).filter(
+    (s) => !(s.from === from && s.to === to),
+  );
+  if ((settings.edit_substitutions ?? []).length === before) return;
   await persistSettings();
 }
 
-/** Snapshot of what the auto-learner has produced, for UI display. */
 export interface AutoLearnSnapshot {
   learned: string[];
   pendingCount: number;
@@ -533,15 +322,8 @@ export interface AutoLearnSnapshot {
 
 export function getAutoLearnSnapshot(): AutoLearnSnapshot {
   const learned = Array.isArray(settings?.vocab_terms) ? [...settings!.vocab_terms] : [];
-  const pending = Array.isArray(settings?.vocab_term_candidates)
-    ? settings!.vocab_term_candidates.length
+  const pending = Array.isArray(settings?.edit_substitutions)
+    ? settings!.edit_substitutions.length
     : 0;
   return { learned, pendingCount: pending };
-}
-
-/** Expose threshold values for the UI (progress indicators on observing chips). */
-export function promotionThresholdFor(candidate: VocabTermCandidate): number {
-  return classifyCandidateKind(candidate.term) === "structural"
-    ? PROMOTION_THRESHOLD_STRUCTURAL
-    : PROMOTION_THRESHOLD_PLAIN;
 }

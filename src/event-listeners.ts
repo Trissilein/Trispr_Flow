@@ -847,11 +847,11 @@ function renderLearnedVocabChipsInternal(): void {
   const terms = Array.isArray(settings?.vocab_terms) ? [...settings!.vocab_terms] : [];
   terms.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
-  const candidates = Array.isArray(settings?.vocab_term_candidates)
-    ? settings!.vocab_term_candidates
-    : [];
+  const pending = Array.isArray(settings?.edit_substitutions)
+    ? settings!.edit_substitutions.length
+    : 0;
 
-  updateVocabCountBadge(terms.length, candidates.length);
+  updateVocabCountBadge(terms.length, pending);
   container.innerHTML = "";
 
   for (const term of terms) {
@@ -863,15 +863,15 @@ function renderLearnedVocabChipsInternal(): void {
 function renderObservingCandidateChips(): void {
   const container = dom.vocabObservingList;
   if (!container) return;
-  const candidates = Array.isArray(settings?.vocab_term_candidates)
-    ? [...settings!.vocab_term_candidates]
+  const subs = Array.isArray(settings?.edit_substitutions)
+    ? [...settings!.edit_substitutions]
     : [];
-  // Newest-first so recently-active terms surface at the top.
-  candidates.sort((a, b) => b.last_seen_ms - a.last_seen_ms);
+  // Newest-first so recently-corrected pairs surface at the top.
+  subs.sort((a, b) => b.last_seen_ms - a.last_seen_ms);
 
   container.innerHTML = "";
-  for (const cand of candidates) {
-    container.appendChild(buildObservingChip(cand));
+  for (const sub of subs) {
+    container.appendChild(buildPendingSubstitutionChip(sub));
   }
 }
 
@@ -890,13 +890,6 @@ function updateVocabCountBadge(learned: number, observed: number): void {
 function buildLearnedChip(term: string): DocumentFragment {
   const frag = document.createDocumentFragment();
 
-  // Look up the original cluster by term (case-insensitive) so we can show
-  // variant spellings even though `vocab_terms` only stores the canonical form.
-  const cluster = findClusterByTerm(term);
-  const variants = cluster?.variants ?? null;
-  const hasMultipleVariants =
-    !!variants && Object.keys(variants).filter((v) => v !== term).length > 0;
-
   const chip = document.createElement("span");
   chip.className = "vocab-term-chip";
   chip.dataset.term = term;
@@ -905,21 +898,6 @@ function buildLearnedChip(term: string): DocumentFragment {
   const label = document.createElement("span");
   label.textContent = term;
   chip.appendChild(label);
-
-  if (hasMultipleVariants) {
-    chip.classList.add("cluster");
-    chip.setAttribute("tabindex", "0");
-    const totalCount = Object.values(variants!).reduce((sum, n) => sum + n, 0);
-    const count = document.createElement("span");
-    count.className = "vocab-chip-count";
-    count.textContent = `×${totalCount}`;
-    chip.appendChild(count);
-    const expand = document.createElement("span");
-    expand.className = "vocab-chip-expand";
-    expand.textContent = "▸";
-    expand.setAttribute("aria-hidden", "true");
-    chip.appendChild(expand);
-  }
 
   const dismiss = document.createElement("button");
   dismiss.type = "button";
@@ -936,133 +914,33 @@ function buildLearnedChip(term: string): DocumentFragment {
   chip.appendChild(dismiss);
   frag.appendChild(chip);
 
-  if (hasMultipleVariants) {
-    const variantsBox = document.createElement("span");
-    variantsBox.className = "vocab-chip-variants";
-    variantsBox.setAttribute("role", "list");
-    variantsBox.setAttribute("aria-label", `Variants of ${term}`);
-    for (const [variant, vCount] of Object.entries(variants!)) {
-      if (variant === term) continue;
-      variantsBox.appendChild(buildVariantChip(term, variant, vCount));
-    }
-    frag.appendChild(variantsBox);
-
-    const toggle = () => {
-      const nowExpanded = chip.classList.toggle("expanded");
-      chip.setAttribute("aria-expanded", nowExpanded ? "true" : "false");
-    };
-    chip.setAttribute("aria-expanded", "false");
-    chip.addEventListener("click", (ev) => {
-      if ((ev.target as HTMLElement).closest(".vocab-term-chip-dismiss")) return;
-      toggle();
-    });
-    chip.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" || ev.key === " ") {
-        ev.preventDefault();
-        toggle();
-      }
-    });
-  }
-
   return frag;
 }
 
-function buildVariantChip(
-  clusterTerm: string,
-  variant: string,
-  count: number,
-): HTMLSpanElement {
-  const chip = document.createElement("span");
-  chip.className = "vocab-variant-chip";
-  chip.setAttribute("role", "listitem");
-
-  const label = document.createElement("span");
-  label.textContent = variant;
-  chip.appendChild(label);
-
-  if (count > 1) {
-    const countSpan = document.createElement("span");
-    countSpan.className = "vocab-variant-chip-count";
-    countSpan.textContent = `×${count}`;
-    chip.appendChild(countSpan);
-  }
-
-  const dismiss = document.createElement("button");
-  dismiss.type = "button";
-  dismiss.className = "vocab-variant-chip-dismiss";
-  dismiss.title = `Remove variant ${variant} from this cluster`;
-  dismiss.setAttribute("aria-label", `Remove variant ${variant} from ${clusterTerm}`);
-  dismiss.textContent = "×";
-  dismiss.addEventListener("click", async (ev) => {
-    ev.stopPropagation();
-    const { dismissCandidateVariant } = await import("./vocab-auto-learn");
-    await dismissCandidateVariant(clusterTerm, variant);
-    renderLearnedVocabChips();
-  });
-  chip.appendChild(dismiss);
-  return chip;
-}
-
-function buildObservingChip(cand: {
-  term: string;
+function buildPendingSubstitutionChip(sub: {
+  from: string;
+  to: string;
   count: number;
-  variants?: Record<string, number>;
 }): HTMLSpanElement {
   const chip = document.createElement("span");
   chip.className = "vocab-term-chip observing";
-  chip.dataset.term = cand.term;
   chip.setAttribute("role", "listitem");
+  chip.setAttribute("title", `Corrected ${sub.count}× — will auto-learn after ${PENDING_THRESHOLD} corrections`);
 
   const label = document.createElement("span");
-  label.textContent = cand.term;
+  label.textContent = `${sub.from} → ${sub.to}`;
   chip.appendChild(label);
 
   const progress = document.createElement("span");
   progress.className = "vocab-chip-progress";
-  // Compute threshold lazily — import is cheap here since the module is
-  // already loaded by the auto-learner pipeline.
-  const threshold = guessPromotionThreshold(cand.term);
-  progress.textContent = `${cand.count}/${threshold}`;
-  progress.title = `Will be learned after ${threshold} sightings`;
+  progress.textContent = `×${sub.count}/${PENDING_THRESHOLD}`;
   chip.appendChild(progress);
-
-  const variantKeys = cand.variants ? Object.keys(cand.variants) : [];
-  if (variantKeys.length > 1) {
-    const variantHint = document.createElement("span");
-    variantHint.className = "vocab-chip-count";
-    variantHint.textContent = `(${variantKeys.length} spellings)`;
-    variantHint.title = variantKeys.join(", ");
-    chip.appendChild(variantHint);
-  }
 
   return chip;
 }
 
-function findClusterByTerm(term: string) {
-  if (!settings?.vocab_term_candidates) return null;
-  const lower = term.toLowerCase();
-  return (
-    settings.vocab_term_candidates.find(
-      (c) =>
-        c.term.toLowerCase() === lower
-        || (c.variants && Object.keys(c.variants).some((v) => v.toLowerCase() === lower)),
-    ) ?? null
-  );
-}
-
-/**
- * Mirrors `classifyCandidateKind` from vocab-auto-learn.ts. Kept local so the
- * UI doesn't have to import the full auto-learner module just to render a
- * progress badge — the classification is cheap and deterministic.
- */
-function guessPromotionThreshold(term: string): number {
-  const hasUpper = /[A-ZÄÖÜ]/.test(term);
-  const hasLower = /[a-zäöüß]/.test(term);
-  const isCamel = hasUpper && hasLower && /[a-zäöüß][A-ZÄÖÜ]/.test(term);
-  const isAcronym = /^[A-ZÄÖÜ]{2,6}([0-9A-ZÄÖÜ]{0,3})?$/.test(term);
-  const isHyphenMixed = /-/.test(term) && hasUpper;
-  return isCamel || isAcronym || isHyphenMixed ? 3 : 8;
-}
+/** Mirrors the PROMOTION_THRESHOLD constant from vocab-auto-learn.ts for the UI. */
+const PENDING_THRESHOLD = 3;
 
 function addVocabRow(original: string, replacement: string) {
   if (!dom.postprocVocabRows) return;

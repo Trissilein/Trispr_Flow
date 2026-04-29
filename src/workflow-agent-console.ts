@@ -171,7 +171,8 @@ function requireAssistantInteraction(actionLabel: string): boolean {
 }
 
 function emitAssistantEvent(eventName: string, payload: Record<string, unknown>): void {
-  const emitter = window.__TAURI__?.event?.emit;
+  const tauri = (window as unknown as { __TAURI__?: { event?: { emit?: (name: string, payload: unknown) => unknown } } }).__TAURI__;
+  const emitter = tauri?.event?.emit;
   if (typeof emitter !== "function") return;
   try {
     const result = emitter(eventName, payload);

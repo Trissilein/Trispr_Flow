@@ -1,181 +1,209 @@
-# Roadmap - Trispr Flow
+# Roadmap — Trispr Flow
 
-Last updated: 2026-04-11 (Block W planned: Assistant Presence Window with 3D dot-cloud + TTS text panel, after Block U)
+Last updated: 2026-04-29 — restructured to A-Z priority scheme with complexity / Codex-delegation tags.
 
-This file is the canonical source for priorities and execution order.
+This file is the canonical source for priorities and execution order. Block IDs (A, B, C, …) reflect **current** execution priority, not historical phase. The Legacy-ID-Mapping at the bottom maps old letter codes (U, V, W, …) used in commit history.
 
-## Canonical Current State
+## Snapshot
 
-- Released: `v0.7.0`, `v0.7.1`, `v0.7.2`
-- Current phase: `v0.8.x` assistant hardening with `Block T` + `Block V` completed and `Block U` active.
-- **Next version bump**: `v0.8.x` after `Block U` soak/release gates are green.
-- Foundation complete: Blocks F + G + H + L + M
-- Active execution blocks: Block U (assistant UX + soak + release gate)
+- **Released:** `v0.7.0`, `v0.7.1`, `v0.7.2`, `v0.7.3`, `v0.7.4`, `v0.7.5`
+- **Current phase:** `v0.8.x` assistant hardening; Block A (former U) gate-closure pending; Soak-runs intentionally skipped per 2026-04-29 decision.
+- **Foundation complete:** Blocks D, F, G, H, L, M, N, Q, S, T, V (legacy IDs).
+- **Active block:** A (gate-closure of v0.8.x release).
 
-## Analysis De-Scope Decision
+## Complexity Buckets (used in tables below)
 
-- Analysis functionality is removed from Trispr Flow mainline.
-- `Analyse` remains as a placeholder button in UI.
-- Dedicated analysis development moved to `analysis-module-branch`.
-- Mainline installer strategy is now CUDA + Vulkan only.
+Aligned with `~/.claude/skills/codex-delegate/SKILL.md`:
 
-## Active Work Blocks
+| Bucket | Heuristic | Codex-default? |
+|---|---|---|
+| trivial | One file, no logic, replace/rename/typo | ✅ gpt-5.4-mini / minimal |
+| simple | Repeating known pattern, boilerplate | ✅ gpt-5.3-codex / medium |
+| moderate | Standard implementation from clear spec | ✅ gpt-5.4 / medium |
+| complex | Multi-file integration, non-trivial state | ⚠️ gpt-5.4 / high — split first |
+| architecturally-tricky | Design judgement needed, cross-cutting | ❌ Claude does it |
 
-| Block | Focus | Complexity | Depends on | Status |
-| --- | --- | --- | --- | --- |
-| D | v0.7.2 Offline-first AI fallback (Ollama provider + pipeline + UX) | High | F, G | Complete ✅ |
-| E | UX/UI consistency and settings IA cleanup | Medium | D | Planned |
-| F | Reliability hardening and release QA | High | D, E | Planned |
-| G | Cloud provider rollout (OpenAI/Claude/Gemini) | High | D, F | Deferred to v0.7.3 |
-| J | Adaptive AI refinement intelligence (VRAM indicator + self-learning vocabulary) | Medium | D | Planned |
-| K | Expert Mode UX Overhaul (standard/expert toggle, hide technical settings) | Medium | E | Planned |
-| L | Module Platform + GDD Automation + Confluence Cloud publishing | Extra High | E, F, K | Complete ✅ |
-| M | Workflow-Agent voice automation for GDD (wakeword -> confirm -> execute) | Extra High | L, F | Complete ✅ |
-| N | Multimodal I/O modules (screen vision input + TTS voice output) | Extra High | M, L | Foundations complete ✅ (`N1-N12` + benchmark track) |
-| Q | Onboarding refinement and startup stability | Medium | D | Complete ✅ |
-| R | Local AI provider hardening (Input Truncation + LM Studio integration) | Low | Q, D | Planned / partial ✅ |
-| S | Build Recovery + Module Decoupling (`v0.7.3`) | High | N, Q | Complete ✅ (`S1-S13.5`) |
-| T | Assistant Pivot Foundation (`v0.8.0`) | Extra High | S, M | Complete ✅ (`T1-T5`) |
-| V | GDD Copilot Loop (`v0.8.x`) | Extra High | T, L, M, N | Complete ✅ (`V1-V6`) |
-| U | Assistant UX + Soak + Release Gate (`v0.8.x`) | Extra High | T, V | Active ♻️ |
-| W | Assistant Presence Window (3D Dot-Cloud + TTS Text Panel) | High | U, T, V | Planned |
+---
 
-## v0.7 Task Ledger
+## Active Zone (A → F)
 
-| Task | Title | State |
-| --- | --- | --- |
-| 31 | Multi-provider architecture | Done |
-| 36 | Settings migration + data model | Done |
-| 37 | Provider config UI scaffolding | Done |
-| 32 | Ollama provider integration (backend) | Done |
-| 33 | Activate AI refinement pipeline stage for local provider | Done |
-| 34 | Ollama-only UI (endpoint, model refresh, connection test) | Done |
-| 35 | Prompt strategy polish for local models (DE/EN) | Done |
-| 38 | Offline E2E + fail-safe regression tests | Done |
-| 43 | GPU VRAM detection (Tauri backend) | Planned |
-| 43a | VRAM requirement display in AI Fallback UI | Partial ✅ (Gemma4 variant cards show size_gb + vram_gb; backend VRAM probe not yet exposed) |
-| 44 | Word-diff extraction from refinement events | Done ✅ |
-| 44a | Persistence and threshold logic for learned vocabulary | Done ✅ |
-| 44b | Learned vocabulary settings UI + suggestion review dialog | Done ✅ |
-| 44c | Adaptive vocabulary regression tests | Planned |
-| 44d | Screen Recording ground-truth path (capture before Enter → OCR → diff → learn) | Future / depends on Screen Recording module |
-| 45 | Refinement quantization profiles + quality/speed recommendation matrix | Partial ✅ (Gemma4 Q4/Q8/BF16 variants with VRAM labels added to model picker) |
+| ID | Title | Complexity | Codex-able | Effort | Depends on | Status |
+|---|---|---|---|---|---|---|
+| **A** | v0.8.x Release Gate Closure (no soak) | moderate | ✅ mostly | ~1 day | — | 🟡 active |
+| **B** | UX/UI consistency + Picker-Unification | complex | ⚠️ mixed | 3–5 days | A | 📋 next |
+| **C** | Adaptive AI Refinement (VRAM probe + quant matrix + keep-alive + vocab-ground-truth) | complex | ⚠️ mixed | 5–7 days | B | 📋 planned |
+| **D** | Reliability Hardening + Release-QA polish | complex | ⚠️ mixed | 5 days | C | 📋 planned |
+| **E** | Expert-Mode UX Toggle (standard/expert) | moderate | ✅ mostly | 2–3 days | B | 📋 planned |
+| **F** | Assistant Presence Window (3D dot-cloud + TTS panel) | architecturally-tricky | ❌ Claude | 1–2 weeks | A, D | 📋 later |
 
-## AI Direction (Decision Snapshot)
+### A — v0.8.x Release Gate Closure
 
-- Primary fallback mode is now offline-first via locally running Ollama.
-- Runtime assumption: external Ollama install, local endpoint, model once downloaded then offline-capable.
-- Recommended baseline model track:
-  - **Qwen track**: `qwen3.5:4b` primary, `qwen3.5:2b` fast fallback, `qwen3.5:9b` quality profile.
-  - **Gemma4 track** (added 2026-04-06): `gemma4:e4b` standard (Q4 ~5 GB VRAM), `gemma4:e4b-it-q8_0` high-quality (~7.5 GB), `gemma4:e4b-it-bf16` maximum (~15 GB). Gemma4 requires explicit anglicism-preservation prompt addons — handled automatically by `resolveEffectiveRefinementPrompt()`.
-- Model-family prompt adaptation is live: `detectModelFamily()` prefix heuristic routes Gemma/Qwen/generic to appropriate system-prompt variants.
-- Cloud provider UX/activation is intentionally postponed to v0.7.3.
-- GDD generation is now treated as core workflow capability; autonomous orchestration is handled by `workflow_agent`.
-- Multimodal modules (`input_vision`, `output_voice_tts`) are capability modules consumed by `workflow_agent` when enabled.
+- **A1** Generate `bench/results/tts.latest.json` (run `npm run tts:benchmark`) — *trivial, Codex* — runs harness, captures result, attaches to gate. Fallback: I run it inline if Codex unavailable.
+- **A2** Run `npm run qa:assistant -- --strict-benchmark` (no `--require-soak`) — *trivial, Codex* — exit-criteria check. Sign-off doc in `docs/reports/`.
+- **A3** Update `STATUS.md` + `CHANGELOG.md` with v0.8.x release notes — *simple, Codex* — boilerplate writes from gate-output JSON.
+- **A4** Cut tag `v0.8.0` and push — *trivial, manual* — Claude orchestrates, user runs `git tag` + `git push --tags` himself.
 
-## Agent Evolution Guardrails
+### B — UX/UI consistency + Picker-Unification
 
-- Activation model: `Hybrid` (explicit `product_mode` switch + wakeword while in assistant mode).
-- Autonomy model: `Plan+Confirm` for all actions with side effects.
-- Product priority: `GDD copilot` first, then generalized assistant expansion.
-- LLM policy: `Local-first`; cloud remains optional fallback, not required baseline.
-- Knowledge baseline: transcript + archive remain primary v1 context source.
+- **B1** Audit settings panel IA: capture inconsistencies (spacing, label-style, expander depth) → checklist — *moderate, Claude* — needs design judgement.
+- **B2** Picker-Unification: Ollama vs LM Studio model lists → single bottom section (was R5) — *moderate, Codex* — pattern is clear after B1.
+- **B3** Apply settings refactors per B1 checklist — *simple-to-moderate, Codex* — repetitive once decisions made.
+- **B4** Modernization pass: refresh icon system, animation easing, hover-states — *moderate, Claude* — design-heavy, hard to delegate cleanly.
 
-## Phased Path to Full Agent
+### C — Adaptive AI Refinement
 
-**Phase 0 — Stabiler Unterbau (`S13.5`)**  
-Close TTS provider-matrix/device-routing/forced-failure validation and unify runtime diagnostics.  
-Exit: deterministic behavior for disabled/unavailable modules.
+- **C1** Backend GPU-VRAM probe (was 43) — *complex, Claude* — Tauri-Rust + nvml/vulkan-info + Tauri-command surface. Probably needs platform-specific paths.
+- **C2** Wire VRAM probe into Fallback-UI (was 43a finish) — *moderate, Codex* — once C1 surface is stable.
+- **C3** Refinement Keep-Alive ping for Ollama / LM Studio (was R4) — *moderate, Codex* — mirror Whisper pre-warm pattern.
+- **C4** Quantization profile matrix UI polish (was 45 finish) — *simple, Codex* — labels + tooltips on existing model picker.
+- **C5** Pre-Paste-Diff ground-truth (frontend learn from refinement diffs, complement to UIA capture) — *moderate, Claude* — touches existing vocab-auto-learn architecture, judgment on signal weighting.
+- **C6** Asymmetric vocab promotion: lower threshold for `vocab_terms` (Whisper-bias) than for `postproc_custom_vocab` (find-replace) — *moderate, Codex* — clear spec, mechanical.
 
-**Phase 1 — Assistant Pivot Foundation (`Block T`, `v0.8.0`)**  
-Finalize assistant state machine + `transcribe|assistant` mode UX + graceful degradation policy.  
-Exit: stable assistant mode without transcribe regression.
+### D — Reliability Hardening + Release-QA polish
 
-**Phase 2 — GDD Copilot Loop (`Block V`, `v0.8.x`)**  
-Evolve workflow-agent from command trigger to copilot loop (conversation -> clustered session -> archive context -> suggestions -> GDD draft).  
-Exit: reproducible E2E `conversation -> draft -> review` path.
+- **D1** Soak-test automation harness (since manual soak is skipped, build automated 4h regression run) — *complex, Codex* — clear spec but multi-file.
+- **D2** Latency-budget assertions in benchmark gate (e.g. p95 ≤ X for refinement) — *moderate, Codex* — extends existing gate.
+- **D3** First-run developer-bootstrap polish (FIRST_RUN.bat audit) — *simple, Codex* — script-only.
+- **D4** Crash-report auto-collection on quit (panic logs + last-N tracing lines packaged) — *moderate, Claude* — needs Win32 path judgement.
 
-**Phase 3 — Voice Confirmation Loop (`Block O`)**  
-Implement `awaiting_confirmation` with TTL/token model and wakeword confirm/cancel intents plus TTS prompt timeout.  
-Exit: safe voice approvals without accidental execution.
+### E — Expert-Mode UX Toggle
 
-**Phase 4 — Hands-free Actions (`Block P`)**  
-Add focus/inject command surface and E2E voice-plan-confirm-window-action path.  
-Exit: reliable keyboard-free workflow for defined target apps.
+- **E1** Add `expert_mode` setting + persistence — *trivial, Codex* — boilerplate.
+- **E2** Hide technical settings groups when expert_mode=false — *simple, Codex* — pattern from existing module-gating.
+- **E3** UX writing for "what's in expert mode" tooltip + onboarding hint — *simple, Claude* — copy needs voice/tone judgement.
 
-**Phase 5 — Vollwertiger Mitarbeiter-Modus (continuous hardening)**  
-Iterate proactive suggestions, role/skill profiles, and policy-bounded autonomy with measurable productivity gains.
+### F — Assistant Presence Window
 
-## Block Q Task Details
+- **F1** Architecture: how does the Presence-Window relate to overlay + assistant-presence (3 windows now)? — *architecturally-tricky, Claude*
+- **F2** 3D dot-cloud renderer (WebGL inside Tauri webview) — *complex, Codex* — given clear visual spec.
+- **F3** TTS text panel (real-time word streaming) — *moderate, Codex* — once F1 plumbing is set.
+- **F4** Window-mgmt integration (always-on-top, click-through, multi-monitor) — *complex, Claude* — overlay-style edge cases.
 
-| Task | Title | Depends on | Status |
-| --- | --- | --- | --- |
-| Q1 | Startup Freeze: `save_settings` sync revert — remove `spawn_blocking`, `refresh_runtime_diagnostics` stays on detached thread | — | Done ✅ |
-| Q2 | Ghost Overlay: bootstrap position `(12,12)` → off-screen `(-9999,-9999)`, defensive repositioning in `apply_overlay_state_to_window` | — | Done ✅ |
-| Q3 | Refinement Resilience: `catch_unwind` + concurrency gate (max 2 active) + watchdog 90s → 45s | Q1 | Done ✅ (catch_unwind via Crash-Proof Shell P1-P4; concurrency gate via MAX_CONCURRENT_REFINEMENTS=2 in audio.rs:1266; watchdog at 45s in audio.rs:31) |
+---
 
-## Crash-Proof Shell (2026-03-17)
+## Deferred Zone (Z)
 
-| Phase | Title | Status |
-| --- | --- | --- |
-| P1 | Global `panic::set_hook` — all panics logged via tracing | Done ✅ |
-| P2 | All 31 `thread::spawn` → `spawn_guarded` (catch_unwind wrapper) | Done ✅ |
-| P3 | All remaining `.lock().unwrap()` → `.unwrap_or_else(\|p\| p.into_inner())` — zero poison-cascade risk | Done ✅ |
-| P4 | 26 module Tauri commands wrapped with `guarded_command!` macro | Done ✅ |
-| P5 | Overlay failure guard evolved to bounded supervisor retries + cooldown (no permanent session lockout) | Done ✅ |
-| P6 | `register_hotkeys` moved to background thread (cross-thread deadlock with Windows event loop) | Done ✅ |
-| P7 | `save_settings` IPC calls: 3 s timeout via `Promise.race` (prevents frontend freeze if backend blocks) | Done ✅ |
-| P8 | Event-driven Ollama init: wait for `ollama:runtime-health` instead of immediate ping-storm at startup | Done ✅ |
-| P9 | Rust-side cold-start buffer: 10 s OLLAMA_DIAG_NEXT_MS suppresses all Ollama pings during bootstrap | Done ✅ |
+| ID | Title | Reason | Unblock condition |
+|---|---|---|---|
+| **Z1** | Cloud provider rollout (OpenAI/Claude/Gemini for refinement) | Local-first is sufficient for now | when an explicit user need or business case appears |
+| **Z2** | LM Studio per-request thinking disable (was R6) | `chat_template_kwargs` ignored by llmster backend | when LM Studio adds API for per-request thinking control |
+| **Z3** | Screen-Recording ground-truth path (was 44d) | Depends on Screen-Recording module which doesn't exist yet | when Screen-Recording module lands (separate roadmap) |
+| **Z4** | UIA `RuntimeId`-based identity (additional to HWND/PID) | HWND/PID match has been sufficient in testing | only if false-positive learning re-appears across same-window controls |
 
-## LM Studio Integration (2026-03-17)
+---
 
-| Phase | Title | Status |
-| --- | --- | --- |
-| LS1 | Daemon lifecycle: `lms daemon up` on switch-to, `lms daemon stop` on switch-away | Done ✅ |
-| LS2 | `max_tokens` in OpenAI-compatible request body (LM Studio + Oobabooga) — caps reasoning model output | Done ✅ |
+## Codex Bridge Health
 
-## Block R Task Details
+The `codex-delegate` skill provides automatic failure handling. Claude triggers the bridge per task, with these outcomes:
 
-| Task | Title | Depends on | Note |
-| --- | --- | --- | --- |
-| R1 | Input truncation for local providers (Ollama, LM Studio): max 2000 words, sentence-boundary cutoff, `[truncated]` suffix | Q1 | ✅ Done — both providers truncate at 2000 words with sentence-boundary fallback |
-| R2 | LM Studio auto-start: ping endpoint on app start → `lms daemon up` + model load if unreachable | — | ✅ Done — startup ping-check in setup block; mirrors provider-switch lifecycle (LS1) |
-| R3 | LM Studio reasoning-model detection: UI warning when model name matches CoT pattern (DeepSeek-R1, QwQ, etc.) — recommend instruct model | R2 | ✅ Done — `isReasoningModel()` in settings.ts; amber warning in model card |
-| R4 | **Refinement Model Keep-Alive** (future): Similar to Whisper pre-warm, periodically ping refinement model to prevent cold-start latency. First inference call ~2-5s slower than follow-up calls. Whisper already keeps hot; refinement should too. | Q3 | Low priority; first-call latency acceptable for now. Consider `keep_alive` parameter in Ollama/LM Studio requests. |
-| R5 | **Model Picker UX Unification**: Ollama and LM Studio use different UI patterns for model selection — LM Studio models shown inside provider card, Ollama shows them in a separate model section below. Same models, same UX. Both should use the bottom model-category section. | E | Medium priority; UX consistency issue. |
-| R6 | **LM Studio Thinking Disable** (future): `chat_template_kwargs` in request body is ignored by llmster (llama.cpp backend). True disable requires `model.yaml` with `enable_thinking: false`. Investigate: automated `model.yaml` provisioning on first `lms load`, or LM Studio Config Preset API. | R2 | Blocked on llmster API limitation. Track LM Studio changelog for per-request thinking control. |
+| `failure.kind` | Bridge response | What gets done |
+|---|---|---|
+| `ok` | accept Codex result | task closes |
+| `quota_exhausted` | **circuit-breaker trips** (2 consecutive → no further delegation that session) | Claude takes over remaining Codex-tagged tasks inline |
+| `rate_limit` | wait 60 s, retry once | if 2nd attempt fails → take over |
+| `auth_error` | surface to user (`codex login`) | take over current task; halt delegation until user re-auths |
+| `model_unavailable` | retry with `gpt-5.4` (next-tier fallback) | continue if recovery succeeds |
+| `timeout` | split task or take over | timeout typically means prompt was too ambitious |
 
-## Block S Task Details (Current Window)
+**Robustness rules for this roadmap:**
+1. Every task in the Active Zone with "Codex-able: ✅" or "⚠️" has an implicit Claude fallback. If the bridge dies mid-block, Claude finishes the block.
+2. "Codex-able: ❌" tasks are never delegated — Claude does them by hand.
+3. Architecturally-tricky decisions (B1, C1, C5, F1, F4, D4, E3) are explicitly Claude-owned even when sub-implementation is Codex-delegated.
+4. After a `quota_exhausted` event, Claude documents the unfinished sub-tasks in `docs/reports/codex-bridge-paused.md` so the user can see what's queued for the next quota window.
 
-| Task | Title | Depends on | Status |
-| --- | --- | --- | --- |
-| S6 | AI Refinement as optional module (`ai_refinement`) | S3-S5 | Done ✅ |
-| S7 | AI Refinement runtime capability gate + disable side-effects | S6 | Done ✅ |
-| S8 | Frontend tab gating + effective refinement state (`module && setting`) | S6, S7 | Done ✅ |
-| S9 | Regression/docs closure + handoff to TTS free-config/testing | S6-S8 | Done ✅ |
-| S10 | Strict module-UX decoupling + dedicated TTS main tab (`voice-output`) | S9 | Done ✅ |
-| S11 | AI-Refinement re-enable speed path (autostart + warmup + runtime-ready defer policy) | S10 | Done ✅ |
-| S12 | Overlay deep refactor (bounded recovery supervisor, off-screen fallback, pulse reliability, recovered health signal) | S10 | Done ✅ |
-| S13 | Regression + soak/manual gate (`50 cycles + 10 restarts`) and closure handoff to TTS free-config/testing | S10-S12 | Done ✅ (manual soak validated) |
+**Quota visibility limitation:** ChatGPT-OAuth quota is server-side; the CLI does not expose remaining budget. The bridge learns of quota exhaustion only at the next call. This is acceptable because the circuit-breaker prevents repeat hits.
 
-## Immediate Next Actions
+---
 
-1. **Block U U2/U3 Soak Runs (deferred to end)**: attach 8h + 24h soak evidence after U1/U4 prep is complete.
-2. **Block U Gate Closure**: run strict assistant gate with benchmark + soak evidence and verify mode-safety/degraded-capability/publish safety.
-3. **Release Readiness Bundle**: consolidate evidence (`build`, `tests`, benchmark links, soak logs, manual validation checklist).
-4. **Plan O/P follow-up** only after U gates are closed, keeping plan/confirm guarantees intact.
+## Legacy Block-ID Mapping
+
+| Old ID | New ID | Notes |
+|---|---|---|
+| U | A | Assistant UX + Soak Gate; soak runs skipped per 2026-04-29 decision |
+| E | B | UX/UI consistency; absorbs R5 (Picker-Unification) |
+| J | C | Adaptive AI refinement; absorbs 43, 43a, 45, R4 |
+| F | D | Reliability hardening |
+| K | E | Expert-Mode toggle |
+| W | F | Assistant Presence Window |
+| G | Z1 | Cloud provider — deferred |
+| R6 | Z2 | LM Studio thinking-disable — externally blocked |
+| 44d | Z3 | Screen-Recording ground-truth — depends on new module |
+| D, H, L, M, N, Q, R1-R5, S, T, V | history | Completed in earlier phases — see History below |
+
+---
+
+## Phased Path to Full Agent (unchanged from prior roadmap)
+
+**Phase 0 — Stabiler Unterbau (`S13.5`)** — done.
+**Phase 1 — Assistant Pivot Foundation (Block T → v0.8.0)** — done.
+**Phase 2 — GDD Copilot Loop (Block V → v0.8.x)** — done.
+**Phase 3 — Voice Confirmation Loop (Block O)** — planned post-A.
+**Phase 4 — Hands-free Actions (Block P)** — planned post-Phase 3.
+**Phase 5 — Vollwertiger Mitarbeiter-Modus** — continuous.
+
+(Phase IDs O/P remain in their original notation since they map to long-term agent evolution, not the current sprint queue.)
+
+---
+
+## History (Done) — compressed
+
+### 2026-04-29
+- Identity-Tracking + Caret-Range vocab capture (HWND/PID validation, `selection-line` pattern, Self-Filter)
+- Window-Shrinking heuristic in `wordDiff` for VS-Code/Monaco compatibility
+- Overlay topmost hardening (toggle re-promote + heartbeat re-assertion)
+- Task 44c — Adaptive Vocabulary Regression Tests (43 tests green)
+- CSS branding: CUDA→Nvidia-green, Vulkan→AMD-red on backend-switch buttons
+- ROADMAP.md restructured to A-Z priority scheme
+
+### 2026-04-08
+- v0.7.3 release: Models section + Custom Vocabulary UI redesigns; vocabulary casing bug fixed
+- 219 tests green at release time
+
+### 2026-04-07
+- Block J / Tasks 44a-44b: vocabulary learning live (LLM-diff, threshold, auto-add, suggestion review)
+- Custom Vocabulary UI flattened (3 levels → 1)
+- Ollama refinement keep-alive 20m → 60m
+
+### 2026-04-06
+- Hotkey overhaul: ISO `</>` key support, DE keyboard Y↔Z fix, hybrid event.code/event.key strategy
+- TTS-Stop default hotkey: Ctrl+Shift+Esc → Ctrl+Shift+F12 (Task Manager conflict)
+- Gemma 4 model variant matrix (5 quantizations with VRAM annotations)
+- Model-family-specific refinement prompts (Gemma anglicism preservation)
+- Ollama runtime updated to v0.20.2 + download progress popup
+- Block J designed (LLM-diff suggestion flow → 44, 44a, 44b, 44c, 44d)
+
+### 2026-03-22
+- Block S6-S13 landed: AI Refinement as toggleable module, strict module-UX decoupling, dedicated voice-output tab, autostart + warmup speed path, overlay deep refactor
+
+### 2026-03-20
+- Block N9 (privacy/consent UX), N10 (TTS fallback matrix), N11 (TTS benchmark harness)
+- N11 evidence run: `windows_native` recommended (success_rate=100%, p50=245ms, p95=282ms)
+- Overlay startup hardening (transparent fallback to non-transparent)
+- FFmpeg packaging cleanup (build-time fetch, SHA256 + OPUS validation)
+
+### 2026-03-18
+- Prompt-style chip selector UI
+- Logging: daily `.txt` files; shutdown log entry distinguishes normal exits from crashes
+- Crash-Proof Shell P1-P9 (panic hooks, spawn_guarded, lock_unwrap_or_else, guarded_command, …)
+
+### 2026-03-17
+- LM Studio integration LS1 (daemon lifecycle), LS2 (max_tokens for OpenAI-compat)
+- Block R1 (input truncation 2000-word cap), R2 (LM Studio auto-start), R3 (reasoning-model UI warning)
+
+### Earlier
+- v0.7.0 GPU acceleration: CUDA detection, runtime backend preference, Q5 quantized models for VRAM-constrained GPUs
+- Block T (Assistant Pivot Foundation, v0.8.0) and Block V (GDD Copilot Loop) — see git log for details
+- Block L (Module Platform), Block M (Workflow-Agent voice automation), Block Q (Onboarding refinement)
+- Crash-Proof Shell + LM Studio integration phases
+
+---
 
 ## References
 
-- `docs/TASK_SCHEDULE.md`
-- `docs/DECISIONS.md`
-- `docs/AGENT_EVOLUTION_ROADMAP.md`
-- `docs/ARCHITECTURE_REVIEW_0.7.md`
-- `docs/V0.7.0_ARCHITECTURE.md`
-- `docs/INSTALLER_VARIANTS.md`
-- `docs/GDD_MODULE_WORKFLOW.md`
-- `docs/V0.8.0_BLOCK_L_ROLLOUT_PACKET.md`
-- `docs/V0.8.1_WORKFLOW_AGENT_PLAN.md`
-- `docs/V0.8.2_MULTIMODAL_IO_PLAN.md`
-- `docs/N11_TTS_BENCHMARK.md`
+- `~/.claude/skills/codex-delegate/SKILL.md` — Codex bridge protocol and circuit-breaker
+- `~/.claude/skills/orchestrator/SKILL.md` — multi-agent plan/task coordination
+- `docs/V0.8.x_BLOCK_U_RELEASE_GATE.md` — A-block gate procedure
+- `docs/AGENT_EVOLUTION_ROADMAP.md` — long-term Phase 3-5 detail
+- `docs/ARCHITECTURE_REVIEW_0.7.md`, `docs/V0.7.0_ARCHITECTURE.md`
+- `docs/INSTALLER_VARIANTS.md`, `docs/N11_TTS_BENCHMARK.md`
+- `docs/V0.8.0_BLOCK_L_ROLLOUT_PACKET.md`, `docs/V0.8.1_WORKFLOW_AGENT_PLAN.md`, `docs/V0.8.2_MULTIMODAL_IO_PLAN.md`

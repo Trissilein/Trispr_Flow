@@ -5,6 +5,31 @@ All notable changes to Trispr Flow will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-04-29
+
+Block A release-gate closure for the v0.8.x assistant phase. Soak runs (U2/U3) intentionally skipped per 2026-04-29 decision; gate accepts via `--strict-benchmark` without `--require-soak`.
+
+### Added
+
+- **Vocabulary auto-learning robustness**:
+  - Identity-Tracking in UIA-capture: HWND + PID snapshot at paste time, validated at Enter time. Prevents learning from text in unrelated windows after a window switch.
+  - Trispr-self-filter: pastes into our own window are ignored — we never learn from edits in our own UI.
+  - Caret-based range extraction (`selection-line` pattern): for Monaco / VS-Code / Antigravity editors, `IUIAutomationTextPattern.GetSelection().ExpandToEnclosingUnit(Line)` returns the edited line instead of the whole document.
+  - Window-shrinking heuristic in `wordDiff`: when `submitted` ≫ `pasted` tokens (Monaco fallback), sliding LCS-window finds the relevant edit region.
+  - Edit-detected event payload now carries `same_target: bool` and `pattern_used: string` for downstream confidence weighting.
+- **Adaptive Vocabulary Regression Tests** (Task 44c): 43 unit tests covering casing edge cases, post-promotion `postproc_custom_vocab_enabled` activation, deduplication, merge semantics, null-settings guards, Monaco-style oversized submitted, selection-line short-output handling.
+- **Overlay topmost hardening**: `set_always_on_top(false→true)` toggle forces a fresh `SetWindowPos(HWND_TOPMOST, …)` on every show. Heartbeat path re-asserts every 1.2 s while overlay is visible. Eliminates the "regular windows cover the volume overlay" regression.
+- **CSS branding for backend switch**: CUDA button in Nvidia-green (`#76B900`), Vulkan in AMD-red (`#ED1C24`); active states fully filled, idle states dimmed for legibility.
+
+### Changed
+
+- **ROADMAP.md restructured** to A-Z priority scheme. Active-zone (A → F) and deferred-zone (Z1-Z4) replace historical block-letter codes (U/V/W/E/F/K/J/G/R6 → A/B/C/D/E/F/Z1/Z2). Each block now carries complexity bucket and Codex-delegation tag. Legacy-ID-mapping table preserved for commit history.
+- **Release gate runner**: `scripts/assistant-release-gate.mjs` `readJsonIfExists` now strips UTF-8 BOM. Fixed silent failure where PowerShell-written `bench/results/tts.latest.json` (BOM-prefixed) was rejected by `JSON.parse`, causing `benchmark_linked_pass=false` despite valid TTS data.
+
+### Known issues
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib` fails at `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139) — a DLL loader issue at test-binary startup, before any test code runs. Reproduces independent of recent code changes (still happens after reverting `Win32_System_Threading` feature). Not blocking v0.8.0 release because gate accepts `--skip-rust-lib-tests`. To be triaged separately.
+
 ## [0.7.4] - 2026-04-12
 
 ### Added

@@ -28,7 +28,7 @@ Block A release-gate closure for the v0.8.x assistant phase. Soak runs (U2/U3) i
 
 ### Known issues
 
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib` fails at `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139) — a DLL loader issue at test-binary startup, before any test code runs. Reproduces independent of recent code changes (still happens after reverting `Win32_System_Threading` feature). Not blocking v0.8.0 release because gate accepts `--skip-rust-lib-tests`. To be triaged separately.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib` fails at `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139) on the current Windows 11 build host — a DLL loader issue at test-binary startup, before any test code runs. Pre-existing: reproduces identically against `b3db990` (pre-vocab) and remains environment-specific. **Production binary is unaffected** (`trispr-flow.exe` runs cleanly). Full diagnosis archived in [`docs/KNOWN_ISSUES.md` #001](docs/KNOWN_ISSUES.md). Gate accepts `--skip-rust-lib-tests` as workaround.
 
 ## [0.7.4] - 2026-04-12
 

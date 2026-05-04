@@ -271,32 +271,19 @@ pub fn inspect_recent_server_crash(app: &AppHandle) -> Option<String> {
     let tail = &content[tail_start..];
 
     if tail.contains("no kernel image is available for execution on the device") {
-        let archs = tail
-            .lines()
-            .rev()
-            .find_map(|l| {
-                l.find("CUDA : ARCHS")
-                    .map(|idx| l[idx..].split('|').next().unwrap_or("").trim().to_string())
-            })
-            .unwrap_or_else(|| "CUDA : ARCHS = unknown".to_string());
-        return Some(format!(
-            "whisper-server CUDA build does not support this GPU ({}). Switch local_backend_preference to \"vulkan\" in Settings, or rebuild bin/cuda/whisper-server.exe with your GPU's compute capability included in CMAKE_CUDA_ARCHITECTURES.",
-            archs
-        ));
+        return Some(
+            "GPU not supported by CUDA build. Switch backend to Vulkan in Settings.".to_string(),
+        );
     }
 
     if tail.contains("out of memory") {
         return Some(
-            "whisper-server ran out of GPU memory. Try a smaller model or switch local_backend_preference to \"vulkan\"/\"cpu\"."
-                .to_string(),
+            "GPU out of memory. Try a smaller model or switch to Vulkan/CPU.".to_string(),
         );
     }
 
     if tail.contains("CUDA error") {
-        return Some(
-            "whisper-server reported a CUDA error — see whisper-server.stderr.log for details. Switch to Vulkan if this persists."
-                .to_string(),
-        );
+        return Some("CUDA error — see whisper-server.stderr.log.".to_string());
     }
 
     None

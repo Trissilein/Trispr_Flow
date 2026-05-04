@@ -925,7 +925,7 @@ async function bootstrap() {
       whisperFatalLastShown.set(message, now);
       showToast({
         type: "error",
-        title: "Whisper-Server Fehler",
+        title: "Whisper-Server",
         message,
         duration: 12_000,
       });

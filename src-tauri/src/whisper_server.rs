@@ -17,16 +17,47 @@ use tracing::{info, warn};
 pub const WHISPER_SERVER_PORT: u16 = 8178;
 
 /// Health check: ping the server's root endpoint.
+///
+/// Two-attempt probe: a fast first attempt covers the steady-state happy path
+/// (~ms when healthy), and a longer retry absorbs transient post-decode pauses
+/// where the server thread is briefly busy after a transcription completes.
 pub fn ping_whisper_server(port: u16) -> bool {
-    let agent = ureq::builder()
-        .timeout_connect(Duration::from_millis(200))
-        .timeout_read(Duration::from_millis(200))
-        .build();
+    ping_whisper_server_with_attempts(port, 2)
+}
 
-    agent
-        .get(&format!("http://127.0.0.1:{port}/"))
-        .call()
-        .is_ok()
+fn ping_whisper_server_with_attempts(port: u16, attempts: u32) -> bool {
+    info!("[ping] ping_whisper_server_with_attempts(port={}, attempts={})", port, attempts);
+    for attempt in 0..attempts.max(1) {
+        let timeout = if attempt == 0 {
+            Duration::from_millis(400)
+        } else {
+            Duration::from_millis(1500)
+        };
+        info!("[ping] attempt {}/{}, timeout_ms={}", attempt + 1, attempts.max(1), timeout.as_millis());
+        let agent = ureq::builder()
+            .timeout_connect(timeout)
+            .timeout_read(timeout)
+            .build();
+        let start = std::time::Instant::now();
+        let result = agent
+            .get(&format!("http://127.0.0.1:{port}/"))
+            .call();
+        let elapsed = start.elapsed();
+        match result {
+            Ok(_) => {
+                info!("[ping] attempt {}/{} SUCCESS in {:.1}ms", attempt + 1, attempts.max(1), elapsed.as_secs_f64() * 1000.0);
+                return true;
+            }
+            Err(e) => {
+                info!("[ping] attempt {}/{} FAILED: {}", attempt + 1, attempts.max(1), e);
+            }
+        }
+        if attempt + 1 < attempts {
+            std::thread::sleep(Duration::from_millis(120));
+        }
+    }
+    info!("[ping] ping_whisper_server_with_attempts(port={}) -> false", port);
+    false
 }
 
 fn resolve_preferred_server_path(settings: &Settings) -> Option<PathBuf> {
@@ -71,6 +102,7 @@ pub fn start_whisper_server(
     state: &AppState,
     model_path: &Path,
 ) -> Result<(), String> {
+    info!("[whisper_server:startup] start_whisper_server(model_path={})", model_path.display());
     let port = state
         .whisper_server_port
         .load(std::sync::atomic::Ordering::Relaxed);
@@ -79,6 +111,13 @@ pub fn start_whisper_server(
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
+
+    let managed_child_slot = state
+        .managed_whisper_server_child
+        .lock()
+        .map(|guard| guard.is_some())
+        .unwrap_or(false);
+    info!("[whisper_server:startup] managed_whisper_server_child slot: is_some={}", managed_child_slot);
 
     // Already running?
     if ping_whisper_server(port) {
@@ -106,10 +145,23 @@ pub fn start_whisper_server(
         model_path.display(),
         port
     );
-    terminate_managed_child_slot(
-        "managed Whisper-Server runtime",
-        &state.managed_whisper_server_child,
-    );
+    // Only invoke the kill path if a managed child is actually tracked. With
+    // the more reliable two-attempt ping above, a ping=false here genuinely
+    // means the process is gone or wedged; if no managed child is tracked,
+    // there is nothing to terminate, just spawn fresh.
+    let had_managed_child = state
+        .managed_whisper_server_child
+        .lock()
+        .map(|guard| guard.is_some())
+        .unwrap_or(false);
+    info!("[whisper_server:startup] had_managed_child={}", had_managed_child);
+    if had_managed_child {
+        info!("[whisper_server:startup] terminating previous managed child");
+        terminate_managed_child_slot(
+            "managed Whisper-Server runtime",
+            &state.managed_whisper_server_child,
+        );
+    }
 
     let mut cmd = std::process::Command::new(&server_path);
     cmd.arg("-m")
@@ -120,9 +172,35 @@ pub fn start_whisper_server(
         .arg(port.to_string())
         .arg("-t")
         .arg(optimal_thread_count().to_string())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stdin(std::process::Stdio::null());
+
+    // Capture stdout/stderr to a log file so we can see crashes / backend
+    // errors. Append mode keeps history across restarts within a session.
+    let logs_dir = crate::paths::resolve_base_dir(app).join("logs");
+    let _ = std::fs::create_dir_all(&logs_dir);
+    let log_path = logs_dir.join("whisper-server.stderr.log");
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        Ok(file) => {
+            let stderr = file.try_clone().unwrap_or_else(|_| {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_path)
+                    .expect("re-open log file")
+            });
+            cmd.stdout(file).stderr(stderr);
+            info!("[whisper_server:startup] stdout/stderr -> {}", log_path.display());
+        }
+        Err(e) => {
+            warn!("[whisper_server:startup] could not open log file ({}), discarding stdout/stderr: {}", log_path.display(), e);
+            cmd.stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+        }
+    }
 
     // Hide console window on Windows
     #[cfg(target_os = "windows")]
@@ -132,6 +210,7 @@ pub fn start_whisper_server(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
+    info!("[whisper_server:startup] spawning whisper-server process");
     let spawn_result = spawn_managed_child(
         state,
         "managed Whisper-Server runtime",
@@ -140,9 +219,11 @@ pub fn start_whisper_server(
     )
     .map_err(|e| {
         let message = format!("Failed to spawn whisper-server ({})", e);
+        info!("[whisper_server:startup] spawn FAILED: {}", message);
         update_whisper_server_diagnostics(app, &settings, "cli", "cpu", Some(message.clone()));
         message
     })?;
+    info!("[whisper_server:startup] spawn SUCCESS (pid={}, job_assigned={})", spawn_result.pid, spawn_result.job_assigned);
     if !spawn_result.job_assigned {
         warn!(
             "whisper-server started without managed job assignment (pid {})",
@@ -150,10 +231,13 @@ pub fn start_whisper_server(
         );
     }
 
-    // Poll for server readiness (max 8 seconds, check every 250ms)
-    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    // Poll for server readiness (max 30 seconds, check every 250ms)
+    // The large-v3-turbo model (~1.5 GB) can take 10-20s to load on first start.
+    info!("[whisper_server:startup] polling for readiness (max 30s)");
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
         if ping_whisper_server(port) {
+            info!("[whisper_server:startup] start_whisper_server() SUCCESS");
             info!("whisper-server ready on port {}", port);
             update_whisper_server_diagnostics(app, &settings, "server", "gpu", None);
             return Ok(());
@@ -162,7 +246,8 @@ pub fn start_whisper_server(
     }
 
     // Timeout — log warning but don't fail. Fallback to CLI will be used.
-    warn!("whisper-server startup timeout (8s) — will fall back to CLI transcription for now");
+    info!("[whisper_server:startup] start_whisper_server() TIMEOUT after 30s");
+    warn!("whisper-server startup timeout (30s) — will fall back to CLI transcription for now");
     update_whisper_server_diagnostics(
         app,
         &settings,
@@ -214,11 +299,32 @@ pub fn transcribe_via_server(
         .timeout_read(Duration::from_secs(120)) // Long audio can take time
         .build();
 
+    info!("[server-request] POST /inference port={} wav_bytes={} body_bytes={} language={}",
+        port, wav_bytes.len(), body.len(), language);
+    let req_start = std::time::Instant::now();
     let response = agent
         .post(&format!("http://127.0.0.1:{port}/inference"))
         .set("Content-Type", &content_type)
         .send_bytes(&body)
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
+        .map_err(|err| match err {
+            ureq::Error::Status(code, response) => {
+                let body = response.into_string().unwrap_or_default();
+                let body = body.replace('\n', " ").replace('\r', " ");
+                let body = body.trim();
+                if body.is_empty() {
+                    format!("whisper-server HTTP {} (port {})", code, port)
+                } else {
+                    format!("whisper-server HTTP {} (port {}): {}", code, port, body)
+                }
+            }
+            ureq::Error::Transport(transport) => {
+                format!("whisper-server transport error (port {}): {}", port, transport)
+            }
+        })
+        .inspect_err(|e| {
+            warn!("[server-request] FAILED after {:.2}s: {}", req_start.elapsed().as_secs_f64(), e);
+        })?;
+    info!("[server-request] response received in {:.2}s", req_start.elapsed().as_secs_f64());
 
     let json: serde_json::Value = response
         .into_json()

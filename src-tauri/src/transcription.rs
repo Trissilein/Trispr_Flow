@@ -2214,6 +2214,7 @@ fn transcribe_local(
 
             match crate::whisper_server::transcribe_via_server(wav_bytes, port, &lang_str) {
                 Ok(text) => {
+                    info!("[diagnostics] transcribe_via_server SUCCESS -> update(mode=server, backend=gpu, last_error=None)");
                     update_whisper_runtime_diagnostics(
                         app,
                         settings,
@@ -2231,6 +2232,7 @@ fn transcribe_local(
                 }
                 Err(e) => {
                     warn!("whisper-server failed ({}), falling back to CLI", e);
+                    info!("[diagnostics] transcribe_via_server ERROR -> update(mode=cli, backend=cpu, last_error=\"server unavailable, CLI active: {}\")", e);
                     update_whisper_runtime_diagnostics(
                         app,
                         settings,
@@ -2240,8 +2242,60 @@ fn transcribe_local(
                         None,
                         Some(format!("server unavailable, CLI active: {}", e)),
                     );
+                    // Restart the server in the background so the next request
+                    // can use the fast HTTP path again (server may have crashed).
+                    {
+                        let handle = app.clone();
+                        let model_path_clone = model_path.clone();
+                        crate::util::spawn_guarded("restart_whisper_server_after_crash", move || {
+                            let state = handle.state::<crate::state::AppState>();
+                            let _ = crate::whisper_server::start_whisper_server(
+                                &handle,
+                                state.inner(),
+                                &model_path_clone,
+                            );
+                        });
+                    }
                     // Continue to CLI fallback below
                 }
+            }
+        } else {
+            // Server is configured but unreachable. Stamp a fresh diagnostic so
+            // the UI message reflects this attempt instead of a stale one. If a
+            // managed child is tracked, kick a background restart so the next
+            // call has a chance of using the fast HTTP path again.
+            let managed_child_present = state
+                .managed_whisper_server_child
+                .lock()
+                .map(|guard| guard.is_some())
+                .unwrap_or(false);
+            if managed_child_present {
+                info!("[diagnostics] ping_whisper_server=false -> update(mode=cli, backend=cpu, last_error=\"whisper-server unreachable, restarting and using CLI fallback\")");
+                update_whisper_runtime_diagnostics(
+                    app,
+                    settings,
+                    "cli",
+                    "cpu",
+                    resolve_whisper_gpu_layers(settings),
+                    None,
+                    Some(
+                        "whisper-server unreachable, restarting and using CLI fallback"
+                            .to_string(),
+                    ),
+                );
+                let handle = app.clone();
+                let model_path_clone = model_path.clone();
+                crate::util::spawn_guarded(
+                    "restart_whisper_server_after_ping_fail",
+                    move || {
+                        let state = handle.state::<crate::state::AppState>();
+                        let _ = crate::whisper_server::start_whisper_server(
+                            &handle,
+                            state.inner(),
+                            &model_path_clone,
+                        );
+                    },
+                );
             }
         }
     }
@@ -2601,6 +2655,30 @@ fn run_whisper_cli(
     };
 
     let accelerator = if stderr_gpu { "gpu" } else { "cpu" };
+    // Preserve any fresher last_error already set in this call chain (e.g. by
+    // the ping=false branch in transcribe_local). Only synthesize the generic
+    // "server unavailable" hint when nothing more specific is set AND we
+    // actually fell back to CPU despite a GPU backend being configured.
+    let preserved_last_error = {
+        let state = app.state::<crate::state::AppState>();
+        state
+            .runtime_diagnostics
+            .lock()
+            .map(|guard| guard.whisper.last_error.clone())
+            .unwrap_or_default()
+    };
+    let preserved = !preserved_last_error.trim().is_empty();
+    let last_error = if preserved {
+        Some(preserved_last_error)
+    } else if accelerator == "cpu" && backend != "cpu" {
+        Some("server unavailable, CLI active".to_string())
+    } else {
+        None
+    };
+    let synthesized = accelerator == "cpu" && backend != "cpu" && !preserved;
+    info!("[diagnostics] cli_happy_path -> update(mode=cli, backend={}, last_error_preserved={}, last_error_synthesized={}, last_error={})",
+        accelerator, preserved, synthesized,
+        last_error.as_ref().map(|s| s.as_str()).unwrap_or("None"));
     update_whisper_runtime_diagnostics(
         app,
         settings,
@@ -2608,11 +2686,7 @@ fn run_whisper_cli(
         accelerator,
         requested_gpu_layers,
         applied_gpu_layers,
-        if accelerator == "cpu" && backend != "cpu" {
-            Some("server unavailable, CLI active".to_string())
-        } else {
-            None
-        },
+        last_error,
     );
 
     if !force_cpu && (accelerator == "gpu" || backend != "cpu") {

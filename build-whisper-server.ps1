@@ -48,8 +48,11 @@ cd build-cuda
 # Also set CUDA flags to allow unsupported compiler (VS 2026 with CUDA 13.0)
 Write-Host "Configuring CMake with CUDA..." -ForegroundColor Cyan
 $env:CUDAFLAGS = "-allow-unsupported-compiler"
+# Arch list covers Turing (75, T500) through Blackwell (120, RTX 50xx). Without 75
+# the binary crashes on Turing-class GPUs with "no kernel image available". Without
+# 120 it crashes on RTX 50xx. Keep all of them so one binary runs on both machines.
 & cmake .. -DGGML_CUDA=ON -DGGML_CUDA_F16=ON `
-    -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89" `
+    -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89;90;120" `
     -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler" `
     -A x64
 
@@ -67,18 +70,25 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Copy binary
-$srcBinary = "bin\Release\whisper-server.exe"
-$dstBinary = "$TrispiFlow\src-tauri\bin\cuda\whisper-server.exe"
-
-if (Test-Path $srcBinary) {
-    Write-Host "Copying binary..." -ForegroundColor Cyan
-    Copy-Item $srcBinary -Destination $dstBinary -Force
-    $fileSize = (Get-Item $dstBinary).Length / 1MB
-    Write-Host "SUCCESS! Copied: $dstBinary" -ForegroundColor Green
-    Write-Host "File size: $([Math]::Round($fileSize, 2)) MB" -ForegroundColor Green
-} else {
-    Write-Host "ERROR: Binary not found" -ForegroundColor Red
+# Copy both whisper-server.exe and whisper-cli.exe — both need the multi-arch
+# CUDA build to run on Turing (T500) and Blackwell (RTX 50xx) alike.
+$binaries = @("whisper-server.exe", "whisper-cli.exe")
+$missingBinaries = @()
+foreach ($exe in $binaries) {
+    $srcBinary = "bin\Release\$exe"
+    $dstBinary = "$TrispiFlow\src-tauri\bin\cuda\$exe"
+    if (Test-Path $srcBinary) {
+        Write-Host "Copying $exe..." -ForegroundColor Cyan
+        Copy-Item $srcBinary -Destination $dstBinary -Force
+        $fileSize = (Get-Item $dstBinary).Length / 1MB
+        Write-Host "  -> $dstBinary ($([Math]::Round($fileSize, 2)) MB)" -ForegroundColor Green
+    } else {
+        Write-Host "ERROR: $exe not found at $srcBinary" -ForegroundColor Red
+        $missingBinaries += $exe
+    }
+}
+if ($missingBinaries.Count -gt 0) {
+    Write-Host "Build produced no output for: $($missingBinaries -join ', ')" -ForegroundColor Red
     exit 1
 }
 

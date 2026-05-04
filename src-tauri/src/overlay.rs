@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WindowEvent};
-use tracing::warn;
+use tracing::{info, warn};
 
 const OVERLAY_RECOVERY_MAX_ATTEMPTS: u32 = 4;
 const OVERLAY_RECOVERY_BACKOFF_MS: u64 = 140;
@@ -313,9 +313,9 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
 
 fn window_position_invalid(window: &WebviewWindow) -> bool {
     let Some(monitor) = window
-        .current_monitor()
-        .ok()
-        .flatten()
+        .app_handle()
+        .get_webview_window("main")
+        .and_then(|main_win| main_win.current_monitor().ok().flatten())
         .or_else(|| window.primary_monitor().ok().flatten())
     else {
         return false;
@@ -330,55 +330,83 @@ fn window_position_invalid(window: &WebviewWindow) -> bool {
         Err(_) => return false,
     };
 
-    let scale = monitor.scale_factor();
+    // outer_position/outer_size return physical pixels on Win32 and so do
+    // monitor.size()/monitor.position(). Stay in physical units throughout —
+    // the overlap check is a ratio comparison, units cancel.
     let monitor_size = monitor.size();
     let monitor_pos = monitor.position();
 
-    let monitor_x = monitor_pos.x as f64 / scale;
-    let monitor_y = monitor_pos.y as f64 / scale;
-    let monitor_w = monitor_size.width as f64 / scale;
-    let monitor_h = monitor_size.height as f64 / scale;
+    let monitor_x = monitor_pos.x as f64;
+    let monitor_y = monitor_pos.y as f64;
+    let monitor_w = monitor_size.width as f64;
+    let monitor_h = monitor_size.height as f64;
 
     let window_x = outer_pos.x as f64;
     let window_y = outer_pos.y as f64;
     let window_w = outer_size.width as f64;
     let window_h = outer_size.height as f64;
 
+    // Threshold in physical px. 8 px is well below realistic overlay sizes
+    // (50-200 logical px) at any sane DPI — won't false-positive or
+    // false-negative.
+    const SLIVER_PX: f64 = 8.0;
     let overlap_w = (window_x + window_w).min(monitor_x + monitor_w) - window_x.max(monitor_x);
     let overlap_h = (window_y + window_h).min(monitor_y + monitor_h) - window_y.max(monitor_y);
-    overlap_w < 4.0 || overlap_h < 4.0
+    let invalid = overlap_w < SLIVER_PX || overlap_h < SLIVER_PX;
+    info!("[overlay:position_check] monitor={{x:{}, y:{}, w:{}, h:{}}}, window={{x:{}, y:{}, w:{}, h:{}}}, overlap={{w:{:.1}, h:{:.1}}}, invalid={}",
+        monitor_x as i32, monitor_y as i32, monitor_w as u32, monitor_h as u32,
+        window_x as i32, window_y as i32, window_w as u32, window_h as u32,
+        overlap_w, overlap_h, invalid);
+    invalid
 }
 
 fn fallback_overlay_to_safe_anchor(window: &WebviewWindow) -> Result<(), String> {
-    let Some(monitor) = window
-        .current_monitor()
-        .ok()
-        .flatten()
+    info!("[overlay:fallback_anchor] fallback_overlay_to_safe_anchor()");
+    // Prefer the user's saved settings: re-apply via the canonical path so the
+    // overlay respects pos_x/pos_y percentages and uses consistent units. The
+    // raw 50/50 anchor below is only the last-resort path before any settings
+    // have been applied.
+    let app = window.app_handle();
+    if let Some(settings) = overlay_controller_snapshot(app).desired_settings {
+        info!("[overlay:fallback_anchor] desired_settings present, delegating to apply_overlay_settings_to_window()");
+        return apply_overlay_settings_to_window(window, &settings);
+    }
+
+    info!("[overlay:fallback_anchor] no desired_settings, using 50/50 hard-coded anchor");
+    let Some(monitor) = app
+        .get_webview_window("main")
+        .and_then(|main_win| main_win.current_monitor().ok().flatten())
         .or_else(|| window.primary_monitor().ok().flatten())
     else {
         return Ok(());
     };
 
+    // Convert both monitor rect AND window size to logical pixels before
+    // mixing them — set_position(Logical(...)) below interprets the result as
+    // logical, so all inputs must agree.
     let scale = monitor.scale_factor();
     let monitor_size = monitor.size();
     let monitor_pos = monitor.position();
-    let monitor_w = monitor_size.width as f64 / scale;
-    let monitor_h = monitor_size.height as f64 / scale;
-    let origin_x = monitor_pos.x as f64 / scale;
-    let origin_y = monitor_pos.y as f64 / scale;
+    let monitor_w_logical = monitor_size.width as f64 / scale;
+    let monitor_h_logical = monitor_size.height as f64 / scale;
+    let origin_x_logical = monitor_pos.x as f64 / scale;
+    let origin_y_logical = monitor_pos.y as f64 / scale;
 
     let outer_size = window.outer_size().ok();
-    let width = outer_size
-        .map(|size| size.width as f64)
+    let width_logical = outer_size
+        .map(|size| size.width as f64 / scale)
         .unwrap_or(64.0)
         .max(32.0);
-    let height = outer_size
-        .map(|size| size.height as f64)
+    let height_logical = outer_size
+        .map(|size| size.height as f64 / scale)
         .unwrap_or(64.0)
         .max(32.0);
 
-    let pos_x = origin_x + monitor_w * 0.5 - width * 0.5;
-    let pos_y = origin_y + monitor_h * 0.5 - height * 0.5;
+    let pos_x = origin_x_logical + monitor_w_logical * 0.5 - width_logical * 0.5;
+    let pos_y = origin_y_logical + monitor_h_logical * 0.5 - height_logical * 0.5;
+    info!("[overlay:fallback_anchor] scale={}, monitor_w_logical={}, monitor_h_logical={}, origin_x_logical={}, origin_y_logical={}, width_logical={}, height_logical={}",
+        scale, monitor_w_logical, monitor_h_logical, origin_x_logical, origin_y_logical, width_logical, height_logical);
+    info!("[overlay:fallback_anchor] set_position(Logical(x={}, y={}))", pos_x, pos_y);
     window
         .set_position(tauri::Position::Logical(tauri::LogicalPosition {
             x: pos_x,
@@ -413,12 +441,18 @@ fn apply_overlay_state_to_window(
                 let _ = apply_overlay_settings_to_window(window, settings);
             }
         }
+        // window_position_invalid() compares window rect vs monitor rect in
+        // PHYSICAL pixels — both sides must stay in physical units, do not
+        // re-introduce a scale_factor() conversion here.
         if window_position_invalid(window) {
+            info!("[overlay:apply_state] window_position_invalid=true, re-applying settings");
             let controller = overlay_controller_snapshot(app);
             if let Some(ref settings) = controller.desired_settings {
+                info!("[overlay:apply_state] calling apply_overlay_settings_to_window(pos_x={}, pos_y={})", settings.pos_x, settings.pos_y);
                 let _ = apply_overlay_settings_to_window(window, settings);
             }
             if window_position_invalid(window) {
+                info!("[overlay:apply_state] still invalid after apply, calling fallback_overlay_to_safe_anchor");
                 let _ = fallback_overlay_to_safe_anchor(window);
             }
         }
@@ -792,12 +826,15 @@ fn resolve_overlay_position(
     // pos_x and pos_y are stored as percentages (0-100)
     // Convert to absolute monitor coordinates, then to window position
 
-    if let Some(monitor) = window
-        .current_monitor()
-        .ok()
-        .flatten()
-        .or_else(|| window.primary_monitor().ok().flatten())
-    {
+    // Use the main window's monitor to anchor the overlay correctly.
+    // The overlay window is parked off-screen during init, so current_monitor()
+    // on the overlay itself would resolve the wrong display.
+    let monitor = window
+        .app_handle()
+        .get_webview_window("main")
+        .and_then(|main_win| main_win.current_monitor().ok().flatten())
+        .or_else(|| window.primary_monitor().ok().flatten());
+    if let Some(monitor) = monitor {
         let scale = monitor.scale_factor();
         let size_px = monitor.size();
         let pos_px = monitor.position();
@@ -818,18 +855,21 @@ fn resolve_overlay_position(
         // Position window so its center is at the anchor point
         let pos_x = anchor_x - width * 0.5;
         let pos_y = anchor_y - height * 0.5;
+        info!("[overlay:resolve_position] scale={}, monitor_width={}, monitor_height={}, origin_x={}, origin_y={}, percent_x={}, percent_y={}, window_width={}, window_height={}, anchor_x={}, anchor_y={}, final_pos_x={}, final_pos_y={}",
+            scale, monitor_width, monitor_height, origin_x, origin_y, percent_x, percent_y, width, height, anchor_x, anchor_y, pos_x, pos_y);
         (pos_x, pos_y)
     } else {
         // Fallback if monitor info unavailable (shouldn't happen)
+        info!("[overlay:resolve_position] no monitor found, using fallback (0, 0)");
         (0.0, 0.0)
     }
 }
 
 fn current_monitor_logical_size(window: &WebviewWindow) -> Option<(f64, f64)> {
     let monitor = window
-        .current_monitor()
-        .ok()
-        .flatten()
+        .app_handle()
+        .get_webview_window("main")
+        .and_then(|main_win| main_win.current_monitor().ok().flatten())
         .or_else(|| window.primary_monitor().ok().flatten())?;
     let scale = monitor.scale_factor();
     let size_px = monitor.size();
@@ -905,7 +945,9 @@ fn apply_overlay_settings_to_window(
     window
         .set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }))
         .map_err(|e| format!("Failed to set overlay size: {}", e))?;
+    info!("[overlay:apply_settings] resolving position for pos_x_pct={}, pos_y_pct={}", settings.pos_x, settings.pos_y);
     let (pos_x, pos_y) = resolve_overlay_position(&window, settings, width, height);
+    info!("[overlay:apply_settings] resolved to Logical(x={}, y={})", pos_x, pos_y);
     window
         .set_position(tauri::Position::Logical(tauri::LogicalPosition {
             x: pos_x,

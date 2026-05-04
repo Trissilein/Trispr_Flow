@@ -258,6 +258,50 @@ pub fn start_whisper_server(
     Ok(())
 }
 
+/// Inspect the tail of whisper-server's captured stderr log for known crash
+/// patterns. Returns a user-facing hint if a known fatal cause is recognised
+/// (e.g. CUDA arch mismatch). Called after a transport error so the operator
+/// sees an actionable message instead of a generic "connection closed".
+pub fn inspect_recent_server_crash(app: &AppHandle) -> Option<String> {
+    let log_path = crate::paths::resolve_base_dir(app)
+        .join("logs")
+        .join("whisper-server.stderr.log");
+    let content = std::fs::read_to_string(&log_path).ok()?;
+    let tail_start = content.len().saturating_sub(8 * 1024);
+    let tail = &content[tail_start..];
+
+    if tail.contains("no kernel image is available for execution on the device") {
+        let archs = tail
+            .lines()
+            .rev()
+            .find_map(|l| {
+                l.find("CUDA : ARCHS")
+                    .map(|idx| l[idx..].split('|').next().unwrap_or("").trim().to_string())
+            })
+            .unwrap_or_else(|| "CUDA : ARCHS = unknown".to_string());
+        return Some(format!(
+            "whisper-server CUDA build does not support this GPU ({}). Switch local_backend_preference to \"vulkan\" in Settings, or rebuild bin/cuda/whisper-server.exe with your GPU's compute capability included in CMAKE_CUDA_ARCHITECTURES.",
+            archs
+        ));
+    }
+
+    if tail.contains("out of memory") {
+        return Some(
+            "whisper-server ran out of GPU memory. Try a smaller model or switch local_backend_preference to \"vulkan\"/\"cpu\"."
+                .to_string(),
+        );
+    }
+
+    if tail.contains("CUDA error") {
+        return Some(
+            "whisper-server reported a CUDA error — see whisper-server.stderr.log for details. Switch to Vulkan if this persists."
+                .to_string(),
+        );
+    }
+
+    None
+}
+
 /// Transcribe WAV bytes via HTTP to the Whisper-Server.
 ///
 /// Builds multipart/form-data manually since ureq v2 has no multipart feature.

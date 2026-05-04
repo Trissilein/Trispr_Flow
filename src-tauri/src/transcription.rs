@@ -2232,7 +2232,20 @@ fn transcribe_local(
                 }
                 Err(e) => {
                     warn!("whisper-server failed ({}), falling back to CLI", e);
-                    info!("[diagnostics] transcribe_via_server ERROR -> update(mode=cli, backend=cpu, last_error=\"server unavailable, CLI active: {}\")", e);
+                    // Inspect the captured stderr log for known fatal patterns
+                    // (e.g. CUDA "no kernel image" — indicates the binary was
+                    // built without this GPU's compute capability). Surface that
+                    // as the diagnostic so the user sees an actionable message
+                    // instead of the generic transport error.
+                    let crash_hint = crate::whisper_server::inspect_recent_server_crash(app);
+                    let diagnostic_error = match crash_hint.as_deref() {
+                        Some(hint) => hint.to_string(),
+                        None => format!("server unavailable, CLI active: {}", e),
+                    };
+                    if let Some(hint) = crash_hint.as_deref() {
+                        warn!("whisper-server crash recognised: {}", hint);
+                    }
+                    info!("[diagnostics] transcribe_via_server ERROR -> update(mode=cli, backend=cpu, last_error=\"{}\")", diagnostic_error);
                     update_whisper_runtime_diagnostics(
                         app,
                         settings,
@@ -2240,7 +2253,7 @@ fn transcribe_local(
                         "cpu",
                         resolve_whisper_gpu_layers(settings),
                         None,
-                        Some(format!("server unavailable, CLI active: {}", e)),
+                        Some(diagnostic_error),
                     );
                     // Restart the server in the background so the next request
                     // can use the fast HTTP path again (server may have crashed).

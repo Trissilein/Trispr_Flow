@@ -25,14 +25,11 @@ The CUDA build was done locally on the desktop (RTX 50xx) with arch list default
 
 Rebuild on the desktop with a multi-arch list that covers both target GPUs:
 
-- `75` — Turing (T500, RTX 20xx)
-- `80` — Ampere (A100)
-- `86` — Ampere (RTX 30xx)
+- `75` — Turing (T500 notebook)
 - `89` — Ada Lovelace (RTX 40xx)
-- `90` — Hopper (H100)
 - `120` — Blackwell (RTX 50xx — the desktop)
 
-Also add PTX (`-real`/`-virtual` form): keeping `120-virtual` as the highest virtual arch lets newer GPUs JIT-compile if needed.
+Other architectures (Ampere RTX 30xx = sm_86, A100 = sm_80, Hopper H100 = sm_90) deliberately omitted to keep build time and binary size down. If we ever need to support one of those, add it here. The runtime now detects unsupported-arch crashes (CUDA "no kernel image available") and surfaces a clear error pointing at Vulkan as a workaround, so users hitting it see actionable guidance instead of a silent CLI fallback.
 
 ### Steps on the desktop
 
@@ -50,7 +47,7 @@ The script lives at `build-whisper-server.ps1` in the repo root. It currently ha
 -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89"
 ```
 
-The Multi-arch update commit will change it to `"75;80;86;89;90;120"` (covers Turing through Blackwell). Verify the change is in place before running.
+The Multi-arch update commit will change it to `"75;89;120"` (covers Turing through Blackwell). Verify the change is in place before running.
 
 ### What the script does (and what's missing)
 
@@ -68,7 +65,7 @@ Copy-Item "C:\temp\whisper.cpp-build\whisper.cpp\build-cuda\bin\Release\whisper-
 1. `cd c:\GIT\Trispr_Flow && npm run tauri dev`
 2. Settings → set `local_backend_preference` to `"cuda"` (it should still work — Blackwell is in the new arch list)
 3. Transcribe a few short clips
-4. Verify `%LOCALAPPDATA%\Trispr Flow\logs\whisper-server.stderr.log` shows `CUDA : ARCHS = 75;80;86;89;90;120` and no `no kernel image` errors
+4. Verify `%LOCALAPPDATA%\Trispr Flow\logs\whisper-server.stderr.log` shows `CUDA : ARCHS = 75;89;120` and no `no kernel image` errors
 
 ### Verification on the notebook
 
@@ -92,7 +89,7 @@ Copy-Item "C:\temp\whisper.cpp-build\whisper.cpp\build-cuda\bin\Release\whisper-
 
 ## When marking this done
 
-- [ ] Build script CUDA arch updated to `75;80;86;89;90;120`
+- [ ] Build script CUDA arch updated to `75;89;120`
 - [ ] Both `whisper-server.exe` and `whisper-cli.exe` rebuilt
 - [ ] Both copied into `src-tauri/bin/cuda/`
 - [ ] Verified on desktop (RTX 50xx) — still works

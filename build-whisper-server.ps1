@@ -48,11 +48,13 @@ cd build-cuda
 # Also set CUDA flags to allow unsupported compiler (VS 2026 with CUDA 13.0)
 Write-Host "Configuring CMake with CUDA..." -ForegroundColor Cyan
 $env:CUDAFLAGS = "-allow-unsupported-compiler"
-# Arch list covers Turing (75, T500) through Blackwell (120, RTX 50xx). Without 75
-# the binary crashes on Turing-class GPUs with "no kernel image available". Without
-# 120 it crashes on RTX 50xx. Keep all of them so one binary runs on both machines.
+# Arch list covers the GPUs we actually use: 75 = Turing (T500 notebook),
+# 89 = Ada Lovelace (RTX 40xx), 120 = Blackwell (RTX 50xx). Other archs left
+# out to keep build time / binary size small. If a user shows up with an
+# unsupported card (e.g. RTX 30xx = sm_86), the runtime detects the
+# "no kernel image" crash and surfaces a clear error suggesting Vulkan.
 & cmake .. -DGGML_CUDA=ON -DGGML_CUDA_F16=ON `
-    -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89;90;120" `
+    -DCMAKE_CUDA_ARCHITECTURES="75;89;120" `
     -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler" `
     -A x64
 

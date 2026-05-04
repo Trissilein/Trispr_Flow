@@ -167,6 +167,8 @@ let eventUnlisteners: Array<() => void> = [];
 let backlogWarningToastId: string | null = null;
 let overlayHealthToastId: string | null = null;
 let ollamaRuntimeLoadingToastId: string | null = null;
+const whisperFatalLastShown = new Map<string, number>();
+const WHISPER_FATAL_COOLDOWN_MS = 60_000;
 let pasteQueue: Promise<void> = Promise.resolve();
 let frontendHeartbeatTimer: number | null = null;
 let frontendHeartbeatFailureCount = 0;
@@ -911,6 +913,22 @@ async function bootstrap() {
     listen("module:state-changed", () => {
       reconcileMainTabVisibility();
       refreshModulesHub();
+    }),
+    listen<{ message: string }>("whisper:server-fatal", (event) => {
+      const message = event.payload?.message?.trim();
+      if (!message) return;
+      // Dedupe identical messages within a 60s window so a recurring server
+      // crash doesn't spam the user with the same toast on every transcription.
+      const now = Date.now();
+      const last = whisperFatalLastShown.get(message) || 0;
+      if (now - last < WHISPER_FATAL_COOLDOWN_MS) return;
+      whisperFatalLastShown.set(message, now);
+      showToast({
+        type: "error",
+        title: "Whisper-Server Fehler",
+        message,
+        duration: 12_000,
+      });
     }),
     listen<{
       provider?: string;

@@ -2244,6 +2244,14 @@ fn transcribe_local(
                     };
                     if let Some(hint) = crash_hint.as_deref() {
                         warn!("whisper-server crash recognised: {}", hint);
+                        // Emit to the frontend so the user sees an actionable
+                        // toast right away. Frontend deduplicates by message,
+                        // so we can fire on every recurrence without spamming.
+                        let _ = tauri::Emitter::emit(
+                            app,
+                            "whisper:server-fatal",
+                            serde_json::json!({ "message": hint }),
+                        );
                     }
                     info!("[diagnostics] transcribe_via_server ERROR -> update(mode=cli, backend=cpu, last_error=\"{}\")", diagnostic_error);
                     update_whisper_runtime_diagnostics(

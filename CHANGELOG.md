@@ -5,6 +5,14 @@ All notable changes to Trispr Flow will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-05-05
+
+### Fixed
+
+- **CUDA multi-arch fat-binary**: `setup-whisper.ps1` now builds `whisper-server` and `whisper-cli` against all three target architectures (`sm_75` / Turing, `sm_89` / Ada Lovelace, `sm_120` / Blackwell) instead of auto-detecting only the local GPU. Previously, a single-arch binary (sm_86) caused whisper-server to fail silently on Turing-class hardware (e.g., T500 notebook GPU), making Trispr Flow fall back to the CLI path on every session.
+- **whisper-server build target**: Added `whisper-server` as an explicit CMake target alongside `whisper-cli` in `setup-whisper.ps1`.
+- **Auto-copy to `bin/cuda/`**: Built binaries (`whisper-server.exe`, `whisper-cli.exe`, `whisper.dll`, `ggml*.dll`) are now automatically copied to `src-tauri/bin/cuda/` after a successful CUDA build.
+
 ## [0.8.0] - 2026-04-29
 
 Block A release-gate closure for the v0.8.x assistant phase. Soak runs (U2/U3) intentionally skipped per 2026-04-29 decision; gate accepts via `--strict-benchmark` without `--require-soak`.

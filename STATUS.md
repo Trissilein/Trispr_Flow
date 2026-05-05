@@ -1,13 +1,13 @@
 # Trispr Flow - Status
 
-Last updated: 2026-04-29
+Last updated: 2026-05-05
 
 ## Snapshot
 
-- Current release: `v0.8.0`
+- Current release: `v0.8.1`
 - Current planning phase: Block B (UX/UI consistency + R5 picker-unification) — see `ROADMAP.md`
 - Canonical next steps: `ROADMAP.md` (A → F active zone, Z1-Z4 deferred)
-- Current readiness: v0.8.0 cut, gate green via `--strict-benchmark` (soak runs intentionally skipped)
+- Current readiness: v0.8.1 cut — multi-arch CUDA fat-binary (sm_75/sm_89/sm_120)
 
 ## Current Blockers
 

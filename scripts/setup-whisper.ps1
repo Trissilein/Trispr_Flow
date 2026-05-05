@@ -205,7 +205,13 @@ if ($useCuda) {
   }
 
   if ([string]::IsNullOrWhiteSpace($CudaArch)) {
-    $CudaArch = Detect-CudaArch
+    $detected = Detect-CudaArch
+    # Multi-arch fat-binary for distribution: Turing (sm_75), Ada (sm_89), Blackwell (sm_120).
+    # Single-arch override only if caller explicitly passes -CudaArch.
+    $CudaArch = "75;89;120"
+    if (-not [string]::IsNullOrWhiteSpace($detected)) {
+      Write-Host "  (local GPU detected as sm_$detected — building fat-binary $CudaArch for distribution)"
+    }
   }
 }
 
@@ -240,15 +246,45 @@ try {
     cmake -B $buildDirName -S . -DGGML_CUDA=OFF -DWHISPER_CUDA=OFF -DWHISPER_BUILD_TESTS=OFF
   }
 
-  cmake --build $buildDirName --config Release --target whisper-cli
+  cmake --build $buildDirName --config Release --target whisper-cli --target whisper-server
 } finally {
   Pop-Location
 }
 
 $buildDir = Join-Path $WhisperRoot $buildDirName
-$cliPath = Join-Path $buildDir "bin\Release\whisper-cli.exe"
+$releaseDir = Join-Path $buildDir "bin\Release"
+$cliPath = Join-Path $releaseDir "whisper-cli.exe"
 if (!(Test-Path $cliPath)) {
   throw "whisper-cli.exe not found at $cliPath"
+}
+
+$serverPath = Join-Path $releaseDir "whisper-server.exe"
+if (!(Test-Path $serverPath)) {
+  Write-Warning "whisper-server.exe not found at $serverPath — server target may not have built"
+}
+
+if ($useCuda) {
+  Write-Section "Copying CUDA binaries -> src-tauri/bin/cuda"
+  $binCudaDir = Join-Path $RepoRoot "src-tauri\bin\cuda"
+  if (-not (Test-Path $binCudaDir)) { New-Item -ItemType Directory -Force $binCudaDir | Out-Null }
+  $copyTargets = @(
+    "whisper-cli.exe",
+    "whisper-server.exe",
+    "whisper.dll",
+    "ggml.dll",
+    "ggml-base.dll",
+    "ggml-cpu.dll",
+    "ggml-cuda.dll"
+  )
+  foreach ($file in $copyTargets) {
+    $src = Join-Path $releaseDir $file
+    if (Test-Path $src) {
+      Copy-Item $src $binCudaDir -Force
+      Write-Host "  OK: $file"
+    } else {
+      Write-Warning "  skip (not found): $file"
+    }
+  }
 }
 
 $envPath = Join-Path $RepoRoot ".env.local"
@@ -259,6 +295,6 @@ $envLines = @(
 
 $envLines | Set-Content -Path $envPath -Encoding UTF8
 
-Write-Host "OK: whisper-cli built"
+Write-Host "OK: whisper-cli + whisper-server built"
 Write-Host "OK: wrote $envPath"
 Write-Host "Next: cd `"$RepoRoot`"; npm run tauri dev"

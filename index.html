@@ -960,6 +960,33 @@
           </div>
           <div class="panel-body" id="model-panel-body">
           <div class="model-manager">
+            <div class="model-language-control" aria-label="Whisper input language">
+              <div>
+                <h3>Input Language</h3>
+                <p id="whisper-input-language-note">Multi uses Whisper auto-detect. Pin a language for lower latency on short clips.</p>
+              </div>
+              <label class="model-language-select-wrap">
+                <span class="sr-only">Whisper input language</span>
+                <select id="whisper-input-language-select" title="Language hint passed to Whisper ASR">
+                  <option value="auto">Multi (Auto)</option>
+                  <option value="de">Deutsch</option>
+                  <option value="en">English</option>
+                  <option value="fr">Français</option>
+                  <option value="es">Español</option>
+                  <option value="it">Italiano</option>
+                  <option value="pt">Português</option>
+                  <option value="nl">Nederlands</option>
+                  <option value="pl">Polski</option>
+                  <option value="ru">Русский</option>
+                  <option value="ja">日本語</option>
+                  <option value="ko">한국어</option>
+                  <option value="zh">中文</option>
+                  <option value="ar">العربية</option>
+                  <option value="tr">Türkçe</option>
+                  <option value="hi">हिन्दी</option>
+                </select>
+              </label>
+            </div>
             <div class="model-section">
               <div id="model-list" class="model-list"></div>
               <p class="model-hint">Active models use the teal border. Available models are dimmed.</p>

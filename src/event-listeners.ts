@@ -1782,6 +1782,30 @@ export function wireEvents() {
     renderSettings();
   });
 
+  const setWhisperInputLanguage = async (mode: Settings["language_mode"]) => {
+    if (!settings) return;
+    if (mode === "auto") {
+      settings.language_mode = "auto";
+      settings.language_pinned = false;
+    } else {
+      settings.language_mode = mode;
+      settings.language_pinned = true;
+    }
+    settings.postproc_language = derivePostprocLanguageFromAsr(
+      settings.language_mode,
+      settings.language_pinned
+    );
+    syncActivePromptPresetSelection();
+    refreshResolvedRefinementPromptInSettings();
+    await persistSettings();
+    renderSettings();
+  };
+
+  dom.whisperInputLanguageSelect?.addEventListener("change", () => {
+    const value = dom.whisperInputLanguageSelect!.value as Settings["language_mode"];
+    void setWhisperInputLanguage(value);
+  });
+
 
 
   dom.audioCuesToggle?.addEventListener("change", async () => {

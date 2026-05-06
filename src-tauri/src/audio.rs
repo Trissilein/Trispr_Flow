@@ -1198,6 +1198,14 @@ fn handle_transcription_ok(
             settings.activation_words_enabled,
         )
     {
+        let _ = app_handle.emit(
+            "transcription:dropped",
+            serde_json::json!({
+                "source": source,
+                "text": text,
+                "reason": "filtered",
+            }),
+        );
         return None;
     }
 

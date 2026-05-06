@@ -26,37 +26,56 @@ pub fn ping_whisper_server(port: u16) -> bool {
 }
 
 fn ping_whisper_server_with_attempts(port: u16, attempts: u32) -> bool {
-    info!("[ping] ping_whisper_server_with_attempts(port={}, attempts={})", port, attempts);
+    info!(
+        "[ping] ping_whisper_server_with_attempts(port={}, attempts={})",
+        port, attempts
+    );
     for attempt in 0..attempts.max(1) {
         let timeout = if attempt == 0 {
             Duration::from_millis(400)
         } else {
             Duration::from_millis(1500)
         };
-        info!("[ping] attempt {}/{}, timeout_ms={}", attempt + 1, attempts.max(1), timeout.as_millis());
+        info!(
+            "[ping] attempt {}/{}, timeout_ms={}",
+            attempt + 1,
+            attempts.max(1),
+            timeout.as_millis()
+        );
         let agent = ureq::builder()
             .timeout_connect(timeout)
             .timeout_read(timeout)
             .build();
         let start = std::time::Instant::now();
-        let result = agent
-            .get(&format!("http://127.0.0.1:{port}/"))
-            .call();
+        let result = agent.get(&format!("http://127.0.0.1:{port}/")).call();
         let elapsed = start.elapsed();
         match result {
             Ok(_) => {
-                info!("[ping] attempt {}/{} SUCCESS in {:.1}ms", attempt + 1, attempts.max(1), elapsed.as_secs_f64() * 1000.0);
+                info!(
+                    "[ping] attempt {}/{} SUCCESS in {:.1}ms",
+                    attempt + 1,
+                    attempts.max(1),
+                    elapsed.as_secs_f64() * 1000.0
+                );
                 return true;
             }
             Err(e) => {
-                info!("[ping] attempt {}/{} FAILED: {}", attempt + 1, attempts.max(1), e);
+                info!(
+                    "[ping] attempt {}/{} FAILED: {}",
+                    attempt + 1,
+                    attempts.max(1),
+                    e
+                );
             }
         }
         if attempt + 1 < attempts {
             std::thread::sleep(Duration::from_millis(120));
         }
     }
-    info!("[ping] ping_whisper_server_with_attempts(port={}) -> false", port);
+    info!(
+        "[ping] ping_whisper_server_with_attempts(port={}) -> false",
+        port
+    );
     false
 }
 
@@ -102,7 +121,10 @@ pub fn start_whisper_server(
     state: &AppState,
     model_path: &Path,
 ) -> Result<(), String> {
-    info!("[whisper_server:startup] start_whisper_server(model_path={})", model_path.display());
+    info!(
+        "[whisper_server:startup] start_whisper_server(model_path={})",
+        model_path.display()
+    );
     let port = state
         .whisper_server_port
         .load(std::sync::atomic::Ordering::Relaxed);
@@ -117,7 +139,10 @@ pub fn start_whisper_server(
         .lock()
         .map(|guard| guard.is_some())
         .unwrap_or(false);
-    info!("[whisper_server:startup] managed_whisper_server_child slot: is_some={}", managed_child_slot);
+    info!(
+        "[whisper_server:startup] managed_whisper_server_child slot: is_some={}",
+        managed_child_slot
+    );
 
     // Already running?
     if ping_whisper_server(port) {
@@ -154,7 +179,10 @@ pub fn start_whisper_server(
         .lock()
         .map(|guard| guard.is_some())
         .unwrap_or(false);
-    info!("[whisper_server:startup] had_managed_child={}", had_managed_child);
+    info!(
+        "[whisper_server:startup] had_managed_child={}",
+        had_managed_child
+    );
     if had_managed_child {
         info!("[whisper_server:startup] terminating previous managed child");
         terminate_managed_child_slot(
@@ -193,7 +221,10 @@ pub fn start_whisper_server(
                     .expect("re-open log file")
             });
             cmd.stdout(file).stderr(stderr);
-            info!("[whisper_server:startup] stdout/stderr -> {}", log_path.display());
+            info!(
+                "[whisper_server:startup] stdout/stderr -> {}",
+                log_path.display()
+            );
         }
         Err(e) => {
             warn!("[whisper_server:startup] could not open log file ({}), discarding stdout/stderr: {}", log_path.display(), e);
@@ -223,7 +254,10 @@ pub fn start_whisper_server(
         update_whisper_server_diagnostics(app, &settings, "cli", "cpu", Some(message.clone()));
         message
     })?;
-    info!("[whisper_server:startup] spawn SUCCESS (pid={}, job_assigned={})", spawn_result.pid, spawn_result.job_assigned);
+    info!(
+        "[whisper_server:startup] spawn SUCCESS (pid={}, job_assigned={})",
+        spawn_result.pid, spawn_result.job_assigned
+    );
     if !spawn_result.job_assigned {
         warn!(
             "whisper-server started without managed job assignment (pid {})",
@@ -277,9 +311,7 @@ pub fn inspect_recent_server_crash(app: &AppHandle) -> Option<String> {
     }
 
     if tail.contains("out of memory") {
-        return Some(
-            "GPU out of memory. Try a smaller model or switch to Vulkan/CPU.".to_string(),
-        );
+        return Some("GPU out of memory. Try a smaller model or switch to Vulkan/CPU.".to_string());
     }
 
     if tail.contains("CUDA error") {
@@ -319,6 +351,21 @@ pub fn transcribe_via_server(
     write_multipart_field_text(&mut body, boundary, "language", language)
         .map_err(|e| format!("Failed to encode multipart: {}", e))?;
 
+    // Dictation only needs final text, not token timestamps. Keep decoding
+    // deterministic and avoid fallback candidate loops for lower latency on
+    // short push-to-talk clips.
+    for (name, value) in [
+        ("no_timestamps", "true"),
+        ("temperature", "0.0"),
+        ("temperature_inc", "0.0"),
+        ("best_of", "1"),
+        ("suppress_nst", "true"),
+        ("no_language_probabilities", "true"),
+    ] {
+        write_multipart_field_text(&mut body, boundary, name, value)
+            .map_err(|e| format!("Failed to encode multipart: {}", e))?;
+    }
+
     // Close boundary
     write!(body, "--{}--\r\n", boundary)
         .map_err(|e| format!("Failed to close multipart: {}", e))?;
@@ -330,8 +377,13 @@ pub fn transcribe_via_server(
         .timeout_read(Duration::from_secs(120)) // Long audio can take time
         .build();
 
-    info!("[server-request] POST /inference port={} wav_bytes={} body_bytes={} language={}",
-        port, wav_bytes.len(), body.len(), language);
+    info!(
+        "[server-request] POST /inference port={} wav_bytes={} body_bytes={} language={}",
+        port,
+        wav_bytes.len(),
+        body.len(),
+        language
+    );
     let req_start = std::time::Instant::now();
     let response = agent
         .post(&format!("http://127.0.0.1:{port}/inference"))
@@ -349,13 +401,23 @@ pub fn transcribe_via_server(
                 }
             }
             ureq::Error::Transport(transport) => {
-                format!("whisper-server transport error (port {}): {}", port, transport)
+                format!(
+                    "whisper-server transport error (port {}): {}",
+                    port, transport
+                )
             }
         })
         .inspect_err(|e| {
-            warn!("[server-request] FAILED after {:.2}s: {}", req_start.elapsed().as_secs_f64(), e);
+            warn!(
+                "[server-request] FAILED after {:.2}s: {}",
+                req_start.elapsed().as_secs_f64(),
+                e
+            );
         })?;
-    info!("[server-request] response received in {:.2}s", req_start.elapsed().as_secs_f64());
+    info!(
+        "[server-request] response received in {:.2}s",
+        req_start.elapsed().as_secs_f64()
+    );
 
     let json: serde_json::Value = response
         .into_json()

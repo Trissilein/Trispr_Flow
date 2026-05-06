@@ -3,7 +3,7 @@
 
 param(
     [string]$BuildDir = "C:\temp\whisper.cpp-build",
-    [string]$TrispiFlow = "D:\GIT\Trispr_Flow"
+    [string]$TrispiFlow = $PSScriptRoot
 )
 
 Write-Host "Building whisper-server.exe..." -ForegroundColor Cyan
@@ -72,25 +72,35 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Copy both whisper-server.exe and whisper-cli.exe — both need the multi-arch
-# CUDA build to run on Turing (T500) and Blackwell (RTX 50xx) alike.
-$binaries = @("whisper-server.exe", "whisper-cli.exe")
-$missingBinaries = @()
-foreach ($exe in $binaries) {
-    $srcBinary = "bin\Release\$exe"
-    $dstBinary = "$TrispiFlow\src-tauri\bin\cuda\$exe"
-    if (Test-Path $srcBinary) {
-        Write-Host "Copying $exe..." -ForegroundColor Cyan
-        Copy-Item $srcBinary -Destination $dstBinary -Force
-        $fileSize = (Get-Item $dstBinary).Length / 1MB
-        Write-Host "  -> $dstBinary ($([Math]::Round($fileSize, 2)) MB)" -ForegroundColor Green
+# Copy the full CUDA runtime set. ggml-cuda.dll must match the freshly built
+# EXEs, otherwise older installs can fail with "no kernel image" on sm_75 GPUs.
+$cudaTargetDir = Join-Path $TrispiFlow "src-tauri\bin\cuda"
+New-Item -ItemType Directory -Force -Path $cudaTargetDir | Out-Null
+$runtimeFiles = @(
+    "whisper-server.exe",
+    "whisper-cli.exe",
+    "whisper.dll",
+    "ggml.dll",
+    "ggml-base.dll",
+    "ggml-cpu.dll",
+    "ggml-cuda.dll"
+)
+$missingFiles = @()
+foreach ($file in $runtimeFiles) {
+    $srcFile = "bin\Release\$file"
+    $dstFile = Join-Path $cudaTargetDir $file
+    if (Test-Path $srcFile) {
+        Write-Host "Copying $file..." -ForegroundColor Cyan
+        Copy-Item $srcFile -Destination $dstFile -Force
+        $fileSize = (Get-Item $dstFile).Length / 1MB
+        Write-Host "  -> $dstFile ($([Math]::Round($fileSize, 2)) MB)" -ForegroundColor Green
     } else {
-        Write-Host "ERROR: $exe not found at $srcBinary" -ForegroundColor Red
-        $missingBinaries += $exe
+        Write-Host "ERROR: $file not found at $srcFile" -ForegroundColor Red
+        $missingFiles += $file
     }
 }
-if ($missingBinaries.Count -gt 0) {
-    Write-Host "Build produced no output for: $($missingBinaries -join ', ')" -ForegroundColor Red
+if ($missingFiles.Count -gt 0) {
+    Write-Host "Build produced no output for: $($missingFiles -join ', ')" -ForegroundColor Red
     exit 1
 }
 

@@ -1114,6 +1114,25 @@ html.expert-mode details[data-expert-only="true"] > summary {
   font-size: 0.75rem;
 }
 
+.model-language-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--stroke);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-soft) 72%, transparent);
+}
+
+.model-language-select-wrap {
+  flex: 0 0 190px;
+}
+
+.model-language-select-wrap select {
+  width: 100%;
+}
+
 .model-source-grid {
   margin-top: 8px;
 }

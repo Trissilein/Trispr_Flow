@@ -322,6 +322,14 @@ function syncAsrLanguageHintUi(): void {
       ? "Pinned: ASR is locked to the selected language."
       : "Auto-detect is active. Enable pinning to lock a specific ASR language.";
   }
+  if (dom.whisperInputLanguageSelect) {
+    dom.whisperInputLanguageSelect.value = pinned ? settings.language_mode : "auto";
+  }
+  if (dom.whisperInputLanguageNote) {
+    dom.whisperInputLanguageNote.textContent = pinned
+      ? "Language is pinned. Short clips skip auto-detect for lower Whisper latency."
+      : "Multi uses Whisper auto-detect. Pin a language for lower latency on short clips.";
+  }
 }
 
 function normalizeRefiningIndicatorColor(value: string | undefined): string {

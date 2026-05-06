@@ -57,6 +57,8 @@ export const modeState = $("mode-state");
 export const deviceState = $("device-state");
 export const modelState = $("model-state");
 export const appVersion = $("app-version") as HTMLSpanElement | null;
+export const whisperInputLanguageSelect = $("whisper-input-language-select") as HTMLSelectElement | null;
+export const whisperInputLanguageNote = $("whisper-input-language-note") as HTMLParagraphElement | null;
 
 // Capture input controls
 export const captureEnabledToggle = $("capture-enabled-toggle") as HTMLInputElement | null;

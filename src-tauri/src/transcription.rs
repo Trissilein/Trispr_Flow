@@ -961,14 +961,23 @@ fn transcribe_worker(
                         timestamp_ms: crate::util::now_ms(),
                     },
                 );
-                if !text.trim().is_empty()
-                    && !should_drop_transcript(&text, level, duration_ms, true)
-                    && !should_drop_by_activation_words(
+                if text.trim().is_empty()
+                    || should_drop_transcript(&text, level, duration_ms, true)
+                    || should_drop_by_activation_words(
                         &text,
                         &settings.activation_words,
                         settings.activation_words_enabled,
                     )
                 {
+                    let _ = app.emit(
+                        "transcription:dropped",
+                        serde_json::json!({
+                            "source": "output",
+                            "text": text,
+                            "reason": "filtered",
+                        }),
+                    );
+                } else {
                     // Apply post-processing if enabled
                     let processed_text = if settings.postproc_enabled {
                         match process_transcript(&text, &settings, &app) {
@@ -2268,14 +2277,17 @@ fn transcribe_local(
                     {
                         let handle = app.clone();
                         let model_path_clone = model_path.clone();
-                        crate::util::spawn_guarded("restart_whisper_server_after_crash", move || {
-                            let state = handle.state::<crate::state::AppState>();
-                            let _ = crate::whisper_server::start_whisper_server(
-                                &handle,
-                                state.inner(),
-                                &model_path_clone,
-                            );
-                        });
+                        crate::util::spawn_guarded(
+                            "restart_whisper_server_after_crash",
+                            move || {
+                                let state = handle.state::<crate::state::AppState>();
+                                let _ = crate::whisper_server::start_whisper_server(
+                                    &handle,
+                                    state.inner(),
+                                    &model_path_clone,
+                                );
+                            },
+                        );
                     }
                     // Continue to CLI fallback below
                 }
@@ -2300,23 +2312,19 @@ fn transcribe_local(
                     resolve_whisper_gpu_layers(settings),
                     None,
                     Some(
-                        "whisper-server unreachable, restarting and using CLI fallback"
-                            .to_string(),
+                        "whisper-server unreachable, restarting and using CLI fallback".to_string(),
                     ),
                 );
                 let handle = app.clone();
                 let model_path_clone = model_path.clone();
-                crate::util::spawn_guarded(
-                    "restart_whisper_server_after_ping_fail",
-                    move || {
-                        let state = handle.state::<crate::state::AppState>();
-                        let _ = crate::whisper_server::start_whisper_server(
-                            &handle,
-                            state.inner(),
-                            &model_path_clone,
-                        );
-                    },
-                );
+                crate::util::spawn_guarded("restart_whisper_server_after_ping_fail", move || {
+                    let state = handle.state::<crate::state::AppState>();
+                    let _ = crate::whisper_server::start_whisper_server(
+                        &handle,
+                        state.inner(),
+                        &model_path_clone,
+                    );
+                });
             }
         }
     }

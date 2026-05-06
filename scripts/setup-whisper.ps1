@@ -210,7 +210,7 @@ if ($useCuda) {
     # Single-arch override only if caller explicitly passes -CudaArch.
     $CudaArch = "75;89;120"
     if (-not [string]::IsNullOrWhiteSpace($detected)) {
-      Write-Host "  (local GPU detected as sm_$detected — building fat-binary $CudaArch for distribution)"
+      Write-Host "  (local GPU detected as sm_$detected - building fat-binary $CudaArch for distribution)"
     }
   }
 }
@@ -246,7 +246,7 @@ try {
     cmake -B $buildDirName -S . -DGGML_CUDA=OFF -DWHISPER_CUDA=OFF -DWHISPER_BUILD_TESTS=OFF
   }
 
-  cmake --build $buildDirName --config Release --target whisper-cli --target whisper-server
+  cmake --build $buildDirName --config Release --target whisper-cli --target whisper-server --parallel
 } finally {
   Pop-Location
 }
@@ -260,7 +260,7 @@ if (!(Test-Path $cliPath)) {
 
 $serverPath = Join-Path $releaseDir "whisper-server.exe"
 if (!(Test-Path $serverPath)) {
-  Write-Warning "whisper-server.exe not found at $serverPath — server target may not have built"
+  Write-Warning "whisper-server.exe not found at $serverPath - server target may not have built"
 }
 
 if ($useCuda) {

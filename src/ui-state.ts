@@ -147,7 +147,7 @@ function renderFeedbackIndicators() {
   }
   updateTranscribeStatus(transcribe.labelState);
 
-  const refiningEnabled = Boolean(settings?.ai_fallback?.enabled);
+  const refiningEnabled = isRefinementEnabled();
   const refiningState: "disabled" | "idle" | "refining" = !refiningEnabled
     ? "disabled"
     : refiningRuntimeActive

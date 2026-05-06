@@ -8,6 +8,7 @@ type Stage = (typeof stages)[number];
 let activeStage: Stage | null = null;
 let bar: HTMLElement | null = null;
 let clearTimer: ReturnType<typeof setTimeout> | null = null;
+let stageWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
 
 function getBar(): HTMLElement | null {
   if (!bar) bar = document.getElementById("pipeline-status-bar");
@@ -28,6 +29,7 @@ function setStage(
   }
 
   if (clearTimer !== null) { clearTimeout(clearTimer); clearTimer = null; }
+  if (stageWatchdogTimer !== null) { clearTimeout(stageWatchdogTimer); stageWatchdogTimer = null; }
 
   if (stage === null) {
     b.hidden = true;
@@ -46,6 +48,15 @@ function setStage(
     else if (i === stageIdx) el.classList.add(state);
   });
   activeStage = stage;
+
+  if (state === "active") {
+    stageWatchdogTimer = setTimeout(() => {
+      stageWatchdogTimer = null;
+      if (activeStage === stage) {
+        setStage(null, "active", true);
+      }
+    }, stage === "postproc" ? 10_000 : 45_000);
+  }
 }
 
 function clearAfterDelay(ms: number): void {
@@ -83,6 +94,9 @@ export function initPipelineStatus(): void {
 
   // Transcription error → show error state then hide
   listen("transcription:error", () => { setStage("whisper", "error"); clearAfterDelay(3000); });
+
+  // Dropped/filtered transcript → no paste will follow, so clear the pipeline.
+  listen("transcription:dropped", () => { clearAfterDelay(400); });
 
   listen("assistant:intent-detected", () => {
     setStage("agent", "active", true);

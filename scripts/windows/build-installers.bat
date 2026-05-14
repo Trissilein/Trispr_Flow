@@ -113,14 +113,14 @@ if not "!ERRORLEVEL!"=="0" (
 REM --- FFmpeg + Piper only bundled in cuda-complete (offline installer) ---
 if /i "%VARIANT%"=="cuda-complete" (
     echo   [setup] Ensuring FFmpeg runtime for cuda-complete...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\setup-ffmpeg.ps1"
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "scripts\setup-ffmpeg.ps1"
     if not "!ERRORLEVEL!"=="0" (
         echo ERROR: FFmpeg setup failed for cuda-complete.
         del /q "%CFG%" >nul 2>&1
         exit /b 1
     )
     echo   [setup] Ensuring Piper runtime for cuda-complete...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\setup-piper.ps1"
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "scripts\setup-piper.ps1"
     if not "!ERRORLEVEL!"=="0" (
         echo ERROR: Piper setup failed for cuda-complete.
         del /q "%CFG%" >nul 2>&1

@@ -56,9 +56,9 @@ const CUDA_RUNTIME_REQUIRED_FILES: &[&str] = &[
     "ggml-base.dll",
     "ggml-cpu.dll",
     "ggml-cuda.dll",
-    "cublas64_13.dll",
-    "cublasLt64_13.dll",
-    "cudart64_13.dll",
+    "cublas64_12.dll",
+    "cublasLt64_12.dll",
+    "cudart64_12.dll",
 ];
 const VULKAN_RUNTIME_REQUIRED_FILES: &[&str] = &[
     "whisper-cli.exe",
@@ -414,7 +414,7 @@ mod tests {
         fs::create_dir_all(&cuda_dir).expect("create cuda test dir");
 
         for file in CUDA_RUNTIME_REQUIRED_FILES {
-            if *file == "cublasLt64_13.dll" {
+            if *file == "cublasLt64_12.dll" {
                 continue;
             }
             fs::write(cuda_dir.join(file), b"").expect("write placeholder runtime file");
@@ -424,8 +424,8 @@ mod tests {
         assert!(issue.is_some(), "expected missing CUDA runtime issue");
         let message = issue.unwrap_or_default();
         assert!(
-            message.contains("cublasLt64_13.dll"),
-            "expected missing cublasLt64_13.dll in preflight issue, got: {message}"
+            message.contains("cublasLt64_12.dll"),
+            "expected missing cublasLt64_12.dll in preflight issue, got: {message}"
         );
 
         let _ = fs::remove_dir_all(&base);

@@ -51,7 +51,7 @@ for (const [key, value] of Object.entries(resources)) {
   if (normalizedVariant === "vulkan" && key.startsWith("bin/cuda/")) {
     continue;
   }
-  if (normalizedVariant === "cuda-lite" && key === "bin/cuda/cublasLt64_13.dll") {
+  if (normalizedVariant === "cuda-lite" && key === "bin/cuda/cublasLt64_12.dll") {
     continue;
   }
   // FFmpeg and Piper are downloaded on-demand for non-offline variants

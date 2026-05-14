@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Trispr Flow",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "identifier": "com.trispr.flow",
   "build": {
     "beforeDevCommand": "npm run dev:tauri",
@@ -45,9 +45,9 @@
       "bin/cuda/ggml-base.dll": "bin/cuda/ggml-base.dll",
       "bin/cuda/ggml-cpu.dll": "bin/cuda/ggml-cpu.dll",
       "bin/cuda/ggml-cuda.dll": "bin/cuda/ggml-cuda.dll",
-      "bin/cuda/cublas64_13.dll": "bin/cuda/cublas64_13.dll",
-      "bin/cuda/cublasLt64_13.dll": "bin/cuda/cublasLt64_13.dll",
-      "bin/cuda/cudart64_13.dll": "bin/cuda/cudart64_13.dll",
+      "bin/cuda/cublas64_12.dll": "bin/cuda/cublas64_12.dll",
+      "bin/cuda/cublasLt64_12.dll": "bin/cuda/cublasLt64_12.dll",
+      "bin/cuda/cudart64_12.dll": "bin/cuda/cudart64_12.dll",
       "bin/cuda/whisper-server.exe": "bin/cuda/whisper-server.exe",
       "bin/vulkan/whisper-cli.exe": "bin/vulkan/whisper-cli.exe",
       "bin/vulkan/whisper.dll": "bin/vulkan/whisper.dll",

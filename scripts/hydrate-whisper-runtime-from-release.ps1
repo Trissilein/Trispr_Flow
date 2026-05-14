@@ -140,7 +140,7 @@ function Test-InstalledRuntimeReady([string]$BaseDir) {
 
   $required = @(
     (Join-Path $binRoot "cuda\whisper-cli.exe"),
-    (Join-Path $binRoot "cuda\cublasLt64_13.dll"),
+    (Join-Path $binRoot "cuda\cublasLt64_12.dll"),
     (Join-Path $binRoot "vulkan\whisper-cli.exe"),
     (Join-Path $binRoot "quantize.exe")
   )

@@ -15,13 +15,13 @@ const requiredCudaLite = [
   "ggml-base.dll",
   "ggml-cpu.dll",
   "ggml-cuda.dll",
-  "cublas64_13.dll",
-  "cudart64_13.dll",
+  "cublas64_12.dll",
+  "cudart64_12.dll",
 ];
 
 const requiredCudaComplete = [
   ...requiredCudaLite,
-  "cublasLt64_13.dll",
+  "cublasLt64_12.dll",
 ];
 
 const requiredVulkan = [

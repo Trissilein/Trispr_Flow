@@ -3,7 +3,7 @@ $VoicesDir = Join-Path $PiperDir 'voices'
 New-Item -ItemType Directory -Force -Path $PiperDir, $VoicesDir | Out-Null
 
 Write-Host '== Downloading Piper binary =='
-$ZipUrl = 'https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_windows_amd64.zip'
+$ZipUrl = 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip'
 $ZipPath = Join-Path $env:TEMP 'piper.zip'
 Write-Host 'Downloading...'
 Invoke-WebRequest -Uri $ZipUrl -OutFile $ZipPath -UseBasicParsing -ErrorAction Stop
@@ -14,6 +14,15 @@ Copy-Item (Join-Path $ExtractedPiper 'piper.exe') $PiperDir -Force
 Copy-Item (Join-Path $ExtractedPiper 'onnxruntime.dll') $PiperDir -Force
 Copy-Item (Join-Path $ExtractedPiper 'onnxruntime_providers_shared.dll') $PiperDir -Force
 Copy-Item -Path (Join-Path $ExtractedPiper 'espeak-ng-data') -Destination $PiperDir -Recurse -Force
+foreach ($optionalFile in @('espeak-ng.dll', 'piper_phonemize.dll', 'libtashkeel_model.ort')) {
+    $src = Join-Path $ExtractedPiper $optionalFile
+    if (Test-Path $src) {
+        Copy-Item $src $PiperDir -Force
+        Write-Host "OK: $optionalFile"
+    } else {
+        Write-Host "WARN: $optionalFile not found in zip (may not be needed)"
+    }
+}
 Write-Host 'OK: Piper binary extracted'
 
 Write-Host ''

@@ -283,7 +283,7 @@ function applyPromotions(pairs: Array<[string, string]>): void {
   settings.postproc_custom_vocab_enabled = true;
   settings.vocab_terms = terms;
 
-  void import("./event-listeners")
+  void import("./settings")
     .then(({ renderLearnedVocabChips }) => {
       renderLearnedVocabChips();
     })

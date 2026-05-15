@@ -1,7 +1,7 @@
 // UI utility functions for formatting and conversion
 
 import type { ModelInfo, DownloadProgress } from "./types";
-import { MODEL_DESCRIPTIONS } from "./state";
+import { MODEL_DESCRIPTIONS } from "./model-descriptions";
 
 export function getModelDescription(model: ModelInfo) {
   const entry = MODEL_DESCRIPTIONS[model.id];

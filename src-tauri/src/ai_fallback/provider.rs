@@ -2227,4 +2227,51 @@ mod tests {
         let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(true));
         assert_eq!(sanitized, refined);
     }
+
+    // --- SSRF guard: cloud metadata + link-local must be blocked, loopback + LAN must pass ---
+    #[test]
+    fn ssrf_target_blocks_aws_metadata_ip() {
+        assert!(is_ssrf_target("http://169.254.169.254:11434"));
+    }
+
+    #[test]
+    fn ssrf_target_blocks_gcp_metadata_hostname() {
+        assert!(is_ssrf_target("http://metadata.google.internal:11434"));
+    }
+
+    #[test]
+    fn ssrf_target_blocks_arbitrary_link_local_ipv4() {
+        assert!(is_ssrf_target("http://169.254.100.200:11434"));
+    }
+
+    #[test]
+    fn ssrf_target_blocks_ipv6_link_local() {
+        assert!(is_ssrf_target("http://[fe80::1]:11434"));
+    }
+
+    #[test]
+    fn ssrf_target_fails_closed_on_unparseable_endpoint() {
+        // Unparseable input must be treated as a target (fail-closed),
+        // not silently allowed through.
+        assert!(is_ssrf_target("not-a-url"));
+    }
+
+    #[test]
+    fn ssrf_target_allows_loopback() {
+        assert!(!is_ssrf_target("http://127.0.0.1:11434"));
+    }
+
+    #[test]
+    fn ssrf_target_allows_private_lan() {
+        // Private LAN ranges (RFC 1918) are not in the SSRF block list.
+        // Operators may legitimately run Ollama on a LAN host.
+        assert!(!is_ssrf_target("http://192.168.1.20:11434"));
+    }
+
+    #[test]
+    fn ssrf_target_blocks_ipv4_mapped_ipv6_link_local() {
+        // ::ffff:169.254.x.x is the IPv6 representation of an IPv4 link-local
+        // address. The function explicitly handles this via to_ipv4_mapped().
+        assert!(is_ssrf_target("http://[::ffff:169.254.169.254]:11434"));
+    }
 }

@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - "refactor/**"
+      - "feat/**"
+      - "fix/**"
+
+jobs:
+  # ── Blocking gate ──────────────────────────────────────────────────────────
+  # Required status check. Must pass before any PR can merge.
+  fast-gate:
+    name: Type-check + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: ./node_modules/.bin/tsc
+
+      - name: Unit tests
+        run: npm test
+
+  # ── Informational (non-blocking) ───────────────────────────────────────────
+  # Runs Rust build + cargo tests on Windows to catch backend regressions.
+  # Not a required check — promoted to required once CI runtime is measured.
+  smoke:
+    name: Rust smoke (windows-latest)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install NPM dependencies
+        run: npm ci
+
+      - name: Rust format check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Smoke test
+        run: npm run test:smoke

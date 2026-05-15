@@ -41,8 +41,9 @@ If multiple agents or sessions run in parallel:
 - Commit only the files owned by your current task.
 - Sync frequently with `git status -sb` before staging/committing.
 
-## Housekeeping (Required Before Push)
-Housekeeping is the mandatory end-of-session workflow before every push. The goal is to keep
+## Housekeeping (Product sessions only — not required for contributor PRs)
+Housekeeping is the mandatory end-of-session workflow before every push.
+Contributor PRs only require passing CI and a filled PR description — updating STATUS.md, CHANGELOG.md, and ROADMAP.md is the product owner's responsibility after merge. The goal is to keep
 repository state clean, track progress in docs, and isolate maintenance work in its own commit.
 
 1. Review current context:

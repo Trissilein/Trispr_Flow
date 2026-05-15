@@ -100,4 +100,11 @@ During work:
 
 At the end of a substantial session:
 - Call `mempalace_diary_write` with `agent_name="codex"` and record a compact AAAK-style summary of what changed, what mattered, and what should be resumed next.
+
+## PR workflow
+
+- PRs from contributors are opened as **drafts** while in progress.
+- Review is requested only when the PR is marked **Ready for review** and CI (`Type-check + unit tests`) is green.
+- Do not review or approve a PR that is still in draft state.
+- PR context is in the description, commit messages, and `project-spec/decisions/`. No mempalace access is required to review a PR.
 <!-- END PROJECT LOCAL BLOCK -->

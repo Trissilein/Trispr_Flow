@@ -114,30 +114,34 @@ The per-slice accessor approach is a one-way door with medium reversal cost. Acc
 
 ### OQ-1 — How is `persistSettings` decoupled to fix the circular dependency?
 
-Blocks: QW2, R2.
+**RESOLVED 2026-05-15**
 
-Options on the table:
-- (a) Extract `persistSettings` into `settings-core.ts`, which neither `event-listeners.ts` nor `vocabulary-ui.ts` depends on circularly.
-- (b) Pass `persistSettings` as a callback into `addVocabRow` instead of importing it.
+Decision: Move `renderVocabulary`, `renderLearnedVocabChips`, `addVocabRow`, and their five private helpers (`renderLearnedVocabChipsInternal`, `renderObservingCandidateChips`, `updateVocabCountBadge`, `buildLearnedChip`, `buildPendingSubstitutionChip`) from `event-listeners.ts` into `settings.ts`.
 
-No decision recorded. Requires explicit resolution before QW2 begins.
+Rationale: These are settings-panel render functions that were misplaced in `event-listeners.ts`. Moving them to `settings.ts` removes the only import `settings.ts` has from `event-listeners.ts`, breaking the cycle. No new files, no callback injection. `event-listeners.ts` imports them from `settings.ts` instead (already imports 14+ symbols from there). The ~150-line growth of `settings.ts` is acceptable; a full architecture pass via `/improve-codebase-architecture` will split files by domain later.
+
+The two options previously on the table (settings-core.ts extraction, callback injection) were more complex than necessary because they didn't identify that the vocabulary render functions had simply landed in the wrong file.
 
 ### OQ-2 — How are Tauri commands registered after R1 moves implementations?
 
-Blocks: R1.
+**RESOLVED 2026-05-15**
 
-Options on the table:
-- (a) Each domain module exports `pub fn commands() -> Vec<Box<dyn Command>>`, `lib.rs` merges.
-- (b) `lib.rs` stays the registration hub; domain modules expose `pub fn handle_x()` delegates.
-- (c) Tauri 2 plugin pattern per domain.
+Decision: Option (b) — `lib.rs` stays the registration hub using the `pub use` pattern.
 
-No decision recorded. Requires explicit resolution before R1 begins. Without it, each R1 PR will solve this independently, producing incoherent patterns.
+Concretely:
+- `#[tauri::command]` attribute moves **with** the implementation into the domain module
+- `lib.rs` re-exports the function name via `pub use domain::command_fn`
+- `generate_handler![command_fn, ...]` list stays in `lib.rs`
+
+This makes domain modules self-contained (command + implementation co-located) while keeping `lib.rs` as a pure registration manifest. The 108-name list is acceptable as a manifest — it contains names, not implementations.
+
+Rationale: Option (a) (`Vec<Box<dyn Command>>`) is incompatible with `generate_handler!`, which is a compile-time macro. Option (c) (Tauri plugin per domain) pays plugin ceremony now for a benefit only realised during the full architecture pass. Option (b) with `pub use` is the natural Tauri 2 community pattern, fully reversible, and leaves a clean foundation for per-domain plugin promotion later.
 
 ---
 
 ## Constraints (binding)
 
-- Ingo (repo owner) is actively shipping Block B (UX/UI). Refactoring must not produce merge conflicts with his work.
+- Active block (Block U, v0.8.x) remaining work is soak tests (U2/U3) and a release-gate doc (U4). No code changes to `event-listeners.ts`, `settings.ts`, or `lib.rs` are in progress. Merge conflict risk for Phase 1/2 refactoring is currently zero. (Updated 2026-05-15 — previous constraint named Block B, which is complete.)
 - No framework additions to the TypeScript frontend (no React, Vue, Svelte, or signals library).
 - Git operations in native Windows shell only (per CLAUDE.md).
 - No retroactive ADRs for items already in `docs/DECISIONS.md`. New decisions go here.

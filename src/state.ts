@@ -136,7 +136,7 @@ export function updateSettings(newSettings: Partial<Settings>) {
     if (newSettings.ai_fallback) {
       settings.ai_fallback = { ...settings.ai_fallback, ...newSettings.ai_fallback };
     }
-    
+
     // Merge the rest
     Object.assign(settings, { ...newSettings, setup: settings.setup, ai_fallback: settings.ai_fallback });
     normalizeAssistantSettings(settings);

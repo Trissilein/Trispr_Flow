@@ -2,7 +2,7 @@
 
 > Offline-first dictation and system-audio transcription with local AI refinement.
 
-[![Version](https://img.shields.io/badge/version-0.7.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.8.1-blue.svg)](CHANGELOG.md)
 [![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
 [![macOS](https://img.shields.io/badge/macOS-planned-lightgrey?style=flat&logo=apple)](ROADMAP.md)
 [![Notices](https://img.shields.io/badge/license-notices-blue.svg)](THIRD_PARTY_NOTICES.md)
@@ -20,9 +20,9 @@ It is designed for local-first transcription and editing workflows:
 
 ## Current Release
 
-- Current app line: `v0.7.2`
-- Packaging: unified Windows installer flow
-- Delivery focus: stabilization and reliability hardening for local runtime + UX
+- Current app line: `v0.8.1`
+- Packaging: unified Windows installer flow (vulkan-only / cuda-lite / cuda-complete)
+- Delivery focus: assistant hardening, UX/UI consistency (Block B)
 
 Release details:
 - [CHANGELOG.md](CHANGELOG.md)

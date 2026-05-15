@@ -137,6 +137,19 @@ This makes domain modules self-contained (command + implementation co-located) w
 
 Rationale: Option (a) (`Vec<Box<dyn Command>>`) is incompatible with `generate_handler!`, which is a compile-time macro. Option (c) (Tauri plugin per domain) pays plugin ceremony now for a benefit only realised during the full architecture pass. Option (b) with `pub use` is the natural Tauri 2 community pattern, fully reversible, and leaves a clean foundation for per-domain plugin promotion later.
 
+### OQ-3 — What is the wire-module contract for R2?
+
+**RESOLVED 2026-05-15**
+
+The contract is fixed for all five R2 slices (`history`, `overlay`, `voice-output`, `transcription`, `ai-refinement`) so the pattern, once set on slice 1, is mechanically applied to slices 2–5.
+
+1. **Signature.** Each module exports a single `export function wire<Domain>(): void`. No return value, no cleanup. Listeners persist for app lifetime. (DOM listeners, not Tauri events; `CLAUDE.md`'s `unlisten` rule applies to `tauri::event::listen`, not `addEventListener`.)
+2. **Imports.** Each `*.wire.ts` is a file-level peer of `event-listeners.ts`. It imports `dom` from `./dom-refs` and helper functions from their existing modules (`./history`, `./history-preferences`, `./archive-browser`, etc.) directly. No injection, no helper bag.
+3. **Local closures.** Inline closures defined in the current `wireEvents()` body (e.g. `commitAlias` in the history cluster) are lifted to module-scope `function` declarations inside the wire module. Not exported. Kept private to the slice.
+4. **Smoke tests.** Each slice ships ~25 integration-style tests at `src/__tests__/<domain>-wire.test.ts`. Tests build the DOM via `vi.hoisted` fixtures, call `wire<Domain>()`, dispatch a DOM event, and assert observable state (e.g. `currentHistoryTab === "mic"` after a click) without mocking the helper modules. Mocks limited to Tauri `invoke` and similar boundary surfaces.
+5. **`wireEvents()` shrinks to an orchestrator.** After all five slices are extracted, `wireEvents()` consists of the residual non-domain code (e.g. setup defaults at top, main-tab switching, product-mode toggle, capture/transcribe toggles) plus five `wireHistory(); wireOverlay(); …` calls. Order of the calls matches the order of the deleted clusters in the original file.
+6. **One commit per slice.** Each commit lands one wire module, its smoke-test file, and the matching deletion in `event-listeners.ts`. Reviewer subagent gate before each commit.
+
 ---
 
 ## Constraints (binding)

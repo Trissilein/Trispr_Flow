@@ -25,8 +25,6 @@ import {
 import * as dom from "./dom-refs";
 import {
   persistSettings,
-  updateOverlayStyleVisibility,
-  applyOverlaySharedUi,
   updateTranscribeVadVisibility,
   updateTranscribeThreshold,
   renderAIFallbackSettingsUi,
@@ -86,6 +84,8 @@ import {
 import { normalizeModelTag } from "./ollama-tag-utils";
 import { syncWorkflowAgentConsoleState } from "./workflow-agent-console";
 import { wireHistory } from "./wiring/history.wire";
+import { wireOverlay } from "./wiring/overlay.wire";
+import { onChangePersist } from "./wiring/wire-helpers";
 
 // Cleanup registry for window-level listeners added by wireEvents()
 const _windowCleanups: Array<() => void> = [];
@@ -1084,16 +1084,6 @@ export function initMainTab() {
     console.error("Failed to load active tab", error);
     switchMainTab("transcription");
   }
-}
-
-// Registers a "change" event listener that only saves settings.
-// Use for sliders / toggles whose value was already written to the settings
-// object by the companion "input" listener; this just persists the final value.
-function onChangePersist(el: Element | null | undefined): void {
-  el?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
 }
 
 export function wireEvents() {
@@ -2434,7 +2424,7 @@ export function wireEvents() {
       setPresetOverride(ai.prompt_preset_overrides, builtInId, prompt);
       const label =
         BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS.find((p) => p.id === builtInId)?.label
-          ?? builtInId;
+        ?? builtInId;
       showToast({
         type: "success",
         title: "Override saved",
@@ -2475,7 +2465,7 @@ export function wireEvents() {
     const builtInId = normalizeRefinementPromptPreset(activeId) as BuiltInRefinementPromptPreset;
     const label =
       BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS.find((p) => p.id === builtInId)?.label
-        ?? builtInId;
+      ?? builtInId;
     const hasOverride =
       typeof ai.prompt_preset_overrides[builtInId] === "string"
       && ai.prompt_preset_overrides[builtInId]!.trim().length > 0;
@@ -2702,188 +2692,7 @@ export function wireEvents() {
 
   onChangePersist(dom.vadSilence);
 
-  dom.overlayColor?.addEventListener("input", () => {
-    if (!settings || !dom.overlayColor) return;
-    if ((settings.overlay_style || "dot") === "kitt") {
-      settings.overlay_kitt_color = dom.overlayColor.value;
-    } else {
-      settings.overlay_color = dom.overlayColor.value;
-    }
-  });
-
-  onChangePersist(dom.overlayColor);
-
-  dom.overlayMinRadius?.addEventListener("input", () => {
-    if (!settings || !dom.overlayMinRadius || !dom.overlayMaxRadius) return;
-    settings.overlay_min_radius = Number(dom.overlayMinRadius.value);
-    if (settings.overlay_min_radius > settings.overlay_max_radius) {
-      settings.overlay_max_radius = settings.overlay_min_radius;
-      dom.overlayMaxRadius.value = Math.round(settings.overlay_max_radius).toString();
-    }
-    if (dom.overlayMinRadiusValue) {
-      dom.overlayMinRadiusValue.textContent = `${Math.round(settings.overlay_min_radius)}`;
-    }
-    if (dom.overlayMaxRadiusValue) {
-      dom.overlayMaxRadiusValue.textContent = `${Math.round(settings.overlay_max_radius)}`;
-    }
-    updateRangeAria("overlay-min-radius", settings.overlay_min_radius);
-  });
-
-  onChangePersist(dom.overlayMinRadius);
-
-  dom.overlayMaxRadius?.addEventListener("input", () => {
-    if (!settings || !dom.overlayMaxRadius || !dom.overlayMinRadius) return;
-    settings.overlay_max_radius = Number(dom.overlayMaxRadius.value);
-    if (settings.overlay_max_radius < settings.overlay_min_radius) {
-      settings.overlay_min_radius = settings.overlay_max_radius;
-      dom.overlayMinRadius.value = Math.round(settings.overlay_min_radius).toString();
-    }
-    if (dom.overlayMinRadiusValue) {
-      dom.overlayMinRadiusValue.textContent = `${Math.round(settings.overlay_min_radius)}`;
-    }
-    if (dom.overlayMaxRadiusValue) {
-      dom.overlayMaxRadiusValue.textContent = `${Math.round(settings.overlay_max_radius)}`;
-    }
-    updateRangeAria("overlay-max-radius", settings.overlay_max_radius);
-  });
-
-  onChangePersist(dom.overlayMaxRadius);
-
-  dom.overlayRise?.addEventListener("input", () => {
-    if (!settings || !dom.overlayRise) return;
-    const value = Number(dom.overlayRise.value);
-    if ((settings.overlay_style || "dot") === "kitt") {
-      settings.overlay_kitt_rise_ms = value;
-    } else {
-      settings.overlay_rise_ms = value;
-    }
-    if (dom.overlayRiseValue) dom.overlayRiseValue.textContent = `${value}`;
-    updateRangeAria("overlay-rise", value);
-  });
-
-  onChangePersist(dom.overlayRise);
-
-  dom.overlayFall?.addEventListener("input", () => {
-    if (!settings || !dom.overlayFall) return;
-    const value = Number(dom.overlayFall.value);
-    if ((settings.overlay_style || "dot") === "kitt") {
-      settings.overlay_kitt_fall_ms = value;
-    } else {
-      settings.overlay_fall_ms = value;
-    }
-    if (dom.overlayFallValue) dom.overlayFallValue.textContent = `${value}`;
-    updateRangeAria("overlay-fall", value);
-  });
-
-  onChangePersist(dom.overlayFall);
-
-  dom.overlayOpacityInactive?.addEventListener("input", () => {
-    if (!settings || !dom.overlayOpacityInactive || !dom.overlayOpacityActive) return;
-    const value = Math.min(1, Math.max(0.05, Number(dom.overlayOpacityInactive.value) / 100));
-    if ((settings.overlay_style || "dot") === "kitt") {
-      settings.overlay_kitt_opacity_inactive = value;
-      if (settings.overlay_kitt_opacity_active < settings.overlay_kitt_opacity_inactive) {
-        settings.overlay_kitt_opacity_active = settings.overlay_kitt_opacity_inactive;
-        dom.overlayOpacityActive.value = Math.round(settings.overlay_kitt_opacity_active * 100).toString();
-      }
-      if (dom.overlayOpacityInactiveValue) {
-        dom.overlayOpacityInactiveValue.textContent = `${Math.round(settings.overlay_kitt_opacity_inactive * 100)}%`;
-      }
-      if (dom.overlayOpacityActiveValue) {
-        dom.overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_kitt_opacity_active * 100)}%`;
-      }
-    } else {
-      settings.overlay_opacity_inactive = value;
-      if (settings.overlay_opacity_active < settings.overlay_opacity_inactive) {
-        settings.overlay_opacity_active = settings.overlay_opacity_inactive;
-        dom.overlayOpacityActive.value = Math.round(settings.overlay_opacity_active * 100).toString();
-      }
-      if (dom.overlayOpacityInactiveValue) {
-        dom.overlayOpacityInactiveValue.textContent = `${Math.round(settings.overlay_opacity_inactive * 100)}%`;
-      }
-      if (dom.overlayOpacityActiveValue) {
-        dom.overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_opacity_active * 100)}%`;
-      }
-    }
-    updateRangeAria("overlay-opacity-inactive", Number(dom.overlayOpacityInactive.value));
-  });
-
-  onChangePersist(dom.overlayOpacityInactive);
-
-  dom.overlayOpacityActive?.addEventListener("input", () => {
-    if (!settings || !dom.overlayOpacityActive || !dom.overlayOpacityInactive) return;
-    if ((settings.overlay_style || "dot") === "kitt") {
-      const value = Math.min(
-        1,
-        Math.max(settings.overlay_kitt_opacity_inactive, Number(dom.overlayOpacityActive.value) / 100)
-      );
-      settings.overlay_kitt_opacity_active = value;
-      if (dom.overlayOpacityActiveValue) {
-        dom.overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_kitt_opacity_active * 100)}%`;
-      }
-    } else {
-      const value = Math.min(
-        1,
-        Math.max(settings.overlay_opacity_inactive, Number(dom.overlayOpacityActive.value) / 100)
-      );
-      settings.overlay_opacity_active = value;
-      if (dom.overlayOpacityActiveValue) {
-        dom.overlayOpacityActiveValue.textContent = `${Math.round(settings.overlay_opacity_active * 100)}%`;
-      }
-    }
-    updateRangeAria("overlay-opacity-active", Number(dom.overlayOpacityActive.value));
-  });
-
-  onChangePersist(dom.overlayOpacityActive);
-
-  dom.overlayPosX?.addEventListener("change", async () => {
-    if (!settings || !dom.overlayPosX) return;
-    if ((settings.overlay_style || "dot") === "kitt") {
-      settings.overlay_kitt_pos_x = Number(dom.overlayPosX.value);
-    } else {
-      settings.overlay_pos_x = Number(dom.overlayPosX.value);
-    }
-    await persistSettings();
-  });
-
-  dom.overlayPosY?.addEventListener("change", async () => {
-    if (!settings || !dom.overlayPosY) return;
-    if ((settings.overlay_style || "dot") === "kitt") {
-      settings.overlay_kitt_pos_y = Number(dom.overlayPosY.value);
-    } else {
-      settings.overlay_pos_y = Number(dom.overlayPosY.value);
-    }
-    await persistSettings();
-  });
-
-  dom.overlayStyle?.addEventListener("change", async () => {
-    if (!settings || !dom.overlayStyle) return;
-    settings.overlay_style = dom.overlayStyle.value;
-    updateOverlayStyleVisibility(dom.overlayStyle.value);
-    applyOverlaySharedUi(dom.overlayStyle.value);
-    await persistSettings();
-  });
-
-  dom.overlayRefiningIndicatorEnabled?.addEventListener("change", async () => {
-    if (!settings || !dom.overlayRefiningIndicatorEnabled) return;
-    settings.overlay_refining_indicator_enabled = dom.overlayRefiningIndicatorEnabled.checked;
-    await persistSettings();
-  });
-
-  dom.overlayRefiningIndicatorPreset?.addEventListener("change", async () => {
-    if (!settings || !dom.overlayRefiningIndicatorPreset) return;
-    const value = dom.overlayRefiningIndicatorPreset.value;
-    settings.overlay_refining_indicator_preset =
-      value === "subtle" || value === "intense" ? value : "standard";
-    await persistSettings();
-  });
-
-  dom.overlayRefiningIndicatorColor?.addEventListener("input", () => {
-    if (!settings || !dom.overlayRefiningIndicatorColor) return;
-    settings.overlay_refining_indicator_color = dom.overlayRefiningIndicatorColor.value;
-  });
-
-  onChangePersist(dom.overlayRefiningIndicatorColor);
+  wireOverlay();
 
   // Accent color picker — live preview while dragging
   dom.accentColor?.addEventListener("input", () => {
@@ -2905,98 +2714,6 @@ export function wireEvents() {
     if (dom.accentColor) dom.accentColor.value = DEFAULT_ACCENT_COLOR;
     applyAccentColor(DEFAULT_ACCENT_COLOR);
     await persistSettings();
-  });
-
-  dom.overlayRefiningIndicatorSpeed?.addEventListener("input", () => {
-    if (!settings || !dom.overlayRefiningIndicatorSpeed) return;
-    const value = Math.max(450, Math.min(3000, Number(dom.overlayRefiningIndicatorSpeed.value)));
-    settings.overlay_refining_indicator_speed_ms = value;
-    if (dom.overlayRefiningIndicatorSpeedValue) {
-      dom.overlayRefiningIndicatorSpeedValue.textContent = `${value} ms`;
-    }
-    updateRangeAria("overlay-refining-indicator-speed", value);
-  });
-
-  dom.overlayRefiningIndicatorSpeed?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
-
-  dom.overlayRefiningIndicatorRange?.addEventListener("input", () => {
-    if (!settings || !dom.overlayRefiningIndicatorRange) return;
-    const value = Math.max(60, Math.min(180, Number(dom.overlayRefiningIndicatorRange.value)));
-    settings.overlay_refining_indicator_range = value;
-    if (dom.overlayRefiningIndicatorRangeValue) {
-      dom.overlayRefiningIndicatorRangeValue.textContent = `${value}%`;
-    }
-    updateRangeAria("overlay-refining-indicator-range", value);
-  });
-
-  dom.overlayRefiningIndicatorRange?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
-
-  dom.overlayTtsStopEnabled?.addEventListener("change", async () => {
-    if (!settings) return;
-    settings.overlay_tts_stop_enabled = Boolean(dom.overlayTtsStopEnabled?.checked);
-    await persistSettings();
-  });
-
-  dom.overlayTtsStopShape?.addEventListener("change", async () => {
-    if (!settings || !dom.overlayTtsStopShape) return;
-    settings.overlay_tts_stop_shape = dom.overlayTtsStopShape.value === "round" ? "round" : "compact";
-    await persistSettings();
-  });
-
-  dom.overlayTtsStopColor?.addEventListener("input", () => {
-    if (!settings || !dom.overlayTtsStopColor) return;
-    settings.overlay_tts_stop_color = dom.overlayTtsStopColor.value;
-  });
-
-  onChangePersist(dom.overlayTtsStopColor);
-
-  dom.overlayKittMinWidth?.addEventListener("input", () => {
-    if (!settings || !dom.overlayKittMinWidth) return;
-    settings.overlay_kitt_min_width = Number(dom.overlayKittMinWidth.value);
-    if (dom.overlayKittMinWidthValue) dom.overlayKittMinWidthValue.textContent = `${Math.round(settings.overlay_kitt_min_width)}`;
-    updateRangeAria("overlay-kitt-min-width", settings.overlay_kitt_min_width);
-  });
-
-  dom.overlayKittMinWidth?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
-
-  dom.overlayKittMaxWidth?.addEventListener("input", () => {
-    if (!settings || !dom.overlayKittMaxWidth) return;
-    settings.overlay_kitt_max_width = Number(dom.overlayKittMaxWidth.value);
-    if (dom.overlayKittMaxWidthValue) dom.overlayKittMaxWidthValue.textContent = `${Math.round(settings.overlay_kitt_max_width)}`;
-    updateRangeAria("overlay-kitt-max-width", settings.overlay_kitt_max_width);
-  });
-
-  dom.overlayKittMaxWidth?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
-
-  dom.overlayKittHeight?.addEventListener("input", () => {
-    if (!settings || !dom.overlayKittHeight) return;
-    settings.overlay_kitt_height = Number(dom.overlayKittHeight.value);
-    if (dom.overlayKittHeightValue) dom.overlayKittHeightValue.textContent = `${Math.round(settings.overlay_kitt_height)}`;
-    updateRangeAria("overlay-kitt-height", settings.overlay_kitt_height);
-  });
-
-  dom.overlayKittHeight?.addEventListener("change", async () => {
-    if (!settings) return;
-    await persistSettings();
-  });
-
-  // Apply Overlay Settings button
-  dom.applyOverlayBtn?.addEventListener("click", async () => {
-    if (!settings) return;
-    await persistSettings();
-    showToast({ title: "Applied", message: "Overlay settings applied", type: "success" });
   });
 
   // Topic keywords reset

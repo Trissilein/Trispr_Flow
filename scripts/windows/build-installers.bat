@@ -6,8 +6,8 @@ REM Trispr Flow - Multi-Variant Installer Builder
 REM ========================================
 REM Variants:
 REM   - vulkan       (no CUDA runtime payload)
-REM   - cuda-lite    (CUDA without cublasLt64_12.dll, Vulkan included)
-REM   - cuda-complete(CUDA + cublasLt64_12.dll, Vulkan included)
+REM   - cuda-lite    (CUDA without cublasLt64_13.dll, Vulkan included)
+REM   - cuda-complete(CUDA + cublasLt64_13.dll, Vulkan included)
 
 for %%I in ("%~dp0..\..") do set "ROOT=%%~fI"
 pushd "%ROOT%" >nul 2>&1

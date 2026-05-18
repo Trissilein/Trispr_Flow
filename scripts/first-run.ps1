@@ -49,9 +49,9 @@ function Test-Dir([string]$Path) {
 function Get-RuntimeStatus {
   $cudaCli = Join-Path $BinRoot "cuda\whisper-cli.exe"
   $cudaServer = Join-Path $BinRoot "cuda\whisper-server.exe"
-  $cudaCublas = Join-Path $BinRoot "cuda\cublas64_12.dll"
-  $cudaCublasLt = Join-Path $BinRoot "cuda\cublasLt64_12.dll"
-  $cudaCudart = Join-Path $BinRoot "cuda\cudart64_12.dll"
+  $cudaCublas = Join-Path $BinRoot "cuda\cublas64_13.dll"
+  $cudaCublasLt = Join-Path $BinRoot "cuda\cublasLt64_13.dll"
+  $cudaCudart = Join-Path $BinRoot "cuda\cudart64_13.dll"
   $vulkanCli = Join-Path $BinRoot "vulkan\whisper-cli.exe"
   $vulkanServer = Join-Path $BinRoot "vulkan\whisper-server.exe"
   $quantize = Join-Path $BinRoot "quantize.exe"
@@ -229,7 +229,7 @@ $status = Get-RuntimeStatus
 Write-Section "Runtime Status"
 Write-Info ("Transcription runtime ready: {0}" -f $status.transcription_ready)
 Write-Info ("Recommended CUDA+Vulkan runtime complete: {0}" -f $status.recommended_runtime_complete)
-Write-Info ("CUDA runtime complete (including cublasLt64_12.dll): {0}" -f $status.cuda_runtime_complete)
+Write-Info ("CUDA runtime complete (including cublasLt64_13.dll): {0}" -f $status.cuda_runtime_complete)
 Write-Info ("Quantize binary ready: {0}" -f $status.quantize)
 Write-Info ("FFmpeg ready (local or PATH): {0}" -f $status.ffmpeg_ready)
 if ($status.env_cli_ready) {

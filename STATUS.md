@@ -1,28 +1,33 @@
 # Trispr Flow - Status
 
-Last updated: 2026-05-05
+Last updated: 2026-05-18
 
 ## Snapshot
 
-- Current release: `v0.8.1`
+- Current release: `v0.8.1` — developing toward `v0.8.2`
 - Current planning phase: Block B (UX/UI consistency + R5 picker-unification) — see `ROADMAP.md`
 - Canonical next steps: `ROADMAP.md` (A → F active zone, Z1-Z4 deferred)
-- Current readiness: v0.8.1 cut — multi-arch CUDA fat-binary (sm_75/sm_89/sm_120)
+- Current readiness: v0.8.2-dev — CUDA 13 DLL migration + vocab cleanup job in progress
 
 ## Current Blockers
 
-1. No hard compile/test blockers as of 2026-04-07 (`cargo test --lib`, `npm test`, `npm run build` all green).
-2. Block U release gate: soak evidence (8h + 24h runs) still pending before `v0.8.x` cut.
-3. Vocabulary learning (Block J / Tasks 44a–44b) now complete; Task 44c (regression tests) planned.
+1. No hard compile/test blockers (`npm run build` green; `cargo check` green).
+2. `cargo test --lib` still failing with STATUS_ENTRYPOINT_NOT_FOUND on this host — pre-existing, documented in `docs/KNOWN_ISSUES.md` #001.
+3. Block U soak evidence still pending.
 
 ## Next Focus (Execution Order)
 
-1. Complete Block U U2/U3 soak runs and close release gate.
-2. Task 44c: vocabulary learning regression tests (validate learning + threshold + auto-add flows).
-3. Screen Recording Module (future): vocabulary ground-truth via active-window capture + OCR diff.
-4. Keep baseline gates green while iterating (`cargo test --lib`, `npm test`, `npm run build`).
+1. Cut `v0.8.2` release once CUDA 13 migration validated.
+2. Screen Recording Module (future): vocabulary ground-truth via active-window capture + OCR diff.
+3. Keep baseline gates green (`npm test`, `npm run build`).
 
 ## Working State
+
+- **Recent (2026-05-18)**:
+  - **CUDA 13 DLL migration**: `cublas64_12/cublasLt64_12/cudart64_12` → `*_13` across `transcription.rs`, `tauri.conf.json`, and all build/installer scripts. Matches CUDA Toolkit 13 library naming.
+  - **Overlay → active virtual desktop**: `assistant_presence.rs` now calls `IVirtualDesktopManager::MoveWindowToDesktop` on every show. Window follows the user to whichever Windows virtual desktop is active. `Win32_UI_Shell` feature added to `windows` crate.
+  - **Vite dynamic-import warnings fixed**: `settings.ts` ↔ `vocab-auto-learn.ts` mutual dynamic imports converted to static imports. Both files are always in the same chunk; dynamic imports provided no benefit and triggered Vite warnings.
+  - **Vocab LLM cleanup job** (`vocab-cleanup.ts`): Background job runs at most every 4 days at app start. Two-phase: deterministic pre-filter (URL contamination, sentence-boundary artifacts, contradictory pairs) → LLM classification via OLLAMA `/api/chat`. Uses currently loaded model (`/api/ps`), falls back to `postproc_llm_model`. Default on any error: keep. Timestamp `last_vocab_cleanup_ms` only written on success.
 
 - **Recent (2026-04-08)**:
   - **v0.7.3 Release**: UI audit and redesigns complete.

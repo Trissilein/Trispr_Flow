@@ -5,6 +5,22 @@ All notable changes to Trispr Flow will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Vocab LLM cleanup job** (`src/vocab-cleanup.ts`): Automatic background job (every 4 days at app start) that scrubs junk from the `edit_substitutions` pending list using OLLAMA. Two-phase: deterministic pre-filter (URL contamination, sentence-boundary artifacts, contradictory A↔B pairs) followed by LLM classification via `/api/chat`. Uses the currently loaded model (`/api/ps`), falling back to `postproc_llm_model`. Safe default: any error or ambiguity → keep. Timestamp `last_vocab_cleanup_ms` only written on success.
+- **`Settings.last_vocab_cleanup_ms`**: New optional field tracking the Unix-ms timestamp of the last successful vocab cleanup run.
+
+### Changed
+
+- **Overlay → active virtual desktop**: `assistant_presence.rs` calls `IVirtualDesktopManager::MoveWindowToDesktop` on every `show_assistant_presence_window`. The KITT/HAL overlay now appears on whichever Windows virtual desktop is active. `Win32_UI_Shell` feature added to the `windows` crate.
+- **CUDA 13 DLL migration**: Runtime filenames updated from `cublas64_12/cublasLt64_12/cudart64_12` to `cublas64_13/cublasLt64_13/cudart64_13` across `transcription.rs`, `tauri.conf.json`, and all build/installer scripts (`first-run.ps1`, `generate-tauri-variant-config.mjs`, `hydrate-whisper-runtime-from-release.ps1`, `validate-whisper-runtime.mjs`, `windows/build-installers.bat`).
+
+### Fixed
+
+- **Vite dynamic-import chunk warnings**: `vocab-auto-learn.ts` was dynamically importing `settings.ts` (which it already statically imported), and `settings.ts` was dynamically importing `vocab-auto-learn.ts`. Both modules are always in the same chunk via `main.ts`; the dynamic imports achieved no code-splitting and triggered Vite `(!) dynamic import will not move module into another chunk` warnings. Converted to static imports on both sides.
+
 ## [0.8.1] - 2026-05-05
 
 ### Fixed

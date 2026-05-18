@@ -157,8 +157,8 @@ The contract is fixed for all R2 slices so the pattern, once set on slice 1, is 
    | ----- | ------------------------------ | ----------------------------------------------------------------------------------- | --------------------- |
    | 1     | `src/wiring/history.wire.ts`   | Partitioned History                                                                 | shipped (`5b91f6f`)   |
    | 2     | `src/wiring/overlay.wire.ts`   | Overlay (settings panel for the always-on-top WebView)                              | shipped (`b1c61c1`)   |
-   | 3     | `src/wiring/voice-output.wire.ts` | Output Voice TTS (UI tab "Voice Output", DOM prefix `voiceOutput*`)              | pending               |
-   | 4     | `src/wiring/transcription.wire.ts` | Transcription + Whisper Backend + PTT + VAD + Continuous Dump + Quality/Encoding | pending — non-contiguous source regions in `event-listeners.ts` (e.g. hotkey-recording at ~L1279, quality/encoding at ~L1509, GPU purge at ~L2957) |
+   | 3     | `src/wiring/voice-output.wire.ts` | Output Voice TTS (UI tab "Voice Output", DOM prefix `voiceOutput*`)              | shipped (`87c2157`)   |
+   | 4     | `src/wiring/transcription.wire.ts` | Transcription + Whisper Backend + PTT + VAD + Continuous Dump + Quality/Encoding | shipped — non-contiguous extraction |
    | 5     | `src/wiring/ai-refinement.wire.ts` | AI Refinement + Post-Processing + topic-keywords + provider-chain + prompt-editor + local-runtime | pending — large, non-contiguous (provider setup ~L200–500, post-processing ~L1686, AI fallback ~L1726, local runtime ~L1914–2060, topic-keywords ~L2719). Naming kept as `ai-refinement.wire.ts` to match CONTEXT.md canonical user-facing term; Post-Processing UI is folded in because it is mechanically inseparable from the refinement panel and the file header documents the inclusion. |
    | 6     | `src/wiring/app-chrome.wire.ts` | Global app appearance + navigation (accent color, main-tab switching, modules-hub / recordings / analyse buttons) — items that are *not* a domain capability | pending — added under Option A to eliminate the `event-listeners.ts` junk drawer. |
 

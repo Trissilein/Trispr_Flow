@@ -5,8 +5,25 @@
 //   event-listeners.ts → wiring/*.wire.ts → wiring/wire-helpers.ts
 // Wire modules never import from event-listeners.ts.
 
-import { persistSettings } from "../settings";
+import { persistSettings, renderSettings } from "../settings";
 import { settings } from "../state";
+
+let settingsRenderFrame: number | null = null;
+
+export function scheduleSettingsRender(): void {
+  if (settingsRenderFrame !== null) return;
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    settingsRenderFrame = window.requestAnimationFrame(() => {
+      settingsRenderFrame = null;
+      renderSettings();
+    });
+  } else {
+    settingsRenderFrame = window.setTimeout(() => {
+      settingsRenderFrame = null;
+      renderSettings();
+    }, 16) as unknown as number;
+  }
+}
 
 /**
  * Registers a "change" event listener that just persists the current settings.

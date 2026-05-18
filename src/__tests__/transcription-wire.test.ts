@@ -93,13 +93,29 @@ vi.hoisted(() => {
     <button id="gpu-backend-vulkan"></button>
     <button id="gpu-purge-btn"></button>
     <span id="gpu-vram">123 MB</span>
+
+    <select id="model-source-select"><option value="default">default</option><option value="custom">custom</option></select>
+    <input id="model-custom-url" type="text" value="" />
+    <button id="model-refresh"></button>
+    <input id="model-storage-path" type="text" value="" />
+    <button id="model-storage-browse"></button>
+    <button id="model-storage-reset"></button>
   `;
 });
+
+vi.mock("../models", () => ({
+  refreshModels: vi.fn().mockResolvedValue(undefined),
+  refreshModelsDir: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { wireTranscription } from "../wiring/transcription.wire";
 import * as dom from "../dom-refs";
 import { settings, setSettings } from "../state";
 import type { Settings } from "../types";
+import { refreshModels, refreshModelsDir } from "../models";
+
+const mockedRefreshModels = vi.mocked(refreshModels);
+const mockedRefreshModelsDir = vi.mocked(refreshModelsDir);
 
 const mockedInvoke = vi.mocked(invoke);
 
@@ -143,6 +159,9 @@ function freshSettings(): Settings {
     continuous_mic_soft_flush_ms: 10000,
     continuous_mic_silence_flush_ms: 1200,
     continuous_mic_hard_cut_ms: 45000,
+    model_source: "default",
+    model_custom_url: "",
+    model_storage_dir: "",
     local_backend_preference: "auto",
     providers: {
       ollama: {
@@ -221,6 +240,13 @@ beforeEach(() => {
   if (dom.continuousMicSilenceFlush) dom.continuousMicSilenceFlush.value = "1200";
   if (dom.continuousMicHardCut) dom.continuousMicHardCut.value = "45000";
   if (dom.gpuVramLabel) dom.gpuVramLabel.textContent = "123 MB";
+  if (dom.modelSourceSelect) dom.modelSourceSelect.value = "default";
+  if (dom.modelCustomUrl) dom.modelCustomUrl.value = "";
+  if (dom.modelStoragePath) dom.modelStoragePath.value = "";
+  mockedRefreshModels.mockReset();
+  mockedRefreshModels.mockResolvedValue(undefined);
+  mockedRefreshModelsDir.mockReset();
+  mockedRefreshModelsDir.mockResolvedValue(undefined);
   wireOnce();
 });
 
@@ -475,5 +501,75 @@ describe("wireTranscription - whisper backend gpu controls", () => {
     expect(dom.gpuVramLabel?.textContent).toBe("Purged ✓");
     vi.advanceTimersByTime(2000);
     expect(dom.gpuVramLabel?.textContent).toBe("123 MB");
+  });
+});
+
+describe("wireTranscription - whisper model source & storage", () => {
+  it("modelSourceSelect change updates model_source and refreshes models", async () => {
+    dom.modelSourceSelect!.value = "custom";
+    fire(dom.modelSourceSelect, "change");
+    await flush();
+    expect(settings!.model_source).toBe("custom");
+    expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything());
+    expect(mockedRefreshModels).toHaveBeenCalled();
+  });
+
+  it("modelCustomUrl change trims and updates model_custom_url", async () => {
+    dom.modelCustomUrl!.value = "  http://custom.host/model  ";
+    fire(dom.modelCustomUrl, "change");
+    await flush();
+    expect(settings!.model_custom_url).toBe("http://custom.host/model");
+    expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything());
+  });
+
+  it("modelRefresh on default source calls clear_hidden_external_models", async () => {
+    settings!.model_source = "default";
+    dom.modelCustomUrl!.value = "http://example.com";
+    dom.modelRefresh?.click();
+    await vi.waitFor(() => expect(mockedRefreshModels).toHaveBeenCalled());
+    expect(mockedInvoke).toHaveBeenCalledWith("clear_hidden_external_models");
+    expect(settings!.model_custom_url).toBe("http://example.com");
+  });
+
+  it("modelRefresh on custom source skips clear_hidden_external_models", async () => {
+    settings!.model_source = "custom";
+    dom.modelRefresh?.click();
+    await flush();
+    expect(mockedInvoke).not.toHaveBeenCalledWith("clear_hidden_external_models");
+    expect(mockedRefreshModels).toHaveBeenCalled();
+  });
+
+  it("modelStorageBrowse stores picked dir and refreshes", async () => {
+    mockedInvoke.mockResolvedValueOnce("/picked/dir");
+    dom.modelStorageBrowse?.click();
+    await vi.waitFor(() => expect(mockedRefreshModels).toHaveBeenCalled());
+    expect(settings!.model_storage_dir).toBe("/picked/dir");
+    expect(mockedRefreshModelsDir).toHaveBeenCalled();
+  });
+
+  it("modelStorageBrowse with null dir does nothing", async () => {
+    mockedInvoke.mockResolvedValueOnce(null);
+    dom.modelStorageBrowse?.click();
+    await flush();
+    expect(settings!.model_storage_dir).toBe("");
+    expect(mockedRefreshModelsDir).not.toHaveBeenCalled();
+  });
+
+  it("modelStorageReset clears storage dir and DOM then refreshes", async () => {
+    settings!.model_storage_dir = "/old/dir";
+    dom.modelStoragePath!.value = "/old/dir";
+    dom.modelStorageReset?.click();
+    await vi.waitFor(() => expect(mockedRefreshModels).toHaveBeenCalled());
+    expect(settings!.model_storage_dir).toBe("");
+    expect(dom.modelStoragePath!.value).toBe("");
+    expect(mockedRefreshModelsDir).toHaveBeenCalled();
+  });
+
+  it("modelStoragePath change trims and updates storage dir", async () => {
+    dom.modelStoragePath!.value = "  C:/models  ";
+    fire(dom.modelStoragePath, "change");
+    await vi.waitFor(() => expect(mockedRefreshModels).toHaveBeenCalled());
+    expect(settings!.model_storage_dir).toBe("C:/models");
+    expect(mockedRefreshModelsDir).toHaveBeenCalled();
   });
 });

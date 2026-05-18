@@ -1,7 +1,6 @@
 // DOM event listeners setup
 
 import { invoke } from "@tauri-apps/api/core";
-import type { Settings } from "./types";
 import {
   isAssistantCoreAvailable,
   settings,
@@ -14,7 +13,6 @@ import {
   ensureContinuousDumpDefaults,
 } from "./settings";
 import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
-import { refreshModels, refreshModelsDir } from "./models";
 import { syncHistoryAliasesIntoSettings } from "./history-preferences";
 import { isPanelId, togglePanel } from "./panels";
 import { setupHotkeyRecorder, initHotkeyStatusListener } from "./hotkeys";
@@ -33,7 +31,7 @@ import { wireOverlay } from "./wiring/overlay.wire";
 import { wireTranscription } from "./wiring/transcription.wire";
 import { wireAiRefinement } from "./wiring/ai-refinement.wire";
 import { wireVoiceOutput } from "./wiring/voice-output.wire";
-import { onChangePersist, scheduleSettingsRender } from "./wiring/wire-helpers";
+import { onChangePersist } from "./wiring/wire-helpers";
 
 // Cleanup registry for window-level listeners added by wireEvents()
 const _windowCleanups: Array<() => void> = [];
@@ -383,65 +381,6 @@ export function wireEvents() {
 
   dom.globalOnlineEnabledBtn?.addEventListener("click", async () => {
     await setGlobalOnlineMode(true);
-  });
-
-  dom.modelSourceSelect?.addEventListener("change", async () => {
-    if (!settings || !dom.modelSourceSelect) return;
-    settings.model_source = dom.modelSourceSelect.value as Settings["model_source"];
-    await persistSettings();
-    scheduleSettingsRender();
-    await refreshModels();
-  });
-
-  dom.modelCustomUrl?.addEventListener("change", async () => {
-    if (!settings || !dom.modelCustomUrl) return;
-    settings.model_custom_url = dom.modelCustomUrl.value.trim();
-    await persistSettings();
-  });
-
-  dom.modelRefresh?.addEventListener("click", async () => {
-    if (!settings) return;
-    if (dom.modelCustomUrl) {
-      settings.model_custom_url = dom.modelCustomUrl.value.trim();
-    }
-    await persistSettings();
-    if (settings.model_source === "default") {
-      try {
-        await invoke("clear_hidden_external_models");
-      } catch (error) {
-        console.error("clear_hidden_external_models failed", error);
-      }
-    }
-    await refreshModels();
-  });
-
-  dom.modelStorageBrowse?.addEventListener("click", async () => {
-    if (!settings) return;
-    const dir = await invoke<string | null>("pick_model_dir");
-    if (!dir) return;
-    settings.model_storage_dir = dir;
-    await persistSettings();
-    await refreshModelsDir();
-    await refreshModels();
-  });
-
-  dom.modelStorageReset?.addEventListener("click", async () => {
-    if (!settings) return;
-    settings.model_storage_dir = "";
-    if (dom.modelStoragePath) {
-      dom.modelStoragePath.value = "";
-    }
-    await persistSettings();
-    await refreshModelsDir();
-    await refreshModels();
-  });
-
-  dom.modelStoragePath?.addEventListener("change", async () => {
-    if (!settings || !dom.modelStoragePath) return;
-    settings.model_storage_dir = dom.modelStoragePath.value.trim();
-    await persistSettings();
-    await refreshModelsDir();
-    await refreshModels();
   });
 
   document.querySelectorAll<HTMLButtonElement>(".panel-collapse-btn").forEach((button) => {

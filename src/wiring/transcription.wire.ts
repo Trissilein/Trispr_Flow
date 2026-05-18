@@ -17,6 +17,7 @@ import { updateRangeAria } from "../accessibility";
 import { showToast } from "../toast";
 import { dbToLevel, VAD_DB_FLOOR } from "../ui-helpers";
 import { onChangePersist, scheduleSettingsRender } from "./wire-helpers";
+import { refreshModels, refreshModelsDir } from "../models";
 
 function applyContinuousProfile(profile: "balanced" | "low_latency" | "high_quality") {
   if (!settings) return;
@@ -526,4 +527,64 @@ export function wireTranscription(): void {
       }
     });
   }
+
+  // Whisper model source & storage controls (R2 slice 4 backfill).
+  dom.modelSourceSelect?.addEventListener("change", async () => {
+    if (!settings || !dom.modelSourceSelect) return;
+    settings.model_source = dom.modelSourceSelect.value as Settings["model_source"];
+    await persistSettings();
+    scheduleSettingsRender();
+    await refreshModels();
+  });
+
+  dom.modelCustomUrl?.addEventListener("change", async () => {
+    if (!settings || !dom.modelCustomUrl) return;
+    settings.model_custom_url = dom.modelCustomUrl.value.trim();
+    await persistSettings();
+  });
+
+  dom.modelRefresh?.addEventListener("click", async () => {
+    if (!settings) return;
+    if (dom.modelCustomUrl) {
+      settings.model_custom_url = dom.modelCustomUrl.value.trim();
+    }
+    await persistSettings();
+    if (settings.model_source === "default") {
+      try {
+        await invoke("clear_hidden_external_models");
+      } catch (error) {
+        console.error("clear_hidden_external_models failed", error);
+      }
+    }
+    await refreshModels();
+  });
+
+  dom.modelStorageBrowse?.addEventListener("click", async () => {
+    if (!settings) return;
+    const dir = await invoke<string | null>("pick_model_dir");
+    if (!dir) return;
+    settings.model_storage_dir = dir;
+    await persistSettings();
+    await refreshModelsDir();
+    await refreshModels();
+  });
+
+  dom.modelStorageReset?.addEventListener("click", async () => {
+    if (!settings) return;
+    settings.model_storage_dir = "";
+    if (dom.modelStoragePath) {
+      dom.modelStoragePath.value = "";
+    }
+    await persistSettings();
+    await refreshModelsDir();
+    await refreshModels();
+  });
+
+  dom.modelStoragePath?.addEventListener("change", async () => {
+    if (!settings || !dom.modelStoragePath) return;
+    settings.model_storage_dir = dom.modelStoragePath.value.trim();
+    await persistSettings();
+    await refreshModelsDir();
+    await refreshModels();
+  });
 }

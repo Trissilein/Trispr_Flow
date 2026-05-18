@@ -719,6 +719,8 @@ export interface Settings {
   edit_substitutions?: EditSubstitution[];
   /** Set to true after the one-time migration that clears legacy heuristic data. */
   edit_delta_migrated?: boolean;
+  /** Unix-ms timestamp of the last successful LLM vocab cleanup run. */
+  last_vocab_cleanup_ms?: number;
   postproc_llm_enabled: boolean;
   postproc_llm_provider: string;
   postproc_llm_api_key: string;

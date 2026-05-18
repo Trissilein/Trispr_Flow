@@ -127,6 +127,7 @@ import {
 import { syncVoiceOutputConsoleState } from "./voice-output-console";
 import { initVideoGenerationPanel } from "./video-generation";
 import { ingestEditDelta } from "./vocab-auto-learn";
+import { scheduleVocabCleanupIfNeeded } from "./vocab-cleanup";
 import {
   handleRefinementFailureForInspector,
   handleRefinementStartedForInspector,
@@ -829,6 +830,8 @@ async function bootstrap() {
           unlistenHealth();
         })();
       }
+      // Give OLLAMA time to load a model before the cleanup check runs
+      setTimeout(scheduleVocabCleanupIfNeeded, 15_000);
     } catch (bgError) {
       console.error("Non-fatal background init error:", bgError);
       traceFrontendError("bootstrap.background", "background init failed", {

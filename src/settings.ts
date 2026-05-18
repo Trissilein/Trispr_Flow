@@ -57,6 +57,7 @@ import {
   normalizeAuthMethodPreference,
   isVerifiedAuthStatus,
 } from "./ai-provider-utils";
+import { dismissLearnedTerm } from "./vocab-auto-learn";
 
 export function ensureContinuousDumpDefaults() {
   if (!settings) return;
@@ -2739,7 +2740,6 @@ function buildLearnedChip(term: string): DocumentFragment {
   dismiss.textContent = "×";
   dismiss.addEventListener("click", async (ev) => {
     ev.stopPropagation();
-    const { dismissLearnedTerm } = await import("./vocab-auto-learn");
     await dismissLearnedTerm(term);
     renderLearnedVocabChips();
   });

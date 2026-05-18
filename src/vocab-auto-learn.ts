@@ -13,7 +13,7 @@
 
 import type { EditSubstitution } from "./types";
 import { settings } from "./state";
-import { persistSettings } from "./settings";
+import { persistSettings, renderLearnedVocabChips } from "./settings";
 
 const PROMOTION_THRESHOLD = 3;
 
@@ -283,11 +283,7 @@ function applyPromotions(pairs: Array<[string, string]>): void {
   settings.postproc_custom_vocab_enabled = true;
   settings.vocab_terms = terms;
 
-  void import("./settings")
-    .then(({ renderLearnedVocabChips }) => {
-      renderLearnedVocabChips();
-    })
-    .catch(() => {});
+  renderLearnedVocabChips();
 }
 
 // ---------------------------------------------------------------------------

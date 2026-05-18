@@ -406,7 +406,10 @@ fn fallback_overlay_to_safe_anchor(window: &WebviewWindow) -> Result<(), String>
     let pos_y = origin_y_logical + monitor_h_logical * 0.5 - height_logical * 0.5;
     info!("[overlay:fallback_anchor] scale={}, monitor_w_logical={}, monitor_h_logical={}, origin_x_logical={}, origin_y_logical={}, width_logical={}, height_logical={}",
         scale, monitor_w_logical, monitor_h_logical, origin_x_logical, origin_y_logical, width_logical, height_logical);
-    info!("[overlay:fallback_anchor] set_position(Logical(x={}, y={}))", pos_x, pos_y);
+    info!(
+        "[overlay:fallback_anchor] set_position(Logical(x={}, y={}))",
+        pos_x, pos_y
+    );
     window
         .set_position(tauri::Position::Logical(tauri::LogicalPosition {
             x: pos_x,
@@ -945,9 +948,15 @@ fn apply_overlay_settings_to_window(
     window
         .set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }))
         .map_err(|e| format!("Failed to set overlay size: {}", e))?;
-    info!("[overlay:apply_settings] resolving position for pos_x_pct={}, pos_y_pct={}", settings.pos_x, settings.pos_y);
+    info!(
+        "[overlay:apply_settings] resolving position for pos_x_pct={}, pos_y_pct={}",
+        settings.pos_x, settings.pos_y
+    );
     let (pos_x, pos_y) = resolve_overlay_position(&window, settings, width, height);
-    info!("[overlay:apply_settings] resolved to Logical(x={}, y={})", pos_x, pos_y);
+    info!(
+        "[overlay:apply_settings] resolved to Logical(x={}, y={})",
+        pos_x, pos_y
+    );
     window
         .set_position(tauri::Position::Logical(tauri::LogicalPosition {
             x: pos_x,

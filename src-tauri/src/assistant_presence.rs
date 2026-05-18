@@ -182,10 +182,10 @@ pub fn show_assistant_presence_window(app: &AppHandle) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn move_to_active_virtual_desktop(_window: &WebviewWindow) {
+    use windows::core::{GUID, PCWSTR};
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
     use windows::Win32::UI::Shell::IVirtualDesktopManager;
     use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetForegroundWindow};
-    use windows::core::{GUID, PCWSTR};
 
     // CLSID_VirtualDesktopManager = {AA509086-5CA9-4C25-8F95-589D3C07B48A}
     const CLSID_VDM: GUID = GUID::from_values(

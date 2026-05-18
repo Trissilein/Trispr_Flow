@@ -4,7 +4,7 @@
  * local backend switching, temperature slider, auth modal keydown, topic keywords reset.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 
 vi.hoisted(() => {
@@ -385,7 +385,7 @@ describe("AI fallback module gate", () => {
     wireOnce();
     setSettings({
       ...freshSettings(),
-      module_settings: { enabled_modules: [] }, // ai_refinement NOT in list
+      module_settings: { enabled_modules: [], consented_permissions: {}, module_overrides: {} }, // ai_refinement NOT in list
     });
     dom.aiFallbackEnabled!.checked = true;
     dom.aiFallbackEnabled!.dispatchEvent(new Event("change"));

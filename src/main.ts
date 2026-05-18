@@ -94,9 +94,9 @@ import {
   initMainTab,
   cleanupWindowListeners,
   openMainTab,
-  scheduleSettingsRender,
   reconcileMainTabVisibility,
 } from "./event-listeners";
+import { scheduleSettingsRender } from "./wiring/wire-helpers";
 import { initUnifiedTooltips, cleanupUnifiedTooltips } from "./custom-tooltips";
 import { dismissToast, showToast, showErrorToast } from "./toast";
 import { playAudioCue } from "./audio-cues";

@@ -175,7 +175,49 @@ pub fn show_assistant_presence_window(app: &AppHandle) -> Result<(), String> {
     window
         .show()
         .map_err(|err| format!("Failed to show assistant presence window: {err}"))?;
+    #[cfg(target_os = "windows")]
+    move_to_active_virtual_desktop(&window);
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn move_to_active_virtual_desktop(_window: &WebviewWindow) {
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+    use windows::Win32::UI::Shell::IVirtualDesktopManager;
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetForegroundWindow};
+    use windows::core::{GUID, PCWSTR};
+
+    // CLSID_VirtualDesktopManager = {AA509086-5CA9-4C25-8F95-589D3C07B48A}
+    const CLSID_VDM: GUID = GUID::from_values(
+        0xAA509086,
+        0x5CA9,
+        0x4C25,
+        [0x8F, 0x95, 0x58, 0x9D, 0x3C, 0x07, 0xB4, 0x8A],
+    );
+
+    let title: Vec<u16> = "Trispr Assistant\0".encode_utf16().collect();
+    let Ok(hwnd) = (unsafe { FindWindowW(PCWSTR::null(), PCWSTR(title.as_ptr())) }) else {
+        return;
+    };
+    if hwnd.0.is_null() {
+        return;
+    }
+
+    unsafe {
+        let Ok(mgr): Result<IVirtualDesktopManager, _> =
+            CoCreateInstance(&CLSID_VDM, None, CLSCTX_ALL)
+        else {
+            return;
+        };
+        let fg = GetForegroundWindow();
+        if fg.0.is_null() {
+            return;
+        }
+        let Ok(desktop_id) = mgr.GetWindowDesktopId(fg) else {
+            return;
+        };
+        let _ = mgr.MoveWindowToDesktop(hwnd, &desktop_id);
+    }
 }
 
 pub fn hide_assistant_presence_window(app: &AppHandle) {

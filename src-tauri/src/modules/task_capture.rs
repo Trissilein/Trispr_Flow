@@ -15,7 +15,6 @@ pub const TASK_CAPTURE_KEYWORDS: &[&str] = &[
 pub const TASK_CAPTURE_FILLERS: &[&str] = &["daran", "dass", "an"];
 pub const TASK_CAPTURE_REFINEMENT_PROMPT: &str = "Du bist ein Task-Formatierer. Formuliere den folgenden Sprachtext als klaren, konkreten Task in einem Satz. Antworte NUR mit dem formatierten Task, nichts anderes.";
 
-
 pub fn find_matching_route<'a>(
     command_text: &str,
     settings: &'a TaskCaptureSettings,
@@ -28,7 +27,9 @@ pub fn find_matching_route<'a>(
                 "exact" => {
                     let words: Vec<&str> = lowered.split_whitespace().collect();
                     let kw_words: Vec<&str> = kw_lower.split_whitespace().collect();
-                    words.windows(kw_words.len()).any(|w| w == kw_words.as_slice())
+                    words
+                        .windows(kw_words.len())
+                        .any(|w| w == kw_words.as_slice())
                 }
                 _ => lowered.contains(&kw_lower),
             }

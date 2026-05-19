@@ -48,6 +48,13 @@ vi.hoisted(() => {
     <input id="transcribe-gain" type="range" min="-30" max="30" value="0" />
     <span id="transcribe-gain-value"></span>
 
+    <input id="mic-gain" type="range" min="-30" max="30" value="0" />
+    <span id="mic-gain-value"></span>
+    <input id="vad-threshold" type="range" min="-80" max="0" value="-45" />
+    <span id="vad-threshold-value"></span>
+    <input id="vad-silence" type="range" min="200" max="4000" value="1200" />
+    <span id="vad-silence-value"></span>
+
     <input id="audio-cues-toggle" type="checkbox" />
     <input id="ptt-use-vad-toggle" type="checkbox" />
     <input id="audio-cues-volume" type="range" min="0" max="100" value="50" />
@@ -132,6 +139,11 @@ function freshSettings(): Settings {
     transcribe_batch_interval_ms: 10000,
     transcribe_chunk_overlap_ms: 300,
     transcribe_input_gain_db: 0,
+    mic_input_gain_db: 0,
+    vad_threshold: 0.4,
+    vad_threshold_start: 0.4,
+    vad_threshold_sustain: 0.3,
+    vad_silence_ms: 1200,
     audio_cues: false,
     audio_cues_volume: 0.5,
     ptt_use_vad: false,
@@ -213,6 +225,9 @@ beforeEach(() => {
   if (dom.transcribeBatchInterval) dom.transcribeBatchInterval.value = "10000";
   if (dom.transcribeChunkOverlap) dom.transcribeChunkOverlap.value = "300";
   if (dom.transcribeGain) dom.transcribeGain.value = "0";
+  if (dom.micGain) dom.micGain.value = "0";
+  if (dom.vadThreshold) dom.vadThreshold.value = "-45";
+  if (dom.vadSilence) dom.vadSilence.value = "1200";
   if (dom.audioCuesToggle) dom.audioCuesToggle.checked = false;
   if (dom.pttUseVadToggle) dom.pttUseVadToggle.checked = false;
   if (dom.audioCuesVolume) dom.audioCuesVolume.value = "50";
@@ -358,6 +373,50 @@ describe("wireTranscription - vad and gain", () => {
     fire(dom.transcribeGain, "input");
     expect(settings!.transcribe_input_gain_db).toBe(30);
     expect(dom.transcribeGainValue?.textContent).toBe("+30 dB");
+  });
+
+  it("global mic gain input clamps and updates label", () => {
+    if (dom.micGain) dom.micGain.value = "-100";
+    fire(dom.micGain, "input");
+    expect(settings!.mic_input_gain_db).toBe(-30);
+    expect(dom.micGainValue?.textContent).toBe("-30 dB");
+  });
+
+  it("global mic gain input clamps to +30 dB", () => {
+    if (dom.micGain) dom.micGain.value = "100";
+    fire(dom.micGain, "input");
+    expect(settings!.mic_input_gain_db).toBe(30);
+    expect(dom.micGainValue?.textContent).toBe("+30 dB");
+  });
+
+  it("global vad threshold input normalizes start and legacy thresholds", () => {
+    if (dom.vadThreshold) dom.vadThreshold.value = "-20";
+    fire(dom.vadThreshold, "input");
+    expect(settings!.vad_threshold_start).toBeGreaterThan(0);
+    expect(settings!.vad_threshold).toBe(settings!.vad_threshold_start);
+    expect(dom.vadThresholdValue?.textContent).toBe("-20 dB");
+  });
+
+  it("global vad threshold input clamps to vad floor", () => {
+    if (dom.vadThreshold) dom.vadThreshold.value = "-200";
+    fire(dom.vadThreshold, "input");
+    expect(settings!.vad_threshold_start).toBeCloseTo(0.001);
+    expect(settings!.vad_threshold).toBe(settings!.vad_threshold_start);
+    expect(dom.vadThresholdValue?.textContent).toBe("-60 dB");
+  });
+
+  it("global vad silence input clamps and updates label", () => {
+    if (dom.vadSilence) dom.vadSilence.value = "9999";
+    fire(dom.vadSilence, "input");
+    expect(settings!.vad_silence_ms).toBe(4000);
+    expect(dom.vadSilenceValue?.textContent).toBe("4000 ms");
+  });
+
+  it("global vad silence input clamps to 200 ms", () => {
+    if (dom.vadSilence) dom.vadSilence.value = "50";
+    fire(dom.vadSilence, "input");
+    expect(settings!.vad_silence_ms).toBe(200);
+    expect(dom.vadSilenceValue?.textContent).toBe("200 ms");
   });
 });
 

@@ -11,7 +11,7 @@ import {
   syncCaptureModeVisibility,
   renderSettings,
 } from "../settings";
-import { renderHero } from "../ui-state";
+import { renderHero, updateThresholdMarkers } from "../ui-state";
 import { setupHotkeyRecorder } from "../hotkeys";
 import { updateRangeAria } from "../accessibility";
 import { showToast } from "../toast";
@@ -255,6 +255,53 @@ export function wireTranscription(): void {
   });
 
   onChangePersist(dom.transcribeGain);
+
+  dom.micGain?.addEventListener("input", () => {
+    if (!settings || !dom.micGain) return;
+    const value = Number(dom.micGain.value);
+    settings.mic_input_gain_db = Math.max(-30, Math.min(30, value));
+    if (dom.micGainValue) {
+      const gain = Math.round(settings.mic_input_gain_db);
+      dom.micGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
+    }
+    updateRangeAria("mic-gain", value);
+  });
+
+  onChangePersist(dom.micGain);
+
+  dom.vadThreshold?.addEventListener("input", () => {
+    if (!settings || !dom.vadThreshold) return;
+    const rawDb = Number(dom.vadThreshold.value);
+    const clampedDb = Math.max(VAD_DB_FLOOR, Math.min(0, rawDb));
+    const threshold = Math.min(1, Math.max(0, dbToLevel(clampedDb)));
+
+    // Update the start threshold (main threshold)
+    settings.vad_threshold_start = threshold;
+    // Keep legacy field in sync
+    settings.vad_threshold = threshold;
+
+    if (dom.vadThresholdValue) {
+      dom.vadThresholdValue.textContent = `${Math.round(clampedDb)} dB`;
+    }
+
+    updateRangeAria("vad-threshold", clampedDb);
+    // Update threshold markers
+    updateThresholdMarkers();
+  });
+
+  onChangePersist(dom.vadThreshold);
+
+  dom.vadSilence?.addEventListener("input", () => {
+    if (!settings || !dom.vadSilence) return;
+    const value = Math.max(200, Math.min(4000, Number(dom.vadSilence.value)));
+    settings.vad_silence_ms = value;
+    if (dom.vadSilenceValue) {
+      dom.vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
+    }
+    updateRangeAria("vad-silence", value);
+  });
+
+  onChangePersist(dom.vadSilence);
 
   dom.audioCuesToggle?.addEventListener("change", async () => {
     if (!settings) return;

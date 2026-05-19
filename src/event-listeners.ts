@@ -12,12 +12,10 @@ import {
   renderAIFallbackSettingsUi,
   ensureContinuousDumpDefaults,
 } from "./settings";
-import { renderHero, updateDeviceLineClamp, updateThresholdMarkers } from "./ui-state";
+import { renderHero, updateDeviceLineClamp } from "./ui-state";
 import { syncHistoryAliasesIntoSettings } from "./history-preferences";
 import { isPanelId, togglePanel } from "./panels";
 import { setupHotkeyRecorder, initHotkeyStatusListener } from "./hotkeys";
-import { updateRangeAria } from "./accessibility";
-import { dbToLevel, VAD_DB_FLOOR } from "./ui-helpers";
 import {
   getOllamaRuntimeCardState,
   refreshOllamaInstalledModels,
@@ -31,7 +29,6 @@ import { wireOverlay } from "./wiring/overlay.wire";
 import { wireTranscription } from "./wiring/transcription.wire";
 import { wireAiRefinement } from "./wiring/ai-refinement.wire";
 import { wireVoiceOutput } from "./wiring/voice-output.wire";
-import { onChangePersist } from "./wiring/wire-helpers";
 
 // Cleanup registry for window-level listeners added by wireEvents()
 const _windowCleanups: Array<() => void> = [];
@@ -427,53 +424,6 @@ export function wireEvents() {
   const _onResize = () => updateDeviceLineClamp();
   window.addEventListener("resize", _onResize);
   _windowCleanups.push(() => window.removeEventListener("resize", _onResize));
-
-  dom.micGain?.addEventListener("input", () => {
-    if (!settings || !dom.micGain) return;
-    const value = Number(dom.micGain.value);
-    settings.mic_input_gain_db = Math.max(-30, Math.min(30, value));
-    if (dom.micGainValue) {
-      const gain = Math.round(settings.mic_input_gain_db);
-      dom.micGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
-    }
-    updateRangeAria("mic-gain", value);
-  });
-
-  onChangePersist(dom.micGain);
-
-  dom.vadThreshold?.addEventListener("input", () => {
-    if (!settings || !dom.vadThreshold) return;
-    const rawDb = Number(dom.vadThreshold.value);
-    const clampedDb = Math.max(VAD_DB_FLOOR, Math.min(0, rawDb));
-    const threshold = Math.min(1, Math.max(0, dbToLevel(clampedDb)));
-
-    // Update the start threshold (main threshold)
-    settings.vad_threshold_start = threshold;
-    // Keep legacy field in sync
-    settings.vad_threshold = threshold;
-
-    if (dom.vadThresholdValue) {
-      dom.vadThresholdValue.textContent = `${Math.round(clampedDb)} dB`;
-    }
-
-    updateRangeAria("vad-threshold", clampedDb);
-    // Update threshold markers
-    updateThresholdMarkers();
-  });
-
-  onChangePersist(dom.vadThreshold);
-
-  dom.vadSilence?.addEventListener("input", () => {
-    if (!settings || !dom.vadSilence) return;
-    const value = Math.max(200, Math.min(4000, Number(dom.vadSilence.value)));
-    settings.vad_silence_ms = value;
-    if (dom.vadSilenceValue) {
-      dom.vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
-    }
-    updateRangeAria("vad-silence", value);
-  });
-
-  onChangePersist(dom.vadSilence);
 
   wireOverlay();
 

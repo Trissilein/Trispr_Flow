@@ -1,0 +1,101 @@
+# Settings Decomposition Plan — Trispr Flow
+
+Date: 2026-05-19  
+Status: **decided** — plan approved, execution pending  
+Participants: Hendr (architect), automated challenger review (grill-with-docs session)
+
+---
+
+## Context
+
+`settings.ts` is 2671 lines, zero tests. It is the next largest untested file after the R2 decomposition of `event-listeners.ts`. It handles rendering and persisting settings panels for all domains. The R2 pattern (domain-scoped modules with smoke tests) applies here.
+
+The `settings` global object is defined in `state.ts`, not `settings.ts`. This means domain render modules can import `settings` from `../state` without creating a circular dependency through the orchestrator.
+
+---
+
+## Decisions
+
+### 1 — Orchestrator becomes `src/settings/index.ts`
+
+`settings.ts` moves to `src/settings/index.ts`. No existing imports change — Vite's bundler module resolution resolves `from "./settings"` and `from "../settings"` to `src/settings/index.ts` automatically.
+
+Rejected alternative: keeping `settings.ts` at `src/` root alongside a `src/settings/` directory. Rejected because two things named "settings" at different levels is misleading. Moving the orchestrator into the directory it governs is cleaner and consistent with the `wiring/` pattern.
+
+The orchestrator shrinks to: `persistSettings` (imported from `settings-persist.ts`), the two cross-domain render functions, `renderSettings()` (the top-level dispatcher), `renderAIRefinementTab()`, `ensureContinuousDumpDefaults()`, `ensureSetupDefaults()`, and `syncDerivedLanguageSettings()`. Everything else moves to a domain module.
+
+### 2 — `persistSettings` moves to `src/settings-persist.ts`
+
+`persistSettings` is imported by 10 files across the codebase. It operates on the `settings` global from `state.ts`, calls `invoke("save_settings")`, and uses two normalization helpers imported from their existing source modules. Moving it to `settings-persist.ts` breaks the circular dependency that would otherwise exist between `settings/index.ts` (which imports domain modules) and domain modules (which call `persistSettings`).
+
+Rejected alternatives:
+- **Move to `state.ts`**: Would add a Tauri `invoke()` dependency to what is currently a pure-data module.
+- **Callback injection**: Rejected for the same reasons as in OQ-1 — excessive ceremony for what is a straightforward import.
+
+All 10 importers update their import path from `./settings` / `../settings` to `./settings-persist` / `../settings-persist`. This is a mechanical change and is done in the prerequisite commit (Slice 0).
+
+### 3 — Cross-domain render functions stay in the orchestrator
+
+`renderProductModeSettings()` and `renderGlobalOnlineModeSettings()` stay in `src/settings/index.ts`. Both span multiple CONTEXT.md domains:
+- Product Mode (Transcription ↔ AI Refinement)
+- Global Online Mode (AI Refinement ↔ Voice Output)
+
+Additionally, `renderProductModeSettings()` mutates `settings.product_mode` (normalization on load) — it is not purely a UI render function. Cross-cutting initialization logic belongs in the orchestrator, not in a domain-owned module.
+
+Rejected alternative: `src/settings/app-chrome.settings.ts` mirroring the wire module boundary. Rejected because it would put cross-cutting initialization inside a module that is supposed to own a single domain.
+
+### 4 — Directory structure: `src/settings/<domain>.settings.ts`
+
+Domain render modules live at `src/settings/<domain>.settings.ts`. The double-extension pattern mirrors `src/wiring/<domain>.wire.ts` — same mental model, different suffix. The directory groups all domain settings modules as siblings of the orchestrator.
+
+### 5 — Slice order (risk-ascending)
+
+| Slice | Module | Rationale |
+|---|---|---|
+| S0 | prerequisite commit: move `settings.ts` → `settings/index.ts`, create `settings-persist.ts`, update all importers | zero-extraction commit; validates bundler resolution and clears the path |
+| S1 | `settings/vocabulary.settings.ts` | Isolated (~120 lines), partially covered by existing `vocab-render.test.ts`, validates the pattern |
+| S2 | `settings/overlay.settings.ts` | Small (~100 lines), self-contained, Overlay already has its own wire module |
+| S3 | `settings/transcription.settings.ts` | Language + VAD helpers, bounded domain (~180 lines) |
+| S4 | `settings/voice-output.settings.ts` | Larger (~450 lines) but all Piper/TTS — cohesive domain |
+| S5 | `settings/ai-refinement.settings.ts` | Largest (~850 lines), most complex — last |
+
+### 6 — Export contract per domain module
+
+Each domain module exports:
+- One primary `render<Domain>Settings()` function (the module's entry point from the orchestrator)
+- Specific secondary exports that are genuinely called from outside (e.g. `handlePiperVoiceDownloadProgress`, `updateProviderMutualExclusion` in voice-output — called directly from `main.ts`)
+- All other functions are private (unexported)
+
+Secondary exports are documented in the file header, same as the OQ-3 clause 1 scoped exception for `app-chrome.wire.ts`.
+
+### 7 — Smoke tests
+
+Each slice ships smoke tests at `src/__tests__/<domain>-settings.test.ts`. Same pattern and scope as R2 wire module tests: build DOM via `vi.hoisted` fixtures, call the primary render function, assert observable DOM state. Mock `invoke` (already globally mocked) and any modules that open external surfaces. Target ~20 tests per slice.
+
+### 8 — One commit per slice
+
+Same discipline as R2. Each commit: one settings module + its smoke test + deletions from `settings/index.ts`. Reviewer subagent gate before each commit. Logic is preserved, not improved, during extraction.
+
+---
+
+## Dependency flow after decomposition
+
+```
+src/settings/index.ts
+  → src/settings/vocabulary.settings.ts   → state.ts, dom-refs.ts, settings-persist.ts
+  → src/settings/overlay.settings.ts      → state.ts, dom-refs.ts, utils.ts
+  → src/settings/transcription.settings.ts → state.ts, dom-refs.ts, ui-helpers.ts
+  → src/settings/voice-output.settings.ts  → state.ts, dom-refs.ts, settings-persist.ts, ...
+  → src/settings/ai-refinement.settings.ts → state.ts, dom-refs.ts, settings-persist.ts, ...
+  → src/settings-persist.ts               → state.ts, @tauri-apps/api/core, refinement-prompts.ts
+```
+
+All flows are one-way. No module in `src/settings/` imports from `src/settings/index.ts`.
+
+---
+
+## What is not decided here
+
+- Whether `settings/index.ts` is renamed after decomposition (deferred — rename after it shrinks, when the right name is obvious)
+- Implementation details of individual slice perimeters (decided during execution via reviewer subagent gate)
+- R1 (Rust `lib.rs` decomposition) — separate plan, status unknown

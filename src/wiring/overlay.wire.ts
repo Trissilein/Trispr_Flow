@@ -18,7 +18,7 @@
 
 import * as dom from "../dom-refs";
 import { settings } from "../state";
-import { updateOverlayStyleVisibility, applyOverlaySharedUi } from "../settings";
+import { updateOverlayStyleVisibility, applyOverlaySharedUi } from "../settings/overlay.settings";
 import { persistSettings } from "../settings-persist";
 import { updateRangeAria } from "../accessibility";
 import { showToast } from "../toast";

@@ -50,14 +50,16 @@ Domain render modules live at `src/settings/<domain>.settings.ts`. The double-ex
 
 ### 5 — Slice order (risk-ascending)
 
-| Slice | Module | Rationale |
-|---|---|---|
-| S0 | prerequisite commit: move `settings.ts` → `settings/index.ts`, create `settings-persist.ts`, update all importers | zero-extraction commit; validates bundler resolution and clears the path |
-| S1 | `settings/vocabulary.settings.ts` | Isolated (~120 lines), partially covered by existing `vocab-render.test.ts`, validates the pattern |
-| S2 | `settings/overlay.settings.ts` | Small (~100 lines), self-contained, Overlay already has its own wire module |
-| S3 | `settings/transcription.settings.ts` | Language + VAD helpers, bounded domain (~180 lines) |
-| S4 | `settings/voice-output.settings.ts` | Larger (~450 lines) but all Piper/TTS — cohesive domain |
-| S5 | `settings/ai-refinement.settings.ts` | Largest (~850 lines), most complex — last |
+| Slice | Module                                                                                                            | Rationale                                                                                          |
+| ----- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| S0    | prerequisite commit: move `settings.ts` → `settings/index.ts`, create `settings-persist.ts`, update all importers | zero-extraction commit; validates bundler resolution and clears the path                           |
+| S1    | `settings/vocabulary.settings.ts`                                                                                 | Isolated (~120 lines), partially covered by existing `vocab-render.test.ts`, validates the pattern |
+| S2    | `settings/overlay.settings.ts`                                                                                    | Small (~100 lines), self-contained, Overlay already has its own wire module                        |
+| S3    | `settings/transcription.settings.ts`                                                                              | Language + VAD helpers, bounded domain (~180 lines)                                                |
+| S4    | `settings/voice-output.settings.ts`                                                                               | Larger (~450 lines) but all Piper/TTS — cohesive domain                                            |
+| S5    | `settings/ai-refinement.settings.ts`                                                                              | Largest (~850 lines), most complex — last                                                          |
+
+S2 owns the overlay-refining indicator helpers (`normalizeOverlayRefiningPreset`, color/speed/range normalization, TTS stop overlay display state). These settings configure how the Overlay appears during refinement, so they belong to Overlay even when AI Refinement surfaces related state. `renderOverlayHealthNote()` stays with AI Refinement because it renders an AI-refinement panel note rather than overlay controls.
 
 ### 6 — Export contract per domain module
 

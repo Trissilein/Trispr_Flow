@@ -13,7 +13,8 @@
 
 import type { EditSubstitution } from "./types";
 import { settings } from "./state";
-import { persistSettings, renderLearnedVocabChips } from "./settings";
+import { renderLearnedVocabChips } from "./settings";
+import { persistSettings } from "./settings-persist";
 
 const PROMOTION_THRESHOLD = 3;
 

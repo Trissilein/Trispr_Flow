@@ -24,11 +24,11 @@ import type { TtsSpeakResult } from "../types";
 import * as dom from "../dom-refs";
 import { settings } from "../state";
 import {
-  persistSettings,
   refreshProviderAvailability,
   refreshProviderVoices,
   handleProviderVoiceSelection,
 } from "../settings";
+import { persistSettings } from "../settings-persist";
 
 // Formats a Tauri-side error string from `test_tts_provider` for display in
 // the inline status line. Private to this slice; not exported.

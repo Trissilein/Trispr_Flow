@@ -5,7 +5,8 @@
 //   event-listeners.ts → wiring/*.wire.ts → wiring/wire-helpers.ts
 // Wire modules never import from event-listeners.ts.
 
-import { persistSettings, renderSettings } from "../settings";
+import { renderSettings } from "../settings";
+import { persistSettings } from "../settings-persist";
 import { settings } from "../state";
 
 let settingsRenderFrame: number | null = null;

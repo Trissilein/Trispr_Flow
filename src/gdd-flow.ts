@@ -8,7 +8,7 @@ import {
 import { buildConversationHistory, buildConversationText } from "./history";
 import { focusFirstElement, trapFocusInModal } from "./modal-focus";
 import { appRuntimeStartedMs, settings } from "./state";
-import { persistSettings } from "./settings";
+import { persistSettings } from "./settings-persist";
 import { showToast } from "./toast";
 import type {
   ConfluenceTargetSuggestion,

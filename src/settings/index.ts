@@ -7,20 +7,20 @@ import {
   runtimeDiagnostics,
   settings,
   startupStatus,
-} from "./state";
-import * as dom from "./dom-refs";
-import { thresholdToDb, VAD_DB_FLOOR, formatBytes } from "./ui-helpers";
-import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "./utils";
-import { DEFAULT_TOPICS, setTopicKeywords, type TopicKeywords } from "./history";
-import { formatHotkeyForDisplay } from "./ui-helpers";
-import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
+} from "../state";
+import * as dom from "../dom-refs";
+import { thresholdToDb, VAD_DB_FLOOR, formatBytes } from "../ui-helpers";
+import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "../utils";
+import { DEFAULT_TOPICS, setTopicKeywords, type TopicKeywords } from "../history";
+import { formatHotkeyForDisplay } from "../ui-helpers";
+import { renderAIRefinementStaticHelp } from "../ai-refinement-help";
 import {
   getOllamaRuntimeCardState,
   getOllamaRuntimeVersionCatalog,
   isOnlineVersionFetchInProgress,
-} from "./ollama-models";
-import { traceFrontendWarn } from "./frontend-trace";
-import { syncRefinementPipelineGraphFromSettings } from "./refinement-pipeline-graph";
+} from "../ollama-models";
+import { traceFrontendWarn } from "../frontend-trace";
+import { syncRefinementPipelineGraphFromSettings } from "../refinement-pipeline-graph";
 import {
   BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS,
   DEFAULT_REFINEMENT_PROMPT_PRESET,
@@ -28,13 +28,12 @@ import {
   hasPresetOverride,
   NEW_REFINEMENT_PROMPT_OPTION_ID,
   normalizeActiveRefinementPromptPresetId,
-  normalizePersistedRefinementPromptPresetId,
   normalizeRefinementPromptPreset,
   normalizeUserRefinementPromptPresets,
   resolveEffectiveRefinementPrompt,
   toUserRefinementPromptOptionId,
   type BuiltInRefinementPromptPreset,
-} from "./refinement-prompts";
+} from "../refinement-prompts";
 import type {
   AIProviderSettings,
   AIFallbackProvider,
@@ -48,7 +47,7 @@ import type {
   TtsProviderInfo,
   TtsVoiceInfo,
   UserRefinementPromptPreset,
-} from "./types";
+} from "../types";
 import {
   CLOUD_PROVIDER_IDS,
   CLOUD_PROVIDER_LABELS,
@@ -56,8 +55,11 @@ import {
   normalizeExecutionMode,
   normalizeAuthMethodPreference,
   isVerifiedAuthStatus,
-} from "./ai-provider-utils";
-import { dismissLearnedTerm } from "./vocab-auto-learn";
+} from "../ai-provider-utils";
+import { dismissLearnedTerm } from "../vocab-auto-learn";
+import { persistSettings } from "../settings-persist";
+
+export { persistSettings };
 
 export function ensureContinuousDumpDefaults() {
   if (!settings) return;
@@ -79,35 +81,6 @@ export function ensureContinuousDumpDefaults() {
   settings.continuous_system_soft_flush_ms ??= settings.continuous_soft_flush_ms;
   settings.continuous_system_silence_flush_ms ??= settings.continuous_silence_flush_ms;
   settings.continuous_system_hard_cut_ms ??= settings.continuous_hard_cut_ms;
-}
-
-export async function persistSettings() {
-  if (!settings) return;
-  const aiFallback = settings.ai_fallback;
-  const settingsForSave = {
-    ...settings,
-    ai_fallback: aiFallback ? { ...aiFallback } : aiFallback,
-  };
-  if (settingsForSave.ai_fallback) {
-    settingsForSave.ai_fallback.prompt_presets = normalizeUserRefinementPromptPresets(
-      settingsForSave.ai_fallback.prompt_presets
-    );
-    settingsForSave.ai_fallback.active_prompt_preset_id = normalizePersistedRefinementPromptPresetId(
-      settingsForSave.ai_fallback.active_prompt_preset_id,
-      settingsForSave.ai_fallback.prompt_profile,
-      settingsForSave.ai_fallback.prompt_presets
-    );
-  }
-  try {
-    await Promise.race([
-      invoke("save_settings", { settings: settingsForSave }),
-      new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error("save_settings timed out")), 3_000)
-      ),
-    ]);
-  } catch (error) {
-    console.error("save_settings failed", error);
-  }
 }
 
 function detectOverlayViewport(): { width: number; height: number } {
@@ -513,7 +486,7 @@ function isReasoningModel(name: string): boolean {
 }
 
 function renderCompatModelCards(
-  compatSettings: import("./types").OpenAICompatSettings | undefined,
+  compatSettings: import("../types").OpenAICompatSettings | undefined,
   _provider?: string,
 ) {
   const container = dom.aiFallbackCompatModelList;

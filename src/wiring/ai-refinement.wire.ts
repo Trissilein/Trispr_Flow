@@ -26,7 +26,6 @@ import {
 import { settings } from "../state";
 import * as dom from "../dom-refs";
 import {
-  persistSettings,
   renderAIFallbackSettingsUi,
   renderSettings,
   renderTopicKeywords,
@@ -35,6 +34,7 @@ import {
   syncDerivedLanguageSettings,
   addVocabRow,
 } from "../settings";
+import { persistSettings } from "../settings-persist";
 import { renderHero } from "../ui-state";
 import { setTopicKeywords, DEFAULT_TOPICS } from "../history";
 import { showToast } from "../toast";

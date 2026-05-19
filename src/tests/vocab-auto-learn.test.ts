@@ -1,15 +1,18 @@
 /**
  * Tests for the Edit-Delta vocabulary learning system.
  *
- * `./settings` is mocked: `persistSettings` calls Tauri invoke (not available in
- * jsdom) and `renderLearnedVocabChips` is the dynamic-import target that runs
- * after promotions (must be present so the import resolves cleanly).
+ * `./settings-persist` is mocked because `persistSettings` calls Tauri invoke
+ * (not available in jsdom). `./settings` is mocked for `renderLearnedVocabChips`,
+ * the dynamic-import target that runs after promotions.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../settings", () => ({
-  persistSettings: vi.fn(async () => {}),
   renderLearnedVocabChips: vi.fn(),
+}));
+
+vi.mock("../settings-persist", () => ({
+  persistSettings: vi.fn(async () => {}),
 }));
 
 import {

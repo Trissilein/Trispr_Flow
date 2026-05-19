@@ -14,6 +14,7 @@ const OVERLAY_HEARTBEAT_STALE_MS: u64 = 6_000;
 /// Unlike the legacy lockout, this is a short cooldown and never permanent.
 static OVERLAY_CREATE_COOLDOWN_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
 static OVERLAY_CREATE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+static MONITOR_FOLLOW_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -95,6 +96,96 @@ where
 
 fn overlay_controller_snapshot(app: &AppHandle) -> OverlayController {
     with_overlay_controller(app, |controller| controller.clone())
+}
+
+fn monitor_at_cursor(window: &WebviewWindow) -> Option<tauri::Monitor> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+        let mut point = POINT { x: 0, y: 0 };
+        if unsafe { GetCursorPos(&mut point) }.is_err() {
+            return None;
+        }
+        let monitors = window.available_monitors().ok()?;
+        for monitor in monitors {
+            let pos = monitor.position();
+            let size = monitor.size();
+            if point.x >= pos.x
+                && point.x < pos.x + size.width as i32
+                && point.y >= pos.y
+                && point.y < pos.y + size.height as i32
+            {
+                return Some(monitor);
+            }
+        }
+        None
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+        None
+    }
+}
+
+fn spawn_monitor_follow_task(app: AppHandle) {
+    if MONITOR_FOLLOW_ACTIVE.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::Builder::new()
+        .name("overlay-monitor-follow".into())
+        .spawn(move || {
+            info!("[overlay:monitor_follow] task started");
+            let mut last_monitor_origin: Option<(i32, i32)> = None;
+            while MONITOR_FOLLOW_ACTIVE.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(250));
+                if !MONITOR_FOLLOW_ACTIVE.load(Ordering::Relaxed) {
+                    break;
+                }
+                let Some(window) = app.get_webview_window("overlay") else {
+                    continue;
+                };
+                let Some(cursor_monitor) = monitor_at_cursor(&window) else {
+                    continue;
+                };
+                let origin = cursor_monitor.position();
+                let current_origin = (origin.x, origin.y);
+                if last_monitor_origin == Some(current_origin) {
+                    continue;
+                }
+                info!(
+                    "[overlay:monitor_follow] cursor moved to monitor at ({}, {})",
+                    origin.x, origin.y
+                );
+                last_monitor_origin = Some(current_origin);
+                let controller = overlay_controller_snapshot(&app);
+                if let Some(settings) = controller.desired_settings {
+                    let app_inner = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        if let Some(win) = app_inner.get_webview_window("overlay") {
+                            let _ = apply_overlay_settings_to_window(&win, &settings);
+                        }
+                    });
+                }
+            }
+            info!("[overlay:monitor_follow] task stopped");
+        })
+        .ok();
+}
+
+fn stop_monitor_follow_task() {
+    MONITOR_FOLLOW_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+fn update_monitor_follow(app: &AppHandle) {
+    let controller = overlay_controller_snapshot(app);
+    let visible =
+        !matches!(controller.desired_state, OverlayState::Hidden) || controller.tts_stop_visible;
+    if visible {
+        spawn_monitor_follow_task(app.clone());
+    } else {
+        stop_monitor_follow_task();
+    }
 }
 
 fn emit_overlay_health(app: &AppHandle, status: &str, attempt: u32, reason: impl Into<String>) {
@@ -312,10 +403,13 @@ pub fn create_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
 }
 
 fn window_position_invalid(window: &WebviewWindow) -> bool {
-    let Some(monitor) = window
-        .app_handle()
-        .get_webview_window("main")
-        .and_then(|main_win| main_win.current_monitor().ok().flatten())
+    let Some(monitor) = monitor_at_cursor(window)
+        .or_else(|| {
+            window
+                .app_handle()
+                .get_webview_window("main")
+                .and_then(|main_win| main_win.current_monitor().ok().flatten())
+        })
         .or_else(|| window.primary_monitor().ok().flatten())
     else {
         return false;
@@ -373,9 +467,11 @@ fn fallback_overlay_to_safe_anchor(window: &WebviewWindow) -> Result<(), String>
     }
 
     info!("[overlay:fallback_anchor] no desired_settings, using 50/50 hard-coded anchor");
-    let Some(monitor) = app
-        .get_webview_window("main")
-        .and_then(|main_win| main_win.current_monitor().ok().flatten())
+    let Some(monitor) = monitor_at_cursor(window)
+        .or_else(|| {
+            app.get_webview_window("main")
+                .and_then(|main_win| main_win.current_monitor().ok().flatten())
+        })
         .or_else(|| window.primary_monitor().ok().flatten())
     else {
         return Ok(());
@@ -719,6 +815,7 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
             controller.last_level = 0.0;
         }
     });
+    update_monitor_follow(app);
     let Some(window) = app.get_webview_window("overlay") else {
         if matches!(state, OverlayState::Recording | OverlayState::Transcribing) {
             schedule_overlay_window_creation(app, "state_update");
@@ -739,6 +836,7 @@ pub fn update_overlay_tts_stop_visibility(app: &AppHandle, active: bool) -> Resu
     with_overlay_controller(app, |controller| {
         controller.tts_stop_visible = effective_active;
     });
+    update_monitor_follow(app);
     let Some(window) = app.get_webview_window("overlay") else {
         if effective_active {
             schedule_overlay_window_creation(app, "tts_stop_update");
@@ -829,13 +927,13 @@ fn resolve_overlay_position(
     // pos_x and pos_y are stored as percentages (0-100)
     // Convert to absolute monitor coordinates, then to window position
 
-    // Use the main window's monitor to anchor the overlay correctly.
-    // The overlay window is parked off-screen during init, so current_monitor()
-    // on the overlay itself would resolve the wrong display.
-    let monitor = window
-        .app_handle()
-        .get_webview_window("main")
-        .and_then(|main_win| main_win.current_monitor().ok().flatten())
+    let monitor = monitor_at_cursor(window)
+        .or_else(|| {
+            window
+                .app_handle()
+                .get_webview_window("main")
+                .and_then(|main_win| main_win.current_monitor().ok().flatten())
+        })
         .or_else(|| window.primary_monitor().ok().flatten());
     if let Some(monitor) = monitor {
         let scale = monitor.scale_factor();
@@ -869,10 +967,13 @@ fn resolve_overlay_position(
 }
 
 fn current_monitor_logical_size(window: &WebviewWindow) -> Option<(f64, f64)> {
-    let monitor = window
-        .app_handle()
-        .get_webview_window("main")
-        .and_then(|main_win| main_win.current_monitor().ok().flatten())
+    let monitor = monitor_at_cursor(window)
+        .or_else(|| {
+            window
+                .app_handle()
+                .get_webview_window("main")
+                .and_then(|main_win| main_win.current_monitor().ok().flatten())
+        })
         .or_else(|| window.primary_monitor().ok().flatten())?;
     let scale = monitor.scale_factor();
     let size_px = monitor.size();

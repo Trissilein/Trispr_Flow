@@ -26,7 +26,7 @@ vi.mock("../workflow-agent-console", () => ({
   focusWorkflowAgentConsole: focusWorkflowAgentConsoleMock,
 }));
 
-vi.mock("../event-listeners", () => ({
+vi.mock("../wiring/app-chrome.wire", () => ({
   openMainTab: openMainTabMock,
 }));
 

@@ -3,7 +3,7 @@ import * as dom from "./dom-refs";
 import { ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID, isAssistantCoreAvailable, settings } from "./state";
 import { showToast } from "./toast";
 import { openGddFlow } from "./gdd-flow";
-import { openMainTab } from "./event-listeners";
+import { openMainTab } from "./wiring/app-chrome.wire";
 import { focusWorkflowAgentConsole, syncWorkflowAgentConsoleState } from "./workflow-agent-console";
 import { focusVoiceOutputConsole, syncVoiceOutputConsoleState } from "./voice-output-console";
 import { focusFirstElement } from "./modal-focus";

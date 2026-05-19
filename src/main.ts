@@ -91,11 +91,13 @@ import { initPanelState, isPanelCollapsed, setPanelCollapsed } from "./panels";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
 import {
   wireEvents,
-  initMainTab,
   cleanupWindowListeners,
+} from "./event-listeners";
+import {
+  initMainTab,
   openMainTab,
   reconcileMainTabVisibility,
-} from "./event-listeners";
+} from "./wiring/app-chrome.wire";
 import { scheduleSettingsRender } from "./wiring/wire-helpers";
 import { initUnifiedTooltips, cleanupUnifiedTooltips } from "./custom-tooltips";
 import { dismissToast, showToast, showErrorToast } from "./toast";

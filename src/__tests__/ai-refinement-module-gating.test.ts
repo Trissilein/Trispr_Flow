@@ -133,7 +133,7 @@ describe("AI refinement module tab gating", () => {
 
   it("shows AI tab only when ai_refinement module is enabled", async () => {
     const state = await import("../state");
-    const listeners = await import("../event-listeners");
+    const listeners = await import("../wiring/app-chrome.wire");
 
     state.setSettings(makeSettings(false, false));
     listeners.initMainTab();
@@ -151,7 +151,7 @@ describe("AI refinement module tab gating", () => {
 
   it("falls back to transcription when active AI tab gets disabled", async () => {
     const state = await import("../state");
-    const listeners = await import("../event-listeners");
+    const listeners = await import("../wiring/app-chrome.wire");
 
     state.setSettings(makeSettings(true, true));
     listeners.initMainTab();
@@ -190,7 +190,7 @@ describe("AI refinement module tab gating", () => {
 
   it("shows Voice Output tab only when output_voice_tts module is enabled", async () => {
     const state = await import("../state");
-    const listeners = await import("../event-listeners");
+    const listeners = await import("../wiring/app-chrome.wire");
 
     state.setSettings(makeSettings(true, true, false));
     listeners.initMainTab();
@@ -208,7 +208,7 @@ describe("AI refinement module tab gating", () => {
 
   it("falls back to transcription when active Voice Output tab gets disabled", async () => {
     const state = await import("../state");
-    const listeners = await import("../event-listeners");
+    const listeners = await import("../wiring/app-chrome.wire");
 
     state.setSettings(makeSettings(true, true, true));
     listeners.initMainTab();
@@ -234,7 +234,7 @@ describe("AI refinement module tab gating", () => {
 
   it("ignores persisted Voice Output tab when module is disabled", async () => {
     const state = await import("../state");
-    const listeners = await import("../event-listeners");
+    const listeners = await import("../wiring/app-chrome.wire");
 
     localStorage.setItem("trispr-active-tab", "voice-output");
     state.setSettings(makeSettings(true, true, false));
@@ -248,7 +248,7 @@ describe("AI refinement module tab gating", () => {
 
   it("shows Agent tab only when workflow_agent is enabled", async () => {
     const state = await import("../state");
-    const listeners = await import("../event-listeners");
+    const listeners = await import("../wiring/app-chrome.wire");
 
     state.setSettings(makeSettings(true, true, true, false));
     listeners.initMainTab();
@@ -266,7 +266,7 @@ describe("AI refinement module tab gating", () => {
 
   it("falls back to transcription when active Agent tab gets disabled", async () => {
     const state = await import("../state");
-    const listeners = await import("../event-listeners");
+    const listeners = await import("../wiring/app-chrome.wire");
 
     state.setSettings(makeSettings(true, true, true, true));
     listeners.initMainTab();

@@ -2,13 +2,17 @@
  * Tests for the Edit-Delta vocabulary learning system.
  *
  * `./settings-persist` is mocked because `persistSettings` calls Tauri invoke
- * (not available in jsdom). `./settings` is mocked for `renderLearnedVocabChips`,
- * the dynamic-import target that runs after promotions.
+ * (not available in jsdom). `./settings/vocabulary.settings` is mocked for
+ * `renderLearnedVocabChips`, the dynamic-import target that runs after promotions.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../settings", () => ({
+const mocks = vi.hoisted(() => ({
   renderLearnedVocabChips: vi.fn(),
+}));
+
+vi.mock("../settings/vocabulary.settings", () => ({
+  renderLearnedVocabChips: mocks.renderLearnedVocabChips,
 }));
 
 vi.mock("../settings-persist", () => ({
@@ -39,6 +43,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
 
 beforeEach(() => {
   setSettings(makeSettings());
+  mocks.renderLearnedVocabChips.mockReset();
 });
 
 afterEach(() => {
@@ -177,6 +182,13 @@ describe("ingestEditDelta — accumulation", () => {
       ingestEditDelta("Test Trispa Ende.", "Test Trispr Ende.");
     }
     expect(settings!.vocab_terms).toContain("Trispr");
+  });
+
+  it("promotion refreshes the learned vocabulary chips", async () => {
+    for (let i = 0; i < 3; i++) {
+      ingestEditDelta("Test Trispa Ende.", "Test Trispr Ende.");
+    }
+    await vi.waitFor(() => expect(mocks.renderLearnedVocabChips).toHaveBeenCalled());
   });
 
   it("promotion with mixed-case 'from' adds both original and lowercase postproc entries", () => {

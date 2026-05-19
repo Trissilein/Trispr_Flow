@@ -14,8 +14,8 @@
 
 import type { EditSubstitution } from "./types";
 import { settings } from "./state";
-import { renderLearnedVocabChips } from "./settings";
 import { persistSettings } from "./settings-persist";
+import { renderLearnedVocabChips } from "./settings/vocabulary.settings";
 
 const CLEANUP_INTERVAL_MS = 4 * 24 * 60 * 60 * 1000;
 const MIN_ENTRIES_TO_CLEAN = 5;

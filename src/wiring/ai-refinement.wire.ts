@@ -32,9 +32,9 @@ import {
   resolveEffectiveAsrLanguageHint,
   derivePostprocLanguageFromAsr,
   syncDerivedLanguageSettings,
-  addVocabRow,
 } from "../settings";
 import { persistSettings } from "../settings-persist";
+import { addVocabRow } from "../settings/vocabulary.settings";
 import { renderHero } from "../ui-state";
 import { setTopicKeywords, DEFAULT_TOPICS } from "../history";
 import { showToast } from "../toast";

@@ -2,6 +2,7 @@ pub mod health;
 pub mod lifecycle;
 pub mod permissions;
 pub mod registry;
+pub mod task_capture;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -11,6 +12,7 @@ use crate::gdd::GddPresetClone;
 pub const ASSISTANT_CORE_MODULE_ID: &str = "assistant_core";
 pub const ASSISTANT_PRESENCE_MODULE_ID: &str = "assistant_presence";
 pub const LEGACY_WORKFLOW_AGENT_MODULE_ID: &str = "workflow_agent";
+pub const TASK_CAPTURE_MODULE_ID: &str = "task_capture";
 
 pub fn canonicalize_module_id(module_id: &str) -> &str {
     match module_id.trim() {
@@ -621,6 +623,62 @@ impl Default for VideoGenerationSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TaskCaptureRoute {
+    pub label: String,
+    pub keywords: Vec<String>,
+    pub endpoint: String,
+    pub confluence_page_id: String,
+}
+
+impl Default for TaskCaptureRoute {
+    fn default() -> Self {
+        Self {
+            label: String::new(),
+            keywords: Vec::new(),
+            endpoint: String::new(),
+            confluence_page_id: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TaskCaptureSettings {
+    pub routes: Vec<TaskCaptureRoute>,
+    pub match_mode: String,
+    pub ai_refinement_enabled: bool,
+    pub refinement_prompt: String,
+}
+
+impl Default for TaskCaptureSettings {
+    fn default() -> Self {
+        Self {
+            routes: vec![TaskCaptureRoute {
+                label: "Agenda".to_string(),
+                keywords: vec![
+                    "erinnere mich".to_string(),
+                    "trag ein".to_string(),
+                    "trag auf liste".to_string(),
+                    "auf meine liste".to_string(),
+                    "auf die agenda".to_string(),
+                    "auf meine todo liste".to_string(),
+                    "add to list".to_string(),
+                    "add to my agenda".to_string(),
+                    "put on my todo".to_string(),
+                    "remind me".to_string(),
+                ],
+                endpoint: "http://127.0.0.1:8177/agenda/add".to_string(),
+                confluence_page_id: String::new(),
+            }],
+            match_mode: "contains".to_string(),
+            ai_refinement_enabled: true,
+            refinement_prompt: "Du bist ein Task-Formatierer. Formuliere den folgenden Sprachtext als klaren, konkreten Task in einem Satz. Antworte NUR mit dem formatierten Task, nichts anderes.".to_string(),
+        }
+    }
+}
+
 pub fn normalize_video_generation_settings(settings: &mut VideoGenerationSettings) {
     settings.output_dir = settings.output_dir.trim().to_string();
     settings.default_resolution = match settings.default_resolution.as_str() {
@@ -654,5 +712,31 @@ pub fn normalize_video_generation_settings(settings: &mut VideoGenerationSetting
     // 0 means "use hyperframes default (auto)"; otherwise clamp to a sane range.
     if settings.render_workers != 0 {
         settings.render_workers = settings.render_workers.clamp(1, 16);
+    }
+}
+
+pub fn normalize_task_capture_settings(settings: &mut TaskCaptureSettings) {
+    if settings.routes.is_empty() {
+        settings.routes = TaskCaptureSettings::default().routes;
+    }
+    for route in &mut settings.routes {
+        route.label = route.label.trim().to_string();
+        route.endpoint = route.endpoint.trim().to_string();
+        route.confluence_page_id = route.confluence_page_id.trim().to_string();
+        route.keywords.retain(|kw| !kw.trim().is_empty());
+        route.keywords = route
+            .keywords
+            .iter()
+            .map(|kw| kw.trim().to_lowercase())
+            .collect();
+        route.keywords.sort();
+        route.keywords.dedup();
+    }
+    settings.match_mode = match settings.match_mode.as_str() {
+        "exact" => "exact".to_string(),
+        _ => "contains".to_string(),
+    };
+    if settings.refinement_prompt.trim().is_empty() {
+        settings.refinement_prompt = TaskCaptureSettings::default().refinement_prompt;
     }
 }

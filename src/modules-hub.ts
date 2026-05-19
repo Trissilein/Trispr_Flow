@@ -150,6 +150,12 @@ function moduleGuide(moduleId: string): { description: string; usage: string } {
       usage: "Use: Enable module, then open the AI Refinement tab to configure provider and prompts.",
     };
   }
+  if (moduleId === "task_capture") {
+    return {
+      description: "Voice-activated task capture with AI refinement and Confluence agenda posting.",
+      usage: "Say 'Trispr erinnere mich...' or 'Trispr remind me...' to capture tasks.",
+    };
+  }
   if (moduleId === "input_vision") {
     return {
       description: "Adds low-FPS screen context capture for agent-driven workflows.",
@@ -222,6 +228,21 @@ function openModuleConfig(moduleId: string): void {
       return;
     }
     openMainTab("ai-refinement");
+    return;
+  }
+
+  if (moduleId === "task_capture") {
+    const enabled = settings?.module_settings?.enabled_modules?.includes("task_capture") ?? false;
+    if (!enabled) {
+      showToast({
+        type: "info",
+        title: "Enable module first",
+        message: "Enable Task Capture to open its configuration tab.",
+        duration: 3200,
+      });
+      return;
+    }
+    openMainTab("task-capture");
     return;
   }
 

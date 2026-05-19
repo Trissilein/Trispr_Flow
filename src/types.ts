@@ -324,6 +324,20 @@ export interface VoiceOutputSettings {
   qwen3_tts_enabled?: boolean;
 }
 
+export interface TaskCaptureRoute {
+  label: string;
+  keywords: string[];
+  endpoint: string;
+  confluence_page_id: string;
+}
+
+export interface TaskCaptureSettings {
+  routes: TaskCaptureRoute[];
+  match_mode: "exact" | "contains";
+  ai_refinement_enabled: boolean;
+  refinement_prompt: string;
+}
+
 export interface AgentCommandParseResult {
   detected: boolean;
   intent: AgentIntent;
@@ -635,6 +649,7 @@ export interface Settings {
   workflow_agent?: WorkflowAgentSettings;
   vision_input_settings?: VisionInputSettings;
   voice_output_settings?: VoiceOutputSettings;
+  task_capture_settings?: TaskCaptureSettings;
   assistant_presence_enabled?: boolean;
   assistant_presence_pinned?: boolean;
   assistant_presence_window_x?: number | null;

@@ -34,7 +34,7 @@ mod workflow_agent;
 use arboard::{Clipboard, ImageData};
 use enigo::{Enigo, Key, KeyboardControllable};
 use errors::{AppError, ErrorEvent};
-use overlay::emit_capture_idle_overlay;
+use overlay::{emit_capture_idle_overlay, update_overlay_refining_indicator};
 use state::{
     AppState, AssistantOrchestratorState, HistoryEntry, RuntimeDiagnostics, Settings, StartupStatus,
 };
@@ -96,9 +96,10 @@ use crate::models::{
 use crate::modules::{
     canonicalize_module_id, health as module_health, lifecycle as module_lifecycle,
     normalize_confluence_settings, normalize_gdd_module_settings, normalize_module_settings,
-    normalize_vision_input_settings, normalize_voice_output_settings,
-    normalize_workflow_agent_settings, registry as module_registry, ASSISTANT_CORE_MODULE_ID,
-    ASSISTANT_PRESENCE_MODULE_ID,
+    normalize_task_capture_settings, normalize_vision_input_settings,
+    normalize_voice_output_settings, normalize_workflow_agent_settings,
+    registry as module_registry, ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID,
+    TASK_CAPTURE_MODULE_ID,
 };
 use crate::ollama_runtime::{
     detect_ollama_runtime, download_ollama_runtime, fetch_ollama_online_versions,
@@ -1461,6 +1462,48 @@ async fn get_settings(app: AppHandle) -> Settings {
 }
 
 #[tauri::command]
+async fn get_task_capture_settings(app: AppHandle) -> crate::modules::TaskCaptureSettings {
+    let state = app.state::<AppState>();
+    let settings = state.settings.read().unwrap_or_else(|p| p.into_inner());
+    settings.task_capture_settings.clone()
+}
+
+#[tauri::command]
+async fn save_task_capture_settings(
+    app: AppHandle,
+    task_capture_settings: crate::modules::TaskCaptureSettings,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut settings = {
+        let current = state.settings.read().unwrap_or_else(|p| p.into_inner());
+        current.clone()
+    };
+    settings.task_capture_settings = task_capture_settings;
+    save_settings_inner(&app, &mut settings)
+}
+
+#[tauri::command]
+fn test_task_capture_endpoint(endpoint: String) -> Result<String, String> {
+    let endpoint = endpoint.trim().to_string();
+    if endpoint.is_empty() {
+        return Err("Endpoint URL is empty".to_string());
+    }
+    match ureq::post(&endpoint)
+        .set("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(5))
+        .send_json(serde_json::json!({ "text": "[Test] Verbindungstest von Trispr Flow" }))
+    {
+        Ok(response) => Ok(format!("OK (status {})", response.status())),
+        Err(ureq::Error::Status(code, response)) => Err(crate::format_ureq_status_error(
+            "Test request",
+            code,
+            response,
+        )),
+        Err(ureq::Error::Transport(transport)) => Err(format!("Connection failed: {}", transport)),
+    }
+}
+
+#[tauri::command]
 async fn get_startup_status(app: AppHandle) -> StartupStatus {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -2461,7 +2504,11 @@ fn resolve_qwen3_tts_runtime_config(
     }
 }
 
-fn format_ureq_status_error(context: &str, code: u16, response: ureq::Response) -> String {
+pub(crate) fn format_ureq_status_error(
+    context: &str,
+    code: u16,
+    response: ureq::Response,
+) -> String {
     let mut body = response.into_string().unwrap_or_default();
     body = body.replace('\n', " ").replace('\r', " ");
     let body = body.trim();
@@ -4314,6 +4361,7 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
     normalize_assistant_presence_binding(settings);
     normalize_vision_input_settings(&mut settings.vision_input_settings);
     normalize_voice_output_settings(&mut settings.voice_output_settings);
+    normalize_task_capture_settings(&mut settings.task_capture_settings);
     reconcile_assistant_transcribe_flag(settings);
 
     info!("[DIAG] save_settings_inner: acquiring settings lock (write)");
@@ -4696,6 +4744,7 @@ fn enable_module(
                     settings.ai_fallback.enabled = true;
                     settings.postproc_llm_enabled = true;
                 }
+                if module_id == TASK_CAPTURE_MODULE_ID {}
             }
             normalize_module_settings(&mut settings.module_settings);
             normalize_assistant_core_binding(&mut settings);
@@ -4795,6 +4844,7 @@ fn disable_module(
                     settings.ai_fallback.enabled = false;
                     settings.postproc_llm_enabled = false;
                 }
+                if module_id == TASK_CAPTURE_MODULE_ID {}
             }
             normalize_module_settings(&mut settings.module_settings);
             normalize_assistant_core_binding(&mut settings);
@@ -4944,6 +4994,7 @@ fn module_enabled(settings: &Settings, module_id: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeCapability {
     AiRefinement,
+    TaskCapture,
     WorkflowAgent,
     VisionInput,
     VoiceOutputTts,
@@ -4953,6 +5004,7 @@ impl RuntimeCapability {
     fn module_id(self) -> &'static str {
         match self {
             Self::AiRefinement => AI_REFINEMENT_MODULE_ID,
+            Self::TaskCapture => TASK_CAPTURE_MODULE_ID,
             Self::WorkflowAgent => ASSISTANT_CORE_MODULE_ID,
             Self::VisionInput => "input_vision",
             Self::VoiceOutputTts => "output_voice_tts",
@@ -4962,6 +5014,7 @@ impl RuntimeCapability {
     fn setting_enabled(self, settings: &Settings) -> bool {
         match self {
             Self::AiRefinement => settings.ai_fallback.enabled,
+            Self::TaskCapture => true,
             Self::WorkflowAgent => settings.workflow_agent.enabled,
             Self::VisionInput => settings.vision_input_settings.enabled,
             Self::VoiceOutputTts => settings.voice_output_settings.enabled,
@@ -4972,6 +5025,9 @@ impl RuntimeCapability {
         match self {
             Self::AiRefinement => {
                 "AI Refinement module is disabled. Enable module 'ai_refinement' first."
+            }
+            Self::TaskCapture => {
+                "Task Capture module is disabled. Enable module 'task_capture' first."
             }
             Self::WorkflowAgent => {
                 "Assistant Core module is disabled. Enable module 'assistant_core' first."
@@ -4988,6 +5044,7 @@ impl RuntimeCapability {
     fn setting_disabled_message(self) -> &'static str {
         match self {
             Self::AiRefinement => "AI refinement is disabled in settings.",
+            Self::TaskCapture => "Task Capture is disabled in settings.",
             Self::WorkflowAgent => "Assistant Core is disabled in settings.",
             Self::VisionInput => "Vision input is disabled in settings.",
             Self::VoiceOutputTts => "Voice output is disabled in settings.",
@@ -5479,6 +5536,7 @@ mod runtime_capability_gate_tests {
         }
         match capability {
             RuntimeCapability::AiRefinement => settings.ai_fallback.enabled = setting_enabled,
+            RuntimeCapability::TaskCapture => {}
             RuntimeCapability::WorkflowAgent => settings.workflow_agent.enabled = setting_enabled,
             RuntimeCapability::VisionInput => {
                 settings.vision_input_settings.enabled = setting_enabled
@@ -5657,6 +5715,7 @@ fn agent_list_supported_actions() -> Vec<String> {
         "session_recap".to_string(),
         "plan_status".to_string(),
         "confirm_or_cancel".to_string(),
+        "reminder_capture".to_string(),
         "web_search".to_string(),
         "open_module".to_string(),
         "open_app".to_string(),
@@ -5670,7 +5729,7 @@ struct AssistantExecuteDirectActionRequest {
     command_text: String,
 }
 
-fn normalize_assistant_action_text(text: &str) -> String {
+pub(crate) fn normalize_assistant_action_text(text: &str) -> String {
     text.trim()
         .to_lowercase()
         .chars()
@@ -5829,6 +5888,249 @@ fn assistant_execute_direct_action(
         }
 
         let result = match request.intent.trim() {
+            "reminder_capture" => {
+                if !crate::modules::task_capture::task_capture_enabled(&settings_snapshot) {
+                    tracing::info!("[task_capture] module disabled, rejecting intent");
+                    crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message:
+                            "Task Capture module is disabled. Enable 'task_capture' in modules."
+                                .to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("module_disabled".to_string()),
+                    }
+                } else {
+                    let tc_settings = settings_snapshot.task_capture_settings.clone();
+                    tracing::info!("[task_capture] raw input: {:?}", request.command_text);
+
+                    let matched_route = crate::modules::task_capture::find_matching_route(
+                        &request.command_text,
+                        &tc_settings,
+                    );
+                    let route = match matched_route {
+                        Some(r) => {
+                            tracing::info!("[task_capture] matched route: {:?}", r.label);
+                            r.clone()
+                        }
+                        None => {
+                            tracing::info!(
+                                "[task_capture] no route matched, using first route as fallback"
+                            );
+                            tc_settings.routes.first().cloned().unwrap_or_default()
+                        }
+                    };
+
+                    let raw_task =
+                        crate::modules::task_capture::extract_task_text(&request.command_text);
+                    tracing::info!("[task_capture] extracted text: {:?}", raw_task);
+                    if raw_task.is_empty() {
+                        crate::workflow_agent::AgentExecutionResult {
+                            status: "failed".to_string(),
+                            message: "No reminder text was detected.".to_string(),
+                            draft: None,
+                            publish_result: None,
+                            queued_job: None,
+                            error: Some("reminder_text_missing".to_string()),
+                        }
+                    } else {
+                        let _ = app.emit(
+                            "agent:execution-progress",
+                            serde_json::json!({
+                                "intent": "reminder_capture",
+                                "stage": "enqueue",
+                                "message": format!("{}: Eintrag erkannt", route.label),
+                                "text": raw_task.clone(),
+                            }),
+                        );
+
+                        let app_clone = app.clone();
+                        let settings_clone = settings_snapshot.clone();
+                        let queued_task = raw_task.clone();
+                        let route_clone = route.clone();
+                        let ai_enabled = tc_settings.ai_refinement_enabled;
+                        let custom_prompt = tc_settings.refinement_prompt.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let refined_text = if ai_enabled {
+                                let _ = app_clone.emit(
+                                    "agent:execution-progress",
+                                    serde_json::json!({
+                                        "intent": "reminder_capture",
+                                        "stage": "refining",
+                                        "message": "Ollama formuliert Task…",
+                                        "text": queued_task.clone(),
+                                    }),
+                                );
+                                let _ = update_overlay_refining_indicator(&app_clone, true);
+
+                                let app_for_refine = app_clone.clone();
+                                let settings_for_refine = settings_clone.clone();
+                                let raw_for_refine = queued_task.clone();
+                                let prompt_for_refine = custom_prompt.clone();
+                                match tauri::async_runtime::spawn_blocking(move || {
+                                    crate::modules::task_capture::refine_task_text(
+                                        &app_for_refine,
+                                        &settings_for_refine,
+                                        &raw_for_refine,
+                                        Some(&prompt_for_refine),
+                                    )
+                                })
+                                .await
+                                {
+                                    Ok(text) if !text.trim().is_empty() => {
+                                        tracing::info!(
+                                            "[task_capture] refined text: {:?}",
+                                            text.trim()
+                                        );
+                                        text.trim().to_string()
+                                    }
+                                    Ok(_) => {
+                                        tracing::warn!(
+                                            "[task_capture] refinement returned empty, using raw"
+                                        );
+                                        queued_task.clone()
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            "[task_capture] refinement task join failed: {}",
+                                            error
+                                        );
+                                        queued_task.clone()
+                                    }
+                                }
+                            } else {
+                                tracing::info!(
+                                    "[task_capture] AI refinement disabled, using raw text"
+                                );
+                                queued_task.clone()
+                            };
+
+                            let _ = app_clone.emit(
+                                "agent:execution-progress",
+                                serde_json::json!({
+                                    "intent": "reminder_capture",
+                                    "stage": "posting",
+                                    "message": format!("Task wird an {} gesendet…", route_clone.label),
+                                    "text": refined_text.clone(),
+                                }),
+                            );
+
+                            tracing::info!("[task_capture] posting to: {}", route_clone.endpoint);
+                            let post_text = refined_text.clone();
+                            let post_endpoint = route_clone.endpoint.clone();
+                            let agenda_post_result =
+                                match tauri::async_runtime::spawn_blocking(move || {
+                                    crate::modules::task_capture::post_task_to_endpoint(
+                                        &post_text,
+                                        &post_endpoint,
+                                    )
+                                })
+                                .await
+                                {
+                                    Ok(result) => result,
+                                    Err(error) => Err(format!(
+                                        "Task capture request task join failed: {}",
+                                        error
+                                    )),
+                                };
+
+                            let _ = update_overlay_refining_indicator(&app_clone, false);
+                            tracing::info!("[task_capture] post result: {:?}", agenda_post_result);
+
+                            let (result, notification_payload) = match agenda_post_result {
+                                Ok(()) => (
+                                    crate::workflow_agent::AgentExecutionResult {
+                                        status: "completed".to_string(),
+                                        message: format!("{}: {}", route_clone.label, refined_text),
+                                        draft: None,
+                                        publish_result: None,
+                                        queued_job: None,
+                                        error: None,
+                                    },
+                                    serde_json::json!({
+                                        "ok": true,
+                                        "title": route_clone.label,
+                                        "message": format!("{}: {}", route_clone.label, refined_text),
+                                        "text": refined_text,
+                                    }),
+                                ),
+                                Err(error) => {
+                                    tracing::error!("[task_capture] post failed: {}", error);
+                                    (
+                                        crate::workflow_agent::AgentExecutionResult {
+                                            status: "failed".to_string(),
+                                            message: format!(
+                                                "{}-Fehler: {}",
+                                                route_clone.label, error
+                                            ),
+                                            draft: None,
+                                            publish_result: None,
+                                            queued_job: None,
+                                            error: Some(error.clone()),
+                                        },
+                                        serde_json::json!({
+                                            "ok": false,
+                                            "title": route_clone.label,
+                                            "message": format!("Fehler: {}", error),
+                                        }),
+                                    )
+                                }
+                            };
+
+                            let _ = app_clone.emit("agenda:notification", &notification_payload);
+                            if result.status == "failed" {
+                                let _ = app_clone.emit("agent:execution-failed", &result);
+                            } else {
+                                let _ = app_clone.emit("agent:execution-finished", &result);
+                            }
+
+                            if assistant_mode {
+                                let assistant_state = if result.status == "failed" {
+                                    AssistantOrchestratorState::Recovering
+                                } else {
+                                    AssistantOrchestratorState::Listening
+                                };
+                                emit_assistant_action_result(
+                                    &app_clone,
+                                    &settings_clone,
+                                    assistant_state,
+                                    &result,
+                                    "assistant_execute_direct_action:reminder_capture",
+                                );
+                                let state_handle = app_clone.state::<AppState>();
+                                let _ = emit_assistant_baseline_state(
+                                    &app_clone,
+                                    state_handle.inner(),
+                                    &settings_clone,
+                                    "assistant_execute_direct_action:reminder_capture_complete",
+                                );
+                            }
+
+                            let result_status = result.status.clone();
+                            let result_message = result.message.clone();
+                            let _ = app_clone.emit(
+                                "agent:execution-progress",
+                                serde_json::json!({
+                                    "intent": "reminder_capture",
+                                    "stage": "done",
+                                    "status": result_status,
+                                    "message": result_message,
+                                }),
+                            );
+                        });
+
+                        crate::workflow_agent::AgentExecutionResult {
+                            status: "queued".to_string(),
+                            message: format!("{}: Task wird verarbeitet…", route.label),
+                            draft: None,
+                            publish_result: None,
+                            queued_job: None,
+                            error: None,
+                        }
+                    }
+                }
+            }
             "web_search" => {
                 if !settings_snapshot.workflow_agent.online_enabled {
                     crate::workflow_agent::AgentExecutionResult {
@@ -5976,7 +6278,7 @@ fn unknown_rule_reply(command_text: &str, online_enabled: bool) -> String {
     "Ich kann aktuell GDD-Drafts, Session-Recaps und Plan-Status aus deinen lokalen Transkripten verarbeiten. Formuliere die Anfrage bitte in diesem Scope.".to_string()
 }
 
-fn ai_provider_is_local(provider: &str) -> bool {
+pub(crate) fn ai_provider_is_local(provider: &str) -> bool {
     matches!(provider, "ollama" | "lm_studio" | "oobabooga")
 }
 
@@ -11957,6 +12259,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            get_task_capture_settings,
+            save_task_capture_settings,
+            test_task_capture_endpoint,
             get_startup_status,
             get_runtime_diagnostics,
             save_settings,

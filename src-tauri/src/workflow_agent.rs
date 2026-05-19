@@ -376,7 +376,11 @@ fn session_preview(entries: &[HistoryEntry]) -> String {
         .join(" ");
     joined = joined.trim().to_string();
     if joined.len() > 180 {
-        joined.truncate(180);
+        let mut end = 180;
+        while !joined.is_char_boundary(end) && end > 0 {
+            end -= 1;
+        }
+        joined.truncate(end);
         joined.push_str("...");
     }
     joined
@@ -454,6 +458,18 @@ pub fn parse_command(
         "abbrechen",
         "freigeben",
     ];
+    let reminder_keywords = [
+        "erinnere mich",
+        "trag ein",
+        "trag auf liste",
+        "auf meine liste",
+        "auf die agenda",
+        "auf meine todo liste",
+        "add to list",
+        "add to my agenda",
+        "put on my todo",
+        "remind me",
+    ];
 
     let recap_hit = recap_keywords
         .iter()
@@ -473,6 +489,9 @@ pub fn parse_command(
     let confirm_cancel_hit = confirm_cancel_keywords
         .iter()
         .any(|keyword| normalized.contains(keyword));
+    let reminder_hit = reminder_keywords
+        .iter()
+        .any(|keyword| normalized.contains(keyword));
 
     let (intent_detected, intent) = if wakeword_matched && confirm_cancel_hit {
         (true, "confirm_or_cancel".to_string())
@@ -480,6 +499,8 @@ pub fn parse_command(
         (true, "plan_status".to_string())
     } else if wakeword_matched && recap_hit {
         (true, "session_recap".to_string())
+    } else if wakeword_matched && reminder_hit {
+        (true, "reminder_capture".to_string())
     } else if wakeword_matched && open_module_hit {
         (true, "open_module".to_string())
     } else if wakeword_matched && open_app_hit {
@@ -505,6 +526,7 @@ pub fn parse_command(
         || recap_hit
         || plan_status_hit
         || confirm_cancel_hit
+        || reminder_hit
         || web_search_hit
         || open_module_hit
         || open_app_hit
@@ -527,12 +549,13 @@ pub fn parse_command(
         temporal_hint,
         topic_hint,
         reasoning: format!(
-            "wakeword={}, gdd_keywords={}, recap={}, plan_status={}, confirm_cancel={}, web_search={}, open_module={}, open_app={}, publish_hint={}",
+            "wakeword={}, gdd_keywords={}, recap={}, plan_status={}, confirm_cancel={}, reminder={}, web_search={}, open_module={}, open_app={}, publish_hint={}",
             wakeword_matched,
             gdd_keyword_hits,
             recap_hit,
             plan_status_hit,
             confirm_cancel_hit,
+            reminder_hit,
             web_search_hit,
             open_module_hit,
             open_app_hit,
@@ -960,6 +983,48 @@ mod tests {
         let result = parse_command(&req, &make_wakewords(), &make_keywords());
         assert!(result.detected);
         assert_eq!(result.intent, "open_module");
+    }
+
+    #[test]
+    fn bare_todo_does_not_trigger_reminder_capture() {
+        let req = AgentParseCommandRequest {
+            command_text: "hey trispr we discussed the todo list in the meeting".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert_ne!(result.intent, "reminder_capture");
+    }
+
+    #[test]
+    fn bare_agenda_does_not_trigger_reminder_capture() {
+        let req = AgentParseCommandRequest {
+            command_text: "trispr the agenda was about game balance".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert_ne!(result.intent, "reminder_capture");
+    }
+
+    #[test]
+    fn erinnere_mich_triggers_reminder_capture() {
+        let req = AgentParseCommandRequest {
+            command_text: "trispr erinnere mich daran die Mail zu schreiben".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(result.detected);
+        assert_eq!(result.intent, "reminder_capture");
+    }
+
+    #[test]
+    fn add_to_my_agenda_triggers_reminder_capture() {
+        let req = AgentParseCommandRequest {
+            command_text: "hey trispr add to my agenda review the PR".to_string(),
+            source: None,
+        };
+        let result = parse_command(&req, &make_wakewords(), &make_keywords());
+        assert!(result.detected);
+        assert_eq!(result.intent, "reminder_capture");
     }
 
     #[test]

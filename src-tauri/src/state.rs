@@ -9,11 +9,12 @@ use crate::constants::{
 use crate::history_partition::PartitionedHistory;
 use crate::modules::{
     canonicalize_module_id, normalize_confluence_settings, normalize_gdd_module_settings,
-    normalize_module_settings, normalize_video_generation_settings,
-    normalize_vision_input_settings, normalize_voice_output_settings,
-    normalize_workflow_agent_settings, ConfluenceSettings, GddModuleSettings, ModuleSettings,
-    VideoGenerationSettings, VisionInputSettings, VoiceOutputSettings, WorkflowAgentSettings,
-    ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID, LEGACY_WORKFLOW_AGENT_MODULE_ID,
+    normalize_module_settings, normalize_task_capture_settings,
+    normalize_video_generation_settings, normalize_vision_input_settings,
+    normalize_voice_output_settings, normalize_workflow_agent_settings, ConfluenceSettings,
+    GddModuleSettings, ModuleSettings, TaskCaptureSettings, VideoGenerationSettings,
+    VisionInputSettings, VoiceOutputSettings, WorkflowAgentSettings, ASSISTANT_CORE_MODULE_ID,
+    ASSISTANT_PRESENCE_MODULE_ID, LEGACY_WORKFLOW_AGENT_MODULE_ID,
 };
 use crate::multimodal_io::{PiperDaemonState, VisionFrameBuffer};
 use crate::overlay::OverlayController;
@@ -317,6 +318,8 @@ pub(crate) struct Settings {
     pub(crate) voice_output_settings: VoiceOutputSettings,
     #[serde(default)]
     pub(crate) video_generation_settings: VideoGenerationSettings,
+    #[serde(default)]
+    pub(crate) task_capture_settings: TaskCaptureSettings,
     #[serde(default = "default_assistant_presence_enabled")]
     pub(crate) assistant_presence_enabled: bool,
     #[serde(default = "default_assistant_presence_pinned")]
@@ -496,6 +499,7 @@ impl Default for Settings {
       vision_input_settings: VisionInputSettings::default(),
       voice_output_settings: VoiceOutputSettings::default(),
       video_generation_settings: VideoGenerationSettings::default(),
+      task_capture_settings: TaskCaptureSettings::default(),
       assistant_presence_enabled: default_assistant_presence_enabled(),
       assistant_presence_pinned: default_assistant_presence_pinned(),
       assistant_presence_window_x: None,
@@ -1291,6 +1295,7 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             normalize_vision_input_settings(&mut settings.vision_input_settings);
             normalize_voice_output_settings(&mut settings.voice_output_settings);
             normalize_video_generation_settings(&mut settings.video_generation_settings);
+            normalize_task_capture_settings(&mut settings.task_capture_settings);
             if settings.setup.local_ai_wizard_completed {
                 settings.setup.local_ai_wizard_pending = false;
             }
@@ -1769,6 +1774,7 @@ pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result
     normalize_vision_input_settings(&mut persisted.vision_input_settings);
     normalize_voice_output_settings(&mut persisted.voice_output_settings);
     normalize_video_generation_settings(&mut persisted.video_generation_settings);
+    normalize_task_capture_settings(&mut persisted.task_capture_settings);
     let raw = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
     // Atomic write: write to .tmp then rename to avoid partial/corrupted JSON on crash.
     let tmp_path = path.with_extension("json.tmp");

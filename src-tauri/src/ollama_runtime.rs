@@ -1725,9 +1725,14 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
     kill_stale_ollama_pid(app);
     terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
     let mut cmd = Command::new(&binary_path);
+    let server_keep_alive = std::env::var("TRISPR_OLLAMA_KEEP_ALIVE")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "5m".to_string());
     cmd.arg("serve")
         .env("OLLAMA_HOST", host)
         .env("OLLAMA_NO_CLOUD", "1")
+        .env("OLLAMA_KEEP_ALIVE", &server_keep_alive)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

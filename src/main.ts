@@ -1032,6 +1032,17 @@ async function bootstrap() {
         appendWorkflowAgentLog(`Event ${name} -> ${JSON.stringify(event.payload)}`);
       })
     ),
+    listen("agent:execution-progress", (event: any) => {
+      const p = event.payload;
+      if (p?.intent === "reminder_capture" && p?.message) {
+        showToast({ type: "info", title: "Task Capture", message: p.message, duration: 2500 });
+      }
+    }),
+    listen("agenda:notification", (event: any) => {
+      const p = event.payload;
+      const type = p?.ok ? "success" : "error";
+      showToast({ type, title: p?.title || "Agenda", message: p?.message || "", duration: 4000 });
+    }),
     listen<AssistantStateChangedEvent>("assistant:state-changed", (event) => {
       if (!event.payload) return;
       handleAssistantStateChanged(event.payload);
@@ -1093,6 +1104,7 @@ async function bootstrap() {
         target === "transcription"
         || target === "settings"
         || target === "ai-refinement"
+        || target === "task-capture"
         || target === "modules"
       ) {
         openMainTab(target);

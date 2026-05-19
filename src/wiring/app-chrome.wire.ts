@@ -15,6 +15,7 @@ import {
 } from "../ollama-models";
 import { DEFAULT_ACCENT_COLOR, applyAccentColor } from "../utils";
 import { syncWorkflowAgentConsoleState } from "../workflow-agent-console";
+import { renderTaskCaptureTab } from "../task-capture-config";
 
 type MainTab =
   | "transcription"
@@ -23,7 +24,8 @@ type MainTab =
   | "voice-output"
   | "video"
   | "agent"
-  | "modules";
+  | "modules"
+  | "task-capture";
 
 let aiRefinementTabRefreshInFlight: Promise<void> | null = null;
 let _resizeWired = false;
@@ -44,11 +46,16 @@ function agentTabAvailable(): boolean {
   return isAssistantCoreAvailable();
 }
 
+function taskCaptureTabAvailable(): boolean {
+  return settings?.module_settings?.enabled_modules?.includes("task_capture") ?? false;
+}
+
 function syncMainTabAvailability(): void {
   const aiAvailable = aiRefinementTabAvailable();
   const voiceAvailable = voiceOutputTabAvailable();
   const videoAvailable = videoTabAvailable();
   const agentAvailable = agentTabAvailable();
+  const taskCaptureAvailable = taskCaptureTabAvailable();
   if (dom.tabBtnAiRefinement) {
     dom.tabBtnAiRefinement.hidden = !aiAvailable;
     dom.tabBtnAiRefinement.setAttribute("aria-hidden", (!aiAvailable).toString());
@@ -109,6 +116,21 @@ function syncMainTabAvailability(): void {
       dom.tabAgent.classList.remove("active");
     }
   }
+  if (dom.tabBtnTaskCapture) {
+    dom.tabBtnTaskCapture.hidden = !taskCaptureAvailable;
+    dom.tabBtnTaskCapture.setAttribute("aria-hidden", (!taskCaptureAvailable).toString());
+    if (taskCaptureAvailable) {
+      dom.tabBtnTaskCapture.removeAttribute("tabindex");
+    } else {
+      dom.tabBtnTaskCapture.setAttribute("tabindex", "-1");
+    }
+  }
+  if (dom.tabTaskCapture) {
+    dom.tabTaskCapture.hidden = !taskCaptureAvailable;
+    if (!taskCaptureAvailable) {
+      dom.tabTaskCapture.classList.remove("active");
+    }
+  }
 }
 
 function getActiveMainTabFromDom(): MainTab {
@@ -118,6 +140,7 @@ function getActiveMainTabFromDom(): MainTab {
   if (dom.tabBtnVideo?.classList.contains("active")) return "video";
   if (dom.tabBtnAgent?.classList.contains("active")) return "agent";
   if (dom.tabBtnModules?.classList.contains("active")) return "modules";
+  if (dom.tabBtnTaskCapture?.classList.contains("active")) return "task-capture";
   return "transcription";
 }
 
@@ -137,6 +160,10 @@ export function reconcileMainTabVisibility(): void {
     return;
   }
   if (!agentTabAvailable() && activeTab === "agent") {
+    switchMainTab("transcription");
+    return;
+  }
+  if (!taskCaptureTabAvailable() && activeTab === "task-capture") {
     switchMainTab("transcription");
   }
 }
@@ -185,6 +212,9 @@ function switchMainTab(tab: MainTab) {
   if (resolvedTab === "agent" && !agentTabAvailable()) {
     resolvedTab = "transcription";
   }
+  if (resolvedTab === "task-capture" && !taskCaptureTabAvailable()) {
+    resolvedTab = "transcription";
+  }
 
   const isTranscription = resolvedTab === "transcription";
   const isSettings = resolvedTab === "settings";
@@ -193,6 +223,7 @@ function switchMainTab(tab: MainTab) {
   const isVideo = resolvedTab === "video";
   const isAgent = resolvedTab === "agent";
   const isModules = resolvedTab === "modules";
+  const isTaskCapture = resolvedTab === "task-capture";
 
   dom.tabBtnTranscription?.classList.toggle("active", isTranscription);
   dom.tabBtnSettings?.classList.toggle("active", isSettings);
@@ -201,6 +232,7 @@ function switchMainTab(tab: MainTab) {
   dom.tabBtnVideo?.classList.toggle("active", isVideo);
   dom.tabBtnAgent?.classList.toggle("active", isAgent);
   dom.tabBtnModules?.classList.toggle("active", isModules);
+  dom.tabBtnTaskCapture?.classList.toggle("active", isTaskCapture);
 
   dom.tabBtnTranscription?.setAttribute("aria-selected", isTranscription.toString());
   dom.tabBtnSettings?.setAttribute("aria-selected", isSettings.toString());
@@ -209,6 +241,7 @@ function switchMainTab(tab: MainTab) {
   dom.tabBtnVideo?.setAttribute("aria-selected", isVideo.toString());
   dom.tabBtnAgent?.setAttribute("aria-selected", isAgent.toString());
   dom.tabBtnModules?.setAttribute("aria-selected", isModules.toString());
+  dom.tabBtnTaskCapture?.setAttribute("aria-selected", isTaskCapture.toString());
 
   // Update tab content visibility — clear any inline display styles first
   if (dom.tabTranscription) {
@@ -239,6 +272,10 @@ function switchMainTab(tab: MainTab) {
     dom.tabModules.style.removeProperty("display");
     dom.tabModules.classList.toggle("active", isModules);
   }
+  if (dom.tabTaskCapture) {
+    dom.tabTaskCapture.style.removeProperty("display");
+    dom.tabTaskCapture.classList.toggle("active", isTaskCapture);
+  }
 
   // Persist to localStorage
   try {
@@ -256,6 +293,10 @@ function switchMainTab(tab: MainTab) {
       }
     })();
   }
+
+  if (isTaskCapture) {
+    void renderTaskCaptureTab();
+  }
 }
 
 // Initialize tab state from localStorage
@@ -270,7 +311,8 @@ export function initMainTab() {
       savedTab === "voice-output" ||
       savedTab === "video" ||
       savedTab === "agent" ||
-      savedTab === "modules"
+      savedTab === "modules" ||
+      savedTab === "task-capture"
     ) {
       switchMainTab(savedTab);
     } else {
@@ -306,6 +348,9 @@ export function wireAppChrome(): void {
   });
   dom.tabBtnModules?.addEventListener("click", () => {
     switchMainTab("modules");
+  });
+  dom.tabBtnTaskCapture?.addEventListener("click", () => {
+    switchMainTab("task-capture");
   });
 
   const setProductMode = async (nextMode: "transcribe" | "assistant") => {

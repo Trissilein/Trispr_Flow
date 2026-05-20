@@ -8,6 +8,8 @@ import {
   updateTranscribeVadVisibility,
   updateTranscribeThreshold,
   syncCaptureModeVisibility,
+} from "../settings/transcription.settings";
+import {
   renderSettings,
 } from "../settings";
 import { persistSettings } from "../settings-persist";

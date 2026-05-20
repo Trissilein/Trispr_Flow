@@ -29,10 +29,12 @@ import {
   renderAIFallbackSettingsUi,
   renderSettings,
   renderTopicKeywords,
-  resolveEffectiveAsrLanguageHint,
-  derivePostprocLanguageFromAsr,
   syncDerivedLanguageSettings,
 } from "../settings";
+import {
+  resolveEffectiveAsrLanguageHint,
+  derivePostprocLanguageFromAsr,
+} from "../settings/transcription.settings";
 import { persistSettings } from "../settings-persist";
 import { addVocabRow } from "../settings/vocabulary.settings";
 import { renderHero } from "../ui-state";

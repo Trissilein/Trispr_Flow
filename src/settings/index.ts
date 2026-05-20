@@ -9,10 +9,9 @@ import {
   startupStatus,
 } from "../state";
 import * as dom from "../dom-refs";
-import { thresholdToDb, VAD_DB_FLOOR, formatBytes } from "../ui-helpers";
+import { formatBytes } from "../ui-helpers";
 import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "../utils";
 import { DEFAULT_TOPICS, setTopicKeywords, type TopicKeywords } from "../history";
-import { formatHotkeyForDisplay } from "../ui-helpers";
 import { renderAIRefinementStaticHelp } from "../ai-refinement-help";
 import {
   getOllamaRuntimeCardState,
@@ -56,16 +55,15 @@ import {
   isVerifiedAuthStatus,
 } from "../ai-provider-utils";
 import { persistSettings } from "../settings-persist";
-// Local bindings are used by renderSettings(); the re-export below preserves external imports.
 import { renderLearnedVocabChips, renderVocabulary } from "./vocabulary.settings";
 import { renderOverlaySettings } from "./overlay.settings";
+import {
+  derivePostprocLanguageFromAsr,
+  renderTranscriptionSettings,
+  resolveEffectiveAsrLanguageHint,
+} from "./transcription.settings";
 
 export { persistSettings };
-export {
-  addVocabRow,
-  renderLearnedVocabChips,
-  renderVocabulary,
-} from "./vocabulary.settings";
 
 export function ensureContinuousDumpDefaults() {
   if (!settings) return;
@@ -89,51 +87,6 @@ export function ensureContinuousDumpDefaults() {
   settings.continuous_system_hard_cut_ms ??= settings.continuous_hard_cut_ms;
 }
 
-export function updateTranscribeVadVisibility(enabled: boolean) {
-  if (dom.transcribeMeterThreshold) {
-    dom.transcribeMeterThreshold.style.display = enabled ? "block" : "none";
-  }
-  if (dom.transcribeThresholdLabel) {
-    dom.transcribeThresholdLabel.style.display = enabled ? "block" : "none";
-  }
-}
-
-export function updateTranscribeThreshold(threshold: number) {
-  const db = thresholdToDb(threshold, VAD_DB_FLOOR);
-  if (dom.transcribeThresholdDb) {
-    dom.transcribeThresholdDb.textContent = `${db.toFixed(1)} dB`;
-  }
-  if (dom.transcribeMeterThreshold) {
-    const pos = (db - VAD_DB_FLOOR) / (0 - VAD_DB_FLOOR);
-    dom.transcribeMeterThreshold.style.left = `${Math.round(pos * 100)}%`;
-  }
-}
-
-function normalizeLanguageModeValue(languageMode: string | null | undefined): string {
-  const normalized = (languageMode || "auto").trim().toLowerCase();
-  if (!normalized) return "auto";
-  return normalized;
-}
-
-export function resolveEffectiveAsrLanguageHint(
-  languageMode: string | null | undefined,
-  languagePinned: boolean | null | undefined
-): string {
-  const normalized = normalizeLanguageModeValue(languageMode);
-  return languagePinned ? normalized : "auto";
-}
-
-export function derivePostprocLanguageFromAsr(
-  languageMode: string | null | undefined,
-  languagePinned: boolean | null | undefined
-): "en" | "de" | "multi" {
-  if (!languagePinned) return "multi";
-  const normalized = normalizeLanguageModeValue(languageMode);
-  if (normalized === "en") return "en";
-  if (normalized === "de") return "de";
-  return "multi";
-}
-
 function derivedPostprocLanguageLabel(postprocLanguage: "en" | "de" | "multi"): string {
   if (postprocLanguage === "en") {
     return "Derived: English rules (ASR language pinned to English).";
@@ -144,50 +97,12 @@ function derivedPostprocLanguageLabel(postprocLanguage: "en" | "de" | "multi"): 
   return "Derived: Multilingual rules (ASR auto-detect or non EN/DE language).";
 }
 
-export function syncCaptureModeVisibility(mode: string, pttUseVad = false): void {
-  const hotkeysEnabled = mode === "ptt";
-  const vadEnabled = mode === "vad" || (mode === "ptt" && pttUseVad);
-  if (dom.hotkeysBlock) dom.hotkeysBlock.classList.toggle("hidden", !hotkeysEnabled);
-  if (dom.vadBlock) dom.vadBlock.classList.toggle("hidden", !vadEnabled);
-  // In PTT+VAD mode we only use threshold gating while the key is held.
-  // Silence grace is VAD-mode specific and should not appear for PTT.
-  const vadSilenceField = dom.vadSilence?.closest(".field");
-  if (vadSilenceField) {
-    vadSilenceField.classList.toggle("hidden", mode === "ptt");
-  }
-}
-
 export function syncDerivedLanguageSettings(): void {
   if (!settings) return;
   settings.postproc_language = derivePostprocLanguageFromAsr(
     settings.language_mode,
     settings.language_pinned
   );
-}
-
-function syncAsrLanguageHintUi(): void {
-  if (!settings) return;
-  const pinned = Boolean(settings.language_pinned);
-  if (dom.languageSelect) {
-    dom.languageSelect.disabled = !pinned;
-    dom.languageSelect.setAttribute("aria-disabled", String(!pinned));
-  }
-  if (dom.asrLanguageField) {
-    dom.asrLanguageField.classList.toggle("is-disabled", !pinned);
-  }
-  if (dom.asrLanguageHintNote) {
-    dom.asrLanguageHintNote.textContent = pinned
-      ? "Pinned: ASR is locked to the selected language."
-      : "Auto-detect is active. Enable pinning to lock a specific ASR language.";
-  }
-  if (dom.whisperInputLanguageSelect) {
-    dom.whisperInputLanguageSelect.value = pinned ? settings.language_mode : "auto";
-  }
-  if (dom.whisperInputLanguageNote) {
-    dom.whisperInputLanguageNote.textContent = pinned
-      ? "Language is pinned. Short clips skip auto-detect for lower Whisper latency."
-      : "Multi uses Whisper auto-detect. Pin a language for lower latency on short clips.";
-  }
 }
 
 function authStatusLabel(status?: string | null): string {
@@ -1135,7 +1050,7 @@ export function renderAIFallbackSettingsUi() {
   );
   const userHasPrevious = Boolean(
     selectedUserPromptPreset?.previous_prompt &&
-      selectedUserPromptPreset.previous_prompt.trim().length > 0
+    selectedUserPromptPreset.previous_prompt.trim().length > 0
   );
   const shownPrompt = isBuiltInPrompt
     ? promptPreview
@@ -1294,125 +1209,7 @@ export function renderSettings() {
   syncDerivedLanguageSettings();
   renderProductModeSettings();
   renderGlobalOnlineModeSettings();
-  if (dom.captureEnabledToggle) dom.captureEnabledToggle.checked = settings.capture_enabled;
-  if (dom.transcribeEnabledToggle) dom.transcribeEnabledToggle.checked = settings.transcribe_enabled;
-  if (dom.modeSelect) dom.modeSelect.value = settings.mode;
-  if (dom.pttHotkey) dom.pttHotkey.value = formatHotkeyForDisplay(settings.hotkey_ptt);
-  if (dom.toggleHotkey) dom.toggleHotkey.value = formatHotkeyForDisplay(settings.hotkey_toggle);
-  syncCaptureModeVisibility(settings.mode, settings.ptt_use_vad);
-  if (dom.deviceSelect) dom.deviceSelect.value = settings.input_device;
-  if (dom.languageSelect) dom.languageSelect.value = settings.language_mode;
-  if (dom.languagePinnedToggle) dom.languagePinnedToggle.checked = settings.language_pinned;
-  syncAsrLanguageHintUi();
-  if (dom.modelSourceSelect) dom.modelSourceSelect.value = settings.model_source;
-  if (dom.modelCustomUrl) dom.modelCustomUrl.value = settings.model_custom_url ?? "";
-  if (dom.modelStoragePath && settings.model_storage_dir) {
-    dom.modelStoragePath.value = settings.model_storage_dir;
-  }
-  if (dom.modelCustomUrlField) {
-    dom.modelCustomUrlField.classList.toggle("hidden", settings.model_source !== "custom");
-  }
-  if (dom.audioCuesToggle) dom.audioCuesToggle.checked = settings.audio_cues;
-  if (dom.pttUseVadToggle) dom.pttUseVadToggle.checked = settings.ptt_use_vad;
-  if (dom.audioCuesVolume) dom.audioCuesVolume.value = Math.round(settings.audio_cues_volume * 100).toString();
-  if (dom.audioCuesVolumeValue) {
-    dom.audioCuesVolumeValue.textContent = `${Math.round(settings.audio_cues_volume * 100)}%`;
-  }
-  if (dom.hallucinationFilterToggle) {
-    dom.hallucinationFilterToggle.checked = settings.hallucination_filter_enabled;
-  }
-  if (dom.activationWordsToggle) {
-    dom.activationWordsToggle.checked = settings.activation_words_enabled;
-  }
-  if (dom.activationWordsList) {
-    dom.activationWordsList.value = settings.activation_words.join('\n');
-  }
-  if (dom.activationWordsConfig) {
-    dom.activationWordsConfig.classList.toggle('hidden', !settings.activation_words_enabled);
-  }
-  if (dom.micGain) dom.micGain.value = Math.round(settings.mic_input_gain_db).toString();
-  if (dom.micGainValue) {
-    const gain = Math.round(settings.mic_input_gain_db);
-    dom.micGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
-  }
-  // Display start threshold in dB (main user-facing threshold)
-  const vadThresholdDb = thresholdToDb(settings.vad_threshold_start, VAD_DB_FLOOR);
-  if (dom.vadThreshold) dom.vadThreshold.value = Math.round(vadThresholdDb).toString();
-  if (dom.vadThresholdValue) dom.vadThresholdValue.textContent = `${Math.round(vadThresholdDb)} dB`;
-  if (dom.vadSilence) dom.vadSilence.value = settings.vad_silence_ms.toString();
-  if (dom.vadSilenceValue) dom.vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
-  if (dom.transcribeHotkey) dom.transcribeHotkey.value = formatHotkeyForDisplay(settings.transcribe_hotkey);
-  if (dom.toggleActivationWordsHotkey) dom.toggleActivationWordsHotkey.value = formatHotkeyForDisplay(settings.hotkey_toggle_activation_words);
-  if (dom.productModeHotkey) {
-    dom.productModeHotkey.value = formatHotkeyForDisplay(settings.hotkey_product_mode_toggle || "CommandOrControl+Shift+P");
-  }
-  if (dom.ttsStopHotkey) {
-    dom.ttsStopHotkey.value = formatHotkeyForDisplay(settings.hotkey_tts_stop || "CommandOrControl+Shift+F12");
-  }
-  if (dom.transcribeDeviceSelect) {
-    dom.transcribeDeviceSelect.value = settings.transcribe_output_device;
-    // If the stored device ID is not present in the current option list, the browser
-    // silently leaves the dropdown on "Default (System)" (value = "default").
-    // Sync the settings object so the next persistSettings() sends the actual value.
-    if (dom.transcribeDeviceSelect.value !== settings.transcribe_output_device) {
-      settings.transcribe_output_device = dom.transcribeDeviceSelect.value;
-    }
-  }
-  if (dom.transcribeVadToggle) dom.transcribeVadToggle.checked = settings.transcribe_vad_mode;
-  const transcribeThresholdDb = thresholdToDb(settings.transcribe_vad_threshold, VAD_DB_FLOOR);
-  if (dom.transcribeVadThreshold) {
-    dom.transcribeVadThreshold.value = Math.round(transcribeThresholdDb).toString();
-  }
-  if (dom.transcribeVadThresholdValue) {
-    dom.transcribeVadThresholdValue.textContent = `${Math.round(transcribeThresholdDb)} dB`;
-  }
-  if (dom.transcribeVadSilence) {
-    dom.transcribeVadSilence.value = settings.transcribe_vad_silence_ms.toString();
-  }
-  if (dom.transcribeVadSilenceValue) {
-    dom.transcribeVadSilenceValue.textContent = `${Math.round(settings.transcribe_vad_silence_ms / 100) / 10}s`;
-  }
-  updateTranscribeThreshold(settings.transcribe_vad_threshold);
-  updateTranscribeVadVisibility(settings.transcribe_vad_mode);
-  if (dom.transcribeBatchInterval) {
-    dom.transcribeBatchInterval.value = settings.transcribe_batch_interval_ms.toString();
-  }
-  if (dom.transcribeBatchValue) {
-    dom.transcribeBatchValue.textContent = `${Math.round(settings.transcribe_batch_interval_ms / 1000)}s`;
-  }
-  if (dom.transcribeChunkOverlap) {
-    dom.transcribeChunkOverlap.value = settings.transcribe_chunk_overlap_ms.toString();
-  }
-  if (dom.transcribeOverlapValue) {
-    dom.transcribeOverlapValue.textContent = `${(settings.transcribe_chunk_overlap_ms / 1000).toFixed(1)}s`;
-  }
-  if (dom.transcribeGain) {
-    dom.transcribeGain.value = Math.round(settings.transcribe_input_gain_db).toString();
-  }
-  if (dom.transcribeGainValue) {
-    const gain = Math.round(settings.transcribe_input_gain_db);
-    dom.transcribeGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
-  }
-  if (dom.transcribeBatchField) {
-    const disabled = settings.transcribe_vad_mode;
-    dom.transcribeBatchField.classList.toggle("is-disabled", disabled);
-    dom.transcribeBatchInterval?.toggleAttribute("disabled", disabled);
-  }
-  if (dom.transcribeOverlapField) {
-    const disabled = settings.transcribe_vad_mode;
-    dom.transcribeOverlapField.classList.toggle("is-disabled", disabled);
-    dom.transcribeChunkOverlap?.toggleAttribute("disabled", disabled);
-  }
-  if (dom.transcribeVadThresholdField) {
-    const disabled = !settings.transcribe_vad_mode;
-    dom.transcribeVadThresholdField.classList.toggle("is-disabled", disabled);
-    dom.transcribeVadThreshold?.toggleAttribute("disabled", disabled);
-  }
-  if (dom.transcribeVadSilenceField) {
-    const disabled = !settings.transcribe_vad_mode;
-    dom.transcribeVadSilenceField.classList.toggle("is-disabled", disabled);
-    dom.transcribeVadSilence?.toggleAttribute("disabled", disabled);
-  }
+  renderTranscriptionSettings();
   renderOverlaySettings();
   // Apply accent color
   settings.accent_color = normalizeColorHex(settings.accent_color, DEFAULT_ACCENT_COLOR);

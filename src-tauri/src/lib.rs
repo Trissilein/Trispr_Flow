@@ -4790,6 +4790,18 @@ fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
             return;
         }
 
+        if let Err(error) = tauri::async_runtime::block_on(verify_ollama_runtime(app.clone())) {
+            warn!(
+                "AI refinement runtime verify after re-enable failed: {}",
+                error
+            );
+            return;
+        }
+
+        // verify_ollama_runtime success path already sets ollama_ready=true.
+        // Do not re-read startup_status here: a concurrent start_ollama_runtime
+        // invocation could briefly reset the flag and cause us to skip warmup
+        // even though Ollama is reachable.
         let state = app.state::<AppState>();
         let latest_settings = {
             let snapshot = state

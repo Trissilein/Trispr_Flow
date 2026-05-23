@@ -1931,8 +1931,15 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
         message
     };
     update_startup_status(app, state.inner(), |status| {
-        status.ollama_ready = false;
-        status.ollama_starting = true;
+        // Guard against concurrent start calls clobbering a ready state.
+        // Two start_ollama_runtime invocations can race (e.g. backend re-enable
+        // bootstrap + frontend autostart). If the first call has already set
+        // ollama_ready=true, the second call's entry must not reset it back to
+        // starting=true, otherwise the UI keeps showing "Ollama is starting in
+        // background." and the warmup readiness check sees stale false.
+        if !status.ollama_ready {
+            status.ollama_starting = true;
+        }
     });
     update_ollama_runtime_diagnostics(
         app,

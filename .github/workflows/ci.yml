@@ -63,5 +63,9 @@ jobs:
       - name: Rust format check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
+      - name: Hydrate Whisper runtime from published release
+        shell: pwsh
+        run: .\scripts\hydrate-whisper-runtime-from-release.ps1
+
       - name: Smoke test
         run: npm run test:smoke

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Ollama model recovery and System-ASR resume**: `prepare_refinement` now repairs stale configured Ollama model tags against installed models instead of only handling empty values. App bootstrap resumes `transcribe_enabled=true` by starting the system transcription monitor again, and Whisper model switches restart an active transcribe monitor so server and CLI fallback do not keep using an old settings snapshot.
 - **Vite dynamic-import chunk warnings**: `vocab-auto-learn.ts` was dynamically importing `settings.ts` (which it already statically imported), and `settings.ts` was dynamically importing `vocab-auto-learn.ts`. Both modules are always in the same chunk via `main.ts`; the dynamic imports achieved no code-splitting and triggered Vite `(!) dynamic import will not move module into another chunk` warnings. Converted to static imports on both sides.
 
 ## [0.8.1] - 2026-05-05

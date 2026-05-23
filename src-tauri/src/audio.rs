@@ -1858,22 +1858,12 @@ fn repair_ollama_model_after_not_found(
         return None;
     }
 
-    let preferred = settings_snapshot.providers.ollama.preferred_model.trim();
-    let failed = failed_model.trim().to_ascii_lowercase();
-    let repaired_model = installed
-        .iter()
-        .find(|model| !preferred.is_empty() && model.eq_ignore_ascii_case(preferred))
-        .or_else(|| {
-            installed
-                .iter()
-                .find(|model| model.trim().to_ascii_lowercase() != failed)
-        })
-        .or_else(|| installed.first())?
-        .trim()
-        .to_string();
-    if repaired_model.is_empty() {
+    let resolution =
+        crate::resolve_ollama_refinement_model(settings_snapshot, failed_model, &installed)?;
+    if resolution.model.trim().is_empty() {
         return None;
     }
+    let repaired_model = resolution.model;
 
     let snapshot = {
         let state = app_handle.state::<AppState>();

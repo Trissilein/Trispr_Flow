@@ -630,6 +630,29 @@ pub(crate) fn start_transcribe_monitor(
     Ok(())
 }
 
+pub(crate) fn restart_transcribe_monitor_if_active(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    settings: &Settings,
+) -> Result<bool, String> {
+    let active = state.transcribe_active.load(Ordering::Relaxed)
+        || state
+            .transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .active;
+    if !active {
+        return Ok(false);
+    }
+
+    if crate::state::diagnostic_logging_enabled() {
+        info!("[runtime:transcribe_monitor] restarting active monitor after model switch");
+    }
+    stop_transcribe_monitor(app, state);
+    start_transcribe_monitor(app, state, settings)?;
+    Ok(true)
+}
+
 pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppState>) {
     if crate::state::diagnostic_logging_enabled() {
         info!("[runtime:transcribe_monitor] stop requested");

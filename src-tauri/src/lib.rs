@@ -116,8 +116,9 @@ use crate::state::{
 };
 use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, last_transcription_accelerator,
-    reconcile_whisper_runtime, start_transcribe_monitor, stop_transcribe_monitor,
-    toggle_transcribe_state, transcribe_audio, warm_transcribe_runtime, whisper_runtime_required,
+    reconcile_whisper_runtime, restart_transcribe_monitor_if_active, start_transcribe_monitor,
+    stop_transcribe_monitor, toggle_transcribe_state, transcribe_audio, warm_transcribe_runtime,
+    whisper_runtime_required,
 };
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
@@ -764,6 +765,55 @@ pub(crate) struct RefinementSetup {
     pub options: RefinementOptions,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OllamaModelResolution {
+    pub model: String,
+    pub repaired: bool,
+}
+
+pub(crate) fn resolve_ollama_refinement_model(
+    settings: &Settings,
+    requested_model: &str,
+    installed_models: &[String],
+) -> Option<OllamaModelResolution> {
+    fn find_installed_model<'a>(
+        installed_models: &'a [String],
+        candidate: &str,
+    ) -> Option<&'a str> {
+        let candidate = candidate.trim();
+        if candidate.is_empty() {
+            return None;
+        }
+        installed_models
+            .iter()
+            .map(|model| model.trim())
+            .find(|model| !model.is_empty() && model.eq_ignore_ascii_case(candidate))
+    }
+
+    let requested = requested_model.trim();
+    let selected = find_installed_model(installed_models, requested)
+        .or_else(|| {
+            find_installed_model(
+                installed_models,
+                settings.providers.ollama.preferred_model.trim(),
+            )
+        })
+        .or_else(|| find_installed_model(installed_models, settings.postproc_llm_model.trim()))
+        .or_else(|| {
+            installed_models
+                .iter()
+                .map(|model| model.trim())
+                .find(|model| !model.is_empty())
+        })?
+        .to_string();
+
+    let repaired = requested.is_empty() || !selected.eq_ignore_ascii_case(requested);
+    Some(OllamaModelResolution {
+        model: selected,
+        repaired,
+    })
+}
+
 /// Append a "preserve these terms verbatim" clause to the refinement system
 /// prompt. This prevents the LLM from mangling user-specific proper nouns
 /// and acronyms during refinement (e.g. "MemPalace" → "Mem Palace",
@@ -887,29 +937,23 @@ pub(crate) fn prepare_refinement(
     if is_ollama {
         let endpoint = settings.providers.ollama.endpoint.clone();
         crate::ai_fallback::provider::ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
-
-        if model.is_empty() {
-            let preferred = settings.providers.ollama.preferred_model.trim();
-            let postproc = settings.postproc_llm_model.trim();
-            let cached = settings
-                .providers
-                .ollama
-                .available_models
-                .iter()
-                .map(|entry| entry.trim())
-                .find(|entry| !entry.is_empty());
-
-            if !preferred.is_empty() {
-                model = preferred.to_string();
-                repaired = true;
-            } else if !postproc.is_empty() {
-                model = postproc.to_string();
-                repaired = true;
-            } else if let Some(cached_model) = cached {
-                model = cached_model.to_string();
-                repaired = true;
-            }
+        let installed_models = crate::ai_fallback::provider::list_ollama_models(&endpoint);
+        let resolution = resolve_ollama_refinement_model(settings, &model, &installed_models)
+            .ok_or_else(|| {
+                "No installed Ollama models are available. Download a model and set it active first."
+                    .to_string()
+            })?;
+        if crate::state::diagnostic_logging_enabled() {
+            info!(
+                "[refinement:prepare] ollama model resolution requested={} selected={} repaired={} installed_count={}",
+                model,
+                resolution.model,
+                resolution.repaired,
+                installed_models.len()
+            );
         }
+        model = resolution.model;
+        repaired = resolution.repaired;
     } else if is_lm_studio && model.is_empty() {
         model = settings
             .providers
@@ -5683,8 +5727,8 @@ fn emit_assistant_action_result(
 #[cfg(test)]
 mod runtime_capability_gate_tests {
     use super::{
-        capability_enabled, require_capability_enabled, should_autostart_ai_refinement_runtime,
-        RuntimeCapability,
+        capability_enabled, require_capability_enabled, resolve_ollama_refinement_model,
+        should_autostart_ai_refinement_runtime, RuntimeCapability,
     };
     use crate::state::Settings;
 
@@ -5807,6 +5851,48 @@ mod runtime_capability_gate_tests {
         settings.ai_fallback.enabled = true;
         settings.providers.ollama.endpoint = "http://192.168.1.20:11434".to_string();
         assert!(!should_autostart_ai_refinement_runtime(&settings));
+    }
+
+    #[test]
+    fn ollama_model_resolution_repairs_stale_config_to_installed_preference() {
+        let mut settings = Settings::default();
+        settings.providers.ollama.preferred_model = "qwen2.5:latest".to_string();
+        settings.postproc_llm_model = "gemma3:latest".to_string();
+        let installed = vec!["qwen2.5:latest".to_string(), "gemma3:latest".to_string()];
+
+        let resolution = resolve_ollama_refinement_model(&settings, "qwen3.5:latest", &installed)
+            .expect("expected a repaired model");
+
+        assert_eq!(resolution.model, "qwen2.5:latest");
+        assert!(resolution.repaired);
+    }
+
+    #[test]
+    fn ollama_model_resolution_keeps_installed_model() {
+        let mut settings = Settings::default();
+        settings.providers.ollama.preferred_model = "qwen2.5:latest".to_string();
+        settings.postproc_llm_model = "gemma3:latest".to_string();
+        let installed = vec!["qwen2.5:latest".to_string(), "gemma3:latest".to_string()];
+
+        let resolution = resolve_ollama_refinement_model(&settings, "gemma3:latest", &installed)
+            .expect("expected a model resolution");
+
+        assert_eq!(resolution.model, "gemma3:latest");
+        assert!(!resolution.repaired);
+    }
+
+    #[test]
+    fn ollama_model_resolution_empty_config_falls_back_to_first_installed() {
+        let mut settings = Settings::default();
+        settings.providers.ollama.preferred_model = "missing:model".to_string();
+        settings.postproc_llm_model = "also-missing:model".to_string();
+        let installed = vec!["mistral:latest".to_string(), "gemma3:latest".to_string()];
+
+        let resolution = resolve_ollama_refinement_model(&settings, "", &installed)
+            .expect("expected a fallback model");
+
+        assert_eq!(resolution.model, "mistral:latest");
+        assert!(resolution.repaired);
     }
 }
 
@@ -6558,6 +6644,16 @@ fn agent_compose_unknown_reply(
                 });
             }
         };
+        if setup.repaired {
+            let repaired_model = setup.model.clone();
+            update_and_persist_settings(&app, state.inner(), |s| {
+                s.ai_fallback.model = repaired_model.clone();
+                s.providers.ollama.preferred_model = repaired_model.clone();
+                s.postproc_llm_model = repaired_model;
+                normalize_ai_fallback_fields(s);
+                Ok(())
+            })?;
+        }
 
         let mut options = setup.options.clone();
         options.max_tokens = options.max_tokens.clamp(128, 512);
@@ -9368,6 +9464,15 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
                     model_id
                 );
             }
+            if new_settings.transcribe_enabled {
+                if let Err(err) = restart_transcribe_monitor_if_active(&app, &state, &new_settings)
+                {
+                    warn!(
+                        "Failed to restart active transcribe monitor after model switch: {}",
+                        err
+                    );
+                }
+            }
         } else {
             crate::transcription::stop_transcribe_monitor_and_release_whisper(&app, &state);
         }
@@ -11885,7 +11990,18 @@ pub fn run() {
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .clone();
                 if whisper_runtime_required(&runtime_settings) {
-                    warm_transcribe_runtime(app.handle(), &state, &runtime_settings);
+                    if runtime_settings.transcribe_enabled {
+                        if let Err(err) =
+                            start_transcribe_monitor(app.handle(), &state, &runtime_settings)
+                        {
+                            warn!(
+                                "Failed to start transcribe monitor during app bootstrap: {}",
+                                err
+                            );
+                        }
+                    } else {
+                        warm_transcribe_runtime(app.handle(), &state, &runtime_settings);
+                    }
                 }
                 if should_autostart_ai_refinement_runtime(&runtime_settings) {
                     schedule_ai_refinement_reenable_bootstrap(app.handle().clone());

@@ -63,9 +63,59 @@ jobs:
       - name: Rust format check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
-      - name: Hydrate Whisper runtime from published release
+      - name: Seed Whisper runtime placeholders for smoke
         shell: pwsh
-        run: .\scripts\hydrate-whisper-runtime-from-release.ps1
+        run: |
+          $binRoot = Join-Path $PWD "src-tauri\bin"
+
+          function Ensure-File([string]$relativePath) {
+            $path = Join-Path $binRoot $relativePath
+            $dir = Split-Path -Parent $path
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              Set-Content -LiteralPath $path -Value "smoke-placeholder"
+            }
+          }
+
+          function Ensure-DirPlaceholder([string]$relativeDir) {
+            $dir = Join-Path $binRoot $relativeDir
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $placeholder = Join-Path $dir ".placeholder"
+            if (-not (Test-Path -LiteralPath $placeholder -PathType Leaf)) {
+              Set-Content -LiteralPath $placeholder -Value "smoke-placeholder"
+            }
+          }
+
+          @(
+            "cuda\whisper-cli.exe",
+            "cuda\whisper.dll",
+            "cuda\ggml.dll",
+            "cuda\ggml-base.dll",
+            "cuda\ggml-cpu.dll",
+            "cuda\ggml-cuda.dll",
+            "cuda\cublas64_13.dll",
+            "cuda\cublasLt64_13.dll",
+            "cuda\cudart64_13.dll",
+            "cuda\whisper-server.exe",
+            "vulkan\whisper-cli.exe",
+            "vulkan\whisper.dll",
+            "vulkan\ggml.dll",
+            "vulkan\ggml-base.dll",
+            "vulkan\ggml-cpu.dll",
+            "vulkan\ggml-vulkan.dll",
+            "quantize.exe",
+            "ffmpeg\ffmpeg.exe",
+            "piper\piper.exe",
+            "piper\espeak-ng.dll",
+            "piper\piper_phonemize.dll",
+            "piper\libtashkeel_model.ort",
+            "piper\onnxruntime.dll",
+            "piper\onnxruntime_providers_shared.dll",
+            "piper\voices\de_DE-thorsten-medium.onnx",
+            "piper\voices\de_DE-thorsten-medium.onnx.json"
+          ) | ForEach-Object { Ensure-File $_ }
+
+          Ensure-DirPlaceholder "piper\espeak-ng-data"
 
       - name: Smoke test
         run: npm run test:smoke

@@ -1435,9 +1435,7 @@ fn refinement_paste_timeout_ms(app_handle: &AppHandle, settings: &Settings) -> (
 
     let state = app_handle.state::<AppState>();
     let startup_status = crate::startup_status_snapshot(state.inner());
-    let last_success_ms = state
-        .refinement_last_success_ms
-        .load(Ordering::SeqCst);
+    let last_success_ms = state.refinement_last_success_ms.load(Ordering::SeqCst);
     let last_success_model = state
         .refinement_last_success_model
         .lock()

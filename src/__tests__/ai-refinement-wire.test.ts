@@ -103,6 +103,7 @@ vi.hoisted(() => {
 import { wireAiRefinement } from "../wiring/ai-refinement.wire";
 import * as dom from "../dom-refs";
 import { settings, setSettings } from "../state";
+import { autoStartLocalRuntimeIfNeeded } from "../ollama-models";
 import type { Settings } from "../types";
 
 // Stub out heavy rendering functions that touch uninitialized module state
@@ -138,6 +139,9 @@ vi.mock("../ui-state", async (importOriginal) => {
 });
 
 const mockedInvoke = vi.mocked(invoke);
+const mockedAutoStartLocalRuntimeIfNeeded = vi.mocked(
+  autoStartLocalRuntimeIfNeeded,
+);
 
 function freshSettings(): Settings {
   return {
@@ -155,6 +159,7 @@ function freshSettings(): Settings {
     audio_cues: false,
     audio_cues_volume: 0.5,
     ptt_use_vad: false,
+    ptt_hot_keepalive_ms: 30000,
     hallucination_filter_enabled: false,
     activation_words_enabled: false,
     activation_words: [],
@@ -264,18 +269,23 @@ beforeEach(() => {
   setSettings(freshSettings());
   mockedInvoke.mockReset();
   mockedInvoke.mockResolvedValue(undefined);
+  mockedAutoStartLocalRuntimeIfNeeded.mockClear();
   if (dom.postprocEnabled) dom.postprocEnabled.checked = false;
   if (dom.postprocPunctuation) dom.postprocPunctuation.checked = true;
   if (dom.postprocCapitalization) dom.postprocCapitalization.checked = true;
   if (dom.postprocNumbers) dom.postprocNumbers.checked = false;
   if (dom.languageSelect) dom.languageSelect.value = "auto";
   if (dom.languagePinnedToggle) dom.languagePinnedToggle.checked = false;
-  if (dom.whisperInputLanguageSelect) dom.whisperInputLanguageSelect.value = "auto";
+  if (dom.whisperInputLanguageSelect)
+    dom.whisperInputLanguageSelect.value = "auto";
   if (dom.aiFallbackEnabled) dom.aiFallbackEnabled.checked = false;
-  if (dom.aiFallbackLocalBackendSelect) dom.aiFallbackLocalBackendSelect.value = "ollama";
+  if (dom.aiFallbackLocalBackendSelect)
+    dom.aiFallbackLocalBackendSelect.value = "ollama";
   if (dom.aiFallbackTemperature) dom.aiFallbackTemperature.value = "0.3";
-  if (dom.aiFallbackPreserveLanguage) dom.aiFallbackPreserveLanguage.checked = true;
-  if (dom.aiFallbackLowLatencyMode) dom.aiFallbackLowLatencyMode.checked = false;
+  if (dom.aiFallbackPreserveLanguage)
+    dom.aiFallbackPreserveLanguage.checked = true;
+  if (dom.aiFallbackLowLatencyMode)
+    dom.aiFallbackLowLatencyMode.checked = false;
   if (dom.aiFallbackMaxTokens) dom.aiFallbackMaxTokens.value = "4000";
   const modal = document.getElementById("ai-auth-modal");
   if (modal) modal.hidden = true;
@@ -288,7 +298,12 @@ describe("postproc toggles", () => {
     wireOnce();
     dom.postprocEnabled!.checked = true;
     dom.postprocEnabled!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.postproc_enabled).toBe(true);
   });
 
@@ -297,7 +312,12 @@ describe("postproc toggles", () => {
     setSettings({ ...freshSettings(), postproc_enabled: true });
     dom.postprocEnabled!.checked = false;
     dom.postprocEnabled!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.postproc_enabled).toBe(false);
   });
 
@@ -305,7 +325,12 @@ describe("postproc toggles", () => {
     wireOnce();
     dom.postprocPunctuation!.checked = false;
     dom.postprocPunctuation!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.postproc_punctuation_enabled).toBe(false);
   });
 
@@ -313,7 +338,12 @@ describe("postproc toggles", () => {
     wireOnce();
     dom.postprocCapitalization!.checked = false;
     dom.postprocCapitalization!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.postproc_capitalization_enabled).toBe(false);
   });
 
@@ -321,20 +351,31 @@ describe("postproc toggles", () => {
     wireOnce();
     dom.postprocNumbers!.checked = true;
     dom.postprocNumbers!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.postproc_numbers_enabled).toBe(true);
   });
 
   it("postprocCustomVocabEnabled: shows/hides vocab config block", async () => {
     wireOnce();
-    const config = document.getElementById("postproc-custom-vocab-config") as HTMLElement;
+    const config = document.getElementById(
+      "postproc-custom-vocab-config",
+    ) as HTMLElement;
     dom.postprocCustomVocabEnabled!.checked = true;
     dom.postprocCustomVocabEnabled!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(settings?.postproc_custom_vocab_enabled).toBe(true));
+    await vi.waitFor(() =>
+      expect(settings?.postproc_custom_vocab_enabled).toBe(true),
+    );
     expect(config.style.display).toBe("flex");
     dom.postprocCustomVocabEnabled!.checked = false;
     dom.postprocCustomVocabEnabled!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(settings?.postproc_custom_vocab_enabled).toBe(false));
+    await vi.waitFor(() =>
+      expect(settings?.postproc_custom_vocab_enabled).toBe(false),
+    );
     expect(config.style.display).toBe("none");
   });
 });
@@ -346,7 +387,12 @@ describe("language controls", () => {
     wireOnce();
     dom.languageSelect!.value = "en";
     dom.languageSelect!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.language_mode).toBe("en");
   });
 
@@ -354,16 +400,30 @@ describe("language controls", () => {
     wireOnce();
     dom.languagePinnedToggle!.checked = true;
     dom.languagePinnedToggle!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.language_pinned).toBe(true);
   });
 
   it("whisperInputLanguageSelect: 'auto' sets mode=auto, pinned=false", async () => {
     wireOnce();
-    setSettings({ ...freshSettings(), language_mode: "en", language_pinned: true });
+    setSettings({
+      ...freshSettings(),
+      language_mode: "en",
+      language_pinned: true,
+    });
     dom.whisperInputLanguageSelect!.value = "auto";
     dom.whisperInputLanguageSelect!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.language_mode).toBe("auto");
     expect(settings?.language_pinned).toBe(false);
   });
@@ -372,7 +432,12 @@ describe("language controls", () => {
     wireOnce();
     dom.whisperInputLanguageSelect!.value = "de";
     dom.whisperInputLanguageSelect!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.language_mode).toBe("de");
     expect(settings?.language_pinned).toBe(true);
   });
@@ -385,11 +450,20 @@ describe("AI fallback module gate", () => {
     wireOnce();
     setSettings({
       ...freshSettings(),
-      module_settings: { enabled_modules: [], consented_permissions: {}, module_overrides: {} }, // ai_refinement NOT in list
+      module_settings: {
+        enabled_modules: [],
+        consented_permissions: {},
+        module_overrides: {},
+      }, // ai_refinement NOT in list
     });
     dom.aiFallbackEnabled!.checked = true;
     dom.aiFallbackEnabled!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.ai_fallback.enabled).toBe(false);
     expect(dom.aiFallbackEnabled!.checked).toBe(false);
   });
@@ -403,8 +477,15 @@ describe("AI fallback module gate", () => {
     });
     dom.aiFallbackEnabled!.checked = true;
     dom.aiFallbackEnabled!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(settings?.ai_fallback.enabled).toBe(true), { timeout: 3000 });
+    await vi.waitFor(() => expect(settings?.ai_fallback.enabled).toBe(true), {
+      timeout: 3000,
+    });
     expect(settings?.postproc_llm_enabled).toBe(true);
+    await vi.waitFor(() =>
+      expect(mockedAutoStartLocalRuntimeIfNeeded).toHaveBeenCalledWith(
+        "enable_toggle",
+      ),
+    );
   });
 });
 
@@ -430,7 +511,12 @@ describe("temperature slider", () => {
     dom.aiFallbackTemperature!.value = "0.5";
     dom.aiFallbackTemperature!.dispatchEvent(new Event("input"));
     dom.aiFallbackTemperature!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
   });
 });
 
@@ -441,7 +527,12 @@ describe("local backend switching", () => {
     wireOnce();
     dom.aiFallbackLocalBackendSelect!.value = "lm_studio";
     dom.aiFallbackLocalBackendSelect!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.ai_fallback.provider).toBe("lm_studio");
   });
 
@@ -449,18 +540,33 @@ describe("local backend switching", () => {
     wireOnce();
     dom.aiFallbackLocalBackendSelect!.value = "oobabooga";
     dom.aiFallbackLocalBackendSelect!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.ai_fallback.provider).toBe("oobabooga");
   });
 
   it("aiFallbackLocalBackendSelect: switching back to ollama triggers runtime refresh", async () => {
     wireOnce();
-    setSettings({ ...freshSettings(), ai_fallback: { ...freshSettings().ai_fallback, provider: "lm_studio" } });
+    setSettings({
+      ...freshSettings(),
+      ai_fallback: { ...freshSettings().ai_fallback, provider: "lm_studio" },
+    });
     mockedInvoke.mockResolvedValue({ found: false, healthy: false });
     dom.aiFallbackLocalBackendSelect!.value = "ollama";
     dom.aiFallbackLocalBackendSelect!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(settings?.ai_fallback.provider).toBe("ollama"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(settings?.ai_fallback.provider).toBe("ollama"),
+    );
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
   });
 });
 
@@ -471,7 +577,9 @@ describe("auth modal keydown", () => {
     wireOnce();
     const modal = document.getElementById("ai-auth-modal") as HTMLElement;
     modal.hidden = false;
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
     expect(modal.hidden).toBe(true);
   });
 
@@ -479,7 +587,9 @@ describe("auth modal keydown", () => {
     wireOnce();
     const modal = document.getElementById("ai-auth-modal") as HTMLElement;
     modal.hidden = true;
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
     expect(modal.hidden).toBe(true);
   });
 
@@ -487,7 +597,9 @@ describe("auth modal keydown", () => {
     wireOnce();
     const modal = document.getElementById("ai-auth-modal") as HTMLElement;
     modal.hidden = false;
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
     expect(modal.hidden).toBe(false);
   });
 });
@@ -499,11 +611,20 @@ describe("low-latency mode", () => {
     wireOnce();
     setSettings({
       ...freshSettings(),
-      ai_fallback: { ...freshSettings().ai_fallback, max_tokens: 4000, temperature: 0.8 },
+      ai_fallback: {
+        ...freshSettings().ai_fallback,
+        max_tokens: 4000,
+        temperature: 0.8,
+      },
     });
     dom.aiFallbackLowLatencyMode!.checked = true;
     dom.aiFallbackLowLatencyMode!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.ai_fallback.max_tokens).toBeLessThanOrEqual(512);
     expect(settings?.ai_fallback.temperature).toBeLessThanOrEqual(0.2);
   });
@@ -512,11 +633,18 @@ describe("low-latency mode", () => {
     wireOnce();
     setSettings({
       ...freshSettings(),
-      ai_fallback: { ...freshSettings().ai_fallback, low_latency_mode: true, max_tokens: 256, temperature: 0.15 },
+      ai_fallback: {
+        ...freshSettings().ai_fallback,
+        low_latency_mode: true,
+        max_tokens: 256,
+        temperature: 0.15,
+      },
     });
     dom.aiFallbackLowLatencyMode!.checked = false;
     dom.aiFallbackLowLatencyMode!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(settings?.ai_fallback.low_latency_mode).toBe(false));
+    await vi.waitFor(() =>
+      expect(settings?.ai_fallback.low_latency_mode).toBe(false),
+    );
     // Values should NOT be clamped on disable
     expect(settings?.ai_fallback.max_tokens).toBe(256);
   });
@@ -529,16 +657,32 @@ describe("preserve source language", () => {
     wireOnce();
     dom.aiFallbackPreserveLanguage!.checked = false;
     dom.aiFallbackPreserveLanguage!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.ai_fallback.preserve_source_language).toBe(false);
   });
 
   it("checking enables preserve_source_language and saves", async () => {
     wireOnce();
-    setSettings({ ...freshSettings(), ai_fallback: { ...freshSettings().ai_fallback, preserve_source_language: false } });
+    setSettings({
+      ...freshSettings(),
+      ai_fallback: {
+        ...freshSettings().ai_fallback,
+        preserve_source_language: false,
+      },
+    });
     dom.aiFallbackPreserveLanguage!.checked = true;
     dom.aiFallbackPreserveLanguage!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.ai_fallback.preserve_source_language).toBe(true);
   });
 });
@@ -550,7 +694,12 @@ describe("max tokens", () => {
     wireOnce();
     dom.aiFallbackMaxTokens!.value = "99999";
     dom.aiFallbackMaxTokens!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.ai_fallback.max_tokens).toBe(8192);
   });
 
@@ -558,7 +707,12 @@ describe("max tokens", () => {
     wireOnce();
     dom.aiFallbackMaxTokens!.value = "10";
     dom.aiFallbackMaxTokens!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
     expect(settings?.ai_fallback.max_tokens).toBe(128);
   });
 });
@@ -568,9 +722,19 @@ describe("max tokens", () => {
 describe("topic keywords reset", () => {
   it("click calls save_settings (reset flow runs)", async () => {
     wireOnce();
-    setSettings({ ...freshSettings(), topic_keywords: [{ term: "custom", boost: 1 }] as any });
-    const btn = document.getElementById("topic-keywords-reset") as HTMLButtonElement;
+    setSettings({
+      ...freshSettings(),
+      topic_keywords: [{ term: "custom", boost: 1 }] as any,
+    });
+    const btn = document.getElementById(
+      "topic-keywords-reset",
+    ) as HTMLButtonElement;
     btn.click();
-    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    await vi.waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.anything(),
+      ),
+    );
   });
 });

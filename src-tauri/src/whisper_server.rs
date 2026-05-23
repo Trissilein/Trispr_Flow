@@ -26,22 +26,27 @@ pub fn ping_whisper_server(port: u16) -> bool {
 }
 
 fn ping_whisper_server_with_attempts(port: u16, attempts: u32) -> bool {
-    info!(
-        "[ping] ping_whisper_server_with_attempts(port={}, attempts={})",
-        port, attempts
-    );
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
+    if diagnostics_enabled {
+        info!(
+            "[ping] ping_whisper_server_with_attempts(port={}, attempts={})",
+            port, attempts
+        );
+    }
     for attempt in 0..attempts.max(1) {
         let timeout = if attempt == 0 {
             Duration::from_millis(400)
         } else {
             Duration::from_millis(1500)
         };
-        info!(
-            "[ping] attempt {}/{}, timeout_ms={}",
-            attempt + 1,
-            attempts.max(1),
-            timeout.as_millis()
-        );
+        if diagnostics_enabled {
+            info!(
+                "[ping] attempt {}/{}, timeout_ms={}",
+                attempt + 1,
+                attempts.max(1),
+                timeout.as_millis()
+            );
+        }
         let agent = ureq::builder()
             .timeout_connect(timeout)
             .timeout_read(timeout)
@@ -51,31 +56,37 @@ fn ping_whisper_server_with_attempts(port: u16, attempts: u32) -> bool {
         let elapsed = start.elapsed();
         match result {
             Ok(_) => {
-                info!(
-                    "[ping] attempt {}/{} SUCCESS in {:.1}ms",
-                    attempt + 1,
-                    attempts.max(1),
-                    elapsed.as_secs_f64() * 1000.0
-                );
+                if diagnostics_enabled {
+                    info!(
+                        "[ping] attempt {}/{} SUCCESS in {:.1}ms",
+                        attempt + 1,
+                        attempts.max(1),
+                        elapsed.as_secs_f64() * 1000.0
+                    );
+                }
                 return true;
             }
             Err(e) => {
-                info!(
-                    "[ping] attempt {}/{} FAILED: {}",
-                    attempt + 1,
-                    attempts.max(1),
-                    e
-                );
+                if diagnostics_enabled {
+                    info!(
+                        "[ping] attempt {}/{} FAILED: {}",
+                        attempt + 1,
+                        attempts.max(1),
+                        e
+                    );
+                }
             }
         }
         if attempt + 1 < attempts {
             std::thread::sleep(Duration::from_millis(120));
         }
     }
-    info!(
-        "[ping] ping_whisper_server_with_attempts(port={}) -> false",
-        port
-    );
+    if diagnostics_enabled {
+        info!(
+            "[ping] ping_whisper_server_with_attempts(port={}) -> false",
+            port
+        );
+    }
     false
 }
 
@@ -121,10 +132,13 @@ pub fn start_whisper_server(
     state: &AppState,
     model_path: &Path,
 ) -> Result<(), String> {
-    info!(
-        "[whisper_server:startup] start_whisper_server(model_path={})",
-        model_path.display()
-    );
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
+    if diagnostics_enabled {
+        info!(
+            "[whisper_server:startup] start_whisper_server(model_path={})",
+            model_path.display()
+        );
+    }
     let port = state
         .whisper_server_port
         .load(std::sync::atomic::Ordering::Relaxed);
@@ -139,14 +153,18 @@ pub fn start_whisper_server(
         .lock()
         .map(|guard| guard.is_some())
         .unwrap_or(false);
-    info!(
-        "[whisper_server:startup] managed_whisper_server_child slot: is_some={}",
-        managed_child_slot
-    );
+    if diagnostics_enabled {
+        info!(
+            "[whisper_server:startup] managed_whisper_server_child slot: is_some={}",
+            managed_child_slot
+        );
+    }
 
     // Already running?
     if ping_whisper_server(port) {
-        info!("whisper-server already running on port {}", port);
+        if diagnostics_enabled {
+            info!("whisper-server already running on port {}", port);
+        }
         update_whisper_server_diagnostics(app, &settings, "server", "gpu", None);
         return Ok(());
     }
@@ -164,12 +182,14 @@ pub fn start_whisper_server(
         message
     })?;
 
-    info!(
-        "Starting whisper-server: {} -m {} --port {}",
-        server_path.display(),
-        model_path.display(),
-        port
-    );
+    if diagnostics_enabled {
+        info!(
+            "Starting whisper-server: {} -m {} --port {}",
+            server_path.display(),
+            model_path.display(),
+            port
+        );
+    }
     // Only invoke the kill path if a managed child is actually tracked. With
     // the more reliable two-attempt ping above, a ping=false here genuinely
     // means the process is gone or wedged; if no managed child is tracked,
@@ -179,12 +199,16 @@ pub fn start_whisper_server(
         .lock()
         .map(|guard| guard.is_some())
         .unwrap_or(false);
-    info!(
-        "[whisper_server:startup] had_managed_child={}",
-        had_managed_child
-    );
+    if diagnostics_enabled {
+        info!(
+            "[whisper_server:startup] had_managed_child={}",
+            had_managed_child
+        );
+    }
     if had_managed_child {
-        info!("[whisper_server:startup] terminating previous managed child");
+        if diagnostics_enabled {
+            info!("[whisper_server:startup] terminating previous managed child");
+        }
         terminate_managed_child_slot(
             "managed Whisper-Server runtime",
             &state.managed_whisper_server_child,
@@ -221,10 +245,12 @@ pub fn start_whisper_server(
                     .expect("re-open log file")
             });
             cmd.stdout(file).stderr(stderr);
-            info!(
-                "[whisper_server:startup] stdout/stderr -> {}",
-                log_path.display()
-            );
+            if diagnostics_enabled {
+                info!(
+                    "[whisper_server:startup] stdout/stderr -> {}",
+                    log_path.display()
+                );
+            }
         }
         Err(e) => {
             warn!("[whisper_server:startup] could not open log file ({}), discarding stdout/stderr: {}", log_path.display(), e);
@@ -241,7 +267,9 @@ pub fn start_whisper_server(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    info!("[whisper_server:startup] spawning whisper-server process");
+    if diagnostics_enabled {
+        info!("[whisper_server:startup] spawning whisper-server process");
+    }
     let spawn_result = spawn_managed_child(
         state,
         "managed Whisper-Server runtime",
@@ -250,14 +278,18 @@ pub fn start_whisper_server(
     )
     .map_err(|e| {
         let message = format!("Failed to spawn whisper-server ({})", e);
-        info!("[whisper_server:startup] spawn FAILED: {}", message);
+        if diagnostics_enabled {
+            info!("[whisper_server:startup] spawn FAILED: {}", message);
+        }
         update_whisper_server_diagnostics(app, &settings, "cli", "cpu", Some(message.clone()));
         message
     })?;
-    info!(
-        "[whisper_server:startup] spawn SUCCESS (pid={}, job_assigned={})",
-        spawn_result.pid, spawn_result.job_assigned
-    );
+    if diagnostics_enabled {
+        info!(
+            "[whisper_server:startup] spawn SUCCESS (pid={}, job_assigned={})",
+            spawn_result.pid, spawn_result.job_assigned
+        );
+    }
     if !spawn_result.job_assigned {
         warn!(
             "whisper-server started without managed job assignment (pid {})",
@@ -267,12 +299,16 @@ pub fn start_whisper_server(
 
     // Poll for server readiness (max 30 seconds, check every 250ms)
     // The large-v3-turbo model (~1.5 GB) can take 10-20s to load on first start.
-    info!("[whisper_server:startup] polling for readiness (max 30s)");
+    if diagnostics_enabled {
+        info!("[whisper_server:startup] polling for readiness (max 30s)");
+    }
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
         if ping_whisper_server(port) {
-            info!("[whisper_server:startup] start_whisper_server() SUCCESS");
-            info!("whisper-server ready on port {}", port);
+            if diagnostics_enabled {
+                info!("[whisper_server:startup] start_whisper_server() SUCCESS");
+                info!("whisper-server ready on port {}", port);
+            }
             update_whisper_server_diagnostics(app, &settings, "server", "gpu", None);
             return Ok(());
         }
@@ -280,7 +316,9 @@ pub fn start_whisper_server(
     }
 
     // Timeout — log warning but don't fail. Fallback to CLI will be used.
-    info!("[whisper_server:startup] start_whisper_server() TIMEOUT after 30s");
+    if diagnostics_enabled {
+        info!("[whisper_server:startup] start_whisper_server() TIMEOUT after 30s");
+    }
     warn!("whisper-server startup timeout (30s) — will fall back to CLI transcription for now");
     update_whisper_server_diagnostics(
         app,
@@ -377,13 +415,16 @@ pub fn transcribe_via_server(
         .timeout_read(Duration::from_secs(120)) // Long audio can take time
         .build();
 
-    info!(
-        "[server-request] POST /inference port={} wav_bytes={} body_bytes={} language={}",
-        port,
-        wav_bytes.len(),
-        body.len(),
-        language
-    );
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
+    if diagnostics_enabled {
+        info!(
+            "[server-request] POST /inference port={} wav_bytes={} body_bytes={} language={}",
+            port,
+            wav_bytes.len(),
+            body.len(),
+            language
+        );
+    }
     let req_start = std::time::Instant::now();
     let response = agent
         .post(&format!("http://127.0.0.1:{port}/inference"))
@@ -414,10 +455,12 @@ pub fn transcribe_via_server(
                 e
             );
         })?;
-    info!(
-        "[server-request] response received in {:.2}s",
-        req_start.elapsed().as_secs_f64()
-    );
+    if diagnostics_enabled {
+        info!(
+            "[server-request] response received in {:.2}s",
+            req_start.elapsed().as_secs_f64()
+        );
+    }
 
     let json: serde_json::Value = response
         .into_json()
@@ -481,6 +524,9 @@ pub fn schedule_whisper_server_warmup(
     model_path: &Path,
     settings: &Settings,
 ) {
+    if !crate::transcription::whisper_runtime_required(settings) {
+        return;
+    }
     let port = state.whisper_server_port.load(Ordering::Relaxed);
     if ping_whisper_server(port) {
         return;
@@ -501,7 +547,9 @@ pub fn schedule_whisper_server_warmup(
         match start_whisper_server(&handle, state.inner(), &model_path) {
             Ok(()) => {
                 if ping_whisper_server(port) {
-                    info!("whisper-server warmup complete");
+                    if crate::state::diagnostic_logging_enabled() {
+                        info!("whisper-server warmup complete");
+                    }
                 } else {
                     warn!("whisper-server warmup finished without healthy server; CLI remains primary");
                 }

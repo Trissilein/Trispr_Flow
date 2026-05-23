@@ -7,6 +7,7 @@ import { persistSettings, renderAIFallbackSettingsUi, renderSettings } from "../
 import { renderHero, updateDeviceLineClamp } from "../ui-state";
 import { isPanelId, togglePanel } from "../panels";
 import { initHotkeyStatusListener, setupHotkeyRecorder } from "../hotkeys";
+import { traceFrontendInfo } from "../frontend-trace";
 import {
   getOllamaRuntimeCardState,
   refreshOllamaInstalledModels,
@@ -169,8 +170,12 @@ export function reconcileMainTabVisibility(): void {
 }
 
 async function refreshAiRefinementTabState(): Promise<void> {
+  traceFrontendInfo("ollama.refresh", "ai-refinement tab refresh requested", {
+    inFlight: Boolean(aiRefinementTabRefreshInFlight),
+  });
   if (aiRefinementTabRefreshInFlight) {
     await aiRefinementTabRefreshInFlight;
+    traceFrontendInfo("ollama.refresh", "ai-refinement tab refresh reused in-flight request");
     return;
   }
 
@@ -186,6 +191,11 @@ async function refreshAiRefinementTabState(): Promise<void> {
   aiRefinementTabRefreshInFlight = refreshTask;
   try {
     await refreshTask;
+    traceFrontendInfo("ollama.refresh", "ai-refinement tab refresh completed", {
+      healthy: getOllamaRuntimeCardState().healthy,
+      detected: getOllamaRuntimeCardState().detected,
+      busy: getOllamaRuntimeCardState().busy,
+    });
   } finally {
     if (aiRefinementTabRefreshInFlight === refreshTask) {
       aiRefinementTabRefreshInFlight = null;

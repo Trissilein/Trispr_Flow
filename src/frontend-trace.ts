@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isDiagnosticLoggingEnabled } from "./state";
 
 type FrontendLogLevel = "info" | "warn" | "error";
 
@@ -15,6 +16,9 @@ export function traceFrontend(level: FrontendLogLevel, context: string, message:
   const normalizedContext = context.trim() || "frontend";
   const payload = stringifyExtra(extra);
   const fullMessage = payload ? `${message} | ${payload}` : message;
+  if (level === "info" && !isDiagnosticLoggingEnabled()) {
+    return;
+  }
   void invoke("log_frontend_event", {
     level,
     context: normalizedContext,

@@ -723,6 +723,9 @@ export function getOllamaRuntimeVersionCatalog(): OllamaRuntimeVersionInfo[] {
       selected: true,
       installed: false,
       recommended: true,
+      prerelease: /(?:-rc|-alpha|-beta)/i.test(
+        settings?.providers?.ollama?.runtime_target_version || DEFAULT_RUNTIME_VERSION,
+      ),
       installable: true,
       installable_reason: null,
     },
@@ -750,6 +753,9 @@ export async function refreshOllamaRuntimeVersionCatalog(force = false): Promise
           selected: true,
           installed: false,
           recommended: true,
+          prerelease: /(?:-rc|-alpha|-beta)/i.test(
+            settings?.providers?.ollama?.runtime_target_version || DEFAULT_RUNTIME_VERSION,
+          ),
           installable: true,
           installable_reason: null,
         },
@@ -1643,19 +1649,38 @@ export async function refreshOllamaRuntimeState(
   const skipDetect = options.skipDetect ?? false;
   const force = options.force ?? false;
   const now = Date.now();
+  traceFrontendInfo("ollama.refresh", "refresh requested", {
+    force,
+    verify,
+    skipDetect,
+    backgroundPolling: Boolean(runtimeBackgroundStartPollInFlight),
+    busyAction: runtimeBusyAction,
+    inFlight: Boolean(runtimeStateRefreshInFlight),
+  });
 
   if (runtimeBackgroundStartPollInFlight && force && !verify) {
+    traceFrontendInfo("ollama.refresh", "refresh skipped: background start poll in flight", {
+      force,
+      verify,
+    });
     renderOllamaModelManager();
     return;
   }
 
   if (!verify && !force && now - runtimeStateLastRefreshMs < PASSIVE_RUNTIME_REFRESH_TTL_MS) {
+    traceFrontendInfo("ollama.refresh", "refresh skipped: passive ttl", {
+      age_ms: now - runtimeStateLastRefreshMs,
+    });
     renderOllamaModelManager();
     return;
   }
 
   if (runtimeStateRefreshInFlight) {
     if (!verify && !force) {
+      traceFrontendInfo("ollama.refresh", "refresh skipped: refresh already in flight", {
+        verify,
+        force,
+      });
       return;
     }
     await runtimeStateRefreshInFlight;
@@ -1749,6 +1774,16 @@ export async function refreshOllamaRuntimeState(
     }
 
     runtimeStateLastRefreshMs = Date.now();
+    traceFrontendInfo("ollama.refresh", "refresh completed", {
+      force,
+      verify,
+      skipDetect,
+      healthy: runtimeHealth?.ok ?? false,
+      detected: runtimeDetect?.found ?? null,
+      serving: runtimeDetect?.is_serving ?? null,
+      models: runtimeHealth?.models_count ?? 0,
+      activeModelRequiredRuntime,
+    });
     renderOllamaModelManager();
     traceRuntimeRefreshStateIfChanged("runtime state changed");
   })();
@@ -1768,12 +1803,18 @@ export function isRuntimeBackgroundPollingActive(): boolean {
 }
 
 async function handleOllamaPull(modelName: string): Promise<void> {
+  traceFrontendInfo("ollama.pull", "pull requested", { model: modelName });
   activeOllamaPulls.add(modelName);
   renderOllamaModelManager();
 
   try {
     await invoke("pull_ollama_model", { model: modelName });
+    traceFrontendInfo("ollama.pull", "pull command accepted", { model: modelName });
   } catch (error) {
+    traceFrontendWarn("ollama.pull", "pull command failed", {
+      model: modelName,
+      error: error instanceof Error ? error.message : String(error),
+    });
     showToast({
       type: "error",
       title: "Download failed",

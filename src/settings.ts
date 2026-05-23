@@ -10,8 +10,16 @@ import {
 } from "./state";
 import * as dom from "./dom-refs";
 import { thresholdToDb, VAD_DB_FLOOR, formatBytes } from "./ui-helpers";
-import { applyAccentColor, DEFAULT_ACCENT_COLOR, normalizeColorHex } from "./utils";
-import { DEFAULT_TOPICS, setTopicKeywords, type TopicKeywords } from "./history";
+import {
+  applyAccentColor,
+  DEFAULT_ACCENT_COLOR,
+  normalizeColorHex,
+} from "./utils";
+import {
+  DEFAULT_TOPICS,
+  setTopicKeywords,
+  type TopicKeywords,
+} from "./history";
 import { formatHotkeyForDisplay } from "./ui-helpers";
 import { renderAIRefinementStaticHelp } from "./ai-refinement-help";
 import {
@@ -73,12 +81,25 @@ export function ensureContinuousDumpDefaults() {
   settings.continuous_idle_keepalive_ms ??= 60000;
   settings.continuous_mic_override_enabled ??= false;
   settings.continuous_mic_soft_flush_ms ??= settings.continuous_soft_flush_ms;
-  settings.continuous_mic_silence_flush_ms ??= settings.continuous_silence_flush_ms;
+  settings.continuous_mic_silence_flush_ms ??=
+    settings.continuous_silence_flush_ms;
   settings.continuous_mic_hard_cut_ms ??= settings.continuous_hard_cut_ms;
   settings.continuous_system_override_enabled ??= false;
-  settings.continuous_system_soft_flush_ms ??= settings.continuous_soft_flush_ms;
-  settings.continuous_system_silence_flush_ms ??= settings.continuous_silence_flush_ms;
+  settings.continuous_system_soft_flush_ms ??=
+    settings.continuous_soft_flush_ms;
+  settings.continuous_system_silence_flush_ms ??=
+    settings.continuous_silence_flush_ms;
   settings.continuous_system_hard_cut_ms ??= settings.continuous_hard_cut_ms;
+}
+
+export function ensureCaptureRuntimeDefaults() {
+  if (!settings) return;
+  settings.ptt_hot_keepalive_ms ??= 30000;
+}
+
+export function ensureDiagnosticsDefaults() {
+  if (!settings) return;
+  settings.diagnostic_logging_enabled ??= false;
 }
 
 export async function persistSettings() {
@@ -89,20 +110,22 @@ export async function persistSettings() {
     ai_fallback: aiFallback ? { ...aiFallback } : aiFallback,
   };
   if (settingsForSave.ai_fallback) {
-    settingsForSave.ai_fallback.prompt_presets = normalizeUserRefinementPromptPresets(
-      settingsForSave.ai_fallback.prompt_presets
-    );
-    settingsForSave.ai_fallback.active_prompt_preset_id = normalizePersistedRefinementPromptPresetId(
-      settingsForSave.ai_fallback.active_prompt_preset_id,
-      settingsForSave.ai_fallback.prompt_profile,
-      settingsForSave.ai_fallback.prompt_presets
-    );
+    settingsForSave.ai_fallback.prompt_presets =
+      normalizeUserRefinementPromptPresets(
+        settingsForSave.ai_fallback.prompt_presets,
+      );
+    settingsForSave.ai_fallback.active_prompt_preset_id =
+      normalizePersistedRefinementPromptPresetId(
+        settingsForSave.ai_fallback.active_prompt_preset_id,
+        settingsForSave.ai_fallback.prompt_profile,
+        settingsForSave.ai_fallback.prompt_presets,
+      );
   }
   try {
     await Promise.race([
       invoke("save_settings", { settings: settingsForSave }),
       new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error("save_settings timed out")), 3_000)
+        setTimeout(() => reject(new Error("save_settings timed out")), 3_000),
       ),
     ]);
   } catch (error) {
@@ -113,27 +136,35 @@ export async function persistSettings() {
 function detectOverlayViewport(): { width: number; height: number } {
   const screenWidth = Number(
     (typeof window !== "undefined"
-      ? window.screen?.availWidth ?? window.screen?.width
-      : 0) ?? 0
+      ? (window.screen?.availWidth ?? window.screen?.width)
+      : 0) ?? 0,
   );
   const screenHeight = Number(
     (typeof window !== "undefined"
-      ? window.screen?.availHeight ?? window.screen?.height
-      : 0) ?? 0
+      ? (window.screen?.availHeight ?? window.screen?.height)
+      : 0) ?? 0,
   );
-  const width = Number.isFinite(screenWidth) && screenWidth > 0 ? screenWidth : 1920;
-  const height = Number.isFinite(screenHeight) && screenHeight > 0 ? screenHeight : 1080;
+  const width =
+    Number.isFinite(screenWidth) && screenWidth > 0 ? screenWidth : 1920;
+  const height =
+    Number.isFinite(screenHeight) && screenHeight > 0 ? screenHeight : 1080;
   return { width, height };
 }
 
 function applyOverlayDimensionSliderBounds() {
   const { width, height } = detectOverlayViewport();
   const kittMaxWidthCap = Math.max(50, Math.round(width * 0.5));
-  const dotMaxRadiusCap = Math.max(8, Math.round(Math.min(width, height) * 0.25)); // 50% diameter
+  const dotMaxRadiusCap = Math.max(
+    8,
+    Math.round(Math.min(width, height) * 0.25),
+  ); // 50% diameter
 
   if (dom.overlayKittMaxWidth) {
     dom.overlayKittMaxWidth.max = String(kittMaxWidthCap);
-    dom.overlayKittMaxWidth.setAttribute("aria-valuemax", String(kittMaxWidthCap));
+    dom.overlayKittMaxWidth.setAttribute(
+      "aria-valuemax",
+      String(kittMaxWidthCap),
+    );
   }
   if (dom.overlayMaxRadius) {
     dom.overlayMaxRadius.max = String(dotMaxRadiusCap);
@@ -157,8 +188,10 @@ function clampToSliderBounds(input: HTMLInputElement, value: number): number {
 
 export function updateOverlayStyleVisibility(style: string) {
   const isKitt = style === "kitt";
-  if (dom.overlayDotSettings) dom.overlayDotSettings.style.display = isKitt ? "none" : "block";
-  if (dom.overlayKittSettings) dom.overlayKittSettings.style.display = isKitt ? "block" : "none";
+  if (dom.overlayDotSettings)
+    dom.overlayDotSettings.style.display = isKitt ? "none" : "block";
+  if (dom.overlayKittSettings)
+    dom.overlayKittSettings.style.display = isKitt ? "block" : "none";
 }
 
 function getOverlaySharedSettings(style: string, current: typeof settings) {
@@ -196,7 +229,8 @@ export function applyOverlaySharedUi(style: string) {
       effectiveRise = maxRise;
     }
   }
-  if (dom.overlayRiseValue) dom.overlayRiseValue.textContent = `${effectiveRise}`;
+  if (dom.overlayRiseValue)
+    dom.overlayRiseValue.textContent = `${effectiveRise}`;
   let effectiveFall = shared.fall_ms;
   if (dom.overlayFall) dom.overlayFall.value = shared.fall_ms.toString();
   if (dom.overlayFall) {
@@ -206,27 +240,32 @@ export function applyOverlaySharedUi(style: string) {
       effectiveFall = maxFall;
     }
   }
-  if (dom.overlayFallValue) dom.overlayFallValue.textContent = `${effectiveFall}`;
+  if (dom.overlayFallValue)
+    dom.overlayFallValue.textContent = `${effectiveFall}`;
   if (dom.overlayOpacityInactive) {
-    dom.overlayOpacityInactive.value = Math.round(shared.opacity_inactive * 100).toString();
+    dom.overlayOpacityInactive.value = Math.round(
+      shared.opacity_inactive * 100,
+    ).toString();
   }
   if (dom.overlayOpacityInactiveValue) {
     dom.overlayOpacityInactiveValue.textContent = `${Math.round(shared.opacity_inactive * 100)}%`;
   }
   if (dom.overlayOpacityActive) {
-    dom.overlayOpacityActive.value = Math.round(shared.opacity_active * 100).toString();
+    dom.overlayOpacityActive.value = Math.round(
+      shared.opacity_active * 100,
+    ).toString();
   }
   if (dom.overlayOpacityActiveValue) {
     dom.overlayOpacityActiveValue.textContent = `${Math.round(shared.opacity_active * 100)}%`;
   }
   if (dom.overlayPosX) {
     dom.overlayPosX.value = Math.round(
-      style === "kitt" ? settings.overlay_kitt_pos_x : settings.overlay_pos_x
+      style === "kitt" ? settings.overlay_kitt_pos_x : settings.overlay_pos_x,
     ).toString();
   }
   if (dom.overlayPosY) {
     dom.overlayPosY.value = Math.round(
-      style === "kitt" ? settings.overlay_kitt_pos_y : settings.overlay_pos_y
+      style === "kitt" ? settings.overlay_kitt_pos_y : settings.overlay_pos_y,
     ).toString();
   }
 }
@@ -251,7 +290,9 @@ export function updateTranscribeThreshold(threshold: number) {
   }
 }
 
-function normalizeLanguageModeValue(languageMode: string | null | undefined): string {
+function normalizeLanguageModeValue(
+  languageMode: string | null | undefined,
+): string {
   const normalized = (languageMode || "auto").trim().toLowerCase();
   if (!normalized) return "auto";
   return normalized;
@@ -259,7 +300,7 @@ function normalizeLanguageModeValue(languageMode: string | null | undefined): st
 
 export function resolveEffectiveAsrLanguageHint(
   languageMode: string | null | undefined,
-  languagePinned: boolean | null | undefined
+  languagePinned: boolean | null | undefined,
 ): string {
   const normalized = normalizeLanguageModeValue(languageMode);
   return languagePinned ? normalized : "auto";
@@ -267,7 +308,7 @@ export function resolveEffectiveAsrLanguageHint(
 
 export function derivePostprocLanguageFromAsr(
   languageMode: string | null | undefined,
-  languagePinned: boolean | null | undefined
+  languagePinned: boolean | null | undefined,
 ): "en" | "de" | "multi" {
   if (!languagePinned) return "multi";
   const normalized = normalizeLanguageModeValue(languageMode);
@@ -276,7 +317,9 @@ export function derivePostprocLanguageFromAsr(
   return "multi";
 }
 
-function derivedPostprocLanguageLabel(postprocLanguage: "en" | "de" | "multi"): string {
+function derivedPostprocLanguageLabel(
+  postprocLanguage: "en" | "de" | "multi",
+): string {
   if (postprocLanguage === "en") {
     return "Derived: English rules (ASR language pinned to English).";
   }
@@ -286,10 +329,14 @@ function derivedPostprocLanguageLabel(postprocLanguage: "en" | "de" | "multi"): 
   return "Derived: Multilingual rules (ASR auto-detect or non EN/DE language).";
 }
 
-export function syncCaptureModeVisibility(mode: string, pttUseVad = false): void {
+export function syncCaptureModeVisibility(
+  mode: string,
+  pttUseVad = false,
+): void {
   const hotkeysEnabled = mode === "ptt";
   const vadEnabled = mode === "vad" || (mode === "ptt" && pttUseVad);
-  if (dom.hotkeysBlock) dom.hotkeysBlock.classList.toggle("hidden", !hotkeysEnabled);
+  if (dom.hotkeysBlock)
+    dom.hotkeysBlock.classList.toggle("hidden", !hotkeysEnabled);
   if (dom.vadBlock) dom.vadBlock.classList.toggle("hidden", !vadEnabled);
   // In PTT+VAD mode we only use threshold gating while the key is held.
   // Silence grace is VAD-mode specific and should not appear for PTT.
@@ -303,7 +350,7 @@ export function syncDerivedLanguageSettings(): void {
   if (!settings) return;
   settings.postproc_language = derivePostprocLanguageFromAsr(
     settings.language_mode,
-    settings.language_pinned
+    settings.language_pinned,
   );
 }
 
@@ -323,7 +370,9 @@ function syncAsrLanguageHintUi(): void {
       : "Auto-detect is active. Enable pinning to lock a specific ASR language.";
   }
   if (dom.whisperInputLanguageSelect) {
-    dom.whisperInputLanguageSelect.value = pinned ? settings.language_mode : "auto";
+    dom.whisperInputLanguageSelect.value = pinned
+      ? settings.language_mode
+      : "auto";
   }
   if (dom.whisperInputLanguageNote) {
     dom.whisperInputLanguageNote.textContent = pinned
@@ -354,18 +403,22 @@ function authStatusLabel(status?: string | null): string {
   return "Locked";
 }
 
-function authMethodLabel(method?: AIProviderAuthMethodPreference | null): string {
+function authMethodLabel(
+  method?: AIProviderAuthMethodPreference | null,
+): string {
   return method === "oauth" ? "OAuth (coming soon)" : "API key";
 }
 
 function normalizeOverlayRefiningPreset(
-  preset?: string | null
+  preset?: string | null,
 ): OverlayRefiningIndicatorPreset {
   if (preset === "subtle" || preset === "intense") return preset;
   return "standard";
 }
 
-function getProviderSettings(provider: AIFallbackProvider): AIProviderSettings | null {
+function getProviderSettings(
+  provider: AIFallbackProvider,
+): AIProviderSettings | null {
   if (!settings?.providers) return null;
   if (provider === "claude") return settings.providers.claude;
   if (provider === "openai") return settings.providers.openai;
@@ -393,7 +446,7 @@ function cloneTopicKeywords(input: TopicKeywords): TopicKeywords {
 }
 
 function normalizeTopicKeywords(
-  input: Record<string, unknown> | null | undefined
+  input: Record<string, unknown> | null | undefined,
 ): TopicKeywords {
   const fallback = cloneTopicKeywords(DEFAULT_TOPICS);
   if (!input || typeof input !== "object") return fallback;
@@ -469,7 +522,10 @@ function writeAIRefinementExpanderState(next: Record<string, boolean>): void {
   _expanderStateCache = next;
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(AI_REFINEMENT_EXPANDER_STATE_KEY, JSON.stringify(next));
+    window.localStorage.setItem(
+      AI_REFINEMENT_EXPANDER_STATE_KEY,
+      JSON.stringify(next),
+    );
   } catch {
     // no-op
   }
@@ -526,7 +582,8 @@ function renderCompatModelCards(
   if (models.length === 0) {
     const hint = document.createElement("p");
     hint.className = "field-hint";
-    hint.textContent = "Click \u2018Fetch models\u2019 to discover loaded models from the server.";
+    hint.textContent =
+      "Click \u2018Fetch models\u2019 to discover loaded models from the server.";
     container.appendChild(hint);
     return;
   }
@@ -556,7 +613,9 @@ function renderCompatModelCards(
       <div class="model-actions"></div>
     `;
 
-    const actionsEl = card.querySelector(".model-actions") as HTMLDivElement | null;
+    const actionsEl = card.querySelector(
+      ".model-actions",
+    ) as HTMLDivElement | null;
     if (actionsEl && !isActive) {
       const activateBtn = document.createElement("button");
       activateBtn.className = "btn-sm btn-primary";
@@ -579,13 +638,17 @@ function applyProviderLaneVisibility(isOnlineMode: boolean) {
   if (dom.aiFallbackModelField)
     dom.aiFallbackModelField.style.display = isOnlineMode ? "block" : "none";
   if (dom.aiFallbackOllamaManagedNote)
-    dom.aiFallbackOllamaManagedNote.style.display = isOnlineMode ? "none" : "block";
+    dom.aiFallbackOllamaManagedNote.style.display = isOnlineMode
+      ? "none"
+      : "block";
   if (dom.aiFallbackProviderLanes) {
     dom.aiFallbackProviderLanes.style.display = "grid";
   }
 }
 
-function renderCloudProviderList(fallbackProvider: CloudAIFallbackProvider | null) {
+function renderCloudProviderList(
+  fallbackProvider: CloudAIFallbackProvider | null,
+) {
   if (!dom.aiFallbackCloudProviderList) return;
 
   dom.aiFallbackCloudProviderList.innerHTML = "";
@@ -644,10 +707,17 @@ function renderCloudProviderList(fallbackProvider: CloudAIFallbackProvider | nul
   });
 }
 
-function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedModel: string) {
+function renderAIFallbackModelOptions(
+  provider: AIFallbackProvider,
+  selectedModel: string,
+) {
   if (!dom.aiFallbackModel) return;
 
-  if (provider === "ollama" || provider === "lm_studio" || provider === "oobabooga") {
+  if (
+    provider === "ollama" ||
+    provider === "lm_studio" ||
+    provider === "oobabooga"
+  ) {
     // Local backends manage their model in the Runtime section — hide this picker
     dom.aiFallbackModel.disabled = true;
     dom.aiFallbackModel.innerHTML = "";
@@ -670,7 +740,9 @@ function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedMode
     dom.aiFallbackModel.appendChild(option);
   }
   if (models.length > 0) {
-    dom.aiFallbackModel.value = models.includes(selectedModel) ? selectedModel : models[0];
+    dom.aiFallbackModel.value = models.includes(selectedModel)
+      ? selectedModel
+      : models[0];
   } else {
     const placeholder = "No models available";
     const option = document.createElement("option");
@@ -694,7 +766,9 @@ function renderRefinementPipelineNote() {
   const aiStarting = !isCompatLocal && ollamaStarting;
 
   const providerLabels: Record<string, string> = {
-    ollama: "Ollama", lm_studio: "LM Studio", oobabooga: "Oobabooga",
+    ollama: "Ollama",
+    lm_studio: "LM Studio",
+    oobabooga: "Oobabooga",
   };
   const label = providerLabels[provider] ?? provider;
 
@@ -710,7 +784,8 @@ function renderRefinementPipelineNote() {
       ? `Primary output: ${label} AI refinement only. Rule-based non-AI fallback is disabled.`
       : "Primary output: Raw transcription while local AI is unavailable.";
   } else if (rulesEnabled) {
-    note = "Primary output: Rule-based refiner only (non-AI, zero token/API cost).";
+    note =
+      "Primary output: Rule-based refiner only (non-AI, zero token/API cost).";
   }
 
   dom.refinementPipelineNote.textContent = note;
@@ -726,16 +801,17 @@ function renderOverlayHealthNote() {
     return;
   }
   dom.overlayHealthNote.hidden = false;
-  dom.overlayHealthNote.textContent = health.status === "failed"
-    ? `Overlay degraded after ${health.attempt} recovery attempts: ${health.reason}`
-    : health.status === "recovered"
-      ? `Overlay recovered: ${health.reason}`
-      : `Overlay recovering (${health.attempt}): ${health.reason}`;
+  dom.overlayHealthNote.textContent =
+    health.status === "failed"
+      ? `Overlay degraded after ${health.attempt} recovery attempts: ${health.reason}`
+      : health.status === "recovered"
+        ? `Overlay recovered: ${health.reason}`
+        : `Overlay recovering (${health.attempt}): ${health.reason}`;
 }
 
 function renderPromptPresetCards(
   userPresets: UserRefinementPromptPreset[],
-  activePresetId: string
+  activePresetId: string,
 ): void {
   const container = dom.promptPresetList;
   if (!container) return;
@@ -743,7 +819,9 @@ function renderPromptPresetCards(
 
   // Normalise "custom" fallback — no card for it, treat as default built-in
   const effectiveActiveId =
-    activePresetId === "custom" ? DEFAULT_REFINEMENT_PROMPT_PRESET : activePresetId;
+    activePresetId === "custom"
+      ? DEFAULT_REFINEMENT_PROMPT_PRESET
+      : activePresetId;
 
   const overrides = settings?.ai_fallback?.prompt_preset_overrides;
 
@@ -753,7 +831,7 @@ function renderPromptPresetCards(
     isActive: boolean,
     extraClass: string,
     action: string,
-    deletable: boolean
+    deletable: boolean,
   ): HTMLElement => {
     const chip = document.createElement("button");
     chip.type = "button";
@@ -777,7 +855,14 @@ function renderPromptPresetCards(
     const isActive = effectiveActiveId === preset.id;
     const modified = hasPresetOverride(overrides, preset.id);
     const extra = modified ? "preset-chip--modified" : "";
-    const chip = makeChip(preset.id, preset.label, isActive, extra, "use-preset", false);
+    const chip = makeChip(
+      preset.id,
+      preset.label,
+      isActive,
+      extra,
+      "use-preset",
+      false,
+    );
     if (modified) chip.title = "Customized — saved";
     container.appendChild(chip);
   }
@@ -787,14 +872,28 @@ function renderPromptPresetCards(
     const optionId = toUserRefinementPromptOptionId(preset.id);
     const isActive = effectiveActiveId === optionId;
     container.appendChild(
-      makeChip(optionId, preset.name, isActive, "preset-chip--user", "use-preset", true)
+      makeChip(
+        optionId,
+        preset.name,
+        isActive,
+        "preset-chip--user",
+        "use-preset",
+        true,
+      ),
     );
   }
 
   // "+ New" chip
   const isNewMode = effectiveActiveId === NEW_REFINEMENT_PROMPT_OPTION_ID;
   container.appendChild(
-    makeChip(NEW_REFINEMENT_PROMPT_OPTION_ID, "+ New", isNewMode, "preset-chip--new", "new-preset", false)
+    makeChip(
+      NEW_REFINEMENT_PROMPT_OPTION_ID,
+      "+ New",
+      isNewMode,
+      "preset-chip--new",
+      "new-preset",
+      false,
+    ),
   );
 }
 
@@ -808,7 +907,7 @@ export function renderAIFallbackSettingsUi() {
     const providerSettings = getProviderSettings(providerId);
     if (!providerSettings) return;
     providerSettings.auth_method_preference = normalizeAuthMethodPreference(
-      providerSettings.auth_method_preference
+      providerSettings.auth_method_preference,
     );
   });
   const ai = settings.ai_fallback;
@@ -818,13 +917,15 @@ export function renderAIFallbackSettingsUi() {
   ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
     ai.active_prompt_preset_id,
     ai.prompt_profile,
-    ai.prompt_presets
-  );
-  const selectedUserPromptPresetFromActive = findUserRefinementPromptPresetByOptionId(
     ai.prompt_presets,
-    ai.active_prompt_preset_id
   );
-  const isNewPromptPresetModeFromActive = ai.active_prompt_preset_id === NEW_REFINEMENT_PROMPT_OPTION_ID;
+  const selectedUserPromptPresetFromActive =
+    findUserRefinementPromptPresetByOptionId(
+      ai.prompt_presets,
+      ai.active_prompt_preset_id,
+    );
+  const isNewPromptPresetModeFromActive =
+    ai.active_prompt_preset_id === NEW_REFINEMENT_PROMPT_OPTION_ID;
   if (selectedUserPromptPresetFromActive) {
     ai.prompt_profile = "custom";
     ai.custom_prompt_enabled = true;
@@ -833,14 +934,20 @@ export function renderAIFallbackSettingsUi() {
     ai.prompt_profile = "custom";
     ai.custom_prompt_enabled = true;
   } else {
-    ai.prompt_profile = normalizeRefinementPromptPreset(ai.active_prompt_preset_id);
+    ai.prompt_profile = normalizeRefinementPromptPreset(
+      ai.active_prompt_preset_id,
+    );
     ai.custom_prompt_enabled = ai.prompt_profile === "custom";
   }
   ai.use_default_prompt = false;
   ai.preserve_source_language ??= true;
   ai.fallback_provider = normalizeCloudProvider(ai?.fallback_provider ?? null);
   ai.execution_mode = normalizeExecutionMode(ai?.execution_mode);
-  const LOCAL_BACKENDS: AIFallbackProvider[] = ["ollama", "lm_studio", "oobabooga"];
+  const LOCAL_BACKENDS: AIFallbackProvider[] = [
+    "ollama",
+    "lm_studio",
+    "oobabooga",
+  ];
   if (!LOCAL_BACKENDS.includes(ai.provider as AIFallbackProvider)) {
     // Cloud provider somehow set as primary — migrate fallback and reset to ollama
     if (!ai.fallback_provider) {
@@ -849,8 +956,12 @@ export function renderAIFallbackSettingsUi() {
     ai.provider = "ollama";
   }
 
-  const fallbackProvider = normalizeCloudProvider(ai?.fallback_provider ?? null);
-  const fallbackConfig = fallbackProvider ? getProviderSettings(fallbackProvider) : null;
+  const fallbackProvider = normalizeCloudProvider(
+    ai?.fallback_provider ?? null,
+  );
+  const fallbackConfig = fallbackProvider
+    ? getProviderSettings(fallbackProvider)
+    : null;
   const executionMode: AIExecutionMode = "local_primary";
   const provider = ai.provider as AIFallbackProvider;
   ai.execution_mode = executionMode;
@@ -860,30 +971,50 @@ export function renderAIFallbackSettingsUi() {
   const runtimeVersionOptions = getOllamaRuntimeVersionCatalog();
   const runtimeStage = runtimeDiagnostics?.ollama?.spawn_stage?.trim() || "";
   const runtimeHealthy =
-    runtimeCardState.healthy
-    || Boolean(runtimeDiagnostics?.ollama?.reachable)
-    || Boolean(startupStatus?.ollama_ready)
-    || runtimeStage === "ready";
+    runtimeCardState.healthy ||
+    Boolean(runtimeDiagnostics?.ollama?.reachable) ||
+    Boolean(startupStatus?.ollama_ready) ||
+    runtimeStage === "ready";
   const runtimeStarting =
-    !runtimeHealthy
-    && (
-      runtimeCardState.busy
-      || runtimeCardState.backgroundStarting
-      || Boolean(startupStatus?.ollama_starting)
-    );
-  const aiRuntimeBannerVisible = Boolean(ai?.enabled) && provider === "ollama" && runtimeStarting;
+    !runtimeHealthy &&
+    (runtimeCardState.busy ||
+      runtimeCardState.backgroundStarting ||
+      Boolean(startupStatus?.ollama_starting));
+  const aiRuntimeBannerVisible =
+    Boolean(ai?.enabled) && provider === "ollama" && runtimeStarting;
   if (runtimeHealthy && startupStatus?.ollama_starting) {
     if (!aiRuntimeStateDriftLogged) {
       aiRuntimeStateDriftLogged = true;
-      traceFrontendWarn("ai.runtime_ui", "runtime healthy while startup still reports starting", {
-        startupStatus,
-        runtimeDiagnostics: runtimeDiagnostics?.ollama ?? null,
-      });
+      traceFrontendWarn(
+        "ai.runtime_ui",
+        "runtime healthy while startup still reports starting",
+        {
+          startupStatus,
+          runtimeDiagnostics: runtimeDiagnostics?.ollama ?? null,
+        },
+      );
     }
   } else {
     aiRuntimeStateDriftLogged = false;
   }
-  let selectedRuntimeEntry: (typeof runtimeVersionOptions)[number] | null = null;
+  let selectedRuntimeEntry: (typeof runtimeVersionOptions)[number] | null =
+    null;
+  type RuntimeVersionOption = (typeof runtimeVersionOptions)[number];
+  const isUncheckedRuntimeVersion = (entry: RuntimeVersionOption) => {
+    const reason = entry.installable_reason?.toLowerCase() ?? "";
+    return (
+      !entry.installable &&
+      entry.source === "online" &&
+      (reason.includes("not in the verified") ||
+        reason.includes("outside the verified") ||
+        reason.includes("not checked") ||
+        reason.includes("not been checked"))
+    );
+  };
+  const installabilityLabel = (entry: RuntimeVersionOption) => {
+    if (entry.installable) return "installable";
+    return isUncheckedRuntimeVersion(entry) ? "not checked" : "not installable";
+  };
 
   if (dom.aiFallbackEnabled) {
     dom.aiFallbackEnabled.checked = Boolean(ai?.enabled);
@@ -893,7 +1024,10 @@ export function renderAIFallbackSettingsUi() {
   if (dom.aiFallbackSettings) {
     dom.aiFallbackSettings.style.display = "block";
     dom.aiFallbackSettings.classList.toggle("is-disabled", !ai?.enabled);
-    dom.aiFallbackSettings.setAttribute("aria-busy", runtimeCardState.busy ? "true" : "false");
+    dom.aiFallbackSettings.setAttribute(
+      "aria-busy",
+      runtimeCardState.busy ? "true" : "false",
+    );
   }
   if (dom.aiFallbackLoadingScrim) {
     dom.aiFallbackLoadingScrim.hidden = !aiRuntimeBannerVisible;
@@ -914,13 +1048,15 @@ export function renderAIFallbackSettingsUi() {
     const providerStatus = fallbackProvider
       ? `${CLOUD_PROVIDER_LABELS[fallbackProvider]} stored (${authStatusLabel(fallbackConfig?.auth_status)})`
       : "No provider selected.";
-    dom.aiFallbackFallbackStatus.textContent =
-      `${providerStatus} Online fallback is roadmap-only and not active in production.`;
+    dom.aiFallbackFallbackStatus.textContent = `${providerStatus} Online fallback is roadmap-only and not active in production.`;
   }
 
   if (dom.aiFallbackLocalLane) {
     dom.aiFallbackLocalLane.classList.toggle("is-active", true);
-    dom.aiFallbackLocalLane.classList.toggle("is-runtime-busy", runtimeCardState.busy);
+    dom.aiFallbackLocalLane.classList.toggle(
+      "is-runtime-busy",
+      runtimeCardState.busy,
+    );
     dom.aiFallbackLocalLane.setAttribute("aria-pressed", "true");
   }
   if (dom.aiFallbackOnlineLane) {
@@ -964,18 +1100,23 @@ export function renderAIFallbackSettingsUi() {
         baseNote = "Available later.";
       }
     }
-    dom.aiFallbackLocalRuntimeNote.textContent = runtimeCardState.compatibilityWarning
-      ? `${baseNote} ${runtimeCardState.compatibilityWarning}`
-      : baseNote;
+    dom.aiFallbackLocalRuntimeNote.textContent =
+      runtimeCardState.compatibilityWarning
+        ? `${baseNote} ${runtimeCardState.compatibilityWarning}`
+        : baseNote;
     dom.aiFallbackLocalRuntimeNote.classList.toggle(
       "ai-runtime-busy-note",
-      runtimeCardState.busy || runtimeCardState.backgroundStarting
+      runtimeCardState.busy || runtimeCardState.backgroundStarting,
     );
     dom.aiFallbackLocalRuntimeNote.setAttribute("aria-live", "polite");
   }
 
   // Show/update Ollama runtime installation progress bar
-  if (dom.aiFallbackRuntimeProgress && dom.aiFallbackRuntimeProgressFill && dom.aiFallbackRuntimeProgressText) {
+  if (
+    dom.aiFallbackRuntimeProgress &&
+    dom.aiFallbackRuntimeProgressFill &&
+    dom.aiFallbackRuntimeProgressText
+  ) {
     const progress = (window as any).runtimeInstallProgress;
     if (progress) {
       // Show progress bar
@@ -983,14 +1124,25 @@ export function renderAIFallbackSettingsUi() {
 
       // Update progress fill
       let percent = 0;
-      if (progress.downloaded !== undefined && progress.total !== undefined && progress.total > 0) {
-        percent = Math.min(100, Math.round((progress.downloaded / progress.total) * 100));
+      if (
+        progress.downloaded !== undefined &&
+        progress.total !== undefined &&
+        progress.total > 0
+      ) {
+        percent = Math.min(
+          100,
+          Math.round((progress.downloaded / progress.total) * 100),
+        );
       }
       dom.aiFallbackRuntimeProgressFill.style.width = `${percent}%`;
 
       // Update progress text
       let progressText = progress.message || "";
-      if (progress.downloaded !== undefined && progress.total !== undefined && progress.total > 0) {
+      if (
+        progress.downloaded !== undefined &&
+        progress.total !== undefined &&
+        progress.total > 0
+      ) {
         const mbDone = Math.round(progress.downloaded / (1024 * 1024));
         const mbTotal = Math.round(progress.total / (1024 * 1024));
         progressText = `${progressText} (${mbDone}/${mbTotal} MB)`;
@@ -1003,38 +1155,48 @@ export function renderAIFallbackSettingsUi() {
   }
 
   if (dom.aiFallbackLocalPrimaryAction) {
-    dom.aiFallbackLocalPrimaryAction.textContent = runtimeCardState.primaryLabel;
-    dom.aiFallbackLocalPrimaryAction.disabled = runtimeCardState.primaryDisabled;
-    dom.aiFallbackLocalPrimaryAction.dataset.runtimeAction = runtimeCardState.primaryAction;
-    dom.aiFallbackLocalPrimaryAction.classList.toggle("is-busy", runtimeCardState.busy);
+    dom.aiFallbackLocalPrimaryAction.textContent =
+      runtimeCardState.primaryLabel;
+    dom.aiFallbackLocalPrimaryAction.disabled =
+      runtimeCardState.primaryDisabled;
+    dom.aiFallbackLocalPrimaryAction.dataset.runtimeAction =
+      runtimeCardState.primaryAction;
+    dom.aiFallbackLocalPrimaryAction.classList.toggle(
+      "is-busy",
+      runtimeCardState.busy,
+    );
     dom.aiFallbackLocalPrimaryAction.setAttribute(
       "aria-busy",
-      runtimeCardState.busy ? "true" : "false"
+      runtimeCardState.busy ? "true" : "false",
     );
   }
   if (dom.aiFallbackLocalImportAction) {
     dom.aiFallbackLocalImportAction.disabled = runtimeCardState.busy;
   }
   if (dom.aiFallbackLocalRuntimeSource) {
-    const currentSource = settings.providers.ollama.runtime_source || "per_user_zip";
+    const currentSource =
+      settings.providers.ollama.runtime_source || "per_user_zip";
     dom.aiFallbackLocalRuntimeSource.value = currentSource;
     dom.aiFallbackLocalRuntimeSource.disabled = runtimeCardState.busy;
   }
   if (dom.aiFallbackLocalVerifyAction) {
-    dom.aiFallbackLocalVerifyAction.disabled = runtimeCardState.busy || !runtimeCardState.detected;
+    dom.aiFallbackLocalVerifyAction.disabled =
+      runtimeCardState.busy || !runtimeCardState.detected;
   }
   if (dom.aiFallbackLocalRefreshAction) {
     dom.aiFallbackLocalRefreshAction.disabled = runtimeCardState.busy;
   }
   if (dom.aiFallbackFetchVersionsAction) {
-    dom.aiFallbackFetchVersionsAction.disabled = runtimeCardState.busy || isOnlineVersionFetchInProgress();
-    dom.aiFallbackFetchVersionsAction.textContent = isOnlineVersionFetchInProgress()
-      ? "Fetching..."
-      : "Get versions";
+    dom.aiFallbackFetchVersionsAction.disabled =
+      runtimeCardState.busy || isOnlineVersionFetchInProgress();
+    dom.aiFallbackFetchVersionsAction.textContent =
+      isOnlineVersionFetchInProgress() ? "Fetching..." : "Get versions";
   }
   if (dom.aiFallbackLocalRuntimeVersion) {
     const selectedVersion =
-      settings.providers.ollama.runtime_target_version?.trim() || runtimeCardState.version || "0.20.2";
+      settings.providers.ollama.runtime_target_version?.trim() ||
+      runtimeCardState.version ||
+      "0.20.2";
     const optionPool = [...runtimeVersionOptions];
     const appendIfMissing = (version: string) => {
       if (!version) return;
@@ -1045,27 +1207,47 @@ export function renderAIFallbackSettingsUi() {
         selected: version === selectedVersion,
         installed: version === runtimeCardState.version,
         recommended: version === "0.20.2",
+        prerelease: /(?:-rc|-alpha|-beta)/i.test(version),
         installable: false,
         installable_reason:
-          "This version is not in the verified installable runtime catalog.",
+          "Version not checked against online installability catalog.",
       });
     };
     appendIfMissing(selectedVersion);
     appendIfMissing(runtimeCardState.version);
     const prioritized = optionPool
       .sort((a, b) => {
-        const aScore = (a.selected ? 4 : 0) + (a.installed ? 2 : 0) + (a.recommended ? 1 : 0);
-        const bScore = (b.selected ? 4 : 0) + (b.installed ? 2 : 0) + (b.recommended ? 1 : 0);
-        return bScore - aScore || b.version.localeCompare(a.version, undefined, { numeric: true });
+        const aScore =
+          (a.selected ? 4 : 0) +
+          (a.installed ? 2 : 0) +
+          (a.recommended ? 1 : 0);
+        const bScore =
+          (b.selected ? 4 : 0) +
+          (b.installed ? 2 : 0) +
+          (b.recommended ? 1 : 0);
+        return (
+          bScore - aScore ||
+          b.version.localeCompare(a.version, undefined, { numeric: true })
+        );
       })
-      .filter((entry, idx, arr) => idx === arr.findIndex((e) => e.version === entry.version));
+      .filter(
+        (entry, idx, arr) =>
+          idx === arr.findIndex((e) => e.version === entry.version),
+      );
     const limited = prioritized;
 
     dom.aiFallbackLocalRuntimeVersion.innerHTML = "";
     limited.forEach((entry) => {
       const option = document.createElement("option");
       option.value = entry.version;
-      option.textContent = `${entry.version} (${entry.installable ? "installable" : "not installable"})`;
+      option.textContent = `${entry.version} (${installabilityLabel(entry)})`;
+      const hoverDetails = [entry.release_name, entry.release_notes_summary]
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value));
+      option.title =
+        hoverDetails.length > 0
+          ? hoverDetails.join("\n\n")
+          : `${entry.version} (${installabilityLabel(entry)})`;
       option.disabled = !entry.installable && !entry.selected;
       dom.aiFallbackLocalRuntimeVersion?.appendChild(option);
     });
@@ -1073,16 +1255,21 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackLocalRuntimeVersion.classList.remove("is-scroll-list");
     if (
       selectedVersion &&
-      Array.from(dom.aiFallbackLocalRuntimeVersion.options).some((opt) => opt.value === selectedVersion)
+      Array.from(dom.aiFallbackLocalRuntimeVersion.options).some(
+        (opt) => opt.value === selectedVersion,
+      )
     ) {
       dom.aiFallbackLocalRuntimeVersion.value = selectedVersion;
     }
     selectedRuntimeEntry =
-      limited.find((entry) => entry.version === dom.aiFallbackLocalRuntimeVersion?.value) ?? null;
+      limited.find(
+        (entry) => entry.version === dom.aiFallbackLocalRuntimeVersion?.value,
+      ) ?? null;
     dom.aiFallbackLocalRuntimeVersion.disabled = runtimeCardState.busy;
   }
   if (dom.aiFallbackLocalRuntimeVersionNote) {
-    const selected = settings.providers.ollama.runtime_target_version || "0.20.2";
+    const selected =
+      settings.providers.ollama.runtime_target_version || "0.20.2";
     dom.aiFallbackLocalRuntimeVersionNote.textContent = "";
     const lead = document.createElement("span");
     lead.textContent = `Selected target ${selected}. `;
@@ -1097,19 +1284,49 @@ export function renderAIFallbackSettingsUi() {
       badges.appendChild(el);
     };
 
-    if (selectedRuntimeEntry?.selected) addBadge("Active", "runtime-version-chip--selected");
-    if (selectedRuntimeEntry?.installed) addBadge("Installed", "runtime-version-chip--installed");
-    if (selectedRuntimeEntry?.recommended) addBadge("Recommended", "runtime-version-chip--recommended");
+    if (selectedRuntimeEntry?.selected)
+      addBadge("Active", "runtime-version-chip--selected");
+    if (selectedRuntimeEntry?.installed)
+      addBadge("Installed", "runtime-version-chip--installed");
+    if (selectedRuntimeEntry?.recommended)
+      addBadge("Recommended", "runtime-version-chip--recommended");
+    if (selectedRuntimeEntry?.prerelease) {
+      addBadge("Pre-release", "runtime-version-chip--prerelease");
+    }
     if (selectedRuntimeEntry) {
       if (selectedRuntimeEntry.installable) {
         addBadge("Installable", "runtime-version-chip--installable");
+      } else if (isUncheckedRuntimeVersion(selectedRuntimeEntry)) {
+        addBadge("Not checked", "runtime-version-chip--unchecked");
       } else {
         addBadge("Not installable", "runtime-version-chip--not-installable");
       }
       addBadge(
         selectedRuntimeEntry.source === "online" ? "Online" : "Pinned",
-        "runtime-version-chip--source"
+        "runtime-version-chip--source",
       );
+      if (
+        selectedRuntimeEntry.release_name?.trim() ||
+        selectedRuntimeEntry.release_notes_summary?.trim()
+      ) {
+        const release = document.createElement("span");
+        release.className = "runtime-version-release";
+        const releaseName = selectedRuntimeEntry.release_name?.trim();
+        const releaseNotes = selectedRuntimeEntry.release_notes_summary?.trim();
+        if (releaseName) {
+          const name = document.createElement("span");
+          name.className = "runtime-version-release-name";
+          name.textContent = releaseName;
+          release.appendChild(name);
+        }
+        if (releaseNotes) {
+          const notes = document.createElement("span");
+          notes.className = "runtime-version-release-notes";
+          notes.textContent = releaseNotes;
+          release.appendChild(notes);
+        }
+        dom.aiFallbackLocalRuntimeVersionNote.appendChild(release);
+      }
     } else {
       addBadge("Not installable", "runtime-version-chip--not-installable");
       addBadge("Pinned", "runtime-version-chip--source");
@@ -1119,7 +1336,9 @@ export function renderAIFallbackSettingsUi() {
     if (selectedRuntimeEntry?.installable_reason?.trim()) {
       const reason = document.createElement("span");
       reason.className = "runtime-version-reason";
-      reason.textContent = selectedRuntimeEntry.installable_reason.trim();
+      reason.textContent = isUncheckedRuntimeVersion(selectedRuntimeEntry)
+        ? "Version not checked against online installability catalog."
+        : selectedRuntimeEntry.installable_reason.trim();
       dom.aiFallbackLocalRuntimeVersionNote.appendChild(reason);
     }
   }
@@ -1127,17 +1346,24 @@ export function renderAIFallbackSettingsUi() {
   if (dom.aiFallbackLocalBackendSelect) {
     const currentBackend = ai?.provider ?? "ollama";
     const validBackends = ["ollama", "lm_studio", "oobabooga"];
-    dom.aiFallbackLocalBackendSelect.value = validBackends.includes(currentBackend) ? currentBackend : "ollama";
+    dom.aiFallbackLocalBackendSelect.value = validBackends.includes(
+      currentBackend,
+    )
+      ? currentBackend
+      : "ollama";
     dom.aiFallbackLocalBackendSelect.disabled = runtimeCardState.busy;
   }
-  const backendTitleEl = document.getElementById("ai-fallback-local-lane-title-text");
+  const backendTitleEl = document.getElementById(
+    "ai-fallback-local-lane-title-text",
+  );
   if (backendTitleEl) {
     const labels: Record<string, string> = {
       ollama: "Ollama (Local)",
       lm_studio: "LM Studio (Local)",
       oobabooga: "Oobabooga (Local)",
     };
-    backendTitleEl.textContent = labels[ai?.provider ?? "ollama"] ?? "Local AI (Local)";
+    backendTitleEl.textContent =
+      labels[ai?.provider ?? "ollama"] ?? "Local AI (Local)";
   }
 
   const isOllama = provider === "ollama";
@@ -1169,14 +1395,16 @@ export function renderAIFallbackSettingsUi() {
   if (dom.aiFallbackLocalPrimaryAction) {
     dom.aiFallbackLocalPrimaryAction.hidden = !isOllama;
     if (isOllama) {
-      dom.aiFallbackLocalPrimaryAction.title = "Install or start local Ollama runtime";
+      dom.aiFallbackLocalPrimaryAction.title =
+        "Install or start local Ollama runtime";
     }
   }
   // Import model button: Ollama only
   if (dom.aiFallbackLocalImportAction) {
     dom.aiFallbackLocalImportAction.hidden = !isOllama;
     if (isOllama) {
-      dom.aiFallbackLocalImportAction.title = "Import a local GGUF or Modelfile into Ollama";
+      dom.aiFallbackLocalImportAction.title =
+        "Import a local GGUF or Modelfile into Ollama";
     }
   }
   // Runtime status line: Ollama only
@@ -1189,35 +1417,53 @@ export function renderAIFallbackSettingsUi() {
   }
 
   if (isOllama) {
-    if (dom.aiFallbackLocalFallbackEndpoints && document.activeElement !== dom.aiFallbackLocalFallbackEndpoints) {
-      dom.aiFallbackLocalFallbackEndpoints.value = (settings.providers.ollama.fallback_endpoints ?? []).join("\n");
+    if (
+      dom.aiFallbackLocalFallbackEndpoints &&
+      document.activeElement !== dom.aiFallbackLocalFallbackEndpoints
+    ) {
+      dom.aiFallbackLocalFallbackEndpoints.value = (
+        settings.providers.ollama.fallback_endpoints ?? []
+      ).join("\n");
       dom.aiFallbackLocalFallbackEndpoints.disabled = runtimeCardState.busy;
     }
   }
 
   if (isCompatBackend) {
-    const compatSettings = provider === "lm_studio"
-      ? settings.providers.lm_studio
-      : settings.providers.oobabooga;
-    const defaultEndpoint = provider === "lm_studio" ? "http://127.0.0.1:1234" : "http://127.0.0.1:5000";
-    const endpointHint = provider === "lm_studio"
-      ? "Default LM Studio port: 127.0.0.1:1234"
-      : "Default Oobabooga port: 127.0.0.1:5000";
+    const compatSettings =
+      provider === "lm_studio"
+        ? settings.providers.lm_studio
+        : settings.providers.oobabooga;
+    const defaultEndpoint =
+      provider === "lm_studio"
+        ? "http://127.0.0.1:1234"
+        : "http://127.0.0.1:5000";
+    const endpointHint =
+      provider === "lm_studio"
+        ? "Default LM Studio port: 127.0.0.1:1234"
+        : "Default Oobabooga port: 127.0.0.1:5000";
 
     if (dom.aiFallbackCompatGuide) {
-      dom.aiFallbackCompatGuide.textContent = provider === "lm_studio"
-        ? "Setup: Install LM Studio \u2192 load a model \u2192 open the \u201cLocal Server\u201d tab \u2192 click Start. Then click \u2018Fetch models\u2019."
-        : "Setup: Start text-generation-webui with --api flag \u2192 load a model. Then click \u2018Fetch models\u2019.";
+      dom.aiFallbackCompatGuide.textContent =
+        provider === "lm_studio"
+          ? "Setup: Install LM Studio \u2192 load a model \u2192 open the \u201cLocal Server\u201d tab \u2192 click Start. Then click \u2018Fetch models\u2019."
+          : "Setup: Start text-generation-webui with --api flag \u2192 load a model. Then click \u2018Fetch models\u2019.";
     }
 
-    if (dom.aiFallbackCompatEndpoint && document.activeElement !== dom.aiFallbackCompatEndpoint) {
-      dom.aiFallbackCompatEndpoint.value = compatSettings?.endpoint || defaultEndpoint;
+    if (
+      dom.aiFallbackCompatEndpoint &&
+      document.activeElement !== dom.aiFallbackCompatEndpoint
+    ) {
+      dom.aiFallbackCompatEndpoint.value =
+        compatSettings?.endpoint || defaultEndpoint;
       dom.aiFallbackCompatEndpoint.placeholder = defaultEndpoint;
     }
     if (dom.aiFallbackCompatEndpointHint) {
       dom.aiFallbackCompatEndpointHint.textContent = endpointHint;
     }
-    if (dom.aiFallbackCompatApiKey && document.activeElement !== dom.aiFallbackCompatApiKey) {
+    if (
+      dom.aiFallbackCompatApiKey &&
+      document.activeElement !== dom.aiFallbackCompatApiKey
+    ) {
       dom.aiFallbackCompatApiKey.value = compatSettings?.api_key || "";
     }
 
@@ -1238,12 +1484,15 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackTemperatureValue.textContent = temp.toFixed(2);
   }
   if (dom.aiFallbackPreserveLanguage) {
-    dom.aiFallbackPreserveLanguage.checked = Boolean(ai?.preserve_source_language ?? true);
+    dom.aiFallbackPreserveLanguage.checked = Boolean(
+      ai?.preserve_source_language ?? true,
+    );
   }
   if (dom.aiFallbackPreserveLanguageNote) {
-    dom.aiFallbackPreserveLanguageNote.textContent = ai?.preserve_source_language
-      ? "Language lock is active for built-in presets. Custom prompts are sent unchanged."
-      : "Language lock is off for built-in presets. Refinement may switch language when model confidence drifts.";
+    dom.aiFallbackPreserveLanguageNote.textContent =
+      ai?.preserve_source_language
+        ? "Language lock is active for built-in presets. Custom prompts are sent unchanged."
+        : "Language lock is off for built-in presets. Refinement may switch language when model confidence drifts.";
   }
   if (dom.aiFallbackLowLatencyMode) {
     dom.aiFallbackLowLatencyMode.checked = Boolean(ai?.low_latency_mode);
@@ -1256,30 +1505,34 @@ export function renderAIFallbackSettingsUi() {
   if (dom.aiFallbackMaxTokens) {
     dom.aiFallbackMaxTokens.value = String(ai?.max_tokens ?? 4000);
   }
-  const userPromptPresets = normalizeUserRefinementPromptPresets(ai?.prompt_presets);
+  const userPromptPresets = normalizeUserRefinementPromptPresets(
+    ai?.prompt_presets,
+  );
   ai.prompt_presets = userPromptPresets;
   ai.prompt_preset_overrides ??= {};
   const overrides = ai.prompt_preset_overrides;
   const activePromptPresetId = normalizeActiveRefinementPromptPresetId(
     ai?.active_prompt_preset_id,
     ai?.prompt_profile,
-    userPromptPresets
+    userPromptPresets,
   );
   ai.active_prompt_preset_id = activePromptPresetId;
   renderPromptPresetCards(userPromptPresets, activePromptPresetId);
   const selectedUserPromptPreset = findUserRefinementPromptPresetByOptionId(
     userPromptPresets,
-    activePromptPresetId
+    activePromptPresetId,
   );
-  const isNewPresetMode = activePromptPresetId === NEW_REFINEMENT_PROMPT_OPTION_ID;
-  const promptProfile = selectedUserPromptPreset || isNewPresetMode
-    ? "custom"
-    : normalizeRefinementPromptPreset(activePromptPresetId);
+  const isNewPresetMode =
+    activePromptPresetId === NEW_REFINEMENT_PROMPT_OPTION_ID;
+  const promptProfile =
+    selectedUserPromptPreset || isNewPresetMode
+      ? "custom"
+      : normalizeRefinementPromptPreset(activePromptPresetId);
   ai.prompt_profile = promptProfile;
   ai.custom_prompt_enabled = promptProfile === "custom";
   const effectiveLanguageHint = resolveEffectiveAsrLanguageHint(
     settings.language_mode,
-    settings.language_pinned
+    settings.language_pinned,
   );
   const promptPreview = resolveEffectiveRefinementPrompt(
     promptProfile,
@@ -1287,20 +1540,24 @@ export function renderAIFallbackSettingsUi() {
     ai?.custom_prompt,
     Boolean(ai?.preserve_source_language ?? true),
     ai?.model,
-    overrides
+    overrides,
   );
   const isCustomPrompt = activePromptPresetId === "custom";
   const isUserPrompt = Boolean(selectedUserPromptPreset);
   const isBuiltInPrompt = !isCustomPrompt && !isUserPrompt && !isNewPresetMode;
   const builtInId = isBuiltInPrompt
-    ? (normalizeRefinementPromptPreset(activePromptPresetId) as BuiltInRefinementPromptPreset)
+    ? (normalizeRefinementPromptPreset(
+        activePromptPresetId,
+      ) as BuiltInRefinementPromptPreset)
     : null;
   const builtInHasOverride = Boolean(
-    builtInId && typeof overrides[builtInId] === "string" && overrides[builtInId]!.trim().length > 0
+    builtInId &&
+    typeof overrides[builtInId] === "string" &&
+    overrides[builtInId]!.trim().length > 0,
   );
   const userHasPrevious = Boolean(
     selectedUserPromptPreset?.previous_prompt &&
-      selectedUserPromptPreset.previous_prompt.trim().length > 0
+    selectedUserPromptPreset.previous_prompt.trim().length > 0,
   );
   const shownPrompt = isBuiltInPrompt
     ? promptPreview
@@ -1334,10 +1591,10 @@ export function renderAIFallbackSettingsUi() {
     const isFocused = document.activeElement === textarea;
     const currentValue = textarea.value;
     const externalDirty =
-      !isFocused
-      && (isBuiltInPrompt || isUserPrompt)
-      && currentValue.trim().length > 0
-      && currentValue.trim() !== (shownPrompt || "").trim();
+      !isFocused &&
+      (isBuiltInPrompt || isUserPrompt) &&
+      currentValue.trim().length > 0 &&
+      currentValue.trim() !== (shownPrompt || "").trim();
     if (!isFocused && !externalDirty) {
       textarea.value = shownPrompt;
       textarea.classList.remove("has-unsaved-edits");
@@ -1352,13 +1609,16 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackPresetNameField.hidden = isCustomPrompt;
   }
   if (dom.aiFallbackPresetNameInputWrap) {
-    dom.aiFallbackPresetNameInputWrap.hidden = !(isUserPrompt || isNewPresetMode);
+    dom.aiFallbackPresetNameInputWrap.hidden = !(
+      isUserPrompt || isNewPresetMode
+    );
   }
   if (dom.aiFallbackPromptPresetName) {
     dom.aiFallbackPromptPresetName.hidden = !(isUserPrompt || isNewPresetMode);
     if (document.activeElement !== dom.aiFallbackPromptPresetName) {
       if (isUserPrompt) {
-        dom.aiFallbackPromptPresetName.value = selectedUserPromptPreset?.name || "";
+        dom.aiFallbackPromptPresetName.value =
+          selectedUserPromptPreset?.name || "";
       } else if (!isNewPresetMode) {
         dom.aiFallbackPromptPresetName.value = "";
       }
@@ -1379,7 +1639,8 @@ export function renderAIFallbackSettingsUi() {
     } else if (isBuiltInPrompt) {
       dom.aiFallbackPromptPresetSave.textContent = "Save";
       dom.aiFallbackPromptPresetSave.disabled = !textareaDirty;
-      dom.aiFallbackPromptPresetSave.title = "Save override for this built-in preset";
+      dom.aiFallbackPromptPresetSave.title =
+        "Save override for this built-in preset";
       dom.aiFallbackPromptPresetSave.hidden = false;
     } else {
       dom.aiFallbackPromptPresetSave.hidden = true;
@@ -1419,23 +1680,33 @@ function renderProductModeSettings(): void {
   if (!assistantCoreAvailable) {
     settings.product_mode = "transcribe";
   }
-  const productMode = settings.product_mode === "assistant" ? "assistant" : "transcribe";
+  const productMode =
+    settings.product_mode === "assistant" ? "assistant" : "transcribe";
   settings.product_mode = productMode;
   const transcribeActive = productMode === "transcribe";
   const assistantActive = productMode === "assistant";
   dom.productModeControl?.toggleAttribute("hidden", !assistantCoreAvailable);
   if (dom.productModeTranscribeBtn) {
-    dom.productModeTranscribeBtn.classList.toggle("is-active", transcribeActive);
-    dom.productModeTranscribeBtn.setAttribute("aria-pressed", transcribeActive ? "true" : "false");
+    dom.productModeTranscribeBtn.classList.toggle(
+      "is-active",
+      transcribeActive,
+    );
+    dom.productModeTranscribeBtn.setAttribute(
+      "aria-pressed",
+      transcribeActive ? "true" : "false",
+    );
   }
   if (dom.productModeAssistantBtn) {
     dom.productModeAssistantBtn.classList.toggle("is-active", assistantActive);
-    dom.productModeAssistantBtn.setAttribute("aria-pressed", assistantActive ? "true" : "false");
+    dom.productModeAssistantBtn.setAttribute(
+      "aria-pressed",
+      assistantActive ? "true" : "false",
+    );
     dom.productModeAssistantBtn.disabled = !assistantCoreAvailable;
   }
   dom.globalOnlineControl?.toggleAttribute(
     "hidden",
-    !assistantCoreAvailable || productMode !== "assistant"
+    !assistantCoreAvailable || productMode !== "assistant",
   );
 }
 
@@ -1444,96 +1715,156 @@ function renderGlobalOnlineModeSettings(): void {
   const onlineEnabled = Boolean(settings.workflow_agent?.online_enabled);
   if (dom.globalOnlineOfflineBtn) {
     dom.globalOnlineOfflineBtn.classList.toggle("is-active", !onlineEnabled);
-    dom.globalOnlineOfflineBtn.setAttribute("aria-pressed", onlineEnabled ? "false" : "true");
+    dom.globalOnlineOfflineBtn.setAttribute(
+      "aria-pressed",
+      onlineEnabled ? "false" : "true",
+    );
   }
   if (dom.globalOnlineEnabledBtn) {
     dom.globalOnlineEnabledBtn.classList.toggle("is-active", onlineEnabled);
-    dom.globalOnlineEnabledBtn.setAttribute("aria-pressed", onlineEnabled ? "true" : "false");
+    dom.globalOnlineEnabledBtn.setAttribute(
+      "aria-pressed",
+      onlineEnabled ? "true" : "false",
+    );
   }
 }
 
 export function renderSettings() {
   if (!settings) return;
   ensureContinuousDumpDefaults();
+  ensureCaptureRuntimeDefaults();
+  ensureDiagnosticsDefaults();
   ensureSetupDefaults();
   syncDerivedLanguageSettings();
   applyOverlayDimensionSliderBounds();
   renderProductModeSettings();
   renderGlobalOnlineModeSettings();
-  if (dom.captureEnabledToggle) dom.captureEnabledToggle.checked = settings.capture_enabled;
-  if (dom.transcribeEnabledToggle) dom.transcribeEnabledToggle.checked = settings.transcribe_enabled;
+  if (dom.captureEnabledToggle)
+    dom.captureEnabledToggle.checked = settings.capture_enabled;
+  if (dom.transcribeEnabledToggle)
+    dom.transcribeEnabledToggle.checked = settings.transcribe_enabled;
   if (dom.modeSelect) dom.modeSelect.value = settings.mode;
-  if (dom.pttHotkey) dom.pttHotkey.value = formatHotkeyForDisplay(settings.hotkey_ptt);
-  if (dom.toggleHotkey) dom.toggleHotkey.value = formatHotkeyForDisplay(settings.hotkey_toggle);
+  if (dom.pttHotkey)
+    dom.pttHotkey.value = formatHotkeyForDisplay(settings.hotkey_ptt);
+  if (dom.toggleHotkey)
+    dom.toggleHotkey.value = formatHotkeyForDisplay(settings.hotkey_toggle);
   syncCaptureModeVisibility(settings.mode, settings.ptt_use_vad);
   if (dom.deviceSelect) dom.deviceSelect.value = settings.input_device;
   if (dom.languageSelect) dom.languageSelect.value = settings.language_mode;
-  if (dom.languagePinnedToggle) dom.languagePinnedToggle.checked = settings.language_pinned;
+  if (dom.languagePinnedToggle)
+    dom.languagePinnedToggle.checked = settings.language_pinned;
   syncAsrLanguageHintUi();
-  if (dom.modelSourceSelect) dom.modelSourceSelect.value = settings.model_source;
-  if (dom.modelCustomUrl) dom.modelCustomUrl.value = settings.model_custom_url ?? "";
+  if (dom.modelSourceSelect)
+    dom.modelSourceSelect.value = settings.model_source;
+  if (dom.modelCustomUrl)
+    dom.modelCustomUrl.value = settings.model_custom_url ?? "";
   if (dom.modelStoragePath && settings.model_storage_dir) {
     dom.modelStoragePath.value = settings.model_storage_dir;
   }
   if (dom.modelCustomUrlField) {
-    dom.modelCustomUrlField.classList.toggle("hidden", settings.model_source !== "custom");
+    dom.modelCustomUrlField.classList.toggle(
+      "hidden",
+      settings.model_source !== "custom",
+    );
   }
   if (dom.audioCuesToggle) dom.audioCuesToggle.checked = settings.audio_cues;
   if (dom.pttUseVadToggle) dom.pttUseVadToggle.checked = settings.ptt_use_vad;
-  if (dom.audioCuesVolume) dom.audioCuesVolume.value = Math.round(settings.audio_cues_volume * 100).toString();
+  if (dom.diagnosticLoggingToggle) {
+    dom.diagnosticLoggingToggle.checked = settings.diagnostic_logging_enabled === true;
+  }
+  if (dom.pttHotKeepalive) {
+    dom.pttHotKeepalive.value = settings.ptt_hot_keepalive_ms.toString();
+  }
+  if (dom.pttHotKeepaliveValue) {
+    dom.pttHotKeepaliveValue.textContent = `${Math.round(settings.ptt_hot_keepalive_ms / 1000)}s`;
+  }
+  if (dom.audioCuesVolume)
+    dom.audioCuesVolume.value = Math.round(
+      settings.audio_cues_volume * 100,
+    ).toString();
   if (dom.audioCuesVolumeValue) {
     dom.audioCuesVolumeValue.textContent = `${Math.round(settings.audio_cues_volume * 100)}%`;
   }
   if (dom.hallucinationFilterToggle) {
-    dom.hallucinationFilterToggle.checked = settings.hallucination_filter_enabled;
+    dom.hallucinationFilterToggle.checked =
+      settings.hallucination_filter_enabled;
   }
   if (dom.activationWordsToggle) {
     dom.activationWordsToggle.checked = settings.activation_words_enabled;
   }
   if (dom.activationWordsList) {
-    dom.activationWordsList.value = settings.activation_words.join('\n');
+    dom.activationWordsList.value = settings.activation_words.join("\n");
   }
   if (dom.activationWordsConfig) {
-    dom.activationWordsConfig.classList.toggle('hidden', !settings.activation_words_enabled);
+    dom.activationWordsConfig.classList.toggle(
+      "hidden",
+      !settings.activation_words_enabled,
+    );
   }
-  if (dom.micGain) dom.micGain.value = Math.round(settings.mic_input_gain_db).toString();
+  if (dom.micGain)
+    dom.micGain.value = Math.round(settings.mic_input_gain_db).toString();
   if (dom.micGainValue) {
     const gain = Math.round(settings.mic_input_gain_db);
     dom.micGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
   }
   // Display start threshold in dB (main user-facing threshold)
-  const vadThresholdDb = thresholdToDb(settings.vad_threshold_start, VAD_DB_FLOOR);
-  if (dom.vadThreshold) dom.vadThreshold.value = Math.round(vadThresholdDb).toString();
-  if (dom.vadThresholdValue) dom.vadThresholdValue.textContent = `${Math.round(vadThresholdDb)} dB`;
+  const vadThresholdDb = thresholdToDb(
+    settings.vad_threshold_start,
+    VAD_DB_FLOOR,
+  );
+  if (dom.vadThreshold)
+    dom.vadThreshold.value = Math.round(vadThresholdDb).toString();
+  if (dom.vadThresholdValue)
+    dom.vadThresholdValue.textContent = `${Math.round(vadThresholdDb)} dB`;
   if (dom.vadSilence) dom.vadSilence.value = settings.vad_silence_ms.toString();
-  if (dom.vadSilenceValue) dom.vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
-  if (dom.transcribeHotkey) dom.transcribeHotkey.value = formatHotkeyForDisplay(settings.transcribe_hotkey);
-  if (dom.toggleActivationWordsHotkey) dom.toggleActivationWordsHotkey.value = formatHotkeyForDisplay(settings.hotkey_toggle_activation_words);
+  if (dom.vadSilenceValue)
+    dom.vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
+  if (dom.transcribeHotkey)
+    dom.transcribeHotkey.value = formatHotkeyForDisplay(
+      settings.transcribe_hotkey,
+    );
+  if (dom.toggleActivationWordsHotkey)
+    dom.toggleActivationWordsHotkey.value = formatHotkeyForDisplay(
+      settings.hotkey_toggle_activation_words,
+    );
   if (dom.productModeHotkey) {
-    dom.productModeHotkey.value = formatHotkeyForDisplay(settings.hotkey_product_mode_toggle || "CommandOrControl+Shift+P");
+    dom.productModeHotkey.value = formatHotkeyForDisplay(
+      settings.hotkey_product_mode_toggle || "CommandOrControl+Shift+P",
+    );
   }
   if (dom.ttsStopHotkey) {
-    dom.ttsStopHotkey.value = formatHotkeyForDisplay(settings.hotkey_tts_stop || "CommandOrControl+Shift+F12");
+    dom.ttsStopHotkey.value = formatHotkeyForDisplay(
+      settings.hotkey_tts_stop || "CommandOrControl+Shift+F12",
+    );
   }
   if (dom.transcribeDeviceSelect) {
     dom.transcribeDeviceSelect.value = settings.transcribe_output_device;
     // If the stored device ID is not present in the current option list, the browser
     // silently leaves the dropdown on "Default (System)" (value = "default").
     // Sync the settings object so the next persistSettings() sends the actual value.
-    if (dom.transcribeDeviceSelect.value !== settings.transcribe_output_device) {
+    if (
+      dom.transcribeDeviceSelect.value !== settings.transcribe_output_device
+    ) {
       settings.transcribe_output_device = dom.transcribeDeviceSelect.value;
     }
   }
-  if (dom.transcribeVadToggle) dom.transcribeVadToggle.checked = settings.transcribe_vad_mode;
-  const transcribeThresholdDb = thresholdToDb(settings.transcribe_vad_threshold, VAD_DB_FLOOR);
+  if (dom.transcribeVadToggle)
+    dom.transcribeVadToggle.checked = settings.transcribe_vad_mode;
+  const transcribeThresholdDb = thresholdToDb(
+    settings.transcribe_vad_threshold,
+    VAD_DB_FLOOR,
+  );
   if (dom.transcribeVadThreshold) {
-    dom.transcribeVadThreshold.value = Math.round(transcribeThresholdDb).toString();
+    dom.transcribeVadThreshold.value = Math.round(
+      transcribeThresholdDb,
+    ).toString();
   }
   if (dom.transcribeVadThresholdValue) {
     dom.transcribeVadThresholdValue.textContent = `${Math.round(transcribeThresholdDb)} dB`;
   }
   if (dom.transcribeVadSilence) {
-    dom.transcribeVadSilence.value = settings.transcribe_vad_silence_ms.toString();
+    dom.transcribeVadSilence.value =
+      settings.transcribe_vad_silence_ms.toString();
   }
   if (dom.transcribeVadSilenceValue) {
     dom.transcribeVadSilenceValue.textContent = `${Math.round(settings.transcribe_vad_silence_ms / 100) / 10}s`;
@@ -1541,19 +1872,23 @@ export function renderSettings() {
   updateTranscribeThreshold(settings.transcribe_vad_threshold);
   updateTranscribeVadVisibility(settings.transcribe_vad_mode);
   if (dom.transcribeBatchInterval) {
-    dom.transcribeBatchInterval.value = settings.transcribe_batch_interval_ms.toString();
+    dom.transcribeBatchInterval.value =
+      settings.transcribe_batch_interval_ms.toString();
   }
   if (dom.transcribeBatchValue) {
     dom.transcribeBatchValue.textContent = `${Math.round(settings.transcribe_batch_interval_ms / 1000)}s`;
   }
   if (dom.transcribeChunkOverlap) {
-    dom.transcribeChunkOverlap.value = settings.transcribe_chunk_overlap_ms.toString();
+    dom.transcribeChunkOverlap.value =
+      settings.transcribe_chunk_overlap_ms.toString();
   }
   if (dom.transcribeOverlapValue) {
     dom.transcribeOverlapValue.textContent = `${(settings.transcribe_chunk_overlap_ms / 1000).toFixed(1)}s`;
   }
   if (dom.transcribeGain) {
-    dom.transcribeGain.value = Math.round(settings.transcribe_input_gain_db).toString();
+    dom.transcribeGain.value = Math.round(
+      settings.transcribe_input_gain_db,
+    ).toString();
   }
   if (dom.transcribeGainValue) {
     const gain = Math.round(settings.transcribe_input_gain_db);
@@ -1582,68 +1917,84 @@ export function renderSettings() {
   if (dom.overlayMinRadius) {
     const clamped = clampToSliderBounds(
       dom.overlayMinRadius,
-      Math.round(settings.overlay_min_radius)
+      Math.round(settings.overlay_min_radius),
     );
     dom.overlayMinRadius.value = clamped.toString();
     settings.overlay_min_radius = clamped;
   }
-  if (dom.overlayMinRadiusValue) dom.overlayMinRadiusValue.textContent = `${Math.round(settings.overlay_min_radius)}`;
+  if (dom.overlayMinRadiusValue)
+    dom.overlayMinRadiusValue.textContent = `${Math.round(settings.overlay_min_radius)}`;
   if (dom.overlayMaxRadius) {
     const clamped = clampToSliderBounds(
       dom.overlayMaxRadius,
-      Math.round(settings.overlay_max_radius)
+      Math.round(settings.overlay_max_radius),
     );
     dom.overlayMaxRadius.value = clamped.toString();
     settings.overlay_max_radius = clamped;
   }
-  if (dom.overlayMaxRadiusValue) dom.overlayMaxRadiusValue.textContent = `${Math.round(settings.overlay_max_radius)}`;
+  if (dom.overlayMaxRadiusValue)
+    dom.overlayMaxRadiusValue.textContent = `${Math.round(settings.overlay_max_radius)}`;
   const overlayStyleValue = settings.overlay_style || "dot";
   if (dom.overlayStyle) dom.overlayStyle.value = overlayStyleValue;
   if (dom.overlayRefiningIndicatorEnabled) {
-    dom.overlayRefiningIndicatorEnabled.checked = settings.overlay_refining_indicator_enabled ?? true;
+    dom.overlayRefiningIndicatorEnabled.checked =
+      settings.overlay_refining_indicator_enabled ?? true;
   }
   settings.overlay_refining_indicator_preset = normalizeOverlayRefiningPreset(
-    settings.overlay_refining_indicator_preset
+    settings.overlay_refining_indicator_preset,
   );
   if (dom.overlayRefiningIndicatorPreset) {
-    dom.overlayRefiningIndicatorPreset.value = settings.overlay_refining_indicator_preset;
+    dom.overlayRefiningIndicatorPreset.value =
+      settings.overlay_refining_indicator_preset;
   }
   // Apply accent color
-  settings.accent_color = normalizeColorHex(settings.accent_color, DEFAULT_ACCENT_COLOR);
+  settings.accent_color = normalizeColorHex(
+    settings.accent_color,
+    DEFAULT_ACCENT_COLOR,
+  );
   if (dom.accentColor) dom.accentColor.value = settings.accent_color;
   applyAccentColor(settings.accent_color);
 
   settings.overlay_refining_indicator_color = normalizeRefiningIndicatorColor(
-    settings.overlay_refining_indicator_color
+    settings.overlay_refining_indicator_color,
   );
-  settings.overlay_refining_indicator_speed_ms = normalizeRefiningIndicatorSpeedMs(
-    settings.overlay_refining_indicator_speed_ms
-  );
+  settings.overlay_refining_indicator_speed_ms =
+    normalizeRefiningIndicatorSpeedMs(
+      settings.overlay_refining_indicator_speed_ms,
+    );
   settings.overlay_refining_indicator_range = normalizeRefiningIndicatorRange(
-    settings.overlay_refining_indicator_range
+    settings.overlay_refining_indicator_range,
   );
-  settings.overlay_tts_stop_shape = settings.overlay_tts_stop_shape === "round" ? "round" : "compact";
+  settings.overlay_tts_stop_shape =
+    settings.overlay_tts_stop_shape === "round" ? "round" : "compact";
   settings.overlay_tts_stop_color = normalizeColorHex(
     settings.overlay_tts_stop_color,
-    DEFAULT_ACCENT_COLOR
+    DEFAULT_ACCENT_COLOR,
   );
   if (dom.overlayRefiningIndicatorColor) {
-    dom.overlayRefiningIndicatorColor.value = settings.overlay_refining_indicator_color;
+    dom.overlayRefiningIndicatorColor.value =
+      settings.overlay_refining_indicator_color;
   }
   if (dom.overlayRefiningIndicatorSpeed) {
-    dom.overlayRefiningIndicatorSpeed.value = String(settings.overlay_refining_indicator_speed_ms);
+    dom.overlayRefiningIndicatorSpeed.value = String(
+      settings.overlay_refining_indicator_speed_ms,
+    );
   }
   if (dom.overlayRefiningIndicatorSpeedValue) {
     dom.overlayRefiningIndicatorSpeedValue.textContent = `${settings.overlay_refining_indicator_speed_ms} ms`;
   }
   if (dom.overlayRefiningIndicatorRange) {
-    dom.overlayRefiningIndicatorRange.value = String(settings.overlay_refining_indicator_range);
+    dom.overlayRefiningIndicatorRange.value = String(
+      settings.overlay_refining_indicator_range,
+    );
   }
   if (dom.overlayRefiningIndicatorRangeValue) {
     dom.overlayRefiningIndicatorRangeValue.textContent = `${settings.overlay_refining_indicator_range}%`;
   }
   if (dom.overlayTtsStopEnabled) {
-    dom.overlayTtsStopEnabled.checked = Boolean(settings.overlay_tts_stop_enabled);
+    dom.overlayTtsStopEnabled.checked = Boolean(
+      settings.overlay_tts_stop_enabled,
+    );
   }
   if (dom.overlayTtsStopShape) {
     dom.overlayTtsStopShape.value = settings.overlay_tts_stop_shape;
@@ -1655,27 +2006,40 @@ export function renderSettings() {
   applyOverlaySharedUi(overlayStyleValue);
   if (dom.overlayPosX) {
     dom.overlayPosX.value = Math.round(
-      overlayStyleValue === "kitt" ? settings.overlay_kitt_pos_x : settings.overlay_pos_x
+      overlayStyleValue === "kitt"
+        ? settings.overlay_kitt_pos_x
+        : settings.overlay_pos_x,
     ).toString();
   }
   if (dom.overlayPosY) {
     dom.overlayPosY.value = Math.round(
-      overlayStyleValue === "kitt" ? settings.overlay_kitt_pos_y : settings.overlay_pos_y
+      overlayStyleValue === "kitt"
+        ? settings.overlay_kitt_pos_y
+        : settings.overlay_pos_y,
     ).toString();
   }
-  if (dom.overlayKittMinWidth) dom.overlayKittMinWidth.value = Math.round(settings.overlay_kitt_min_width).toString();
-  if (dom.overlayKittMinWidthValue) dom.overlayKittMinWidthValue.textContent = `${Math.round(settings.overlay_kitt_min_width)}`;
+  if (dom.overlayKittMinWidth)
+    dom.overlayKittMinWidth.value = Math.round(
+      settings.overlay_kitt_min_width,
+    ).toString();
+  if (dom.overlayKittMinWidthValue)
+    dom.overlayKittMinWidthValue.textContent = `${Math.round(settings.overlay_kitt_min_width)}`;
   if (dom.overlayKittMaxWidth) {
     const clamped = clampToSliderBounds(
       dom.overlayKittMaxWidth,
-      Math.round(settings.overlay_kitt_max_width)
+      Math.round(settings.overlay_kitt_max_width),
     );
     dom.overlayKittMaxWidth.value = clamped.toString();
     settings.overlay_kitt_max_width = clamped;
   }
-  if (dom.overlayKittMaxWidthValue) dom.overlayKittMaxWidthValue.textContent = `${Math.round(settings.overlay_kitt_max_width)}`;
-  if (dom.overlayKittHeight) dom.overlayKittHeight.value = Math.round(settings.overlay_kitt_height).toString();
-  if (dom.overlayKittHeightValue) dom.overlayKittHeightValue.textContent = `${Math.round(settings.overlay_kitt_height)}`;
+  if (dom.overlayKittMaxWidthValue)
+    dom.overlayKittMaxWidthValue.textContent = `${Math.round(settings.overlay_kitt_max_width)}`;
+  if (dom.overlayKittHeight)
+    dom.overlayKittHeight.value = Math.round(
+      settings.overlay_kitt_height,
+    ).toString();
+  if (dom.overlayKittHeightValue)
+    dom.overlayKittHeightValue.textContent = `${Math.round(settings.overlay_kitt_height)}`;
   renderOverlayHealthNote();
 
   // Quality & Encoding settings
@@ -1689,85 +2053,112 @@ export function renderSettings() {
     dom.opusBitrateSelect.value = (settings.opus_bitrate_kbps ?? 64).toString();
   }
   if (dom.autoSaveSystemAudioToggle) {
-    dom.autoSaveSystemAudioToggle.checked = settings.auto_save_system_audio ?? false;
+    dom.autoSaveSystemAudioToggle.checked =
+      settings.auto_save_system_audio ?? false;
   }
   if (dom.autoSaveMicAudioToggle) {
     dom.autoSaveMicAudioToggle.checked = settings.auto_save_mic_audio ?? false;
   }
   if (dom.continuousDumpEnabledToggle) {
-    dom.continuousDumpEnabledToggle.checked = settings.continuous_dump_enabled ?? true;
+    dom.continuousDumpEnabledToggle.checked =
+      settings.continuous_dump_enabled ?? true;
   }
   if (dom.continuousDumpProfile) {
-    dom.continuousDumpProfile.value = settings.continuous_dump_profile ?? "balanced";
+    dom.continuousDumpProfile.value =
+      settings.continuous_dump_profile ?? "balanced";
   }
   if (dom.continuousHardCut) {
-    dom.continuousHardCut.value = String(settings.continuous_hard_cut_ms ?? 45000);
+    dom.continuousHardCut.value = String(
+      settings.continuous_hard_cut_ms ?? 45000,
+    );
   }
   if (dom.continuousHardCutValue) {
     dom.continuousHardCutValue.textContent = `${Math.round((settings.continuous_hard_cut_ms ?? 45000) / 1000)}s`;
   }
   if (dom.continuousMinChunk) {
-    dom.continuousMinChunk.value = String(settings.continuous_min_chunk_ms ?? 1000);
+    dom.continuousMinChunk.value = String(
+      settings.continuous_min_chunk_ms ?? 1000,
+    );
   }
   if (dom.continuousMinChunkValue) {
     dom.continuousMinChunkValue.textContent = `${((settings.continuous_min_chunk_ms ?? 1000) / 1000).toFixed(1)}s`;
   }
   if (dom.continuousPreRoll) {
-    dom.continuousPreRoll.value = String(settings.continuous_pre_roll_ms ?? 300);
+    dom.continuousPreRoll.value = String(
+      settings.continuous_pre_roll_ms ?? 300,
+    );
   }
   if (dom.continuousPreRollValue) {
     dom.continuousPreRollValue.textContent = `${((settings.continuous_pre_roll_ms ?? 300) / 1000).toFixed(2)}s`;
   }
   if (dom.continuousPostRoll) {
-    dom.continuousPostRoll.value = String(settings.continuous_post_roll_ms ?? 200);
+    dom.continuousPostRoll.value = String(
+      settings.continuous_post_roll_ms ?? 200,
+    );
   }
   if (dom.continuousPostRollValue) {
     dom.continuousPostRollValue.textContent = `${((settings.continuous_post_roll_ms ?? 200) / 1000).toFixed(2)}s`;
   }
   if (dom.continuousKeepalive) {
-    dom.continuousKeepalive.value = String(settings.continuous_idle_keepalive_ms ?? 60000);
+    dom.continuousKeepalive.value = String(
+      settings.continuous_idle_keepalive_ms ?? 60000,
+    );
   }
   if (dom.continuousKeepaliveValue) {
     dom.continuousKeepaliveValue.textContent = `${Math.round((settings.continuous_idle_keepalive_ms ?? 60000) / 1000)}s`;
   }
   if (dom.continuousSystemOverrideToggle) {
-    dom.continuousSystemOverrideToggle.checked = settings.continuous_system_override_enabled ?? false;
+    dom.continuousSystemOverrideToggle.checked =
+      settings.continuous_system_override_enabled ?? false;
   }
   if (dom.continuousSystemSoftFlush) {
-    dom.continuousSystemSoftFlush.value = String(settings.continuous_system_soft_flush_ms ?? 10000);
+    dom.continuousSystemSoftFlush.value = String(
+      settings.continuous_system_soft_flush_ms ?? 10000,
+    );
   }
   if (dom.continuousSystemSoftFlushValue) {
     dom.continuousSystemSoftFlushValue.textContent = `${Math.round((settings.continuous_system_soft_flush_ms ?? 10000) / 1000)}s`;
   }
   if (dom.continuousSystemSilenceFlush) {
-    dom.continuousSystemSilenceFlush.value = String(settings.continuous_system_silence_flush_ms ?? 1200);
+    dom.continuousSystemSilenceFlush.value = String(
+      settings.continuous_system_silence_flush_ms ?? 1200,
+    );
   }
   if (dom.continuousSystemSilenceFlushValue) {
     dom.continuousSystemSilenceFlushValue.textContent = `${((settings.continuous_system_silence_flush_ms ?? 1200) / 1000).toFixed(1)}s`;
   }
   if (dom.continuousSystemHardCut) {
-    dom.continuousSystemHardCut.value = String(settings.continuous_system_hard_cut_ms ?? 45000);
+    dom.continuousSystemHardCut.value = String(
+      settings.continuous_system_hard_cut_ms ?? 45000,
+    );
   }
   if (dom.continuousSystemHardCutValue) {
     dom.continuousSystemHardCutValue.textContent = `${Math.round((settings.continuous_system_hard_cut_ms ?? 45000) / 1000)}s`;
   }
   if (dom.continuousMicOverrideToggle) {
-    dom.continuousMicOverrideToggle.checked = settings.continuous_mic_override_enabled ?? false;
+    dom.continuousMicOverrideToggle.checked =
+      settings.continuous_mic_override_enabled ?? false;
   }
   if (dom.continuousMicSoftFlush) {
-    dom.continuousMicSoftFlush.value = String(settings.continuous_mic_soft_flush_ms ?? 10000);
+    dom.continuousMicSoftFlush.value = String(
+      settings.continuous_mic_soft_flush_ms ?? 10000,
+    );
   }
   if (dom.continuousMicSoftFlushValue) {
     dom.continuousMicSoftFlushValue.textContent = `${Math.round((settings.continuous_mic_soft_flush_ms ?? 10000) / 1000)}s`;
   }
   if (dom.continuousMicSilenceFlush) {
-    dom.continuousMicSilenceFlush.value = String(settings.continuous_mic_silence_flush_ms ?? 1200);
+    dom.continuousMicSilenceFlush.value = String(
+      settings.continuous_mic_silence_flush_ms ?? 1200,
+    );
   }
   if (dom.continuousMicSilenceFlushValue) {
     dom.continuousMicSilenceFlushValue.textContent = `${((settings.continuous_mic_silence_flush_ms ?? 1200) / 1000).toFixed(1)}s`;
   }
   if (dom.continuousMicHardCut) {
-    dom.continuousMicHardCut.value = String(settings.continuous_mic_hard_cut_ms ?? 45000);
+    dom.continuousMicHardCut.value = String(
+      settings.continuous_mic_hard_cut_ms ?? 45000,
+    );
   }
   if (dom.continuousMicHardCutValue) {
     dom.continuousMicHardCutValue.textContent = `${Math.round((settings.continuous_mic_hard_cut_ms ?? 45000) / 1000)}s`;
@@ -1778,27 +2169,32 @@ export function renderSettings() {
     dom.postprocEnabled.checked = settings.postproc_enabled;
   }
   if (dom.postprocSettings) {
-    dom.postprocSettings.style.display = settings.postproc_enabled ? "grid" : "none";
+    dom.postprocSettings.style.display = settings.postproc_enabled
+      ? "grid"
+      : "none";
   }
   if (dom.postprocLanguageDerived) {
     dom.postprocLanguageDerived.textContent = derivedPostprocLanguageLabel(
-      settings.postproc_language as "en" | "de" | "multi"
+      settings.postproc_language as "en" | "de" | "multi",
     );
   }
   if (dom.postprocPunctuation) {
     dom.postprocPunctuation.checked = settings.postproc_punctuation_enabled;
   }
   if (dom.postprocCapitalization) {
-    dom.postprocCapitalization.checked = settings.postproc_capitalization_enabled;
+    dom.postprocCapitalization.checked =
+      settings.postproc_capitalization_enabled;
   }
   if (dom.postprocNumbers) {
     dom.postprocNumbers.checked = settings.postproc_numbers_enabled;
   }
   if (dom.postprocCustomVocabEnabled) {
-    dom.postprocCustomVocabEnabled.checked = settings.postproc_custom_vocab_enabled;
+    dom.postprocCustomVocabEnabled.checked =
+      settings.postproc_custom_vocab_enabled;
   }
   if (dom.postprocCustomVocabConfig) {
-    dom.postprocCustomVocabConfig.style.display = settings.postproc_custom_vocab_enabled ? "block" : "none";
+    dom.postprocCustomVocabConfig.style.display =
+      settings.postproc_custom_vocab_enabled ? "block" : "none";
   }
   renderVocabulary();
 
@@ -1884,12 +2280,14 @@ function isRemovedPiperVoiceKey(value: string): boolean {
 }
 
 function isWindowsVoiceProvider(
-  provider: string | null | undefined
+  provider: string | null | undefined,
 ): provider is "windows_native" | "windows_natural" {
   return provider === "windows_native" || provider === "windows_natural";
 }
 
-function isPiperVoiceProvider(provider: string | null | undefined): provider is "local_custom" {
+function isPiperVoiceProvider(
+  provider: string | null | undefined,
+): provider is "local_custom" {
   return provider === "local_custom";
 }
 
@@ -1899,17 +2297,18 @@ function normalizePiperGainDb(value: number | null | undefined): number {
   return Math.max(-24, Math.min(6, Math.round(parsed)));
 }
 
-
 function isAnyPiperProviderActive(): boolean {
   if (!settings?.voice_output_settings) return false;
-  return isPiperVoiceProvider(settings.voice_output_settings.default_provider)
-    || isPiperVoiceProvider(settings.voice_output_settings.fallback_provider);
+  return (
+    isPiperVoiceProvider(settings.voice_output_settings.default_provider) ||
+    isPiperVoiceProvider(settings.voice_output_settings.fallback_provider)
+  );
 }
 
 function setPiperDownloadProgressUi(
   percent: number,
   text: string,
-  options?: { forceVisible?: boolean }
+  options?: { forceVisible?: boolean },
 ): void {
   const normalizedPercent = Math.max(0, Math.min(100, Math.round(percent)));
   if (dom.voiceOutputPiperDownloadFill) {
@@ -1923,14 +2322,22 @@ function setPiperDownloadProgressUi(
     dom.voiceOutputPiperDownloadText.textContent = text;
   }
   if (dom.voiceOutputPiperDownloadStatus) {
-    const visible = Boolean(options?.forceVisible || piperDownloadInFlight || isAnyPiperProviderActive());
+    const visible = Boolean(
+      options?.forceVisible ||
+      piperDownloadInFlight ||
+      isAnyPiperProviderActive(),
+    );
     dom.voiceOutputPiperDownloadStatus.hidden = !visible;
   }
 }
 
-async function isPiperVoiceInstalledByCatalog(voiceKey: string): Promise<boolean> {
+async function isPiperVoiceInstalledByCatalog(
+  voiceKey: string,
+): Promise<boolean> {
   try {
-    const catalog = await invoke<PiperVoiceCatalogEntry[]>("list_piper_voice_catalog");
+    const catalog = await invoke<PiperVoiceCatalogEntry[]>(
+      "list_piper_voice_catalog",
+    );
     return catalog.some((entry) => entry.key === voiceKey && entry.installed);
   } catch {
     return false;
@@ -1969,7 +2376,10 @@ function toDisplayLanguage(locale: string): string {
   if (!language) return locale;
   const languageName = (() => {
     try {
-      if (typeof Intl !== "undefined" && typeof Intl.DisplayNames === "function") {
+      if (
+        typeof Intl !== "undefined" &&
+        typeof Intl.DisplayNames === "function"
+      ) {
         const names = new Intl.DisplayNames(["en"], { type: "language" });
         return names.of(language) ?? language;
       }
@@ -2006,7 +2416,9 @@ function formatWindowsVoiceLabel(voice: TtsVoiceInfo): string {
   if (profileLabel) {
     parts.push(profileLabel);
   }
-  return parts.length > 0 ? `${voice.label} (${parts.join(", ")})` : voice.label;
+  return parts.length > 0
+    ? `${voice.label} (${parts.join(", ")})`
+    : voice.label;
 }
 
 function basenameFromPath(rawPath: string): string {
@@ -2021,7 +2433,10 @@ function formatPiperOptionLabel(entry: PiperVoiceCatalogEntry): string {
     : entry.label;
 }
 
-function applyPiperOptionVisualState(option: HTMLOptionElement, installed: boolean): void {
+function applyPiperOptionVisualState(
+  option: HTMLOptionElement,
+  installed: boolean,
+): void {
   option.dataset.piperInstalled = installed ? "1" : "0";
   option.style.backgroundColor = "";
   option.style.backgroundImage = "";
@@ -2029,7 +2444,7 @@ function applyPiperOptionVisualState(option: HTMLOptionElement, installed: boole
 
 function normalizedPiperSelection(
   configuredModelPath: string,
-  catalog: PiperVoiceCatalogEntry[]
+  catalog: PiperVoiceCatalogEntry[],
 ): string {
   const configured = configuredModelPath.trim();
   if (configured.length === 0) return DEFAULT_PIPER_VOICE_KEY;
@@ -2039,32 +2454,46 @@ function normalizedPiperSelection(
   if (catalog.some((entry) => entry.key === configured)) {
     return configured;
   }
-  const byPath = catalog.find((entry) => entry.path && entry.path === configured);
+  const byPath = catalog.find(
+    (entry) => entry.path && entry.path === configured,
+  );
   if (byPath) {
     return byPath.key;
   }
   return configured;
 }
 
-function availableRuntimeStableProviderIds(providers: TtsProviderInfo[]): TtsProviderId[] {
+function availableRuntimeStableProviderIds(
+  providers: TtsProviderInfo[],
+): TtsProviderId[] {
   return providers
-    .filter((provider) => provider.available && provider.surface === "runtime_stable")
+    .filter(
+      (provider) => provider.available && provider.surface === "runtime_stable",
+    )
     .map((provider) => provider.id) as TtsProviderId[];
 }
 
 function normalizeProviderPair(
   providers: TtsProviderInfo[],
   preferredDefault: TtsProviderId,
-  preferredFallback: TtsProviderId
+  preferredFallback: TtsProviderId,
 ): { defaultProvider: TtsProviderId; fallbackProvider: TtsProviderId } {
-  const runtimeStable = availableRuntimeStableProviderIds(providers) as TtsProviderId[];
+  const runtimeStable = availableRuntimeStableProviderIds(
+    providers,
+  ) as TtsProviderId[];
   const available = providers
     .filter((provider) => provider.available)
     .map((provider) => provider.id) as TtsProviderId[];
-  const defaultBase: TtsProviderId = runtimeStable[0] ?? available[0] ?? "windows_native";
-  const selectPreferred = (preferred: TtsProviderId, disallow: TtsProviderId | null): TtsProviderId => {
+  const defaultBase: TtsProviderId =
+    runtimeStable[0] ?? available[0] ?? "windows_native";
+  const selectPreferred = (
+    preferred: TtsProviderId,
+    disallow: TtsProviderId | null,
+  ): TtsProviderId => {
     const candidate = preferred;
-    const preferredInfo = providers.find((provider) => provider.id === candidate);
+    const preferredInfo = providers.find(
+      (provider) => provider.id === candidate,
+    );
     if (preferredInfo?.available) {
       if (disallow && candidate === disallow && runtimeStable.length > 1) {
         // fall through to choose another provider
@@ -2086,21 +2515,25 @@ function normalizeProviderPair(
 
 function setProviderOptions(
   select: HTMLSelectElement | null,
-  providers: TtsProviderInfo[]
+  providers: TtsProviderInfo[],
 ): void {
   if (!select) return;
   select.innerHTML = "";
   providers.forEach((provider) => {
     const option = document.createElement("option");
     option.value = provider.id;
-    option.textContent = provider.available ? provider.label : `${provider.label} — nicht verfügbar`;
+    option.textContent = provider.available
+      ? provider.label
+      : `${provider.label} — nicht verfügbar`;
     option.disabled = !provider.available;
     option.dataset.providerAvailable = provider.available ? "1" : "0";
     select.appendChild(option);
   });
 }
 
-export async function refreshProviderVoices(target: "default" | "fallback"): Promise<void> {
+export async function refreshProviderVoices(
+  target: "default" | "fallback",
+): Promise<void> {
   if (!settings?.voice_output_settings) return;
 
   const isDefault = target === "default";
@@ -2108,9 +2541,15 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
     ? settings.voice_output_settings.default_provider
     : settings.voice_output_settings.fallback_provider;
 
-  const field = isDefault ? dom.voiceOutputWindowsVoiceField : dom.voiceOutputFallbackVoiceField;
-  const select = isDefault ? dom.voiceOutputWindowsVoiceSelect : dom.voiceOutputFallbackVoiceSelect;
-  const hint = isDefault ? dom.voiceOutputWindowsVoiceHint : dom.voiceOutputFallbackVoiceHint;
+  const field = isDefault
+    ? dom.voiceOutputWindowsVoiceField
+    : dom.voiceOutputFallbackVoiceField;
+  const select = isDefault
+    ? dom.voiceOutputWindowsVoiceSelect
+    : dom.voiceOutputFallbackVoiceSelect;
+  const hint = isDefault
+    ? dom.voiceOutputWindowsVoiceHint
+    : dom.voiceOutputFallbackVoiceHint;
   const autoField = isDefault ? dom.voiceOutputAutoLanguageVoiceField : null;
 
   if (!select) return;
@@ -2124,9 +2563,10 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
     setFieldHidden(field, true);
     setFieldHidden(autoField, true);
     if (hint) {
-      hint.textContent = provider === "qwen3_tts"
-        ? "Stimme wird in den Qwen3-TTS-Einstellungen gesteuert."
-        : "Stimme-Auswahl nur für Windows-Provider verfügbar.";
+      hint.textContent =
+        provider === "qwen3_tts"
+          ? "Stimme wird in den Qwen3-TTS-Einstellungen gesteuert."
+          : "Stimme-Auswahl nur für Windows-Provider verfügbar.";
     }
     select.innerHTML = "";
     const option = document.createElement("option");
@@ -2148,16 +2588,25 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
     loadingOption.value = "";
     loadingOption.textContent = "Lade Piper-Stimmen...";
     select.appendChild(loadingOption);
-    if (hint) hint.textContent = "Lade kuratierte und installierte Piper-Stimmen...";
+    if (hint)
+      hint.textContent = "Lade kuratierte und installierte Piper-Stimmen...";
 
-    const seqRef = isDefault ? ++voiceOutputWindowsVoiceRequestSeq : ++voiceOutputFallbackVoiceRequestSeq;
+    const seqRef = isDefault
+      ? ++voiceOutputWindowsVoiceRequestSeq
+      : ++voiceOutputFallbackVoiceRequestSeq;
     try {
-      const catalog = await invoke<PiperVoiceCatalogEntry[]>("list_piper_voice_catalog");
-      const currentSeq = isDefault ? voiceOutputWindowsVoiceRequestSeq : voiceOutputFallbackVoiceRequestSeq;
+      const catalog = await invoke<PiperVoiceCatalogEntry[]>(
+        "list_piper_voice_catalog",
+      );
+      const currentSeq = isDefault
+        ? voiceOutputWindowsVoiceRequestSeq
+        : voiceOutputFallbackVoiceRequestSeq;
       if (seqRef !== currentSeq) return;
 
       select.innerHTML = "";
-      const configured = (settings.voice_output_settings.piper_model_path ?? "").trim();
+      const configured = (
+        settings.voice_output_settings.piper_model_path ?? ""
+      ).trim();
       const normalizedSelection = normalizedPiperSelection(configured, catalog);
       if (!configured) {
         settings.voice_output_settings.piper_model_path = normalizedSelection;
@@ -2176,17 +2625,17 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
       });
 
       if (
-        normalizedSelection.length > 0
-        && !catalog.some((entry) => entry.key === normalizedSelection)
+        normalizedSelection.length > 0 &&
+        !catalog.some((entry) => entry.key === normalizedSelection)
       ) {
         const customOption = document.createElement("option");
         customOption.value = normalizedSelection;
-        customOption.textContent =
-          `${PIPER_OPTION_INSTALLED_MARKER}${PIPER_OPTION_CUSTOM_PREFIX}${basenameFromPath(normalizedSelection)}`;
+        customOption.textContent = `${PIPER_OPTION_INSTALLED_MARKER}${PIPER_OPTION_CUSTOM_PREFIX}${basenameFromPath(normalizedSelection)}`;
         applyPiperOptionVisualState(customOption, true);
         customOption.dataset.piperPath = normalizedSelection;
         customOption.dataset.piperCurated = "0";
-        customOption.dataset.piperBaseLabel = basenameFromPath(normalizedSelection);
+        customOption.dataset.piperBaseLabel =
+          basenameFromPath(normalizedSelection);
         select.appendChild(customOption);
       }
 
@@ -2195,16 +2644,19 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
       const installedCount = catalog.filter((entry) => entry.installed).length;
       const downloadableCount = Math.max(0, catalog.length - installedCount);
       if (hint) {
-        hint.textContent =
-          `${installedCount}/${catalog.length} installiert · ${downloadableCount} per Download verfügbar.`;
+        hint.textContent = `${installedCount}/${catalog.length} installiert · ${downloadableCount} per Download verfügbar.`;
       }
       return;
     } catch (error) {
-      const currentSeq = isDefault ? voiceOutputWindowsVoiceRequestSeq : voiceOutputFallbackVoiceRequestSeq;
+      const currentSeq = isDefault
+        ? voiceOutputWindowsVoiceRequestSeq
+        : voiceOutputFallbackVoiceRequestSeq;
       if (seqRef !== currentSeq) return;
       select.innerHTML = "";
       const fallbackOption = document.createElement("option");
-      fallbackOption.value = settings.voice_output_settings.piper_model_path || DEFAULT_PIPER_VOICE_KEY;
+      fallbackOption.value =
+        settings.voice_output_settings.piper_model_path ||
+        DEFAULT_PIPER_VOICE_KEY;
       fallbackOption.textContent = `${PIPER_OPTION_INSTALLED_MARKER}${PIPER_OPTION_CUSTOM_PREFIX}${fallbackOption.value}`;
       applyPiperOptionVisualState(fallbackOption, true);
       fallbackOption.dataset.piperPath = fallbackOption.value;
@@ -2213,7 +2665,9 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
       select.value = fallbackOption.value;
       select.disabled = false;
       if (hint) {
-        hint.textContent = `Piper-Stimmliste nicht verfügbar: ${String(error).replace(/^Error:\s*/i, "").trim()}`;
+        hint.textContent = `Piper-Stimmliste nicht verfügbar: ${String(error)
+          .replace(/^Error:\s*/i, "")
+          .trim()}`;
       }
       return;
     }
@@ -2230,19 +2684,32 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
   select.appendChild(loadingOption);
   if (hint) hint.textContent = "Lade installierte Windows-Stimmen...";
 
-  const seqRef = isDefault ? ++voiceOutputWindowsVoiceRequestSeq : ++voiceOutputFallbackVoiceRequestSeq;
+  const seqRef = isDefault
+    ? ++voiceOutputWindowsVoiceRequestSeq
+    : ++voiceOutputFallbackVoiceRequestSeq;
   try {
-    const voices = await invoke<TtsVoiceInfo[]>("list_tts_voices", { provider });
-    const currentSeq = isDefault ? voiceOutputWindowsVoiceRequestSeq : voiceOutputFallbackVoiceRequestSeq;
+    const voices = await invoke<TtsVoiceInfo[]>("list_tts_voices", {
+      provider,
+    });
+    const currentSeq = isDefault
+      ? voiceOutputWindowsVoiceRequestSeq
+      : voiceOutputFallbackVoiceRequestSeq;
     if (seqRef !== currentSeq) return;
 
-    const filteredVoices = voices.filter((voice) => voice.provider === provider);
-    const voiceIdKey = isDefault ? "voice_id_windows" : "voice_id_windows_fallback";
-    const selectedVoiceId = ((settings.voice_output_settings[voiceIdKey] as string) ?? "").trim();
+    const filteredVoices = voices.filter(
+      (voice) => voice.provider === provider,
+    );
+    const voiceIdKey = isDefault
+      ? "voice_id_windows"
+      : "voice_id_windows_fallback";
+    const selectedVoiceId = (
+      (settings.voice_output_settings[voiceIdKey] as string) ?? ""
+    ).trim();
     const availableIds = new Set(filteredVoices.map((voice) => voice.id));
-    const effectiveVoiceId = selectedVoiceId.length > 0 && availableIds.has(selectedVoiceId)
-      ? selectedVoiceId
-      : "";
+    const effectiveVoiceId =
+      selectedVoiceId.length > 0 && availableIds.has(selectedVoiceId)
+        ? selectedVoiceId
+        : "";
     (settings.voice_output_settings[voiceIdKey] as string) = effectiveVoiceId;
 
     select.innerHTML = "";
@@ -2261,12 +2728,15 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
     select.value = effectiveVoiceId;
     select.disabled = filteredVoices.length === 0;
     if (hint) {
-      hint.textContent = filteredVoices.length > 0
-        ? `${filteredVoices.length} Windows-Stimme(n) gefunden.`
-        : "Keine Windows-Stimmen für diesen Provider gefunden.";
+      hint.textContent =
+        filteredVoices.length > 0
+          ? `${filteredVoices.length} Windows-Stimme(n) gefunden.`
+          : "Keine Windows-Stimmen für diesen Provider gefunden.";
     }
   } catch (error) {
-    const currentSeq = isDefault ? voiceOutputWindowsVoiceRequestSeq : voiceOutputFallbackVoiceRequestSeq;
+    const currentSeq = isDefault
+      ? voiceOutputWindowsVoiceRequestSeq
+      : voiceOutputFallbackVoiceRequestSeq;
     if (seqRef !== currentSeq) return;
     select.innerHTML = "";
     const errorOption = document.createElement("option");
@@ -2276,7 +2746,9 @@ export async function refreshProviderVoices(target: "default" | "fallback"): Pro
     select.value = "";
     select.disabled = false;
     if (hint) {
-      hint.textContent = `Stimmliste nicht verfügbar: ${String(error).replace(/^Error:\s*/i, "").trim()}`;
+      hint.textContent = `Stimmliste nicht verfügbar: ${String(error)
+        .replace(/^Error:\s*/i, "")
+        .trim()}`;
     }
   }
 }
@@ -2286,7 +2758,9 @@ export async function refreshVoiceOutputWindowsVoices(): Promise<void> {
   return refreshProviderVoices("default");
 }
 
-export function handlePiperVoiceDownloadProgress(progress: PiperVoiceDownloadProgress): void {
+export function handlePiperVoiceDownloadProgress(
+  progress: PiperVoiceDownloadProgress,
+): void {
   const key = (progress.voice_key ?? "").trim();
   const stage = (progress.stage ?? "").trim().toLowerCase();
   const downloaded = Number(progress.downloaded_bytes ?? 0);
@@ -2294,16 +2768,17 @@ export function handlePiperVoiceDownloadProgress(progress: PiperVoiceDownloadPro
   const explicitPercent = Number(progress.percent ?? Number.NaN);
   const computedPercent = Number.isFinite(explicitPercent)
     ? explicitPercent
-    : (Number.isFinite(total) && total > 0
+    : Number.isFinite(total) && total > 0
       ? (downloaded / total) * 100
-      : 0);
+      : 0;
   const readableDownloaded = formatBytes(Math.max(0, downloaded));
   const readableTotal = total > 0 ? formatBytes(total) : null;
   const stageLabel = key.length > 0 ? key : "Piper";
 
   if (stage === "started") {
     piperDownloadInFlight = true;
-    const message = progress.message?.trim() || `${stageLabel}: Download gestartet...`;
+    const message =
+      progress.message?.trim() || `${stageLabel}: Download gestartet...`;
     setPiperDownloadProgressUi(0, message, { forceVisible: true });
     return;
   }
@@ -2313,28 +2788,38 @@ export function handlePiperVoiceDownloadProgress(progress: PiperVoiceDownloadPro
     const suffix = readableTotal
       ? `${readableDownloaded} / ${readableTotal}`
       : readableDownloaded;
-    const message = progress.message?.trim()
-      || `${stageLabel}: ${Math.round(Math.max(0, Math.min(100, computedPercent)))}% · ${suffix}`;
-    setPiperDownloadProgressUi(computedPercent, message, { forceVisible: true });
+    const message =
+      progress.message?.trim() ||
+      `${stageLabel}: ${Math.round(Math.max(0, Math.min(100, computedPercent)))}% · ${suffix}`;
+    setPiperDownloadProgressUi(computedPercent, message, {
+      forceVisible: true,
+    });
     return;
   }
 
   if (stage === "completed") {
     piperDownloadInFlight = false;
-    const message = progress.message?.trim() || `${stageLabel}: Download abgeschlossen.`;
+    const message =
+      progress.message?.trim() || `${stageLabel}: Download abgeschlossen.`;
     setPiperDownloadProgressUi(100, message, { forceVisible: true });
     return;
   }
 
   if (stage === "error") {
     piperDownloadInFlight = false;
-    const message = progress.message?.trim() || `${stageLabel}: Download fehlgeschlagen.`;
-    setPiperDownloadProgressUi(computedPercent, message, { forceVisible: true });
+    const message =
+      progress.message?.trim() || `${stageLabel}: Download fehlgeschlagen.`;
+    setPiperDownloadProgressUi(computedPercent, message, {
+      forceVisible: true,
+    });
     return;
   }
 
-  const fallbackMessage = progress.message?.trim() || `${stageLabel}: ${stage || "Status-Update"}`;
-  setPiperDownloadProgressUi(computedPercent, fallbackMessage, { forceVisible: true });
+  const fallbackMessage =
+    progress.message?.trim() || `${stageLabel}: ${stage || "Status-Update"}`;
+  setPiperDownloadProgressUi(computedPercent, fallbackMessage, {
+    forceVisible: true,
+  });
 }
 
 export function updateProviderMutualExclusion(): void {
@@ -2342,15 +2827,21 @@ export function updateProviderMutualExclusion(): void {
   const enforceDistinctProviders = stableAvailable.length > 1;
   const defVal = dom.voiceOutputDefaultProvider?.value ?? "";
   const fbVal = dom.voiceOutputFallbackProvider?.value ?? "";
-  for (const option of Array.from(dom.voiceOutputDefaultProvider?.options ?? [])) {
+  for (const option of Array.from(
+    dom.voiceOutputDefaultProvider?.options ?? [],
+  )) {
     if (!option.value) continue;
     const available = option.dataset.providerAvailable !== "0";
-    option.disabled = !available || (enforceDistinctProviders && option.value === fbVal);
+    option.disabled =
+      !available || (enforceDistinctProviders && option.value === fbVal);
   }
-  for (const option of Array.from(dom.voiceOutputFallbackProvider?.options ?? [])) {
+  for (const option of Array.from(
+    dom.voiceOutputFallbackProvider?.options ?? [],
+  )) {
     if (!option.value) continue;
     const available = option.dataset.providerAvailable !== "0";
-    option.disabled = !available || (enforceDistinctProviders && option.value === defVal);
+    option.disabled =
+      !available || (enforceDistinctProviders && option.value === defVal);
   }
 }
 
@@ -2359,7 +2850,9 @@ export async function refreshProviderAvailability(): Promise<void> {
   try {
     providers = await Promise.race([
       invoke<TtsProviderInfo[]>("list_tts_providers"),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), 3000),
+      ),
     ]);
   } catch {
     return; // Silent failure — UI nicht blockieren
@@ -2373,11 +2866,11 @@ export async function refreshProviderAvailability(): Promise<void> {
     const { defaultProvider, fallbackProvider } = normalizeProviderPair(
       providers,
       settings.voice_output_settings.default_provider,
-      settings.voice_output_settings.fallback_provider
+      settings.voice_output_settings.fallback_provider,
     );
     const changed =
-      settings.voice_output_settings.default_provider !== defaultProvider
-      || settings.voice_output_settings.fallback_provider !== fallbackProvider;
+      settings.voice_output_settings.default_provider !== defaultProvider ||
+      settings.voice_output_settings.fallback_provider !== fallbackProvider;
     settings.voice_output_settings.default_provider = defaultProvider;
     settings.voice_output_settings.fallback_provider = fallbackProvider;
     if (dom.voiceOutputDefaultProvider) {
@@ -2394,7 +2887,7 @@ export async function refreshProviderAvailability(): Promise<void> {
 
   const setAvailabilityBadge = (
     badge: HTMLElement | null,
-    providerId: string | null | undefined
+    providerId: string | null | undefined,
   ): void => {
     if (!badge) return;
     const provider = providers.find((entry) => entry.id === providerId);
@@ -2409,11 +2902,11 @@ export async function refreshProviderAvailability(): Promise<void> {
 
   setAvailabilityBadge(
     dom.voiceOutputDefaultAvailability,
-    dom.voiceOutputDefaultProvider?.value
+    dom.voiceOutputDefaultProvider?.value,
   );
   setAvailabilityBadge(
     dom.voiceOutputFallbackAvailability,
-    dom.voiceOutputFallbackProvider?.value
+    dom.voiceOutputFallbackProvider?.value,
   );
 
   void refreshProviderVoices("default");
@@ -2424,11 +2917,13 @@ export function renderVoiceOutputSettings(): void {
   if (!settings?.voice_output_settings) return;
 
   const vo = settings.voice_output_settings;
-  vo.auto_voice_by_detected_language = vo.auto_voice_by_detected_language === true;
+  vo.auto_voice_by_detected_language =
+    vo.auto_voice_by_detected_language === true;
   vo.piper_gain_db = normalizePiperGainDb(vo.piper_gain_db);
-  const normalizedOutputDevice = typeof vo.output_device === "string" && vo.output_device.trim().length > 0
-    ? vo.output_device.trim()
-    : "default";
+  const normalizedOutputDevice =
+    typeof vo.output_device === "string" && vo.output_device.trim().length > 0
+      ? vo.output_device.trim()
+      : "default";
   vo.output_device = normalizedOutputDevice;
 
   if (dom.voiceOutputDeviceSelect) {
@@ -2457,23 +2952,36 @@ export function renderVoiceOutputSettings(): void {
   const normalizeProvider = (
     select: HTMLSelectElement | null,
     preferred: string | undefined,
-    fallback: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts"
+    fallback:
+      | "windows_native"
+      | "windows_natural"
+      | "local_custom"
+      | "qwen3_tts",
   ): "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts" => {
     if (!select) return fallback;
     const candidate = (preferred ?? "").trim();
-    const optionExists = candidate.length > 0
-      && Array.from(select.options).some((option) => option.value === candidate && !option.disabled);
-    return optionExists ? (candidate as "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts") : fallback;
+    const optionExists =
+      candidate.length > 0 &&
+      Array.from(select.options).some(
+        (option) => option.value === candidate && !option.disabled,
+      );
+    return optionExists
+      ? (candidate as
+          | "windows_native"
+          | "windows_natural"
+          | "local_custom"
+          | "qwen3_tts")
+      : fallback;
   };
   const normalizedDefault = normalizeProvider(
     dom.voiceOutputDefaultProvider,
     vo.default_provider as string | undefined,
-    "windows_native"
+    "windows_native",
   );
   const normalizedFallback = normalizeProvider(
     dom.voiceOutputFallbackProvider,
     vo.fallback_provider as string | undefined,
-    "windows_native"
+    "windows_native",
   );
   vo.default_provider = normalizedDefault;
   vo.fallback_provider = normalizedFallback;
@@ -2524,10 +3032,12 @@ export function renderVoiceOutputSettings(): void {
     dom.voiceOutputPiperModelDir.value = vo.piper_model_dir ?? "";
   }
   if (dom.voiceOutputQwenEndpoint) {
-    dom.voiceOutputQwenEndpoint.value = vo.qwen3_tts_endpoint ?? "http://127.0.0.1:8000/v1/audio/speech";
+    dom.voiceOutputQwenEndpoint.value =
+      vo.qwen3_tts_endpoint ?? "http://127.0.0.1:8000/v1/audio/speech";
   }
   if (dom.voiceOutputQwenModel) {
-    dom.voiceOutputQwenModel.value = vo.qwen3_tts_model ?? "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice";
+    dom.voiceOutputQwenModel.value =
+      vo.qwen3_tts_model ?? "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice";
   }
   if (dom.voiceOutputQwenVoice) {
     dom.voiceOutputQwenVoice.value = vo.qwen3_tts_voice ?? "vivian";
@@ -2542,7 +3052,8 @@ export function renderVoiceOutputSettings(): void {
     dom.voiceOutputQwenTimeoutSec.value = String(timeout);
   }
   if (dom.voiceOutputAutoLanguageVoice) {
-    dom.voiceOutputAutoLanguageVoice.checked = vo.auto_voice_by_detected_language;
+    dom.voiceOutputAutoLanguageVoice.checked =
+      vo.auto_voice_by_detected_language;
   }
 
   // Gate qwen3-TTS UI section based on enabled flag
@@ -2554,27 +3065,37 @@ export function renderVoiceOutputSettings(): void {
   if (!piperDownloadInFlight) {
     setPiperDownloadProgressUi(0, "Bereit.");
   } else {
-    setPiperDownloadProgressUi(0, dom.voiceOutputPiperDownloadText?.textContent?.trim() || "Lade Stimme...");
+    setPiperDownloadProgressUi(
+      0,
+      dom.voiceOutputPiperDownloadText?.textContent?.trim() || "Lade Stimme...",
+    );
   }
 
   void refreshProviderAvailability();
 }
 
-export async function handleProviderVoiceSelection(target: "default" | "fallback"): Promise<void> {
+export async function handleProviderVoiceSelection(
+  target: "default" | "fallback",
+): Promise<void> {
   if (!settings?.voice_output_settings) return;
   const isDefault = target === "default";
   const provider = isDefault
     ? settings.voice_output_settings.default_provider
     : settings.voice_output_settings.fallback_provider;
-  const select = isDefault ? dom.voiceOutputWindowsVoiceSelect : dom.voiceOutputFallbackVoiceSelect;
-  const hint = isDefault ? dom.voiceOutputWindowsVoiceHint : dom.voiceOutputFallbackVoiceHint;
+  const select = isDefault
+    ? dom.voiceOutputWindowsVoiceSelect
+    : dom.voiceOutputFallbackVoiceSelect;
+  const hint = isDefault
+    ? dom.voiceOutputWindowsVoiceHint
+    : dom.voiceOutputFallbackVoiceHint;
   if (!select) return;
 
   if (isWindowsVoiceProvider(provider)) {
     if (isDefault) {
       settings.voice_output_settings.voice_id_windows = select.value.trim();
     } else {
-      settings.voice_output_settings.voice_id_windows_fallback = select.value.trim();
+      settings.voice_output_settings.voice_id_windows_fallback =
+        select.value.trim();
     }
     await persistSettings();
     return;
@@ -2585,7 +3106,9 @@ export async function handleProviderVoiceSelection(target: "default" | "fallback
   }
 
   const selected = select.value.trim();
-  const previous = (settings.voice_output_settings.piper_model_path ?? DEFAULT_PIPER_VOICE_KEY).trim();
+  const previous = (
+    settings.voice_output_settings.piper_model_path ?? DEFAULT_PIPER_VOICE_KEY
+  ).trim();
   const nextKey = selected || DEFAULT_PIPER_VOICE_KEY;
   if (isRemovedPiperVoiceKey(nextKey)) {
     select.value = DEFAULT_PIPER_VOICE_KEY;
@@ -2594,14 +3117,17 @@ export async function handleProviderVoiceSelection(target: "default" | "fallback
       dom.voiceOutputPiperModel.value = DEFAULT_PIPER_VOICE_KEY;
     }
     if (hint) {
-      hint.textContent = "Diese Piper-Stimme wurde entfernt. Default wurde wiederhergestellt.";
+      hint.textContent =
+        "Diese Piper-Stimme wurde entfernt. Default wurde wiederhergestellt.";
     }
     await persistSettings();
     await refreshProviderVoices("default");
     await refreshProviderVoices("fallback");
     return;
   }
-  const selectedOption = Array.from(select.options).find((option) => option.value === nextKey);
+  const selectedOption = Array.from(select.options).find(
+    (option) => option.value === nextKey,
+  );
   let installed = selectedOption?.dataset.piperInstalled === "1";
   if (!installed) {
     installed = await isPiperVoiceInstalledByCatalog(nextKey);
@@ -2609,30 +3135,41 @@ export async function handleProviderVoiceSelection(target: "default" | "fallback
 
   if (!installed) {
     const confirmed = window.confirm(
-      `Die Stimme '${nextKey}' ist nicht installiert. Jetzt herunterladen und aktivieren?`
+      `Die Stimme '${nextKey}' ist nicht installiert. Jetzt herunterladen und aktivieren?`,
     );
     if (!confirmed) {
       select.value = previous;
-      if (hint) hint.textContent = `Auswahl verworfen. Aktiv bleibt: ${previous}.`;
+      if (hint)
+        hint.textContent = `Auswahl verworfen. Aktiv bleibt: ${previous}.`;
       return;
     }
     if (hint) hint.textContent = `Lade Piper-Stimme '${nextKey}'...`;
     piperDownloadInFlight = true;
-    setPiperDownloadProgressUi(0, `${nextKey}: Download gestartet...`, { forceVisible: true });
+    setPiperDownloadProgressUi(0, `${nextKey}: Download gestartet...`, {
+      forceVisible: true,
+    });
     try {
       await invoke<string>("download_piper_voice_key", { voiceKey: nextKey });
       piperDownloadInFlight = false;
-      setPiperDownloadProgressUi(100, `${nextKey}: Download abgeschlossen.`, { forceVisible: true });
+      setPiperDownloadProgressUi(100, `${nextKey}: Download abgeschlossen.`, {
+        forceVisible: true,
+      });
     } catch (error) {
       piperDownloadInFlight = false;
       select.value = previous;
       setPiperDownloadProgressUi(
         0,
-        `${nextKey}: Download fehlgeschlagen (${String(error).replace(/^Error:\s*/i, "").trim()}).`,
-        { forceVisible: true }
+        `${nextKey}: Download fehlgeschlagen (${String(error)
+          .replace(/^Error:\s*/i, "")
+          .trim()}).`,
+        { forceVisible: true },
       );
       if (hint) {
-        hint.textContent = `Download fehlgeschlagen (${nextKey}): ${String(error).replace(/^Error:\s*/i, "").trim()}`;
+        hint.textContent = `Download fehlgeschlagen (${nextKey}): ${String(
+          error,
+        )
+          .replace(/^Error:\s*/i, "")
+          .trim()}`;
       }
       return;
     }
@@ -2645,7 +3182,10 @@ export async function handleProviderVoiceSelection(target: "default" | "fallback
   await persistSettings();
   await refreshProviderVoices("default");
   await refreshProviderVoices("fallback");
-  const activeSelect = target === "default" ? dom.voiceOutputWindowsVoiceSelect : dom.voiceOutputFallbackVoiceSelect;
+  const activeSelect =
+    target === "default"
+      ? dom.voiceOutputWindowsVoiceSelect
+      : dom.voiceOutputFallbackVoiceSelect;
   if (activeSelect) {
     activeSelect.value = nextKey;
   }
@@ -2677,7 +3217,9 @@ export function renderLearnedVocabChips(): void {
 function renderLearnedVocabChipsInternal(): void {
   const container = dom.vocabTermsList;
   if (!container) return;
-  const terms = Array.isArray(settings?.vocab_terms) ? [...settings!.vocab_terms] : [];
+  const terms = Array.isArray(settings?.vocab_terms)
+    ? [...settings!.vocab_terms]
+    : [];
   terms.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
   const pending = Array.isArray(settings?.edit_substitutions)
@@ -2757,7 +3299,10 @@ function buildPendingSubstitutionChip(sub: {
   const chip = document.createElement("span");
   chip.className = "vocab-term-chip observing";
   chip.setAttribute("role", "listitem");
-  chip.setAttribute("title", `Corrected ${sub.count}× — will auto-learn after ${PENDING_THRESHOLD} corrections`);
+  chip.setAttribute(
+    "title",
+    `Corrected ${sub.count}× — will auto-learn after ${PENDING_THRESHOLD} corrections`,
+  );
 
   const label = document.createElement("span");
   label.textContent = `${sub.from} → ${sub.to}`;

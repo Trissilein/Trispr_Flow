@@ -84,8 +84,8 @@ use crate::ai_fallback::keyring as ai_fallback_keyring;
 use crate::ai_fallback::models::RefinementOptions;
 use crate::ai_fallback::provider::{
     default_models_for_provider, is_local_ollama_endpoint, is_ssrf_target, list_ollama_models,
-    list_ollama_models_with_size, ping_ollama, ping_ollama_quick, prompt_for_profile,
-    resolve_effective_local_model, AIProvider, ProviderFactory,
+    list_ollama_models_with_size, ping_ollama, ping_ollama_quick, prompt_for_profile, AIProvider,
+    ProviderFactory,
 };
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
 use crate::history_partition::PartitionedHistory;
@@ -116,7 +116,8 @@ use crate::state::{
 };
 use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, last_transcription_accelerator,
-    start_transcribe_monitor, stop_transcribe_monitor, toggle_transcribe_state, transcribe_audio,
+    reconcile_whisper_runtime, start_transcribe_monitor, stop_transcribe_monitor,
+    toggle_transcribe_state, transcribe_audio, warm_transcribe_runtime, whisper_runtime_required,
 };
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
@@ -819,6 +820,19 @@ pub(crate) fn prepare_refinement(
     let is_lm_studio = ai.provider == "lm_studio";
     let is_oobabooga = ai.provider == "oobabooga";
     let is_local_compat = is_lm_studio || is_oobabooga;
+    if crate::state::diagnostic_logging_enabled() {
+        info!(
+            "[refinement:prepare] start provider={} model={} ollama={} ai_enabled={} module_enabled={}",
+            ai.provider,
+            ai.model,
+            is_ollama,
+            settings.ai_fallback.enabled,
+            settings
+                .module_settings
+                .enabled_modules
+                .contains(crate::state::AI_REFINEMENT_MODULE_ID)
+        );
+    }
 
     if is_ollama {
         let state = app.state::<AppState>();
@@ -872,18 +886,30 @@ pub(crate) fn prepare_refinement(
     let mut repaired = false;
     if is_ollama {
         let endpoint = settings.providers.ollama.endpoint.clone();
-        let preferred = settings.providers.ollama.preferred_model.clone();
-        // Fast reachability check (300ms) before the slow model-list call (up to 5s).
-        // This prevents the AI refinement thread from blocking paste for seconds
-        // when Ollama is not running.
         crate::ai_fallback::provider::ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
-        let resolved = resolve_effective_local_model(&model, &preferred, &endpoint)
-            .map_err(|e| e.to_string())?;
-        repaired = resolved.repaired
-            || settings.ai_fallback.model.trim() != resolved.model
-            || settings.providers.ollama.preferred_model.trim() != resolved.model
-            || settings.postproc_llm_model.trim() != resolved.model;
-        model = resolved.model;
+
+        if model.is_empty() {
+            let preferred = settings.providers.ollama.preferred_model.trim();
+            let postproc = settings.postproc_llm_model.trim();
+            let cached = settings
+                .providers
+                .ollama
+                .available_models
+                .iter()
+                .map(|entry| entry.trim())
+                .find(|entry| !entry.is_empty());
+
+            if !preferred.is_empty() {
+                model = preferred.to_string();
+                repaired = true;
+            } else if !postproc.is_empty() {
+                model = postproc.to_string();
+                repaired = true;
+            } else if let Some(cached_model) = cached {
+                model = cached_model.to_string();
+                repaired = true;
+            }
+        }
     } else if is_lm_studio && model.is_empty() {
         model = settings
             .providers
@@ -947,6 +973,20 @@ pub(crate) fn prepare_refinement(
         prompt_profile: ai.prompt_profile.clone(),
     };
 
+    if crate::state::diagnostic_logging_enabled() {
+        info!(
+            "[refinement:prepare] resolved provider={} model={} repaired={} prompt_profile={} low_latency={} max_tokens={} temperature={} guard={}",
+            ai.provider,
+            model,
+            repaired,
+            options.prompt_profile,
+            options.low_latency_mode,
+            options.max_tokens,
+            options.temperature,
+            options.enforce_language_guard
+        );
+    }
+
     Ok(RefinementSetup {
         provider,
         api_key,
@@ -954,6 +994,83 @@ pub(crate) fn prepare_refinement(
         repaired,
         options,
     })
+}
+
+fn ensure_ollama_runtime_ready_for_refinement(
+    app: &AppHandle,
+    settings: &Settings,
+) -> Result<(), String> {
+    let endpoint = settings.providers.ollama.endpoint.trim().to_string();
+    let state = app.state::<AppState>();
+    let startup_status = startup_status_snapshot(state.inner());
+    let autostart = should_autostart_ai_refinement_runtime(settings);
+    if crate::state::diagnostic_logging_enabled() {
+        info!(
+            "[ollama.runtime] ensure_ready_for_refinement start endpoint={} autostart={} ready={} starting={}",
+            endpoint,
+            autostart,
+            startup_status.ollama_ready,
+            startup_status.ollama_starting
+        );
+    }
+    if !autostart {
+        if crate::state::diagnostic_logging_enabled() {
+            info!(
+                "[ollama.runtime] ensure_ready_for_refinement skipped (autostart disabled) endpoint={}",
+                endpoint
+            );
+        }
+        return Ok(());
+    }
+
+    if startup_status.ollama_ready {
+        if crate::state::diagnostic_logging_enabled() {
+            info!(
+                "[ollama.runtime] ensure_ready_for_refinement already ready endpoint={}",
+                endpoint
+            );
+        }
+        return Ok(());
+    }
+
+    let start_result = tauri::async_runtime::block_on(start_ollama_runtime(app.clone()))
+        .map_err(|error| format!("Failed to start Ollama runtime for refinement: {}", error))?;
+    if crate::state::diagnostic_logging_enabled() {
+        info!(
+            "[ollama.runtime] ensure_ready_for_refinement start result pending_start={} startup_wait_ms={}",
+            start_result.pending_start,
+            start_result.startup_wait_ms
+        );
+    }
+    if start_result.pending_start {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline && !startup_status_snapshot(state.inner()).ollama_ready {
+            if ping_ollama_quick(&endpoint).is_ok() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+    }
+    tauri::async_runtime::block_on(verify_ollama_runtime(app.clone()))
+        .map_err(|error| format!("Failed to verify Ollama runtime for refinement: {}", error))?;
+
+    if !startup_status_snapshot(state.inner()).ollama_ready {
+        if crate::state::diagnostic_logging_enabled() {
+            info!(
+                "[ollama.runtime] ensure_ready_for_refinement still not ready endpoint={}",
+                endpoint
+            );
+        }
+        return Err("Ollama runtime is still not ready after on-demand start.".to_string());
+    }
+
+    if crate::state::diagnostic_logging_enabled() {
+        info!(
+            "[ollama.runtime] ensure_ready_for_refinement ready endpoint={}",
+            endpoint
+        );
+    }
+    Ok(())
 }
 
 fn cancel_backlog_auto_expand(_app: &AppHandle) {
@@ -1958,6 +2075,7 @@ async fn refine_transcript(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
 
+    ensure_ollama_runtime_ready_for_refinement(&app, &settings_snapshot)?;
     let setup = prepare_refinement(&app, &settings_snapshot)?;
 
     if setup.repaired {
@@ -1975,6 +2093,7 @@ async fn refine_transcript(
     // inference, slow network, etc.).  Running it on a blocking worker thread
     // prevents it from stalling the Tauri event loop and triggering tao's
     // "NewEvents without RedrawEventsCleared" warning that leads to a UI freeze.
+    let _activity_guard = crate::audio::start_refinement_activity_guard(app.clone());
     let app_clone = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         setup
@@ -2002,35 +2121,24 @@ async fn ping_refinement_model(app: AppHandle, state: State<'_, AppState>) -> Re
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
 
-    // Only ping if AI Refinement is enabled and provider is local (Ollama or LM Studio)
+    // Health check only: do not run inference here. The UI keepalive path uses this
+    // to verify that local refinement is reachable without keeping a model hot.
     if !settings_snapshot.ai_fallback.enabled {
         return Ok(false);
     }
 
-    let provider = &settings_snapshot.ai_fallback.provider;
+    let provider = settings_snapshot.ai_fallback.provider.as_str();
     if provider != "ollama" && provider != "lm_studio" && provider != "oobabooga" {
         return Ok(false);
     }
 
-    // Prepare refinement setup (validates model, endpoint, etc.)
-    let setup = match prepare_refinement(&app, &settings_snapshot) {
-        Ok(s) => s,
-        Err(_) => return Ok(false), // Silent fail - model not ready
-    };
-
-    // Send a minimal ping (single dot character)
-    let ping_text = ".";
-
     let result = tauri::async_runtime::spawn_blocking(move || {
-        setup
-            .provider
-            .refine_transcript(ping_text, &setup.model, &setup.options, &setup.api_key)
+        prepare_refinement(&app, &settings_snapshot).map(|_| true)
     })
     .await
     .map_err(|e| format!("ping_refinement_model task failed: {}", e))?;
 
-    // Return true if ping succeeded, false if it failed (but don't propagate the error)
-    Ok(result.is_ok())
+    Ok(result.unwrap_or(false))
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -3967,6 +4075,7 @@ fn refine_transcript_for_benchmark(
     settings_snapshot: &Settings,
     transcript: &str,
 ) -> Result<crate::ai_fallback::models::RefinementResult, String> {
+    ensure_ollama_runtime_ready_for_refinement(app, settings_snapshot)?;
     let setup = prepare_refinement(app, settings_snapshot)?;
 
     setup
@@ -4021,12 +4130,23 @@ fn frontend_heartbeat(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-fn log_frontend_event(level: String, context: String, message: String) -> Result<(), String> {
+fn log_frontend_event(
+    app: AppHandle,
+    level: String,
+    context: String,
+    message: String,
+) -> Result<(), String> {
     let normalized_context = context.trim();
     let normalized_message = message.trim();
     if normalized_message.is_empty() {
         return Ok(());
     }
+    let diagnostics_enabled = app
+        .state::<AppState>()
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .diagnostic_logging_enabled;
     match level.trim().to_ascii_lowercase().as_str() {
         "error" => error!(
             "[frontend:{}] {}",
@@ -4037,24 +4157,31 @@ fn log_frontend_event(level: String, context: String, message: String) -> Result
             },
             normalized_message
         ),
-        "warn" => warn!(
-            "[frontend:{}] {}",
-            if normalized_context.is_empty() {
-                "unknown"
-            } else {
-                normalized_context
-            },
-            normalized_message
-        ),
-        _ => info!(
-            "[frontend:{}] {}",
-            if normalized_context.is_empty() {
-                "unknown"
-            } else {
-                normalized_context
-            },
-            normalized_message
-        ),
+        "warn" => {
+            warn!(
+                "[frontend:{}] {}",
+                if normalized_context.is_empty() {
+                    "unknown"
+                } else {
+                    normalized_context
+                },
+                normalized_message
+            )
+        }
+        _ => {
+            if !diagnostics_enabled {
+                return Ok(());
+            }
+            info!(
+                "[frontend:{}] {}",
+                if normalized_context.is_empty() {
+                    "unknown"
+                } else {
+                    normalized_context
+                },
+                normalized_message
+            )
+        }
     }
     Ok(())
 }
@@ -4110,7 +4237,7 @@ fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String
             return Err(err);
         }
     } else {
-        stop_transcribe_monitor(app, &state);
+        crate::transcription::stop_transcribe_monitor_and_release_whisper(app, &state);
     }
 
     let _ = app.emit("settings-changed", settings.clone());
@@ -4159,12 +4286,17 @@ fn pull_ollama_model(
     };
 
     if let Err(error) = precheck_ollama_registry_model_tag(&model) {
-        let mut pulls = state
-            .ollama_pulls
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        pulls.remove(&model);
-        return Err(error);
+        warn!(
+            "[ollama.pull] registry precheck failed model={} endpoint={} error={} - continuing with real pull",
+            model,
+            endpoint,
+            error
+        );
+    } else {
+        info!(
+            "[ollama.pull] registry precheck ok model={} endpoint={}",
+            model, endpoint
+        );
     }
 
     // Drop-Guard ensures the model is removed from ollama_pulls even if the
@@ -4316,12 +4448,17 @@ fn get_ollama_model_info_impl(
 /// Synchronous core of save_settings — used by both the async Tauri command
 /// and internal callers (e.g. tray menu handlers) that cannot await.
 fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), String> {
-    info!(
-        "[DIAG] save_settings_inner: enter (thread {:?})",
-        std::thread::current().id()
-    );
+    let diagnostics_enabled = settings.diagnostic_logging_enabled;
+    if diagnostics_enabled {
+        info!(
+            "[DIAG] save_settings_inner: enter (thread {:?})",
+            std::thread::current().id()
+        );
+    }
     let state = app.state::<AppState>();
-    info!("[DIAG] save_settings_inner: acquiring settings lock (read)");
+    if diagnostics_enabled {
+        info!("[DIAG] save_settings_inner: acquiring settings lock (read)");
+    }
     let (
         prev_mode,
         prev_device,
@@ -4347,7 +4484,9 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
             current.ai_fallback.provider.clone(),
         )
     };
-    info!("[DIAG] save_settings_inner: normalizing");
+    if diagnostics_enabled {
+        info!("[DIAG] save_settings_inner: normalizing");
+    }
     normalize_ai_fallback_fields(settings);
     normalize_continuous_dump_fields(settings);
     normalize_history_alias_fields(settings);
@@ -4364,7 +4503,9 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
     normalize_task_capture_settings(&mut settings.task_capture_settings);
     reconcile_assistant_transcribe_flag(settings);
 
-    info!("[DIAG] save_settings_inner: acquiring settings lock (write)");
+    if diagnostics_enabled {
+        info!("[DIAG] save_settings_inner: acquiring settings lock (write)");
+    }
     {
         let mut current = state
             .settings
@@ -4372,7 +4513,10 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *current = settings.clone();
     }
-    info!("[DIAG] save_settings_inner: saving file");
+    crate::state::sync_diagnostic_logging_enabled(settings);
+    if diagnostics_enabled {
+        info!("[DIAG] save_settings_inner: saving file");
+    }
     sync_model_dir_env(settings);
     save_settings_file(app, settings)?;
     schedule_piper_daemon_reconcile(
@@ -4422,14 +4566,18 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         }
     }
 
-    info!("[DIAG] save_settings_inner: hotkeys spawned, acquiring recorder lock");
+    if diagnostics_enabled {
+        info!("[DIAG] save_settings_inner: hotkeys spawned, acquiring recorder lock");
+    }
     if let Ok(recorder) = state.recorder.lock() {
         recorder.input_gain_db.store(
             (settings.mic_input_gain_db * 1000.0) as i64,
             Ordering::Relaxed,
         );
     }
-    info!("[DIAG] save_settings_inner: recorder lock released, checking mode change");
+    if diagnostics_enabled {
+        info!("[DIAG] save_settings_inner: recorder lock released, checking mode change");
+    }
 
     let mode_changed = prev_mode != settings.mode;
     let device_changed = prev_device != settings.input_device;
@@ -4466,13 +4614,16 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         prev_transcribe_output_device != settings.transcribe_output_device;
     if transcribe_enabled_changed {
         if !settings.transcribe_enabled {
-            stop_transcribe_monitor(app, &state);
+            crate::transcription::stop_transcribe_monitor_and_release_whisper(app, &state);
         } else {
             let _ = start_transcribe_monitor(app, &state, settings);
         }
     } else if transcribe_device_changed && settings.transcribe_enabled {
         stop_transcribe_monitor(app, &state);
         let _ = start_transcribe_monitor(app, &state, settings);
+    }
+    if capture_enabled_changed && !settings.transcribe_enabled {
+        reconcile_whisper_runtime(app, &state, settings);
     }
 
     let local_backend_changed = !prev_local_backend_preference
@@ -4483,33 +4634,47 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
             "Whisper backend preference changed: '{}' -> '{}'",
             prev_local_backend_preference, settings.local_backend_preference
         );
-        if let Some(model_path) = crate::models::resolve_model_path(app, &settings.model) {
-            if let Err(err) =
-                crate::whisper_server::restart_whisper_server_if_running(app, &state, &model_path)
-            {
+        if whisper_runtime_required(settings) {
+            if let Some(model_path) = crate::models::resolve_model_path(app, &settings.model) {
+                let port = state.whisper_server_port.load(Ordering::Relaxed);
+                if crate::whisper_server::ping_whisper_server(port) {
+                    if let Err(err) = crate::whisper_server::restart_whisper_server_if_running(
+                        app,
+                        &state,
+                        &model_path,
+                    ) {
+                        warn!(
+                            "Failed to restart whisper-server after backend switch: {}",
+                            err
+                        );
+                    }
+                } else {
+                    crate::whisper_server::schedule_whisper_server_warmup(
+                        app,
+                        state.inner(),
+                        &model_path,
+                        settings,
+                    );
+                }
+            } else {
                 warn!(
-                    "Failed to restart whisper-server after backend switch: {}",
-                    err
+                    "Skipping immediate backend switch warmup: model '{}' could not be resolved.",
+                    settings.model
                 );
             }
-            crate::whisper_server::schedule_whisper_server_warmup(
-                app,
-                state.inner(),
-                &model_path,
-                settings,
-            );
         } else {
-            warn!(
-                "Skipping immediate backend switch warmup: model '{}' could not be resolved.",
-                settings.model
-            );
+            crate::whisper_server::kill_whisper_server(state.inner());
         }
     }
 
-    info!("[DIAG] save_settings_inner: applying overlay settings");
+    if diagnostics_enabled {
+        info!("[DIAG] save_settings_inner: applying overlay settings");
+    }
     let overlay_settings = build_overlay_settings(settings);
     let _ = overlay::apply_overlay_settings(app, &overlay_settings);
-    info!("[DIAG] save_settings_inner: overlay done");
+    if diagnostics_enabled {
+        info!("[DIAG] save_settings_inner: overlay done");
+    }
 
     if prev_ai_refinement_enabled && !settings.ai_fallback.enabled {
         crate::audio::force_reset_refinement_activity(app, "forced_reset");
@@ -4517,7 +4682,9 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         schedule_ai_refinement_reenable_bootstrap(app.clone());
     }
 
-    info!("[DIAG] save_settings_inner: acquiring recorder lock (2nd)");
+    if diagnostics_enabled {
+        info!("[DIAG] save_settings_inner: acquiring recorder lock (2nd)");
+    }
     let recorder = state
         .recorder
         .lock()
@@ -4526,7 +4693,9 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         let _ = emit_capture_idle_overlay(app, settings);
     }
     drop(recorder);
-    info!("[DIAG] save_settings_inner: recorder lock released, refreshing status");
+    if diagnostics_enabled {
+        info!("[DIAG] save_settings_inner: recorder lock released, refreshing status");
+    }
 
     // Fire startup-status refresh on a detached thread: resolve_model_path()
     // does blocking filesystem I/O (exists() checks, current_dir()) that can
@@ -4548,13 +4717,19 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         });
     }
 
-    info!("[DIAG] save_settings_inner: emitting settings-changed");
+    if diagnostics_enabled {
+        if diagnostics_enabled {
+            info!("[DIAG] save_settings_inner: emitting settings-changed");
+        }
+    }
     let _ = app.emit("settings-changed", settings.clone());
     assistant_presence::reconcile_assistant_presence_window(app, settings);
     let _ = emit_assistant_baseline_state(app, state.inner(), settings, "save_settings");
     let _ = app.emit("menu:update-mic", settings.capture_enabled);
     let _ = app.emit("menu:update-transcribe", settings.transcribe_enabled);
-    info!("[DIAG] save_settings_inner: done");
+    if diagnostics_enabled {
+        info!("[DIAG] save_settings_inner: done");
+    }
     Ok(())
 }
 
@@ -4580,16 +4755,16 @@ fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
     capability_enabled(settings, RuntimeCapability::AiRefinement)
         && settings.ai_fallback.provider == "ollama"
         && settings.ai_fallback.execution_mode == "local_primary"
+        && is_local_ollama_endpoint(&settings.providers.ollama.endpoint)
 }
 
-fn warmup_ai_refinement_model_once(app: &AppHandle, settings: &Settings) -> Result<(), String> {
-    let setup = prepare_refinement(app, settings)?;
-    let warmup_text = "Warmup: local AI refinement runtime.";
-    setup
-        .provider
-        .refine_transcript(warmup_text, &setup.model, &setup.options, &setup.api_key)
-        .map(|_| ())
-        .map_err(|err| err.to_string())
+fn check_ai_refinement_runtime_ready_once(
+    app: &AppHandle,
+    settings: &Settings,
+) -> Result<(), String> {
+    // Metadata-only readiness check. Do not run inference here.
+    let _ = prepare_refinement(app, settings)?;
+    Ok(())
 }
 
 fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
@@ -4607,28 +4782,15 @@ fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
             return;
         }
 
-        if let Err(error) = tauri::async_runtime::block_on(start_ollama_runtime(app.clone())) {
+        if let Err(error) = ensure_ollama_runtime_ready_for_refinement(&app, &initial_settings) {
             warn!(
-                "AI refinement re-enable autostart failed (continuing with raw fallback): {}",
+                "AI refinement runtime autostart failed after enable/bootstrap (non-fatal): {}",
                 error
             );
             return;
-        }
-
-        if let Err(error) = tauri::async_runtime::block_on(verify_ollama_runtime(app.clone())) {
-            warn!(
-                "AI refinement runtime verify after re-enable failed: {}",
-                error
-            );
         }
 
         let state = app.state::<AppState>();
-        let startup = startup_status_snapshot(state.inner());
-        if !startup.ollama_ready {
-            warn!("AI refinement runtime warmup skipped: Ollama still not ready after autostart");
-            return;
-        }
-
         let latest_settings = {
             let snapshot = state
                 .settings
@@ -4641,10 +4803,10 @@ fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
             return;
         }
 
-        match warmup_ai_refinement_model_once(&app, &latest_settings) {
-            Ok(()) => info!("AI refinement warmup completed after module re-enable"),
+        match check_ai_refinement_runtime_ready_once(&app, &latest_settings) {
+            Ok(()) => info!("AI refinement runtime ready after module re-enable"),
             Err(error) => warn!(
-                "AI refinement warmup failed after module re-enable (non-fatal): {}",
+                "AI refinement readiness check failed after module re-enable (non-fatal): {}",
                 error
             ),
         }
@@ -4778,7 +4940,7 @@ fn enable_module(
             if snapshot.transcribe_enabled && !prev_transcribe_enabled {
                 let _ = start_transcribe_monitor(&app, &state, &snapshot);
             } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
-                stop_transcribe_monitor(&app, &state);
+                crate::transcription::stop_transcribe_monitor_and_release_whisper(&app, &state);
             }
         }
         let _ = app.emit("settings-changed", snapshot.clone());
@@ -4895,7 +5057,7 @@ fn disable_module(
             if snapshot.transcribe_enabled && !prev_transcribe_enabled {
                 let _ = start_transcribe_monitor(&app, &state, &snapshot);
             } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
-                stop_transcribe_monitor(&app, &state);
+                crate::transcription::stop_transcribe_monitor_and_release_whisper(&app, &state);
             }
         }
 
@@ -4994,6 +5156,7 @@ fn module_enabled(settings: &Settings, module_id: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeCapability {
     AiRefinement,
+    #[allow(dead_code)]
     TaskCapture,
     WorkflowAgent,
     VisionInput,
@@ -5519,7 +5682,10 @@ fn emit_assistant_action_result(
 
 #[cfg(test)]
 mod runtime_capability_gate_tests {
-    use super::{capability_enabled, require_capability_enabled, RuntimeCapability};
+    use super::{
+        capability_enabled, require_capability_enabled, should_autostart_ai_refinement_runtime,
+        RuntimeCapability,
+    };
     use crate::state::Settings;
 
     fn settings_for_capability(
@@ -5625,6 +5791,22 @@ mod runtime_capability_gate_tests {
             require_capability_enabled(&setting_disabled, RuntimeCapability::VoiceOutputTts)
                 .unwrap_err();
         assert_eq!(setting_error, "Voice output is disabled in settings.");
+    }
+
+    #[test]
+    fn ollama_autostart_requires_enabled_local_ai_refinement() {
+        let mut settings = settings_for_capability(RuntimeCapability::AiRefinement, true, true);
+        settings.ai_fallback.provider = "ollama".to_string();
+        settings.ai_fallback.execution_mode = "local_primary".to_string();
+        settings.providers.ollama.endpoint = "http://127.0.0.1:11434".to_string();
+        assert!(should_autostart_ai_refinement_runtime(&settings));
+
+        settings.ai_fallback.enabled = false;
+        assert!(!should_autostart_ai_refinement_runtime(&settings));
+
+        settings.ai_fallback.enabled = true;
+        settings.providers.ollama.endpoint = "http://192.168.1.20:11434".to_string();
+        assert!(!should_autostart_ai_refinement_runtime(&settings));
     }
 }
 
@@ -5940,7 +6122,7 @@ fn assistant_execute_direct_action(
                             serde_json::json!({
                                 "intent": "reminder_capture",
                                 "stage": "enqueue",
-                                "message": format!("{}: Eintrag erkannt", route.label),
+                                "message": format!("{}: Entry recognized", route.label),
                                 "text": raw_task.clone(),
                             }),
                         );
@@ -5949,7 +6131,12 @@ fn assistant_execute_direct_action(
                         let settings_clone = settings_snapshot.clone();
                         let queued_task = raw_task.clone();
                         let route_clone = route.clone();
-                        let ai_enabled = tc_settings.ai_refinement_enabled;
+                        let ai_enabled = tc_settings.ai_refinement_enabled
+                            && settings_snapshot.ai_fallback.enabled
+                            && settings_snapshot
+                                .module_settings
+                                .enabled_modules
+                                .contains(AI_REFINEMENT_MODULE_ID);
                         let custom_prompt = tc_settings.refinement_prompt.clone();
                         tauri::async_runtime::spawn(async move {
                             let refined_text = if ai_enabled {
@@ -5958,7 +6145,7 @@ fn assistant_execute_direct_action(
                                     serde_json::json!({
                                         "intent": "reminder_capture",
                                         "stage": "refining",
-                                        "message": "Ollama formuliert Task…",
+                                        "message": "Ollama is refining the task...",
                                         "text": queued_task.clone(),
                                     }),
                                 );
@@ -6011,7 +6198,7 @@ fn assistant_execute_direct_action(
                                 serde_json::json!({
                                     "intent": "reminder_capture",
                                     "stage": "posting",
-                                    "message": format!("Task wird an {} gesendet…", route_clone.label),
+                                    "message": format!("Sending task to {}...", route_clone.label),
                                     "text": refined_text.clone(),
                                 }),
                             );
@@ -6061,7 +6248,7 @@ fn assistant_execute_direct_action(
                                         crate::workflow_agent::AgentExecutionResult {
                                             status: "failed".to_string(),
                                             message: format!(
-                                                "{}-Fehler: {}",
+                                                "{} error: {}",
                                                 route_clone.label, error
                                             ),
                                             draft: None,
@@ -6072,7 +6259,7 @@ fn assistant_execute_direct_action(
                                         serde_json::json!({
                                             "ok": false,
                                             "title": route_clone.label,
-                                            "message": format!("Fehler: {}", error),
+                                            "message": format!("Error: {}", error),
                                         }),
                                     )
                                 }
@@ -6353,6 +6540,14 @@ fn agent_compose_unknown_reply(
             });
         }
 
+        if let Err(error) = ensure_ollama_runtime_ready_for_refinement(&app, &settings_snapshot) {
+            return Ok(AgentComposeReplyResult {
+                text: unknown_rule_reply(command_text, online_enabled),
+                source: "rule".to_string(),
+                reason_code: format!("local_runtime_unavailable:{error}"),
+            });
+        }
+
         let setup = match prepare_refinement(&app, &settings_snapshot) {
             Ok(value) => value,
             Err(error) => {
@@ -6374,6 +6569,7 @@ fn agent_compose_unknown_reply(
         });
         options.enforce_language_guard = false;
 
+        let _activity_guard = crate::audio::start_refinement_activity_guard(app.clone());
         match setup
             .provider
             .refine_transcript(command_text, &setup.model, &options, &setup.api_key)
@@ -9126,7 +9322,6 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
             .settings
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let old_model = settings.model.clone();
         settings.model = model_id.clone();
         drop(settings);
 
@@ -9139,43 +9334,42 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
         )?;
 
-        // If transcription is active or Whisper server is running, restart with new model
-        // to clear old model from VRAM and load new model
-        if state.transcribe_active.load(Ordering::Relaxed) {
-            stop_transcribe_monitor(&app, &state);
-            let new_settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .clone();
-            if let Err(err) = start_transcribe_monitor(&app, &state, &new_settings) {
-                // Restore old model if restart fails
-                let mut settings = state
-                    .settings
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                settings.model = old_model;
-                drop(settings);
-                let _ = save_settings_file(
-                    &app,
-                    &state
-                        .settings
-                        .read()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        // If any transcription lane is active, refresh the resident Whisper runtime.
+        let new_settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if whisper_runtime_required(&new_settings) {
+            if let Some(new_model_path) = crate::models::resolve_model_path(&app, &model_id) {
+                let port = state.whisper_server_port.load(Ordering::Relaxed);
+                if crate::whisper_server::ping_whisper_server(port) {
+                    if let Err(err) = crate::whisper_server::restart_whisper_server_if_running(
+                        &app,
+                        &state,
+                        &new_model_path,
+                    ) {
+                        warn!(
+                            "Failed to restart whisper-server after model switch: {}",
+                            err
+                        );
+                    }
+                } else {
+                    crate::whisper_server::schedule_whisper_server_warmup(
+                        &app,
+                        state.inner(),
+                        &new_model_path,
+                        &new_settings,
+                    );
+                }
+            } else {
+                warn!(
+                    "Skipping whisper-server model switch: model '{}' could not be resolved.",
+                    model_id
                 );
-                state.transcribe_active.store(false, Ordering::Relaxed);
-                return Err(format!("Failed to apply model: {}", err));
             }
         } else {
-            // Even if transcription is inactive, restart Whisper server if it's running
-            // to clear old model from VRAM and load new model
-            if let Some(new_model_path) = crate::models::resolve_model_path(&app, &model_id) {
-                let _ = crate::whisper_server::restart_whisper_server_if_running(
-                    &app,
-                    &state,
-                    &new_model_path,
-                );
-            }
+            crate::transcription::stop_transcribe_monitor_and_release_whisper(&app, &state);
         }
 
         refresh_startup_status(&app, state.inner());
@@ -9189,12 +9383,12 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn unload_ollama_model(model: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || unload_ollama_model_impl(model))
+    tauri::async_runtime::spawn_blocking(move || unload_ollama_model_impl(&model))
         .await
         .map_err(|e| format!("Unload Ollama model task failed: {}", e))?
 }
 
-fn unload_ollama_model_impl(model: String) -> Result<(), String> {
+pub(crate) fn unload_ollama_model_impl(model: &str) -> Result<(), String> {
     // Send a request to Ollama to unload the model from VRAM.
     // This uses a minimal POST to /api/generate with keep_alive: "0m" to signal
     // that the model should be unloaded immediately.
@@ -9426,7 +9620,7 @@ fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String> {
     drop(settings);
 
     if !current_ollama_model.is_empty() {
-        let _ = unload_ollama_model_impl(current_ollama_model);
+        let _ = unload_ollama_model_impl(&current_ollama_model);
     }
 
     // Kill and restart Whisper server to clear old model
@@ -11205,7 +11399,7 @@ pub(crate) fn toggle_product_mode_async(app: AppHandle) {
         if snapshot.transcribe_enabled && !prev_transcribe_enabled {
             let _ = start_transcribe_monitor(&app, &state, &snapshot);
         } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
-            stop_transcribe_monitor(&app, &state);
+            crate::transcription::stop_transcribe_monitor_and_release_whisper(&app, &state);
         }
 
         let _ = app.emit("settings-changed", snapshot.clone());
@@ -11414,6 +11608,7 @@ pub fn run() {
 
             let mut settings = load_settings(app.handle());
             reconcile_assistant_transcribe_flag(&mut settings);
+            crate::state::sync_diagnostic_logging_enabled(&settings);
 
             // Compute partition base directories and legacy paths for migration.
             let app_data_dir = crate::paths::resolve_base_dir(app.handle());
@@ -11450,6 +11645,9 @@ pub fn run() {
                 refinement_active_count: AtomicUsize::new(0),
                 refinement_watchdog_generation: AtomicU64::new(0),
                 refinement_last_change_ms: AtomicU64::new(0),
+                refinement_last_success_ms: AtomicU64::new(0),
+                refinement_last_success_model: Mutex::new(None),
+                ollama_idle_release_generation: AtomicU64::new(0),
                 runtime_start_attempts: AtomicU64::new(0),
                 runtime_start_failures: AtomicU64::new(0),
                 refinement_timeouts: AtomicU64::new(0),
@@ -11518,43 +11716,6 @@ pub fn run() {
                 crate::util::spawn_guarded("startup_diagnostics", move || {
                     let state = handle.state::<AppState>();
                     refresh_runtime_diagnostics(&handle, state.inner());
-                });
-            }
-
-            // Pre-warm whisper capability probe in background so the first PTT transcription
-            // doesn't pay the 2-3s CUDA init cost for the -ngl support check.
-            {
-                let handle = app.handle().clone();
-                crate::util::spawn_guarded("prewarm_whisper", move || {
-                    let state = handle.state::<AppState>();
-                    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
-                    if let Some(cli_path) = crate::paths::resolve_whisper_cli_path_for_backend(
-                        Some(settings.local_backend_preference.as_str()),
-                    ) {
-                        crate::transcription::prewarm_whisper_capability_cache(&cli_path);
-                    }
-                });
-            }
-
-            // Eagerly start whisper-server in background so the first transcription
-            // uses the fast HTTP path instead of the slow CLI cold-start (~50s → <1s).
-            {
-                let handle = app.handle().clone();
-                crate::util::spawn_guarded("eager_whisper_server", move || {
-                    let state = handle.state::<AppState>();
-                    let model_id = {
-                        let s = state.settings.read()
-                            .unwrap_or_else(|p| p.into_inner());
-                        s.model.clone()
-                    };
-                    if let Some(model_path) = crate::models::resolve_model_path(&handle, &model_id) {
-                        match crate::whisper_server::start_whisper_server(&handle, state.inner(), &model_path) {
-                            Ok(()) => info!("Eager whisper-server started successfully"),
-                            Err(e) => warn!("Eager whisper-server start failed (CLI fallback available): {}", e),
-                        }
-                    } else {
-                        warn!("Eager whisper-server skipped: model '{}' not found on disk", model_id);
-                    }
                 });
             }
 
@@ -11698,24 +11859,36 @@ pub fn run() {
                 }
             }
 
-            info!("[DIAG] setup: registering hotkeys...");
+            if settings.diagnostic_logging_enabled {
+                info!("[DIAG] setup: registering hotkeys...");
+            }
             if let Err(err) = register_hotkeys(app.handle(), &settings) {
                 warn!("Failed to register hotkeys: {}", err);
             }
-            info!("[DIAG] setup: hotkeys done");
-
-            if settings.transcribe_enabled {
+            if settings.diagnostic_logging_enabled {
+                info!("[DIAG] setup: hotkeys done");
+                info!(
+                    "[DIAG] runtime profile: mode={} capture_enabled={} transcribe_enabled={} ptt_use_vad={} ptt_hot_keepalive_ms={} continuous_idle_keepalive_ms={} system_asr_boot_autostart=off",
+                    settings.mode,
+                    settings.capture_enabled,
+                    settings.transcribe_enabled,
+                    settings.ptt_use_vad,
+                    settings.ptt_hot_keepalive_ms,
+                    settings.continuous_idle_keepalive_ms
+                );
+            }
+            {
                 let state = app.state::<AppState>();
-                if let Err(err) = start_transcribe_monitor(app.handle(), &state, &settings) {
-                    warn!("Failed to start transcribe monitor during setup: {}", err);
-                    settings.transcribe_enabled = false;
-                    {
-                        let mut current = state
-                            .settings
-                            .write()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        current.transcribe_enabled = false;
-                    }
+                let runtime_settings = state
+                    .settings
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .clone();
+                if whisper_runtime_required(&runtime_settings) {
+                    warm_transcribe_runtime(app.handle(), &state, &runtime_settings);
+                }
+                if should_autostart_ai_refinement_runtime(&runtime_settings) {
+                    schedule_ai_refinement_reenable_bootstrap(app.handle().clone());
                 }
             }
 
@@ -11962,15 +12135,23 @@ pub fn run() {
                     }
                 });
             }
-            info!("[DIAG] setup: sync_ptt_hot_standby...");
+            if settings.diagnostic_logging_enabled {
+                info!("[DIAG] setup: sync_ptt_hot_standby...");
+            }
             crate::audio::sync_ptt_hot_standby(app.handle(), &app.state::<AppState>(), &settings);
-            info!("[DIAG] setup: ptt done, priming overlay state...");
+            if settings.diagnostic_logging_enabled {
+                info!("[DIAG] setup: ptt done, priming overlay state...");
+            }
 
             let overlay_app = app.handle().clone();
             app.listen("overlay:ready", move |_| {
-                info!("[DIAG] overlay:ready event received");
+                if settings.diagnostic_logging_enabled {
+                    info!("[DIAG] overlay:ready event received");
+                }
                 overlay::mark_overlay_ready(&overlay_app);
-                info!("[DIAG] overlay:ready handled");
+                if settings.diagnostic_logging_enabled {
+                    info!("[DIAG] overlay:ready handled");
+                }
             });
             let overlay_heartbeat_app = app.handle().clone();
             app.listen("overlay:heartbeat", move |_| {
@@ -11986,7 +12167,9 @@ pub fn run() {
                     overlay::idle_overlay_state_for_settings(&settings),
                 );
                 overlay::preload_overlay_window(&app.handle());
-                info!("[DIAG] setup: overlay state primed + window pre-warmed, building tray...");
+                if settings.diagnostic_logging_enabled {
+                    info!("[DIAG] setup: overlay state primed + window pre-warmed, building tray...");
+                }
             }
             assistant_presence::reconcile_assistant_presence_window(&app.handle(), &settings);
 

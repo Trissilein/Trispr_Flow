@@ -2,6 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import * as dom from "./dom-refs";
 import { isAssistantCoreAvailable, settings } from "./state";
 import { showToast } from "./toast";
+import {
+  actionHintForIntent,
+  immediateDraftForIntent,
+  isImmediateDirectActionIntent,
+} from "./workflow-agent-intents";
 import { isAmbiguousSelection, isValidTargetLanguage } from "./workflow-agent-policy";
 import type {
   AgentBuildExecutionPlanRequest,
@@ -208,21 +213,6 @@ function emitAssistantReplyFinal(
     intent: intent ?? null,
     source: source ?? null,
   });
-}
-
-function immediateDraftForIntent(intent: string | null | undefined): string {
-  switch ((intent ?? "").trim()) {
-    case "web_search":
-      return "Checking the best web route for that.";
-    case "open_module":
-      return "Opening the matching Trispr surface.";
-    case "open_app":
-      return "Launching that app.";
-    case "gdd_generate_publish":
-      return "Matching the right transcript session.";
-    default:
-      return "Working on that now.";
-  }
 }
 
 function suggestionLevelFromMaxCandidates(maxCandidates: number): "low" | "standard" | "high" {
@@ -569,18 +559,7 @@ function renderActionLane(): void {
       "Non-side-effect intents reply immediately. GDD intents open a confirmable plan lane.";
     return;
   }
-  if (lastParse.intent === "gdd_generate_publish") {
-    dom.workflowAgentActionHint.textContent =
-      "GDD intent detected. Select a session, build plan, then confirm execution.";
-    return;
-  }
-  if (lastParse.intent === "unknown") {
-    dom.workflowAgentActionHint.textContent =
-      "Wakeword was recognized, but no side-effect intent was detected. Reply stays safe and read-only.";
-    return;
-  }
-  dom.workflowAgentActionHint.textContent =
-    "Intent is read-only (no side effects). Confirm lane is not required.";
+  dom.workflowAgentActionHint.textContent = actionHintForIntent(lastParse.intent);
 }
 
 function syncGlobalOnlineModeHeader(onlineEnabled: boolean): void {
@@ -993,7 +972,7 @@ async function parseCommand(
     return;
   }
 
-  if (parsed.intent === "web_search" || parsed.intent === "open_module" || parsed.intent === "open_app") {
+  if (isImmediateDirectActionIntent(parsed.intent)) {
     await executeDirectAction(parsed.intent, parsed.command_text);
     return;
   }

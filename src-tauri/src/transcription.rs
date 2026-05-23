@@ -326,8 +326,8 @@ fn backlog_status_from_queue(queue: &AudioQueueState) -> TranscribeBacklogStatus
 mod tests {
     use super::{
         backlog_capacity_for_batch_ms, gpu_backend_attempt_order, should_drop_transcript,
-        whisper_runtime_preflight_issue, AudioQueue, CUDA_BACKEND_UNSTABLE,
-        CUDA_RUNTIME_REQUIRED_FILES,
+        whisper_runtime_preflight_issue, whisper_runtime_required, AudioQueue,
+        CUDA_BACKEND_UNSTABLE, CUDA_RUNTIME_REQUIRED_FILES,
     };
     use crate::state::Settings;
     use std::fs;
@@ -401,6 +401,21 @@ mod tests {
         let mut settings = Settings::default();
         settings.local_backend_preference = "vulkan".to_string();
         assert_eq!(gpu_backend_attempt_order(&settings), vec!["vulkan"]);
+    }
+
+    #[test]
+    fn whisper_runtime_required_for_capture_or_system_transcribe() {
+        let mut settings = Settings::default();
+        settings.capture_enabled = false;
+        settings.transcribe_enabled = false;
+        assert!(!whisper_runtime_required(&settings));
+
+        settings.capture_enabled = true;
+        assert!(whisper_runtime_required(&settings));
+
+        settings.capture_enabled = false;
+        settings.transcribe_enabled = true;
+        assert!(whisper_runtime_required(&settings));
     }
 
     #[test]
@@ -510,6 +525,7 @@ pub(crate) fn start_transcribe_monitor(
     state: &State<'_, AppState>,
     settings: &Settings,
 ) -> Result<(), String> {
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     // CRITICAL SECURITY CHECK: Only start if explicitly enabled
     if !settings.transcribe_enabled {
         error!("SECURITY: Attempted to start transcribe monitor while transcribe_enabled=false. Blocking.");
@@ -521,12 +537,31 @@ pub(crate) fn start_transcribe_monitor(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if recorder.active {
+        if diagnostics_enabled {
+            info!(
+                "[runtime:transcribe_monitor] already active; skipping start device={} output_device={} batch_interval_ms={}",
+                settings.transcribe_output_device,
+                settings.transcribe_output_device,
+                settings.transcribe_batch_interval_ms
+            );
+        }
         return Ok(());
+    }
+
+    if diagnostics_enabled {
+        info!(
+            "[runtime:transcribe_monitor] starting device={} output_device={} batch_interval_ms={} vad_mode={}",
+            settings.transcribe_output_device,
+            settings.transcribe_output_device,
+            settings.transcribe_batch_interval_ms,
+            settings.transcribe_vad_mode
+        );
     }
 
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
     let app_handle = app.clone();
     let settings = settings.clone();
+    let warmup_settings = settings.clone();
     let queue_capacity = backlog_capacity_for_batch_ms(settings.transcribe_batch_interval_ms);
     let queue = AudioQueue::new(queue_capacity, Some(app_handle.clone()));
     #[cfg(target_os = "windows")]
@@ -588,12 +623,17 @@ pub(crate) fn start_transcribe_monitor(
     recorder.queue = Some(queue);
     state.transcribe_active.store(true, Ordering::Relaxed);
 
+    warm_transcribe_runtime(app, state, &warmup_settings);
+
     emit_transcribe_idle(app);
     let _ = app.emit("transcribe:state", "idle");
     Ok(())
 }
 
 pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppState>) {
+    if crate::state::diagnostic_logging_enabled() {
+        info!("[runtime:transcribe_monitor] stop requested");
+    }
     let (stop_tx, join_handle, queue) = {
         let mut recorder = state
             .transcribe
@@ -630,6 +670,54 @@ pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppStat
         if done_rx.recv_timeout(Duration::from_secs(2)).is_err() {
             warn!("Transcribe monitor thread did not exit within 2 s after stop signal");
         }
+    }
+}
+
+pub(crate) fn stop_transcribe_monitor_and_release_whisper(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+) {
+    stop_transcribe_monitor(app, state);
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    reconcile_whisper_runtime(app, state, &settings);
+}
+
+pub(crate) fn whisper_runtime_required(settings: &Settings) -> bool {
+    settings.capture_enabled || settings.transcribe_enabled
+}
+
+pub(crate) fn reconcile_whisper_runtime(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    settings: &Settings,
+) {
+    if whisper_runtime_required(settings) {
+        warm_transcribe_runtime(app, state, settings);
+    } else {
+        crate::whisper_server::kill_whisper_server(state.inner());
+    }
+}
+
+pub(crate) fn warm_transcribe_runtime(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    settings: &Settings,
+) {
+    if !whisper_runtime_required(settings) {
+        return;
+    }
+
+    if let Some(model_path) = resolve_model_path(app, &settings.model) {
+        crate::whisper_server::schedule_whisper_server_warmup(
+            app,
+            state.inner(),
+            &model_path,
+            settings,
+        );
     }
 }
 
@@ -845,11 +933,13 @@ fn flush_system_audio_to_session(buffer: &mut Vec<i16>) {
         buffer.clear();
         return;
     }
-    info!(
-        "Flushing system audio chunk: {} samples ({} ms)",
-        buffer.len(),
-        duration_ms
-    );
+    if crate::state::diagnostic_logging_enabled() {
+        info!(
+            "Flushing system audio chunk: {} samples ({} ms)",
+            buffer.len(),
+            duration_ms
+        );
+    }
     if let Err(e) = crate::session_manager::flush_chunk(buffer, "output") {
         error!("Failed to flush system audio chunk: {}", e);
     }
@@ -902,6 +992,7 @@ fn transcribe_worker(
     queue: Arc<AudioQueue>,
     transcribing: Arc<AtomicBool>,
 ) {
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     let min_samples = (TARGET_SAMPLE_RATE as u64 * MIN_AUDIO_MS / 1000) as usize;
     // System audio auto-save buffer (accumulates chunks before flushing to session)
     let auto_save = settings.auto_save_system_audio && settings.opus_enabled;
@@ -1073,9 +1164,15 @@ fn transcribe_worker(
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) =
                     Some(path.to_string_lossy().to_string());
-                info!("System audio session finalized");
+                if diagnostics_enabled {
+                    info!("System audio session finalized");
+                }
             }
-            Ok(None) => info!("System audio session ended with no chunks"),
+            Ok(None) => {
+                if diagnostics_enabled {
+                    info!("System audio session ended with no chunks");
+                }
+            }
             Err(e) => error!("Failed to finalize system audio session: {}", e),
         }
     }
@@ -1101,6 +1198,22 @@ fn flush_system_cluster(
         .collect::<Vec<_>>()
         .join(" ");
     let merged_id = format!("o_cluster_{}", crate::util::now_ms());
+    let ai_refinement_module_enabled = settings
+        .module_settings
+        .enabled_modules
+        .contains(crate::state::AI_REFINEMENT_MODULE_ID);
+    let will_trigger_refinement = settings.ai_fallback.enabled && ai_refinement_module_enabled;
+    if crate::state::diagnostic_logging_enabled() {
+        info!(
+            "[system_cluster] flush entries={} merged_id={} input_bytes={} ai_enabled={} ai_refinement_module_enabled={} will_trigger_refinement={}",
+            entries.len(),
+            merged_id,
+            joined.len(),
+            settings.ai_fallback.enabled,
+            ai_refinement_module_enabled,
+            will_trigger_refinement
+        );
+    }
 
     // Atomically update history: remove cluster entries, insert merged entry
     let state = app.state::<crate::state::AppState>();
@@ -1135,17 +1248,25 @@ fn flush_system_cluster(
     }
 
     // Trigger AI refinement if enabled
-    if settings.ai_fallback.enabled {
+    if will_trigger_refinement {
         let job_id = format!("syscluster_{}", crate::util::now_ms());
         crate::audio::maybe_spawn_ai_refinement(
             app.clone(),
             joined,
             "output".to_string(),
+            "system_cluster_flush",
             job_id,
             Some(merged_id),
             settings,
             false,
         );
+    } else {
+        if crate::state::diagnostic_logging_enabled() {
+            info!(
+                "[system_cluster] refinement skipped for {} (ai_enabled={} module_enabled={})",
+                merged_id, settings.ai_fallback.enabled, ai_refinement_module_enabled
+            );
+        }
     }
 }
 
@@ -1725,12 +1846,6 @@ fn resolve_whisper_threads(gpu_hint: bool) -> usize {
     cores.saturating_sub(1).clamp(2, 12)
 }
 
-/// Call at app startup in a background thread to pre-warm the GPU capability cache,
-/// so the first PTT transcription doesn't pay the 2-3s CUDA init cost.
-pub(crate) fn prewarm_whisper_capability_cache(cli_path: &Path) {
-    whisper_cli_supports_gpu_layers(cli_path);
-}
-
 fn whisper_cli_supports_gpu_layers(cli_path: &Path) -> bool {
     static CACHE: std::sync::OnceLock<Mutex<HashMap<PathBuf, bool>>> = std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -2171,6 +2286,7 @@ fn transcribe_local(
     settings: &Settings,
     wav_bytes: &[u8],
 ) -> Result<String, String> {
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     let t0 = std::time::Instant::now();
     let temp_dir = std::env::temp_dir();
     let _ = fs::create_dir_all(&temp_dir);
@@ -2189,11 +2305,13 @@ fn transcribe_local(
             e
         )
     })?;
-    info!(
-        "[TIMING] wav_write: {:.3}s ({} bytes)",
-        t0.elapsed().as_secs_f32(),
-        wav_bytes.len()
-    );
+    if diagnostics_enabled {
+        info!(
+            "[TIMING] wav_write: {:.3}s ({} bytes)",
+            t0.elapsed().as_secs_f32(),
+            wav_bytes.len()
+        );
+    }
     // Guard ensures wav_path is deleted on every exit path (early returns, panic).
     let _wav_guard = TempFileGuard::new(wav_path.clone());
 
@@ -2215,15 +2333,19 @@ fn transcribe_local(
                 "auto".to_string()
             };
 
-            info!(
-                "[TIMING] whisper_server mode: sending {} bytes WAV",
-                wav_bytes.len()
-            );
+            if diagnostics_enabled {
+                info!(
+                    "[TIMING] whisper_server mode: sending {} bytes WAV",
+                    wav_bytes.len()
+                );
+            }
             let t_server = std::time::Instant::now();
 
             match crate::whisper_server::transcribe_via_server(wav_bytes, port, &lang_str) {
                 Ok(text) => {
-                    info!("[diagnostics] transcribe_via_server SUCCESS -> update(mode=server, backend=gpu, last_error=None)");
+                    if diagnostics_enabled {
+                        info!("[diagnostics] transcribe_via_server SUCCESS -> update(mode=server, backend=gpu, last_error=None)");
+                    }
                     update_whisper_runtime_diagnostics(
                         app,
                         settings,
@@ -2233,10 +2355,12 @@ fn transcribe_local(
                         resolve_whisper_gpu_layers(settings),
                         None,
                     );
-                    info!(
-                        "[TIMING] whisper_server: {:.2}s",
-                        t_server.elapsed().as_secs_f32()
-                    );
+                    if diagnostics_enabled {
+                        info!(
+                            "[TIMING] whisper_server: {:.2}s",
+                            t_server.elapsed().as_secs_f32()
+                        );
+                    }
                     return Ok(text);
                 }
                 Err(e) => {
@@ -2262,7 +2386,9 @@ fn transcribe_local(
                             serde_json::json!({ "message": hint }),
                         );
                     }
-                    info!("[diagnostics] transcribe_via_server ERROR -> update(mode=cli, backend=cpu, last_error=\"{}\")", diagnostic_error);
+                    if diagnostics_enabled {
+                        info!("[diagnostics] transcribe_via_server ERROR -> update(mode=cli, backend=cpu, last_error=\"{}\")", diagnostic_error);
+                    }
                     update_whisper_runtime_diagnostics(
                         app,
                         settings,
@@ -2303,7 +2429,9 @@ fn transcribe_local(
                 .map(|guard| guard.is_some())
                 .unwrap_or(false);
             if managed_child_present {
-                info!("[diagnostics] ping_whisper_server=false -> update(mode=cli, backend=cpu, last_error=\"whisper-server unreachable, restarting and using CLI fallback\")");
+                if diagnostics_enabled {
+                    info!("[diagnostics] ping_whisper_server=false -> update(mode=cli, backend=cpu, last_error=\"whisper-server unreachable, restarting and using CLI fallback\")");
+                }
                 update_whisper_runtime_diagnostics(
                     app,
                     settings,
@@ -2414,6 +2542,7 @@ fn run_whisper_cli(
     output_base: &Path,
     force_cpu: bool,
 ) -> Result<String, String> {
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     if let Some(issue) = whisper_runtime_preflight_issue(cli_path) {
         update_whisper_runtime_diagnostics(
             app,
@@ -2513,14 +2642,16 @@ fn run_whisper_cli(
     let mut gpu_activity_guard =
         WhisperGpuActivityGuard::new(app, if expected_gpu { "gpu" } else { "cpu" }, backend);
 
-    info!(
-        "[TIMING] whisper_spawn: model={}, gpu_layers={:?}, backend_gpu={}, force_cpu={}, threads={}",
-        model_path.display(),
-        gpu_layers,
-        backend_gpu_capable,
-        force_cpu,
-        &threads
-    );
+    if diagnostics_enabled {
+        info!(
+            "[TIMING] whisper_spawn: model={}, gpu_layers={:?}, backend_gpu={}, force_cpu={}, threads={}",
+            model_path.display(),
+            gpu_layers,
+            backend_gpu_capable,
+            force_cpu,
+            &threads
+        );
+    }
     let t_spawn = std::time::Instant::now();
     // Use spawn + polling instead of output() to enforce a hard timeout.
     // command.output() blocks forever if whisper-cli hangs (e.g. GPU deadlock).
@@ -2581,10 +2712,12 @@ fn run_whisper_cli(
             }
         }
     };
-    info!(
-        "[TIMING] whisper_process: {:.2}s",
-        t_spawn.elapsed().as_secs_f32()
-    );
+    if diagnostics_enabled {
+        info!(
+            "[TIMING] whisper_process: {:.2}s",
+            t_spawn.elapsed().as_secs_f32()
+        );
+    }
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stderr_gpu = whisper_stderr_indicates_gpu(&stderr);
     if stderr_gpu {
@@ -2705,9 +2838,11 @@ fn run_whisper_cli(
         None
     };
     let synthesized = accelerator == "cpu" && backend != "cpu" && !preserved;
-    info!("[diagnostics] cli_happy_path -> update(mode=cli, backend={}, last_error_preserved={}, last_error_synthesized={}, last_error={})",
-        accelerator, preserved, synthesized,
-        last_error.as_ref().map(|s| s.as_str()).unwrap_or("None"));
+    if diagnostics_enabled {
+        info!("[diagnostics] cli_happy_path -> update(mode=cli, backend={}, last_error_preserved={}, last_error_synthesized={}, last_error={})",
+            accelerator, preserved, synthesized,
+            last_error.as_ref().map(|s| s.as_str()).unwrap_or("None"));
+    }
     update_whisper_runtime_diagnostics(
         app,
         settings,
@@ -2734,10 +2869,12 @@ fn run_whisper_cli(
                 settings,
             );
         } else {
-            info!(
-                "Skipping whisper-server warmup: active backend '{}' has no matching server runtime.",
-                backend
-            );
+            if diagnostics_enabled {
+                info!(
+                    "Skipping whisper-server warmup: active backend '{}' has no matching server runtime.",
+                    backend
+                );
+            }
         }
     }
 

@@ -442,6 +442,19 @@
                 </label>
                 <span class="toggle-hint">Only record when audio exceeds threshold, even while holding PTT key</span>
               </div>
+              <label class="field range span-2" data-expert-only="true">
+                <span class="field-label">PTT warm window</span>
+                <div class="range-row">
+                  <input id="ptt-hot-keepalive" type="range" min="5000" max="120000" step="5000"
+                         title="Keep the PTT audio stream warm for this long after release (ms)"
+                         aria-valuemin="5000"
+                         aria-valuemax="120000"
+                         aria-valuenow="30000"
+                         aria-label="PTT hot standby keepalive"
+                         aria-describedby="ptt-hot-keepalive-value" />
+                  <span id="ptt-hot-keepalive-value" class="range-value" aria-live="polite">30s</span>
+                </div>
+              </label>
             </div>
             <div id="vad-block" class="field-group hidden">
               <label class="field range">
@@ -577,6 +590,16 @@
                 <span class="expert-pill" aria-hidden="true">Expert</span>
               </summary>
               <div class="expander-content">
+                <div class="field toggle span-2">
+                  <label class="toggle-row">
+                    <span class="field-label">Diagnose-Logging</span>
+                    <input id="diagnostic-logging-toggle" type="checkbox" title="Enable verbose diagnostic logs, process attribution, and runtime snapshots" />
+                    <span class="toggle-track">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                  </label>
+                  <span class="toggle-hint">Turn off for quieter idle runtime. Errors and toasts stay visible.</span>
+                </div>
                 <div class="field toggle span-2">
                   <div class="toggle-row">
                     <span class="field-label">Hallucination filter</span>

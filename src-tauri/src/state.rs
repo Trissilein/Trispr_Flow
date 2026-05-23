@@ -37,6 +37,15 @@ const ASSISTANT_CORE_MIGRATION_FLAG_KEY: &str = "assistant_core.migrated_legacy_
 /// 200 ms — additional writes during that window are coalesced.
 static HISTORY_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 static TRANSCRIBE_HISTORY_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
+static DIAGNOSTIC_LOGGING_ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn diagnostic_logging_enabled() -> bool {
+    DIAGNOSTIC_LOGGING_ENABLED.load(Ordering::Relaxed)
+}
+
+pub(crate) fn sync_diagnostic_logging_enabled(settings: &Settings) {
+    DIAGNOSTIC_LOGGING_ENABLED.store(settings.diagnostic_logging_enabled, Ordering::Relaxed);
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -331,7 +340,10 @@ pub(crate) struct Settings {
     pub(crate) assistant_presence_window_monitor: Option<String>,
     pub(crate) audio_cues: bool,
     pub(crate) audio_cues_volume: f32,
+    #[serde(default)]
+    pub(crate) diagnostic_logging_enabled: bool,
     pub(crate) ptt_use_vad: bool, // Enable VAD threshold check even in PTT mode
+    pub(crate) ptt_hot_keepalive_ms: u64, // Warm standby window after PTT release
     pub(crate) vad_threshold: f32, // Legacy: now maps to vad_threshold_start
     pub(crate) vad_threshold_start: f32,
     pub(crate) vad_threshold_sustain: f32,
@@ -509,7 +521,9 @@ impl Default for Settings {
       assistant_presence_window_monitor: None,
       audio_cues: true,
       audio_cues_volume: 0.3,
+      diagnostic_logging_enabled: false,
       ptt_use_vad: false,
+      ptt_hot_keepalive_ms: 30_000,
       vad_threshold: VAD_THRESHOLD_START_DEFAULT,
       vad_threshold_start: VAD_THRESHOLD_START_DEFAULT,
       vad_threshold_sustain: VAD_THRESHOLD_SUSTAIN_DEFAULT,
@@ -881,6 +895,9 @@ pub(crate) struct AppState {
     pub(crate) refinement_active_count: AtomicUsize,
     pub(crate) refinement_watchdog_generation: AtomicU64,
     pub(crate) refinement_last_change_ms: AtomicU64,
+    pub(crate) refinement_last_success_ms: AtomicU64,
+    pub(crate) refinement_last_success_model: Mutex<Option<String>>,
+    pub(crate) ollama_idle_release_generation: AtomicU64,
     pub(crate) runtime_start_attempts: AtomicU64,
     pub(crate) runtime_start_failures: AtomicU64,
     pub(crate) refinement_timeouts: AtomicU64,
@@ -958,6 +975,22 @@ pub(crate) fn record_refinement_fallback_timed_out(state: &AppState) {
     state
         .refinement_fallback_timed_out
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn record_refinement_success(state: &AppState, model: &str) {
+    state
+        .refinement_last_success_ms
+        .store(crate::util::now_ms(), std::sync::atomic::Ordering::Relaxed);
+    let mut last_model = state
+        .refinement_last_success_model
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let trimmed = model.trim();
+    *last_model = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    };
 }
 
 pub(crate) fn get_runtime_metrics_snapshot(state: &AppState) -> RuntimeMetricsSnapshot {
@@ -1581,6 +1614,7 @@ pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
     settings.continuous_post_roll_ms = settings.continuous_post_roll_ms.clamp(0, 1_500);
     settings.continuous_idle_keepalive_ms =
         settings.continuous_idle_keepalive_ms.clamp(10_000, 120_000);
+    settings.ptt_hot_keepalive_ms = settings.ptt_hot_keepalive_ms.clamp(5_000, 120_000);
 
     settings.continuous_mic_soft_flush_ms =
         settings.continuous_mic_soft_flush_ms.clamp(4_000, 30_000);

@@ -4620,15 +4620,14 @@ fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
                 "AI refinement runtime verify after re-enable failed: {}",
                 error
             );
-        }
-
-        let state = app.state::<AppState>();
-        let startup = startup_status_snapshot(state.inner());
-        if !startup.ollama_ready {
-            warn!("AI refinement runtime warmup skipped: Ollama still not ready after autostart");
             return;
         }
 
+        // verify_ollama_runtime success path already sets ollama_ready=true.
+        // Do not re-read startup_status here: a concurrent start_ollama_runtime
+        // invocation could briefly reset the flag and cause us to skip warmup
+        // even though Ollama is reachable.
+        let state = app.state::<AppState>();
         let latest_settings = {
             let snapshot = state
                 .settings

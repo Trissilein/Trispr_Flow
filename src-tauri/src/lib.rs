@@ -39,9 +39,8 @@ use overlay::{emit_capture_idle_overlay, update_overlay_refining_indicator};
 use state::{
     AppState, AssistantOrchestratorState, HistoryEntry, RuntimeDiagnostics, Settings, StartupStatus,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{
     AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering,

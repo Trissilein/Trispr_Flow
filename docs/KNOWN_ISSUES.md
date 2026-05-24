@@ -59,19 +59,45 @@ Release-gate runs use `--skip-rust-lib-tests`. The flag is allowed by `scripts/a
 ### Re-engagement criteria
 
 Pick this up again when one of:
-- The missing entry point is identified via `dumpbin /imports` + export-table comparison (next planned step).
+- The fix is implemented (see "Proposed fix" below) and `--no-run` can be removed.
 - A Rust unit test for backend logic becomes load-bearing and compile-check is no longer sufficient.
-- The fault address inside `ntdll.dll` changes meaningfully (suggests a Windows update touched the loader path).
-- We have time to install Application Verifier or Windows Debugging Tools (gflags + Loader Snaps) to capture the missing-symbol name conclusively.
 
-**Update (2026-05-24):** The crash reproduces on GitHub Actions `windows-latest` (Server 2025 / Windows 11 24H2) with the same `STATUS_ENTRYPOINT_NOT_FOUND` exit code. This rules out local environment as the sole cause. The fault is in the Tauri test binary's Windows DLL loader chain. `--no-run` is in use for `cargo test --lib` in the CI smoke job as a compile-check workaround. Rust test execution in CI is a tracked open item.
+**Update (2026-05-24) — root cause fully identified:**
 
-### Useful diagnostics path if anyone re-engages
+**Missing entry point: `TaskDialogIndirect` in `comctl32.dll`**
 
-1. Install Windows Debugging Tools for Windows (provides `gflags.exe` and `cdb.exe`).
-2. `gflags /i trispr_flow_lib-*.exe +sls` to enable Loader Snaps for the test binary.
-3. Run `cdb -G -gx target\debug\deps\trispr_flow_lib-*.exe` and capture the loader-snap output before the entry-point exception. The output prints every `LdrpResolveDllName` and `LdrpResolveProcedureAddress` call and identifies the missing symbol name.
-4. Alternative: install Application Verifier and enable the "Basics" stop in test-binary, run, capture `AV` log.
+- The test binary links against `comctl32.dll` (pulled in by Tauri's windowing code).
+- Without an application manifest, Windows loads `C:\Windows\System32\comctl32.dll` (v5.82 — the legacy compatibility layer). `comctl32` v5.82 does **not** export `TaskDialogIndirect`; that function is v6 only.
+- The production Tauri binary has a manifest embedded by `tauri-winres` via `tauri_build::build()` (see `src-tauri/build.rs`), declaring `Microsoft.Windows.Common-Controls` v6 as a `dependentAssembly`. This causes Windows to load the v6 DLL from WinSxS instead.
+- The test binary has no such manifest, so the loader crashes with `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139) before any Rust code runs.
+- Verified locally using `llvm-readobj --coff-imports` (PE import table) and `llvm-readobj --coff-exports C:\Windows\System32\comctl32.dll`.
+
+**Proposed fix (one-line in `src-tauri/build.rs`):**
+
+Add a `cargo:rustc-link-arg-tests` directive that tells the MSVC linker to embed the comctl32 v6 dependency in the test binary's manifest, matching what `tauri-winres` does for the production binary. The `rustc-link-arg-tests` instruction only applies to test targets, so it does not affect the production binary:
+
+```rust
+// In build.rs, after tauri_build::build():
+#[cfg(target_os = "windows")]
+println!(
+    "cargo:rustc-link-arg-tests=/MANIFESTDEPENDENCY:type='win32' \
+     name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+     processorArchitecture='amd64' publicKeyToken='6595b64144ccf1df' language='*'"
+);
+```
+
+This embeds the comctl32 v6 activation into the test binary's embedded manifest via the MSVC linker's `/MANIFESTDEPENDENCY` flag. Once tested and confirmed, remove `--no-run` from `test:smoke` and update the CI smoke ADR.
+
+**CI reproduction:** Confirmed on GitHub Actions `windows-latest` (Server 2025 / Windows 11 24H2) — CI run 26372280621 (before `--no-run` restore). Both local Windows 11 26200 and CI are affected. The fault is structural (missing manifest in test binary), not environment-specific.
+
+### Useful diagnostics path for verification
+
+1. Apply the proposed `build.rs` fix.
+2. Run `cargo test --manifest-path src-tauri/Cargo.toml --lib` (without `--no-run`).
+3. Expect the test binary to launch cleanly and run (0 tests, 0 failures).
+4. Remove `--no-run` from `test:smoke` in `package.json` and push to CI.
+
+
 
 ---
 

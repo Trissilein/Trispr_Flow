@@ -24,7 +24,8 @@ npm run test:smoke
 
 `test:smoke` runs:
 1. `npm run build`
-2. `cargo test --manifest-path src-tauri/Cargo.toml`
+2. `cargo test --manifest-path src-tauri/Cargo.toml --lib`
+3. `cargo test --manifest-path src-tauri/Cargo.toml --bins`
 
 ## Local whisper.cpp (GPU)
 1. Build whisper.cpp with CUDA enabled.

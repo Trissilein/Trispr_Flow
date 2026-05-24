@@ -35,7 +35,7 @@ jobs:
         run: npm test
 
   # ── Informational (non-blocking) ───────────────────────────────────────────
-  # Runs Rust build + cargo tests on Windows to catch backend regressions.
+  # Runs Rust format + cargo tests on Windows to catch backend regressions.
   # Not a required check — promoted to required once CI runtime is measured.
   smoke:
     name: Rust smoke (windows-latest)

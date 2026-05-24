@@ -124,9 +124,29 @@ The assumption that `STATUS_ENTRYPOINT_NOT_FOUND` would not reproduce on a fresh
 
 **Decision:** Restore `--no-run` to `cargo test --lib` (the ADR's stated fallback). Rust test *execution* in CI is now a separate tracked work item. The compile-check (`--no-run`) still catches type errors, missing symbols, and refactoring breakage — the primary safety value for a parallel-agent development workflow.
 
-**Next diagnostic step (planned):** Run `dumpbin /imports` on the locally built test binary (`src-tauri/target/debug/deps/trispr_flow_lib-*.exe`) and compare each imported function against the export tables of the corresponding DLLs on this machine. This will identify the specific missing entry point and determine whether static CRT linkage or a different fix is appropriate.
+Stale documentation cleaned up in the same pass.
 
-Stale documentation cleaned up in the same pass:
+---
 
-- `GEMINI.md`: removed "Full build + Rust tests + Cargo build check" description of `test:smoke`.
-- `docs/DEVELOPMENT.md`: replaced the single-line `cargo test` step with the actual `--lib` then `--bins` invocations and a pointer to this ADR.
+## Follow-up (2026-05-24, resolution)
+
+The diagnostic completed in the same session. Using `llvm-readobj --coff-imports` (from the Rust LLVM tools component) and `llvm-readobj --coff-exports`, the exact missing entry point was identified:
+
+**Missing entry point: `TaskDialogIndirect` in `comctl32.dll` v5.82.**
+
+Causal chain:
+- The test binary statically imports `comctl32.dll` (pulled in by Tauri's windowing code).
+- Without an application manifest, Windows loads `C:\Windows\System32\comctl32.dll` (v5.82, the legacy compatibility layer). `comctl32` v5.82 does **not** export `TaskDialogIndirect`; that function is v6 only.
+- The production binary gets comctl32 v6 because `tauri-winres` (called by `tauri_build::build()`) embeds an RT_MANIFEST resource declaring `Microsoft.Windows.Common-Controls` v6 as a `dependentAssembly`.
+- The test binary has no such manifest; the loader crashes before any Rust code runs.
+
+**Fix implemented:** `src-tauri/build.rs` now emits, for MSVC targets:
+```
+cargo:rustc-link-arg=/DELAYLOAD:comctl32.dll
+cargo:rustc-link-lib=delayimp
+```
+This moves `comctl32.dll` from hard (eager) imports to delay imports. Since test code never calls `TaskDialogIndirect` (no GUI), the function is never resolved, and the loader crash is avoided. Production behavior is unchanged: the embedded manifest's SxS activation context is established by the OS loader before any code runs, so when comctl32 is first used it loads v6 from WinSxS.
+
+Verification (local, 2026-05-24): `cargo test --manifest-path src-tauri/Cargo.toml --lib` executes without loader crash. Result: 218 pass, 3 fail on pre-existing logic assertions in `ai_fallback/provider` (not loader faults). CI run 26373010870 is pending confirmation.
+
+**`--no-run` removed** from `test:smoke` in `package.json`. Documentation updated.

@@ -6,7 +6,7 @@ Tracking known build-tooling and environment issues that do **not** block produc
 
 ## #001 — `cargo test --lib` fails with `STATUS_ENTRYPOINT_NOT_FOUND` on this Windows build host
 
-**Status:** Triage parked, low priority. Production unaffected.
+**Status:** RESOLVED 2026-05-24. Fix in `src-tauri/build.rs` (delay-load comctl32). Production unaffected throughout.
 
 **First observed:** 2026-04-29 during the `v0.8.0` release-gate run.
 
@@ -52,9 +52,9 @@ Caused by:
 
 **Note (2026-05-23):** Rust unit tests now exist in at least 8 source files (`hotkeys.rs`, `audio.rs`, `continuous_dump.rs`, `ai_fallback/provider.rs`, `errors.rs`, `lib.rs`, `models.rs`, `workflow_agent.rs`). The CI smoke job redesign (see `project-spec/decisions/2026-05-23/ci-smoke-job-redesign.md`) moves test execution to CI (GitHub Actions Windows runner) where this crash is not expected to reproduce. The local workaround (`--skip-rust-lib-tests` in the release gate) remains in place.
 
-### Workaround in active use
+### Workaround in active use (updated 2026-05-24)
 
-Release-gate runs use `--skip-rust-lib-tests`. The flag is allowed by `scripts/assistant-release-gate.mjs` and is reflected in the gate report's `options.skip_rust_lib_tests` field. This is acceptable because `--strict-benchmark` plus the green automated checks plus the green frontend tests produce a sufficiently robust gate signal for a non-soak release.
+Release-gate runs still use `--skip-rust-lib-tests`. The reason has changed: the loader crash is fixed, but `cargo test --lib` now reveals 3 pre-existing logic test failures in `ai_fallback/provider` (`custom_profile_prompt_is_not_modified_by_language_lock`, `ssrf_target_blocks_ipv4_mapped_ipv6_link_local`, `ssrf_target_blocks_ipv6_link_local`). Until those are addressed, the gate flag remains appropriate.
 
 ### Resolution (2026-05-24)
 

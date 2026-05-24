@@ -153,31 +153,32 @@ pub fn is_ssrf_target(endpoint: &str) -> bool {
         Ok(url) => url,
         Err(_) => return true, // Fail-closed: unparseable URLs treated as SSRF targets
     };
-    let host = parsed
-        .host_str()
-        .map(|h| h.to_ascii_lowercase())
-        .unwrap_or_default();
-    // Block cloud metadata endpoint (AWS/GCP/Azure)
-    if host == "169.254.169.254" || host == "metadata.google.internal" {
-        return true;
-    }
-    // Block IPv4 link-local range (169.254.x.x) entirely
-    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
-        if ip.octets()[0] == 169 && ip.octets()[1] == 254 {
-            return true;
-        }
-    }
-    // Block IPv6 link-local (fe80::/10) and IPv4-mapped link-local (::ffff:169.254.x.x).
-    // host_str() already strips brackets from IPv6 literals like [fe80::1].
-    if let Ok(ip) = host.parse::<std::net::Ipv6Addr>() {
-        // fe80::/10 — first 10 bits are 1111111010
-        if (ip.segments()[0] & 0xffc0) == 0xfe80 {
-            return true;
-        }
-        // ::ffff:169.254.x.x — IPv4-mapped link-local
-        if let Some(ipv4) = ip.to_ipv4_mapped() {
-            if ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254 {
+    // Use typed host parsing to avoid IPv6 bracket handling quirks in host_str().
+    match parsed.host() {
+        None => return true, // Fail-closed: parsed URL without host
+        Some(url::Host::Domain(host)) => {
+            let host = host.to_ascii_lowercase();
+            // Block cloud metadata endpoint (AWS/GCP/Azure)
+            if host == "169.254.169.254" || host == "metadata.google.internal" {
                 return true;
+            }
+        }
+        Some(url::Host::Ipv4(ip)) => {
+            // Block IPv4 link-local range (169.254.x.x) entirely.
+            if ip.octets()[0] == 169 && ip.octets()[1] == 254 {
+                return true;
+            }
+        }
+        Some(url::Host::Ipv6(ip)) => {
+            // fe80::/10 — first 10 bits are 1111111010
+            if (ip.segments()[0] & 0xffc0) == 0xfe80 {
+                return true;
+            }
+            // ::ffff:169.254.x.x — IPv4-mapped link-local
+            if let Some(ipv4) = ip.to_ipv4_mapped() {
+                if ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254 {
+                    return true;
+                }
             }
         }
     }
@@ -503,11 +504,8 @@ pub fn prompt_for_profile(
                 preserve_source_language,
             ));
         }
-        return Some(with_language_lock(
-            normalized,
-            language,
-            preserve_source_language,
-        ));
+        // Custom prompts are user-owned and must remain unchanged.
+        return Some(normalized.to_string());
     }
 
     let base = match normalize_prompt_profile(profile) {

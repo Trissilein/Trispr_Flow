@@ -60,6 +60,9 @@ jobs:
       - name: Install NPM dependencies
         run: npm ci
 
+      - name: Generate CI tauri config
+        run: node scripts/generate-tauri-variant-config.mjs --variant ci --out src-tauri/tauri.conf.json
+
       - name: Rust format check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 

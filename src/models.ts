@@ -75,9 +75,8 @@ export function renderModels() {
       }
 
       const status = document.createElement("div");
-      status.className = `model-status ${model.installed ? "downloaded" : "available"}${
-        isActive ? " active" : ""
-      }`;
+      status.className = `model-status ${model.installed ? "downloaded" : "available"}${isActive ? " active" : ""
+        }`;
       status.textContent = model.installed
         ? isActive
           ? "Active"

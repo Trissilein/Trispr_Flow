@@ -27,15 +27,14 @@ import { settings } from "../state";
 import * as dom from "../dom-refs";
 import {
   renderAIFallbackSettingsUi,
-  renderSettings,
   renderTopicKeywords,
-  syncDerivedLanguageSettings,
-} from "../settings";
+} from "../settings/ai-refinement.settings";
+import { renderSettings } from "../settings";
 import {
   resolveEffectiveAsrLanguageHint,
   derivePostprocLanguageFromAsr,
 } from "../settings/transcription.settings";
-import { persistSettings } from "../settings-persist";
+import { persistSettings, syncDerivedLanguageSettings } from "../settings-persist";
 import { addVocabRow } from "../settings/vocabulary.settings";
 import { renderHero } from "../ui-state";
 import { setTopicKeywords, DEFAULT_TOPICS } from "../history";

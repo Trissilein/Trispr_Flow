@@ -101,7 +101,11 @@ npm run test:smoke
 
 `test:smoke` runs:
 1. `npm run build` (TypeScript + Vite production build)
-2. `cargo test --manifest-path src-tauri/Cargo.toml`
+2. `cargo test --manifest-path src-tauri/Cargo.toml --lib`
+3. `cargo test --manifest-path src-tauri/Cargo.toml --bins`
+
+The final `cargo build` step was removed on 2026-05-23. See
+`project-spec/decisions/2026-05-23/ci-smoke-job-redesign.md`.
 
 ## Local whisper.cpp (GPU)
 1. Build whisper.cpp with CUDA enabled.

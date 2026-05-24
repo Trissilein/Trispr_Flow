@@ -27,7 +27,7 @@ import {
   refreshProviderAvailability,
   refreshProviderVoices,
   handleProviderVoiceSelection,
-} from "../settings";
+} from "../settings/voice-output.settings";
 import { persistSettings } from "../settings-persist";
 
 // Formats a Tauri-side error string from `test_tts_provider` for display in

@@ -16,7 +16,7 @@ vi.mock("../settings/vocabulary.settings", () => ({
 }));
 
 vi.mock("../settings-persist", () => ({
-  persistSettings: vi.fn(async () => {}),
+  persistSettings: vi.fn(async () => { }),
 }));
 
 import {

@@ -1,7 +1,8 @@
 # Refactoring Plan — Trispr Flow Quality Foundation
 
 Date: 2026-05-15  
-Status: **R2 complete** — all 6 wire-module slices shipped (2026-05-19); OQ-1/OQ-2/OQ-3 resolved; R1 (lib.rs Rust refactoring) status unknown  
+Last verified: 2026-05-23  
+Status: **Phase 0 complete · Phase 1 complete (QW3 + QW3b done) · R2 complete · R1 not started**  
 Participants: Hendr (architect), automated challenger review
 
 ---
@@ -30,7 +31,7 @@ Refactoring proceeds in three phases: safety-net tests first, then isolated extr
 | `models.rs`               |  1,446 | —                                                                                        |
 | `workflow_agent.rs`       |  1,290 | —                                                                                        |
 
-Zero `#[cfg(test)]` blocks found across all Rust source files.
+~~Zero `#[cfg(test)]` blocks found across all Rust source files.~~ **Superseded (2026-05-23):** `#[cfg(test)] mod tests` blocks now exist in `postprocessing.rs` (line 402) and `ai_fallback/provider.rs` (line 1873) — T0b and T0c are done.
 
 **TypeScript (`src/`):**
 
@@ -45,15 +46,21 @@ Zero `#[cfg(test)]` blocks found across all Rust source files.
 
 Test suite: 21 test files, 269 tests pass (2026-05-15). The two largest files (`event-listeners.ts`, `settings.ts`) have zero coverage.
 
+**Superseded (2026-05-23):** `event-listeners.ts` is now a ~30-line orchestrator (R2 complete). `settings.ts` is gone — decomposed into `src/settings/index.ts` + 5 domain slices (settings decomposition ADR 2026-05-19, complete). Test suite is 626 tests / 33 files (was 269/21).
+
 ### Confirmed circular dependency
 
 `settings.ts` imports `renderVocabulary`, `renderLearnedVocabChips` from `event-listeners.ts`.  
 `event-listeners.ts` imports `persistSettings`, `renderSettings`, and 12+ other symbols from `settings.ts`.  
 `vocab-auto-learn.ts` already works around this via dynamic import (`void import("./event-listeners").then(...)`).
 
+**Superseded (2026-05-23):** The cycle is broken. `settings/vocabulary.settings.ts` now owns `renderVocabulary`/`renderLearnedVocabChips` — the `settings → event-listeners` direction is gone. `event-listeners.ts` retains one import from `./settings` (`ensureContinuousDumpDefaults`); no `src/settings/**` module imports from `event-listeners`. The original bidirectional cycle is now unidirectional. OQ-1 confirmed closed (2026-05-23): the cycle is broken. Implementation path differed from the 2026-05-15 in-place move — vocabulary functions landed in `settings/vocabulary.settings.ts` via ADR 2026-05-19 (settings decomposition) rather than `settings.ts` directly. Outcome is identical.
+
 ### `addVocabRow` constraint (confirmed by challenger)
 
 `addVocabRow` in `event-listeners.ts` calls `persistSettings()`. A naïve extraction of `renderVocabulary` into `vocabulary-ui.ts` recreates the circular dependency as `settings.ts → vocabulary-ui.ts → settings.ts`. This is unresolved. See OQ-1.
+
+**Superseded (2026-05-23):** Resolved via the settings decomposition (ADR 2026-05-19). `addVocabRow` now lives in `settings/vocabulary.settings.ts` alongside `renderVocabulary`/`renderLearnedVocabChips`. The constraint no longer applies.
 
 ### `lib.rs` structure (confirmed by challenger)
 
@@ -65,34 +72,53 @@ Test suite: 21 test files, 269 tests pass (2026-05-15). The two largest files (`
 
 ### Phase 0 — Safety net (parallel, always-on, no merge risk with Ingo's work)
 
-| ID  | What                                                                    | Where                         | Effort         |
-| --- | ----------------------------------------------------------------------- | ----------------------------- | -------------- |
-| T0a | Tests for `normalizeAssistantSettings()`, `normalizeEnabledModuleIds()` | new `state.test.ts` or inline | trivial        |
-| T0b | Rust tests for pure text functions in `postprocessing.rs`               | inline `#[cfg(test)]`         | trivial–simple |
-| T0c | Rust tests for prompt template logic in `ai_fallback/provider.rs`       | inline `#[cfg(test)]`         | simple         |
+| ID  | What                                                                    | Where                         | Effort         | Status (2026-05-23)                                             |
+| --- | ----------------------------------------------------------------------- | ----------------------------- | -------------- | --------------------------------------------------------------- |
+| T0a | Tests for `normalizeAssistantSettings()`, `normalizeEnabledModuleIds()` | new `state.test.ts` or inline | trivial        | **done** — `src/__tests__/state.normalizers.test.ts` (24 tests) |
+| T0b | Rust tests for pure text functions in `postprocessing.rs`               | inline `#[cfg(test)]`         | trivial–simple | **done** — `#[cfg(test)] mod tests` at line 402                 |
+| T0c | Rust tests for prompt template logic in `ai_fallback/provider.rs`       | inline `#[cfg(test)]`         | simple         | **done** — `#[cfg(test)] mod tests` at line 1873                |
 
 Rationale: tests before structural moves create the safety net. Phase 0 has zero dependencies on Phase 1 or 2.
 
 ### Phase 1 — Isolated extractions (sequential, after Phase 0, each item independently committable)
 
-| ID  | What                         | Where                                     | Effort       | Depends on    |
-| --- | ---------------------------- | ----------------------------------------- | ------------ | ------------- |
-| QW4 | Extract weather logic        | `lib.rs` ~L5987–6340 → `weather.rs`       | trivial      | —             |
-| QW3 | Extract TTS benchmark        | `lib.rs` ~L2200–3900 → `tts_benchmark.rs` | **moderate** | QW4 (pattern) |
-| QW5 | Extract `MODEL_DESCRIPTIONS` | `state.ts` → `model-descriptions.ts`      | trivial      | —             |
-| QW2 | Break circular dep           | depends on OQ-1 resolution                | moderate     | OQ-1          |
+| ID   | What                                                                               | Where                                                          | Effort       | Depends on    | Status (2026-05-23)                                                                                       |
+| ---- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------ | ------------- | --------------------------------------------------------------------------------------------------------- |
+| QW4  | Extract weather logic                                                              | `lib.rs` ~L5987–6340 → `weather.rs`                            | trivial      | —             | **done** — `src-tauri/src/weather.rs` exists                                                              |
+| QW3  | Extract TTS benchmark                                                              | `lib.rs` ~L2084–3997 + ~L10445 (two cuts) → `tts_benchmark.rs` | **moderate** | QW4 (pattern) | **done** — `src-tauri/src/tts_benchmark.rs` extracted; startup path rewired                               |
+| QW3b | Rename `Qwen3TtsBenchmarkConfig` → `Qwen3TtsConfig`; migrate to `multimodal_io.rs` | `lib.rs` + `tts_benchmark.rs` → `multimodal_io.rs`             | trivial      | QW3           | **done** — config + runtime/request/speak helpers moved; call sites rewired                               |
+| QW5  | Extract `MODEL_DESCRIPTIONS`                                                       | `state.ts` → `model-descriptions.ts`                           | trivial      | —             | **done** — `src/model-descriptions.ts` exists                                                             |
+| QW2  | Break circular dep                                                                 | depends on OQ-1 resolution                                     | moderate     | OQ-1          | **resolved** — cycle is now unidirectional only; OQ-1 confirmed closed 2026-05-23 (see Context amendment) |
 
-QW2 is blocked pending OQ-1. QW4 and QW5 have no blockers and can start immediately after Phase 0.
+QW2 depends on OQ-1, which is confirmed closed (2026-05-23). QW3, QW3b, QW4, and QW5 are done.
 
-**Note on QW3:** Challenger confirmed this is moderate, not simple. The block contains embedded `#[cfg(test)]` code and depends on `AppState`/`AppHandle`. Proof-of-pattern from QW4 first.
+**Design (2026-05-23) — QW3:** Two-cut extraction — the physical block is not fully contiguous.
+
+- **Cut 1 (~L2084–3997):** benchmark type definitions, constants, and all benchmark functions through `run_tts_benchmark_inner` and `write_tts_benchmark_report`.
+- **Cut 2 (~L10445):** `tts_benchmark_request_from_env` — env-driven constructor for `TtsBenchmarkRequest`; physically outside the main block but belongs with the type. Decision (2026-05-23 grill): classified as benchmark domain logic (reads env vars, constructs `TtsBenchmarkRequest` fields), not startup wiring — moves with the type. Two-cut shape approved.
+
+What moves to `tts_benchmark.rs`: all `TtsBenchmark*` structs; all `TTS_FAILURE_*` and `TTS_PROVIDER_SURFACE_*` constants; functions `classify_tts_failure`, `default_tts_benchmark_gates`, `tts_provider_profile`, `is_runtime_stable_provider`, `default_tts_benchmark_scenarios`, `normalize_tts_benchmark_providers`, `resolve_qwen3_tts_benchmark_config`, `benchmark_qwen3_tts_synthesis`, `normalize_tts_benchmark_scenarios`, `run_tts_provider_once`, `run_tts_runtime_smoke_once`, `summarize_tts_provider`, `build_tts_fallback_order`, `scenario_success_counts_for_provider`, `provider_consistency_from_runtime_surface`; `pub(crate) fn run_tts_benchmark_inner`; `pub(crate) fn write_tts_benchmark_report`; `tts_benchmark_request_from_env`; `#[tauri::command] pub(crate) fn run_tts_benchmark`; existing `#[cfg(test)] mod tts_benchmark_tests`.
+
+Anchor functions that stay in `lib.rs`:
+- `format_ureq_status_error` (pub(crate)) — called by `task_capture.rs` via `crate::format_ureq_status_error`
+
+**Superseded by QW3b (2026-05-23):** `Qwen3TtsConfig` (renamed from `Qwen3TtsBenchmarkConfig`), `request_qwen3_tts_audio_bytes`, `speak_qwen3_tts`, and `resolve_qwen3_tts_runtime_config` moved from `lib.rs` to `multimodal_io.rs`.
+
+Cross-module access after QW3b: `tts_benchmark.rs` uses `crate::multimodal_io::Qwen3TtsConfig` and calls `crate::multimodal_io::request_qwen3_tts_audio_bytes(...)` for benchmark probes.
+
+`lib.rs` changes: add `mod tts_benchmark;` near existing domain `mod` declarations; delete both cut regions; add `pub(crate) use tts_benchmark::run_tts_benchmark;` (OQ-2 pattern — `generate_handler!` list unchanged by name); update startup block (current `TRISPR_RUN_TTS_BENCHMARK` branch) to call `tts_benchmark::tts_benchmark_request_from_env()`, `tts_benchmark::run_tts_benchmark_inner(...)`, `tts_benchmark::write_tts_benchmark_report(...)`.
+
+**QW3b (done, 2026-05-23):** Renamed `Qwen3TtsBenchmarkConfig` → `Qwen3TtsConfig`; moved the config struct, `request_qwen3_tts_audio_bytes`, `speak_qwen3_tts`, and `resolve_qwen3_tts_runtime_config` from `lib.rs` to `multimodal_io.rs`. `tts_benchmark.rs` now uses `crate::multimodal_io::Qwen3TtsConfig` and no longer uses `use super::` for Qwen3 request/config access.
+
+Decision (2026-05-23 grill): timing is "after QW3" (not part of QW3) to keep each commit bounded to a single concern and independently bisectable. Executed: QW3b landed as the immediate follow-on.
 
 ### Phase 2 — Structural refactoring (after Phase 1; each item requires an ADR before execution)
 
-| ID  | What                                                             | Depends on               | Status                      |
-| --- | ---------------------------------------------------------------- | ------------------------ | --------------------------- |
-| R1  | Move command implementations out of `lib.rs` into domain modules | OQ-2, QW3+QW4 as pattern | blocked on OQ-2             |
-| R2  | Split `event-listeners.ts` by domain                             | QW2 resolved, T0a as net | **complete** — all 6 slices shipped; `event-listeners.ts` is a 30-line orchestrator |
-| R3  | ~~Separate state management tier~~                               | —                        | **cancelled as standalone** |
+| ID  | What                                                             | Depends on               | Status                                                                                                      |
+| --- | ---------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| R1  | Move command implementations out of `lib.rs` into domain modules | OQ-2, QW3+QW4 as pattern | **not started** — 111 `#[tauri::command]` functions confirmed in `lib.rs` (2026-05-23 scan; plan cited 108) |
+| R2  | Split `event-listeners.ts` by domain                             | QW2 resolved, T0a as net | **complete** — all 6 slices shipped; `event-listeners.ts` is a 30-line orchestrator                         |
+| R3  | ~~Separate state management tier~~                               | —                        | **cancelled as standalone**                                                                                 |
 
 R3 decision: State modernization is folded into R2. Each domain slice extracted in R2 gets explicit accessor functions instead of direct module-level variable access. No big-bang pub-sub refactor. This is a one-way door of medium reversibility — see Trade-offs.
 
@@ -121,6 +147,8 @@ Decision: Move `renderVocabulary`, `renderLearnedVocabChips`, `addVocabRow`, and
 Rationale: These are settings-panel render functions that were misplaced in `event-listeners.ts`. Moving them to `settings.ts` removes the only import `settings.ts` has from `event-listeners.ts`, breaking the cycle. No new files, no callback injection. `event-listeners.ts` imports them from `settings.ts` instead (already imports 14+ symbols from there). The ~150-line growth of `settings.ts` is acceptable; a full architecture pass via `/improve-codebase-architecture` will split files by domain later.
 
 The two options previously on the table (settings-core.ts extraction, callback injection) were more complex than necessary because they didn't identify that the vocabulary render functions had simply landed in the wrong file.
+
+**Implementation note (2026-05-23):** The vocabulary render functions were moved to `settings/vocabulary.settings.ts` via the settings decomposition (ADR 2026-05-19), not to `settings.ts` directly as this decision specified. The cycle-breaking outcome is identical. OQ-1 confirmed closed.
 
 ### OQ-2 — How are Tauri commands registered after R1 moves implementations?
 
@@ -200,6 +228,12 @@ The contract is fixed for all R2 slices so the pattern, once set on slice 1, is 
    // residual: tab switching + AI-refinement tab helpers, product mode, global online,
    // model source (slice-4 backfill target), panel collapse, productModeToggle/ttsStop hotkeys
    ```
+
+### OQ-4 — `settings-persist.ts` → `transcription.settings.ts` coupling risk
+
+**Open.**
+
+`settings-persist.ts` imports `derivePostprocLanguageFromAsr` from `settings/transcription.settings.ts`. `settings/index.ts` imports from `settings-persist.ts`. If `transcription.settings.ts` ever imports from `settings-persist.ts` or `settings/index.ts`, a new cycle forms. Identified during QW3 design review (2026-05-23). No action required now — log as backlog.
 
 ---
 

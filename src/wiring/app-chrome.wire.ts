@@ -3,7 +3,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isAssistantCoreAvailable, settings } from "../state";
 import * as dom from "../dom-refs";
-import { renderAIFallbackSettingsUi, renderSettings } from "../settings";
+import { renderSettings } from "../settings";
+import { renderAIFallbackSettingsUi } from "../settings/ai-refinement.settings";
 import { persistSettings } from "../settings-persist";
 import { renderHero, updateDeviceLineClamp } from "../ui-state";
 import { isPanelId, togglePanel } from "../panels";

@@ -1,14 +1,14 @@
 # Architecture
 
-Last updated: 2026-03-13
+Last updated: 2026-05-23
 
 ## Frontend architecture
 
 - Stack: Tauri 2 + vanilla TypeScript + Vite
 - Entry: `src/main.ts` bootstraps settings/devices/history/models, then wires listeners and UI rendering.
 - State model: centralized mutable state in `src/state.ts` with explicit setter functions.
-- UI model: direct DOM updates through dedicated modules (`src/settings.ts`, `src/ui-state.ts`, `src/history.ts`, `src/models.ts`).
-- Event wiring: user interactions are bound in `src/event-listeners.ts`.
+- UI model: direct DOM updates through dedicated modules (`src/settings/index.ts` orchestrator + domain slices, `src/ui-state.ts`, `src/history.ts`, `src/models.ts`).
+- Event wiring: user interactions are bound in `src/event-listeners.ts` (thin orchestrator) and domain-specific `src/wiring/*.wire.ts` modules.
 
 ### UI Layout
 
@@ -30,19 +30,31 @@ Last updated: 2026-03-13
 
 ## Frontend module map
 
-| Module | Purpose |
-| --- | --- |
-| `main.ts` | Bootstrap, backend event listeners |
-| `state.ts` | Centralized mutable state |
-| `types.ts` | TypeScript interfaces |
-| `dom-refs.ts` | DOM element references |
-| `event-listeners.ts` | User interaction handlers |
-| `settings.ts` | Settings persistence and UI sync |
-| `ui-state.ts` | Runtime UI status rendering |
-| `history.ts` | History rendering, export, chapters, topics, search |
-| `chapters.ts` | Chapter UI lifecycle |
-| `models.ts` | Model list rendering and actions |
-| `devices.ts` | Audio/output device list rendering |
+| Module                               | Purpose                                                                                                     |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `main.ts`                            | Bootstrap, backend event listeners                                                                          |
+| `state.ts`                           | Centralized mutable state                                                                                   |
+| `types.ts`                           | TypeScript interfaces                                                                                       |
+| `dom-refs.ts`                        | DOM element references                                                                                      |
+| `event-listeners.ts`                 | Thin orchestrator (~30 lines); domain wiring in `src/wiring/`                                               |
+| `wiring/app-chrome.wire.ts`          | Global tab/chrome wiring                                                                                    |
+| `wiring/transcription.wire.ts`       | Transcription event and UI wiring                                                                           |
+| `wiring/ai-refinement.wire.ts`       | AI Refinement event and UI wiring                                                                           |
+| `wiring/overlay.wire.ts`             | Overlay event and UI wiring                                                                                 |
+| `wiring/voice-output.wire.ts`        | Voice Output event and UI wiring                                                                            |
+| `wiring/history.wire.ts`             | History UI wiring                                                                                           |
+| `settings/index.ts`                  | Settings orchestrator; cross-domain render functions and inline Continuous Dump / Post-Processing rendering |
+| `settings/vocabulary.settings.ts`    | Custom Vocabulary and Vocabulary Learning UI                                                                |
+| `settings/overlay.settings.ts`       | Overlay appearance settings UI                                                                              |
+| `settings/transcription.settings.ts` | Transcription language and VAD settings UI                                                                  |
+| `settings/voice-output.settings.ts`  | Piper/TTS voice output settings UI                                                                          |
+| `settings/ai-refinement.settings.ts` | AI Refinement provider, prompt, and model settings UI                                                       |
+| `settings-persist.ts`                | `persistSettings`, `ensureSetupDefaults`, `syncDerivedLanguageSettings`                                     |
+| `ui-state.ts`                        | Runtime UI status rendering                                                                                 |
+| `history.ts`                         | History rendering, export, chapters, topics, search                                                         |
+| `chapters.ts`                        | Chapter UI lifecycle                                                                                        |
+| `models.ts`                          | Model list rendering and actions                                                                            |
+| `devices.ts`                         | Audio/output device list rendering                                                                          |
 
 ## Backend architecture (`src-tauri/src`)
 

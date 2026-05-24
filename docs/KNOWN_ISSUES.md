@@ -46,10 +46,11 @@ Caused by:
 
 ### Why we are not chasing this further right now
 
-- Rust-side unit-test coverage is currently at zero impact because no Rust tests fail. Compile gates (`cargo build --lib` + `cargo check`) catch refactoring breakage equally.
-- Frontend Vitest suite (`npm test`, 269 tests across 21 files) covers the TypeScript surface that is the user-visible logic.
-- Manual smoke-testing of the packaged installer covers the Tauri-runtime integration path.
 - The fault is environment-specific (this Windows 11 26200 build host). It may not reproduce on a fresh Windows runner (e.g. GitHub Actions), so a CI run could re-enable the gate without local debugging.
+- Frontend Vitest suite (`npm test`) covers the TypeScript surface that is the user-visible logic.
+- Manual smoke-testing of the packaged installer covers the Tauri-runtime integration path.
+
+**Note (2026-05-23):** Rust unit tests now exist in at least 8 source files (`hotkeys.rs`, `audio.rs`, `continuous_dump.rs`, `ai_fallback/provider.rs`, `errors.rs`, `lib.rs`, `models.rs`, `workflow_agent.rs`). The CI smoke job redesign (see `project-spec/decisions/2026-05-23/ci-smoke-job-redesign.md`) moves test execution to CI (GitHub Actions Windows runner) where this crash is not expected to reproduce. The local workaround (`--skip-rust-lib-tests` in the release gate) remains in place.
 
 ### Workaround in active use
 

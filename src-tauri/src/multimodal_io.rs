@@ -1,7 +1,7 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -270,6 +270,15 @@ pub struct TtsFallbackOutcome {
     pub provider_used: String,
     pub used_fallback: bool,
     pub primary_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Qwen3TtsConfig {
+    pub endpoint: String,
+    pub model: String,
+    pub voice: String,
+    pub api_key: Option<String>,
+    pub timeout_sec: u64,
 }
 
 #[derive(Debug)]
@@ -2531,6 +2540,129 @@ pub fn play_wav_bytes(
     let play_result = play_wav_blocking(&temp_path, volume, output_device_id, playback_control);
     let _ = std::fs::remove_file(&temp_path);
     play_result
+}
+
+pub(crate) fn resolve_qwen3_tts_runtime_config(
+    settings: &crate::modules::VoiceOutputSettings,
+) -> Qwen3TtsConfig {
+    let endpoint = settings.qwen3_tts_endpoint.trim();
+    let model = settings.qwen3_tts_model.trim();
+    let voice = settings.qwen3_tts_voice.trim();
+    let api_key = settings.qwen3_tts_api_key.trim();
+    Qwen3TtsConfig {
+        endpoint: if endpoint.is_empty() {
+            "http://127.0.0.1:8000/v1/audio/speech".to_string()
+        } else {
+            endpoint.to_string()
+        },
+        model: if model.is_empty() {
+            "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice".to_string()
+        } else {
+            model.to_string()
+        },
+        voice: if voice.is_empty() {
+            "vivian".to_string()
+        } else {
+            voice.to_string()
+        },
+        api_key: if api_key.is_empty() {
+            None
+        } else {
+            Some(api_key.to_string())
+        },
+        timeout_sec: settings.qwen3_tts_timeout_sec.clamp(3, 180),
+    }
+}
+
+pub(crate) fn request_qwen3_tts_audio_bytes(
+    text: &str,
+    rate: f32,
+    config: &Qwen3TtsConfig,
+) -> Result<(Vec<u8>, String), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("TTS text is empty.".to_string());
+    }
+
+    let agent = ureq::builder()
+        .timeout(Duration::from_secs(config.timeout_sec))
+        .build();
+    let mut request = agent
+        .post(&config.endpoint)
+        .set("Content-Type", "application/json")
+        .set(
+            "Accept",
+            "audio/wav, audio/mpeg, application/octet-stream, application/json",
+        );
+    if let Some(api_key) = config.api_key.as_ref() {
+        request = request.set("Authorization", &format!("Bearer {}", api_key));
+    }
+
+    let body = serde_json::json!({
+        "model": config.model,
+        "input": text,
+        "voice": config.voice,
+        "response_format": "wav",
+        "stream": false,
+        "speed": rate.clamp(0.5, 2.0),
+    });
+
+    let response = match request.send_json(body) {
+        Ok(response) => response,
+        Err(ureq::Error::Status(code, response)) => {
+            return Err(crate::format_ureq_status_error(
+                "Qwen3-TTS benchmark request",
+                code,
+                response,
+            ));
+        }
+        Err(ureq::Error::Transport(transport)) => {
+            return Err(format!(
+                "Qwen3-TTS benchmark request failed: {} (endpoint={})",
+                transport, config.endpoint
+            ));
+        }
+    };
+
+    let content_type = response
+        .header("Content-Type")
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mut reader = response.into_reader();
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|err| format!("Qwen3-TTS response read failed: {}", err))?;
+
+    Ok((bytes, content_type))
+}
+
+pub(crate) fn speak_qwen3_tts(
+    text: &str,
+    rate: f32,
+    volume: f32,
+    output_device_id: &str,
+    config: &Qwen3TtsConfig,
+    playback_control: Option<Arc<TtsPlaybackControl>>,
+) -> Result<(), String> {
+    let (bytes, content_type) = request_qwen3_tts_audio_bytes(text, rate, config)?;
+    if bytes.is_empty() {
+        return Err("Qwen3-TTS returned an empty response body.".to_string());
+    }
+    if content_type.contains("application/json") {
+        let body = String::from_utf8_lossy(&bytes).trim().to_string();
+        return Err(format!(
+            "Qwen3-TTS returned JSON instead of audio: {}",
+            body
+        ));
+    }
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err(format!(
+            "Qwen3-TTS response is not WAV audio (content-type='{}').",
+            content_type
+        ));
+    }
+    play_wav_bytes(&bytes, volume, output_device_id, playback_control)
 }
 
 pub fn benchmark_piper_synthesis(

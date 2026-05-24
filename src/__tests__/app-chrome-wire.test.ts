@@ -28,8 +28,11 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 vi.mock("../settings", () => ({
-  renderAIFallbackSettingsUi: mocks.renderAIFallbackSettingsUi,
   renderSettings: mocks.renderSettings,
+}));
+
+vi.mock("../settings/ai-refinement.settings", () => ({
+  renderAIFallbackSettingsUi: mocks.renderAIFallbackSettingsUi,
 }));
 
 vi.mock("../settings-persist", () => ({

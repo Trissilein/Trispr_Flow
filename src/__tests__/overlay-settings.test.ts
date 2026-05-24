@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
-  document.body.innerHTML = `
+    document.body.innerHTML = `
     <input id="overlay-color" type="color" />
     <input id="overlay-min-radius" type="range" min="4" max="32" />
     <span id="overlay-min-radius-value"></span>
@@ -54,162 +54,162 @@ import { setSettings, settings } from "../state";
 import type { Settings } from "../types";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
-  return {
-    overlay_style: "dot",
-    overlay_min_radius: 10,
-    overlay_max_radius: 40,
-    overlay_color: "#112233",
-    overlay_rise_ms: 40,
-    overlay_fall_ms: 80,
-    overlay_opacity_inactive: 0.5,
-    overlay_opacity_active: 0.9,
-    overlay_pos_x: 100,
-    overlay_pos_y: 200,
-    overlay_kitt_color: "#445566",
-    overlay_kitt_rise_ms: 60,
-    overlay_kitt_fall_ms: 90,
-    overlay_kitt_opacity_inactive: 0.4,
-    overlay_kitt_opacity_active: 0.8,
-    overlay_kitt_pos_x: 300,
-    overlay_kitt_pos_y: 400,
-    overlay_kitt_min_width: 20,
-    overlay_kitt_max_width: 500,
-    overlay_kitt_height: 18,
-    overlay_refining_indicator_enabled: true,
-    overlay_refining_indicator_preset: "standard",
-    overlay_refining_indicator_color: "#6ec8ff",
-    overlay_refining_indicator_speed_ms: 1150,
-    overlay_refining_indicator_range: 100,
-    overlay_tts_stop_enabled: true,
-    overlay_tts_stop_shape: "compact",
-    overlay_tts_stop_color: "#ff00aa",
-    ...overrides,
-  } as unknown as Settings;
+    return {
+        overlay_style: "dot",
+        overlay_min_radius: 10,
+        overlay_max_radius: 40,
+        overlay_color: "#112233",
+        overlay_rise_ms: 40,
+        overlay_fall_ms: 80,
+        overlay_opacity_inactive: 0.5,
+        overlay_opacity_active: 0.9,
+        overlay_pos_x: 100,
+        overlay_pos_y: 200,
+        overlay_kitt_color: "#445566",
+        overlay_kitt_rise_ms: 60,
+        overlay_kitt_fall_ms: 90,
+        overlay_kitt_opacity_inactive: 0.4,
+        overlay_kitt_opacity_active: 0.8,
+        overlay_kitt_pos_x: 300,
+        overlay_kitt_pos_y: 400,
+        overlay_kitt_min_width: 20,
+        overlay_kitt_max_width: 500,
+        overlay_kitt_height: 18,
+        overlay_refining_indicator_enabled: true,
+        overlay_refining_indicator_preset: "standard",
+        overlay_refining_indicator_color: "#6ec8ff",
+        overlay_refining_indicator_speed_ms: 1150,
+        overlay_refining_indicator_range: 100,
+        overlay_tts_stop_enabled: true,
+        overlay_tts_stop_shape: "compact",
+        overlay_tts_stop_color: "#ff00aa",
+        ...overrides,
+    } as unknown as Settings;
 }
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 beforeEach(() => {
-  setSettings(makeSettings());
+    setSettings(makeSettings());
 });
 
 describe("updateOverlayStyleVisibility", () => {
-  it("shows dot controls and hides KITT controls for dot style", () => {
-    updateOverlayStyleVisibility("dot");
-    expect(byId<HTMLDivElement>("overlay-dot-settings").style.display).toBe("block");
-    expect(byId<HTMLDivElement>("overlay-kitt-settings").style.display).toBe("none");
-  });
+    it("shows dot controls and hides KITT controls for dot style", () => {
+        updateOverlayStyleVisibility("dot");
+        expect(byId<HTMLDivElement>("overlay-dot-settings").style.display).toBe("block");
+        expect(byId<HTMLDivElement>("overlay-kitt-settings").style.display).toBe("none");
+    });
 
-  it("shows KITT controls and hides dot controls for KITT style", () => {
-    updateOverlayStyleVisibility("kitt");
-    expect(byId<HTMLDivElement>("overlay-dot-settings").style.display).toBe("none");
-    expect(byId<HTMLDivElement>("overlay-kitt-settings").style.display).toBe("block");
-  });
+    it("shows KITT controls and hides dot controls for KITT style", () => {
+        updateOverlayStyleVisibility("kitt");
+        expect(byId<HTMLDivElement>("overlay-dot-settings").style.display).toBe("none");
+        expect(byId<HTMLDivElement>("overlay-kitt-settings").style.display).toBe("block");
+    });
 
-  it("treats unknown styles as dot controls", () => {
-    updateOverlayStyleVisibility("unknown");
-    expect(byId<HTMLDivElement>("overlay-dot-settings").style.display).toBe("block");
-    expect(byId<HTMLDivElement>("overlay-kitt-settings").style.display).toBe("none");
-  });
+    it("treats unknown styles as dot controls", () => {
+        updateOverlayStyleVisibility("unknown");
+        expect(byId<HTMLDivElement>("overlay-dot-settings").style.display).toBe("block");
+        expect(byId<HTMLDivElement>("overlay-kitt-settings").style.display).toBe("none");
+    });
 });
 
 describe("applyOverlaySharedUi", () => {
-  it("renders dot shared settings", () => {
-    applyOverlaySharedUi("dot");
-    expect(byId<HTMLInputElement>("overlay-color").value).toBe("#112233");
-    expect(byId<HTMLInputElement>("overlay-rise").value).toBe("40");
-    expect(byId<HTMLElement>("overlay-rise-value").textContent).toBe("40");
-    expect(byId<HTMLInputElement>("overlay-opacity-active").value).toBe("90");
-    expect(byId<HTMLElement>("overlay-opacity-active-value").textContent).toBe("90%");
-    expect(byId<HTMLInputElement>("overlay-pos-x").value).toBe("100");
-  });
+    it("renders dot shared settings", () => {
+        applyOverlaySharedUi("dot");
+        expect(byId<HTMLInputElement>("overlay-color").value).toBe("#112233");
+        expect(byId<HTMLInputElement>("overlay-rise").value).toBe("40");
+        expect(byId<HTMLElement>("overlay-rise-value").textContent).toBe("40");
+        expect(byId<HTMLInputElement>("overlay-opacity-active").value).toBe("90");
+        expect(byId<HTMLElement>("overlay-opacity-active-value").textContent).toBe("90%");
+        expect(byId<HTMLInputElement>("overlay-pos-x").value).toBe("100");
+    });
 
-  it("renders KITT shared settings", () => {
-    applyOverlaySharedUi("kitt");
-    expect(byId<HTMLInputElement>("overlay-color").value).toBe("#445566");
-    expect(byId<HTMLInputElement>("overlay-rise").value).toBe("60");
-    expect(byId<HTMLInputElement>("overlay-opacity-inactive").value).toBe("40");
-    expect(byId<HTMLInputElement>("overlay-pos-x").value).toBe("300");
-    expect(byId<HTMLInputElement>("overlay-pos-y").value).toBe("400");
-  });
+    it("renders KITT shared settings", () => {
+        applyOverlaySharedUi("kitt");
+        expect(byId<HTMLInputElement>("overlay-color").value).toBe("#445566");
+        expect(byId<HTMLInputElement>("overlay-rise").value).toBe("60");
+        expect(byId<HTMLInputElement>("overlay-opacity-inactive").value).toBe("40");
+        expect(byId<HTMLInputElement>("overlay-pos-x").value).toBe("300");
+        expect(byId<HTMLInputElement>("overlay-pos-y").value).toBe("400");
+    });
 
-  it("is a no-op when settings is null", () => {
-    setSettings(null);
-    byId<HTMLInputElement>("overlay-color").value = "#000000";
-    applyOverlaySharedUi("dot");
-    expect(byId<HTMLInputElement>("overlay-color").value).toBe("#000000");
-  });
+    it("is a no-op when settings is null", () => {
+        setSettings(null);
+        byId<HTMLInputElement>("overlay-color").value = "#000000";
+        applyOverlaySharedUi("dot");
+        expect(byId<HTMLInputElement>("overlay-color").value).toBe("#000000");
+    });
 
-  it("clamps rise and fall labels to control max values", () => {
-    setSettings(makeSettings({ overlay_rise_ms: 500, overlay_fall_ms: 600 }));
-    applyOverlaySharedUi("dot");
-    expect(byId<HTMLInputElement>("overlay-rise").value).toBe("200");
-    expect(byId<HTMLElement>("overlay-rise-value").textContent).toBe("200");
-    expect(byId<HTMLInputElement>("overlay-fall").value).toBe("200");
-    expect(byId<HTMLElement>("overlay-fall-value").textContent).toBe("200");
-  });
+    it("clamps rise and fall labels to control max values", () => {
+        setSettings(makeSettings({ overlay_rise_ms: 500, overlay_fall_ms: 600 }));
+        applyOverlaySharedUi("dot");
+        expect(byId<HTMLInputElement>("overlay-rise").value).toBe("200");
+        expect(byId<HTMLElement>("overlay-rise-value").textContent).toBe("200");
+        expect(byId<HTMLInputElement>("overlay-fall").value).toBe("200");
+        expect(byId<HTMLElement>("overlay-fall-value").textContent).toBe("200");
+    });
 });
 
 describe("renderOverlaySettings", () => {
-  it("renders overlay style, radius, KITT dimensions, and shared settings", () => {
-    renderOverlaySettings();
-    expect(byId<HTMLSelectElement>("overlay-style").value).toBe("dot");
-    expect(byId<HTMLInputElement>("overlay-min-radius").value).toBe("10");
-    expect(byId<HTMLElement>("overlay-min-radius-value").textContent).toBe("10");
-    expect(byId<HTMLInputElement>("overlay-kitt-min-width").value).toBe("20");
-    expect(byId<HTMLInputElement>("overlay-kitt-max-width").value).toBe("500");
-    expect(byId<HTMLElement>("overlay-kitt-height-value").textContent).toBe("18");
-    expect(byId<HTMLInputElement>("overlay-color").value).toBe("#112233");
-  });
+    it("renders overlay style, radius, KITT dimensions, and shared settings", () => {
+        renderOverlaySettings();
+        expect(byId<HTMLSelectElement>("overlay-style").value).toBe("dot");
+        expect(byId<HTMLInputElement>("overlay-min-radius").value).toBe("10");
+        expect(byId<HTMLElement>("overlay-min-radius-value").textContent).toBe("10");
+        expect(byId<HTMLInputElement>("overlay-kitt-min-width").value).toBe("20");
+        expect(byId<HTMLInputElement>("overlay-kitt-max-width").value).toBe("500");
+        expect(byId<HTMLElement>("overlay-kitt-height-value").textContent).toBe("18");
+        expect(byId<HTMLInputElement>("overlay-color").value).toBe("#112233");
+    });
 
-  it("is a no-op when settings is null", () => {
-    setSettings(null);
-    byId<HTMLInputElement>("overlay-min-radius").value = "12";
-    renderOverlaySettings();
-    expect(byId<HTMLInputElement>("overlay-min-radius").value).toBe("12");
-  });
+    it("is a no-op when settings is null", () => {
+        setSettings(null);
+        byId<HTMLInputElement>("overlay-min-radius").value = "12";
+        renderOverlaySettings();
+        expect(byId<HTMLInputElement>("overlay-min-radius").value).toBe("12");
+    });
 
-  it("clamps overlay radii and KITT max width to slider bounds", () => {
-    setSettings(makeSettings({ overlay_min_radius: 999, overlay_max_radius: 9999, overlay_kitt_max_width: 9999 }));
-    renderOverlaySettings();
-    expect(settings?.overlay_min_radius).toBe(Number(byId<HTMLInputElement>("overlay-min-radius").max));
-    expect(settings?.overlay_max_radius).toBe(Number(byId<HTMLInputElement>("overlay-max-radius").max));
-    expect(settings?.overlay_kitt_max_width).toBe(Number(byId<HTMLInputElement>("overlay-kitt-max-width").max));
-  });
+    it("clamps overlay radii and KITT max width to slider bounds", () => {
+        setSettings(makeSettings({ overlay_min_radius: 999, overlay_max_radius: 9999, overlay_kitt_max_width: 9999 }));
+        renderOverlaySettings();
+        expect(settings?.overlay_min_radius).toBe(Number(byId<HTMLInputElement>("overlay-min-radius").max));
+        expect(settings?.overlay_max_radius).toBe(Number(byId<HTMLInputElement>("overlay-max-radius").max));
+        expect(settings?.overlay_kitt_max_width).toBe(Number(byId<HTMLInputElement>("overlay-kitt-max-width").max));
+    });
 
-  it("normalizes overlay-refining indicator values", () => {
-    setSettings(makeSettings({
-      overlay_refining_indicator_preset: "unknown" as any,
-      overlay_refining_indicator_color: "not-a-color",
-      overlay_refining_indicator_speed_ms: 12,
-      overlay_refining_indicator_range: 999,
-      overlay_tts_stop_shape: "square" as any,
-      overlay_tts_stop_color: "bad-color",
-    }));
-    renderOverlaySettings();
-    expect(settings?.overlay_refining_indicator_preset).toBe("standard");
-    expect(byId<HTMLSelectElement>("overlay-refining-indicator-preset").value).toBe("standard");
-    expect(settings?.overlay_refining_indicator_color).toBe("#6ec8ff");
-    expect(settings?.overlay_refining_indicator_speed_ms).toBe(450);
-    expect(settings?.overlay_refining_indicator_range).toBe(180);
-    expect(settings?.overlay_tts_stop_shape).toBe("compact");
-    expect(settings?.overlay_tts_stop_color).toBe("#4be0d4");
-  });
+    it("normalizes overlay-refining indicator values", () => {
+        setSettings(makeSettings({
+            overlay_refining_indicator_preset: "unknown" as any,
+            overlay_refining_indicator_color: "not-a-color",
+            overlay_refining_indicator_speed_ms: 12,
+            overlay_refining_indicator_range: 999,
+            overlay_tts_stop_shape: "square" as any,
+            overlay_tts_stop_color: "bad-color",
+        }));
+        renderOverlaySettings();
+        expect(settings?.overlay_refining_indicator_preset).toBe("standard");
+        expect(byId<HTMLSelectElement>("overlay-refining-indicator-preset").value).toBe("standard");
+        expect(settings?.overlay_refining_indicator_color).toBe("#6ec8ff");
+        expect(settings?.overlay_refining_indicator_speed_ms).toBe(450);
+        expect(settings?.overlay_refining_indicator_range).toBe(180);
+        expect(settings?.overlay_tts_stop_shape).toBe("compact");
+        expect(settings?.overlay_tts_stop_color).toBe("#4be0d4");
+    });
 
-  it("renders overlay-refining indicator controls", () => {
-    renderOverlaySettings();
-    expect(byId<HTMLInputElement>("overlay-refining-indicator-enabled").checked).toBe(true);
-    expect(byId<HTMLInputElement>("overlay-refining-indicator-color").value).toBe("#6ec8ff");
-    expect(byId<HTMLInputElement>("overlay-refining-indicator-speed").value).toBe("1150");
-    expect(byId<HTMLElement>("overlay-refining-indicator-speed-value").textContent).toBe("1150 ms");
-    expect(byId<HTMLInputElement>("overlay-refining-indicator-range").value).toBe("100");
-    expect(byId<HTMLElement>("overlay-refining-indicator-range-value").textContent).toBe("100%");
-  });
+    it("renders overlay-refining indicator controls", () => {
+        renderOverlaySettings();
+        expect(byId<HTMLInputElement>("overlay-refining-indicator-enabled").checked).toBe(true);
+        expect(byId<HTMLInputElement>("overlay-refining-indicator-color").value).toBe("#6ec8ff");
+        expect(byId<HTMLInputElement>("overlay-refining-indicator-speed").value).toBe("1150");
+        expect(byId<HTMLElement>("overlay-refining-indicator-speed-value").textContent).toBe("1150 ms");
+        expect(byId<HTMLInputElement>("overlay-refining-indicator-range").value).toBe("100");
+        expect(byId<HTMLElement>("overlay-refining-indicator-range-value").textContent).toBe("100%");
+    });
 
-  it("renders overlay TTS stop controls", () => {
-    renderOverlaySettings();
-    expect(byId<HTMLInputElement>("overlay-tts-stop-enabled").checked).toBe(true);
-    expect(byId<HTMLSelectElement>("overlay-tts-stop-shape").value).toBe("compact");
-    expect(byId<HTMLInputElement>("overlay-tts-stop-color").value).toBe("#ff00aa");
-  });
+    it("renders overlay TTS stop controls", () => {
+        renderOverlaySettings();
+        expect(byId<HTMLInputElement>("overlay-tts-stop-enabled").checked).toBe(true);
+        expect(byId<HTMLSelectElement>("overlay-tts-stop-shape").value).toBe("compact");
+        expect(byId<HTMLInputElement>("overlay-tts-stop-color").value).toBe("#ff00aa");
+    });
 });

@@ -4,7 +4,7 @@ This file is the canonical source for domain language in Trispr Flow.
 It is written for domain experts (users, designers, contributors), not for implementation details.
 Update this file inline as terms are resolved during design sessions.
 
-Last updated: 2026-05-14
+Last updated: 2026-05-23
 
 ---
 
@@ -88,7 +88,7 @@ Time- or silence-based segmentation markers applied to long transcripts for navi
 
 ### Custom Vocabulary
 User-defined find-replace pairs applied post-transcription by the rule-based Post-Processing pipeline. Separate from Vocabulary Learning (which auto-promotes candidates).
-→ `src-tauri/src/postprocessing.rs`, `src/settings.ts`
+→ `src-tauri/src/postprocessing.rs`, `src/settings/vocabulary.settings.ts`
 
 ### Vocabulary Learning
 A diff-based system that tracks recurring AI corrections of user text (via LCS word-diff) and builds a candidate list for auto-promotion to Custom Vocabulary.

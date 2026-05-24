@@ -76,7 +76,9 @@ import {
   isRefinementEnabled,
 } from "./state";
 import * as dom from "./dom-refs";
-import { handlePiperVoiceDownloadProgress, renderAIFallbackSettingsUi, renderSettings } from "./settings";
+import { renderSettings } from "./settings";
+import { renderAIFallbackSettingsUi } from "./settings/ai-refinement.settings";
+import { handlePiperVoiceDownloadProgress } from "./settings/voice-output.settings";
 import { renderDevices, renderOutputDevices } from "./devices";
 import {
   renderHero,
@@ -400,7 +402,7 @@ function queueTranscriptPaste(text: string, context: string): void {
   if (!trimmed) return;
 
   pasteQueue = pasteQueue
-    .catch(() => {})
+    .catch(() => { })
     .then(async () => {
       await invoke("paste_transcript_text", { text });
     })
@@ -816,7 +818,7 @@ async function bootstrap() {
         }, OLLAMA_FALLBACK_MS);
 
         // Also kick off autostart which will eventually emit the health event
-        void autoStartLocalRuntimeIfNeeded("bootstrap").catch(() => {});
+        void autoStartLocalRuntimeIfNeeded("bootstrap").catch(() => { });
 
         traceFrontendInfo("bootstrap.background", "ollama init deferred — waiting for runtime-health event");
 
@@ -851,7 +853,7 @@ async function bootstrap() {
       const allIds = new Set([...history, ...transcribeHistory].map((e) => e.id));
       pruneOrphanedSnapshots(allIds);
       // Live dump to file for crash recovery
-      dumpHistoryToFile().catch(() => {});
+      dumpHistoryToFile().catch(() => { });
     };
   }
 
@@ -1028,10 +1030,10 @@ async function bootstrap() {
     }),
     ...(["agent:command-detected", "agent:plan-ready", "agent:execution-progress",
       "agent:execution-finished", "agent:execution-failed"] as const).map((name) =>
-      listen(name, (event) => {
-        appendWorkflowAgentLog(`Event ${name} -> ${JSON.stringify(event.payload)}`);
-      })
-    ),
+        listen(name, (event) => {
+          appendWorkflowAgentLog(`Event ${name} -> ${JSON.stringify(event.payload)}`);
+        })
+      ),
     listen("agent:execution-progress", (event: any) => {
       const p = event.payload;
       if (p?.intent === "reminder_capture" && p?.message) {

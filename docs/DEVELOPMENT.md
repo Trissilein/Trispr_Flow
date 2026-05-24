@@ -101,11 +101,14 @@ npm run test:smoke
 
 `test:smoke` runs:
 1. `npm run build` (TypeScript + Vite production build)
-2. `cargo test --manifest-path src-tauri/Cargo.toml --lib`
+2. `cargo test --manifest-path src-tauri/Cargo.toml --lib --no-run` (compile-check only)
 3. `cargo test --manifest-path src-tauri/Cargo.toml --bins`
 
-The final `cargo build` step was removed on 2026-05-23. See
-`project-spec/decisions/2026-05-23/ci-smoke-job-redesign.md`.
+The `--no-run` flag on `--lib` is intentional: the Rust test binary fails to load on
+both local Windows and GitHub Actions `windows-latest` with `STATUS_ENTRYPOINT_NOT_FOUND`
+(0xc0000139), a DLL entry-point version mismatch in the Tauri Windows dependency chain.
+Compile-check gives most of the safety value until the loader issue is resolved.
+See `project-spec/decisions/2026-05-23/ci-smoke-job-redesign.md` and `docs/KNOWN_ISSUES.md`.
 
 ## Local whisper.cpp (GPU)
 1. Build whisper.cpp with CUDA enabled.

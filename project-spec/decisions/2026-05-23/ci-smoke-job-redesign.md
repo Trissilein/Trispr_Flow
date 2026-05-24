@@ -114,5 +114,19 @@ Verification: `cargo fmt --check` clean; `cargo check` clean (only pre-existing 
 
 Stale documentation cleaned up in the same pass:
 
+---
+
+## Follow-up (2026-05-24)
+
+The assumption that `STATUS_ENTRYPOINT_NOT_FOUND` would not reproduce on a fresh GitHub Actions Windows runner proved false. CI run [26371709951](https://github.com/Trissilein/Trispr_Flow/actions/runs/26371709951) produced the identical crash on `windows-latest` (Server 2025 / Windows 11 24H2).
+
+**Root cause understanding:** The crash is not a missing DLL (`STATUS_DLL_NOT_FOUND` = 0xc0000135). It is `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139): every DLL the test binary references is present, but a function one of them tries to call from another DLL is not in that DLL's export table on this Windows version. The production binary has `VCRUNTIME140_1.dll`, `dxgi.dll`, `propsys.dll`, and `api-ms-win-crt-*` shims that the test binary lacks, suggesting the test binary's loader chain reaches a version-mismatched path those shims would otherwise redirect.
+
+**Decision:** Restore `--no-run` to `cargo test --lib` (the ADR's stated fallback). Rust test *execution* in CI is now a separate tracked work item. The compile-check (`--no-run`) still catches type errors, missing symbols, and refactoring breakage — the primary safety value for a parallel-agent development workflow.
+
+**Next diagnostic step (planned):** Run `dumpbin /imports` on the locally built test binary (`src-tauri/target/debug/deps/trispr_flow_lib-*.exe`) and compare each imported function against the export tables of the corresponding DLLs on this machine. This will identify the specific missing entry point and determine whether static CRT linkage or a different fix is appropriate.
+
+Stale documentation cleaned up in the same pass:
+
 - `GEMINI.md`: removed "Full build + Rust tests + Cargo build check" description of `test:smoke`.
 - `docs/DEVELOPMENT.md`: replaced the single-line `cargo test` step with the actual `--lib` then `--bins` invocations and a pointer to this ADR.

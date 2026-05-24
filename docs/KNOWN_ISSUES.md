@@ -59,10 +59,12 @@ Release-gate runs use `--skip-rust-lib-tests`. The flag is allowed by `scripts/a
 ### Re-engagement criteria
 
 Pick this up again when one of:
-- A Rust unit test for backend logic becomes load-bearing (would require running this gate on a different machine or in CI).
+- The missing entry point is identified via `dumpbin /imports` + export-table comparison (next planned step).
+- A Rust unit test for backend logic becomes load-bearing and compile-check is no longer sufficient.
 - The fault address inside `ntdll.dll` changes meaningfully (suggests a Windows update touched the loader path).
-- An independent reproducer is found on a different developer's machine, ruling out the local environment as cause.
 - We have time to install Application Verifier or Windows Debugging Tools (gflags + Loader Snaps) to capture the missing-symbol name conclusively.
+
+**Update (2026-05-24):** The crash reproduces on GitHub Actions `windows-latest` (Server 2025 / Windows 11 24H2) with the same `STATUS_ENTRYPOINT_NOT_FOUND` exit code. This rules out local environment as the sole cause. The fault is in the Tauri test binary's Windows DLL loader chain. `--no-run` is in use for `cargo test --lib` in the CI smoke job as a compile-check workaround. Rust test execution in CI is a tracked open item.
 
 ### Useful diagnostics path if anyone re-engages
 

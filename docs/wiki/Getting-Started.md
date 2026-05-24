@@ -24,7 +24,7 @@ npm run test:smoke
 
 `test:smoke` runs:
 1. `npm run build`
-2. `cargo test --manifest-path src-tauri/Cargo.toml --lib`
+2. `cargo test --manifest-path src-tauri/Cargo.toml --lib --no-run` (compile-check; test execution blocked by DLL issue, see `docs/KNOWN_ISSUES.md`)
 3. `cargo test --manifest-path src-tauri/Cargo.toml --bins`
 
 ## Local whisper.cpp (GPU)

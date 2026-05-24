@@ -1,4 +1,12 @@
 fn main() {
+    if std::env::var("TARGET")
+        .map(|target| target.ends_with("-pc-windows-msvc"))
+        .unwrap_or(false)
+    {
+        println!("cargo:rustc-link-arg=/DELAYLOAD:comctl32.dll");
+        println!("cargo:rustc-link-lib=delayimp");
+    }
+
     // NOTE: comctl32 v6 manifest is now embedded automatically by tauri-winres
     // via the generated resource.rc (RT_MANIFEST / type 24). Manual embedding
     // via /MANIFESTINPUT+/MANIFEST:EMBED would cause CVT1100 duplicate resource.

@@ -1,9 +1,11 @@
 # Refactoring Plan — Trispr Flow Quality Foundation
 
 Date: 2026-05-15  
-Last verified: 2026-05-24
-Status: **Phase 0 complete · Phase 1 complete · R2 complete · R1 build complete (2026-05-24) · B8 deferred**
+Last verified: 2026-05-25
+Status: **Phase 0 complete · Phase 1 complete · R2 complete · R1 execution complete (2026-05-25) · B8 deferred**
 Participants: Hendr (architect), automated challenger review
+
+Follow-on architectural work (Trispr Flow modularization) is tracked separately in [`../2026-05-25/trispr-flow-modularization.md`](../2026-05-25/trispr-flow-modularization.md).
 
 ---
 
@@ -116,7 +118,7 @@ Decision (2026-05-23 grill): timing is "after QW3" (not part of QW3) to keep eac
 
 | ID  | What                                                             | Depends on               | Status                                                                                                                                                                                                        |
 | --- | ---------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | Move command implementations out of `lib.rs` into domain modules | OQ-2, QW3+QW4 as pattern | **design complete (2026-05-24)** — 110 `#[tauri::command]` in `lib.rs` (2026-05-24 recount; 2026-05-23 scan cited 111, original plan 108 — QW3 removed 1, noise accounts for rest); see R1 design notes below |
+| R1  | Move command implementations out of `lib.rs` into domain modules | OQ-2, QW3+QW4 as pattern | **execution complete (2026-05-25)** — `lib.rs` now has 21 `#[tauri::command]` functions (bootstrap/diagnostics only). Commands distributed: `ai_fallback/commands.rs` (16), `gdd/confluence.rs` (14), `multimodal_io.rs` (12), `models.rs` (9), `ollama_runtime.rs` (9), `history_partition.rs` (9), `workflow_agent.rs` (8), `audio.rs` (7), `gdd/mod.rs` (7), plus smaller. Completion commit: `b397260 refactor(overlay): complete R1 command extraction and B8 deferral`. Design notes below retained for traceability. |
 | R2  | Split `event-listeners.ts` by domain                             | QW2 resolved, T0a as net | **complete** — all 6 slices shipped; `event-listeners.ts` is a 30-line orchestrator                                                                                                                           |
 | R3  | ~~Separate state management tier~~                               | —                        | **cancelled as standalone**                                                                                                                                                                                   |
 

@@ -1,8 +1,8 @@
 # Refactoring Plan — Trispr Flow Quality Foundation
 
 Date: 2026-05-15  
-Last verified: 2026-05-23  
-Status: **Phase 0 complete · Phase 1 complete (QW3 + QW3b done) · R2 complete · R1 not started**  
+Last verified: 2026-05-24
+Status: **Phase 0 complete · Phase 1 complete · R2 complete · R1 build complete (2026-05-24) · B8 deferred**
 Participants: Hendr (architect), automated challenger review
 
 ---
@@ -114,23 +114,95 @@ Decision (2026-05-23 grill): timing is "after QW3" (not part of QW3) to keep eac
 
 ### Phase 2 — Structural refactoring (after Phase 1; each item requires an ADR before execution)
 
-| ID  | What                                                             | Depends on               | Status                                                                                                      |
-| --- | ---------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| R1  | Move command implementations out of `lib.rs` into domain modules | OQ-2, QW3+QW4 as pattern | **not started** — 111 `#[tauri::command]` functions confirmed in `lib.rs` (2026-05-23 scan; plan cited 108) |
-| R2  | Split `event-listeners.ts` by domain                             | QW2 resolved, T0a as net | **complete** — all 6 slices shipped; `event-listeners.ts` is a 30-line orchestrator                         |
-| R3  | ~~Separate state management tier~~                               | —                        | **cancelled as standalone**                                                                                 |
+| ID  | What                                                             | Depends on               | Status                                                                                                                                                                                                        |
+| --- | ---------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | Move command implementations out of `lib.rs` into domain modules | OQ-2, QW3+QW4 as pattern | **design complete (2026-05-24)** — 110 `#[tauri::command]` in `lib.rs` (2026-05-24 recount; 2026-05-23 scan cited 111, original plan 108 — QW3 removed 1, noise accounts for rest); see R1 design notes below |
+| R2  | Split `event-listeners.ts` by domain                             | QW2 resolved, T0a as net | **complete** — all 6 slices shipped; `event-listeners.ts` is a 30-line orchestrator                                                                                                                           |
+| R3  | ~~Separate state management tier~~                               | —                        | **cancelled as standalone**                                                                                                                                                                                   |
 
 R3 decision: State modernization is folded into R2. Each domain slice extracted in R2 gets explicit accessor functions instead of direct module-level variable access. No big-bang pub-sub refactor. This is a one-way door of medium reversibility — see Trade-offs.
+
+**Design (2026-05-24) — R1:** Grill + challenger review (2026-05-24) produced the binding plan below. Approved by Hendr.
+
+#### R1 scope
+
+Hybrid: clean-boundary commands move; commands coupled to cross-cutting orchestrators stay in `lib.rs` and are documented as intentional. "No big-bang moves" rule is preserved. R1 proceeds cluster-by-cluster, one commit per cluster.
+
+#### R1 prerequisites (must land before their dependents)
+
+| Step | Action                                                                                                                                       | Unlocks                                                                                      |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| A0.1 | Add `#[macro_export]` to `macro_rules! guarded_command` in `lib.rs` — one line, zero behaviour change                                        | GDD (A1.10), Confluence (B4), modules (B8), workflow_agent (B1), vision (B2), TTS (B3)       |
+| A0.2 | Move `validate_path_within` (path-traversal guard with UNC rejection) from `lib.rs` to `paths.rs` as `pub(crate)` — approved as one-way door | `encode_to_opus` → `opus.rs` (A1.9); `run_latency_benchmark_inner` → `tts_benchmark.rs` (B7) |
+
+Decision A0.1: `#[macro_export]` in `lib.rs` (not move to `util.rs`). Moving the macro costs ~21 callsite updates in `lib.rs` for a marginal organisational gain. Accepted as cost-justified; domain modules call `crate::guarded_command!(...)`. One-way door not triggered — trivially reversible.
+
+Decision A0.2: `validate_path_within` is a security primitive. Correct home is `paths.rs` alongside `resolve_base_dir`. Both `encode_to_opus` and `run_latency_benchmark_inner` import from `crate::paths::validate_path_within` after this move. One-way door — approved 2026-05-24.
+
+#### R1 Cluster A — Pure-delegation moves
+
+A1.1–A1.10 may ship in any order; A0 must land first. A1.9 additionally requires A0.2; A1.10 requires A0.1.
+
+| Commit | Target module          | Commands                                                                                                                                                                                                                                                                                                                                            |
+| ------ | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1.1   | `hotkeys.rs`           | `validate_hotkey`, `test_hotkey`, `get_hotkey_conflicts`                                                                                                                                                                                                                                                                                            |
+| A1.2   | `util.rs`              | `log_frontend_event`, `frontend_heartbeat`                                                                                                                                                                                                                                                                                                          |
+| A1.3   | `paths.rs`             | `open_log_directory`                                                                                                                                                                                                                                                                                                                                |
+| A1.4   | `audio.rs`             | `get_last_recording_path`, `get_recordings_directory`, `open_recordings_directory`                                                                                                                                                                                                                                                                  |
+| A1.5   | `session_manager.rs`   | `save_crash_recovery`, `clear_crash_recovery`                                                                                                                                                                                                                                                                                                       |
+| A1.6   | `history_partition.rs` | `save_transcript`                                                                                                                                                                                                                                                                                                                                   |
+| A1.7   | `video_ingest.rs`      | `video_ingest_sources`, `video_ingest_history_entry` (delegate to `crate::video_ingest::*` — ingest commands belong in the ingest module, not generation)                                                                                                                                                                                           |
+| A1.8   | `video_generation.rs`  | `video_generate`, `video_get_output_dir`, `video_open_output_dir`                                                                                                                                                                                                                                                                                   |
+| A1.9   | `opus.rs`              | `check_ffmpeg`, `get_ffmpeg_version_info`, `encode_to_opus`; uses `crate::paths::validate_path_within` (needs A0.2)                                                                                                                                                                                                                                 |
+| A1.10  | `gdd/mod.rs`           | `list_gdd_presets`, `save_gdd_preset_clone`, `detect_gdd_preset`, `generate_gdd_draft`, `validate_gdd_draft`, `render_gdd_for_confluence`, `render_gdd_markdown`; needs A0.1. `save_gdd_preset_clone` retains its own inline persistence path — refactoring to `update_and_persist_settings` is out of R1 scope (documented intentional divergence) |
+
+#### R1 Cluster B — Helper-promotion moves
+
+All B commits require A0.1 (macro export). Each row promotes its helpers before moving commands.
+
+| Commit | Promote first                                                                                                                                                                | Commands → Target                                                                                                                                                                                                                                           |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| B1     | `emit_assistant_*` helper family + `ASSISTANT_PENDING_CONFIRMATION` / `ASSISTANT_CONFIRM_TOKEN_SEQ` statics → `workflow_agent.rs`                                            | 8 agent commands → `workflow_agent.rs`                                                                                                                                                                                                                      |
+| B2     | `stop_vision_stream_internal` → `multimodal_io.rs`                                                                                                                           | `list_screen_sources`, `start_vision_stream`, `stop_vision_stream`, `get_vision_stream_health`, `capture_vision_snapshot` → `multimodal_io.rs`                                                                                                              |
+| B3     | `speak_tts_internal`, `stop_tts_internal` → `multimodal_io.rs`                                                                                                               | `list_tts_providers`, `list_tts_voices`, `list_piper_voice_catalog`, `download_piper_voice_key`, `speak_tts`, `stop_tts`, `test_tts_provider` → `multimodal_io.rs`                                                                                          |
+| B4     | (macro only — A0.1)                                                                                                                                                          | 14 Confluence commands → `gdd/confluence.rs` (existing 924-line file; `confluence/mod.rs` is a 1-line stub and is not the target)                                                                                                                           |
+| B5     | (state fields only, no new lib.rs helpers)                                                                                                                                   | `get_history`, `get_transcribe_history`, `clear_active_transcript_history`, `delete_active_transcript_entry`, `list_history_partitions`, `load_history_partition`, `add_history_entry`, `add_transcribe_entry` → `history_partition.rs`                     |
+| B6     | `prepare_refinement`, `check_strict_local_mode`, `update_and_persist_settings` → `ai_fallback/` — one-way door, approved 2026-05-24                                          | 18 AI fallback commands → `ai_fallback/commands.rs`                                                                                                                                                                                                         |
+| B7     | `run_latency_benchmark_inner` + `LatencyBenchmarkRequest`/`LatencyBenchmarkResult` types → `tts_benchmark.rs`; imports `crate::ai_fallback::prepare_refinement` post-B6      | `run_latency_benchmark` → `tts_benchmark.rs` (must follow B6 — moving in Cluster A would create a module→root dependency on `prepare_refinement` that B6 would then force to re-migrate)                                                                    |
+| B8     | `schedule_piper_daemon_reconcile`, `schedule_ai_refinement_reenable_bootstrap`, `start_transcribe_monitor`/`stop_transcribe_monitor` — assess entanglement before committing | `list_modules`, `enable_module`, `disable_module`, `get_module_health`, `check_module_updates`, `show_assistant_presence_window` → `modules/commands.rs` — **stretch goal**: if helpers are too entangled, R1 ships without B8 and a follow-up ADR is filed |
+| B9     | (no promotion needed)                                                                                                                                                        | `get_task_capture_settings`, `save_task_capture_settings`, `test_task_capture_endpoint` → `modules/task_capture.rs`                                                                                                                                         |
+
+Build result (2026-05-24): A0, A1, B1-B7, and B9 are implemented. B8 is deferred under its documented stretch-goal rule because the module lifecycle commands still couple settings normalization, transcribe monitor lifecycle, AI runtime bootstrap, Piper daemon lifecycle, assistant presence, and workflow-agent state. Validation: `npm test` passed 626/626; Rust editor diagnostics are warning-only. Full `cargo check --manifest-path src-tauri/Cargo.toml` is blocked on this machine by the known missing bundled CUDA resource `bin\cuda\cublas64_13.dll`.
+
+Note — `workflow_agent.rs` rename: `ASSISTANT_PENDING_CONFIRMATION` static moves as-is to `workflow_agent.rs`. Renaming the file to `assistant_core.rs` (CONTEXT.md preferred term) is deferred — independent of command extraction and out of R1 scope.
+
+#### R1 intentional stays (~24 commands)
+
+These commands remain in `lib.rs`. They are not abandoned work — they are candidates for a future "settings/core/startup split" pass.
+
+| Command(s)                                                                                          | Reason stays                                                                                                                                                                        |
+| --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_settings`, `save_settings`, `save_window_state`, `save_window_visibility_state`, `apply_model` | Coupled to `save_settings_inner` + full settings normalisation chain                                                                                                                |
+| `get_startup_status`, `get_runtime_diagnostics`                                                     | Coupled to `refresh_startup_status`, `refresh_runtime_diagnostics` — startup infrastructure                                                                                         |
+| `get_dependency_preflight_status`                                                                   | `build_dependency_preflight_report` is a ~120-line cross-cutting orchestrator calling `ping_ollama_quick`, `check_powershell_available`, `capability_enabled`, `module_registry::*` |
+| `get_runtime_metrics_snapshot`, `record_runtime_metric`                                             | Helpers entangled with AI refinement state machine; separate architecture pass                                                                                                      |
+| `toggle_transcribe`, `expand_transcribe_backlog`, `paste_transcript_text`                           | Coupled to `toggle_transcribe_state`, `cancel_backlog_auto_expand`, `expand_transcribe_backlog_inner`, `paste_text` — transcription orchestration                                   |
 
 ---
 
 ## Trade-offs and lock-in
 
-| Decision                                                      | What is given up                       | Lock-in risk                                                                        |
-| ------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------- |
-| Command impls move to domain modules (R1)                     | All commands visible in one file       | Low — standard Tauri pattern                                                        |
-| Per-slice accessors instead of pub-sub (R3 → R2)              | Reactive updates, subscription pattern | **Medium** — later adoption of signals requires touching all extracted slices again |
-| Callback injection for `persistSettings` (if chosen for OQ-1) | Simplicity of direct import            | Low — established pattern                                                           |
+| Decision                                                                   | What is given up                                   | Lock-in risk                                                                                   |
+| -------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Command impls move to domain modules (R1)                                  | All commands visible in one file                   | Low — standard Tauri pattern                                                                   |
+| `guarded_command!` stays in `lib.rs` with `#[macro_export]`                | Macro in a more semantically specific home         | Low — trivially moved to `util.rs` later; no callsite impact on domain modules                 |
+| `validate_path_within` → `paths.rs` (A0.2)                                 | Path-security helper no longer in lib.rs           | Low — correct home; no reversal friction                                                       |
+| `prepare_refinement` + `update_and_persist_settings` → `ai_fallback/` (B6) | `lib.rs` no longer owns AI settings persistence    | **Medium** — future changes to AI settings persistence must understand `ai_fallback/` boundary |
+| `save_gdd_preset_clone` retains inline persistence                         | Diverges from `update_and_persist_settings` helper | Low — documented intentional; consolidation is future cleanup                                  |
+| `workflow_agent.rs` not renamed to `assistant_core.rs` in R1               | CONTEXT.md preferred name not reflected in file    | Low — independent rename is a `git mv` + import pass                                           |
+| B8 (module lifecycle) is a stretch goal                                    | Module commands may stay in `lib.rs` post-R1       | Low — does not block any other cluster; follow-up ADR if needed                                |
+| Per-slice accessors instead of pub-sub (R3 → R2)                           | Reactive updates, subscription pattern             | **Medium** — later adoption of signals requires touching all extracted slices again            |
+| Callback injection for `persistSettings` (if chosen for OQ-1)              | Simplicity of direct import                        | Low — established pattern                                                                      |
 
 The per-slice accessor approach is a one-way door with medium reversal cost. Acceptable given two-person team and active delivery constraint.
 

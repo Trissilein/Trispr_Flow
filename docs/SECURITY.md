@@ -37,7 +37,7 @@ Angriffsflächen:
 
 ### ~~MITTEL: `encode_to_opus` — Path Traversal~~ — GEFIXT
 
-**Datei:** `src-tauri/src/lib.rs`
+**Datei:** [src-tauri/src/opus.rs](src-tauri/src/opus.rs) (Funktion `encode_to_opus`), [src-tauri/src/paths.rs](src-tauri/src/paths.rs) (Kanonisierung und Validierung über `validate_path_within`)
 
 **Problem:** `input_path` und `output_path` ohne Boundary-Check direkt an FFmpeg übergeben.
 
@@ -75,7 +75,7 @@ Angriffsflächen:
 
 ### ~~MITTEL: Crash-Recovery in %TEMP%~~ — GEFIXT
 
-**Datei:** `src-tauri/src/lib.rs` — `save_crash_recovery`
+**Datei:** [src-tauri/src/session_manager.rs](src-tauri/src/session_manager.rs) — `save_crash_recovery`
 
 **Problem:** Crash-Recovery-Datei wurde in `%TEMP%` gespeichert — ein world-readable Verzeichnis. Andere Prozesse konnten die Datei lesen oder manipulieren.
 
@@ -85,7 +85,7 @@ Angriffsflächen:
 
 ### ~~MITTEL: `run_latency_benchmark` — Path Traversal~~ — GEFIXT
 
-**Datei:** `src-tauri/src/lib.rs` — `run_latency_benchmark_inner`
+**Datei:** [src-tauri/src/tts_benchmark.rs](src-tauri/src/tts_benchmark.rs) — `run_latency_benchmark_inner`, [src-tauri/src/paths.rs](src-tauri/src/paths.rs) — `validate_path_within`
 
 **Problem:** User-provided `fixture_paths` wurden ohne Validierung als Dateipfade verwendet.
 
@@ -95,7 +95,7 @@ Angriffsflächen:
 
 ### ~~MITTEL: Ollama-Kindprozess Cleanup~~ — GEFIXT
 
-**Datei:** `src-tauri/src/ollama_runtime.rs`, `src-tauri/src/state.rs`, `src-tauri/src/lib.rs`
+**Datei:** [src-tauri/src/ollama_runtime.rs](src-tauri/src/ollama_runtime.rs), [src-tauri/src/state.rs](src-tauri/src/state.rs), [src-tauri/src/lib.rs](src-tauri/src/lib.rs)
 
 **Problem:** Der gespawnte Ollama-Prozess (`child`) wurde nach `child.id()` gedroppt, ohne den Handle zu speichern. Der Prozess lief als Waise nach App-Exit weiter.
 
@@ -108,7 +108,7 @@ Angriffsflächen:
 
 ### ~~NIEDRIG: SSRF-Schutz für Ollama-Endpoint~~ — GEFIXT
 
-**Datei:** `src-tauri/src/ai_fallback/provider.rs`, `src-tauri/src/lib.rs`
+**Datei:** [src-tauri/src/ai_fallback/provider.rs](src-tauri/src/ai_fallback/provider.rs), [src-tauri/src/ai_fallback/commands.rs](src-tauri/src/ai_fallback/commands.rs)
 
 **Problem:** `save_ollama_endpoint` konnte auf Cloud-Metadata-Endpoints (169.254.169.254) zeigen.
 
@@ -129,7 +129,7 @@ Angriffsflächen:
 ## Deep-Dive Prüfergebnisse (kein Fix nötig)
 
 ### Tauri IPC Boundary
-- [x] **58+ Commands geprüft** — Input-Validierung konsistent angewendet
+- [x] **Commands aufgeteilt und geprüft** — Alle Commands (21 verbleibende in [src-tauri/src/lib.rs](src-tauri/src/lib.rs) und die restlichen modularisiert aufgeteilt auf [src-tauri/src/ai_fallback/commands.rs](src-tauri/src/ai_fallback/commands.rs), [src-tauri/src/workflow_agent.rs](src-tauri/src/workflow_agent.rs), [src-tauri/src/multimodal_io.rs](src-tauri/src/multimodal_io.rs), [src-tauri/src/history_partition.rs](src-tauri/src/history_partition.rs), [src-tauri/src/gdd/confluence.rs](src-tauri/src/gdd/confluence.rs), [src-tauri/src/tts_benchmark.rs](src-tauri/src/tts_benchmark.rs)) wurden hinsichtlich ihrer Input-Validierung umfassend und konsistent auditiert.
 - [x] **Race Conditions** — Mutex-basierte Serialisierung, keine unsicheren Shared-State-Zugriffe
 - [x] **Error-Messages** — Geben funktionale Fehlermeldungen zurück, keine Stack-Traces oder interne Pfade
 

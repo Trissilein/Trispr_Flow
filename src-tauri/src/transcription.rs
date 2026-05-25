@@ -40,7 +40,7 @@ use std::time::Duration;
 #[cfg(target_os = "windows")]
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager};
 use tracing::info;
 use tracing::{error, warn};
 
@@ -507,7 +507,7 @@ pub(crate) fn expand_transcribe_backlog(
 
 pub(crate) fn start_transcribe_monitor(
     app: &AppHandle,
-    state: &State<'_, AppState>,
+    state: &AppState,
     settings: &Settings,
 ) -> Result<(), String> {
     // CRITICAL SECURITY CHECK: Only start if explicitly enabled
@@ -593,7 +593,7 @@ pub(crate) fn start_transcribe_monitor(
     Ok(())
 }
 
-pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppState>) {
+pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &AppState) {
     let (stop_tx, join_handle, queue) = {
         let mut recorder = state
             .transcribe

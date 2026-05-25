@@ -1,8 +1,31 @@
 use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tracing::{info, warn};
 
-use crate::state::HistoryEntry;
+use crate::history_partition::PartitionedHistory;
+use crate::modules::{normalize_confluence_settings, ASSISTANT_CORE_MODULE_ID};
+use crate::overlay::update_overlay_refining_indicator;
+use crate::state::{
+    save_settings_file, AppState, AssistantOrchestratorState, HistoryEntry, Settings,
+};
+use crate::weather;
+use crate::{capability_enabled, guarded_command, require_capability_enabled, RuntimeCapability};
+
+static ASSISTANT_CONFIRM_TOKEN_SEQ: AtomicU64 = AtomicU64::new(1_000);
+
+#[derive(Debug, Clone)]
+struct PendingAssistantConfirmation {
+    plan: AgentExecutionPlan,
+    confirm_token: String,
+    expires_at_ms: u64,
+}
+
+static ASSISTANT_PENDING_CONFIRMATION: Mutex<Option<PendingAssistantConfirmation>> =
+    Mutex::new(None);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentParseCommandRequest {
@@ -120,6 +143,36 @@ pub struct SessionBucket {
     pub start_ms: u64,
     pub end_ms: u64,
     pub entries: Vec<HistoryEntry>,
+}
+
+fn collect_partitioned_entries(history: &PartitionedHistory) -> Vec<HistoryEntry> {
+    let mut out = Vec::new();
+    for partition in history.list_partitions() {
+        if let Ok(key) = crate::history_partition::PartitionKey::parse(&partition.key) {
+            out.extend(history.load_partition(&key));
+        }
+    }
+    out
+}
+
+fn collect_all_transcript_entries(state: &AppState) -> Vec<HistoryEntry> {
+    let mut entries = Vec::new();
+    {
+        let history = state
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        entries.extend(collect_partitioned_entries(&history));
+    }
+    {
+        let history = state
+            .history_transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        entries.extend(collect_partitioned_entries(&history));
+    }
+    entries.sort_by_key(|entry| entry.timestamp_ms);
+    entries
 }
 
 fn normalize(text: &str) -> String {
@@ -826,6 +879,2069 @@ pub fn should_publish_after_draft(plan: &AgentExecutionPlan) -> bool {
     }
     // Compatibility lane: accept older plans that only carry `steps`.
     plan.steps.iter().any(|step| step.id == "publish_or_queue")
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct AssistantCapabilitySnapshot {
+    product_mode: String,
+    assistant_mode: bool,
+    assistant_core_available: bool,
+    workflow_agent_available: bool,
+    tts_available: bool,
+    vision_available: bool,
+    degraded: bool,
+    hard_blocked: bool,
+    missing_capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct AssistantStateChangedEvent {
+    state: AssistantOrchestratorState,
+    previous_state: AssistantOrchestratorState,
+    reason: String,
+    transition_id: u64,
+    changed_at_ms: u64,
+    capability: AssistantCapabilitySnapshot,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct AssistantPlanReadyEvent {
+    state: AssistantOrchestratorState,
+    reason: String,
+    plan: crate::workflow_agent::AgentExecutionPlan,
+    capability: AssistantCapabilitySnapshot,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct AssistantIntentDetectedEvent {
+    state: AssistantOrchestratorState,
+    reason: String,
+    parse: crate::workflow_agent::AgentCommandParseResult,
+    capability: AssistantCapabilitySnapshot,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct AssistantAwaitingConfirmationEvent {
+    state: AssistantOrchestratorState,
+    reason: String,
+    plan: crate::workflow_agent::AgentExecutionPlan,
+    confirm_token: String,
+    confirm_timeout_sec: u16,
+    expires_at_ms: u64,
+    capability: AssistantCapabilitySnapshot,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct AssistantConfirmationExpiredEvent {
+    state: AssistantOrchestratorState,
+    reason: String,
+    expired_at_ms: u64,
+    capability: AssistantCapabilitySnapshot,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+struct AssistantActionResultEvent {
+    state: AssistantOrchestratorState,
+    reason: String,
+    result: crate::workflow_agent::AgentExecutionResult,
+    capability: AssistantCapabilitySnapshot,
+}
+
+#[derive(Debug)]
+enum PendingConfirmationError {
+    Missing,
+    Expired { expired_at_ms: u64 },
+    TokenMismatch,
+    PlanMismatch,
+}
+
+fn next_confirmation_token() -> String {
+    let seq = ASSISTANT_CONFIRM_TOKEN_SEQ.fetch_add(1, Ordering::Relaxed);
+    let code = (seq % 9_000) + 1_000;
+    format!("{code:04}")
+}
+
+fn normalize_confirmation_token(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
+}
+
+fn plans_match_for_confirmation(
+    left: &crate::workflow_agent::AgentExecutionPlan,
+    right: &crate::workflow_agent::AgentExecutionPlan,
+) -> bool {
+    left.intent == right.intent
+        && left.session_id == right.session_id
+        && left.target_language == right.target_language
+        && left.publish == right.publish
+}
+
+fn register_pending_confirmation(
+    plan: &crate::workflow_agent::AgentExecutionPlan,
+    confirm_timeout_sec: u16,
+) -> (String, u64) {
+    let token = next_confirmation_token();
+    let expires_at_ms = crate::util::now_ms().saturating_add(confirm_timeout_sec as u64 * 1_000);
+    let mut pending = ASSISTANT_PENDING_CONFIRMATION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *pending = Some(PendingAssistantConfirmation {
+        plan: plan.clone(),
+        confirm_token: token.clone(),
+        expires_at_ms,
+    });
+    (token, expires_at_ms)
+}
+
+fn clear_pending_confirmation() {
+    let mut pending = ASSISTANT_PENDING_CONFIRMATION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *pending = None;
+}
+
+fn clear_pending_confirmation_for_plan(plan: &crate::workflow_agent::AgentExecutionPlan) {
+    let mut pending = ASSISTANT_PENDING_CONFIRMATION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if pending
+        .as_ref()
+        .map(|entry| plans_match_for_confirmation(&entry.plan, plan))
+        .unwrap_or(false)
+    {
+        *pending = None;
+    }
+}
+
+fn consume_pending_confirmation(
+    plan: &crate::workflow_agent::AgentExecutionPlan,
+    token: &str,
+) -> Result<(), PendingConfirmationError> {
+    let now_ms = crate::util::now_ms();
+    let mut pending = ASSISTANT_PENDING_CONFIRMATION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(current) = pending.as_ref() else {
+        return Err(PendingConfirmationError::Missing);
+    };
+    if now_ms > current.expires_at_ms {
+        let expired_at_ms = current.expires_at_ms;
+        *pending = None;
+        return Err(PendingConfirmationError::Expired { expired_at_ms });
+    }
+    if !plans_match_for_confirmation(&current.plan, plan) {
+        return Err(PendingConfirmationError::PlanMismatch);
+    }
+    if normalize_confirmation_token(token)
+        != normalize_confirmation_token(current.confirm_token.as_str())
+    {
+        return Err(PendingConfirmationError::TokenMismatch);
+    }
+    *pending = None;
+    Ok(())
+}
+
+fn assistant_product_mode(settings: &Settings) -> &'static str {
+    if settings
+        .product_mode
+        .trim()
+        .eq_ignore_ascii_case("assistant")
+    {
+        "assistant"
+    } else {
+        "transcribe"
+    }
+}
+
+fn assistant_capability_snapshot(settings: &Settings) -> AssistantCapabilitySnapshot {
+    let assistant_mode = assistant_product_mode(settings) == "assistant";
+    let assistant_core_available = capability_enabled(settings, RuntimeCapability::WorkflowAgent);
+    let tts_available = capability_enabled(settings, RuntimeCapability::VoiceOutputTts);
+    let vision_available = capability_enabled(settings, RuntimeCapability::VisionInput);
+    let mut missing_capabilities: Vec<String> = Vec::new();
+    if !assistant_mode {
+        missing_capabilities.push("product_mode_assistant".to_string());
+    }
+    if !assistant_core_available {
+        missing_capabilities.push(ASSISTANT_CORE_MODULE_ID.to_string());
+    }
+    if !tts_available {
+        missing_capabilities.push("output_voice_tts".to_string());
+    }
+    if !vision_available {
+        missing_capabilities.push("input_vision".to_string());
+    }
+    AssistantCapabilitySnapshot {
+        product_mode: assistant_product_mode(settings).to_string(),
+        assistant_mode,
+        assistant_core_available,
+        workflow_agent_available: assistant_core_available,
+        tts_available,
+        vision_available,
+        degraded: assistant_mode
+            && assistant_core_available
+            && (!tts_available || !vision_available),
+        hard_blocked: !assistant_mode || !assistant_core_available,
+        missing_capabilities,
+    }
+}
+
+fn assistant_baseline_state(
+    capability: &AssistantCapabilitySnapshot,
+) -> (AssistantOrchestratorState, &'static str) {
+    if !capability.assistant_mode {
+        return (AssistantOrchestratorState::Idle, "product_mode_transcribe");
+    }
+    if !capability.assistant_core_available {
+        return (
+            AssistantOrchestratorState::Idle,
+            "assistant_core_unavailable",
+        );
+    }
+    if capability.degraded {
+        return (
+            AssistantOrchestratorState::Listening,
+            "assistant_degraded_capability",
+        );
+    }
+    (AssistantOrchestratorState::Listening, "assistant_ready")
+}
+
+fn transition_assistant_state_with_settings(
+    app: &AppHandle,
+    state: &AppState,
+    settings: &Settings,
+    next_state: AssistantOrchestratorState,
+    reason: impl Into<String>,
+) -> AssistantStateChangedEvent {
+    let reason = reason.into();
+    let capability = assistant_capability_snapshot(settings);
+    let now_ms = crate::util::now_ms();
+    let (previous_state, changed_at_ms, transition_id) = {
+        let mut tracker = state
+            .assistant_orchestrator
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_state = tracker.state;
+        let has_changed = tracker.state != next_state || tracker.last_reason != reason;
+        if has_changed {
+            tracker.transition_id = tracker.transition_id.saturating_add(1);
+            tracker.changed_at_ms = now_ms;
+            tracker.state = next_state;
+            tracker.last_reason = reason.clone();
+        }
+        (
+            previous_state,
+            if has_changed {
+                tracker.changed_at_ms
+            } else if tracker.changed_at_ms == 0 {
+                now_ms
+            } else {
+                tracker.changed_at_ms
+            },
+            tracker.transition_id,
+        )
+    };
+
+    let payload = AssistantStateChangedEvent {
+        state: next_state,
+        previous_state,
+        reason,
+        transition_id,
+        changed_at_ms,
+        capability,
+    };
+    let _ = app.emit("assistant:state-changed", &payload);
+    payload
+}
+
+pub(crate) fn emit_assistant_baseline_state(
+    app: &AppHandle,
+    state: &AppState,
+    settings: &Settings,
+    trigger: &str,
+) -> AssistantStateChangedEvent {
+    let capability = assistant_capability_snapshot(settings);
+    let (baseline_state, baseline_reason) = assistant_baseline_state(&capability);
+    clear_pending_confirmation();
+    let reason = if trigger.trim().is_empty() {
+        baseline_reason.to_string()
+    } else {
+        format!("{}:{}", trigger.trim(), baseline_reason)
+    };
+    transition_assistant_state_with_settings(app, state, settings, baseline_state, reason)
+}
+
+pub(crate) fn emit_assistant_runtime_state_from_current_settings(
+    app: &AppHandle,
+    state: &AppState,
+    trigger: &str,
+) -> AssistantStateChangedEvent {
+    let settings_snapshot = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    emit_assistant_baseline_state(app, state, &settings_snapshot, trigger)
+}
+
+fn emit_assistant_plan_ready(
+    app: &AppHandle,
+    settings: &Settings,
+    plan: &crate::workflow_agent::AgentExecutionPlan,
+    reason: &str,
+) {
+    let capability = assistant_capability_snapshot(settings);
+    if !capability.assistant_mode {
+        return;
+    }
+    let payload = AssistantPlanReadyEvent {
+        state: AssistantOrchestratorState::AwaitingConfirm,
+        reason: reason.to_string(),
+        plan: plan.clone(),
+        capability,
+    };
+    let _ = app.emit("assistant:plan-ready", &payload);
+}
+
+fn emit_assistant_intent_detected(
+    app: &AppHandle,
+    settings: &Settings,
+    parse: &crate::workflow_agent::AgentCommandParseResult,
+    reason: &str,
+) {
+    let capability = assistant_capability_snapshot(settings);
+    if !capability.assistant_mode {
+        return;
+    }
+    let payload = AssistantIntentDetectedEvent {
+        state: AssistantOrchestratorState::Parsing,
+        reason: reason.to_string(),
+        parse: parse.clone(),
+        capability,
+    };
+    let _ = app.emit("assistant:intent-detected", &payload);
+}
+
+fn emit_assistant_awaiting_confirmation(
+    app: &AppHandle,
+    settings: &Settings,
+    plan: &crate::workflow_agent::AgentExecutionPlan,
+    reason: &str,
+) {
+    let capability = assistant_capability_snapshot(settings);
+    if !capability.assistant_mode {
+        return;
+    }
+    let confirm_timeout_sec = settings.workflow_agent.confirm_timeout_sec.clamp(10, 300);
+    let (confirm_token, expires_at_ms) = register_pending_confirmation(plan, confirm_timeout_sec);
+    let payload = AssistantAwaitingConfirmationEvent {
+        state: AssistantOrchestratorState::AwaitingConfirm,
+        reason: reason.to_string(),
+        plan: plan.clone(),
+        confirm_token,
+        confirm_timeout_sec,
+        expires_at_ms,
+        capability,
+    };
+    let _ = app.emit("assistant:awaiting-confirmation", &payload);
+}
+
+fn emit_assistant_confirmation_expired(
+    app: &AppHandle,
+    settings: &Settings,
+    reason: &str,
+    expired_at_ms: u64,
+) {
+    let capability = assistant_capability_snapshot(settings);
+    if !capability.assistant_mode {
+        return;
+    }
+    let payload = AssistantConfirmationExpiredEvent {
+        state: AssistantOrchestratorState::Recovering,
+        reason: reason.to_string(),
+        expired_at_ms,
+        capability,
+    };
+    let _ = app.emit("assistant:confirmation-expired", &payload);
+}
+
+fn expire_pending_confirmation_if_needed(
+    app: &AppHandle,
+    state: &AppState,
+    settings: &Settings,
+    trigger: &str,
+) -> bool {
+    let now_ms = crate::util::now_ms();
+    let expired_at_ms = {
+        let mut pending = ASSISTANT_PENDING_CONFIRMATION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match pending.as_ref() {
+            Some(entry) if now_ms > entry.expires_at_ms => {
+                let expired_at_ms = entry.expires_at_ms;
+                *pending = None;
+                Some(expired_at_ms)
+            }
+            _ => None,
+        }
+    };
+    if let Some(expired_at_ms) = expired_at_ms {
+        emit_assistant_confirmation_expired(
+            app,
+            settings,
+            &format!("{}:timeout", trigger),
+            expired_at_ms,
+        );
+        let _ = emit_assistant_baseline_state(app, state, settings, trigger);
+        return true;
+    }
+    false
+}
+
+fn emit_assistant_action_result(
+    app: &AppHandle,
+    settings: &Settings,
+    state: AssistantOrchestratorState,
+    result: &crate::workflow_agent::AgentExecutionResult,
+    reason: &str,
+) {
+    let capability = assistant_capability_snapshot(settings);
+    if !capability.assistant_mode {
+        return;
+    }
+    let payload = AssistantActionResultEvent {
+        state,
+        reason: reason.to_string(),
+        result: result.clone(),
+        capability,
+    };
+    let _ = app.emit("assistant:action-result", &payload);
+}
+
+#[cfg(test)]
+mod assistant_orchestrator_tests {
+    use super::{assistant_baseline_state, assistant_capability_snapshot};
+    use crate::state::{AssistantOrchestratorState, Settings};
+    use crate::RuntimeCapability;
+
+    fn settings_for_assistant_mode(
+        product_mode: &str,
+        workflow_enabled: bool,
+        tts_enabled: bool,
+        vision_enabled: bool,
+    ) -> Settings {
+        let mut settings = Settings::default();
+        settings.product_mode = product_mode.to_string();
+
+        if workflow_enabled {
+            settings
+                .module_settings
+                .enabled_modules
+                .insert(RuntimeCapability::WorkflowAgent.module_id().to_string());
+            settings.workflow_agent.enabled = true;
+        }
+        if tts_enabled {
+            settings
+                .module_settings
+                .enabled_modules
+                .insert(RuntimeCapability::VoiceOutputTts.module_id().to_string());
+            settings.voice_output_settings.enabled = true;
+        }
+        if vision_enabled {
+            settings
+                .module_settings
+                .enabled_modules
+                .insert(RuntimeCapability::VisionInput.module_id().to_string());
+            settings.vision_input_settings.enabled = true;
+        }
+
+        settings
+    }
+
+    #[test]
+    fn assistant_baseline_is_idle_when_product_mode_is_transcribe() {
+        let settings = settings_for_assistant_mode("transcribe", true, true, true);
+        let capability = assistant_capability_snapshot(&settings);
+        assert!(!capability.assistant_mode);
+        assert!(capability.hard_blocked);
+        let (state, reason) = assistant_baseline_state(&capability);
+        assert_eq!(state, AssistantOrchestratorState::Idle);
+        assert_eq!(reason, "product_mode_transcribe");
+    }
+
+    #[test]
+    fn assistant_baseline_is_listening_with_degraded_capabilities() {
+        let settings = settings_for_assistant_mode("assistant", true, false, true);
+        let capability = assistant_capability_snapshot(&settings);
+        assert!(capability.assistant_mode);
+        assert!(capability.assistant_core_available);
+        assert!(capability.degraded);
+        assert!(!capability.hard_blocked);
+        assert!(capability
+            .missing_capabilities
+            .iter()
+            .any(|id| id == "output_voice_tts"));
+        let (state, reason) = assistant_baseline_state(&capability);
+        assert_eq!(state, AssistantOrchestratorState::Listening);
+        assert_eq!(reason, "assistant_degraded_capability");
+    }
+
+    #[test]
+    fn assistant_baseline_is_idle_when_workflow_agent_is_unavailable() {
+        let settings = settings_for_assistant_mode("assistant", false, true, true);
+        let capability = assistant_capability_snapshot(&settings);
+        assert!(capability.assistant_mode);
+        assert!(!capability.assistant_core_available);
+        assert!(capability.hard_blocked);
+        let (state, reason) = assistant_baseline_state(&capability);
+        assert_eq!(state, AssistantOrchestratorState::Idle);
+        assert_eq!(reason, "assistant_core_unavailable");
+    }
+}
+
+#[tauri::command]
+pub(crate) fn agent_list_supported_actions() -> Vec<String> {
+    vec![
+        "gdd_generate_publish".to_string(),
+        "session_recap".to_string(),
+        "plan_status".to_string(),
+        "confirm_or_cancel".to_string(),
+        "reminder_capture".to_string(),
+        "web_search".to_string(),
+        "open_module".to_string(),
+        "open_app".to_string(),
+    ]
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct AssistantExecuteDirectActionRequest {
+    intent: String,
+    command_text: String,
+}
+
+pub(crate) fn normalize_assistant_action_text(text: &str) -> String {
+    text.trim()
+        .to_lowercase()
+        .chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() || ch.is_whitespace() {
+                ch
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+}
+
+fn open_external_target(target: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", target])
+            .spawn()
+            .map_err(|err| format!("Failed to open target '{target}': {err}"))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(target)
+            .spawn()
+            .map_err(|err| format!("Failed to open target '{target}': {err}"))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map_err(|err| format!("Failed to open target '{target}': {err}"))?;
+        return Ok(());
+    }
+}
+
+fn extract_web_search_query(command_text: &str) -> String {
+    let lower = normalize_assistant_action_text(command_text);
+    let stripped = lower
+        .replace("hey trispr", " ")
+        .replace("trispr agent", " ")
+        .replace("trispr", " ")
+        .replace("search for", " ")
+        .replace("look up", " ")
+        .replace("google", " ")
+        .replace("find online", " ")
+        .replace("search", " ");
+    let cleaned = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.is_empty() {
+        command_text.trim().to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn resolve_module_target(command_text: &str) -> Option<(&'static str, &'static str)> {
+    let text = normalize_assistant_action_text(command_text);
+    if text.contains("gdd") || text.contains("game design") {
+        return Some(("gdd_flow", "GDD Flow"));
+    }
+    if text.contains("voice output") || text.contains("tts") {
+        return Some(("voice-output", "Voice Output"));
+    }
+    if text.contains("refinement") || text.contains("ai refinement") {
+        return Some(("ai-refinement", "AI Refinement"));
+    }
+    if text.contains("assistant debug")
+        || text.contains("assistant tab")
+        || text.contains("agent tab")
+    {
+        return Some(("agent", "Assistant Debug"));
+    }
+    if text.contains("settings") {
+        return Some(("settings", "Settings"));
+    }
+    if text.contains("module") {
+        return Some(("modules", "Modules"));
+    }
+    if text.contains("transcription") || text.contains("transcribe") {
+        return Some(("transcription", "Transcription"));
+    }
+    None
+}
+
+fn launch_named_app(command_text: &str) -> Result<&'static str, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let text = normalize_assistant_action_text(command_text);
+        let launch =
+            |program: &str, args: &[&str], label: &'static str| -> Result<&'static str, String> {
+                std::process::Command::new(program)
+                    .args(args)
+                    .spawn()
+                    .map_err(|err| format!("Failed to launch {label}: {err}"))?;
+                Ok(label)
+            };
+
+        if text.contains("explorer") || text.contains("file explorer") || text.contains("files") {
+            return launch("explorer", &[], "File Explorer");
+        }
+        if text.contains("notepad") {
+            return launch("notepad.exe", &[], "Notepad");
+        }
+        if text.contains("calculator") || text.contains("calc") {
+            return launch("calc.exe", &[], "Calculator");
+        }
+        if text.contains("terminal") || text.contains("powershell") {
+            return launch("powershell.exe", &[], "Terminal");
+        }
+        if text.contains("cursor") {
+            return launch("cmd", &["/C", "start", "", "cursor"], "Cursor");
+        }
+        if text.contains("browser") || text.contains("chrome") || text.contains("edge") {
+            open_external_target("https://www.google.com")?;
+            return Ok("Default Browser");
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = command_text;
+
+    Err("No supported desktop app target was detected.".to_string())
+}
+
+#[tauri::command]
+pub(crate) fn assistant_execute_direct_action(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: AssistantExecuteDirectActionRequest,
+) -> Result<crate::workflow_agent::AgentExecutionResult, String> {
+    guarded_command!("assistant_execute_direct_action", {
+        let settings_snapshot = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
+            settings.clone()
+        };
+
+        let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
+        if assistant_mode {
+            let _ = transition_assistant_state_with_settings(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                AssistantOrchestratorState::Executing,
+                "assistant_execute_direct_action:start",
+            );
+        }
+
+        let result = match request.intent.trim() {
+            "reminder_capture" => {
+                if !crate::modules::task_capture::task_capture_enabled(&settings_snapshot) {
+                    tracing::info!("[task_capture] module disabled, rejecting intent");
+                    crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message:
+                            "Task Capture module is disabled. Enable 'task_capture' in modules."
+                                .to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("module_disabled".to_string()),
+                    }
+                } else {
+                    let tc_settings = settings_snapshot.task_capture_settings.clone();
+                    tracing::info!("[task_capture] raw input: {:?}", request.command_text);
+
+                    let matched_route = crate::modules::task_capture::find_matching_route(
+                        &request.command_text,
+                        &tc_settings,
+                    );
+                    let route = match matched_route {
+                        Some(r) => {
+                            tracing::info!("[task_capture] matched route: {:?}", r.label);
+                            r.clone()
+                        }
+                        None => {
+                            tracing::info!(
+                                "[task_capture] no route matched, using first route as fallback"
+                            );
+                            tc_settings.routes.first().cloned().unwrap_or_default()
+                        }
+                    };
+
+                    let raw_task =
+                        crate::modules::task_capture::extract_task_text(&request.command_text);
+                    tracing::info!("[task_capture] extracted text: {:?}", raw_task);
+                    if raw_task.is_empty() {
+                        crate::workflow_agent::AgentExecutionResult {
+                            status: "failed".to_string(),
+                            message: "No reminder text was detected.".to_string(),
+                            draft: None,
+                            publish_result: None,
+                            queued_job: None,
+                            error: Some("reminder_text_missing".to_string()),
+                        }
+                    } else {
+                        let _ = app.emit(
+                            "agent:execution-progress",
+                            serde_json::json!({
+                                "intent": "reminder_capture",
+                                "stage": "enqueue",
+                                "message": format!("{}: Eintrag erkannt", route.label),
+                                "text": raw_task.clone(),
+                            }),
+                        );
+
+                        let app_clone = app.clone();
+                        let settings_clone = settings_snapshot.clone();
+                        let queued_task = raw_task.clone();
+                        let route_clone = route.clone();
+                        let ai_enabled = tc_settings.ai_refinement_enabled;
+                        let custom_prompt = tc_settings.refinement_prompt.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let refined_text = if ai_enabled {
+                                let _ = app_clone.emit(
+                                    "agent:execution-progress",
+                                    serde_json::json!({
+                                        "intent": "reminder_capture",
+                                        "stage": "refining",
+                                        "message": "Ollama formuliert Task…",
+                                        "text": queued_task.clone(),
+                                    }),
+                                );
+                                let _ = update_overlay_refining_indicator(&app_clone, true);
+
+                                let app_for_refine = app_clone.clone();
+                                let settings_for_refine = settings_clone.clone();
+                                let raw_for_refine = queued_task.clone();
+                                let prompt_for_refine = custom_prompt.clone();
+                                match tauri::async_runtime::spawn_blocking(move || {
+                                    crate::modules::task_capture::refine_task_text(
+                                        &app_for_refine,
+                                        &settings_for_refine,
+                                        &raw_for_refine,
+                                        Some(&prompt_for_refine),
+                                    )
+                                })
+                                .await
+                                {
+                                    Ok(text) if !text.trim().is_empty() => {
+                                        tracing::info!(
+                                            "[task_capture] refined text: {:?}",
+                                            text.trim()
+                                        );
+                                        text.trim().to_string()
+                                    }
+                                    Ok(_) => {
+                                        tracing::warn!(
+                                            "[task_capture] refinement returned empty, using raw"
+                                        );
+                                        queued_task.clone()
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            "[task_capture] refinement task join failed: {}",
+                                            error
+                                        );
+                                        queued_task.clone()
+                                    }
+                                }
+                            } else {
+                                tracing::info!(
+                                    "[task_capture] AI refinement disabled, using raw text"
+                                );
+                                queued_task.clone()
+                            };
+
+                            let _ = app_clone.emit(
+                                "agent:execution-progress",
+                                serde_json::json!({
+                                    "intent": "reminder_capture",
+                                    "stage": "posting",
+                                    "message": format!("Task wird an {} gesendet…", route_clone.label),
+                                    "text": refined_text.clone(),
+                                }),
+                            );
+
+                            tracing::info!("[task_capture] posting to: {}", route_clone.endpoint);
+                            let post_text = refined_text.clone();
+                            let post_endpoint = route_clone.endpoint.clone();
+                            let agenda_post_result =
+                                match tauri::async_runtime::spawn_blocking(move || {
+                                    crate::modules::task_capture::post_task_to_endpoint(
+                                        &post_text,
+                                        &post_endpoint,
+                                    )
+                                })
+                                .await
+                                {
+                                    Ok(result) => result,
+                                    Err(error) => Err(format!(
+                                        "Task capture request task join failed: {}",
+                                        error
+                                    )),
+                                };
+
+                            let _ = update_overlay_refining_indicator(&app_clone, false);
+                            tracing::info!("[task_capture] post result: {:?}", agenda_post_result);
+
+                            let (result, notification_payload) = match agenda_post_result {
+                                Ok(()) => (
+                                    crate::workflow_agent::AgentExecutionResult {
+                                        status: "completed".to_string(),
+                                        message: format!("{}: {}", route_clone.label, refined_text),
+                                        draft: None,
+                                        publish_result: None,
+                                        queued_job: None,
+                                        error: None,
+                                    },
+                                    serde_json::json!({
+                                        "ok": true,
+                                        "title": route_clone.label,
+                                        "message": format!("{}: {}", route_clone.label, refined_text),
+                                        "text": refined_text,
+                                    }),
+                                ),
+                                Err(error) => {
+                                    tracing::error!("[task_capture] post failed: {}", error);
+                                    (
+                                        crate::workflow_agent::AgentExecutionResult {
+                                            status: "failed".to_string(),
+                                            message: format!(
+                                                "{}-Fehler: {}",
+                                                route_clone.label, error
+                                            ),
+                                            draft: None,
+                                            publish_result: None,
+                                            queued_job: None,
+                                            error: Some(error.clone()),
+                                        },
+                                        serde_json::json!({
+                                            "ok": false,
+                                            "title": route_clone.label,
+                                            "message": format!("Fehler: {}", error),
+                                        }),
+                                    )
+                                }
+                            };
+
+                            let _ = app_clone.emit("agenda:notification", &notification_payload);
+                            if result.status == "failed" {
+                                let _ = app_clone.emit("agent:execution-failed", &result);
+                            } else {
+                                let _ = app_clone.emit("agent:execution-finished", &result);
+                            }
+
+                            if assistant_mode {
+                                let assistant_state = if result.status == "failed" {
+                                    AssistantOrchestratorState::Recovering
+                                } else {
+                                    AssistantOrchestratorState::Listening
+                                };
+                                emit_assistant_action_result(
+                                    &app_clone,
+                                    &settings_clone,
+                                    assistant_state,
+                                    &result,
+                                    "assistant_execute_direct_action:reminder_capture",
+                                );
+                                let state_handle = app_clone.state::<AppState>();
+                                let _ = emit_assistant_baseline_state(
+                                    &app_clone,
+                                    state_handle.inner(),
+                                    &settings_clone,
+                                    "assistant_execute_direct_action:reminder_capture_complete",
+                                );
+                            }
+
+                            let result_status = result.status.clone();
+                            let result_message = result.message.clone();
+                            let _ = app_clone.emit(
+                                "agent:execution-progress",
+                                serde_json::json!({
+                                    "intent": "reminder_capture",
+                                    "stage": "done",
+                                    "status": result_status,
+                                    "message": result_message,
+                                }),
+                            );
+                        });
+
+                        crate::workflow_agent::AgentExecutionResult {
+                            status: "queued".to_string(),
+                            message: format!("{}: Task wird verarbeitet…", route.label),
+                            draft: None,
+                            publish_result: None,
+                            queued_job: None,
+                            error: None,
+                        }
+                    }
+                }
+            }
+            "web_search" => {
+                if !settings_snapshot.workflow_agent.online_enabled {
+                    crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "Web search is disabled in Offline mode.".to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("online_disabled".to_string()),
+                    }
+                } else {
+                    let query = extract_web_search_query(&request.command_text);
+                    let encoded: String =
+                        url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+                    let target = format!("https://www.google.com/search?q={encoded}");
+                    open_external_target(&target)?;
+                    crate::workflow_agent::AgentExecutionResult {
+                        status: "completed".to_string(),
+                        message: format!("Opened web search for “{}”.", query.trim()),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: None,
+                    }
+                }
+            }
+            "open_module" => match resolve_module_target(&request.command_text) {
+                Some((target, label)) => {
+                    crate::show_main_window(&app);
+                    let _ = app.emit(
+                        "assistant:open-module",
+                        serde_json::json!({
+                            "target": target,
+                            "reason": "assistant_execute_direct_action",
+                        }),
+                    );
+                    crate::workflow_agent::AgentExecutionResult {
+                        status: "completed".to_string(),
+                        message: format!("Opened {}.", label),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: None,
+                    }
+                }
+                None => crate::workflow_agent::AgentExecutionResult {
+                    status: "failed".to_string(),
+                    message: "No supported Trispr surface was detected in that request."
+                        .to_string(),
+                    draft: None,
+                    publish_result: None,
+                    queued_job: None,
+                    error: Some("module_target_missing".to_string()),
+                },
+            },
+            "open_app" => match launch_named_app(&request.command_text) {
+                Ok(label) => crate::workflow_agent::AgentExecutionResult {
+                    status: "completed".to_string(),
+                    message: format!("Opened {}.", label),
+                    draft: None,
+                    publish_result: None,
+                    queued_job: None,
+                    error: None,
+                },
+                Err(error) => crate::workflow_agent::AgentExecutionResult {
+                    status: "failed".to_string(),
+                    message: error.clone(),
+                    draft: None,
+                    publish_result: None,
+                    queued_job: None,
+                    error: Some(error),
+                },
+            },
+            _ => crate::workflow_agent::AgentExecutionResult {
+                status: "failed".to_string(),
+                message: "Unsupported direct assistant action.".to_string(),
+                draft: None,
+                publish_result: None,
+                queued_job: None,
+                error: Some("unsupported_direct_action".to_string()),
+            },
+        };
+
+        if assistant_mode {
+            let assistant_state = if result.status == "failed" {
+                AssistantOrchestratorState::Recovering
+            } else {
+                AssistantOrchestratorState::Listening
+            };
+            emit_assistant_action_result(
+                &app,
+                &settings_snapshot,
+                assistant_state,
+                &result,
+                "assistant_execute_direct_action",
+            );
+            let _ = emit_assistant_baseline_state(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                "assistant_execute_direct_action:complete",
+            );
+        }
+
+        Ok(result)
+    })
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct AgentComposeUnknownReplyRequest {
+    command_text: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct AgentComposeReplyResult {
+    text: String,
+    source: String,
+    reason_code: String,
+}
+
+fn merged_workflow_wakewords(settings: &crate::modules::WorkflowAgentSettings) -> Vec<String> {
+    let mut merged = settings.wakewords.clone();
+    merged.extend(settings.wakeword_aliases.clone());
+    merged
+}
+
+fn unknown_rule_reply(command_text: &str, online_enabled: bool) -> String {
+    let normalized = command_text.to_lowercase();
+    let english_hint = weather::weather_query_english_hint(&normalized);
+    let weather_like = weather::weather_query_like(&normalized);
+    if weather_like {
+        if online_enabled {
+            return weather::online_weather_unavailable_reply(command_text);
+        }
+        if english_hint {
+            return "I do not have live weather access in local mode. I can still help with plan status, session recaps, or GDD drafts from your transcripts.".to_string();
+        }
+        return "Ich habe lokal keinen Live-Wetterzugriff. Ich kann dir aber einen Plan, Recap oder GDD-Draft aus deinen Transkripten erstellen.".to_string();
+    }
+    if english_hint {
+        return "I can currently handle GDD drafts, session recaps, and plan status from your local transcripts. Please rephrase your request within that scope.".to_string();
+    }
+    "Ich kann aktuell GDD-Drafts, Session-Recaps und Plan-Status aus deinen lokalen Transkripten verarbeiten. Formuliere die Anfrage bitte in diesem Scope.".to_string()
+}
+
+pub(crate) fn ai_provider_is_local(provider: &str) -> bool {
+    matches!(provider, "ollama" | "lm_studio" | "oobabooga")
+}
+
+#[tauri::command]
+pub(crate) fn agent_compose_unknown_reply(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: AgentComposeUnknownReplyRequest,
+) -> Result<AgentComposeReplyResult, String> {
+    guarded_command!("agent_compose_unknown_reply", {
+        let settings_snapshot = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
+            settings.clone()
+        };
+
+        let command_text = request.command_text.trim();
+        if command_text.is_empty() {
+            return Ok(AgentComposeReplyResult {
+                text: unknown_rule_reply("", false),
+                source: "rule".to_string(),
+                reason_code: "empty_command".to_string(),
+            });
+        }
+
+        let workflow_cfg = &settings_snapshot.workflow_agent;
+        let online_enabled = workflow_cfg.online_enabled;
+        let weather_like = weather::weather_query_like(&command_text.to_lowercase());
+        if weather_like && online_enabled {
+            match weather::fetch_live_weather_reply(command_text) {
+                Ok(text) => {
+                    return Ok(AgentComposeReplyResult {
+                        text,
+                        source: "weather_api".to_string(),
+                        reason_code: "weather_api_success".to_string(),
+                    });
+                }
+                Err(error) => {
+                    warn!("weather_api_error: {}", error);
+                    return Ok(AgentComposeReplyResult {
+                        text: weather::online_weather_unavailable_reply(command_text),
+                        source: "rule".to_string(),
+                        reason_code: "weather_api_error".to_string(),
+                    });
+                }
+            }
+        }
+        if workflow_cfg.reply_mode != "hybrid_local_llm" {
+            return Ok(AgentComposeReplyResult {
+                text: unknown_rule_reply(command_text, online_enabled),
+                source: "rule".to_string(),
+                reason_code: "rule_only_mode".to_string(),
+            });
+        }
+
+        if !settings_snapshot.ai_fallback.enabled {
+            return Ok(AgentComposeReplyResult {
+                text: unknown_rule_reply(command_text, online_enabled),
+                source: "rule".to_string(),
+                reason_code: "ai_refinement_disabled".to_string(),
+            });
+        }
+
+        if !online_enabled && !ai_provider_is_local(&settings_snapshot.ai_fallback.provider) {
+            return Ok(AgentComposeReplyResult {
+                text: unknown_rule_reply(command_text, online_enabled),
+                source: "rule".to_string(),
+                reason_code: "non_local_provider_blocked".to_string(),
+            });
+        }
+
+        let setup = match crate::ai_fallback::prepare_refinement(&app, &settings_snapshot) {
+            Ok(value) => value,
+            Err(error) => {
+                return Ok(AgentComposeReplyResult {
+                    text: unknown_rule_reply(command_text, online_enabled),
+                    source: "rule".to_string(),
+                    reason_code: format!("local_runtime_unavailable:{error}"),
+                });
+            }
+        };
+
+        let mut options = setup.options.clone();
+        options.max_tokens = options.max_tokens.clamp(128, 512);
+        options.custom_prompt = Some(if online_enabled {
+            "You are Trispr. Reply in the same language as the user. Keep answers concise and practical. Online models are allowed, but live web lookup tools may be unavailable. Never fabricate citations or claim verified live data unless explicit tool results are provided. Output only the reply.".to_string()
+        } else {
+            "You are Trispr, a local assistant. Reply in the same language as the user. Keep answers concise and practical. Never claim live internet access. If the request needs real-time external data, say this capability is unavailable locally and suggest a supported local action. Output only the reply."
+                .to_string()
+        });
+        options.enforce_language_guard = false;
+
+        match setup
+            .provider
+            .refine_transcript(command_text, &setup.model, &options, &setup.api_key)
+        {
+            Ok(reply) => {
+                let text = reply.text.trim();
+                if text.is_empty() {
+                    return Ok(AgentComposeReplyResult {
+                        text: unknown_rule_reply(command_text, online_enabled),
+                        source: "rule".to_string(),
+                        reason_code: "local_llm_empty".to_string(),
+                    });
+                }
+                Ok(AgentComposeReplyResult {
+                    text: text.to_string(),
+                    source: "local_llm".to_string(),
+                    reason_code: "local_llm_success".to_string(),
+                })
+            }
+            Err(error) => Ok(AgentComposeReplyResult {
+                text: unknown_rule_reply(command_text, online_enabled),
+                source: "rule".to_string(),
+                reason_code: format!("local_llm_error:{error}"),
+            }),
+        }
+    })
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct AgentCancelPendingConfirmationRequest {
+    reason: Option<String>,
+}
+
+#[tauri::command]
+pub(crate) fn agent_cancel_pending_confirmation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: Option<AgentCancelPendingConfirmationRequest>,
+) -> Result<crate::workflow_agent::AgentExecutionResult, String> {
+    guarded_command!("agent_cancel_pending_confirmation", {
+        let settings_snapshot = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            settings.clone()
+        };
+        let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
+        let reason = request
+            .and_then(|value| value.reason)
+            .unwrap_or_else(|| "cancelled_by_user".to_string());
+        let reason_trimmed = reason.trim().to_string();
+        let pending = {
+            let mut guard = ASSISTANT_PENDING_CONFIRMATION
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard.take()
+        };
+
+        if pending.is_none() {
+            return Ok(crate::workflow_agent::AgentExecutionResult {
+                status: "cancelled".to_string(),
+                message: "No pending confirmation to cancel.".to_string(),
+                draft: None,
+                publish_result: None,
+                queued_job: None,
+                error: None,
+            });
+        }
+
+        let pending = pending.expect("checked is_some");
+        let result = crate::workflow_agent::AgentExecutionResult {
+            status: "cancelled".to_string(),
+            message: "Pending confirmation cancelled.".to_string(),
+            draft: None,
+            publish_result: None,
+            queued_job: None,
+            error: None,
+        };
+
+        if assistant_mode {
+            if reason_trimmed.eq_ignore_ascii_case("timeout") {
+                emit_assistant_confirmation_expired(
+                    &app,
+                    &settings_snapshot,
+                    "agent_cancel_pending_confirmation:timeout",
+                    pending.expires_at_ms,
+                );
+            } else {
+                emit_assistant_action_result(
+                    &app,
+                    &settings_snapshot,
+                    AssistantOrchestratorState::Recovering,
+                    &result,
+                    "agent_cancel_pending_confirmation",
+                );
+            }
+            let _ = emit_assistant_baseline_state(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                "agent_cancel_pending_confirmation",
+            );
+        }
+
+        Ok(result)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn agent_parse_command(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::workflow_agent::AgentParseCommandRequest,
+) -> Result<crate::workflow_agent::AgentCommandParseResult, String> {
+    guarded_command!("agent_parse_command", {
+        let settings_snapshot = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
+            settings.clone()
+        };
+        let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
+        if assistant_mode {
+            let _ = expire_pending_confirmation_if_needed(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                "agent_parse_command",
+            );
+        }
+        if assistant_mode {
+            let _ = transition_assistant_state_with_settings(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                AssistantOrchestratorState::Parsing,
+                "agent_parse_command:start",
+            );
+        }
+        let workflow_settings = settings_snapshot.workflow_agent.clone();
+        let intent_keywords = workflow_settings
+            .intent_keywords
+            .get("gdd_generate_publish")
+            .cloned()
+            .unwrap_or_default();
+        let wakewords = merged_workflow_wakewords(&workflow_settings);
+        let parsed = crate::workflow_agent::parse_command(&request, &wakewords, &intent_keywords);
+        if parsed.detected || parsed.wakeword_matched {
+            let _ = app.emit("agent:command-detected", &parsed);
+            if assistant_mode {
+                emit_assistant_intent_detected(
+                    &app,
+                    &settings_snapshot,
+                    &parsed,
+                    if parsed.detected {
+                        "agent_parse_command:detected"
+                    } else {
+                        "agent_parse_command:wakeword_unknown"
+                    },
+                );
+            }
+        }
+        if assistant_mode {
+            let trigger = if parsed.detected {
+                "agent_parse_command:detected"
+            } else if parsed.wakeword_matched {
+                "agent_parse_command:wakeword_unknown"
+            } else {
+                "agent_parse_command:ignored"
+            };
+            let _ = emit_assistant_baseline_state(&app, state.inner(), &settings_snapshot, trigger);
+        }
+        Ok(parsed)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn search_transcript_sessions(
+    state: State<'_, AppState>,
+    mut request: crate::workflow_agent::SearchTranscriptSessionsRequest,
+) -> Result<Vec<crate::workflow_agent::TranscriptSessionCandidate>, String> {
+    guarded_command!("search_transcript_sessions", {
+        let defaults = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
+            (
+                settings.workflow_agent.session_gap_minutes,
+                settings.workflow_agent.max_candidates,
+            )
+        };
+        if request.session_gap_minutes.unwrap_or(0) == 0 {
+            request.session_gap_minutes = Some(defaults.0);
+        }
+        if request.max_candidates.unwrap_or(0) == 0 {
+            request.max_candidates = Some(defaults.1);
+        }
+
+        let entries = collect_all_transcript_entries(&state);
+        let sessions = crate::workflow_agent::build_sessions(
+            &entries,
+            request.session_gap_minutes.unwrap_or(defaults.0),
+        );
+        Ok(crate::workflow_agent::score_sessions(&sessions, &request))
+    })
+}
+
+#[tauri::command]
+pub(crate) fn agent_build_execution_plan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::workflow_agent::AgentBuildExecutionPlanRequest,
+) -> Result<crate::workflow_agent::AgentExecutionPlan, String> {
+    guarded_command!("agent_build_execution_plan", {
+        let settings_snapshot = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
+            settings.clone()
+        };
+        let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
+        if assistant_mode {
+            let _ = expire_pending_confirmation_if_needed(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                "agent_build_execution_plan",
+            );
+        }
+        if request.intent.trim().is_empty() {
+            return Err("Intent is required.".to_string());
+        }
+        if request.session_id.trim().is_empty() {
+            return Err("Session id is required.".to_string());
+        }
+        const ALLOWED_LANGUAGES: &[&str] = &[
+            "source", "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "ko", "zh", "ar",
+            "tr", "hi",
+        ];
+        let lang = request.target_language.trim();
+        if !ALLOWED_LANGUAGES.contains(&lang) {
+            return Err(format!(
+                "Invalid target language '{}'. Allowed: {}",
+                lang,
+                ALLOWED_LANGUAGES.join(", ")
+            ));
+        }
+        if assistant_mode {
+            let _ = transition_assistant_state_with_settings(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                AssistantOrchestratorState::Planning,
+                "agent_build_execution_plan:start",
+            );
+        }
+        let plan = crate::workflow_agent::default_execution_plan(&request);
+        let _ = app.emit("agent:plan-ready", &plan);
+        if assistant_mode {
+            let _ = transition_assistant_state_with_settings(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                AssistantOrchestratorState::AwaitingConfirm,
+                "agent_build_execution_plan:ready",
+            );
+            emit_assistant_plan_ready(
+                &app,
+                &settings_snapshot,
+                &plan,
+                "agent_build_execution_plan:ready",
+            );
+            emit_assistant_awaiting_confirmation(
+                &app,
+                &settings_snapshot,
+                &plan,
+                "agent_build_execution_plan:ready",
+            );
+        }
+        Ok(plan)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn agent_execute_gdd_plan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::workflow_agent::AgentExecuteGddPlanRequest,
+) -> Result<crate::workflow_agent::AgentExecutionResult, String> {
+    guarded_command!("agent_execute_gdd_plan", {
+        let plan = request.plan.clone();
+        let settings_snapshot = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
+            settings.clone()
+        };
+        let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
+        if assistant_mode {
+            let _ = expire_pending_confirmation_if_needed(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                "agent_execute_gdd_plan",
+            );
+        }
+        if assistant_mode {
+            let _ = transition_assistant_state_with_settings(
+                &app,
+                state.inner(),
+                &settings_snapshot,
+                AssistantOrchestratorState::Executing,
+                "agent_execute_gdd_plan:start",
+            );
+        }
+        let confirmation_token = request
+            .confirmation_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(str::to_string);
+
+        if let Some(token) = confirmation_token.as_deref() {
+            match consume_pending_confirmation(&plan, token) {
+                Ok(()) => {}
+                Err(PendingConfirmationError::Missing) => {
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "No pending confirmation for this execution.".to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("confirmation_missing".to_string()),
+                    };
+                    if assistant_mode {
+                        emit_assistant_action_result(
+                            &app,
+                            &settings_snapshot,
+                            AssistantOrchestratorState::Recovering,
+                            &result,
+                            "agent_execute_gdd_plan:confirmation_missing",
+                        );
+                        let _ = emit_assistant_baseline_state(
+                            &app,
+                            state.inner(),
+                            &settings_snapshot,
+                            "agent_execute_gdd_plan:confirmation_missing",
+                        );
+                    }
+                    return Ok(result);
+                }
+                Err(PendingConfirmationError::Expired { expired_at_ms }) => {
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "Confirmation token expired. Build a new plan and confirm again."
+                            .to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("confirmation_expired".to_string()),
+                    };
+                    if assistant_mode {
+                        emit_assistant_confirmation_expired(
+                            &app,
+                            &settings_snapshot,
+                            "agent_execute_gdd_plan:confirmation_expired",
+                            expired_at_ms,
+                        );
+                        emit_assistant_action_result(
+                            &app,
+                            &settings_snapshot,
+                            AssistantOrchestratorState::Recovering,
+                            &result,
+                            "agent_execute_gdd_plan:confirmation_expired",
+                        );
+                        let _ = emit_assistant_baseline_state(
+                            &app,
+                            state.inner(),
+                            &settings_snapshot,
+                            "agent_execute_gdd_plan:confirmation_expired",
+                        );
+                    }
+                    return Ok(result);
+                }
+                Err(PendingConfirmationError::TokenMismatch) => {
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "Invalid confirmation token.".to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("confirmation_token_mismatch".to_string()),
+                    };
+                    if assistant_mode {
+                        emit_assistant_action_result(
+                            &app,
+                            &settings_snapshot,
+                            AssistantOrchestratorState::Recovering,
+                            &result,
+                            "agent_execute_gdd_plan:confirmation_token_mismatch",
+                        );
+                        let _ = emit_assistant_baseline_state(
+                            &app,
+                            state.inner(),
+                            &settings_snapshot,
+                            "agent_execute_gdd_plan:confirmation_token_mismatch",
+                        );
+                    }
+                    return Ok(result);
+                }
+                Err(PendingConfirmationError::PlanMismatch) => {
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "Confirmation token does not match the active plan.".to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("confirmation_plan_mismatch".to_string()),
+                    };
+                    if assistant_mode {
+                        emit_assistant_action_result(
+                            &app,
+                            &settings_snapshot,
+                            AssistantOrchestratorState::Recovering,
+                            &result,
+                            "agent_execute_gdd_plan:confirmation_plan_mismatch",
+                        );
+                        let _ = emit_assistant_baseline_state(
+                            &app,
+                            state.inner(),
+                            &settings_snapshot,
+                            "agent_execute_gdd_plan:confirmation_plan_mismatch",
+                        );
+                    }
+                    return Ok(result);
+                }
+            }
+        } else {
+            clear_pending_confirmation_for_plan(&plan);
+        }
+
+        let execution_result =
+            (|| -> Result<crate::workflow_agent::AgentExecutionResult, String> {
+                if plan.intent != "gdd_generate_publish" {
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "Unsupported agent intent.".to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some(format!("Unsupported intent '{}'.", plan.intent)),
+                    };
+                    let _ = app.emit("agent:execution-failed", &result);
+                    return Ok(result);
+                }
+
+                let _ = app.emit(
+                    "agent:execution-progress",
+                    serde_json::json!({
+                        "session_id": plan.session_id,
+                        "stage": "load_session",
+                    }),
+                );
+
+                let workflow_gap_minutes = settings_snapshot.workflow_agent.session_gap_minutes;
+                let preset_clones = settings_snapshot.gdd_module_settings.preset_clones.clone();
+                let confluence_settings = settings_snapshot.confluence_settings.clone();
+                let one_click_threshold = settings_snapshot
+                    .gdd_module_settings
+                    .one_click_confidence_threshold;
+                let vision_bridge_enabled =
+                    capability_enabled(&settings_snapshot, RuntimeCapability::VisionInput);
+                let tts_bridge_enabled =
+                    capability_enabled(&settings_snapshot, RuntimeCapability::VoiceOutputTts)
+                        && settings_snapshot.workflow_agent.voice_feedback_enabled;
+                let maybe_agent_speak = |context: &str, message: &str| {
+                    if !tts_bridge_enabled || message.trim().is_empty() {
+                        return;
+                    }
+                    let request = crate::multimodal_io::TtsSpeakRequest {
+                        provider: String::new(),
+                        text: message.trim().to_string(),
+                        rate: None,
+                        volume: None,
+                        context: Some(context.to_string()),
+                    };
+                    if let Err(tts_error) =
+                        crate::multimodal_io::speak_tts_internal(&app, state.inner(), request)
+                    {
+                        info!("workflow_agent tts skipped: {}", tts_error);
+                    }
+                };
+                let entries = collect_all_transcript_entries(&state);
+                let sessions =
+                    crate::workflow_agent::build_sessions(&entries, workflow_gap_minutes);
+                let session = match sessions
+                    .iter()
+                    .find(|candidate| candidate.id == plan.session_id)
+                    .cloned()
+                {
+                    Some(session) => session,
+                    None => {
+                        let result = crate::workflow_agent::AgentExecutionResult {
+                            status: "failed".to_string(),
+                            message: format!("Session '{}' not found.", plan.session_id),
+                            draft: None,
+                            publish_result: None,
+                            queued_job: None,
+                            error: Some(format!("Session '{}' not found.", plan.session_id)),
+                        };
+                        let _ = app.emit("agent:execution-failed", &result);
+                        return Ok(result);
+                    }
+                };
+
+                let transcript = session
+                    .entries
+                    .iter()
+                    .map(|entry| entry.text.trim())
+                    .filter(|text| !text.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if transcript.trim().is_empty() {
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "Session has no transcript content.".to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some("Session content was empty.".to_string()),
+                    };
+                    let _ = app.emit("agent:execution-failed", &result);
+                    return Ok(result);
+                }
+
+                let title = request
+                    .title
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("GDD Session {}", session.start_ms));
+                let target_language = plan.target_language.trim().to_string();
+                let mut template_hints: Vec<String> = Vec::new();
+                if !target_language.is_empty() {
+                    template_hints.push(format!(
+                    "Target output language preference: {}. Keep source facts unchanged and avoid invention.",
+                    target_language
+                ));
+                }
+                if vision_bridge_enabled {
+                    let _ = app.emit(
+                        "agent:execution-progress",
+                        serde_json::json!({
+                            "session_id": plan.session_id,
+                            "stage": "vision_context",
+                        }),
+                    );
+                    match crate::multimodal_io::capture_vision_snapshot_internal(
+                        &app,
+                        state.inner(),
+                    ) {
+                        Ok(snapshot) => {
+                            let dimensions = match (snapshot.width, snapshot.height) {
+                                (Some(w), Some(h)) => format!("{}x{}", w, h),
+                                _ => "unknown".to_string(),
+                            };
+                            let scope = snapshot
+                                .source_scope
+                                .as_deref()
+                                .unwrap_or("unknown")
+                                .to_string();
+                            template_hints.push(format!(
+                            "Vision context available (scope={}, sources={}, frame={}, timestamp_ms={}). Treat this as supporting context only.",
+                            scope,
+                            snapshot.source_count,
+                            dimensions,
+                            snapshot.timestamp_ms
+                        ));
+                            let _ = app.emit(
+                                "agent:execution-progress",
+                                serde_json::json!({
+                                    "session_id": plan.session_id,
+                                    "stage": "vision_context_ready",
+                                    "source_scope": scope,
+                                    "source_count": snapshot.source_count,
+                                    "timestamp_ms": snapshot.timestamp_ms,
+                                }),
+                            );
+                        }
+                        Err(error) => {
+                            warn!("workflow_agent vision context unavailable: {}", error);
+                            let _ = app.emit(
+                                "agent:execution-progress",
+                                serde_json::json!({
+                                    "session_id": plan.session_id,
+                                    "stage": "vision_context_unavailable",
+                                    "error": error,
+                                }),
+                            );
+                        }
+                    }
+                }
+                let template_hint = if template_hints.is_empty() {
+                    None
+                } else {
+                    Some(template_hints.join(" "))
+                };
+
+                let _ = app.emit(
+                    "agent:execution-progress",
+                    serde_json::json!({
+                        "session_id": plan.session_id,
+                        "stage": "generate_draft",
+                        "target_language": target_language,
+                    }),
+                );
+
+                let draft_request = crate::gdd::GenerateGddDraftRequest {
+                    transcript,
+                    preset_id: request.preset_id.clone(),
+                    title: Some(title.clone()),
+                    max_chunk_chars: request.max_chunk_chars,
+                    template_hint,
+                    template_label: Some("workflow_agent".to_string()),
+                };
+                let draft = crate::gdd::generate_draft(&draft_request, &preset_clones);
+
+                let publish_after_draft = crate::workflow_agent::should_publish_after_draft(&plan);
+                if !publish_after_draft {
+                    let skipped_reason = if plan.publish {
+                        "Draft generated. Publish skipped because the execution lane had no publish step."
+                    } else {
+                        "Draft generated. Publish skipped by plan."
+                    };
+                    let result = crate::workflow_agent::AgentExecutionResult {
+                        status: "completed".to_string(),
+                        message: skipped_reason.to_string(),
+                        draft: Some(draft.clone()),
+                        publish_result: None,
+                        queued_job: None,
+                        error: None,
+                    };
+                    let _ = app.emit("agent:execution-finished", &result);
+                    maybe_agent_speak(
+                        "agent_reply",
+                        "Workflow Agent: Draft generated. Publish was skipped.",
+                    );
+                    return Ok(result);
+                }
+
+                let space_key = request
+                    .space_key
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        let fallback = confluence_settings.default_space_key.trim();
+                        if fallback.is_empty() {
+                            None
+                        } else {
+                            Some(fallback.to_string())
+                        }
+                    })
+                    .ok_or_else(|| "No Confluence space key provided for publish.".to_string())?;
+                let parent_page_id = request
+                    .parent_page_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        let fallback = confluence_settings.default_parent_page_id.trim();
+                        if fallback.is_empty() {
+                            None
+                        } else {
+                            Some(fallback.to_string())
+                        }
+                    });
+                let target_page_id = request
+                    .target_page_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string);
+
+                let _ = app.emit(
+                    "agent:execution-progress",
+                    serde_json::json!({
+                        "session_id": plan.session_id,
+                        "stage": "publish_or_queue",
+                        "space_key": space_key,
+                    }),
+                );
+
+                let storage_body = crate::gdd::render_storage::render_confluence_storage(&draft);
+                let publish_request = crate::gdd::confluence::ConfluencePublishRequest {
+                    title,
+                    storage_body,
+                    space_key: space_key.clone(),
+                    parent_page_id,
+                    target_page_id,
+                };
+
+                let publish_result =
+                    crate::gdd::confluence::publish(&app, &confluence_settings, &publish_request);
+                match publish_result {
+                    Ok(publish) => {
+                        {
+                            let mut settings = state
+                                .settings
+                                .write()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            let route_key = crate::gdd::confluence::routing_key_for(
+                                &space_key,
+                                &publish_request.title,
+                            );
+                            settings
+                                .confluence_settings
+                                .routing_memory
+                                .insert(route_key, publish.page_id.clone());
+                            normalize_confluence_settings(&mut settings.confluence_settings);
+                            let _ = save_settings_file(&app, &settings);
+                            let _ = app.emit("settings-changed", settings.clone());
+                        }
+                        let result = crate::workflow_agent::AgentExecutionResult {
+                            status: "completed".to_string(),
+                            message: "Draft generated and published to Confluence.".to_string(),
+                            draft: Some(draft),
+                            publish_result: Some(publish),
+                            queued_job: None,
+                            error: None,
+                        };
+                        let _ = app.emit("agent:execution-finished", &result);
+                        maybe_agent_speak(
+                            "agent_reply",
+                            "Workflow Agent: Draft generated and published to Confluence.",
+                        );
+                        Ok(result)
+                    }
+                    Err(error) => {
+                        if crate::gdd::publish_queue::is_queueable_publish_error(&error) {
+                            let queue_request =
+                                crate::gdd::publish_queue::GddPublishOrQueueRequest {
+                                    draft: draft.clone(),
+                                    publish_request,
+                                    routing_confidence: Some(one_click_threshold),
+                                    routing_reasoning: Some("workflow_agent execution".to_string()),
+                                };
+                            let queued_job = crate::gdd::publish_queue::queue_publish_request(
+                                &app,
+                                &queue_request,
+                                &error,
+                            )?;
+                            let result = crate::workflow_agent::AgentExecutionResult {
+                                status: "queued".to_string(),
+                                message: "Confluence unavailable. Publish request queued locally."
+                                    .to_string(),
+                                draft: Some(draft),
+                                publish_result: None,
+                                queued_job: Some(queued_job),
+                                error: Some(error),
+                            };
+                            let _ = app.emit("agent:execution-finished", &result);
+                            maybe_agent_speak(
+                            "agent_event",
+                            "Workflow Agent: Confluence unavailable. Publish request was queued locally.",
+                        );
+                            Ok(result)
+                        } else {
+                            let result = crate::workflow_agent::AgentExecutionResult {
+                                status: "failed".to_string(),
+                                message: "Publish failed with non-queueable error.".to_string(),
+                                draft: Some(draft),
+                                publish_result: None,
+                                queued_job: None,
+                                error: Some(error.clone()),
+                            };
+                            let _ = app.emit("agent:execution-failed", &result);
+                            maybe_agent_speak(
+                                "agent_event",
+                                "Workflow Agent: Publish failed with a non-queueable error.",
+                            );
+                            Ok(result)
+                        }
+                    }
+                }
+            })();
+
+        match execution_result {
+            Ok(result) => {
+                if assistant_mode {
+                    let assistant_state = if result.status == "failed" {
+                        let _ = transition_assistant_state_with_settings(
+                            &app,
+                            state.inner(),
+                            &settings_snapshot,
+                            AssistantOrchestratorState::Recovering,
+                            "agent_execute_gdd_plan:result_failed",
+                        );
+                        AssistantOrchestratorState::Recovering
+                    } else {
+                        AssistantOrchestratorState::Executing
+                    };
+                    emit_assistant_action_result(
+                        &app,
+                        &settings_snapshot,
+                        assistant_state,
+                        &result,
+                        "agent_execute_gdd_plan:result",
+                    );
+                    let _ = emit_assistant_baseline_state(
+                        &app,
+                        state.inner(),
+                        &settings_snapshot,
+                        "agent_execute_gdd_plan:complete",
+                    );
+                }
+                Ok(result)
+            }
+            Err(error) => {
+                if assistant_mode {
+                    let _ = transition_assistant_state_with_settings(
+                        &app,
+                        state.inner(),
+                        &settings_snapshot,
+                        AssistantOrchestratorState::Recovering,
+                        "agent_execute_gdd_plan:error",
+                    );
+                    let synthetic_result = crate::workflow_agent::AgentExecutionResult {
+                        status: "failed".to_string(),
+                        message: "Workflow execution failed before completion.".to_string(),
+                        draft: None,
+                        publish_result: None,
+                        queued_job: None,
+                        error: Some(error.clone()),
+                    };
+                    emit_assistant_action_result(
+                        &app,
+                        &settings_snapshot,
+                        AssistantOrchestratorState::Recovering,
+                        &synthetic_result,
+                        "agent_execute_gdd_plan:error",
+                    );
+                    let _ = emit_assistant_baseline_state(
+                        &app,
+                        state.inner(),
+                        &settings_snapshot,
+                        "agent_execute_gdd_plan:error",
+                    );
+                }
+                Err(error)
+            }
+        }
+    })
 }
 
 #[cfg(test)]

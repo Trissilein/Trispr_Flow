@@ -1,7 +1,7 @@
+use crate::ai_fallback::check_strict_local_mode;
 use crate::ai_fallback::provider::{
     is_local_ollama_endpoint, list_ollama_models, ping_ollama, ping_ollama_quick,
 };
-use crate::check_strict_local_mode;
 use crate::managed_child_slot_status;
 use crate::now_iso;
 use crate::paths::resolve_data_path;

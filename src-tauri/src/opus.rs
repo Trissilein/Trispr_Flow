@@ -5,6 +5,7 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use tauri::AppHandle;
 use tracing::{error, info, warn};
 
 /// Result of OPUS encoding operation
@@ -309,4 +310,35 @@ pub fn get_ffmpeg_version() -> Result<String, String> {
         .to_string();
 
     Ok(first_line)
+}
+
+#[tauri::command]
+pub(crate) fn encode_to_opus(
+    app: AppHandle,
+    input_path: String,
+    output_path: String,
+    bitrate_kbps: Option<u32>,
+) -> Result<OpusEncodeResult, String> {
+    let allowed_root = crate::paths::resolve_base_dir(&app);
+
+    let input = crate::paths::validate_path_within(&input_path, &allowed_root)?;
+    let output = crate::paths::validate_path_within(&output_path, &allowed_root)?;
+
+    if let Some(bitrate) = bitrate_kbps {
+        let mut config = OpusEncoderConfig::default();
+        config.bitrate_kbps = bitrate;
+        encode_wav_to_opus(&input, &output, &config)
+    } else {
+        encode_wav_to_opus_default(&input, &output)
+    }
+}
+
+#[tauri::command]
+pub(crate) fn check_ffmpeg() -> Result<bool, String> {
+    Ok(check_ffmpeg_available())
+}
+
+#[tauri::command]
+pub(crate) fn get_ffmpeg_version_info() -> Result<String, String> {
+    get_ffmpeg_version()
 }

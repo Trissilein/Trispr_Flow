@@ -8,6 +8,7 @@ use tracing::{debug, warn};
 use crate::history_partition::PartitionedHistory;
 use crate::paths;
 use crate::state::{AppState, HistoryEntry};
+use tauri::{AppHandle, Manager};
 
 static SOURCE_ITEM_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -319,6 +320,59 @@ pub fn ingest_history_entry(
         }),
         order,
     })
+}
+
+#[tauri::command]
+pub(crate) async fn video_ingest_sources(
+    paths: Vec<String>,
+    app: AppHandle,
+) -> Result<Vec<SourceItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let max_mb = state
+            .settings
+            .read()
+            .map(|settings| settings.video_generation_settings.max_upload_mb)
+            .unwrap_or(500);
+
+        let workdir =
+            JobWorkdir::create(&app).map_err(|e| format!("prepare ingest workdir: {}", e))?;
+        let outcome = ingest_dropped_paths(
+            paths.into_iter().map(PathBuf::from).collect(),
+            &workdir,
+            0,
+            max_mb,
+        );
+        workdir.cleanup();
+
+        if outcome.items.is_empty() && !outcome.errors.is_empty() {
+            return Err(outcome.errors.join("; "));
+        }
+        if !outcome.errors.is_empty() {
+            warn!(
+                "[video-ingest] {} items ingested, {} errors: {}",
+                outcome.items.len(),
+                outcome.errors.len(),
+                outcome.errors.join("; ")
+            );
+        }
+        Ok(outcome.items)
+    })
+    .await
+    .map_err(|e| format!("ingest join error: {}", e))?
+}
+
+#[tauri::command]
+pub(crate) async fn video_ingest_history_entry(
+    entry_id: String,
+    app: AppHandle,
+) -> Result<SourceItem, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        ingest_history_entry(&entry_id, state.inner(), 0)
+    })
+    .await
+    .map_err(|e| format!("history ingest join error: {}", e))?
 }
 
 fn find_history_entry(history: &PartitionedHistory, entry_id: &str) -> Option<HistoryEntry> {

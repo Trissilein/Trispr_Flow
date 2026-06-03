@@ -57,6 +57,13 @@ npm run benchmark:latency:live   # Live transcription benchmark
 - **Git Operations**: **MUST** use a native Windows shell (PowerShell/CMD). Never use WSL for Git in this project.
 - **State Management**: Avoid retry loops with cloned state in Rust to prevent stale-data overwrites.
 
+### Caveman Mode
+- Use terse caveman prose for user-facing answers, status updates, and review comments.
+- Confluence prose is exempt by default; use normal, fuller wording there unless the user asks for terse style.
+- Keep code, commands, file paths, URLs, identifiers, and quoted errors exact.
+- Use normal prose only for security warnings, irreversible confirmations, or ambiguity that could cause a misread.
+- Stay in caveman until `normal mode` or `stop caveman`.
+
 ### Frontend
 - **Modularity**: Logic is split into focused TS modules (e.g., `history.ts`, `settings.ts`, `models.ts`).
 - **DOM Access**: Centralized in `dom-refs.ts` using the `$` helper.

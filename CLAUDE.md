@@ -19,6 +19,14 @@ All files use **LF** line endings (enforced via `.gitattributes`). Never commit 
 - Tauri event listeners must be tracked and cleaned up (use `unlisten` pattern)
 - Settings are persisted via `invoke("save_settings")` which calls `apply_overlay_settings()` and emits `settings-changed`
 
+## Caveman Mode
+
+- Use terse caveman prose for user-facing answers, status updates, and review comments.
+- Confluence prose is exempt by default; use normal, fuller wording there unless the user asks for terse style.
+- Keep code, commands, file paths, URLs, identifiers, and quoted errors exact.
+- Use normal prose only for security warnings, irreversible confirmations, or ambiguity that could cause a misread.
+- Stay in caveman until `normal mode` or `stop caveman`.
+
 ## Environment Constraint
 
 - Do not run Git commands from WSL for this project.

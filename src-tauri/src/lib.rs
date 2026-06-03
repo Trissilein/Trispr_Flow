@@ -20,6 +20,7 @@ mod opus;
 mod overlay;
 mod paths;
 mod postprocessing;
+mod refinement_adaptation;
 mod session_manager;
 mod state;
 mod transcription;
@@ -84,8 +85,8 @@ use crate::ai_fallback::keyring as ai_fallback_keyring;
 use crate::ai_fallback::models::RefinementOptions;
 use crate::ai_fallback::provider::{
     default_models_for_provider, is_local_ollama_endpoint, is_ssrf_target, list_ollama_models,
-    list_ollama_models_with_size, ping_ollama, ping_ollama_quick, prompt_for_profile, AIProvider,
-    ProviderFactory,
+    list_ollama_models_with_size, ollama_endpoint_candidates, ping_ollama, ping_ollama_quick,
+    prompt_for_profile, AIProvider, ProviderFactory,
 };
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
 use crate::history_partition::PartitionedHistory;
@@ -106,6 +107,7 @@ use crate::ollama_runtime::{
     import_ollama_model_from_file, install_ollama_runtime, list_ollama_runtime_versions,
     set_strict_local_mode, start_ollama_runtime, verify_ollama_runtime,
 };
+use crate::refinement_adaptation::resolve_adaptive_low_latency;
 use crate::state::{
     get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
     normalize_ai_fallback_fields, normalize_ai_refinement_module_binding,
@@ -117,7 +119,8 @@ use crate::state::{
 use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, last_transcription_accelerator,
     reconcile_whisper_runtime, start_transcribe_monitor, stop_transcribe_monitor,
-    toggle_transcribe_state, transcribe_audio, warm_transcribe_runtime, whisper_runtime_required,
+    toggle_transcribe_state, transcribe_audio, warm_transcribe_runtime,
+    whisper_runtime_auto_warm_required, whisper_runtime_required,
 };
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
@@ -520,6 +523,8 @@ pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> 
         diagnostics.ollama.managed_pid = managed_pid;
         diagnostics.ollama.endpoint = endpoint.clone();
         diagnostics.ollama.reachable = reachable;
+        diagnostics.ollama.active_requests = state.refinement_active_count.load(Ordering::SeqCst);
+        diagnostics.ollama.idle_release_ms = 90_000;
         if reachable {
             diagnostics.ollama.spawn_stage = "ready".to_string();
             diagnostics.ollama.last_error.clear();
@@ -532,6 +537,10 @@ pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> 
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
         diagnostics.whisper.backend_selected = whisper_backend.clone();
+        diagnostics.whisper.active_requests = crate::whisper_server::active_request_count();
+        diagnostics.whisper.warm_until_ms =
+            state.whisper_server_warm_until_ms.load(Ordering::Relaxed);
+        diagnostics.whisper.idle_retire_ms = 300_000;
         if diagnostics.whisper.mode == "idle" && settings.capture_enabled {
             diagnostics.whisper.mode = "cli".to_string();
         }
@@ -948,6 +957,19 @@ pub(crate) fn prepare_refinement(
         });
     }
 
+    let adaptive_low_latency = resolve_adaptive_low_latency(app, settings, &model);
+    let effective_low_latency = ai.low_latency_mode || adaptive_low_latency.enabled;
+    let effective_max_tokens = if effective_low_latency {
+        ai.max_tokens.min(512)
+    } else {
+        ai.max_tokens
+    };
+    let effective_temperature = if effective_low_latency && ai.temperature > 0.2 {
+        0.15
+    } else {
+        ai.temperature
+    };
+
     let effective_language = if settings.language_pinned {
         settings.language_mode.clone()
     } else {
@@ -956,9 +978,9 @@ pub(crate) fn prepare_refinement(
     let enforce_language_guard = ai.preserve_source_language && ai.prompt_profile != "llm_prompt";
 
     let options = RefinementOptions {
-        temperature: ai.temperature,
-        max_tokens: ai.max_tokens,
-        low_latency_mode: ai.low_latency_mode,
+        temperature: effective_temperature,
+        max_tokens: effective_max_tokens,
+        low_latency_mode: effective_low_latency,
         language: Some(effective_language.clone()),
         custom_prompt: augment_prompt_with_vocab_terms(
             prompt_for_profile(
@@ -975,12 +997,14 @@ pub(crate) fn prepare_refinement(
 
     if crate::state::diagnostic_logging_enabled() {
         info!(
-            "[refinement:prepare] resolved provider={} model={} repaired={} prompt_profile={} low_latency={} max_tokens={} temperature={} guard={}",
+            "[refinement:prepare] resolved provider={} model={} repaired={} prompt_profile={} low_latency={} adaptive_low_latency={} adaptive_reason={} max_tokens={} temperature={} guard={}",
             ai.provider,
             model,
             repaired,
             options.prompt_profile,
             options.low_latency_mode,
+            adaptive_low_latency.enabled,
+            adaptive_low_latency.reason,
             options.max_tokens,
             options.temperature,
             options.enforce_language_guard
@@ -2093,7 +2117,11 @@ async fn refine_transcript(
     // inference, slow network, etc.).  Running it on a blocking worker thread
     // prevents it from stalling the Tauri event loop and triggering tao's
     // "NewEvents without RedrawEventsCleared" warning that leads to a UI freeze.
-    let _activity_guard = crate::audio::start_refinement_activity_guard(app.clone());
+    let _activity_guard = crate::audio::start_refinement_activity_guard(
+        app.clone(),
+        setup.provider.id().to_string(),
+        setup.model.clone(),
+    );
     let app_clone = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         setup
@@ -4648,7 +4676,7 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
                             err
                         );
                     }
-                } else {
+                } else if whisper_runtime_auto_warm_required(settings) {
                     crate::whisper_server::schedule_whisper_server_warmup(
                         app,
                         state.inner(),
@@ -4762,7 +4790,9 @@ fn check_ai_refinement_runtime_ready_once(
     app: &AppHandle,
     settings: &Settings,
 ) -> Result<(), String> {
-    // Metadata-only readiness check. Do not run inference here.
+    // Metadata-only readiness check — no inference here.
+    // Model warmup happens on first PTT press (concurrent with recording),
+    // not at app start where the GPU spike would be unexpected.
     let _ = prepare_refinement(app, settings)?;
     Ok(())
 }
@@ -6581,7 +6611,11 @@ fn agent_compose_unknown_reply(
         });
         options.enforce_language_guard = false;
 
-        let _activity_guard = crate::audio::start_refinement_activity_guard(app.clone());
+        let _activity_guard = crate::audio::start_refinement_activity_guard(
+            app.clone(),
+            setup.provider.id().to_string(),
+            setup.model.clone(),
+        );
         match setup
             .provider
             .refine_transcript(command_text, &setup.model, &options, &setup.api_key)
@@ -9366,7 +9400,7 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
                             err
                         );
                     }
-                } else {
+                } else if whisper_runtime_auto_warm_required(&new_settings) {
                     crate::whisper_server::schedule_whisper_server_warmup(
                         &app,
                         state.inner(),
@@ -9394,18 +9428,38 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn unload_ollama_model(model: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || unload_ollama_model_impl(&model))
+async fn unload_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || unload_configured_ollama_model(&app, &model))
         .await
         .map_err(|e| format!("Unload Ollama model task failed: {}", e))?
 }
 
-pub(crate) fn unload_ollama_model_impl(model: &str) -> Result<(), String> {
+pub(crate) fn unload_configured_ollama_model(app: &AppHandle, model: &str) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    check_strict_local_mode(&settings)?;
+    let endpoint = settings.providers.ollama.endpoint.trim();
+    if is_ssrf_target(endpoint) {
+        return Err("Ollama endpoint is not allowed for unload.".to_string());
+    }
+    unload_ollama_model_impl(endpoint, model)
+}
+
+pub(crate) fn unload_ollama_model_impl(endpoint: &str, model: &str) -> Result<(), String> {
     // Send a request to Ollama to unload the model from VRAM.
     // This uses a minimal POST to /api/generate with keep_alive: "0m" to signal
     // that the model should be unloaded immediately.
 
-    let ollama_endpoint = "http://127.0.0.1:11434";
+    if model.trim().is_empty() {
+        return Ok(());
+    }
+    if is_ssrf_target(endpoint) {
+        return Err("Ollama endpoint is not allowed for unload.".to_string());
+    }
     let unload_body = serde_json::json!({
         "model": model,
         "prompt": "",
@@ -9418,13 +9472,56 @@ pub(crate) fn unload_ollama_model_impl(model: &str) -> Result<(), String> {
         .timeout_read(std::time::Duration::from_secs(5))
         .build();
 
-    let url = format!("{}/api/generate", ollama_endpoint);
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/generate", candidate);
+        if agent
+            .post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&unload_body)
+            .is_ok()
+        {
+            return Ok(());
+        }
+    }
 
-    // Fire and forget — we don't care about the response, just sending the unload signal
-    let _ = agent
-        .post(&url)
-        .set("Content-Type", "application/json")
-        .send_json(&unload_body);
+    Ok(())
+}
+
+pub(crate) fn warmup_ollama_model_impl(endpoint: &str, model: &str) -> Result<(), String> {
+    // Load the model into VRAM by sending a minimal inference request.
+    // keep_alive: "-1" keeps the model loaded until Ollama exits or an explicit
+    // unload is sent — Trispr Flow's own idle-release (4 h) handles the latter.
+    if model.trim().is_empty() {
+        return Ok(());
+    }
+    if is_ssrf_target(endpoint) {
+        return Err("Ollama endpoint is not allowed for warmup.".to_string());
+    }
+    let warmup_body = serde_json::json!({
+        "model": model,
+        "prompt": ".",
+        "stream": false,
+        "think": false,
+        "keep_alive": "-1",
+        "options": { "num_ctx": 512, "num_predict": 1 }
+    });
+
+    let agent = ureq::builder()
+        .timeout_connect(std::time::Duration::from_secs(5))
+        .timeout_read(std::time::Duration::from_secs(90)) // generous — cold disk load can take 60 s
+        .build();
+
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/generate", candidate);
+        if agent
+            .post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&warmup_body)
+            .is_ok()
+        {
+            return Ok(());
+        }
+    }
 
     Ok(())
 }
@@ -9632,7 +9729,15 @@ fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String> {
     drop(settings);
 
     if !current_ollama_model.is_empty() {
-        let _ = unload_ollama_model_impl(&current_ollama_model);
+        let endpoint = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .providers
+            .ollama
+            .endpoint
+            .clone();
+        let _ = unload_ollama_model_impl(&endpoint, &current_ollama_model);
     }
 
     // Kill and restart Whisper server to clear old model
@@ -11671,6 +11776,9 @@ pub fn run() {
                 managed_whisper_server_child: Mutex::new(None),
                 whisper_server_port: AtomicU16::new(crate::whisper_server::WHISPER_SERVER_PORT),
                 whisper_server_warmup_started: AtomicBool::new(false),
+                ollama_model_warm: AtomicBool::new(false),
+                whisper_server_warm_until_ms: AtomicU64::new(0),
+                whisper_server_retire_generation: AtomicU64::new(0),
                 vision_stream_running: AtomicBool::new(false),
                 vision_stream_started_ms: AtomicU64::new(0),
                 vision_stream_frame_seq: AtomicU64::new(0),
@@ -11896,7 +12004,8 @@ pub fn run() {
                     .read()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .clone();
-                if whisper_runtime_required(&runtime_settings) {
+                crate::whisper_server::ensure_whisper_server_keepalive(app.handle().clone());
+                if whisper_runtime_auto_warm_required(&runtime_settings) {
                     warm_transcribe_runtime(app.handle(), &state, &runtime_settings);
                 }
                 if should_autostart_ai_refinement_runtime(&runtime_settings) {

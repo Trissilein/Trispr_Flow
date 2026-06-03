@@ -146,6 +146,8 @@ pub(crate) struct TranscriptionResult {
     pub(crate) paste_timeout_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) entry_id: Option<String>,
+    pub(crate) audio_duration_ms: u64,
+    pub(crate) word_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -326,8 +328,8 @@ fn backlog_status_from_queue(queue: &AudioQueueState) -> TranscribeBacklogStatus
 mod tests {
     use super::{
         backlog_capacity_for_batch_ms, gpu_backend_attempt_order, should_drop_transcript,
-        whisper_runtime_preflight_issue, whisper_runtime_required, AudioQueue,
-        CUDA_BACKEND_UNSTABLE, CUDA_RUNTIME_REQUIRED_FILES,
+        whisper_runtime_auto_warm_required, whisper_runtime_preflight_issue,
+        whisper_runtime_required, AudioQueue, CUDA_BACKEND_UNSTABLE, CUDA_RUNTIME_REQUIRED_FILES,
     };
     use crate::state::Settings;
     use std::fs;
@@ -416,6 +418,23 @@ mod tests {
         settings.capture_enabled = false;
         settings.transcribe_enabled = true;
         assert!(whisper_runtime_required(&settings));
+    }
+
+    #[test]
+    fn whisper_runtime_auto_warm_skips_idle_ptt_capture() {
+        let mut settings = Settings::default();
+        settings.capture_enabled = true;
+        settings.transcribe_enabled = false;
+        settings.mode = "ptt".to_string();
+        assert!(whisper_runtime_required(&settings));
+        assert!(!whisper_runtime_auto_warm_required(&settings));
+
+        settings.mode = "vad".to_string();
+        assert!(whisper_runtime_auto_warm_required(&settings));
+
+        settings.capture_enabled = false;
+        settings.transcribe_enabled = true;
+        assert!(whisper_runtime_auto_warm_required(&settings));
     }
 
     #[test]
@@ -690,12 +709,16 @@ pub(crate) fn whisper_runtime_required(settings: &Settings) -> bool {
     settings.capture_enabled || settings.transcribe_enabled
 }
 
+pub(crate) fn whisper_runtime_auto_warm_required(settings: &Settings) -> bool {
+    settings.transcribe_enabled || (settings.capture_enabled && settings.mode == "vad")
+}
+
 pub(crate) fn reconcile_whisper_runtime(
     app: &AppHandle,
     state: &State<'_, AppState>,
     settings: &Settings,
 ) {
-    if whisper_runtime_required(settings) {
+    if whisper_runtime_auto_warm_required(settings) {
         warm_transcribe_runtime(app, state, settings);
     } else {
         crate::whisper_server::kill_whisper_server(state.inner());
@@ -2186,6 +2209,11 @@ fn update_whisper_runtime_diagnostics(
         diagnostics.whisper.accelerator = accelerator.to_string();
         diagnostics.whisper.gpu_layers_requested = gpu_layers_requested;
         diagnostics.whisper.gpu_layers_applied = gpu_layers_applied;
+        diagnostics.whisper.active_requests = crate::whisper_server::active_request_count();
+        diagnostics.whisper.warm_until_ms = state
+            .whisper_server_warm_until_ms
+            .load(std::sync::atomic::Ordering::Relaxed);
+        diagnostics.whisper.idle_retire_ms = 300_000;
         diagnostics.whisper.last_error = last_error.unwrap_or_default();
     });
 }
@@ -2355,6 +2383,7 @@ fn transcribe_local(
                         resolve_whisper_gpu_layers(settings),
                         None,
                     );
+                    crate::whisper_server::touch_whisper_server_recent_use(app, state.inner());
                     if diagnostics_enabled {
                         info!(
                             "[TIMING] whisper_server: {:.2}s",

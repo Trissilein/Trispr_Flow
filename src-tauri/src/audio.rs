@@ -1,3 +1,4 @@
+use crate::ai_fallback::error::AIError;
 use crate::constants::{TARGET_SAMPLE_RATE, VAD_MIN_CONSECUTIVE_CHUNKS, VAD_MIN_VOICE_MS};
 use crate::continuous_dump::{AdaptiveSegmenter, AdaptiveSegmenterConfig, SegmentFlushReason};
 use crate::overlay::{
@@ -5,10 +6,11 @@ use crate::overlay::{
     update_overlay_state, OverlayState,
 };
 use crate::postprocessing::process_transcript;
+use crate::refinement_adaptation::{record_refinement_observation, RefinementObservation};
 use crate::state::{
     mark_entry_refinement_failed, mark_entry_refinement_started, mark_entry_refinement_success,
     normalize_ai_fallback_fields, push_history_entry_inner, record_refinement_fallback_failed,
-    save_settings_file, AppState, Settings,
+    record_refinement_timeout, save_settings_file, AppState, Settings,
 };
 use crate::transcription::{
     rms_i16, should_drop_transcript, transcribe_audio, TranscriptionResult,
@@ -27,10 +29,10 @@ const VAD_PRE_ROLL_MS_MIN: u64 = 250;
 const VAD_PRE_ROLL_MS_MAX: u64 = 350;
 const VAD_PRE_ROLL_MIN_MS: u64 = 60;
 const VAD_PRE_ROLL_ENERGY_FACTOR: f32 = 0.45;
-const REFINEMENT_WATCHDOG_TIMEOUT_MS: u64 = 45_000;
+const REFINEMENT_WATCHDOG_TIMEOUT_MS: u64 = 12_000;
 const REFINEMENT_WATCHDOG_POLL_MS: u64 = 1_000;
 const REFINEMENT_PASTE_TIMEOUT_MS: u64 = 10_000;
-const REFINEMENT_COLD_PASTE_TIMEOUT_MS: u64 = 60_000;
+const REFINEMENT_COLD_PASTE_TIMEOUT_MS: u64 = 30_000;
 const REFINEMENT_COLD_PASTE_MAX_AGE_MS: u64 = 12 * 60_000;
 const OVERLAY_EMIT_INTERVAL_MS: u64 = 33; // ~30 FPS for smoother overlay motion
 const PTT_VAD_TAIL_MS: u64 = 150;
@@ -1356,7 +1358,30 @@ fn handle_transcription_ok(
         entry_id = updated.first().map(|entry| entry.id.clone());
         let _ = app_handle.emit("history:updated", updated);
     }
-    let paste_deferred = should_defer_paste_for_refinement(&app_handle, settings);
+    let word_count = processed_text.split_whitespace().count() as u32;
+    info!(
+        "[perf] {}",
+        serde_json::json!({
+            "event": "transcription",
+            "ts": crate::util::now_ms(),
+            "audio_ms": duration_ms,
+            "words": word_count,
+            "job_id": job_id,
+            "source": source,
+        })
+    );
+    // If OLLAMA model is not confirmed warm, paste raw text immediately and
+    // skip refinement entirely — waiting would block for the full model-load
+    // duration (20–60 s) and trash the GPU while the user expects output.
+    let ollama_cold = settings.ai_fallback.provider == "ollama"
+        && ai_refinement_capability_enabled(settings)
+        && !state.ollama_model_warm.load(Ordering::SeqCst);
+
+    let paste_deferred = if ollama_cold {
+        false
+    } else {
+        should_defer_paste_for_refinement(&app_handle, settings)
+    };
     let _ = app_handle.emit(
         "transcription:result",
         TranscriptionResult {
@@ -1370,32 +1395,37 @@ fn handle_transcription_ok(
                 None
             },
             entry_id: entry_id.clone(),
+            audio_duration_ms: duration_ms,
+            word_count,
         },
     );
     if crate::state::diagnostic_logging_enabled() {
         let startup_status = crate::startup_status_snapshot(state.inner());
         info!(
-            "[refinement:{}] paste policy source={} deferred={} timeout_ms={} cold_start={} ollama_ready={} ollama_starting={} active_count={}",
+            "[refinement:{}] paste policy source={} deferred={} timeout_ms={} cold_start={} ollama_cold={} ollama_ready={} ollama_starting={} active_count={}",
             job_id,
             source,
             paste_deferred,
             if paste_deferred { paste_timeout_ms } else { 0 },
             paste_timeout_cold,
+            ollama_cold,
             startup_status.ollama_ready,
             startup_status.ollama_starting,
             state.refinement_active_count.load(Ordering::SeqCst)
         );
     }
-    maybe_spawn_ai_refinement(
-        app_handle.clone(),
-        processed_text.clone(),
-        source.to_string(),
-        "transcription_postprocess",
-        job_id,
-        entry_id,
-        settings,
-        paste_deferred,
-    );
+    if !ollama_cold {
+        maybe_spawn_ai_refinement(
+            app_handle.clone(),
+            processed_text.clone(),
+            source.to_string(),
+            "transcription_postprocess",
+            job_id,
+            entry_id,
+            settings,
+            paste_deferred,
+        );
+    }
 
     Some(processed_text.len())
 }
@@ -1658,10 +1688,11 @@ pub(crate) fn maybe_spawn_ai_refinement(
             }
 
             // Model resolved successfully — now signal that refinement is active.
-            begin_refinement_activity(&app_handle);
-            let _activity_guard = RefinementActivityGuard {
-                app_handle: app_handle.clone(),
-            };
+            let _activity_guard = start_refinement_activity_guard(
+                app_handle.clone(),
+                setup.provider.id().to_string(),
+                setup.model.clone(),
+            );
             if diagnostics_enabled {
                 info!(
                     "[refinement:{}] inference starting trigger={} source={} provider={} model={} entry_id={:?}",
@@ -1764,6 +1795,13 @@ pub(crate) fn maybe_spawn_ai_refinement(
                         app_handle.state::<AppState>().inner(),
                         &result.model,
                     );
+                    record_refinement_observation(
+                        &app_handle,
+                        &result.model,
+                        RefinementObservation::Success {
+                            execution_ms: result.execution_time_ms,
+                        },
+                    );
                     if let Some(entry_id_value) = entry_id.as_deref() {
                         let _ = mark_entry_refinement_success(
                             &app_handle,
@@ -1775,6 +1813,28 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             result.execution_time_ms,
                         );
                     }
+                    app_handle
+                        .state::<AppState>()
+                        .ollama_model_warm
+                        .store(true, Ordering::SeqCst);
+                    let tok_s = result.ollama_eval_ms
+                        .filter(|&ms| ms > 0)
+                        .map(|ms| (result.usage.output_tokens as f64 / (ms as f64 / 1000.0) * 10.0).round() / 10.0);
+                    info!(
+                        "[perf] {}",
+                        serde_json::json!({
+                            "event": "refinement",
+                            "ts": crate::util::now_ms(),
+                            "job_id": job_id,
+                            "refine_ms": result.execution_time_ms,
+                            "tokens_in": result.usage.input_tokens,
+                            "tokens_out": result.usage.output_tokens,
+                            "tok_s": tok_s,
+                            "ollama_load_ms": result.ollama_load_ms,
+                            "ollama_eval_ms": result.ollama_eval_ms,
+                            "model": result.model,
+                        })
+                    );
                     let _ = app_handle.emit(
                         "transcription:refined",
                         serde_json::json!({
@@ -1786,6 +1846,10 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             "trigger": trigger,
                             "model": result.model,
                             "execution_time_ms": result.execution_time_ms,
+                            "tokens_in": result.usage.input_tokens,
+                            "tokens_out": result.usage.output_tokens,
+                            "ollama_load_ms": result.ollama_load_ms,
+                            "ollama_eval_ms": result.ollama_eval_ms,
                         }),
                     );
                 }
@@ -1798,6 +1862,18 @@ pub(crate) fn maybe_spawn_ai_refinement(
                         setup.provider.id(),
                         setup.model,
                         e
+                    );
+                    if matches!(e, AIError::Timeout) {
+                        record_refinement_timeout(app_handle.state::<AppState>().inner());
+                    }
+                    record_refinement_observation(
+                        &app_handle,
+                        &effective_model,
+                        if matches!(e, AIError::Timeout) {
+                            RefinementObservation::Timeout
+                        } else {
+                            RefinementObservation::Failure
+                        },
                     );
                     record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
                     if let Some(entry_id_value) = entry_id.as_deref() {
@@ -1902,16 +1978,26 @@ fn repair_ollama_model_after_not_found(
 
 pub(crate) struct RefinementActivityGuard {
     app_handle: AppHandle,
+    provider: String,
+    model: String,
 }
 
-pub(crate) fn start_refinement_activity_guard(app_handle: AppHandle) -> RefinementActivityGuard {
+pub(crate) fn start_refinement_activity_guard(
+    app_handle: AppHandle,
+    provider: String,
+    model: String,
+) -> RefinementActivityGuard {
     begin_refinement_activity(&app_handle);
-    RefinementActivityGuard { app_handle }
+    RefinementActivityGuard {
+        app_handle,
+        provider,
+        model,
+    }
 }
 
 impl Drop for RefinementActivityGuard {
     fn drop(&mut self) {
-        end_refinement_activity(&self.app_handle);
+        end_refinement_activity(&self.app_handle, &self.provider, &self.model);
     }
 }
 
@@ -1980,6 +2066,45 @@ pub(crate) fn force_reset_refinement_activity(app_handle: &AppHandle, reason: &s
     emit_refinement_activity(app_handle, 0, reason);
 }
 
+const OLLAMA_IDLE_RELEASE_MS: u64 = 14_400_000; // 4 hours — model stays warm for a full work session
+
+fn schedule_ollama_idle_release(app_handle: AppHandle, generation: u64, model: String) {
+    if model.trim().is_empty() {
+        return;
+    }
+    crate::util::spawn_guarded("ollama_idle_release", move || {
+        thread::sleep(Duration::from_millis(OLLAMA_IDLE_RELEASE_MS));
+        let state = app_handle.state::<AppState>();
+        if state.ollama_idle_release_generation.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        if state.refinement_active_count.load(Ordering::SeqCst) != 0 {
+            return;
+        }
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if settings.ai_fallback.provider != "ollama" {
+            return;
+        }
+        if crate::state::diagnostic_logging_enabled() {
+            info!(
+                "[ollama.idle] releasing model={} after {}ms idle",
+                model, OLLAMA_IDLE_RELEASE_MS
+            );
+        }
+        if let Err(err) =
+            crate::unload_ollama_model_impl(&settings.providers.ollama.endpoint, &model)
+        {
+            warn!("[ollama.idle] release failed model={}: {}", model, err);
+        } else {
+            state.ollama_model_warm.store(false, Ordering::SeqCst);
+        }
+    });
+}
+
 pub(crate) fn begin_refinement_activity(app_handle: &AppHandle) {
     let state = app_handle.state::<AppState>();
     let previous = state.refinement_active_count.fetch_add(1, Ordering::SeqCst);
@@ -2011,7 +2136,7 @@ pub(crate) fn begin_refinement_activity(app_handle: &AppHandle) {
     }
 }
 
-pub(crate) fn end_refinement_activity(app_handle: &AppHandle) {
+pub(crate) fn end_refinement_activity(app_handle: &AppHandle, provider: &str, model: &str) {
     let state = app_handle.state::<AppState>();
     loop {
         let current = state.refinement_active_count.load(Ordering::SeqCst);
@@ -2037,10 +2162,18 @@ pub(crate) fn end_refinement_activity(app_handle: &AppHandle) {
                 state
                     .refinement_watchdog_generation
                     .fetch_add(1, Ordering::SeqCst);
-                state
+                let release_generation = state
                     .ollama_idle_release_generation
-                    .fetch_add(1, Ordering::SeqCst);
+                    .fetch_add(1, Ordering::SeqCst)
+                    + 1;
                 let _ = update_overlay_refining_indicator(app_handle, false);
+                if provider == "ollama" {
+                    schedule_ollama_idle_release(
+                        app_handle.clone(),
+                        release_generation,
+                        model.to_string(),
+                    );
+                }
             }
             return;
         }
@@ -2995,6 +3128,34 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
             info!("handle_ptt_press: mode is '{}' -> no-op", settings.mode);
         }
         return Ok(());
+    }
+    if let Some(model_path) = crate::models::resolve_model_path(app, &settings.model) {
+        crate::whisper_server::schedule_whisper_server_warmup(
+            app,
+            state.inner(),
+            &model_path,
+            &settings,
+        );
+    }
+
+    // Pre-warm OLLAMA model concurrently with recording so the model is in
+    // VRAM by the time Whisper finishes. No-op if already loaded.
+    if ai_refinement_capability_enabled(&settings) && settings.ai_fallback.provider == "ollama" {
+        let endpoint = settings.providers.ollama.endpoint.clone();
+        let model = settings.ai_fallback.model.clone();
+        let app_for_warmup = app.clone();
+        crate::util::spawn_guarded("ollama_ptt_warmup", move || {
+            match crate::warmup_ollama_model_impl(&endpoint, &model) {
+                Ok(()) => {
+                    tracing::info!("[ollama.warmup] ptt pre-warm done model={}", model);
+                    app_for_warmup
+                        .state::<AppState>()
+                        .ollama_model_warm
+                        .store(true, Ordering::SeqCst);
+                }
+                Err(e) => tracing::warn!("[ollama.warmup] ptt pre-warm failed (non-fatal): {}", e),
+            }
+        });
     }
 
     if settings.ptt_use_vad {

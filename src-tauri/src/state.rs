@@ -926,8 +926,10 @@ pub(crate) struct AppState {
     pub(crate) whisper_server_warmup_started: AtomicBool,
     /// True once the OLLAMA model is confirmed loaded in VRAM (after warmup or
     /// successful refinement). Reset to false when the model is unloaded.
-    /// Used to skip refinement and paste raw text immediately on cold starts.
     pub(crate) ollama_model_warm: AtomicBool,
+    /// True while the PTT warmup thread is running (between spawn and completion).
+    /// Combined with ollama_model_warm, gives Cold/Loading/Warm tri-state for the overlay.
+    pub(crate) ollama_warmup_in_progress: AtomicBool,
     pub(crate) whisper_server_warm_until_ms: AtomicU64,
     pub(crate) whisper_server_retire_generation: AtomicU64,
     pub(crate) vision_stream_running: AtomicBool,

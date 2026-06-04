@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { isAssistantCoreAvailable, settings } from "../state";
 import * as dom from "../dom-refs";
 import { persistSettings, renderAIFallbackSettingsUi, renderSettings } from "../settings";
-import { renderHero, updateDeviceLineClamp } from "../ui-state";
+import { renderHero } from "../ui-state";
 import { isPanelId, togglePanel } from "../panels";
 import { initHotkeyStatusListener, setupHotkeyRecorder } from "../hotkeys";
 import { traceFrontendInfo } from "../frontend-trace";
@@ -29,7 +29,6 @@ type MainTab =
   | "task-capture";
 
 let aiRefinementTabRefreshInFlight: Promise<void> | null = null;
-let _resizeWired = false;
 
 function aiRefinementTabAvailable(): boolean {
   return settings?.module_settings?.enabled_modules?.includes("ai_refinement") ?? false;
@@ -442,11 +441,6 @@ export function wireAppChrome(): void {
   setupHotkeyRecorder("productModeToggle", dom.productModeHotkey, dom.productModeHotkeyRecord, dom.productModeHotkeyStatus);
   setupHotkeyRecorder("ttsStop", dom.ttsStopHotkey, dom.ttsStopHotkeyRecord, dom.ttsStopHotkeyStatus);
 
-  if (!_resizeWired) {
-    const _onResize = () => updateDeviceLineClamp();
-    window.addEventListener("resize", _onResize);
-    _resizeWired = true;
-  }
 
   // Accent color picker — live preview while dragging
   dom.accentColor?.addEventListener("input", () => {

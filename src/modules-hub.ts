@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import * as dom from "./dom-refs";
-import { ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID, isAssistantCoreAvailable, settings } from "./state";
+import { ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID, isAssistantCoreAvailable, setSettings, settings } from "./state";
+import { renderSettings } from "./settings";
+import type { Settings } from "./types";
 import { showToast } from "./toast";
 import { openGddFlow } from "./gdd-flow";
 import { openMainTab } from "./wiring/app-chrome.wire";
@@ -411,6 +413,18 @@ async function refreshModuleState(): Promise<void> {
   }
 }
 
+async function refreshSettingsAndRender(): Promise<void> {
+  // Re-fetch settings from backend so module changes are reflected in the frontend
+  // state before renderSettings() checks isAssistantCoreAvailable() etc.
+  try {
+    const fresh = await invoke<Settings>("get_settings");
+    setSettings(fresh);
+  } catch {
+    // non-fatal — render with whatever we have
+  }
+  renderSettings();
+}
+
 async function handleEnable(moduleId: string): Promise<void> {
   const moduleInfo = moduleSnapshot.find((candidate) => candidate.id === moduleId);
   if (!moduleInfo) return;
@@ -437,6 +451,7 @@ async function handleEnable(moduleId: string): Promise<void> {
       grantPermissions: grants,
     });
     await refreshModuleState();
+    await refreshSettingsAndRender();
     showToast({
       type: "success",
       title: "Module enabled",
@@ -476,6 +491,7 @@ async function handleDisable(moduleId: string): Promise<void> {
   try {
     await invoke("disable_module", { moduleId });
     await refreshModuleState();
+    await refreshSettingsAndRender();
     showToast({
       type: "success",
       title: "Module disabled",

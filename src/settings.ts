@@ -94,7 +94,17 @@ export function ensureContinuousDumpDefaults() {
 
 export function ensureCaptureRuntimeDefaults() {
   if (!settings) return;
-  settings.ptt_hot_keepalive_ms ??= 30000;
+  settings.ptt_hot_keepalive_ms ??= 600000;
+  if (settings.ptt_hot_keepalive_ms === 30000) {
+    settings.ptt_hot_keepalive_ms = 600000;
+  }
+}
+
+function formatKeepalive(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds >= 60 && seconds % 60 === 0) return `${seconds / 60}m`;
+  if (seconds >= 60) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${seconds}s`;
 }
 
 export function ensureDiagnosticsDefaults() {
@@ -1776,7 +1786,7 @@ export function renderSettings() {
     dom.pttHotKeepalive.value = settings.ptt_hot_keepalive_ms.toString();
   }
   if (dom.pttHotKeepaliveValue) {
-    dom.pttHotKeepaliveValue.textContent = `${Math.round(settings.ptt_hot_keepalive_ms / 1000)}s`;
+    dom.pttHotKeepaliveValue.textContent = formatKeepalive(settings.ptt_hot_keepalive_ms);
   }
   if (dom.audioCuesVolume)
     dom.audioCuesVolume.value = Math.round(

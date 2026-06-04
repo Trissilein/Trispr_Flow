@@ -57,10 +57,6 @@ body {
 
 /* HERO SECTION - COMPACT */
 .hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 300px);
-  gap: 10px;
-  align-items: start;
   animation: rise 0.6s ease both;
   animation-delay: var(--delay, 0s);
 }
@@ -113,10 +109,162 @@ h1 {
 .status {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
   font-weight: 600;
   font-size: 0.85rem;
   color: var(--ink-soft);
+  max-width: 600px;
+}
+
+/* --- Header rework: pipeline activity + engine rows --- */
+.pipeline-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.pipe-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-soft);
+}
+
+.pipe-label {
+  letter-spacing: 0.02em;
+}
+
+.gpu-global {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "Space Grotesk", monospace;
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.gpu-sep { opacity: 0.5; }
+
+/* Both engine rows share the same 6-column grid so VRAM values align vertically:
+   tag (4rem) | dot (8px) | mid (7rem) | model+preset (1fr) | vram (4.5rem) | action (auto)
+   The preset lives inside the 1fr cell as a flex child — no separate column needed. */
+.engine-row {
+  display: grid;
+  grid-template-columns: 4rem 8px 7rem minmax(0, 1fr) 4.5rem auto;
+  column-gap: 8px;
+  align-items: center;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  min-width: 0;
+}
+
+.engine-tag {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Column 3: backend-switch (Whisper) and state-label (Refine) — same grid cell */
+.engine-mid {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.engine-state {
+  font-weight: 600;
+}
+
+.engine-detail {
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.engine-detail-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  position: relative;
+}
+
+.engine-preset-btn {
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: inherit;
+}
+.engine-preset-btn::before { content: "· "; opacity: 0.5; }
+.engine-preset-btn:hover {
+  background: rgba(255,255,255,0.07);
+  color: var(--ink-soft);
+}
+.engine-preset-btn[data-state="off"] {
+  text-decoration: line-through;
+  opacity: 0.45;
+}
+
+.preset-quick-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 200;
+  background: var(--panel);
+  border: 1px solid var(--stroke-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+  list-style: none;
+  margin: 0;
+  min-width: 13rem;
+}
+.preset-quick-menu li button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.preset-quick-menu li button:hover { background: rgba(255,255,255,0.08); }
+.preset-quick-menu li button[aria-selected="true"] { color: var(--accent-2-bright); }
+.preset-quick-menu-separator {
+  border: none;
+  border-top: 1px solid var(--stroke-strong);
+  margin: 3px 6px;
+}
+
+.engine-vram {
+  font-family: "Space Grotesk", monospace;
+  color: var(--muted);
+  white-space: nowrap;
+  text-align: right;
 }
 
 .status-row {
@@ -305,6 +453,28 @@ h1 {
 .status-dot[data-state="error"] {
   background: #ef4444;
   box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.22);
+}
+
+.status-dot[data-state="model-cold"] {
+  background: #c8c8c8;
+  box-shadow: none;
+}
+
+.status-dot[data-state="model-loading"] {
+  background: #f5a623;
+  box-shadow: 0 0 0 4px rgba(245, 166, 35, 0.25);
+  animation: model-pulse 1.2s ease-in-out infinite;
+}
+
+.status-dot[data-state="model-warm"],
+.status-dot[data-state="model-ready"] {
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.25);
+}
+
+@keyframes model-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
 
 .hero-stats,
@@ -512,9 +682,9 @@ h1 {
   display: none;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-areas:
-    "interface interface"
     "capture system"
-    "model model";
+    "model model"
+    "interface interface";
   gap: 10px;
 }
 
@@ -536,12 +706,12 @@ h1 {
   grid-area: model;
 }
 
-/* Standard mode: keep microphone + system panels side by side */
+/* Standard mode: daily controls only. Expert mode restores full runtime panels. */
 html.standard-mode #tab-settings.active {
+  grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
-    "interface interface"
-    "capture system"
-    "model model";
+    "capture"
+    "model";
 }
 
 /* Legacy .expert-mode-bar replaced by global bar */
@@ -574,6 +744,9 @@ html.standard-mode #tab-settings.active {
   gap: 8px;
   flex-wrap: nowrap;
   min-width: 0;
+}
+.global-mode-control[hidden] {
+  display: none;
 }
 
 .global-mode-control--compact {
@@ -720,6 +893,53 @@ html.expert-mode body {
 
 html.standard-mode [data-expert-only="true"] {
   display: none !important;
+}
+
+html.standard-mode .pipeline-machine-wires,
+html.standard-mode .pipeline-machine-board::after,
+html.standard-mode #pipeline-node-rules .pipeline-node-toggle {
+  display: none !important;
+}
+
+html.standard-mode .refinement-pipeline-graph {
+  padding: 8px;
+}
+
+html.standard-mode .pipeline-machine-scroll {
+  overflow: visible;
+  padding: 0;
+}
+
+html.standard-mode .pipeline-machine-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  height: auto;
+  border-color: rgba(120, 138, 168, 0.22);
+  background: rgba(10, 16, 25, 0.42);
+  box-shadow: none;
+  overflow: visible;
+  padding: 8px;
+}
+
+html.standard-mode #pipeline-node-transcribe,
+html.standard-mode #pipeline-node-rules,
+html.standard-mode #pipeline-node-ai {
+  position: static;
+  width: auto;
+  min-width: 0;
+}
+
+html.standard-mode #pipeline-node-gate,
+html.standard-mode #pipeline-node-output-refined,
+html.standard-mode #pipeline-node-output-raw {
+  position: static;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 @media (max-width: 900px) {
@@ -3203,6 +3423,21 @@ button.refinement-chip:focus-visible {
       "capture"
       "system"
       "interface"
+      "model";
+  }
+
+  #tab-settings.active {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "capture"
+      "system"
+      "model"
+      "interface";
+  }
+
+  html.standard-mode #tab-settings.active {
+    grid-template-areas:
+      "capture"
       "model";
   }
 

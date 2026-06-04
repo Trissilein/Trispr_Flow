@@ -1077,6 +1077,8 @@ export interface OllamaRuntimeDiagnostics {
   managed_pid?: number | null;
   endpoint: string;
   reachable: boolean;
+  active_requests?: number;
+  idle_release_ms?: number;
 }
 
 export interface WhisperRuntimeDiagnostics {
@@ -1087,6 +1089,9 @@ export interface WhisperRuntimeDiagnostics {
   accelerator: "gpu" | "cpu" | string;
   gpu_layers_requested?: number | null;
   gpu_layers_applied?: number | null;
+  active_requests?: number;
+  warm_until_ms?: number;
+  idle_retire_ms?: number;
   last_error: string;
 }
 

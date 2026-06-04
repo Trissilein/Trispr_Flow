@@ -90,9 +90,12 @@ import {
   renderHero,
   setCaptureStatus,
   setGpuActivity,
+  setGpuStats,
+  setOllamaModelState,
   setRefiningActive,
   setTranscribeStatus,
   updateThresholdMarkers,
+  type GpuStats,
 } from "./ui-state";
 import {
   scheduleHistoryRender,
@@ -420,6 +423,14 @@ async function refreshStartupStatusFromBackend(): Promise<void> {
     applyStartupStatus(nextStatus);
   } catch (error) {
     console.warn("get_startup_status failed", error);
+  }
+  try {
+    const modelState = await invoke<string>("get_ollama_model_state");
+    if (modelState === "cold" || modelState === "loading" || modelState === "warm") {
+      setOllamaModelState(modelState);
+    }
+  } catch (error) {
+    console.warn("get_ollama_model_state failed", error);
   }
 }
 
@@ -1507,6 +1518,12 @@ async function bootstrap() {
     listen<StartupStatus>("startup:status", (event) => {
       applyStartupStatus(event.payload ?? null);
     }),
+    listen<string>("ollama:model-state", (event) => {
+      const s = event.payload;
+      if (s === "cold" || s === "loading" || s === "warm") {
+        setOllamaModelState(s);
+      }
+    }),
     listen<string>("transcription:error", (event) => {
       console.error("transcription error", event.payload);
       resetTrackedRefinementJobs();
@@ -1767,23 +1784,21 @@ function stopGpuVramMonitoring(): void {
 
 function startGpuVramMonitoring() {
   if (gpuVramMonitoringTimer !== null) return;
-  const updateVramDisplay = async () => {
+  const updateGpuStats = async () => {
     try {
-      const vramUsage = await invoke<string>("get_gpu_vram_usage");
-      if (dom.gpuVramLabel && vramUsage) {
-        dom.gpuVramLabel.textContent = vramUsage;
-      }
+      const stats = await invoke<GpuStats>("get_gpu_stats");
+      setGpuStats(stats);
     } catch (error) {
       // Silently ignore nvidia-smi errors (GPU might not be present)
     }
   };
 
   // Initial update
-  void updateVramDisplay();
+  void updateGpuStats();
 
   // Then update every 2 seconds
   gpuVramMonitoringTimer = window.setInterval(() => {
-    void updateVramDisplay();
+    void updateGpuStats();
   }, 2000);
 }
 
@@ -1818,11 +1833,12 @@ function startRefinementModelHealthCheck() {
 }
 
 function syncDiagnosticLoggingBackgroundTasks(): void {
+  // GPU stats feed the always-visible header telemetry, so poll regardless of
+  // diagnostic logging. The 15-min refinement health-check stays diagnostics-gated.
+  startGpuVramMonitoring();
   if (isDiagnosticLoggingEnabled()) {
-    startGpuVramMonitoring();
     startRefinementModelHealthCheck();
   } else {
-    stopGpuVramMonitoring();
     stopRefinementModelHealthCheck();
   }
 }

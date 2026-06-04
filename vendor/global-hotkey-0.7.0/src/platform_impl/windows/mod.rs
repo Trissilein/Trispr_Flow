@@ -155,14 +155,24 @@ unsafe extern "system" fn global_hotkey_proc(
             state: crate::HotKeyState::Pressed,
         });
         std::thread::spawn(move || loop {
+            // High-order bit = key is currently down.
+            // The low-order bit is a "pressed since last call" toggle that must be
+            // masked out — checking `state == 0` is incorrect because the low bit
+            // may still be set right after key-up, keeping the thread alive
+            // indefinitely and causing subsequent key events to be swallowed.
             let state = GetAsyncKeyState(HIWORD(lparam as u32) as i32);
-            if state == 0 {
+            if (state as u16 & 0x8000) == 0 {
                 GlobalHotKeyEvent::send(GlobalHotKeyEvent {
                     id: wparam as _,
                     state: crate::HotKeyState::Released,
                 });
                 break;
             }
+            // Yield for 5 ms to prevent a CPU-spinning busy-loop.  Without this
+            // sleep each key-press spawns a thread that spins until release; under
+            // repeated presses threads accumulate and can starve the message queue,
+            // causing unrelated keys (e.g. Space) to be swallowed by Windows.
+            std::thread::sleep(std::time::Duration::from_millis(5));
         });
     }
 

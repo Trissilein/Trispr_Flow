@@ -29,9 +29,9 @@ const VAD_PRE_ROLL_MS_MIN: u64 = 250;
 const VAD_PRE_ROLL_MS_MAX: u64 = 350;
 const VAD_PRE_ROLL_MIN_MS: u64 = 60;
 const VAD_PRE_ROLL_ENERGY_FACTOR: f32 = 0.45;
-const REFINEMENT_WATCHDOG_TIMEOUT_MS: u64 = 12_000;
+const REFINEMENT_WATCHDOG_TIMEOUT_MS: u64 = 30_000; // must not fire during cold model load (~20s)
 const REFINEMENT_WATCHDOG_POLL_MS: u64 = 1_000;
-const REFINEMENT_PASTE_TIMEOUT_MS: u64 = 10_000;
+const REFINEMENT_PASTE_TIMEOUT_MS: u64 = 26_000; // 1s above backend timeout (25s) so backend always responds first
 const REFINEMENT_COLD_PASTE_TIMEOUT_MS: u64 = 30_000;
 const REFINEMENT_COLD_PASTE_MAX_AGE_MS: u64 = 12 * 60_000;
 const OVERLAY_EMIT_INTERVAL_MS: u64 = 33; // ~30 FPS for smoother overlay motion
@@ -1370,12 +1370,16 @@ fn handle_transcription_ok(
             "source": source,
         })
     );
-    // If OLLAMA model is not confirmed warm, paste raw text immediately and
-    // skip refinement entirely — waiting would block for the full model-load
-    // duration (20–60 s) and trash the GPU while the user expects output.
+    // If the OLLAMA model is not confirmed warm, paste the raw text immediately
+    // (paste_deferred=false) instead of waiting out the 20–60 s model load.
+    // Refinement still runs in the background and updates the history entry when
+    // it completes — we just don't block the user's paste on a cold model.
+    // Cold = model not confirmed warm, OR warmup is actively running (GPU at 100%).
+    // Both states mean: paste raw text immediately, don't block on refinement.
     let ollama_cold = settings.ai_fallback.provider == "ollama"
         && ai_refinement_capability_enabled(settings)
-        && !state.ollama_model_warm.load(Ordering::SeqCst);
+        && (!state.ollama_model_warm.load(Ordering::SeqCst)
+            || state.ollama_warmup_in_progress.load(Ordering::SeqCst));
 
     let paste_deferred = if ollama_cold {
         false
@@ -1414,18 +1418,16 @@ fn handle_transcription_ok(
             state.refinement_active_count.load(Ordering::SeqCst)
         );
     }
-    if !ollama_cold {
-        maybe_spawn_ai_refinement(
-            app_handle.clone(),
-            processed_text.clone(),
-            source.to_string(),
-            "transcription_postprocess",
-            job_id,
-            entry_id,
-            settings,
-            paste_deferred,
-        );
-    }
+    maybe_spawn_ai_refinement(
+        app_handle.clone(),
+        processed_text.clone(),
+        source.to_string(),
+        "transcription_postprocess",
+        job_id,
+        entry_id,
+        settings,
+        paste_deferred,
+    );
 
     Some(processed_text.len())
 }
@@ -1813,10 +1815,15 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             result.execution_time_ms,
                         );
                     }
-                    app_handle
-                        .state::<AppState>()
-                        .ollama_model_warm
-                        .store(true, Ordering::SeqCst);
+                    {
+                        let s = app_handle.state::<AppState>();
+                        s.ollama_model_warm.store(true, Ordering::SeqCst);
+                        s.ollama_warmup_in_progress.store(false, Ordering::SeqCst);
+                    }
+                    crate::overlay::update_overlay_ollama_state(
+                        &app_handle,
+                        crate::overlay::OllamaModelState::Warm,
+                    );
                     let tok_s = result.ollama_eval_ms
                         .filter(|&ms| ms > 0)
                         .map(|ms| (result.usage.output_tokens as f64 / (ms as f64 / 1000.0) * 10.0).round() / 10.0);
@@ -2101,6 +2108,11 @@ fn schedule_ollama_idle_release(app_handle: AppHandle, generation: u64, model: S
             warn!("[ollama.idle] release failed model={}: {}", model, err);
         } else {
             state.ollama_model_warm.store(false, Ordering::SeqCst);
+            state.ollama_warmup_in_progress.store(false, Ordering::SeqCst);
+            crate::overlay::update_overlay_ollama_state(
+                &app_handle,
+                crate::overlay::OllamaModelState::Cold,
+            );
         }
     });
 }
@@ -3139,21 +3151,48 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
     }
 
     // Pre-warm OLLAMA model concurrently with recording so the model is in
-    // VRAM by the time Whisper finishes. No-op if already loaded.
-    if ai_refinement_capability_enabled(&settings) && settings.ai_fallback.provider == "ollama" {
+    // VRAM by the time Whisper finishes. Skip if already warm OR a warmup is
+    // already running — a redundant warmup only adds load and would flash the
+    // overlay to "loading" even though the model is ready/loading.
+    let already_warm = state.ollama_model_warm.load(Ordering::SeqCst);
+    let warmup_running = state.ollama_warmup_in_progress.load(Ordering::SeqCst);
+    if ai_refinement_capability_enabled(&settings)
+        && settings.ai_fallback.provider == "ollama"
+        && !already_warm
+        && !warmup_running
+    {
         let endpoint = settings.providers.ollama.endpoint.clone();
         let model = settings.ai_fallback.model.clone();
         let app_for_warmup = app.clone();
+        let app_state = app.state::<AppState>();
+        app_state
+            .ollama_warmup_in_progress
+            .store(true, Ordering::SeqCst);
+        crate::overlay::update_overlay_ollama_state(
+            app,
+            crate::overlay::OllamaModelState::Loading,
+        );
         crate::util::spawn_guarded("ollama_ptt_warmup", move || {
             match crate::warmup_ollama_model_impl(&endpoint, &model) {
                 Ok(()) => {
                     tracing::info!("[ollama.warmup] ptt pre-warm done model={}", model);
-                    app_for_warmup
-                        .state::<AppState>()
-                        .ollama_model_warm
-                        .store(true, Ordering::SeqCst);
+                    let s = app_for_warmup.state::<AppState>();
+                    s.ollama_warmup_in_progress.store(false, Ordering::SeqCst);
+                    s.ollama_model_warm.store(true, Ordering::SeqCst);
+                    crate::overlay::update_overlay_ollama_state(
+                        &app_for_warmup,
+                        crate::overlay::OllamaModelState::Warm,
+                    );
                 }
-                Err(e) => tracing::warn!("[ollama.warmup] ptt pre-warm failed (non-fatal): {}", e),
+                Err(e) => {
+                    tracing::warn!("[ollama.warmup] ptt pre-warm failed (non-fatal): {}", e);
+                    let s = app_for_warmup.state::<AppState>();
+                    s.ollama_warmup_in_progress.store(false, Ordering::SeqCst);
+                    crate::overlay::update_overlay_ollama_state(
+                        &app_for_warmup,
+                        crate::overlay::OllamaModelState::Cold,
+                    );
+                }
             }
         });
     }

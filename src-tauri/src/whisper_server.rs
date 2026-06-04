@@ -1,5 +1,5 @@
-//! Whisper-Server persistent process manager.
-//! Keeps the Whisper model pre-loaded in GPU VRAM to eliminate per-transcription model-load overhead (~1.4s).
+//! Whisper-Server process manager.
+//! Keeps the model warm for a short recent-use window, then releases VRAM.
 
 use crate::paths::resolve_whisper_server_path_for_backend;
 use crate::spawn_managed_child;
@@ -8,13 +8,99 @@ use crate::terminate_managed_child_slot;
 use crate::update_runtime_diagnostics;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tracing::{info, warn};
 
 /// Default port for Whisper-Server HTTP API.
 pub const WHISPER_SERVER_PORT: u16 = 8178;
+const WHISPER_SERVER_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
+const WHISPER_SERVER_IDLE_RETIRE_MS: u64 = 300_000;
+
+static WHISPER_SERVER_KEEPALIVE_STARTED: AtomicBool = AtomicBool::new(false);
+static WHISPER_SERVER_ACTIVE_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+
+pub fn active_request_count() -> usize {
+    WHISPER_SERVER_ACTIVE_REQUESTS.load(Ordering::Relaxed)
+}
+
+struct WhisperServerRequestGuard;
+
+impl WhisperServerRequestGuard {
+    fn new() -> Self {
+        WHISPER_SERVER_ACTIVE_REQUESTS.fetch_add(1, Ordering::Relaxed);
+        Self
+    }
+}
+
+impl Drop for WhisperServerRequestGuard {
+    fn drop(&mut self) {
+        WHISPER_SERVER_ACTIVE_REQUESTS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+fn whisper_server_warm_deadline_ms() -> u64 {
+    crate::util::now_ms().saturating_add(WHISPER_SERVER_IDLE_RETIRE_MS)
+}
+
+fn whisper_server_warm_window_active(state: &AppState) -> bool {
+    let warm_until = state.whisper_server_warm_until_ms.load(Ordering::Relaxed);
+    warm_until > crate::util::now_ms()
+}
+
+fn extend_whisper_server_warm_window(state: &AppState) -> u64 {
+    state
+        .whisper_server_warm_until_ms
+        .store(whisper_server_warm_deadline_ms(), Ordering::Relaxed);
+    state
+        .whisper_server_retire_generation
+        .fetch_add(1, Ordering::Relaxed)
+        + 1
+}
+
+fn schedule_whisper_server_retire(app: AppHandle, generation: u64) {
+    crate::util::spawn_guarded("whisper_server_idle_retire", move || loop {
+        let state = app.state::<AppState>();
+        if state
+            .whisper_server_retire_generation
+            .load(Ordering::Relaxed)
+            != generation
+        {
+            return;
+        }
+
+        let warm_until = state.whisper_server_warm_until_ms.load(Ordering::Relaxed);
+        let now = crate::util::now_ms();
+        if warm_until > now {
+            std::thread::sleep(Duration::from_millis((warm_until - now).min(60_000)));
+            continue;
+        }
+
+        if WHISPER_SERVER_ACTIVE_REQUESTS.load(Ordering::Relaxed) > 0 {
+            let next_generation = extend_whisper_server_warm_window(state.inner());
+            schedule_whisper_server_retire(app.clone(), next_generation);
+            return;
+        }
+
+        if crate::state::diagnostic_logging_enabled() {
+            info!(
+                "whisper-server idle retire after {}ms recent-use window",
+                WHISPER_SERVER_IDLE_RETIRE_MS
+            );
+        }
+        state
+            .whisper_server_warm_until_ms
+            .store(0, Ordering::Relaxed);
+        kill_whisper_server(state.inner());
+        return;
+    });
+}
+
+pub fn touch_whisper_server_recent_use(app: &AppHandle, state: &AppState) {
+    let generation = extend_whisper_server_warm_window(state);
+    schedule_whisper_server_retire(app.clone(), generation);
+}
 
 /// Health check: ping the server's root endpoint.
 ///
@@ -165,6 +251,7 @@ pub fn start_whisper_server(
         if diagnostics_enabled {
             info!("whisper-server already running on port {}", port);
         }
+        touch_whisper_server_recent_use(app, state);
         update_whisper_server_diagnostics(app, &settings, "server", "gpu", None);
         return Ok(());
     }
@@ -309,6 +396,7 @@ pub fn start_whisper_server(
                 info!("[whisper_server:startup] start_whisper_server() SUCCESS");
                 info!("whisper-server ready on port {}", port);
             }
+            touch_whisper_server_recent_use(app, state);
             update_whisper_server_diagnostics(app, &settings, "server", "gpu", None);
             return Ok(());
         }
@@ -367,6 +455,7 @@ pub fn transcribe_via_server(
     port: u16,
     language: &str,
 ) -> Result<String, String> {
+    let _request_guard = WhisperServerRequestGuard::new();
     let boundary = "trispr_boundary_8f3a2b";
     let mut body: Vec<u8> = Vec::new();
 
@@ -512,6 +601,12 @@ pub fn kill_whisper_server(state: &AppState) {
     state
         .whisper_server_warmup_started
         .store(false, Ordering::Relaxed);
+    state
+        .whisper_server_warm_until_ms
+        .store(0, Ordering::Relaxed);
+    state
+        .whisper_server_retire_generation
+        .fetch_add(1, Ordering::Relaxed);
     terminate_managed_child_slot(
         "managed Whisper-Server runtime",
         &state.managed_whisper_server_child,
@@ -527,6 +622,7 @@ pub fn schedule_whisper_server_warmup(
     if !crate::transcription::whisper_runtime_required(settings) {
         return;
     }
+    touch_whisper_server_recent_use(app, state);
     let port = state.whisper_server_port.load(Ordering::Relaxed);
     if ping_whisper_server(port) {
         return;
@@ -544,7 +640,11 @@ pub fn schedule_whisper_server_warmup(
     let settings_snapshot = settings.clone();
     crate::util::spawn_guarded("whisper_server_warmup", move || {
         let state = handle.state::<AppState>();
-        match start_whisper_server(&handle, state.inner(), &model_path) {
+        let result = start_whisper_server(&handle, state.inner(), &model_path);
+        state
+            .whisper_server_warmup_started
+            .store(false, Ordering::Relaxed);
+        match result {
             Ok(()) => {
                 if ping_whisper_server(port) {
                     if crate::state::diagnostic_logging_enabled() {
@@ -565,6 +665,65 @@ pub fn schedule_whisper_server_warmup(
                 );
             }
         }
+    });
+}
+
+pub fn ensure_whisper_server_keepalive(app: AppHandle) {
+    if WHISPER_SERVER_KEEPALIVE_STARTED
+        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+
+    crate::util::spawn_guarded("whisper_server_keepalive", move || loop {
+        std::thread::sleep(WHISPER_SERVER_KEEPALIVE_INTERVAL);
+        let state = app.state::<AppState>();
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if !crate::transcription::whisper_runtime_required(&settings) {
+            if ping_whisper_server(state.whisper_server_port.load(Ordering::Relaxed)) {
+                kill_whisper_server(state.inner());
+            }
+            continue;
+        }
+
+        let port = state.whisper_server_port.load(Ordering::Relaxed);
+        if !whisper_server_warm_window_active(state.inner()) {
+            if ping_whisper_server(port)
+                && WHISPER_SERVER_ACTIVE_REQUESTS.load(Ordering::Relaxed) == 0
+            {
+                kill_whisper_server(state.inner());
+            }
+            continue;
+        }
+        if ping_whisper_server(port) {
+            continue;
+        }
+        if WHISPER_SERVER_ACTIVE_REQUESTS.load(Ordering::Relaxed) > 0 {
+            if crate::state::diagnostic_logging_enabled() {
+                info!("whisper-server keepalive skipped restart while request is active");
+            }
+            continue;
+        }
+
+        let Some(model_path) = crate::models::resolve_model_path(&app, &settings.model) else {
+            if crate::state::diagnostic_logging_enabled() {
+                info!(
+                    "whisper-server keepalive skipped: model '{}' could not be resolved",
+                    settings.model
+                );
+            }
+            continue;
+        };
+
+        if crate::state::diagnostic_logging_enabled() {
+            info!("whisper-server keepalive restarting cold server");
+        }
+        schedule_whisper_server_warmup(&app, state.inner(), &model_path, &settings);
     });
 }
 
@@ -591,6 +750,10 @@ fn update_whisper_server_diagnostics(
         diagnostics.whisper.backend_selected = backend.clone();
         diagnostics.whisper.mode = mode.to_string();
         diagnostics.whisper.accelerator = accelerator.to_string();
+        diagnostics.whisper.active_requests = active_request_count();
+        diagnostics.whisper.warm_until_ms =
+            state.whisper_server_warm_until_ms.load(Ordering::Relaxed);
+        diagnostics.whisper.idle_retire_ms = WHISPER_SERVER_IDLE_RETIRE_MS;
         diagnostics.whisper.last_error = last_error.unwrap_or_default();
     });
 }

@@ -14,6 +14,36 @@ export function getModelDescription(model: ModelInfo) {
   return "Model details unavailable.";
 }
 
+// Shorten an Ollama model id for compact display, e.g. "qwen3.5:9b" → "Qwen3.5-9B".
+export function formatModelName(raw: string | undefined | null): string {
+  const value = (raw ?? "").trim();
+  if (!value) return "—";
+  const [name, tag] = value.split(":");
+  const capName = name.charAt(0).toUpperCase() + name.slice(1);
+  const sized = tag ? `${capName}-${tag.toUpperCase()}` : capName;
+  return sized;
+}
+
+// Human-readable label for a refinement prompt profile.
+export function formatPresetLabel(profile: string | undefined | null): string {
+  const map: Record<string, string> = {
+    wording: "Wording",
+    summary: "Summary",
+    technical_specs: "Technical Specs",
+    action_items: "Action Items",
+    llm_prompt: "LLM Prompt",
+    custom: "Custom",
+  };
+  const key = (profile ?? "").trim();
+  return map[key] ?? (key ? key : "—");
+}
+
+// Format a VRAM value in GB for display, e.g. 5.6 → "5.6 GB".
+export function formatVram(gb: number | null | undefined): string {
+  if (gb === null || gb === undefined || Number.isNaN(gb)) return "—";
+  return `${gb.toFixed(1)} GB`;
+}
+
 export const VAD_DB_FLOOR = -60;
 
 // Convert linear level (0-1) to dB (assuming 0dB = 1.0)

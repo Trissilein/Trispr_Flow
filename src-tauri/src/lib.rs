@@ -4138,6 +4138,19 @@ fn get_runtime_metrics_snapshot(
     runtime_metrics_snapshot(state.inner())
 }
 
+/// Current OLLAMA refinement-model readiness for the main-window status light.
+/// Lets the frontend recover the true state after a reload instead of assuming cold.
+#[tauri::command]
+fn get_ollama_model_state(state: State<'_, AppState>) -> String {
+    if state.ollama_warmup_in_progress.load(Ordering::SeqCst) {
+        "loading".to_string()
+    } else if state.ollama_model_warm.load(Ordering::SeqCst) {
+        "warm".to_string()
+    } else {
+        "cold".to_string()
+    }
+}
+
 #[tauri::command]
 fn record_runtime_metric(state: State<'_, AppState>, metric: String) -> Result<(), String> {
     match metric.trim() {
@@ -9489,8 +9502,8 @@ pub(crate) fn unload_ollama_model_impl(endpoint: &str, model: &str) -> Result<()
 
 pub(crate) fn warmup_ollama_model_impl(endpoint: &str, model: &str) -> Result<(), String> {
     // Load the model into VRAM by sending a minimal inference request.
-    // keep_alive: "-1" keeps the model loaded until Ollama exits or an explicit
-    // unload is sent — Trispr Flow's own idle-release (4 h) handles the latter.
+    // keep_alive: -1 (integer) keeps the model loaded until Ollama exits or an
+    // explicit unload is sent — Trispr Flow's own idle-release (4 h) handles the latter.
     if model.trim().is_empty() {
         return Ok(());
     }
@@ -9502,8 +9515,10 @@ pub(crate) fn warmup_ollama_model_impl(endpoint: &str, model: &str) -> Result<()
         "prompt": ".",
         "stream": false,
         "think": false,
-        "keep_alive": "-1",
-        "options": { "num_ctx": 512, "num_predict": 1 }
+        "keep_alive": -1_i64,
+        // num_ctx MUST match the refinement path exactly, otherwise Ollama loads
+        // a separate runner for warmup and reloads on the first real refinement.
+        "options": { "num_ctx": crate::ai_fallback::provider::OLLAMA_REFINEMENT_NUM_CTX, "num_predict": 1 }
     });
 
     let agent = ureq::builder()
@@ -9666,54 +9681,108 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
     }
 }
 
+
+#[derive(serde::Serialize)]
+struct GpuStats {
+    util_pct: Option<u32>,
+    vram_used_gb: f64,
+    vram_total_gb: f64,
+    whisper_vram_gb: Option<f64>,
+    refine_vram_gb: Option<f64>,
+}
+
+/// Run nvidia-smi with the given args, hiding the console window on Windows.
+/// Returns trimmed stdout, or None if the binary is missing / call failed.
+fn run_nvidia_smi(args: &[&str]) -> Option<String> {
+    use std::process::Command;
+    let mut cmd = Command::new("nvidia-smi");
+    cmd.args(args);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8(output.stdout).ok()?.trim().to_string())
+}
+
 #[tauri::command]
-async fn get_gpu_vram_usage() -> Result<String, String> {
-    // Query NVIDIA GPU VRAM usage via nvidia-smi — wrapped in spawn_blocking to
-    // avoid blocking the Tokio worker thread during the nvidia-smi process spawn.
-    tauri::async_runtime::spawn_blocking(|| {
-        use std::process::Command;
+async fn get_gpu_stats(app: AppHandle, state: State<'_, AppState>) -> Result<GpuStats, String> {
+    let endpoint = state
+        .settings
+        .read()
+        .map(|s| s.providers.ollama.endpoint.clone())
+        .unwrap_or_default();
+    let warm_flag = state.ollama_model_warm.load(Ordering::SeqCst);
 
-        let mut cmd = Command::new("nvidia-smi");
-        cmd.args(&[
-            "--query-gpu=memory.used,memory.total",
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        // 1. Overall utilization + total/used VRAM.
+        let mut util_pct = None;
+        let mut vram_used_gb = 0.0;
+        let mut vram_total_gb = 0.0;
+        if let Some(out) = run_nvidia_smi(&[
+            "--query-gpu=utilization.gpu,memory.used,memory.total",
             "--format=csv,noheader,nounits",
-        ]);
-
-        // On Windows, hide the command window to prevent visual pop-ups
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        let output = cmd
-            .output()
-            .map_err(|_| "nvidia-smi not found".to_string())?;
-
-        if !output.status.success() {
-            return Ok(String::new());
-        }
-
-        let result = String::from_utf8(output.stdout)
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-
-        let parts: Vec<&str> = result.split(',').map(|s| s.trim()).collect();
-        if parts.len() == 2 {
-            if let (Ok(used_mb), Ok(total_mb)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>())
-            {
-                let used_gb = used_mb / 1024.0;
-                let total_gb = total_mb / 1024.0;
-                return Ok(format!("{:.1} GB / {:.1} GB", used_gb, total_gb));
+        ]) {
+            let parts: Vec<&str> = out.lines().next().unwrap_or("").split(',').map(|s| s.trim()).collect();
+            if parts.len() == 3 {
+                util_pct = parts[0].parse::<u32>().ok();
+                if let Ok(used) = parts[1].parse::<f64>() {
+                    vram_used_gb = used / 1024.0;
+                }
+                if let Ok(total) = parts[2].parse::<f64>() {
+                    vram_total_gb = total / 1024.0;
+                }
             }
         }
 
-        Ok(String::new())
+        // 2. Refinement model VRAM from Ollama /api/ps.
+        // Some(0) = OLLAMA up but no model loaded; None = OLLAMA unreachable.
+        let refine_vram_bytes = crate::ai_fallback::provider::fetch_ollama_running_vram(&endpoint);
+        let refine_vram_gb = refine_vram_bytes.map(|bytes| bytes as f64 / 1_073_741_824.0);
+        let ollama_reachable_no_model = refine_vram_bytes == Some(0);
+
+        // 3. Whisper VRAM derived: everything that isn't the refinement model.
+        let whisper_vram_gb = if vram_used_gb > 0.0 {
+            let ollama = refine_vram_gb.unwrap_or(0.0);
+            let derived = (vram_used_gb - ollama).max(0.0);
+            Some(derived)
+        } else {
+            None
+        };
+
+        Ok::<(GpuStats, bool), String>((GpuStats {
+            util_pct,
+            vram_used_gb,
+            vram_total_gb,
+            whisper_vram_gb,
+            refine_vram_gb,
+        }, ollama_reachable_no_model))
     })
     .await
-    .unwrap_or_else(|_| Ok(String::new()))
+    .unwrap_or_else(|_| Ok((GpuStats {
+        util_pct: None,
+        vram_used_gb: 0.0,
+        vram_total_gb: 0.0,
+        whisper_vram_gb: None,
+        refine_vram_gb: None,
+    }, false)))?;
+
+    let (stats, ollama_reachable_no_model) = result;
+
+    // If OLLAMA is reachable but no model is loaded, the warm flag is stale.
+    // Reset it so the next PTT press triggers warmup and shows the Loading overlay.
+    if ollama_reachable_no_model && warm_flag {
+        state.ollama_model_warm.store(false, Ordering::SeqCst);
+        state.ollama_warmup_in_progress.store(false, Ordering::SeqCst);
+        crate::overlay::update_overlay_ollama_state(&app, crate::overlay::OllamaModelState::Cold);
+    }
+
+    Ok(stats)
 }
 
 #[tauri::command]
@@ -11777,6 +11846,7 @@ pub fn run() {
                 whisper_server_port: AtomicU16::new(crate::whisper_server::WHISPER_SERVER_PORT),
                 whisper_server_warmup_started: AtomicBool::new(false),
                 ollama_model_warm: AtomicBool::new(false),
+                ollama_warmup_in_progress: AtomicBool::new(false),
                 whisper_server_warm_until_ms: AtomicU64::new(0),
                 whisper_server_retire_generation: AtomicU64::new(0),
                 vision_stream_running: AtomicBool::new(false),
@@ -12678,6 +12748,8 @@ pub fn run() {
             run_latency_benchmark,
             run_tts_benchmark,
             get_runtime_metrics_snapshot,
+            get_ollama_model_state,
+            get_gpu_stats,
             record_runtime_metric,
             frontend_heartbeat,
             log_frontend_event,
@@ -12685,7 +12757,6 @@ pub fn run() {
             delete_ollama_model,
             get_ollama_model_info,
             unload_ollama_model,
-            get_gpu_vram_usage,
             get_hardware_info,
             purge_gpu_memory,
             stop_ollama_runtime,

@@ -8,9 +8,6 @@ use tauri::Emitter;
 use tracing::{error, info, warn};
 use url::Url;
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 /// Shared ureq agent for general Ollama HTTP calls (list models, ping, inference).
 /// Defaults: connect 5 s, read 60 s — generous enough for inference, snappy enough
 /// for metadata queries.  `ping_ollama_quick` and `pull_ollama_model_inner` have
@@ -269,6 +266,38 @@ pub fn list_ollama_models_with_size(endpoint: &str) -> Vec<(String, u64)> {
     }
 
     vec![]
+}
+
+/// Sum the VRAM (bytes) of all currently loaded Ollama models via /api/ps.
+/// Returns None if Ollama is unreachable or no model is loaded.
+pub fn fetch_ollama_running_vram(endpoint: &str) -> Option<u64> {
+    let agent = ureq::builder()
+        .timeout_connect(Duration::from_millis(500))
+        .timeout_read(Duration::from_millis(750))
+        .build();
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/ps", candidate);
+        let Ok(resp) = agent.get(&url).call() else {
+            continue;
+        };
+        let Ok(json) = resp.into_json::<serde_json::Value>() else {
+            continue;
+        };
+        let Some(models) = json["models"].as_array() else {
+            continue;
+        };
+        if models.is_empty() {
+            // OLLAMA is reachable but no model is loaded.
+            // Return Some(0) so callers can distinguish "no model" from "OLLAMA down" (None).
+            return Some(0);
+        }
+        let total: u64 = models
+            .iter()
+            .map(|m| m["size_vram"].as_u64().unwrap_or(0))
+            .sum();
+        return Some(total);
+    }
+    None
 }
 
 /// Test whether Ollama is reachable at the given endpoint.
@@ -641,25 +670,20 @@ fn adaptive_num_predict(
     configured.min(heuristic.max(48))
 }
 
-fn adaptive_num_ctx(input_text: &str, system_prompt: &str, low_latency_mode: bool) -> usize {
-    let tokens = rough_token_estimate(input_text) + rough_token_estimate(system_prompt);
-    let max_ctx = if low_latency_mode { 2048 } else { 4096 };
-    let target = (tokens * 2).clamp(1024, max_ctx);
-    if target <= 1024 {
-        1024
-    } else if target <= 2048 {
-        2048
-    } else if !low_latency_mode && target <= 3072 {
-        3072
-    } else {
-        max_ctx
-    }
-}
+/// Fixed context window for ALL local Ollama refinement requests AND warmup.
+///
+/// This MUST be a single constant value, never adaptive. Ollama keys its loaded
+/// model runner on (model, num_ctx): any change in num_ctx forces a full model
+/// reload (~4-5 s for a 9B model), and with OLLAMA_MAX_LOADED_MODELS=1 the old
+/// runner is evicted. A previous adaptive scheme (1024 for short / 2048 for long
+/// inputs) caused a reload on every length change — the model never stayed warm.
+/// 2048 tokens covers virtually all dictation transcripts; qwen3.5:9b at ctx 2048
+/// fits comfortably in 16 GB VRAM.
+pub const OLLAMA_REFINEMENT_NUM_CTX: usize = 2048;
 
 fn build_ollama_options_payload(
     options: &RefinementOptions,
     input_text: &str,
-    system_prompt: &str,
 ) -> serde_json::Value {
     let mut payload = serde_json::Map::new();
     payload.insert(
@@ -673,9 +697,12 @@ fn build_ollama_options_payload(
         options.low_latency_mode,
     );
     payload.insert("num_predict".to_string(), serde_json::json!(num_predict));
+    // Fixed num_ctx so the model runner stays warm across requests (see
+    // OLLAMA_REFINEMENT_NUM_CTX docs). The env override must also be a single
+    // stable value if set — varying it per-request reintroduces reloads.
     let num_ctx = parse_env_usize("TRISPR_OLLAMA_NUM_CTX")
         .map(|n| n.clamp(1024, 8192))
-        .unwrap_or_else(|| adaptive_num_ctx(input_text, system_prompt, options.low_latency_mode));
+        .unwrap_or(OLLAMA_REFINEMENT_NUM_CTX);
     payload.insert("num_ctx".to_string(), serde_json::json!(num_ctx));
 
     let num_thread =
@@ -1056,69 +1083,6 @@ fn map_ollama_http_error(code: u16, detail: &str) -> AIError {
     AIError::NetworkError(format!("Ollama returned HTTP {}: {}", code, detail))
 }
 
-fn schedule_ollama_timeout_abort(endpoint: String, model: String) {
-    std::thread::spawn(move || {
-        if let Err(error) = crate::unload_ollama_model_impl(&endpoint, &model) {
-            warn!(
-                "[ollama.refine] timeout unload failed endpoint={} model={} error={}",
-                endpoint, model, error
-            );
-        }
-        if !is_local_ollama_endpoint(&endpoint) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(1_200));
-        match ollama_model_still_loaded(&endpoint, &model) {
-            Some(false) => {}
-            Some(true) => {
-                let killed = kill_local_ollama_runners_after_timeout(&model);
-                if killed > 0 {
-                    warn!(
-                        "[ollama.refine] timeout aborted local Ollama runner(s) model={} killed={}",
-                        model, killed
-                    );
-                }
-            }
-            None => {
-                let killed = kill_local_ollama_runners_after_timeout(&model);
-                if killed > 0 {
-                    warn!(
-                        "[ollama.refine] timeout aborted local Ollama runner(s) after /api/ps probe failed model={} killed={}",
-                        model, killed
-                    );
-                }
-            }
-        }
-    });
-}
-
-fn ollama_model_still_loaded(endpoint: &str, model: &str) -> Option<bool> {
-    let agent = ureq::builder()
-        .timeout_connect(Duration::from_millis(500))
-        .timeout_read(Duration::from_millis(750))
-        .build();
-    for candidate in ollama_endpoint_candidates(endpoint) {
-        let url = format!("{}/api/ps", candidate);
-        let Ok(resp) = agent.get(&url).call() else {
-            continue;
-        };
-        let Ok(json) = resp.into_json::<serde_json::Value>() else {
-            continue;
-        };
-        let Some(models) = json.get("models").and_then(|value| value.as_array()) else {
-            continue;
-        };
-        let loaded = models.iter().any(|entry| {
-            entry
-                .get("name")
-                .and_then(|value| value.as_str())
-                .is_some_and(|name| name == model)
-        });
-        return Some(loaded);
-    }
-    None
-}
-
 #[cfg(test)]
 fn is_ollama_runner_command_line(process_name: &str, command_line: &str) -> bool {
     let name = process_name.trim().to_ascii_lowercase();
@@ -1136,55 +1100,6 @@ fn is_ollama_runner_command_line(process_name: &str, command_line: &str) -> bool
             || token.ends_with("/runner")
             || token.ends_with("/runner.exe")
     })
-}
-
-#[cfg(target_os = "windows")]
-fn kill_local_ollama_runners_after_timeout(_model: &str) -> usize {
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let script = r#"
-$ErrorActionPreference = 'SilentlyContinue'
-Get-CimInstance Win32_Process -Filter "Name = 'ollama.exe'" |
-  Where-Object { $_.CommandLine -match '(^|[\s"`''])runner(\.exe)?([\s"`'']|$)' } |
-  ForEach-Object { $_.ProcessId }
-"#;
-    let output = std::process::Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-    let Ok(output) = output else {
-        return 0;
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let pids: Vec<String> = stdout
-        .lines()
-        .filter_map(|line| line.trim().parse::<u32>().ok())
-        .map(|pid| pid.to_string())
-        .collect();
-    let mut killed = 0;
-    for pid in pids {
-        let status = std::process::Command::new("taskkill")
-            .args(["/PID", pid.as_str(), "/T", "/F"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
-        if matches!(status, Ok(status) if status.success()) {
-            killed += 1;
-        }
-    }
-    killed
-}
-
-#[cfg(not(target_os = "windows"))]
-fn kill_local_ollama_runners_after_timeout(_model: &str) -> usize {
-    0
 }
 
 struct ClaudeProvider;
@@ -1335,15 +1250,24 @@ impl AIProvider for OllamaProvider {
         // "think": false disables extended chain-of-thought mode on reasoning models
         // (e.g. qwen3, deepseek-r1). Without this, thinking models generate internal
         // reasoning tokens indefinitely before producing any output, causing apparent hangs.
-        let ollama_options = build_ollama_options_payload(options, text, system_prompt);
+        let ollama_options = build_ollama_options_payload(options, text);
         // Keep the model loaded indefinitely between requests by default so the
         // next hotkey press never has to wait for a cold reload. Operators can
         // override with TRISPR_OLLAMA_KEEP_ALIVE (e.g. "30m" for a shorter window).
         // Trispr Flow's own idle-release (4 h) is the primary unload mechanism.
-        let keep_alive = std::env::var("TRISPR_OLLAMA_KEEP_ALIVE")
+        let keep_alive_raw = std::env::var("TRISPR_OLLAMA_KEEP_ALIVE")
             .ok()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "-1".to_string());
+        // OLLAMA parses keep_alive as a Go duration string OR as a JSON number.
+        // "-1" as a string is rejected ("missing unit in duration"); -1 as an
+        // integer is accepted and means "keep forever". Parse here so callers can
+        // use env-var overrides with either integers ("-1") or durations ("30m").
+        let keep_alive: serde_json::Value = if let Ok(n) = keep_alive_raw.trim().parse::<i64>() {
+            serde_json::json!(n)
+        } else {
+            serde_json::json!(keep_alive_raw)
+        };
 
         let chat_body = serde_json::json!({
             "model": model,
@@ -1418,7 +1342,6 @@ impl AIProvider for OllamaProvider {
                             model,
                             start.elapsed().as_millis()
                         );
-                        schedule_ollama_timeout_abort(candidate.clone(), model.to_string());
                         return Err(AIError::Timeout);
                     }
                     last_transport_error = Some(AIError::OllamaNotRunning);
@@ -1505,7 +1428,6 @@ impl AIProvider for OllamaProvider {
                             model,
                             start.elapsed().as_millis()
                         );
-                        schedule_ollama_timeout_abort(candidate.clone(), model.to_string());
                         return Err(AIError::Timeout);
                     }
                     last_transport_error = Some(AIError::OllamaNotRunning);

@@ -115,7 +115,6 @@ pub fn refine_task_text(
         return fallback;
     }
 
-    let _activity_guard = crate::audio::start_refinement_activity_guard(app.clone());
     let setup = match crate::prepare_refinement(app, settings) {
         Ok(value) => value,
         Err(error) => {
@@ -123,6 +122,11 @@ pub fn refine_task_text(
             return fallback;
         }
     };
+    let _activity_guard = crate::audio::start_refinement_activity_guard(
+        app.clone(),
+        setup.provider.id().to_string(),
+        setup.model.clone(),
+    );
 
     let mut options = setup.options.clone();
     options.max_tokens = options.max_tokens.clamp(64, 192);

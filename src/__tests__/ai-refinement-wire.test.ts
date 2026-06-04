@@ -159,7 +159,7 @@ function freshSettings(): Settings {
     audio_cues: false,
     audio_cues_volume: 0.5,
     ptt_use_vad: false,
-    ptt_hot_keepalive_ms: 30000,
+    ptt_hot_keepalive_ms: 600000,
     hallucination_filter_enabled: false,
     activation_words_enabled: false,
     activation_words: [],

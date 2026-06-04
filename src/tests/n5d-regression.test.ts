@@ -44,6 +44,9 @@ function makeRuntimeDiagnostics(overrides: RuntimeDiagnosticsOverrides = {}): Ru
       accelerator: "gpu",
       gpu_layers_requested: 28,
       gpu_layers_applied: 28,
+      active_requests: 0,
+      warm_until_ms: 0,
+      idle_retire_ms: 300000,
       last_error: "",
       ...(overrides.whisper ?? {}),
     },
@@ -55,6 +58,8 @@ function makeRuntimeDiagnostics(overrides: RuntimeDiagnosticsOverrides = {}): Ru
       managed_pid: 4242,
       endpoint: "http://127.0.0.1:11434",
       reachable: true,
+      active_requests: 0,
+      idle_release_ms: 90000,
       ...(overrides.ollama ?? {}),
     },
   };

@@ -1100,7 +1100,10 @@ pub(crate) fn sync_ptt_hot_standby(
     // the first 1-2 s of speech until the audio device warmed up.
     if let Err(e) = start_ptt_hot_standby(app, state, settings) {
         if diagnostics_enabled {
-            warn!("[runtime:ptt_audio_capture] eager standby start failed (non-fatal): {}", e);
+            warn!(
+                "[runtime:ptt_audio_capture] eager standby start failed (non-fatal): {}",
+                e
+            );
         }
     }
     let _ = emit_capture_idle_overlay(app, settings);
@@ -1829,9 +1832,10 @@ pub(crate) fn maybe_spawn_ai_refinement(
                         &app_handle,
                         crate::overlay::OllamaModelState::Warm,
                     );
-                    let tok_s = result.ollama_eval_ms
-                        .filter(|&ms| ms > 0)
-                        .map(|ms| (result.usage.output_tokens as f64 / (ms as f64 / 1000.0) * 10.0).round() / 10.0);
+                    let tok_s = result.ollama_eval_ms.filter(|&ms| ms > 0).map(|ms| {
+                        (result.usage.output_tokens as f64 / (ms as f64 / 1000.0) * 10.0).round()
+                            / 10.0
+                    });
                     info!(
                         "[perf] {}",
                         serde_json::json!({
@@ -2113,7 +2117,9 @@ fn schedule_ollama_idle_release(app_handle: AppHandle, generation: u64, model: S
             warn!("[ollama.idle] release failed model={}: {}", model, err);
         } else {
             state.ollama_model_warm.store(false, Ordering::SeqCst);
-            state.ollama_warmup_in_progress.store(false, Ordering::SeqCst);
+            state
+                .ollama_warmup_in_progress
+                .store(false, Ordering::SeqCst);
             crate::overlay::update_overlay_ollama_state(
                 &app_handle,
                 crate::overlay::OllamaModelState::Cold,
@@ -3181,10 +3187,7 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
         app_state
             .ollama_warmup_in_progress
             .store(true, Ordering::SeqCst);
-        crate::overlay::update_overlay_ollama_state(
-            app,
-            crate::overlay::OllamaModelState::Loading,
-        );
+        crate::overlay::update_overlay_ollama_state(app, crate::overlay::OllamaModelState::Loading);
         crate::util::spawn_guarded("ollama_ptt_warmup", move || {
             match crate::warmup_ollama_model_impl(&endpoint, &model) {
                 Ok(()) => {

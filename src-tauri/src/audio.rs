@@ -1094,8 +1094,14 @@ pub(crate) fn sync_ptt_hot_standby(
         return;
     }
 
-    if diagnostics_enabled {
-        info!("[runtime:ptt_audio_capture] standby lazy-armed; will start on first PTT press");
+    // Eagerly start the standby so the pre-roll buffer is already filled when
+    // the user presses PTT.  Previously this was "lazy-armed" (start on first
+    // press), which caused the first recording to have 0 ms pre-roll and miss
+    // the first 1-2 s of speech until the audio device warmed up.
+    if let Err(e) = start_ptt_hot_standby(app, state, settings) {
+        if diagnostics_enabled {
+            warn!("[runtime:ptt_audio_capture] eager standby start failed (non-fatal): {}", e);
+        }
     }
     let _ = emit_capture_idle_overlay(app, settings);
 }
@@ -1159,9 +1165,8 @@ fn start_ptt_hot_recording(
     }
     let _ = app.emit("capture:state", "recording");
     let _ = update_overlay_state(app, OverlayState::Recording);
-    if settings.audio_cues {
-        let _ = app.emit("audio:cue", "start");
-    }
+    // Audio cue already emitted at the top of handle_ptt_press for immediate
+    // feedback — do not emit again here or it will double-play.
     Ok(())
 }
 
@@ -3141,6 +3146,14 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
         }
         return Ok(());
     }
+
+    // Emit the audio cue immediately so the user gets instant feedback that
+    // the button press was registered — before anything that could block
+    // (standby cold-start, whisper warmup, OLLAMA warmup).
+    if settings.audio_cues {
+        let _ = app.emit("audio:cue", "start");
+    }
+
     if let Some(model_path) = crate::models::resolve_model_path(app, &settings.model) {
         crate::whisper_server::schedule_whisper_server_warmup(
             app,

@@ -1986,8 +1986,9 @@ export function wireAiRefinement(): void {
   });
 
   document.addEventListener("click", () => {
-    if (!dom.engineRefinePresetMenu?.hidden) {
-      dom.engineRefinePresetMenu!.hidden = true;
+    const menu = dom.engineRefinePresetMenu;
+    if (menu && !menu.hidden) {
+      menu.hidden = true;
       dom.engineRefinePreset?.setAttribute("aria-expanded", "false");
     }
   });

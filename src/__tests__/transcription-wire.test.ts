@@ -555,7 +555,7 @@ describe("wireTranscription - whisper backend gpu controls", () => {
     dom.gpuBackendCudaBtn?.click();
     await flush();
     expect(settings!.local_backend_preference).toBe("cuda");
-    expect(document.querySelector("#toast-container")?.textContent).toContain("Backend updated");
+    expect(document.querySelector("#toast-container")?.textContent).toContain("Backend switched");
   });
 
   it("vulkan backend button updates preference", async () => {

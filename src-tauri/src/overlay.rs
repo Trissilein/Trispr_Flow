@@ -820,7 +820,10 @@ fn schedule_overlay_window_creation(app: &AppHandle, reason: &str) {
     });
 }
 
-/// Updates the overlay state and shows/hides it accordingly
+/// Updates the overlay state and shows/hides it accordingly.
+/// Non-blocking: dispatches the Win32 show/eval work via run_on_main_thread
+/// so callers on background threads (e.g. PTT hotkey thread) are not stalled
+/// by Win32 SendMessage waiting for the main thread to process the message.
 pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), String> {
     with_overlay_controller(app, |controller| {
         controller.desired_state = state.clone();
@@ -835,7 +838,15 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
         }
         return Ok(());
     };
-    apply_overlay_state_to_window(app, &window, state)
+    // Queue on main thread — same pattern as apply_overlay_settings and
+    // update_overlay_ollama_state.  window.show() + window.eval() require the
+    // Win32 message queue and must not be called synchronously from a
+    // background thread or they will block until the main thread is free.
+    let app_clone = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let _ = apply_overlay_state_to_window(&app_clone, &window, state);
+    });
+    Ok(())
 }
 
 pub fn update_overlay_tts_stop_visibility(app: &AppHandle, active: bool) -> Result<(), String> {
@@ -944,6 +955,22 @@ fn apply_overlay_ollama_state_to_window(app: &AppHandle, window: &WebviewWindow)
 
     if !is_ollama_active {
         return;
+    }
+
+    // During active recording or transcribing the overlay must stay visible
+    // with the user's preset color.  Overriding it with the cold/loading color
+    // (e.g. grey #c8c8c8) makes the overlay nearly invisible while dictating.
+    {
+        let controller = app_state
+            .overlay_controller
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if matches!(
+            controller.desired_state,
+            OverlayState::Recording | OverlayState::Transcribing
+        ) {
+            return;
+        }
     }
 
     let color = {

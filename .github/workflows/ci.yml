@@ -35,7 +35,7 @@ jobs:
         run: npm test
 
   # ── Informational (non-blocking) ───────────────────────────────────────────
-  # Runs Rust build + cargo tests on Windows to catch backend regressions.
+  # Runs Rust format + cargo tests on Windows to catch backend regressions.
   # Not a required check — promoted to required once CI runtime is measured.
   smoke:
     name: Rust smoke (windows-latest)
@@ -59,6 +59,9 @@ jobs:
 
       - name: Install NPM dependencies
         run: npm ci
+
+      - name: Generate CI tauri config
+        run: node scripts/generate-tauri-variant-config.mjs --variant ci --out src-tauri/tauri.conf.json
 
       - name: Rust format check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check

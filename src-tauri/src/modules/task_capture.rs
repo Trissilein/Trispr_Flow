@@ -1,4 +1,6 @@
 use crate::modules::TaskCaptureSettings;
+use crate::state::AppState;
+use tauri::{AppHandle, Manager};
 use tracing::info;
 
 pub const TASK_CAPTURE_KEYWORDS: &[&str] = &[
@@ -69,7 +71,7 @@ pub fn extract_task_text(command_text: &str) -> String {
         let Some(first_word) = remainder.split_whitespace().next() else {
             break;
         };
-        let normalized = crate::normalize_assistant_action_text(first_word);
+        let normalized = crate::workflow_agent::normalize_assistant_action_text(first_word);
         if !TASK_CAPTURE_FILLERS.contains(&normalized.as_str()) {
             break;
         }
@@ -105,18 +107,20 @@ pub fn refine_task_text(
         settings.ai_fallback.enabled
     );
     if !settings.workflow_agent.online_enabled
-        && !crate::ai_provider_is_local(&settings.ai_fallback.provider)
+        && !crate::workflow_agent::ai_provider_is_local(&settings.ai_fallback.provider)
     {
         return fallback;
     }
 
-    if let Err(error) = crate::ensure_ollama_runtime_ready_for_refinement(app, settings) {
+    if let Err(error) =
+        crate::ai_fallback::ensure_ollama_runtime_ready_for_refinement(app, settings)
+    {
         tracing::warn!("reminder_capture refinement unavailable: {}", error);
         return fallback;
     }
 
     let _activity_guard = crate::audio::start_refinement_activity_guard(app.clone());
-    let setup = match crate::prepare_refinement(app, settings) {
+    let setup = match crate::ai_fallback::prepare_refinement(app, settings) {
         Ok(value) => value,
         Err(error) => {
             tracing::warn!("reminder_capture refinement unavailable: {}", error);
@@ -189,6 +193,48 @@ pub fn task_capture_enabled(settings: &crate::state::Settings) -> bool {
         .module_settings
         .enabled_modules
         .contains("task_capture")
+}
+
+#[tauri::command]
+pub(crate) async fn get_task_capture_settings(app: AppHandle) -> TaskCaptureSettings {
+    let state = app.state::<AppState>();
+    let settings = state.settings.read().unwrap_or_else(|p| p.into_inner());
+    settings.task_capture_settings.clone()
+}
+
+#[tauri::command]
+pub(crate) async fn save_task_capture_settings(
+    app: AppHandle,
+    task_capture_settings: TaskCaptureSettings,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut settings = {
+        let current = state.settings.read().unwrap_or_else(|p| p.into_inner());
+        current.clone()
+    };
+    settings.task_capture_settings = task_capture_settings;
+    crate::save_settings_inner(&app, &mut settings)
+}
+
+#[tauri::command]
+pub(crate) fn test_task_capture_endpoint(endpoint: String) -> Result<String, String> {
+    let endpoint = endpoint.trim().to_string();
+    if endpoint.is_empty() {
+        return Err("Endpoint URL is empty".to_string());
+    }
+    match ureq::post(&endpoint)
+        .set("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(5))
+        .send_json(serde_json::json!({ "text": "[Test] Verbindungstest von Trispr Flow" }))
+    {
+        Ok(response) => Ok(format!("OK (status {})", response.status())),
+        Err(ureq::Error::Status(code, response)) => Err(crate::format_ureq_status_error(
+            "Test request",
+            code,
+            response,
+        )),
+        Err(ureq::Error::Transport(transport)) => Err(format!("Connection failed: {}", transport)),
+    }
 }
 
 #[cfg(test)]

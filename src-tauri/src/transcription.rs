@@ -40,7 +40,7 @@ use std::time::Duration;
 #[cfg(target_os = "windows")]
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager};
 use tracing::info;
 use tracing::{error, warn};
 
@@ -522,7 +522,7 @@ pub(crate) fn expand_transcribe_backlog(
 
 pub(crate) fn start_transcribe_monitor(
     app: &AppHandle,
-    state: &State<'_, AppState>,
+    state: &AppState,
     settings: &Settings,
 ) -> Result<(), String> {
     let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
@@ -630,7 +630,7 @@ pub(crate) fn start_transcribe_monitor(
     Ok(())
 }
 
-pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppState>) {
+pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &AppState) {
     if crate::state::diagnostic_logging_enabled() {
         info!("[runtime:transcribe_monitor] stop requested");
     }
@@ -673,10 +673,7 @@ pub(crate) fn stop_transcribe_monitor(app: &AppHandle, state: &State<'_, AppStat
     }
 }
 
-pub(crate) fn stop_transcribe_monitor_and_release_whisper(
-    app: &AppHandle,
-    state: &State<'_, AppState>,
-) {
+pub(crate) fn stop_transcribe_monitor_and_release_whisper(app: &AppHandle, state: &AppState) {
     stop_transcribe_monitor(app, state);
     let settings = state
         .settings
@@ -690,34 +687,21 @@ pub(crate) fn whisper_runtime_required(settings: &Settings) -> bool {
     settings.capture_enabled || settings.transcribe_enabled
 }
 
-pub(crate) fn reconcile_whisper_runtime(
-    app: &AppHandle,
-    state: &State<'_, AppState>,
-    settings: &Settings,
-) {
+pub(crate) fn reconcile_whisper_runtime(app: &AppHandle, state: &AppState, settings: &Settings) {
     if whisper_runtime_required(settings) {
         warm_transcribe_runtime(app, state, settings);
     } else {
-        crate::whisper_server::kill_whisper_server(state.inner());
+        crate::whisper_server::kill_whisper_server(state);
     }
 }
 
-pub(crate) fn warm_transcribe_runtime(
-    app: &AppHandle,
-    state: &State<'_, AppState>,
-    settings: &Settings,
-) {
+pub(crate) fn warm_transcribe_runtime(app: &AppHandle, state: &AppState, settings: &Settings) {
     if !whisper_runtime_required(settings) {
         return;
     }
 
     if let Some(model_path) = resolve_model_path(app, &settings.model) {
-        crate::whisper_server::schedule_whisper_server_warmup(
-            app,
-            state.inner(),
-            &model_path,
-            settings,
-        );
+        crate::whisper_server::schedule_whisper_server_warmup(app, state, &model_path, settings);
     }
 }
 

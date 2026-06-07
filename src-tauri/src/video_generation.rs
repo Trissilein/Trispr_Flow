@@ -562,6 +562,42 @@ fn emit_progress(app: &AppHandle, job_id: &str, phase: &str, progress: f32, mess
     }
 }
 
+#[tauri::command]
+pub(crate) async fn video_generate(
+    request: VideoJobRequest,
+    app: AppHandle,
+) -> Result<VideoJobResult, String> {
+    tauri::async_runtime::spawn_blocking(move || render_video(&app, request))
+        .await
+        .map_err(|e| format!("video_generate join error: {}", e))?
+}
+
+#[tauri::command]
+pub(crate) fn video_get_output_dir(app: AppHandle) -> Result<String, String> {
+    let dir = crate::paths::resolve_video_output_dir(&app);
+    Ok(dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub(crate) fn video_open_output_dir(app: AppHandle) -> Result<(), String> {
+    let dir = crate::paths::resolve_video_output_dir(&app);
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("open explorer: {}", e))?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = dir;
+        return Err(
+            "Opening the output directory is only wired for Windows in Phase 1.".to_string(),
+        );
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Workdir cleanup
 // ---------------------------------------------------------------------------

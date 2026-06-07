@@ -13,9 +13,9 @@
 
 import type { EditSubstitution } from "./types";
 import { settings } from "./state";
-import { persistSettings, renderLearnedVocabChips } from "./settings";
+import { persistSettings } from "./settings-persist";
 
-const PROMOTION_THRESHOLD = 3;
+export const PROMOTION_THRESHOLD = 3;
 
 // ---------------------------------------------------------------------------
 // Word-level diff
@@ -283,7 +283,9 @@ function applyPromotions(pairs: Array<[string, string]>): void {
   settings.postproc_custom_vocab_enabled = true;
   settings.vocab_terms = terms;
 
-  renderLearnedVocabChips();
+  void import("./settings/vocabulary.settings").then(({ renderLearnedVocabChips }) => {
+    renderLearnedVocabChips();
+  });
 }
 
 // ---------------------------------------------------------------------------

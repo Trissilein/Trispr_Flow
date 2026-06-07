@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use tauri::AppHandle;
 use tracing::{error, info, warn};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -393,6 +394,41 @@ pub fn scan_incomplete(recordings_dir: &PathBuf) -> Vec<PathBuf> {
                 && p.join("manifest.json").exists()
         })
         .collect()
+}
+
+#[tauri::command]
+pub(crate) fn save_crash_recovery(app: AppHandle, content: String) -> Result<(), String> {
+    let data_dir = crate::paths::resolve_base_dir(&app);
+    let _ = std::fs::create_dir_all(&data_dir);
+
+    let crash_file = data_dir.join(".crash_recovery.json");
+    std::fs::write(&crash_file, content)
+        .map_err(|e| format!("Failed to save crash recovery: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn clear_crash_recovery(app: AppHandle) -> Result<(), String> {
+    let data_dir = crate::paths::resolve_base_dir(&app);
+
+    let crash_file = data_dir.join(".crash_recovery.json");
+    if crash_file.exists() {
+        std::fs::remove_file(&crash_file)
+            .map_err(|e| format!("Failed to clear crash recovery: {}", e))?;
+    }
+
+    let legacy_temp = if cfg!(windows) {
+        std::env::var("TEMP").ok()
+    } else {
+        std::env::var("TMPDIR").ok().or(Some("/tmp".to_string()))
+    };
+    if let Some(temp_dir) = legacy_temp {
+        let legacy_file = PathBuf::from(&temp_dir).join("trispr_crash_recovery.json");
+        let _ = std::fs::remove_file(&legacy_file);
+    }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

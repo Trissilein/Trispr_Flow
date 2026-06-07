@@ -35,7 +35,7 @@ npm run dev:web      # Starts Vite dev server only
 ### Testing
 ```powershell
 npm run test         # Unit tests (Vitest)
-npm run test:smoke   # Full build + Rust tests + Cargo build check
+npm run test:smoke   # Frontend production build + Rust unit tests (--lib then --bins)
 ```
 
 ### Benchmarks

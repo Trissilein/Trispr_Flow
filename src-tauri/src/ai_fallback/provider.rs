@@ -157,24 +157,36 @@ pub fn is_ssrf_target(endpoint: &str) -> bool {
         Ok(url) => url,
         Err(_) => return true, // Fail-closed: unparseable URLs treated as SSRF targets
     };
+    // Use typed host parsing to avoid IPv6 bracket handling quirks in host_str().
     match parsed.host() {
-        Some(url::Host::Domain(domain)) => {
-            let host = domain.to_ascii_lowercase();
-            host == "169.254.169.254" || host == "metadata.google.internal"
+        None => return true, // Fail-closed: parsed URL without host
+        Some(url::Host::Domain(host)) => {
+            let host = host.to_ascii_lowercase();
+            // Block cloud metadata endpoint (AWS/GCP/Azure)
+            if host == "169.254.169.254" || host == "metadata.google.internal" {
+                return true;
+            }
         }
         Some(url::Host::Ipv4(ip)) => {
             // Block IPv4 link-local range (169.254.x.x) entirely.
-            ip.octets()[0] == 169 && ip.octets()[1] == 254
+            if ip.octets()[0] == 169 && ip.octets()[1] == 254 {
+                return true;
+            }
         }
         Some(url::Host::Ipv6(ip)) => {
-            // Block IPv6 link-local (fe80::/10) and IPv4-mapped link-local (::ffff:169.254.x.x).
-            ip.is_unicast_link_local()
-                || ip
-                    .to_ipv4_mapped()
-                    .is_some_and(|ipv4| ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254)
+            // fe80::/10 — first 10 bits are 1111111010
+            if (ip.segments()[0] & 0xffc0) == 0xfe80 {
+                return true;
+            }
+            // ::ffff:169.254.x.x — IPv4-mapped link-local
+            if let Some(ipv4) = ip.to_ipv4_mapped() {
+                if ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254 {
+                    return true;
+                }
+            }
         }
-        None => true,
     }
+    false
 }
 
 /// Return all endpoint candidates: primary (with localhost/127.0.0.1 variants)
@@ -437,6 +449,7 @@ pub fn prompt_for_profile(
                 preserve_source_language,
             ));
         }
+        // Custom prompts are user-owned and must remain unchanged.
         return Some(normalized.to_string());
     }
 

@@ -26,15 +26,16 @@ import {
 import { settings } from "../state";
 import * as dom from "../dom-refs";
 import {
-  persistSettings,
   renderAIFallbackSettingsUi,
-  renderSettings,
   renderTopicKeywords,
+} from "../settings/ai-refinement.settings";
+import { renderSettings } from "../settings";
+import {
   resolveEffectiveAsrLanguageHint,
   derivePostprocLanguageFromAsr,
-  syncDerivedLanguageSettings,
-  addVocabRow,
-} from "../settings";
+} from "../settings/transcription.settings";
+import { persistSettings, syncDerivedLanguageSettings } from "../settings-persist";
+import { addVocabRow } from "../settings/vocabulary.settings";
 import { renderHero } from "../ui-state";
 import { setTopicKeywords, DEFAULT_TOPICS } from "../history";
 import { showToast } from "../toast";

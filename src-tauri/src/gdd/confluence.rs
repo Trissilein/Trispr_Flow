@@ -3,10 +3,11 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::confluence::keyring as confluence_keyring;
-use crate::modules::ConfluenceSettings;
+use crate::modules::{normalize_confluence_settings, ConfluenceSettings};
+use crate::state::{save_settings_file, AppState};
 
 const CONFLUENCE_API_TOKEN_SECRET_ID: &str = "confluence_api_token";
 const CONFLUENCE_OAUTH_ACCESS_SECRET_ID: &str = "confluence_oauth_access_token";
@@ -978,6 +979,403 @@ pub fn oauth_exchange(
         resources,
         expires_in_seconds: expires_in,
         refresh_token_saved: refresh_token.is_some(),
+    })
+}
+
+#[tauri::command]
+pub(crate) fn test_confluence_connection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ConfluenceConnectionResult, String> {
+    crate::guarded_command!("test_confluence_connection", {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        test_connection(&app, &settings.confluence_settings)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn confluence_oauth_start() -> Result<ConfluenceOauthStartResult, String> {
+    crate::guarded_command!("confluence_oauth_start", { oauth_start() })
+}
+
+#[tauri::command]
+pub(crate) fn confluence_oauth_exchange(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    code: String,
+) -> Result<serde_json::Value, String> {
+    crate::guarded_command!("confluence_oauth_exchange", {
+        let exchange_result = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            oauth_exchange(&app, &settings.confluence_settings, &code)?
+        };
+
+        let snapshot = {
+            let mut settings = state
+                .settings
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            settings.confluence_settings.enabled = true;
+            settings.confluence_settings.auth_mode = "oauth".to_string();
+            settings.confluence_settings.site_base_url = exchange_result.selected_site_url.clone();
+            settings.confluence_settings.oauth_cloud_id = exchange_result.selected_cloud_id.clone();
+            normalize_confluence_settings(&mut settings.confluence_settings);
+            settings.clone()
+        };
+
+        save_settings_file(&app, &snapshot)?;
+        let _ = app.emit("settings-changed", snapshot);
+
+        serde_json::to_value(exchange_result).map_err(|error| error.to_string())
+    })
+}
+
+#[tauri::command]
+pub(crate) fn confluence_list_spaces(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<ConfluenceSpace>, String> {
+    crate::guarded_command!("confluence_list_spaces", {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        list_spaces(&app, &settings.confluence_settings)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn load_gdd_template_from_file(
+    file_path: String,
+) -> Result<crate::gdd::GddTemplateSourceResult, String> {
+    crate::guarded_command!("load_gdd_template_from_file", {
+        crate::gdd::load_template_from_file(&file_path)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn load_gdd_template_from_confluence(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source_url: String,
+) -> Result<crate::gdd::GddTemplateSourceResult, String> {
+    crate::guarded_command!("load_gdd_template_from_confluence", {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let page = load_page_template_from_url(&app, &settings.confluence_settings, &source_url)?;
+        Ok(crate::gdd::template_sources::from_confluence_page(
+            page.source_url,
+            page.page_title,
+            page.text,
+        ))
+    })
+}
+
+#[tauri::command]
+pub(crate) fn suggest_confluence_target(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ConfluenceTargetSuggestionRequest,
+) -> Result<ConfluenceTargetSuggestion, String> {
+    crate::guarded_command!("suggest_confluence_target", {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        suggest_target(&app, &settings.confluence_settings, &request)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn publish_gdd_to_confluence(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ConfluencePublishRequest,
+) -> Result<ConfluencePublishResult, String> {
+    crate::guarded_command!("publish_gdd_to_confluence", {
+        let _ = app.emit(
+            "gdd:publish-started",
+            serde_json::json!({ "title": request.title }),
+        );
+
+        let settings_snapshot = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let result = publish(&app, &settings_snapshot.confluence_settings, &request);
+
+        match result {
+            Ok(publish) => {
+                {
+                    let mut settings = state
+                        .settings
+                        .write()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let route_key = routing_key_for(&request.space_key, &request.title);
+                    settings
+                        .confluence_settings
+                        .routing_memory
+                        .insert(route_key, publish.page_id.clone());
+                    normalize_confluence_settings(&mut settings.confluence_settings);
+                    let _ = save_settings_file(&app, &settings);
+                    let _ = app.emit("settings-changed", settings.clone());
+                }
+                let _ = app.emit("gdd:publish-finished", &publish);
+                Ok(publish)
+            }
+            Err(error) => {
+                let _ = app.emit(
+                    "gdd:publish-failed",
+                    serde_json::json!({ "title": request.title, "error": error }),
+                );
+                Err(error)
+            }
+        }
+    })
+}
+
+#[tauri::command]
+pub(crate) fn publish_or_queue_gdd_to_confluence(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::gdd::publish_queue::GddPublishOrQueueRequest,
+) -> Result<crate::gdd::publish_queue::GddPublishAttemptResult, String> {
+    crate::guarded_command!("publish_or_queue_gdd_to_confluence", {
+        let _ = app.emit(
+            "gdd:publish-started",
+            serde_json::json!({ "title": request.publish_request.title }),
+        );
+
+        let settings_snapshot = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let publish_result = publish(
+            &app,
+            &settings_snapshot.confluence_settings,
+            &request.publish_request,
+        );
+
+        match publish_result {
+            Ok(publish) => {
+                {
+                    let mut settings = state
+                        .settings
+                        .write()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let route_key = routing_key_for(
+                        &request.publish_request.space_key,
+                        &request.publish_request.title,
+                    );
+                    settings
+                        .confluence_settings
+                        .routing_memory
+                        .insert(route_key, publish.page_id.clone());
+                    normalize_confluence_settings(&mut settings.confluence_settings);
+                    let _ = save_settings_file(&app, &settings);
+                    let _ = app.emit("settings-changed", settings.clone());
+                }
+
+                let _ = app.emit("gdd:publish-finished", &publish);
+                Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
+                    status: "published".to_string(),
+                    publish_result: Some(publish),
+                    queued_job: None,
+                    error: None,
+                })
+            }
+            Err(error) => {
+                if crate::gdd::publish_queue::is_queueable_publish_error(&error) {
+                    let queued_job =
+                        crate::gdd::publish_queue::queue_publish_request(&app, &request, &error)?;
+                    let _ = app.emit(
+                        "gdd:publish-queued",
+                        serde_json::json!({
+                            "job_id": queued_job.job_id,
+                            "title": queued_job.title,
+                            "error": error,
+                        }),
+                    );
+                    return Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
+                        status: "queued".to_string(),
+                        publish_result: None,
+                        queued_job: Some(queued_job),
+                        error: Some(error),
+                    });
+                }
+
+                let _ = app.emit(
+                    "gdd:publish-failed",
+                    serde_json::json!({
+                        "title": request.publish_request.title,
+                        "error": error,
+                    }),
+                );
+                Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
+                    status: "failed".to_string(),
+                    publish_result: None,
+                    queued_job: None,
+                    error: Some(error),
+                })
+            }
+        }
+    })
+}
+
+#[tauri::command]
+pub(crate) fn list_pending_gdd_publishes(
+    app: AppHandle,
+) -> Result<Vec<crate::gdd::publish_queue::GddPendingPublishJob>, String> {
+    crate::guarded_command!("list_pending_gdd_publishes", {
+        crate::gdd::publish_queue::list_pending_jobs(&app)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn retry_pending_gdd_publish(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    job_id: String,
+) -> Result<crate::gdd::publish_queue::GddPublishAttemptResult, String> {
+    crate::guarded_command!("retry_pending_gdd_publish", {
+        let job_id = job_id.trim().to_string();
+        if job_id.is_empty() {
+            return Err("job_id is required.".to_string());
+        }
+        let mut job = crate::gdd::publish_queue::load_pending_job(&app, &job_id)?
+            .ok_or_else(|| format!("Pending publish job '{}' not found.", job_id))?;
+        let publish_request = crate::gdd::publish_queue::load_publish_request_for_job(&job)?;
+
+        let _ = app.emit(
+            "gdd:publish-started",
+            serde_json::json!({ "title": publish_request.title, "job_id": job.job_id }),
+        );
+
+        let settings_snapshot = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let publish_result = publish(
+            &app,
+            &settings_snapshot.confluence_settings,
+            &publish_request,
+        );
+
+        match publish_result {
+            Ok(publish) => {
+                let _ = crate::gdd::publish_queue::consume_pending_job(&app, &job.job_id)?;
+                {
+                    let mut settings = state
+                        .settings
+                        .write()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let route_key =
+                        routing_key_for(&publish_request.space_key, &publish_request.title);
+                    settings
+                        .confluence_settings
+                        .routing_memory
+                        .insert(route_key, publish.page_id.clone());
+                    normalize_confluence_settings(&mut settings.confluence_settings);
+                    let _ = save_settings_file(&app, &settings);
+                    let _ = app.emit("settings-changed", settings.clone());
+                }
+                let _ = app.emit("gdd:publish-finished", &publish);
+                Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
+                    status: "published".to_string(),
+                    publish_result: Some(publish),
+                    queued_job: None,
+                    error: None,
+                })
+            }
+            Err(error) => {
+                crate::gdd::publish_queue::mark_retry_failure(&mut job, &error);
+                crate::gdd::publish_queue::persist_pending_job(&app, &job)?;
+                let _ = app.emit(
+                    "gdd:publish-failed",
+                    serde_json::json!({
+                        "title": publish_request.title,
+                        "error": error,
+                        "job_id": job.job_id,
+                    }),
+                );
+                Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
+                    status: if crate::gdd::publish_queue::is_queueable_publish_error(&error) {
+                        "queued".to_string()
+                    } else {
+                        "failed".to_string()
+                    },
+                    publish_result: None,
+                    queued_job: Some(job),
+                    error: Some(error),
+                })
+            }
+        }
+    })
+}
+
+#[tauri::command]
+pub(crate) fn delete_pending_gdd_publish(app: AppHandle, job_id: String) -> Result<bool, String> {
+    crate::guarded_command!("delete_pending_gdd_publish", {
+        let job_id = job_id.trim();
+        if job_id.is_empty() {
+            return Err("job_id is required.".to_string());
+        }
+        crate::gdd::publish_queue::delete_pending_job(&app, job_id)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn save_confluence_secret(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    secret_id: String,
+    secret_value: String,
+) -> Result<serde_json::Value, String> {
+    crate::guarded_command!("save_confluence_secret", {
+        let secret_id = secret_id.trim().to_lowercase();
+        confluence_keyring::store_secret(&app, &secret_id, &secret_value)?;
+
+        let snapshot = {
+            let mut settings = state
+                .settings
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            settings.confluence_settings.enabled = true;
+            settings.clone()
+        };
+        save_settings_file(&app, &snapshot)?;
+        let _ = app.emit("settings-changed", snapshot);
+
+        Ok(serde_json::json!({
+            "status": "success",
+            "secret_id": secret_id
+        }))
+    })
+}
+
+#[tauri::command]
+pub(crate) fn clear_confluence_secret(
+    app: AppHandle,
+    secret_id: String,
+) -> Result<serde_json::Value, String> {
+    crate::guarded_command!("clear_confluence_secret", {
+        let secret_id = secret_id.trim().to_lowercase();
+        confluence_keyring::clear_secret(&app, &secret_id)?;
+        Ok(serde_json::json!({
+            "status": "success",
+            "secret_id": secret_id
+        }))
     })
 }
 

@@ -26,7 +26,7 @@ import { openExportDialog } from "../export-dialog";
 import { showToast } from "../toast";
 import { updateRangeAria } from "../accessibility";
 import { currentHistoryTab, history, transcribeHistory } from "../state";
-import { persistSettings } from "../settings";
+import { persistSettings } from "../settings-persist";
 
 function commitAlias(key: "mic" | "system", input: HTMLInputElement | null): void {
   if (!input) return;

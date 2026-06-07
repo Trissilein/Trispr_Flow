@@ -3,9 +3,10 @@ use serde::Serialize;
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::warn;
 
-use crate::state::HistoryEntry;
+use crate::state::{push_history_entry_inner, push_transcribe_entry_inner, AppState, HistoryEntry};
 
 // ---------------------------------------------------------------------------
 // PartitionKey
@@ -313,4 +314,200 @@ pub(crate) fn save_entries_to_path(path: &Path, entries: &[HistoryEntry]) -> Res
     fs::write(&tmp_path, &raw).map_err(|e| e.to_string())?;
     fs::rename(&tmp_path, path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn save_transcript(
+    filename: String,
+    content: String,
+    format: String,
+) -> Result<String, String> {
+    let extension = match format.as_str() {
+        "txt" => "txt",
+        "md" => "md",
+        "json" => "json",
+        _ => "txt",
+    };
+
+    let file_path = rfd::FileDialog::new()
+        .set_file_name(&filename)
+        .add_filter(&format.to_uppercase(), &[extension])
+        .save_file()
+        .ok_or("File save cancelled")?;
+
+    std::fs::write(&file_path, content).map_err(|e| format!("Failed to write file: {}", e))?;
+
+    Ok(file_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub(crate) fn get_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
+    state
+        .history
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .active
+        .iter()
+        .cloned()
+        .collect()
+}
+
+#[tauri::command]
+pub(crate) fn get_transcribe_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
+    state
+        .history_transcribe
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .active
+        .iter()
+        .cloned()
+        .collect()
+}
+
+#[tauri::command]
+pub(crate) fn clear_active_transcript_history(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<u64, String> {
+    let mic_deleted = {
+        let mut history = state
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let deleted = history.active.len() as u64;
+        history.active.clear();
+        history.flush_to_disk()?;
+        let updated: Vec<_> = history.active.iter().cloned().collect();
+        drop(history);
+        let _ = app.emit("history:updated", updated);
+        deleted
+    };
+
+    let system_deleted = {
+        let mut history = state
+            .history_transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let deleted = history.active.len() as u64;
+        history.active.clear();
+        history.flush_to_disk()?;
+        let updated: Vec<_> = history.active.iter().cloned().collect();
+        drop(history);
+        let _ = app.emit("transcribe:history-updated", updated);
+        deleted
+    };
+
+    Ok(mic_deleted + system_deleted)
+}
+
+#[tauri::command]
+pub(crate) fn delete_active_transcript_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entry_id: String,
+) -> Result<u64, String> {
+    let entry_id = entry_id.trim();
+    if entry_id.is_empty() {
+        return Ok(0);
+    }
+
+    let mic_deleted = {
+        let mut history = state
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let before = history.active.len();
+        history.active.retain(|entry| entry.id != entry_id);
+        let deleted = before.saturating_sub(history.active.len()) as u64;
+        if deleted > 0 {
+            history.flush_to_disk()?;
+            let updated: Vec<_> = history.active.iter().cloned().collect();
+            drop(history);
+            let _ = app.emit("history:updated", updated);
+        }
+        deleted
+    };
+
+    let system_deleted = {
+        let mut history = state
+            .history_transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let before = history.active.len();
+        history.active.retain(|entry| entry.id != entry_id);
+        let deleted = before.saturating_sub(history.active.len()) as u64;
+        if deleted > 0 {
+            history.flush_to_disk()?;
+            let updated: Vec<_> = history.active.iter().cloned().collect();
+            drop(history);
+            let _ = app.emit("transcribe:history-updated", updated);
+        }
+        deleted
+    };
+
+    Ok(mic_deleted + system_deleted)
+}
+
+#[tauri::command]
+pub(crate) fn list_history_partitions(
+    app: AppHandle,
+    kind: String,
+) -> Result<Vec<PartitionInfo>, String> {
+    let state = app.state::<AppState>();
+    match kind.as_str() {
+        "mic" => Ok(state
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .list_partitions()),
+        "system" => Ok(state
+            .history_transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .list_partitions()),
+        _ => Err(format!("Unknown history kind: {}", kind)),
+    }
+}
+
+#[tauri::command]
+pub(crate) fn load_history_partition(
+    app: AppHandle,
+    kind: String,
+    key: String,
+) -> Result<Vec<HistoryEntry>, String> {
+    let state = app.state::<AppState>();
+    let pk = PartitionKey::parse(&key)?;
+    match kind.as_str() {
+        "mic" => Ok(state
+            .history
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .load_partition(&pk)),
+        "system" => Ok(state
+            .history_transcribe
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .load_partition(&pk)),
+        _ => Err(format!("Unknown history kind: {}", kind)),
+    }
+}
+
+#[tauri::command]
+pub(crate) fn add_history_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    text: String,
+    source: Option<String>,
+) -> Result<Vec<HistoryEntry>, String> {
+    let source = source.unwrap_or_else(|| "local".to_string());
+    push_history_entry_inner(&app, &state.history, text, source)
+}
+
+#[tauri::command]
+pub(crate) fn add_transcribe_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    text: String,
+) -> Result<Vec<HistoryEntry>, String> {
+    push_transcribe_entry_inner(&app, &state.history_transcribe, text)
 }

@@ -5,7 +5,7 @@ import type { ModelInfo } from "./types";
 import { settings, models, setModels, modelProgress, quantizeProgress } from "./state";
 import * as dom from "./dom-refs";
 import { getModelDescription, formatSize, formatProgress } from "./ui-helpers";
-import { persistSettings } from "./settings";
+import { persistSettings } from "./settings-persist";
 import { renderHero } from "./ui-state";
 import { showToast } from "./toast";
 
@@ -75,9 +75,8 @@ export function renderModels() {
       }
 
       const status = document.createElement("div");
-      status.className = `model-status ${model.installed ? "downloaded" : "available"}${
-        isActive ? " active" : ""
-      }`;
+      status.className = `model-status ${model.installed ? "downloaded" : "available"}${isActive ? " active" : ""
+        }`;
       status.textContent = model.installed
         ? isActive
           ? "Active"

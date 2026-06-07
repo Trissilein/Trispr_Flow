@@ -1,7 +1,7 @@
+use crate::ai_fallback::check_strict_local_mode;
 use crate::ai_fallback::provider::{
     is_local_ollama_endpoint, list_ollama_models, ping_ollama, ping_ollama_quick,
 };
-use crate::check_strict_local_mode;
 use crate::managed_child_slot_status;
 use crate::now_iso;
 use crate::paths::resolve_data_path;
@@ -1931,8 +1931,15 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
         message
     };
     update_startup_status(app, state.inner(), |status| {
-        status.ollama_ready = false;
-        status.ollama_starting = true;
+        // Guard against concurrent start calls clobbering a ready state.
+        // Two start_ollama_runtime invocations can race (e.g. backend re-enable
+        // bootstrap + frontend autostart). If the first call has already set
+        // ollama_ready=true, the second call's entry must not reset it back to
+        // starting=true, otherwise the UI keeps showing "Ollama is starting in
+        // background." and the warmup readiness check sees stale false.
+        if !status.ollama_ready {
+            status.ollama_starting = true;
+        }
     });
     update_ollama_runtime_diagnostics(
         app,

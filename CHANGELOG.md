@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`cargo test --lib` loader crash resolved**: `src-tauri/build.rs` now emits `/DELAYLOAD:comctl32.dll` and links `delayimp` for MSVC targets. Moves `comctl32.dll` from hard PE imports to delay imports, preventing `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139) at process startup. Root cause: `comctl32` v5.82 (`System32`) does not export `TaskDialogIndirect`; the test binary has no application manifest to activate the SxS v6 context that the production binary gets from `tauri-winres`. Since tests never call `TaskDialogIndirect`, delay-loading avoids the resolution entirely. `--no-run` workaround removed from `test:smoke` (both `package.json` and `scripts/release-qa.mjs`). Three pre-existing logic test failures in `ai_fallback/provider` remain; `--skip-rust-lib-tests` in the release gate stays until those are addressed. See `docs/KNOWN_ISSUES.md` #001 and `project-spec/decisions/2026-05-23/ci-smoke-job-redesign.md`.
 - **Vite dynamic-import chunk warnings**: `vocab-auto-learn.ts` was dynamically importing `settings.ts` (which it already statically imported), and `settings.ts` was dynamically importing `vocab-auto-learn.ts`. Both modules are always in the same chunk via `main.ts`; the dynamic imports achieved no code-splitting and triggered Vite `(!) dynamic import will not move module into another chunk` warnings. Converted to static imports on both sides.
 
 ## [0.8.1] - 2026-05-05

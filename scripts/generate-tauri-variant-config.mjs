@@ -27,12 +27,12 @@ function parseArgs(argv) {
 const { variant, outPath } = parseArgs(process.argv.slice(2));
 if (!variant || !outPath) {
   console.error(
-    "[generate-tauri-variant-config] Usage: node scripts/generate-tauri-variant-config.mjs --variant <vulkan|cuda-lite|cuda-complete> --out <path>",
+    "[generate-tauri-variant-config] Usage: node scripts/generate-tauri-variant-config.mjs --variant <vulkan|cuda-lite|cuda-complete|ci> --out <path>",
   );
   process.exit(2);
 }
 
-const allowed = new Set(["vulkan", "vulkan-only", "cuda-lite", "cuda-complete"]);
+const allowed = new Set(["vulkan", "vulkan-only", "cuda-lite", "cuda-complete", "ci"]);
 if (!allowed.has(variant)) {
   console.error(`[generate-tauri-variant-config] Unknown variant '${variant}'.`);
   process.exit(2);
@@ -48,6 +48,15 @@ if (!resources || typeof resources !== "object" || Array.isArray(resources)) {
 
 const filteredResources = {};
 for (const [key, value] of Object.entries(resources)) {
+  if (
+    normalizedVariant === "ci" &&
+    (key.startsWith("bin/cuda/") ||
+      key.startsWith("bin/vulkan/") ||
+      key.startsWith("bin/ffmpeg/") ||
+      key.startsWith("bin/piper/"))
+  ) {
+    continue;
+  }
   if (normalizedVariant === "vulkan" && key.startsWith("bin/cuda/")) {
     continue;
   }

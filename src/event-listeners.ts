@@ -1,11 +1,11 @@
 // DOM event listeners setup
 
 import {
-  persistSettings,
-  ensureDiagnosticsDefaults,
   ensureCaptureRuntimeDefaults,
   ensureContinuousDumpDefaults,
+  ensureDiagnosticsDefaults,
 } from "./settings";
+import { persistSettings } from "./settings-persist";
 import { syncHistoryAliasesIntoSettings } from "./history-preferences";
 import { wireHistory } from "./wiring/history.wire";
 import { wireOverlay } from "./wiring/overlay.wire";

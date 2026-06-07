@@ -7,9 +7,10 @@ on:
   push:
     branches:
       - main
-      - "refactor/**"
-      - "feat/**"
-      - "fix/**"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ── Blocking gate ──────────────────────────────────────────────────────────

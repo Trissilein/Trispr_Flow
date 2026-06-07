@@ -1,24 +1,17 @@
-use tauri::{AppHandle, Emitter};
-use crate::state::{
-    AppState, save_settings_file, AI_REFINEMENT_MODULE_ID,
-    normalize_ai_refinement_module_binding, normalize_assistant_core_binding,
-    normalize_assistant_presence_binding, normalize_product_mode_field,
-};
 use crate::modules::{
-    canonicalize_module_id,
-    ASSISTANT_CORE_MODULE_ID,
-    ASSISTANT_PRESENCE_MODULE_ID,
+    canonicalize_module_id, lifecycle as module_lifecycle, normalize_confluence_settings,
+    normalize_gdd_module_settings, normalize_module_settings, normalize_vision_input_settings,
+    normalize_voice_output_settings, normalize_workflow_agent_settings,
+    registry as module_registry, ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID,
     TASK_CAPTURE_MODULE_ID,
-    registry as module_registry,
-    lifecycle as module_lifecycle,
-    normalize_confluence_settings,
-    normalize_gdd_module_settings,
-    normalize_module_settings,
-    normalize_workflow_agent_settings,
-    normalize_vision_input_settings,
-    normalize_voice_output_settings,
+};
+use crate::state::{
+    normalize_ai_refinement_module_binding, normalize_assistant_core_binding,
+    normalize_assistant_presence_binding, normalize_product_mode_field, save_settings_file,
+    AppState, AI_REFINEMENT_MODULE_ID,
 };
 use crate::transcription::{start_transcribe_monitor, stop_transcribe_monitor};
+use tauri::{AppHandle, Emitter};
 
 pub(crate) fn enable_module_actions(
     app: &AppHandle,
@@ -42,10 +35,10 @@ pub(crate) fn enable_module_actions(
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let prev_transcribe_enabled = settings.transcribe_enabled;
-        
+
         let result =
             module_lifecycle::enable_module(&mut settings.module_settings, &module_id, &grants);
-        
+
         if result.is_ok() {
             if module_id == ASSISTANT_CORE_MODULE_ID {
                 settings.workflow_agent.enabled = true;
@@ -162,9 +155,8 @@ pub(crate) fn disable_module_actions(
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let prev_transcribe_enabled = settings.transcribe_enabled;
 
-        let result =
-            module_lifecycle::disable_module(&mut settings.module_settings, &module_id);
-        
+        let result = module_lifecycle::disable_module(&mut settings.module_settings, &module_id);
+
         if result.is_ok() {
             if module_id == ASSISTANT_CORE_MODULE_ID {
                 settings.workflow_agent.enabled = false;

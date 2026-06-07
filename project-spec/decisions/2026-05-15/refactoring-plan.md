@@ -2,7 +2,7 @@
 
 Date: 2026-05-15  
 Last verified: 2026-05-25
-Status: **Phase 0 complete · Phase 1 complete · R2 complete · R1 execution complete (2026-05-25) · B8 deferred**
+Status: **Phase 0 complete · Phase 1 complete · R2 complete · R1 execution complete (2026-05-25) · B8 coordinator extracted**
 Participants: Hendr (architect), automated challenger review
 
 Follow-on architectural work (Trispr Flow modularization) is tracked separately in [`../2026-05-25/trispr-flow-modularization.md`](../2026-05-25/trispr-flow-modularization.md).
@@ -174,7 +174,7 @@ All B commits require A0.1 (macro export). Each row promotes its helpers before 
 | B8     | `schedule_piper_daemon_reconcile`, `schedule_ai_refinement_reenable_bootstrap`, `start_transcribe_monitor`/`stop_transcribe_monitor` — assess entanglement before committing | `list_modules`, `enable_module`, `disable_module`, `get_module_health`, `check_module_updates`, `show_assistant_presence_window` → `modules/commands.rs` — **stretch goal**: if helpers are too entangled, R1 ships without B8 and a follow-up ADR is filed |
 | B9     | (no promotion needed)                                                                                                                                                        | `get_task_capture_settings`, `save_task_capture_settings`, `test_task_capture_endpoint` → `modules/task_capture.rs`                                                                                                                                         |
 
-Build result (2026-05-24): A0, A1, B1-B7, and B9 are implemented. B8 is deferred under its documented stretch-goal rule because the module lifecycle commands still couple settings normalization, transcribe monitor lifecycle, AI runtime bootstrap, Piper daemon lifecycle, assistant presence, and workflow-agent state. Validation: `npm test` passed 626/626; Rust editor diagnostics are warning-only. Full `cargo check --manifest-path src-tauri/Cargo.toml` is blocked on this machine by the known missing bundled CUDA resource `bin\cuda\cublas64_13.dll`.
+Build result (2026-05-25): A0, A1, and B1-B9 are implemented. B8 shipped as a lifecycle coordinator extraction rather than a full command relocation: `enable_module` and `disable_module` now delegate to `modules/lifecycle_coordinator.rs`, while `list_modules`, `get_module_health`, `check_module_updates`, and `show_assistant_presence_window` remain in `lib.rs` as core registration/orchestration commands. Validation: `npm test` passed 626/626; `cargo test --manifest-path src-tauri/Cargo.toml --lib` passed 221/221; `cargo check --manifest-path src-tauri/Cargo.toml` passed with warnings only under the local Vulkan Tauri config.
 
 Note — `workflow_agent.rs` rename: `ASSISTANT_PENDING_CONFIRMATION` static moves as-is to `workflow_agent.rs`. Renaming the file to `assistant_core.rs` (CONTEXT.md preferred term) is deferred — independent of command extraction and out of R1 scope.
 
@@ -202,7 +202,7 @@ These commands remain in `lib.rs`. They are not abandoned work — they are cand
 | `prepare_refinement` + `update_and_persist_settings` → `ai_fallback/` (B6) | `lib.rs` no longer owns AI settings persistence    | **Medium** — future changes to AI settings persistence must understand `ai_fallback/` boundary |
 | `save_gdd_preset_clone` retains inline persistence                         | Diverges from `update_and_persist_settings` helper | Low — documented intentional; consolidation is future cleanup                                  |
 | `workflow_agent.rs` not renamed to `assistant_core.rs` in R1               | CONTEXT.md preferred name not reflected in file    | Low — independent rename is a `git mv` + import pass                                           |
-| B8 (module lifecycle) is a stretch goal                                    | Module commands may stay in `lib.rs` post-R1       | Low — does not block any other cluster; follow-up ADR if needed                                |
+| B8 coordinator extraction                                                  | Full module command relocation did not land in R1  | Low — lifecycle side effects are isolated; remaining command wrappers can move later           |
 | Per-slice accessors instead of pub-sub (R3 → R2)                           | Reactive updates, subscription pattern             | **Medium** — later adoption of signals requires touching all extracted slices again            |
 | Callback injection for `persistSettings` (if chosen for OQ-1)              | Simplicity of direct import                        | Low — established pattern                                                                      |
 

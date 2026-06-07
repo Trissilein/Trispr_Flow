@@ -126,11 +126,10 @@ use crate::models::{
     hide_external_model, list_models, pick_model_dir, quantize_model, remove_model,
 };
 use crate::modules::{
-    canonicalize_module_id, health as module_health,
-    normalize_confluence_settings, normalize_gdd_module_settings, normalize_module_settings,
-    normalize_task_capture_settings, normalize_vision_input_settings,
-    normalize_voice_output_settings, normalize_workflow_agent_settings,
-    registry as module_registry, ASSISTANT_CORE_MODULE_ID,
+    canonicalize_module_id, health as module_health, normalize_confluence_settings,
+    normalize_gdd_module_settings, normalize_module_settings, normalize_task_capture_settings,
+    normalize_vision_input_settings, normalize_voice_output_settings,
+    normalize_workflow_agent_settings, registry as module_registry, ASSISTANT_CORE_MODULE_ID,
     TASK_CAPTURE_MODULE_ID,
 };
 use crate::state::{

@@ -30,6 +30,7 @@ export type ModulePermission =
   | "audio_output";
 export type AgentIntent =
   | "gdd_generate_publish"
+  | "reminder_capture"
   | "session_recap"
   | "plan_status"
   | "confirm_or_cancel"
@@ -659,7 +660,9 @@ export interface Settings {
   assistant_presence_window_monitor?: string | null;
   audio_cues: boolean;
   audio_cues_volume: number;
+  diagnostic_logging_enabled?: boolean;
   ptt_use_vad: boolean;
+  ptt_hot_keepalive_ms: number;
   vad_threshold: number;
   vad_threshold_start: number;
   vad_threshold_sustain: number;
@@ -1005,8 +1008,11 @@ export interface OllamaRuntimeVersionInfo {
   selected: boolean;
   installed: boolean;
   recommended: boolean;
+  prerelease: boolean;
   installable: boolean;
   installable_reason?: string | null;
+  release_name?: string | null;
+  release_notes_summary?: string | null;
 }
 
 export interface OllamaRuntimeDownloadResult {

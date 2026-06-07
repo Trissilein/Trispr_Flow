@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tauri::Emitter;
-use tracing::warn;
+use tracing::{error, info, warn};
 use url::Url;
 
 /// Shared ureq agent for general Ollama HTTP calls (list models, ping, inference).
@@ -35,12 +35,16 @@ fn shared_agent() -> &'static ureq::Agent {
 /// token count of input text and system prompt.
 /// Range: 60 s (short inputs) … 120 s (long/multilingual prompts).
 fn refinement_agent(input_text: &str, system_prompt: &str) -> ureq::Agent {
-    let total_tokens = rough_token_estimate(input_text) + rough_token_estimate(system_prompt);
-    let timeout_secs = ((total_tokens as f64 / 500.0 * 1.5) + 30.0).clamp(60.0, 120.0) as u64;
+    let timeout_secs = refinement_timeout_secs(input_text, system_prompt);
     ureq::builder()
         .timeout_connect(Duration::from_secs(5))
         .timeout_read(Duration::from_secs(timeout_secs))
         .build()
+}
+
+fn refinement_timeout_secs(input_text: &str, system_prompt: &str) -> u64 {
+    let total_tokens = rough_token_estimate(input_text) + rough_token_estimate(system_prompt);
+    ((total_tokens as f64 / 500.0 * 1.5) + 30.0).clamp(60.0, 120.0) as u64
 }
 
 // Prompt templates optimized for local models (Ollama: qwen3, mistral-small).
@@ -243,65 +247,6 @@ pub fn list_ollama_models(endpoint: &str) -> Vec<String> {
         .into_iter()
         .map(|(name, _)| name)
         .collect()
-}
-
-#[derive(Debug, Clone)]
-pub struct LocalModelResolution {
-    pub model: String,
-    pub repaired: bool,
-}
-
-fn normalize_model_tag(name: &str) -> String {
-    name.trim().to_ascii_lowercase()
-}
-
-fn resolve_installed_model_tag(installed: &[String], candidate: &str) -> Option<String> {
-    let target = normalize_model_tag(candidate);
-    if target.is_empty() {
-        return None;
-    }
-    installed
-        .iter()
-        .find(|name| normalize_model_tag(name) == target)
-        .cloned()
-}
-
-pub fn resolve_effective_local_model(
-    configured_model: &str,
-    preferred_model: &str,
-    endpoint: &str,
-) -> Result<LocalModelResolution, AIError> {
-    let installed = list_ollama_models(endpoint);
-    if installed.is_empty() {
-        if ping_ollama(endpoint).is_err() {
-            return Err(AIError::OllamaNotRunning);
-        }
-        return Err(AIError::NetworkError(
-            "No local Ollama model configured. Download or import a model first.".to_string(),
-        ));
-    }
-
-    let configured = configured_model.trim();
-    if let Some(found) = resolve_installed_model_tag(&installed, configured) {
-        let repaired = !configured.eq_ignore_ascii_case(&found);
-        return Ok(LocalModelResolution {
-            model: found,
-            repaired,
-        });
-    }
-
-    let preferred = preferred_model.trim();
-    if let Some(found) = resolve_installed_model_tag(&installed, preferred) {
-        return Ok(LocalModelResolution {
-            model: found,
-            repaired: true,
-        });
-    }
-
-    Ok(LocalModelResolution {
-        model: installed[0].clone(),
-        repaired: true,
-    })
 }
 
 /// Fetch model list with size information from a running Ollama instance.
@@ -1221,6 +1166,7 @@ impl AIProvider for OllamaProvider {
         _api_key: &str,
     ) -> Result<RefinementResult, AIError> {
         let start = Instant::now();
+        let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
         let model = model.trim();
         if model.is_empty() {
             return Err(AIError::NetworkError(
@@ -1246,10 +1192,13 @@ impl AIProvider for OllamaProvider {
         // (e.g. qwen3, deepseek-r1). Without this, thinking models generate internal
         // reasoning tokens indefinitely before producing any output, causing apparent hangs.
         let ollama_options = build_ollama_options_payload(options, text, system_prompt);
+        // Keep local refinement requests warm for a short window by default.
+        // Operators can override this with TRISPR_OLLAMA_KEEP_ALIVE if they want
+        // warmer or colder caching.
         let keep_alive = std::env::var("TRISPR_OLLAMA_KEEP_ALIVE")
             .ok()
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "60m".to_string());
+            .unwrap_or_else(|| "10m".to_string());
 
         let chat_body = serde_json::json!({
             "model": model,
@@ -1274,6 +1223,22 @@ impl AIProvider for OllamaProvider {
 
         // Per-request agent with timeout scaled to input + prompt complexity.
         // Short inputs: 60 s; long/multilingual prompts: up to 120 s.
+        let timeout_secs = refinement_timeout_secs(text, system_prompt);
+        if diagnostics_enabled {
+            info!(
+                "[ollama.refine] start endpoint={} model={} input_bytes={} prompt_bytes={} profile={} low_latency={} max_tokens={} temperature={} keep_alive={} timeout_s={}",
+                self.endpoint,
+                model,
+                text.len(),
+                system_prompt.len(),
+                options.prompt_profile,
+                options.low_latency_mode,
+                options.max_tokens,
+                options.temperature,
+                keep_alive,
+                timeout_secs
+            );
+        }
         let agent = refinement_agent(text, system_prompt);
 
         let mut last_transport_error: Option<AIError> = None;
@@ -1325,6 +1290,16 @@ impl AIProvider for OllamaProvider {
                 let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
                 let (input_tokens, output_tokens) = parse_ollama_usage(&json);
                 let elapsed_ms = start.elapsed().as_millis() as u64;
+                if diagnostics_enabled {
+                    info!(
+                        "[ollama.refine] success route=chat candidate={} elapsed_ms={} input_tokens={} output_tokens={} output_bytes={}",
+                        candidate,
+                        elapsed_ms,
+                        input_tokens,
+                        output_tokens,
+                        refined_text.len()
+                    );
+                }
                 return Ok(RefinementResult {
                     text: refined_text,
                     usage: TokenUsage {
@@ -1354,6 +1329,11 @@ impl AIProvider for OllamaProvider {
                         )));
                     }
                     if code == 404 {
+                        warn!(
+                            "[ollama.refine] chat route missing on candidate={} model={} — falling back to /api/generate",
+                            candidate,
+                            model
+                        );
                         return Err(AIError::NetworkError(
                             "Ollama route not found: neither /api/chat nor /api/generate is available."
                                 .to_string(),
@@ -1386,6 +1366,16 @@ impl AIProvider for OllamaProvider {
             let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
             let (input_tokens, output_tokens) = parse_ollama_usage(&json);
             let elapsed_ms = start.elapsed().as_millis() as u64;
+            if diagnostics_enabled {
+                info!(
+                    "[ollama.refine] success route=generate candidate={} elapsed_ms={} input_tokens={} output_tokens={} output_bytes={}",
+                    candidate,
+                    elapsed_ms,
+                    input_tokens,
+                    output_tokens,
+                    refined_text.len()
+                );
+            }
 
             return Ok(RefinementResult {
                 text: refined_text,
@@ -1400,7 +1390,15 @@ impl AIProvider for OllamaProvider {
             });
         }
 
-        Err(last_transport_error.unwrap_or(AIError::OllamaNotRunning))
+        let error = last_transport_error.unwrap_or(AIError::OllamaNotRunning);
+        error!(
+            "[ollama.refine] failed endpoint={} model={} elapsed_ms={} error={}",
+            self.endpoint,
+            model,
+            start.elapsed().as_millis(),
+            error
+        );
+        Err(error)
     }
 }
 
@@ -1746,6 +1744,31 @@ pub fn validate_ollama_model_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn format_ollama_pull_snapshot(
+    status: &str,
+    digest: Option<&str>,
+    completed: Option<u64>,
+    total: Option<u64>,
+) -> String {
+    let mut parts = vec![format!("status={}", status)];
+    if let Some(digest) = digest.filter(|value| !value.trim().is_empty()) {
+        parts.push(format!("digest={}", digest));
+    }
+    if let Some(completed) = completed {
+        parts.push(format!("completed={}B", completed));
+    }
+    if let Some(total) = total {
+        parts.push(format!("total={}B", total));
+    }
+    if let (Some(completed), Some(total)) = (completed, total) {
+        if total > 0 {
+            let pct = ((completed.saturating_mul(100)) / total).min(100);
+            parts.push(format!("pct={}%", pct));
+        }
+    }
+    parts.join(" ")
+}
+
 /// Pull an Ollama model and stream progress via Tauri events.
 /// Spawned in a background thread.
 ///
@@ -1756,7 +1779,9 @@ pub fn validate_ollama_model_name(name: &str) -> Result<(), String> {
 pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) {
     use std::io::BufRead;
 
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     let body = serde_json::json!({ "model": model, "stream": true });
+    let pull_started = Instant::now();
 
     let agent = ureq::builder()
         .timeout_connect(Duration::from_secs(5))
@@ -1764,9 +1789,20 @@ pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) 
         .build();
 
     let mut last_connect_error: Option<String> = None;
+    let mut attempted_candidates = 0usize;
 
     for candidate in ollama_endpoint_candidates(&endpoint) {
+        attempted_candidates += 1;
         let url = format!("{}/api/pull", candidate);
+        if diagnostics_enabled {
+            info!(
+                "[ollama.pull] request start model={} candidate={} url={} elapsed_ms={}",
+                model,
+                candidate,
+                url,
+                pull_started.elapsed().as_millis()
+            );
+        }
         let response = match agent
             .post(&url)
             .set("Content-Type", "application/json")
@@ -1775,9 +1811,23 @@ pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) 
             Ok(r) => r,
             Err(ureq::Error::Transport(t)) => {
                 last_connect_error = Some(t.to_string());
+                warn!(
+                    "[ollama.pull] request transport error model={} candidate={} elapsed_ms={} error={}",
+                    model,
+                    candidate,
+                    pull_started.elapsed().as_millis(),
+                    t
+                );
                 continue;
             }
             Err(e) => {
+                error!(
+                    "[ollama.pull] request failed model={} candidate={} elapsed_ms={} error={}",
+                    model,
+                    candidate,
+                    pull_started.elapsed().as_millis(),
+                    e
+                );
                 let _ = app.emit(
                     "ollama:pull-error",
                     OllamaPullError {
@@ -1789,9 +1839,22 @@ pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) 
             }
         };
 
+        if diagnostics_enabled {
+            info!(
+                "[ollama.pull] stream open model={} candidate={} elapsed_ms={}",
+                model,
+                candidate,
+                pull_started.elapsed().as_millis()
+            );
+        }
         let reader = response.into_reader();
         let buffered = std::io::BufReader::new(reader);
         let mut last_emit = Instant::now();
+        let mut line_count: u64 = 0;
+        let mut last_status: Option<String> = None;
+        let mut last_digest: Option<String> = None;
+        let mut last_completed: Option<u64> = None;
+        let mut last_total: Option<u64> = None;
 
         for line_result in buffered.lines() {
             let line = match line_result {
@@ -1805,9 +1868,44 @@ pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) 
             };
 
             let status = json["status"].as_str().unwrap_or("").to_string();
+            let digest = json["digest"].as_str().map(|s| s.to_string());
+            let total = json["total"].as_u64();
+            let completed = json["completed"].as_u64();
+            line_count += 1;
+
+            let should_log = line_count <= 3
+                || last_status.as_deref() != Some(status.as_str())
+                || last_digest.as_deref() != digest.as_deref()
+                || last_completed != completed
+                || last_total != total
+                || json.get("error").is_some();
+            if should_log && diagnostics_enabled {
+                info!(
+                    "[ollama.pull] event model={} candidate={} line={} elapsed_ms={} {}",
+                    model,
+                    candidate,
+                    line_count,
+                    pull_started.elapsed().as_millis(),
+                    format_ollama_pull_snapshot(&status, digest.as_deref(), completed, total,),
+                );
+            }
+            last_status = Some(status.clone());
+            last_digest = digest.clone();
+            last_completed = completed;
+            last_total = total;
 
             // Check for success
             if status == "success" {
+                if diagnostics_enabled {
+                    info!(
+                        "[ollama.pull] success model={} candidate={} elapsed_ms={} lines={} attempts={}",
+                        model,
+                        candidate,
+                        pull_started.elapsed().as_millis(),
+                        line_count,
+                        attempted_candidates
+                    );
+                }
                 let _ = app.emit(
                     "ollama:pull-complete",
                     OllamaPullComplete {
@@ -1824,9 +1922,9 @@ pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) 
                     OllamaPullProgress {
                         model: model.clone(),
                         status: status.clone(),
-                        digest: json["digest"].as_str().map(|s| s.to_string()),
-                        total: json["total"].as_u64(),
-                        completed: json["completed"].as_u64(),
+                        digest,
+                        total,
+                        completed,
                     },
                 );
                 last_emit = Instant::now();
@@ -1834,6 +1932,14 @@ pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) 
 
             // Check for error in response
             if let Some(err) = json["error"].as_str() {
+                warn!(
+                    "[ollama.pull] error model={} candidate={} elapsed_ms={} lines={} error={}",
+                    model,
+                    candidate,
+                    pull_started.elapsed().as_millis(),
+                    line_count,
+                    err
+                );
                 let _ = app.emit(
                     "ollama:pull-error",
                     OllamaPullError {
@@ -1846,6 +1952,13 @@ pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) 
         }
 
         // Stream ended without "success" status.
+        warn!(
+            "[ollama.pull] stream ended unexpectedly model={} candidate={} elapsed_ms={} lines={}",
+            model,
+            candidate,
+            pull_started.elapsed().as_millis(),
+            line_count
+        );
         let _ = app.emit(
             "ollama:pull-error",
             OllamaPullError {
@@ -1856,6 +1969,14 @@ pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) 
         return;
     }
 
+    warn!(
+        "[ollama.pull] all candidates failed model={} endpoint={} attempts={} elapsed_ms={} last_connect_error={}",
+        model,
+        endpoint,
+        attempted_candidates,
+        pull_started.elapsed().as_millis(),
+        last_connect_error.as_deref().unwrap_or("none")
+    );
     let _ = app.emit(
         "ollama:pull-error",
         OllamaPullError {

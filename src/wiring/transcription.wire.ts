@@ -311,12 +311,31 @@ export function wireTranscription(): void {
     await persistSettings();
   });
 
+  dom.diagnosticLoggingToggle?.addEventListener("change", async () => {
+    if (!settings) return;
+    settings.diagnostic_logging_enabled = dom.diagnosticLoggingToggle!.checked;
+    await persistSettings();
+    scheduleSettingsRender();
+  });
+
   dom.pttUseVadToggle?.addEventListener("change", async () => {
     if (!settings) return;
     settings.ptt_use_vad = dom.pttUseVadToggle!.checked;
     syncCaptureModeVisibility(settings.mode, settings.ptt_use_vad);
     await persistSettings();
   });
+
+  dom.pttHotKeepalive?.addEventListener("input", () => {
+    if (!settings || !dom.pttHotKeepalive) return;
+    const value = Math.max(5000, Math.min(120000, Number(dom.pttHotKeepalive.value)));
+    settings.ptt_hot_keepalive_ms = value;
+    if (dom.pttHotKeepaliveValue) {
+      dom.pttHotKeepaliveValue.textContent = `${Math.round(value / 1000)}s`;
+    }
+    updateRangeAria("ptt-hot-keepalive", value);
+  });
+
+  onChangePersist(dom.pttHotKeepalive);
 
   dom.audioCuesVolume?.addEventListener("input", () => {
     if (!settings || !dom.audioCuesVolume) return;

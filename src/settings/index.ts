@@ -40,6 +40,16 @@ export function ensureContinuousDumpDefaults() {
   settings.continuous_system_hard_cut_ms ??= settings.continuous_hard_cut_ms;
 }
 
+export function ensureCaptureRuntimeDefaults() {
+  if (!settings) return;
+  settings.ptt_hot_keepalive_ms ??= 30000;
+}
+
+export function ensureDiagnosticsDefaults() {
+  if (!settings) return;
+  settings.diagnostic_logging_enabled ??= false;
+}
+
 function derivedPostprocLanguageLabel(postprocLanguage: "en" | "de" | "multi"): string {
   if (postprocLanguage === "en") {
     return "Derived: English rules (ASR language pinned to English).";

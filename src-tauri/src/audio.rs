@@ -30,6 +30,8 @@ const VAD_PRE_ROLL_ENERGY_FACTOR: f32 = 0.45;
 const REFINEMENT_WATCHDOG_TIMEOUT_MS: u64 = 45_000;
 const REFINEMENT_WATCHDOG_POLL_MS: u64 = 1_000;
 const REFINEMENT_PASTE_TIMEOUT_MS: u64 = 10_000;
+const REFINEMENT_COLD_PASTE_TIMEOUT_MS: u64 = 60_000;
+const REFINEMENT_COLD_PASTE_MAX_AGE_MS: u64 = 12 * 60_000;
 const OVERLAY_EMIT_INTERVAL_MS: u64 = 33; // ~30 FPS for smoother overlay motion
 const PTT_VAD_TAIL_MS: u64 = 150;
 static TRANSCRIPTION_JOB_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -157,6 +159,7 @@ pub(crate) struct Recorder {
     ptt_hot_join_handle: Option<thread::JoinHandle<()>>,
     ptt_hot_recording: Arc<AtomicBool>,
     ptt_hot_device_id: Option<String>,
+    ptt_hot_keepalive_generation: AtomicU64,
 }
 
 impl Recorder {
@@ -177,6 +180,7 @@ impl Recorder {
             ptt_hot_join_handle: None,
             ptt_hot_recording: Arc::new(AtomicBool::new(false)),
             ptt_hot_device_id: None,
+            ptt_hot_keepalive_generation: AtomicU64::new(0),
         }
     }
 
@@ -788,10 +792,12 @@ macro_rules! build_ptt_hot_stream_typed {
                                             expected_ms, warmup_ms
                                         );
                                     } else {
-                                        info!(
-                                            "PTT pre-roll applied: {} ms (target {} ms)",
-                                            warmup_ms, expected_ms
-                                        );
+                                        if crate::state::diagnostic_logging_enabled() {
+                                            info!(
+                                                "PTT pre-roll applied: {} ms (target {} ms)",
+                                                warmup_ms, expected_ms
+                                            );
+                                        }
                                     }
                                 }
                                 if let Ok(mut guard) = buffer.lock() {
@@ -836,6 +842,9 @@ fn stop_ptt_hot_standby(state: &State<'_, AppState>) {
             .recorder
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        recorder
+            .ptt_hot_keepalive_generation
+            .fetch_add(1, Ordering::Relaxed);
         recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
         recorder.ptt_hot_device_id = None;
         (
@@ -851,11 +860,63 @@ fn stop_ptt_hot_standby(state: &State<'_, AppState>) {
     }
 }
 
+fn schedule_ptt_hot_standby_shutdown(app: AppHandle, keepalive_ms: u64, generation: u64) {
+    if keepalive_ms == 0 {
+        return;
+    }
+    if crate::state::diagnostic_logging_enabled() {
+        info!(
+            "[runtime:ptt_audio_capture] scheduling warm standby stop in {} ms generation={}",
+            keepalive_ms, generation
+        );
+    }
+    crate::util::spawn_guarded("ptt_hot_idle_shutdown", move || {
+        thread::sleep(Duration::from_millis(keepalive_ms));
+        let state = app.state::<AppState>();
+        let should_stop = {
+            let recorder = state
+                .recorder
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            recorder.ptt_hot_join_handle.is_some()
+                && recorder.ptt_hot_device_id.is_some()
+                && recorder
+                    .ptt_hot_keepalive_generation
+                    .load(Ordering::Relaxed)
+                    == generation
+        };
+        if !should_stop {
+            if crate::state::diagnostic_logging_enabled() {
+                info!(
+                    "[runtime:ptt_audio_capture] keepalive expiry skipped generation={} (superseded)",
+                    generation
+                );
+            }
+            return;
+        }
+
+        if crate::state::diagnostic_logging_enabled() {
+            info!(
+                "[runtime:ptt_audio_capture] keepalive expired after {} ms; stopping warm standby",
+                keepalive_ms
+            );
+        }
+        stop_ptt_hot_standby(&state);
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let _ = emit_capture_idle_overlay(&app, &settings);
+    });
+}
+
 fn start_ptt_hot_standby(
     app: &AppHandle,
     state: &State<'_, AppState>,
     settings: &Settings,
 ) -> Result<bool, String> {
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     let device_id = settings.input_device.clone();
 
     let (existing_stop_tx, existing_join_handle, buffer, gain_db, recording_flag) = {
@@ -870,6 +931,12 @@ fn start_ptt_hot_standby(
 
         let same_device = recorder.ptt_hot_device_id.as_deref() == Some(device_id.as_str());
         if recorder.ptt_hot_join_handle.is_some() && same_device {
+            if diagnostics_enabled {
+                info!(
+                    "[runtime:ptt_audio_capture] standby already warm device={} keepalive_ms={}",
+                    device_id, settings.ptt_hot_keepalive_ms
+                );
+            }
             return Ok(false);
         }
 
@@ -902,6 +969,12 @@ fn start_ptt_hot_standby(
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
     let thread_device_id = device_id.clone();
+    if diagnostics_enabled {
+        info!(
+            "[runtime:ptt_audio_capture] starting standby device={} pre_roll_ms={} keepalive_ms={}",
+            thread_device_id, pre_roll_ms, settings.ptt_hot_keepalive_ms
+        );
+    }
 
     let join_handle = crate::util::spawn_guarded("ptt_audio_capture", move || {
         let result = (|| -> Result<(), String> {
@@ -981,24 +1054,48 @@ pub(crate) fn sync_ptt_hot_standby(
     state: &State<'_, AppState>,
     settings: &Settings,
 ) {
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     let should_run = settings.capture_enabled && settings.mode == "ptt" && !settings.ptt_use_vad;
-    if should_run {
-        if let Err(err) = start_ptt_hot_standby(app, state, settings) {
-            warn!("Failed to start PTT standby stream: {}", err);
-        } else {
-            let recorder = state
-                .recorder
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if !recorder.active && !recorder.transcribing {
-                drop(recorder);
-                let _ = emit_capture_idle_overlay(app, settings);
+    let running_state = {
+        let recorder = state
+            .recorder
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (
+            recorder.ptt_hot_join_handle.is_some(),
+            recorder.ptt_hot_device_id.clone(),
+        )
+    };
+
+    if !should_run {
+        if running_state.0 {
+            if diagnostics_enabled {
+                info!("[runtime:ptt_audio_capture] capture no longer needs standby; stopping");
             }
         }
-    } else {
         stop_ptt_hot_standby(state);
         let _ = emit_capture_idle_overlay(app, settings);
+        return;
     }
+
+    if running_state.0 {
+        if running_state.1.as_deref() != Some(settings.input_device.as_str()) {
+            if diagnostics_enabled {
+                info!(
+                    "[runtime:ptt_audio_capture] standby device changed {:?} -> {}; stopping cold",
+                    running_state.1, settings.input_device
+                );
+            }
+            stop_ptt_hot_standby(state);
+            let _ = emit_capture_idle_overlay(app, settings);
+        }
+        return;
+    }
+
+    if diagnostics_enabled {
+        info!("[runtime:ptt_audio_capture] standby lazy-armed; will start on first PTT press");
+    }
+    let _ = emit_capture_idle_overlay(app, settings);
 }
 
 fn start_ptt_hot_recording(
@@ -1006,6 +1103,7 @@ fn start_ptt_hot_recording(
     state: &State<'_, AppState>,
     settings: &Settings,
 ) -> Result<(), String> {
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     if !settings.capture_enabled {
         return Ok(());
     }
@@ -1018,14 +1116,25 @@ fn start_ptt_hot_recording(
         );
     }
 
+    let keepalive_generation = {
+        let recorder = state
+            .recorder
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let generation = recorder
+            .ptt_hot_keepalive_generation
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        if recorder.active {
+            return Ok(());
+        }
+        generation
+    };
+
     let mut recorder = state
         .recorder
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if recorder.active {
-        return Ok(());
-    }
-
     if let Ok(mut buf) = recorder.buffer.lock() {
         buf.reset();
     }
@@ -1040,6 +1149,12 @@ fn start_ptt_hot_recording(
     recorder.continuous_processor_stop_tx = None;
     recorder.continuous_processor_join_handle = None;
 
+    if diagnostics_enabled {
+        info!(
+            "[runtime:ptt_audio_capture] recording armed generation={} keepalive_ms={}",
+            keepalive_generation, settings.ptt_hot_keepalive_ms
+        );
+    }
     let _ = app.emit("capture:state", "recording");
     let _ = update_overlay_state(app, OverlayState::Recording);
     if settings.audio_cues {
@@ -1053,11 +1168,14 @@ pub(crate) fn start_recording_with_settings(
     state: &State<'_, AppState>,
     settings: &Settings,
 ) -> Result<(), String> {
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     if settings.mode == "ptt" && !settings.ptt_use_vad {
         return start_ptt_hot_recording(app, state, settings);
     }
 
-    info!("start_recording_with_settings called");
+    if diagnostics_enabled {
+        info!("start_recording_with_settings called");
+    }
     if !settings.capture_enabled {
         return Ok(());
     }
@@ -1066,7 +1184,9 @@ pub(crate) fn start_recording_with_settings(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if recorder.active {
-        info!("Recording already active, skipping");
+        if diagnostics_enabled {
+            info!("Recording already active, skipping");
+        }
         return Ok(());
     }
 
@@ -1159,7 +1279,9 @@ pub(crate) fn start_recording_with_settings(
     recorder.continuous_processor_stop_tx = None;
     recorder.continuous_processor_join_handle = None;
 
-    info!("Recording started successfully, updating overlay");
+    if diagnostics_enabled {
+        info!("Recording started successfully, updating overlay");
+    }
     let _ = app.emit("capture:state", "recording");
     let _ = update_overlay_state(app, OverlayState::Recording);
 
@@ -1223,6 +1345,7 @@ fn handle_transcription_ok(
 
     let job_id = next_transcription_job_id(source);
     let state = app_handle.state::<AppState>();
+    let (paste_timeout_ms, paste_timeout_cold) = refinement_paste_timeout_ms(app_handle, settings);
     let mut entry_id: Option<String> = None;
     if let Ok(updated) = push_history_entry_inner(
         app_handle,
@@ -1242,17 +1365,32 @@ fn handle_transcription_ok(
             job_id: job_id.clone(),
             paste_deferred,
             paste_timeout_ms: if paste_deferred {
-                Some(REFINEMENT_PASTE_TIMEOUT_MS)
+                Some(paste_timeout_ms)
             } else {
                 None
             },
             entry_id: entry_id.clone(),
         },
     );
+    if crate::state::diagnostic_logging_enabled() {
+        let startup_status = crate::startup_status_snapshot(state.inner());
+        info!(
+            "[refinement:{}] paste policy source={} deferred={} timeout_ms={} cold_start={} ollama_ready={} ollama_starting={} active_count={}",
+            job_id,
+            source,
+            paste_deferred,
+            if paste_deferred { paste_timeout_ms } else { 0 },
+            paste_timeout_cold,
+            startup_status.ollama_ready,
+            startup_status.ollama_starting,
+            state.refinement_active_count.load(Ordering::SeqCst)
+        );
+    }
     maybe_spawn_ai_refinement(
         app_handle.clone(),
         processed_text.clone(),
         source.to_string(),
+        "transcription_postprocess",
         job_id,
         entry_id,
         settings,
@@ -1270,14 +1408,15 @@ fn ai_refinement_capability_enabled(settings: &Settings) -> bool {
         && settings.ai_fallback.enabled
 }
 
-fn should_defer_paste_for_refinement_inner(settings: &Settings, ollama_ready: bool) -> bool {
+fn should_defer_paste_for_refinement_inner(settings: &Settings, _ollama_ready: bool) -> bool {
     if !ai_refinement_capability_enabled(settings) {
         return false;
     }
     let provider = settings.ai_fallback.provider.as_str();
-    // Ollama: defer only in local_primary mode and only once runtime is actually ready.
+    // Ollama jobs own on-demand runtime startup. A stale ollama_ready=false
+    // must not force raw paste before the real refinement job can start.
     if provider == "ollama" {
-        return settings.ai_fallback.execution_mode == "local_primary" && ollama_ready;
+        return settings.ai_fallback.execution_mode == "local_primary";
     }
     // LM Studio / Oobabooga: external local servers — always defer so refined
     // output replaces raw paste instead of both appearing in sequence.
@@ -1287,6 +1426,45 @@ fn should_defer_paste_for_refinement_inner(settings: &Settings, ollama_ready: bo
 fn should_defer_paste_for_refinement(app_handle: &AppHandle, settings: &Settings) -> bool {
     let startup_status = crate::startup_status_snapshot(app_handle.state::<AppState>().inner());
     should_defer_paste_for_refinement_inner(settings, startup_status.ollama_ready)
+}
+
+fn refinement_paste_timeout_ms(app_handle: &AppHandle, settings: &Settings) -> (u64, bool) {
+    if !ai_refinement_capability_enabled(settings) {
+        return (0, false);
+    }
+
+    let state = app_handle.state::<AppState>();
+    let startup_status = crate::startup_status_snapshot(state.inner());
+    let last_success_ms = state.refinement_last_success_ms.load(Ordering::SeqCst);
+    let last_success_model = state
+        .refinement_last_success_model
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let current_model = settings.ai_fallback.model.trim().to_ascii_lowercase();
+    let model_matches = last_success_model
+        .as_deref()
+        .map(|model| model.trim().eq_ignore_ascii_case(&current_model))
+        .unwrap_or(false);
+    let now_ms = crate::util::now_ms();
+    let last_success_age_ms = if last_success_ms == 0 {
+        u64::MAX
+    } else {
+        now_ms.saturating_sub(last_success_ms)
+    };
+    let cold_start = !startup_status.ollama_ready
+        || startup_status.ollama_starting
+        || last_success_ms == 0
+        || !model_matches
+        || last_success_age_ms >= REFINEMENT_COLD_PASTE_MAX_AGE_MS;
+    (
+        if cold_start {
+            REFINEMENT_COLD_PASTE_TIMEOUT_MS
+        } else {
+            REFINEMENT_PASTE_TIMEOUT_MS
+        },
+        cold_start,
+    )
 }
 
 fn next_transcription_job_id(source: &str) -> String {
@@ -1302,70 +1480,56 @@ pub(crate) fn maybe_spawn_ai_refinement(
     app_handle: AppHandle,
     text: String,
     source: String,
+    trigger: &'static str,
     job_id: String,
     entry_id: Option<String>,
     settings: &Settings,
-    defer_announced: bool,
+    _defer_announced: bool,
 ) {
     if !ai_refinement_capability_enabled(settings) {
         return;
     }
     let provider = settings.ai_fallback.provider.as_str();
     let is_local_compat = provider == "lm_studio" || provider == "oobabooga";
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     // Cloud providers (claude, openai, gemini) are deferred to v0.7.3.
     if provider != "ollama" && !is_local_compat {
         return;
     }
-    // Ollama requires its local runtime to be ready before spawning refinement.
-    // LM Studio / Oobabooga are external servers managed by the user — skip this check.
-    if provider == "ollama"
-        && settings.ai_fallback.execution_mode == "local_primary"
-        && !app_handle
-            .state::<AppState>()
-            .startup_status
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .ollama_ready
-    {
-        let error_message =
-            "Ollama runtime not ready; refinement skipped and raw fallback is active.";
-        if let Some(entry_id_value) = entry_id.as_deref() {
-            let _ = mark_entry_refinement_failed(
-                &app_handle,
-                entry_id_value,
-                &job_id,
-                &text,
-                error_message,
-            );
-        }
-        let _ = app_handle.emit(
-            "transcription:refinement-failed",
-            serde_json::json!({
-                "job_id": job_id,
-                "entry_id": entry_id,
-                "source": source,
-                "original": text,
-                "error": error_message,
-                "reason": "runtime_not_ready",
-            }),
+    if diagnostics_enabled {
+        info!(
+            "[refinement:{}] queued trigger={} source={} provider={} model={} entry_id={:?} input_bytes={} input_words={} active_count={}",
+            job_id,
+            trigger,
+            source,
+            provider,
+            settings.ai_fallback.model,
+            entry_id,
+            text.len(),
+            text.split_whitespace().count(),
+            app_handle
+                .state::<AppState>()
+                .refinement_active_count
+                .load(Ordering::SeqCst)
         );
-        if defer_announced {
-            warn!("Refinement skipped after defer announcement because runtime is not ready");
-        }
-        return;
     }
-
     // Concurrency gate: skip if too many refinement threads are already active.
     // This prevents thread explosion when the user dictates faster than inference runs.
-    const MAX_CONCURRENT_REFINEMENTS: usize = 2;
+    const MAX_CONCURRENT_REFINEMENTS: usize = 1;
     let active = app_handle
         .state::<AppState>()
         .refinement_active_count
         .load(Ordering::SeqCst);
     if active >= MAX_CONCURRENT_REFINEMENTS {
         warn!(
-            "Refinement concurrency limit reached ({}/{}), skipping job {}",
-            active, MAX_CONCURRENT_REFINEMENTS, job_id
+            "[refinement:{}] concurrency limit reached ({}/{}), skipping trigger={} source={} provider={} model={}",
+            job_id,
+            active,
+            MAX_CONCURRENT_REFINEMENTS,
+            trigger,
+            source,
+            provider,
+            settings.ai_fallback.model
         );
         let _ = app_handle.emit(
             "transcription:refinement-failed",
@@ -1373,6 +1537,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
                 "job_id": job_id,
                 "entry_id": entry_id,
                 "source": source,
+                "trigger": trigger,
                 "original": text,
                 "error": "Refinement queue full — previous refinement still running.",
                 "reason": "queue_full",
@@ -1382,9 +1547,58 @@ pub(crate) fn maybe_spawn_ai_refinement(
     }
 
     let settings_snapshot = settings.clone();
+    let provider_id = settings.ai_fallback.provider.clone();
 
     thread::spawn(move || {
         let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if diagnostics_enabled {
+                info!(
+                    "[refinement:{}] worker started trigger={} source={} provider={} model={}",
+                    job_id, trigger, source, provider_id, settings_snapshot.ai_fallback.model
+                );
+            }
+            if let Err(error) = crate::ai_fallback::ensure_ollama_runtime_ready_for_refinement(
+                &app_handle,
+                &settings_snapshot,
+            ) {
+                error!(
+                    "[refinement:{}] runtime prep skipped trigger={} source={} provider={} error={}",
+                    job_id,
+                    trigger,
+                    source,
+                    provider_id,
+                    error
+                );
+                let reason_code = if error.to_ascii_lowercase().contains("not ready") {
+                    "runtime_not_ready"
+                } else {
+                    "prepare_failed"
+                };
+                record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
+                if let Some(entry_id_value) = entry_id.as_deref() {
+                    let _ = mark_entry_refinement_failed(
+                        &app_handle,
+                        entry_id_value,
+                        &job_id,
+                        &text,
+                        &error,
+                    );
+                }
+                let _ = app_handle.emit(
+                    "transcription:refinement-failed",
+                    serde_json::json!({
+                        "job_id": job_id.clone(),
+                        "entry_id": entry_id.clone(),
+                        "source": source.clone(),
+                        "trigger": trigger,
+                        "original": text.clone(),
+                        "error": error,
+                        "reason": reason_code,
+                    }),
+                );
+                return;
+            }
+
             // Resolve provider, model, and options via the shared helper.
             // This performs model resolution BEFORE signalling "started" — if
             // Ollama is down or no model is available the frontend never sees a
@@ -1393,7 +1607,10 @@ pub(crate) fn maybe_spawn_ai_refinement(
                 match crate::ai_fallback::prepare_refinement(&app_handle, &settings_snapshot) {
                     Ok(s) => s,
                     Err(error) => {
-                        error!("AI refinement skipped: {}", error);
+                        error!(
+                        "[refinement:{}] prepare failed trigger={} source={} provider={} error={}",
+                        job_id, trigger, source, provider_id, error
+                    );
                         let reason_code = if error.to_ascii_lowercase().contains("not ready") {
                             "runtime_not_ready"
                         } else {
@@ -1408,6 +1625,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
                                 &text,
                                 &error,
                             );
+                            return;
                         }
                         let _ = app_handle.emit(
                             "transcription:refinement-failed",
@@ -1415,6 +1633,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
                                 "job_id": job_id.clone(),
                                 "entry_id": entry_id.clone(),
                                 "source": source.clone(),
+                                "trigger": trigger,
                                 "original": text.clone(),
                                 "error": error,
                                 "reason": reason_code,
@@ -1424,11 +1643,39 @@ pub(crate) fn maybe_spawn_ai_refinement(
                     }
                 };
 
+            if diagnostics_enabled {
+                info!(
+                    "[refinement:{}] prepared trigger={} source={} provider={} model={} repaired={} prompt_profile={} max_tokens={} temperature={} low_latency={} guard={}",
+                    job_id,
+                    trigger,
+                    source,
+                    setup.provider.id(),
+                    setup.model,
+                    setup.repaired,
+                    setup.options.prompt_profile,
+                    setup.options.max_tokens,
+                    setup.options.temperature,
+                    setup.options.low_latency_mode,
+                    setup.options.enforce_language_guard
+                );
+            }
+
             // Model resolved successfully — now signal that refinement is active.
             begin_refinement_activity(&app_handle);
             let _activity_guard = RefinementActivityGuard {
                 app_handle: app_handle.clone(),
             };
+            if diagnostics_enabled {
+                info!(
+                    "[refinement:{}] inference starting trigger={} source={} provider={} model={} entry_id={:?}",
+                    job_id,
+                    trigger,
+                    source,
+                    setup.provider.id(),
+                    setup.model,
+                    entry_id
+                );
+            }
             if let Some(entry_id_value) = entry_id.as_deref() {
                 let _ = mark_entry_refinement_started(&app_handle, entry_id_value, &job_id, &text);
             }
@@ -1438,6 +1685,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
                     "job_id": job_id.clone(),
                     "entry_id": entry_id.clone(),
                     "source": source.clone(),
+                    "trigger": trigger,
                     "original": text.clone(),
                     "model": setup.model.clone(),
                 }),
@@ -1464,13 +1712,61 @@ pub(crate) fn maybe_spawn_ai_refinement(
                 }
             }
 
-            match setup.provider.refine_transcript(
+            let mut effective_model = setup.model.clone();
+            let mut refinement_result = setup.provider.refine_transcript(
                 &text,
-                &setup.model,
+                &effective_model,
                 &setup.options,
                 &setup.api_key,
-            ) {
+            );
+            if let Err(error) = &refinement_result {
+                if provider_id == "ollama" && is_ollama_model_not_found_message(&error.to_string())
+                {
+                    if let Some(repaired_model) = repair_ollama_model_after_not_found(
+                        &app_handle,
+                        &settings_snapshot,
+                        &effective_model,
+                    ) {
+                        warn!(
+                            "[refinement:{}] retrying Ollama model after not-found trigger={} source={} old_model={} repaired_model={}",
+                            job_id,
+                            trigger,
+                            source,
+                            effective_model,
+                            repaired_model
+                        );
+                        effective_model = repaired_model;
+                        refinement_result = setup.provider.refine_transcript(
+                            &text,
+                            &effective_model,
+                            &setup.options,
+                            &setup.api_key,
+                        );
+                    }
+                }
+            }
+
+            match refinement_result {
                 Ok(result) => {
+                    if diagnostics_enabled {
+                        info!(
+                            "[refinement:{}] inference finished trigger={} source={} provider={} model={} elapsed_ms={} input_bytes={} output_bytes={} tokens_in={} tokens_out={}",
+                            job_id,
+                            trigger,
+                            source,
+                            result.provider,
+                            result.model,
+                            result.execution_time_ms,
+                            text.len(),
+                            result.text.len(),
+                            result.usage.input_tokens,
+                            result.usage.output_tokens
+                        );
+                    }
+                    crate::state::record_refinement_success(
+                        app_handle.state::<AppState>().inner(),
+                        &result.model,
+                    );
                     if let Some(entry_id_value) = entry_id.as_deref() {
                         let _ = mark_entry_refinement_success(
                             &app_handle,
@@ -1490,13 +1786,22 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             "original": text,
                             "refined": result.text,
                             "source": source,
+                            "trigger": trigger,
                             "model": result.model,
                             "execution_time_ms": result.execution_time_ms,
                         }),
                     );
                 }
                 Err(e) => {
-                    error!("AI refinement failed ({}): {}", setup.model, e);
+                    error!(
+                        "[refinement:{}] inference failed trigger={} source={} provider={} model={} error={}",
+                        job_id,
+                        trigger,
+                        source,
+                        setup.provider.id(),
+                        setup.model,
+                        e
+                    );
                     record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
                     if let Some(entry_id_value) = entry_id.as_deref() {
                         let _ = mark_entry_refinement_failed(
@@ -1513,6 +1818,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             "job_id": job_id,
                             "entry_id": entry_id,
                             "source": source,
+                            "trigger": trigger,
                             "original": text,
                             "error": e.to_string(),
                             "reason": "provider_error",
@@ -1535,8 +1841,75 @@ pub(crate) fn maybe_spawn_ai_refinement(
     });
 }
 
-struct RefinementActivityGuard {
+fn is_ollama_model_not_found_message(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("model") && normalized.contains("not found")
+}
+
+fn repair_ollama_model_after_not_found(
+    app_handle: &AppHandle,
+    settings_snapshot: &Settings,
+    failed_model: &str,
+) -> Option<String> {
+    let endpoint = settings_snapshot.providers.ollama.endpoint.trim();
+    if endpoint.is_empty() {
+        return None;
+    }
+
+    let installed = crate::ai_fallback::provider::list_ollama_models(endpoint);
+    if installed.is_empty() {
+        return None;
+    }
+
+    let preferred = settings_snapshot.providers.ollama.preferred_model.trim();
+    let failed = failed_model.trim().to_ascii_lowercase();
+    let repaired_model = installed
+        .iter()
+        .find(|model| !preferred.is_empty() && model.eq_ignore_ascii_case(preferred))
+        .or_else(|| {
+            installed
+                .iter()
+                .find(|model| model.trim().to_ascii_lowercase() != failed)
+        })
+        .or_else(|| installed.first())?
+        .trim()
+        .to_string();
+    if repaired_model.is_empty() {
+        return None;
+    }
+
+    let snapshot = {
+        let state = app_handle.state::<AppState>();
+        let mut live = state
+            .settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        live.providers.ollama.available_models = installed;
+        live.ai_fallback.model = repaired_model.clone();
+        live.providers.ollama.preferred_model = repaired_model.clone();
+        live.postproc_llm_model = repaired_model.clone();
+        normalize_ai_fallback_fields(&mut live);
+        live.clone()
+    };
+    if let Err(error) = save_settings_file(app_handle, &snapshot) {
+        warn!(
+            "Failed to persist repaired Ollama model after not-found: {}",
+            error
+        );
+    } else {
+        let _ = app_handle.emit("settings-changed", snapshot);
+    }
+
+    Some(repaired_model)
+}
+
+pub(crate) struct RefinementActivityGuard {
     app_handle: AppHandle,
+}
+
+pub(crate) fn start_refinement_activity_guard(app_handle: AppHandle) -> RefinementActivityGuard {
+    begin_refinement_activity(&app_handle);
+    RefinementActivityGuard { app_handle }
 }
 
 impl Drop for RefinementActivityGuard {
@@ -1601,19 +1974,25 @@ pub(crate) fn force_reset_refinement_activity(app_handle: &AppHandle, reason: &s
         .refinement_watchdog_generation
         .fetch_add(1, Ordering::SeqCst);
     state
+        .ollama_idle_release_generation
+        .fetch_add(1, Ordering::SeqCst);
+    state
         .refinement_last_change_ms
         .store(crate::util::now_ms(), Ordering::SeqCst);
     let _ = update_overlay_refining_indicator(app_handle, false);
     emit_refinement_activity(app_handle, 0, reason);
 }
 
-fn begin_refinement_activity(app_handle: &AppHandle) {
+pub(crate) fn begin_refinement_activity(app_handle: &AppHandle) {
     let state = app_handle.state::<AppState>();
     let previous = state.refinement_active_count.fetch_add(1, Ordering::SeqCst);
     let next = previous + 1;
     state
         .refinement_last_change_ms
         .store(crate::util::now_ms(), Ordering::SeqCst);
+    state
+        .ollama_idle_release_generation
+        .fetch_add(1, Ordering::SeqCst);
     emit_refinement_activity(app_handle, next, "started");
 
     if previous == 0 {
@@ -1635,7 +2014,7 @@ fn begin_refinement_activity(app_handle: &AppHandle) {
     }
 }
 
-fn end_refinement_activity(app_handle: &AppHandle) {
+pub(crate) fn end_refinement_activity(app_handle: &AppHandle) {
     let state = app_handle.state::<AppState>();
     loop {
         let current = state.refinement_active_count.load(Ordering::SeqCst);
@@ -1660,6 +2039,9 @@ fn end_refinement_activity(app_handle: &AppHandle) {
             if next == 0 {
                 state
                     .refinement_watchdog_generation
+                    .fetch_add(1, Ordering::SeqCst);
+                state
+                    .ollama_idle_release_generation
                     .fetch_add(1, Ordering::SeqCst);
                 let _ = update_overlay_refining_indicator(app_handle, false);
             }
@@ -1695,6 +2077,7 @@ fn process_toggle_segment(
         return;
     }
 
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     let t_segment_start = std::time::Instant::now();
 
     // Read the latest persisted settings per segment so model/AI option changes
@@ -1713,20 +2096,24 @@ fn process_toggle_segment(
         recorder.transcribing = true;
     }
 
-    info!(
-        "[TIMING] segment_start: audio_duration={}ms, samples={}, reason={:?}",
-        duration_ms,
-        chunk.len(),
-        reason
-    );
+    if diagnostics_enabled {
+        info!(
+            "[TIMING] segment_start: audio_duration={}ms, samples={}, reason={:?}",
+            duration_ms,
+            chunk.len(),
+            reason
+        );
+    }
 
     let t_before_transcribe = std::time::Instant::now();
     let result = transcribe_audio(app_handle, &effective_settings, &chunk);
-    info!(
-        "[TIMING] transcribe_audio done: {:.2}s (total since segment_start: {:.2}s)",
-        t_before_transcribe.elapsed().as_secs_f32(),
-        t_segment_start.elapsed().as_secs_f32()
-    );
+    if diagnostics_enabled {
+        info!(
+            "[TIMING] transcribe_audio done: {:.2}s (total since segment_start: {:.2}s)",
+            t_before_transcribe.elapsed().as_secs_f32(),
+            t_segment_start.elapsed().as_secs_f32()
+        );
+    }
 
     if let Ok(mut recorder) = app_handle.state::<AppState>().recorder.lock() {
         recorder.transcribing = false;
@@ -1743,11 +2130,13 @@ fn process_toggle_segment(
                 segment_rms,
                 duration_ms,
             ) {
-                info!(
-                    "[TIMING] handle_transcription_ok done: {:.2}s (total: {:.2}s)",
-                    t_before_postproc.elapsed().as_secs_f32(),
-                    t_segment_start.elapsed().as_secs_f32()
-                );
+                if diagnostics_enabled {
+                    info!(
+                        "[TIMING] handle_transcription_ok done: {:.2}s (total: {:.2}s)",
+                        t_before_postproc.elapsed().as_secs_f32(),
+                        t_segment_start.elapsed().as_secs_f32()
+                    );
+                }
                 let _ = app_handle.emit(
                     "continuous-dump:segment",
                     ContinuousDumpEvent {
@@ -1765,10 +2154,12 @@ fn process_toggle_segment(
         }
     }
 
-    info!(
-        "[TIMING] segment_total: {:.2}s",
-        t_segment_start.elapsed().as_secs_f32()
-    );
+    if diagnostics_enabled {
+        info!(
+            "[TIMING] segment_total: {:.2}s",
+            t_segment_start.elapsed().as_secs_f32()
+        );
+    }
 
     let is_active = app_handle
         .state::<AppState>()
@@ -2014,7 +2405,10 @@ pub(crate) fn start_vad_monitor(
     state: &State<'_, AppState>,
     settings: &Settings,
 ) -> Result<(), String> {
-    info!("start_vad_monitor called");
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
+    if diagnostics_enabled {
+        info!("start_vad_monitor called");
+    }
     if !settings.capture_enabled {
         return Ok(());
     }
@@ -2023,7 +2417,9 @@ pub(crate) fn start_vad_monitor(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if recorder.active {
-        info!("VAD already active, skipping");
+        if diagnostics_enabled {
+            info!("VAD already active, skipping");
+        }
         return Ok(());
     }
 
@@ -2339,8 +2735,127 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
 
+    if settings.mode == "ptt" && !settings.ptt_use_vad {
+        crate::util::spawn_guarded("async_stop_recording", move || {
+            if crate::state::diagnostic_logging_enabled() {
+                info!("[runtime:ptt_audio_capture] finalize requested");
+            }
+            let state = app_handle.state::<AppState>();
+            let (buffer, keepalive_generation, was_active) = {
+                let mut recorder = state
+                    .recorder
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let was_active = recorder.active;
+                if was_active {
+                    recorder.active = false;
+                    recorder.transcribing = true;
+                    recorder.continuous_toggle_mode = false;
+                    recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
+                } else {
+                    if crate::state::diagnostic_logging_enabled() {
+                        info!(
+                            "[runtime:ptt_audio_capture] recording not active; stopping warm standby immediately"
+                        );
+                    }
+                }
+                let generation = recorder
+                    .ptt_hot_keepalive_generation
+                    .load(Ordering::Relaxed);
+                (recorder.buffer.clone(), generation, was_active)
+            };
+
+            if !was_active {
+                stop_ptt_hot_standby(&state);
+                let _ = emit_capture_idle_overlay(&app_handle, &settings);
+                return;
+            }
+
+            let samples = {
+                let mut buf = buffer
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                buf.drain()
+            };
+
+            let min_samples = mic_min_samples();
+            if samples.len() < min_samples {
+                let _ = emit_capture_idle_overlay(&app_handle, &settings);
+                let _ = app_handle.emit(
+                    "transcription:error",
+                    format!(
+                        "Audio too short ({} ms). Hold PTT a bit longer.",
+                        (samples.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64)
+                    ),
+                );
+                let mut recorder = state
+                    .recorder
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                recorder.transcribing = false;
+                schedule_ptt_hot_standby_shutdown(
+                    app_handle.clone(),
+                    settings.ptt_hot_keepalive_ms,
+                    keepalive_generation,
+                );
+                return;
+            }
+
+            let _ = app_handle.emit("capture:state", "transcribing");
+            let _ = update_overlay_state(&app_handle, OverlayState::Transcribing);
+
+            let result = transcribe_audio(&app_handle, &settings, &samples);
+            let level = rms_i16(&samples);
+            let duration_ms = samples.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64;
+
+            {
+                let mut recorder = state
+                    .recorder
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                recorder.transcribing = false;
+            }
+
+            let _ = emit_capture_idle_overlay(&app_handle, &settings);
+
+            if settings.audio_cues {
+                let _ = app_handle.emit("audio:cue", "stop");
+            }
+
+            match result {
+                Ok((text, source)) => {
+                    let settings = state
+                        .settings
+                        .read()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .clone();
+                    handle_transcription_ok(
+                        &app_handle,
+                        &text,
+                        &source,
+                        &settings,
+                        level,
+                        duration_ms,
+                    );
+                }
+                Err(err) => {
+                    let _ = app_handle.emit("transcription:error", err);
+                }
+            }
+
+            schedule_ptt_hot_standby_shutdown(
+                app_handle.clone(),
+                settings.ptt_hot_keepalive_ms,
+                keepalive_generation,
+            );
+        });
+        return;
+    }
+
     crate::util::spawn_guarded("async_stop_recording", move || {
-        info!("stop_recording_async called");
+        if crate::state::diagnostic_logging_enabled() {
+            info!("stop_recording_async called");
+        }
         let state = app_handle.state::<AppState>();
         let (buffer, stop_tx, join_handle, proc_stop_tx, proc_join_handle) = {
             let mut recorder = state
@@ -2348,7 +2863,9 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             if !recorder.active {
-                info!("Recording not active, skipping stop");
+                if crate::state::diagnostic_logging_enabled() {
+                    info!("Recording not active, skipping stop");
+                }
                 return;
             }
             recorder.active = false;
@@ -2523,7 +3040,10 @@ pub(crate) fn open_recordings_directory(app: AppHandle) -> Result<(), String> {
 }
 
 pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
-    info!("handle_ptt_press: enter");
+    let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
+    if diagnostics_enabled {
+        info!("handle_ptt_press: enter");
+    }
     let state = app.state::<AppState>();
     let settings = state
         .settings
@@ -2531,11 +3051,15 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
     if !settings.capture_enabled {
-        info!("handle_ptt_press: capture disabled -> no-op");
+        if diagnostics_enabled {
+            info!("handle_ptt_press: capture disabled -> no-op");
+        }
         return Ok(());
     }
     if settings.mode != "ptt" {
-        info!("handle_ptt_press: mode is '{}' -> no-op", settings.mode);
+        if diagnostics_enabled {
+            info!("handle_ptt_press: mode is '{}' -> no-op", settings.mode);
+        }
         return Ok(());
     }
 
@@ -2544,7 +3068,9 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
         if let Err(err) = &result {
             warn!("handle_ptt_press: start_vad_monitor failed: {}", err);
         } else {
-            info!("handle_ptt_press: start_vad_monitor ok");
+            if diagnostics_enabled {
+                info!("handle_ptt_press: start_vad_monitor ok");
+            }
         }
         result
     } else {
@@ -2555,7 +3081,9 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
                 err
             );
         } else {
-            info!("handle_ptt_press: start_recording_with_settings ok");
+            if diagnostics_enabled {
+                info!("handle_ptt_press: start_recording_with_settings ok");
+            }
         }
         result
     }
@@ -2571,6 +3099,15 @@ pub(crate) fn handle_ptt_release_async(app: AppHandle) {
         .clone();
     if settings.mode != "ptt" {
         return;
+    }
+
+    if crate::state::diagnostic_logging_enabled() {
+        info!(
+            "[runtime:ptt_audio_capture] release observed ptt_use_vad={} capture_enabled={} keepalive_ms={}",
+            settings.ptt_use_vad,
+            settings.capture_enabled,
+            settings.ptt_hot_keepalive_ms
+        );
     }
 
     if settings.ptt_use_vad {
@@ -2635,7 +3172,7 @@ pub(crate) fn stop_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
 
 #[cfg(test)]
 mod refinement_defer_policy_tests {
-    use super::should_defer_paste_for_refinement_inner;
+    use super::{is_ollama_model_not_found_message, should_defer_paste_for_refinement_inner};
     use crate::state::{Settings, AI_REFINEMENT_MODULE_ID};
 
     fn settings_for_policy(module_enabled: bool, setting_enabled: bool) -> Settings {
@@ -2653,9 +3190,9 @@ mod refinement_defer_policy_tests {
     }
 
     #[test]
-    fn ollama_not_ready_disables_deferred_paste() {
+    fn ollama_not_ready_still_defers_for_on_demand_start() {
         let settings = settings_for_policy(true, true);
-        assert!(!should_defer_paste_for_refinement_inner(&settings, false));
+        assert!(should_defer_paste_for_refinement_inner(&settings, false));
     }
 
     #[test]
@@ -2677,6 +3214,14 @@ mod refinement_defer_policy_tests {
             &setting_disabled,
             true
         ));
+    }
+
+    #[test]
+    fn detects_ollama_model_not_found_for_inventory_repair() {
+        assert!(is_ollama_model_not_found_message(
+            "Model 'qwen3:8b' not found in Ollama"
+        ));
+        assert!(!is_ollama_model_not_found_message("Ollama timed out"));
     }
 
     #[test]

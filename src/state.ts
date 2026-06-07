@@ -95,6 +95,7 @@ export function normalizeAssistantSettings(newSettings: Settings | null): Settin
   newSettings.workflow_agent.expert_yolo_enabled ??= false;
   newSettings.assistant_presence_enabled ??= true;
   newSettings.assistant_presence_pinned ??= true;
+  newSettings.diagnostic_logging_enabled ??= false;
 
   const assistantCoreEnabled = isAssistantCoreAvailable(newSettings);
   if (!assistantCoreEnabled && newSettings.product_mode === "assistant") {
@@ -125,6 +126,10 @@ export function isAssistantCoreAvailable(current: Settings | null = settings): b
 export function isRefinementEnabled(): boolean {
   const moduleEnabled = settings?.module_settings?.enabled_modules?.includes("ai_refinement") ?? false;
   return moduleEnabled && settings?.ai_fallback?.enabled === true;
+}
+
+export function isDiagnosticLoggingEnabled(current: Settings | null = settings): boolean {
+  return current?.diagnostic_logging_enabled === true;
 }
 
 export function updateSettings(newSettings: Partial<Settings>) {

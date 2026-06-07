@@ -142,7 +142,7 @@ use crate::state::{
 };
 use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, start_transcribe_monitor,
-    stop_transcribe_monitor, toggle_transcribe_state,
+    stop_transcribe_monitor_and_release_whisper, toggle_transcribe_state,
 };
 pub(crate) use ai_fallback::commands::{
     clear_provider_api_key, delete_ollama_model, detect_ollama_runtime, download_ollama_runtime,
@@ -1399,7 +1399,7 @@ fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String
             return Err(err);
         }
     } else {
-        stop_transcribe_monitor(app, &state);
+        stop_transcribe_monitor_and_release_whisper(app, &state);
     }
 
     let _ = app.emit("settings-changed", settings.clone());
@@ -1466,6 +1466,7 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *current = settings.clone();
     }
+    crate::state::sync_diagnostic_logging_enabled(settings);
     info!("[DIAG] save_settings_inner: saving file");
     sync_model_dir_env(settings);
     save_settings_file(app, settings)?;
@@ -1560,12 +1561,12 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
         prev_transcribe_output_device != settings.transcribe_output_device;
     if transcribe_enabled_changed {
         if !settings.transcribe_enabled {
-            stop_transcribe_monitor(app, &state);
+            stop_transcribe_monitor_and_release_whisper(app, &state);
         } else {
             let _ = start_transcribe_monitor(app, &state, settings);
         }
     } else if transcribe_device_changed && settings.transcribe_enabled {
-        stop_transcribe_monitor(app, &state);
+        stop_transcribe_monitor_and_release_whisper(app, &state);
         let _ = start_transcribe_monitor(app, &state, settings);
     }
 
@@ -2200,7 +2201,7 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
         // If transcription is active or Whisper server is running, restart with new model
         // to clear old model from VRAM and load new model
         if state.transcribe_active.load(Ordering::Relaxed) {
-            stop_transcribe_monitor(&app, &state);
+            stop_transcribe_monitor_and_release_whisper(&app, &state);
             let new_settings = state
                 .settings
                 .read()
@@ -3708,7 +3709,7 @@ pub(crate) fn toggle_product_mode_async(app: AppHandle) {
         if snapshot.transcribe_enabled && !prev_transcribe_enabled {
             let _ = start_transcribe_monitor(&app, &state, &snapshot);
         } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
-            stop_transcribe_monitor(&app, &state);
+            stop_transcribe_monitor_and_release_whisper(&app, &state);
         }
 
         let _ = app.emit("settings-changed", snapshot.clone());
@@ -3824,6 +3825,7 @@ pub fn run() {
 
             let mut settings = load_settings(app.handle());
             reconcile_assistant_transcribe_flag(&mut settings);
+            crate::state::sync_diagnostic_logging_enabled(&settings);
 
             // Compute partition base directories and legacy paths for migration.
             let app_data_dir = crate::paths::resolve_base_dir(app.handle());
@@ -3860,6 +3862,9 @@ pub fn run() {
                 refinement_active_count: AtomicUsize::new(0),
                 refinement_watchdog_generation: AtomicU64::new(0),
                 refinement_last_change_ms: AtomicU64::new(0),
+                refinement_last_success_ms: AtomicU64::new(0),
+                refinement_last_success_model: Mutex::new(None),
+                ollama_idle_release_generation: AtomicU64::new(0),
                 runtime_start_attempts: AtomicU64::new(0),
                 runtime_start_failures: AtomicU64::new(0),
                 refinement_timeouts: AtomicU64::new(0),
@@ -3928,21 +3933,6 @@ pub fn run() {
                 crate::util::spawn_guarded("startup_diagnostics", move || {
                     let state = handle.state::<AppState>();
                     refresh_runtime_diagnostics(&handle, state.inner());
-                });
-            }
-
-            // Pre-warm whisper capability probe in background so the first PTT transcription
-            // doesn't pay the 2-3s CUDA init cost for the -ngl support check.
-            {
-                let handle = app.handle().clone();
-                crate::util::spawn_guarded("prewarm_whisper", move || {
-                    let state = handle.state::<AppState>();
-                    let settings = state.settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
-                    if let Some(cli_path) = crate::paths::resolve_whisper_cli_path_for_backend(
-                        Some(settings.local_backend_preference.as_str()),
-                    ) {
-                        crate::transcription::prewarm_whisper_capability_cache(&cli_path);
-                    }
                 });
             }
 

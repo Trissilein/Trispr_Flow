@@ -90,7 +90,9 @@ let authModalProvider: CloudAIFallbackProvider | null = null;
 // the pattern established in refinement-pipeline-graph.ts and
 // voice-output-console.ts).
 function isModuleEnabled(moduleId: string): boolean {
-  return settings?.module_settings?.enabled_modules?.includes(moduleId) ?? false;
+  return (
+    settings?.module_settings?.enabled_modules?.includes(moduleId) ?? false
+  );
 }
 
 function isAiRefinementModuleEnabled(): boolean {
@@ -109,11 +111,15 @@ function getCredentialTargetProvider(): CloudAIFallbackProvider | null {
   if (authModalProvider) {
     return authModalProvider;
   }
-  return normalizeCloudProvider(settings?.ai_fallback?.fallback_provider ?? null);
+  return normalizeCloudProvider(
+    settings?.ai_fallback?.fallback_provider ?? null,
+  );
 }
 
 function getFallbackProvider(): CloudAIFallbackProvider | null {
-  return normalizeCloudProvider(settings?.ai_fallback?.fallback_provider ?? null);
+  return normalizeCloudProvider(
+    settings?.ai_fallback?.fallback_provider ?? null,
+  );
 }
 
 function isProviderVerified(provider: CloudAIFallbackProvider | null): boolean {
@@ -143,20 +149,24 @@ function normalizeAiRefinementModuleBindingInSettings(): void {
   settings.module_settings.consented_permissions ??= {};
   settings.module_settings.module_overrides ??= {};
   settings.module_settings.enabled_modules = Array.from(
-    new Set(settings.module_settings.enabled_modules)
+    new Set(settings.module_settings.enabled_modules),
   );
 
   const overrides = settings.module_settings.module_overrides;
   const migrationDone = overrides[AI_REFINEMENT_MIGRATION_FLAG_KEY] === true;
   if (
-    settings.ai_fallback.enabled
-    && !settings.module_settings.enabled_modules.includes(AI_REFINEMENT_MODULE_ID)
-    && !migrationDone
+    settings.ai_fallback.enabled &&
+    !settings.module_settings.enabled_modules.includes(
+      AI_REFINEMENT_MODULE_ID,
+    ) &&
+    !migrationDone
   ) {
     settings.module_settings.enabled_modules.push(AI_REFINEMENT_MODULE_ID);
   }
 
-  const moduleEnabledNow = settings.module_settings.enabled_modules.includes(AI_REFINEMENT_MODULE_ID);
+  const moduleEnabledNow = settings.module_settings.enabled_modules.includes(
+    AI_REFINEMENT_MODULE_ID,
+  );
   if (!moduleEnabledNow) {
     settings.ai_fallback.enabled = false;
     settings.postproc_llm_enabled = false;
@@ -168,7 +178,11 @@ function applyExecutionModeInSettings(mode: AIExecutionMode): void {
   if (!settings) return;
   settings.ai_fallback.execution_mode = "local_primary";
   // Preserve the currently selected local backend — do NOT reset to "ollama"
-  if (!LOCAL_BACKENDS.includes(settings.ai_fallback.provider as typeof LOCAL_BACKENDS[number])) {
+  if (
+    !LOCAL_BACKENDS.includes(
+      settings.ai_fallback.provider as (typeof LOCAL_BACKENDS)[number],
+    )
+  ) {
     settings.ai_fallback.provider = "ollama";
   }
   settings.postproc_llm_provider = settings.ai_fallback.provider;
@@ -189,7 +203,8 @@ function ensureOnlineModeConstraints(notify: boolean): boolean {
       showToast({
         type: "warning",
         title: "Fallback switched to local",
-        message: "Fallback provider is locked/unverified. Switched back to local Ollama.",
+        message:
+          "Fallback provider is locked/unverified. Switched back to local Ollama.",
         duration: 3800,
       });
     }
@@ -201,7 +216,7 @@ function ensureOnlineModeConstraints(notify: boolean): boolean {
 function isLaneControlTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   return Boolean(
-    target.closest("button,select,input,textarea,summary,details,label,a")
+    target.closest("button,select,input,textarea,summary,details,label,a"),
   );
 }
 
@@ -214,7 +229,7 @@ function cloneDefaultTopicKeywords(): Record<string, string[]> {
 }
 
 function normalizeTopicKeywordsInput(
-  input: Record<string, unknown> | null | undefined
+  input: Record<string, unknown> | null | undefined,
 ): Record<string, string[]> {
   const fallback = cloneDefaultTopicKeywords();
   if (!input || typeof input !== "object") return fallback;
@@ -243,11 +258,14 @@ function refreshResolvedRefinementPromptInSettings() {
   if (!settings) return;
   settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
     settings.ai_fallback.prompt_profile,
-    resolveEffectiveAsrLanguageHint(settings.language_mode, settings.language_pinned),
+    resolveEffectiveAsrLanguageHint(
+      settings.language_mode,
+      settings.language_pinned,
+    ),
     settings.ai_fallback.custom_prompt,
     settings.ai_fallback.preserve_source_language,
     settings.ai_fallback.model,
-    settings.ai_fallback.prompt_preset_overrides
+    settings.ai_fallback.prompt_preset_overrides,
   );
 }
 
@@ -258,7 +276,7 @@ function syncActivePromptPresetSelection() {
   ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
     ai.active_prompt_preset_id,
     ai.prompt_profile,
-    ai.prompt_presets
+    ai.prompt_presets,
   );
   if (ai.active_prompt_preset_id === NEW_REFINEMENT_PROMPT_OPTION_ID) {
     ai.prompt_profile = "custom";
@@ -268,25 +286,31 @@ function syncActivePromptPresetSelection() {
   }
   const selectedUserPreset = findUserRefinementPromptPresetByOptionId(
     ai.prompt_presets,
-    ai.active_prompt_preset_id
+    ai.active_prompt_preset_id,
   );
   if (selectedUserPreset) {
     ai.prompt_profile = "custom";
     ai.custom_prompt_enabled = true;
     ai.custom_prompt = selectedUserPreset.prompt;
   } else {
-    ai.prompt_profile = normalizeRefinementPromptPreset(ai.active_prompt_preset_id);
+    ai.prompt_profile = normalizeRefinementPromptPreset(
+      ai.active_prompt_preset_id,
+    );
     ai.custom_prompt_enabled = ai.prompt_profile === "custom";
   }
   ai.use_default_prompt = false;
 }
 
-function createUserPromptPresetId(baseName: string, existingIds: Set<string>): string {
-  const slug = baseName
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "preset";
+function createUserPromptPresetId(
+  baseName: string,
+  existingIds: Set<string>,
+): string {
+  const slug =
+    baseName
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "preset";
   let candidate = slug;
   let suffix = 1;
   while (existingIds.has(candidate)) {
@@ -297,7 +321,11 @@ function createUserPromptPresetId(baseName: string, existingIds: Set<string>): s
 }
 
 function applyPendingUserPresetEditsFromEditor(): boolean {
-  if (!settings || !dom.aiFallbackCustomPrompt || !dom.aiFallbackPromptPresetName) {
+  if (
+    !settings ||
+    !dom.aiFallbackCustomPrompt ||
+    !dom.aiFallbackPromptPresetName
+  ) {
     return false;
   }
   const ai = settings.ai_fallback;
@@ -305,32 +333,45 @@ function applyPendingUserPresetEditsFromEditor(): boolean {
   ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
     ai.active_prompt_preset_id,
     ai.prompt_profile,
-    ai.prompt_presets
+    ai.prompt_presets,
   );
   const selectedUserPreset = findUserRefinementPromptPresetByOptionId(
     ai.prompt_presets,
-    ai.active_prompt_preset_id
+    ai.active_prompt_preset_id,
   );
   if (!selectedUserPreset) return false;
 
   const nextPrompt = dom.aiFallbackCustomPrompt.value.trim();
-  const nextName = dom.aiFallbackPromptPresetName.value.trim() || selectedUserPreset.name;
+  const nextName =
+    dom.aiFallbackPromptPresetName.value.trim() || selectedUserPreset.name;
   if (!nextPrompt) {
     return false;
   }
-  if (nextPrompt === selectedUserPreset.prompt && nextName === selectedUserPreset.name) {
+  if (
+    nextPrompt === selectedUserPreset.prompt &&
+    nextName === selectedUserPreset.name
+  ) {
     return false;
   }
 
   const nextPrevious =
-    nextPrompt !== selectedUserPreset.prompt ? selectedUserPreset.prompt : selectedUserPreset.previous_prompt;
+    nextPrompt !== selectedUserPreset.prompt
+      ? selectedUserPreset.prompt
+      : selectedUserPreset.previous_prompt;
 
   ai.prompt_presets = ai.prompt_presets.map((preset) =>
     preset.id === selectedUserPreset.id
-      ? { ...preset, name: nextName, prompt: nextPrompt, previous_prompt: nextPrevious }
-      : preset
+      ? {
+          ...preset,
+          name: nextName,
+          prompt: nextPrompt,
+          previous_prompt: nextPrevious,
+        }
+      : preset,
   );
-  ai.active_prompt_preset_id = toUserRefinementPromptOptionId(selectedUserPreset.id);
+  ai.active_prompt_preset_id = toUserRefinementPromptOptionId(
+    selectedUserPreset.id,
+  );
   syncActivePromptPresetSelection();
   refreshResolvedRefinementPromptInSettings();
   return true;
@@ -342,7 +383,8 @@ function confirmDiscardBuiltInEdits(): boolean {
   // `.has-unsaved-edits` is the authoritative dirty flag: the `input` listener
   // adds it on keystroke, the renderer removes it when the textarea is re-sourced
   // from the effective prompt. No flag → no unsaved edits → no confirmation.
-  if (!dom.aiFallbackCustomPrompt.classList.contains("has-unsaved-edits")) return true;
+  if (!dom.aiFallbackCustomPrompt.classList.contains("has-unsaved-edits"))
+    return true;
   return window.confirm("Discard unsaved changes to this preset?");
 }
 
@@ -376,7 +418,11 @@ function ensureAIFallbackSettingsDefaults() {
         auth_method_preference: "api_key",
         auth_status: "locked",
         auth_verified_at: null,
-        available_models: ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
+        available_models: [
+          "claude-3-5-sonnet-20241022",
+          "claude-3-5-haiku-20241022",
+          "claude-3-opus-20240229",
+        ],
         preferred_model: "claude-3-5-sonnet-20241022",
       },
       openai: {
@@ -392,7 +438,11 @@ function ensureAIFallbackSettingsDefaults() {
         auth_method_preference: "api_key",
         auth_status: "locked",
         auth_verified_at: null,
-        available_models: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
+        available_models: [
+          "gemini-2.0-flash",
+          "gemini-1.5-pro",
+          "gemini-1.5-flash",
+        ],
         preferred_model: "gemini-2.0-flash",
       },
       ollama: {
@@ -421,38 +471,54 @@ function ensureAIFallbackSettingsDefaults() {
   }
   settings.ai_fallback.strict_local_mode ??= true;
   settings.ai_fallback.preserve_source_language ??= true;
-  settings.ai_fallback.prompt_profile = normalizeRefinementPromptPreset(settings.ai_fallback.prompt_profile);
-  settings.ai_fallback.prompt_presets = normalizeUserRefinementPromptPresets(
-    settings.ai_fallback.prompt_presets
-  );
-  settings.ai_fallback.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
-    settings.ai_fallback.active_prompt_preset_id,
+  settings.ai_fallback.prompt_profile = normalizeRefinementPromptPreset(
     settings.ai_fallback.prompt_profile,
-    settings.ai_fallback.prompt_presets
   );
+  settings.ai_fallback.prompt_presets = normalizeUserRefinementPromptPresets(
+    settings.ai_fallback.prompt_presets,
+  );
+  settings.ai_fallback.active_prompt_preset_id =
+    normalizeActiveRefinementPromptPresetId(
+      settings.ai_fallback.active_prompt_preset_id,
+      settings.ai_fallback.prompt_profile,
+      settings.ai_fallback.prompt_presets,
+    );
   settings.ai_fallback.low_latency_mode ??= false;
   syncActivePromptPresetSelection();
   settings.ai_fallback.fallback_provider = normalizeCloudProvider(
-    settings.ai_fallback.fallback_provider ?? null
+    settings.ai_fallback.fallback_provider ?? null,
   );
-  settings.ai_fallback.execution_mode = normalizeExecutionMode(settings.ai_fallback.execution_mode);
-  if (!settings.ai_fallback.fallback_provider && !LOCAL_BACKENDS.includes(settings.ai_fallback.provider as typeof LOCAL_BACKENDS[number])) {
-    settings.ai_fallback.fallback_provider = normalizeCloudProvider(settings.ai_fallback.provider);
+  settings.ai_fallback.execution_mode = normalizeExecutionMode(
+    settings.ai_fallback.execution_mode,
+  );
+  if (
+    !settings.ai_fallback.fallback_provider &&
+    !LOCAL_BACKENDS.includes(
+      settings.ai_fallback.provider as (typeof LOCAL_BACKENDS)[number],
+    )
+  ) {
+    settings.ai_fallback.fallback_provider = normalizeCloudProvider(
+      settings.ai_fallback.provider,
+    );
   }
   // Online fallback lane is intentionally roadmap-only for now.
   settings.ai_fallback.execution_mode = "local_primary";
   // Preserve the selected local backend — only reset if something invalid crept in
-  if (!LOCAL_BACKENDS.includes(settings.ai_fallback.provider as typeof LOCAL_BACKENDS[number])) {
+  if (
+    !LOCAL_BACKENDS.includes(
+      settings.ai_fallback.provider as (typeof LOCAL_BACKENDS)[number],
+    )
+  ) {
     settings.ai_fallback.provider = "ollama";
   }
   settings.postproc_llm_provider = settings.ai_fallback.provider;
   settings.postproc_language = derivePostprocLanguageFromAsr(
     settings.language_mode,
-    settings.language_pinned
+    settings.language_pinned,
   );
   const effectiveLanguageHint = resolveEffectiveAsrLanguageHint(
     settings.language_mode,
-    settings.language_pinned
+    settings.language_pinned,
   );
   settings.postproc_llm_prompt = resolveEffectiveRefinementPrompt(
     settings.ai_fallback.prompt_profile,
@@ -460,9 +526,11 @@ function ensureAIFallbackSettingsDefaults() {
     settings.ai_fallback.custom_prompt,
     settings.ai_fallback.preserve_source_language,
     settings.ai_fallback.model,
-    settings.ai_fallback.prompt_preset_overrides
+    settings.ai_fallback.prompt_preset_overrides,
   );
-  settings.topic_keywords = normalizeTopicKeywordsInput(settings.topic_keywords);
+  settings.topic_keywords = normalizeTopicKeywordsInput(
+    settings.topic_keywords,
+  );
   setTopicKeywords(settings.topic_keywords);
   settings.providers.ollama.runtime_source ??= "manual";
   settings.providers.ollama.runtime_path ??= "";
@@ -473,13 +541,18 @@ function ensureAIFallbackSettingsDefaults() {
     const providerSettings = getAIFallbackProviderSettings(provider);
     if (!providerSettings) return;
     providerSettings.auth_method_preference = normalizeAuthMethodPreference(
-      providerSettings.auth_method_preference
+      providerSettings.auth_method_preference,
     );
-    providerSettings.auth_status = isVerifiedAuthStatus(providerSettings.auth_status)
+    providerSettings.auth_status = isVerifiedAuthStatus(
+      providerSettings.auth_status,
+    )
       ? (providerSettings.auth_status as AIProviderAuthStatus)
       : "locked";
     providerSettings.auth_verified_at ??= null;
-    if (!providerSettings.api_key_stored && providerSettings.auth_status !== "verified_oauth") {
+    if (
+      !providerSettings.api_key_stored &&
+      providerSettings.auth_status !== "verified_oauth"
+    ) {
       providerSettings.auth_status = "locked";
       providerSettings.auth_verified_at = null;
     }
@@ -490,11 +563,13 @@ function ensureAIFallbackSettingsDefaults() {
     ollama_remote_expert_opt_in: false,
   };
   settings.setup.ollama_remote_expert_opt_in ??= false;
-  settings.product_mode = settings.product_mode === "assistant" ? "assistant" : "transcribe";
+  settings.product_mode =
+    settings.product_mode === "assistant" ? "assistant" : "transcribe";
   settings.hotkey_product_mode_toggle ??= "CommandOrControl+Shift+P";
   settings.hotkey_tts_stop ??= "CommandOrControl+Shift+F12";
   settings.overlay_tts_stop_enabled ??= true;
-  settings.overlay_tts_stop_shape = settings.overlay_tts_stop_shape === "round" ? "round" : "compact";
+  settings.overlay_tts_stop_shape =
+    settings.overlay_tts_stop_shape === "round" ? "round" : "compact";
   settings.overlay_tts_stop_color ??= "#4be0d4";
   normalizeAiRefinementModuleBindingInSettings();
   settings.gdd_module_settings ??= {
@@ -523,9 +598,13 @@ function ensureAIFallbackSettingsDefaults() {
         ? "fresh_suggest"
         : "hybrid_memory";
   {
-    const threshold = Number(settings.gdd_module_settings.one_click_confidence_threshold);
+    const threshold = Number(
+      settings.gdd_module_settings.one_click_confidence_threshold,
+    );
     settings.gdd_module_settings.one_click_confidence_threshold =
-      Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? threshold : 0.75;
+      Number.isFinite(threshold) && threshold >= 0 && threshold <= 1
+        ? threshold
+        : 0.75;
   }
   settings.gdd_module_settings.preset_clones ??= [];
   settings.confluence_settings ??= {
@@ -545,7 +624,9 @@ function ensureAIFallbackSettingsDefaults() {
   settings.confluence_settings.api_user_email ??= "";
   settings.confluence_settings.default_parent_page_id ??= "";
   settings.confluence_settings.auth_mode =
-    settings.confluence_settings.auth_mode === "api_token" ? "api_token" : "oauth";
+    settings.confluence_settings.auth_mode === "api_token"
+      ? "api_token"
+      : "oauth";
   settings.confluence_settings.routing_memory ??= {};
   syncDerivedLanguageSettings();
 }
@@ -560,15 +641,19 @@ async function refreshAIFallbackModels(provider: AIFallbackProvider) {
       new Set(
         [...(settings.providers.ollama.available_models ?? []), ...models]
           .map((name) => normalizeModelTag(name))
-          .filter((name) => name.length > 0)
-      )
+          .filter((name) => name.length > 0),
+      ),
     );
     settings.providers.ollama.available_models = mergedModels;
     if (!models.includes(settings.providers.ollama.preferred_model)) {
       settings.providers.ollama.preferred_model = models[0] ?? "";
     }
-    if (settings.ai_fallback.provider === "ollama" && !models.includes(settings.ai_fallback.model)) {
-      settings.ai_fallback.model = settings.providers.ollama.preferred_model || models[0] || "";
+    if (
+      settings.ai_fallback.provider === "ollama" &&
+      !models.includes(settings.ai_fallback.model)
+    ) {
+      settings.ai_fallback.model =
+        settings.providers.ollama.preferred_model || models[0] || "";
     }
     return;
   }
@@ -576,7 +661,10 @@ async function refreshAIFallbackModels(provider: AIFallbackProvider) {
   const providerSettings = getAIFallbackProviderSettings(provider);
   if (!providerSettings) return;
   providerSettings.available_models = models;
-  if (!providerSettings.preferred_model || !models.includes(providerSettings.preferred_model)) {
+  if (
+    !providerSettings.preferred_model ||
+    !models.includes(providerSettings.preferred_model)
+  ) {
     providerSettings.preferred_model = models[0] ?? "";
   }
   const mode = normalizeExecutionMode(settings.ai_fallback.execution_mode);
@@ -586,7 +674,8 @@ async function refreshAIFallbackModels(provider: AIFallbackProvider) {
     (mode === "online_fallback" && fallbackProvider === provider)
   ) {
     if (!models.includes(settings.ai_fallback.model)) {
-      settings.ai_fallback.model = providerSettings.preferred_model || models[0] || "";
+      settings.ai_fallback.model =
+        providerSettings.preferred_model || models[0] || "";
     }
   }
 }
@@ -608,16 +697,21 @@ function refreshAuthModalContent(): void {
     dom.aiAuthProviderName.textContent = `${providerLabel} credentials`;
   }
   if (dom.aiAuthMethod) {
-    dom.aiAuthMethod.value = normalizeAuthMethodPreference(providerSettings.auth_method_preference);
+    dom.aiAuthMethod.value = normalizeAuthMethodPreference(
+      providerSettings.auth_method_preference,
+    );
   }
   if (dom.aiAuthVerifyKey) {
     dom.aiAuthVerifyKey.disabled =
-      normalizeAuthMethodPreference(providerSettings.auth_method_preference) === "oauth";
+      normalizeAuthMethodPreference(providerSettings.auth_method_preference) ===
+      "oauth";
   }
   if (dom.aiAuthStatus) {
-    if (normalizeAuthMethodPreference(providerSettings.auth_method_preference) === "oauth") {
-      dom.aiAuthStatus.textContent =
-        `OAuth for ${providerLabel} is coming soon. Use API key verification for now.`;
+    if (
+      normalizeAuthMethodPreference(providerSettings.auth_method_preference) ===
+      "oauth"
+    ) {
+      dom.aiAuthStatus.textContent = `OAuth for ${providerLabel} is coming soon. Use API key verification for now.`;
     } else {
       dom.aiAuthStatus.textContent = providerSettings.api_key_stored
         ? `${providerLabel} key stored. Verify to unlock online usage.`
@@ -634,7 +728,10 @@ function closeAuthModal(): void {
   }
 }
 
-async function saveProviderApiKey(provider: CloudAIFallbackProvider, apiKey: string): Promise<void> {
+async function saveProviderApiKey(
+  provider: CloudAIFallbackProvider,
+  apiKey: string,
+): Promise<void> {
   if (!settings) return;
   await invoke("save_provider_api_key", { provider, apiKey });
   const providerSettings = getAIFallbackProviderSettings(provider);
@@ -649,7 +746,9 @@ async function saveProviderApiKey(provider: CloudAIFallbackProvider, apiKey: str
   refreshAuthModalContent();
 }
 
-async function clearProviderApiKey(provider: CloudAIFallbackProvider): Promise<void> {
+async function clearProviderApiKey(
+  provider: CloudAIFallbackProvider,
+): Promise<void> {
   if (!settings) return;
   await invoke("clear_provider_api_key", { provider });
   const providerSettings = getAIFallbackProviderSettings(provider);
@@ -664,15 +763,20 @@ async function clearProviderApiKey(provider: CloudAIFallbackProvider): Promise<v
   refreshAuthModalContent();
 }
 
-async function verifyProviderCredentials(provider: CloudAIFallbackProvider): Promise<void> {
+async function verifyProviderCredentials(
+  provider: CloudAIFallbackProvider,
+): Promise<void> {
   if (!settings) return;
   const providerSettings = getAIFallbackProviderSettings(provider);
-  const authMethod = normalizeAuthMethodPreference(providerSettings?.auth_method_preference);
+  const authMethod = normalizeAuthMethodPreference(
+    providerSettings?.auth_method_preference,
+  );
   if (authMethod === "oauth") {
     showToast({
       type: "info",
       title: "OAuth coming soon",
-      message: "OAuth verification is not available yet. Use API key verification for now.",
+      message:
+        "OAuth verification is not available yet. Use API key verification for now.",
       duration: 4200,
     });
     return;
@@ -688,14 +792,17 @@ async function verifyProviderCredentials(provider: CloudAIFallbackProvider): Pro
   }
 
   try {
-    const result = await invoke<{ message?: string; method?: string; verified_at?: string }>(
-      "verify_provider_auth",
-      { provider, method: authMethod }
-    );
+    const result = await invoke<{
+      message?: string;
+      method?: string;
+      verified_at?: string;
+    }>("verify_provider_auth", { provider, method: authMethod });
     if (providerSettings) {
       providerSettings.auth_status =
-        (result?.method as "verified_api_key" | "verified_oauth") || "verified_api_key";
-      providerSettings.auth_verified_at = result?.verified_at ?? new Date().toISOString();
+        (result?.method as "verified_api_key" | "verified_oauth") ||
+        "verified_api_key";
+      providerSettings.auth_verified_at =
+        result?.verified_at ?? new Date().toISOString();
     }
     if (!settings.ai_fallback.fallback_provider) {
       settings.ai_fallback.fallback_provider = provider;
@@ -707,7 +814,8 @@ async function verifyProviderCredentials(provider: CloudAIFallbackProvider): Pro
     showToast({
       type: "success",
       title: "Provider verified",
-      message: result?.message ?? `${provider} is unlocked for online fallback.`,
+      message:
+        result?.message ?? `${provider} is unlocked for online fallback.`,
       duration: 3500,
     });
   } catch (error) {
@@ -733,8 +841,20 @@ async function verifyProviderCredentials(provider: CloudAIFallbackProvider): Pro
 function getCompatSettings() {
   if (!settings) return null;
   const p = settings.ai_fallback.provider;
-  if (p === "lm_studio") return settings.providers.lm_studio ??= { endpoint: "http://127.0.0.1:1234", api_key: "", preferred_model: "", available_models: [] };
-  if (p === "oobabooga") return settings.providers.oobabooga ??= { endpoint: "http://127.0.0.1:5000", api_key: "", preferred_model: "", available_models: [] };
+  if (p === "lm_studio")
+    return (settings.providers.lm_studio ??= {
+      endpoint: "http://127.0.0.1:1234",
+      api_key: "",
+      preferred_model: "",
+      available_models: [],
+    });
+  if (p === "oobabooga")
+    return (settings.providers.oobabooga ??= {
+      endpoint: "http://127.0.0.1:5000",
+      api_key: "",
+      preferred_model: "",
+      available_models: [],
+    });
   return null;
 }
 
@@ -749,7 +869,7 @@ async function setWhisperInputLanguage(mode: Settings["language_mode"]) {
   }
   settings.postproc_language = derivePostprocLanguageFromAsr(
     settings.language_mode,
-    settings.language_pinned
+    settings.language_pinned,
   );
   syncActivePromptPresetSelection();
   refreshResolvedRefinementPromptInSettings();
@@ -791,7 +911,8 @@ async function activateOnlineLane() {
   showToast({
     type: "info",
     title: "Roadmap-only",
-    message: "Online fallback is currently read-only and not active in production.",
+    message:
+      "Online fallback is currently read-only and not active in production.",
     duration: 3600,
   });
 }
@@ -896,10 +1017,11 @@ export function wireAiRefinement(): void {
 
   dom.languageSelect?.addEventListener("change", async () => {
     if (!settings) return;
-    settings.language_mode = dom.languageSelect!.value as Settings["language_mode"];
+    settings.language_mode = dom.languageSelect!
+      .value as Settings["language_mode"];
     settings.postproc_language = derivePostprocLanguageFromAsr(
       settings.language_mode,
-      settings.language_pinned
+      settings.language_pinned,
     );
     syncActivePromptPresetSelection();
     refreshResolvedRefinementPromptInSettings();
@@ -912,7 +1034,7 @@ export function wireAiRefinement(): void {
     settings.language_pinned = dom.languagePinnedToggle!.checked;
     settings.postproc_language = derivePostprocLanguageFromAsr(
       settings.language_mode,
-      settings.language_pinned
+      settings.language_pinned,
     );
     syncActivePromptPresetSelection();
     refreshResolvedRefinementPromptInSettings();
@@ -921,7 +1043,8 @@ export function wireAiRefinement(): void {
   });
 
   dom.whisperInputLanguageSelect?.addEventListener("change", () => {
-    const value = dom.whisperInputLanguageSelect!.value as Settings["language_mode"];
+    const value = dom.whisperInputLanguageSelect!
+      .value as Settings["language_mode"];
     void setWhisperInputLanguage(value);
   });
 
@@ -942,7 +1065,8 @@ export function wireAiRefinement(): void {
 
   dom.postprocCapitalization?.addEventListener("change", async () => {
     if (!settings) return;
-    settings.postproc_capitalization_enabled = dom.postprocCapitalization!.checked;
+    settings.postproc_capitalization_enabled =
+      dom.postprocCapitalization!.checked;
     await persistSettings();
   });
 
@@ -954,9 +1078,11 @@ export function wireAiRefinement(): void {
 
   dom.postprocCustomVocabEnabled?.addEventListener("change", async () => {
     if (!settings) return;
-    settings.postproc_custom_vocab_enabled = dom.postprocCustomVocabEnabled!.checked;
+    settings.postproc_custom_vocab_enabled =
+      dom.postprocCustomVocabEnabled!.checked;
     if (dom.postprocCustomVocabConfig) {
-      dom.postprocCustomVocabConfig.style.display = settings.postproc_custom_vocab_enabled ? "flex" : "none";
+      dom.postprocCustomVocabConfig.style.display =
+        settings.postproc_custom_vocab_enabled ? "flex" : "none";
     }
     await persistSettings();
     scheduleSettingsRender();
@@ -992,7 +1118,9 @@ export function wireAiRefinement(): void {
       const provider = settings.ai_fallback.provider;
       if (provider === "ollama") {
         // For Ollama: check if runtime is available before enabling
-        const runtimeInfo = await invoke<any>("detect_ollama_runtime").catch(() => null);
+        const runtimeInfo = await invoke<any>("detect_ollama_runtime").catch(
+          () => null,
+        );
         const ollamaDetected = runtimeInfo?.found === true;
         if (!ollamaDetected) {
           const userWantsInstall = await showOllamaRequiredModal();
@@ -1010,14 +1138,7 @@ export function wireAiRefinement(): void {
     await persistSettings();
     renderAIFallbackSettingsUi();
     renderHero();
-    if (settings.ai_fallback.enabled) {
-      if (settings.ai_fallback.provider === "ollama") {
-        void autoStartLocalRuntimeIfNeeded("enable_toggle").finally(() => {
-          renderAIFallbackSettingsUi();
-          renderOllamaModelManager();
-        });
-      }
-    } else {
+    if (!settings.ai_fallback.enabled) {
       // Stop Ollama runtime when AI refinement is disabled — only if Ollama is the active provider
       if (settings.ai_fallback.provider === "ollama") {
         try {
@@ -1026,18 +1147,28 @@ export function wireAiRefinement(): void {
           console.warn("Failed to stop Ollama runtime:", error);
         }
       }
+    } else if (settings.ai_fallback.provider === "ollama") {
+      void autoStartLocalRuntimeIfNeeded("enable_toggle").finally(() => {
+        renderAIFallbackSettingsUi();
+        renderOllamaModelManager();
+      });
+      renderAIFallbackSettingsUi();
+      renderOllamaModelManager();
     }
   });
 
   dom.aiFallbackCloudProviderList?.addEventListener("click", (event) => {
     const target = event.target as HTMLElement | null;
-    const actionBtn = target?.closest<HTMLButtonElement>("[data-ai-provider-action]");
+    const actionBtn = target?.closest<HTMLButtonElement>(
+      "[data-ai-provider-action]",
+    );
     if (!actionBtn) return;
     event.preventDefault();
     showToast({
       type: "info",
       title: "Roadmap-only",
-      message: "Online fallback controls are visible for roadmap transparency and are currently read-only.",
+      message:
+        "Online fallback controls are visible for roadmap transparency and are currently read-only.",
       duration: 3200,
     });
   });
@@ -1064,7 +1195,7 @@ export function wireAiRefinement(): void {
     const providerSettings = getAIFallbackProviderSettings(authModalProvider);
     if (!providerSettings) return;
     providerSettings.auth_method_preference = normalizeAuthMethodPreference(
-      dom.aiAuthMethod.value
+      dom.aiAuthMethod.value,
     );
     await persistSettings();
     renderAIFallbackSettingsUi();
@@ -1073,7 +1204,8 @@ export function wireAiRefinement(): void {
       showToast({
         type: "info",
         title: "OAuth coming soon",
-        message: "OAuth verification is not available yet. Use API key for now.",
+        message:
+          "OAuth verification is not available yet. Use API key for now.",
         duration: 3600,
       });
     }
@@ -1125,7 +1257,8 @@ export function wireAiRefinement(): void {
     ensureAIFallbackSettingsDefaults();
     applyExecutionModeInSettings("local_primary");
     await persistSettings();
-    const action = dom.aiFallbackLocalPrimaryAction?.dataset.runtimeAction ?? "install";
+    const action =
+      dom.aiFallbackLocalPrimaryAction?.dataset.runtimeAction ?? "install";
     if (action === "ready") {
       renderAIFallbackSettingsUi();
       return;
@@ -1208,9 +1341,10 @@ export function wireAiRefinement(): void {
     ensureAIFallbackSettingsDefaults();
     applyExecutionModeInSettings("local_primary");
     await persistSettings();
-    const switchPromise = source === "system"
-      ? useSystemOllamaRuntime()
-      : useManagedOllamaRuntime();
+    const switchPromise =
+      source === "system"
+        ? useSystemOllamaRuntime()
+        : useManagedOllamaRuntime();
     renderAIFallbackSettingsUi();
     await switchPromise;
     refreshAIUi();
@@ -1218,7 +1352,10 @@ export function wireAiRefinement(): void {
 
   dom.aiFallbackLocalBackendSelect?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackLocalBackendSelect) return;
-    const backend = dom.aiFallbackLocalBackendSelect.value as "ollama" | "lm_studio" | "oobabooga";
+    const backend = dom.aiFallbackLocalBackendSelect.value as
+      | "ollama"
+      | "lm_studio"
+      | "oobabooga";
     settings.ai_fallback.provider = backend;
     // Render immediately so the UI reflects the new backend before the slow save.
     renderAIFallbackSettingsUi();
@@ -1227,7 +1364,9 @@ export function wireAiRefinement(): void {
     renderAIFallbackSettingsUi();
     // Trigger Ollama runtime refresh only when Ollama is selected.
     if (backend === "ollama") {
-      void refreshOllamaRuntimeState({ force: false }).finally(() => renderAIFallbackSettingsUi());
+      void refreshOllamaRuntimeState({ force: false }).finally(() =>
+        renderAIFallbackSettingsUi(),
+      );
     }
   });
 
@@ -1265,7 +1404,8 @@ export function wireAiRefinement(): void {
     if (!s || !dom.aiFallbackCompatFetchModels || !settings) return;
     dom.aiFallbackCompatFetchModels.disabled = true;
     dom.aiFallbackCompatFetchModels.textContent = "Fetching…";
-    if (dom.aiFallbackCompatStatus) dom.aiFallbackCompatStatus.textContent = "Connecting to server…";
+    if (dom.aiFallbackCompatStatus)
+      dom.aiFallbackCompatStatus.textContent = "Connecting to server…";
     try {
       const models = await invoke<string[]>("fetch_available_models", {
         provider: settings.ai_fallback.provider,
@@ -1276,7 +1416,8 @@ export function wireAiRefinement(): void {
         settings.ai_fallback.model = models[0];
       }
       await persistSettings();
-      if (dom.aiFallbackCompatStatus) dom.aiFallbackCompatStatus.textContent = `${models.length} model(s) found.`;
+      if (dom.aiFallbackCompatStatus)
+        dom.aiFallbackCompatStatus.textContent = `${models.length} model(s) found.`;
     } catch (err) {
       if (dom.aiFallbackCompatStatus) {
         dom.aiFallbackCompatStatus.textContent = `Connection failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -1292,14 +1433,20 @@ export function wireAiRefinement(): void {
     const s = getCompatSettings();
     if (!s || !dom.aiFallbackCompatVerifyAction || !settings) return;
     dom.aiFallbackCompatVerifyAction.disabled = true;
-    if (dom.aiFallbackCompatStatus) dom.aiFallbackCompatStatus.textContent = "Verifying…";
+    if (dom.aiFallbackCompatStatus)
+      dom.aiFallbackCompatStatus.textContent = "Verifying…";
     try {
-      const result = await invoke<{ ok: boolean; message: string }>("test_provider_connection", {
-        provider: settings.ai_fallback.provider,
-        apiKey: s.api_key || "",
-      });
+      const result = await invoke<{ ok: boolean; message: string }>(
+        "test_provider_connection",
+        {
+          provider: settings.ai_fallback.provider,
+          apiKey: s.api_key || "",
+        },
+      );
       if (dom.aiFallbackCompatStatus) {
-        dom.aiFallbackCompatStatus.textContent = result.ok ? `✓ ${result.message}` : `✗ ${result.message}`;
+        dom.aiFallbackCompatStatus.textContent = result.ok
+          ? `✓ ${result.message}`
+          : `✗ ${result.message}`;
       }
     } catch (err) {
       if (dom.aiFallbackCompatStatus) {
@@ -1319,7 +1466,8 @@ export function wireAiRefinement(): void {
       showToast({
         type: "info",
         title: "LM Studio installer launched",
-        message: "A PowerShell window has opened. Follow the prompts to complete installation, then restart Trispr Flow.",
+        message:
+          "A PowerShell window has opened. Follow the prompts to complete installation, then restart Trispr Flow.",
         duration: 7000,
       });
     } catch (err) {
@@ -1348,7 +1496,10 @@ export function wireAiRefinement(): void {
   dom.aiFallbackTemperature?.addEventListener("input", () => {
     if (!settings || !dom.aiFallbackTemperature) return;
     ensureAIFallbackSettingsDefaults();
-    const value = Math.max(0, Math.min(1, Number(dom.aiFallbackTemperature.value)));
+    const value = Math.max(
+      0,
+      Math.min(1, Number(dom.aiFallbackTemperature.value)),
+    );
     settings.ai_fallback.temperature = value;
     if (dom.aiFallbackTemperatureValue) {
       dom.aiFallbackTemperatureValue.textContent = value.toFixed(2);
@@ -1361,7 +1512,8 @@ export function wireAiRefinement(): void {
   dom.aiFallbackPreserveLanguage?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackPreserveLanguage) return;
     ensureAIFallbackSettingsDefaults();
-    settings.ai_fallback.preserve_source_language = dom.aiFallbackPreserveLanguage.checked;
+    settings.ai_fallback.preserve_source_language =
+      dom.aiFallbackPreserveLanguage.checked;
     refreshResolvedRefinementPromptInSettings();
     await persistSettings();
     renderAIFallbackSettingsUi();
@@ -1389,7 +1541,10 @@ export function wireAiRefinement(): void {
   dom.aiFallbackMaxTokens?.addEventListener("change", async () => {
     if (!settings || !dom.aiFallbackMaxTokens) return;
     ensureAIFallbackSettingsDefaults();
-    settings.ai_fallback.max_tokens = Math.max(128, Math.min(8192, Number(dom.aiFallbackMaxTokens.value)));
+    settings.ai_fallback.max_tokens = Math.max(
+      128,
+      Math.min(8192, Number(dom.aiFallbackMaxTokens.value)),
+    );
     await persistSettings();
   });
 
@@ -1418,25 +1573,31 @@ export function wireAiRefinement(): void {
       if (!confirmDiscardBuiltInEdits()) return;
       const hasPendingUserChanges = applyPendingUserPresetEditsFromEditor();
       if (hasPendingUserChanges) await persistSettings();
-      settings.ai_fallback.active_prompt_preset_id = NEW_REFINEMENT_PROMPT_OPTION_ID;
+      settings.ai_fallback.active_prompt_preset_id =
+        NEW_REFINEMENT_PROMPT_OPTION_ID;
       settings.ai_fallback.prompt_profile = "custom";
       settings.ai_fallback.custom_prompt_enabled = true;
       settings.ai_fallback.use_default_prompt = false;
       settings.ai_fallback.custom_prompt = "";
-      if (dom.aiFallbackPromptPresetName) dom.aiFallbackPromptPresetName.value = "";
+      if (dom.aiFallbackPromptPresetName)
+        dom.aiFallbackPromptPresetName.value = "";
       if (dom.aiFallbackCustomPrompt) dom.aiFallbackCustomPrompt.value = "";
       refreshResolvedRefinementPromptInSettings();
       renderAIFallbackSettingsUi();
     } else if (action === "delete-chip-preset") {
       e.stopPropagation();
       const ai = settings.ai_fallback;
-      ai.prompt_presets = normalizeUserRefinementPromptPresets(ai.prompt_presets);
+      ai.prompt_presets = normalizeUserRefinementPromptPresets(
+        ai.prompt_presets,
+      );
       const selectedUserPreset = findUserRefinementPromptPresetByOptionId(
         ai.prompt_presets,
-        presetId
+        presetId,
       );
       if (!selectedUserPreset) return;
-      ai.prompt_presets = ai.prompt_presets.filter((p) => p.id !== selectedUserPreset.id);
+      ai.prompt_presets = ai.prompt_presets.filter(
+        (p) => p.id !== selectedUserPreset.id,
+      );
       ai.custom_prompt = selectedUserPreset.prompt;
       ai.active_prompt_preset_id = DEFAULT_REFINEMENT_PROMPT_PRESET;
       syncActivePromptPresetSelection();
@@ -1453,7 +1614,12 @@ export function wireAiRefinement(): void {
   });
 
   dom.aiFallbackPromptPresetSave?.addEventListener("click", async () => {
-    if (!settings || !dom.aiFallbackCustomPrompt || !dom.aiFallbackPromptPresetName) return;
+    if (
+      !settings ||
+      !dom.aiFallbackCustomPrompt ||
+      !dom.aiFallbackPromptPresetName
+    )
+      return;
     ensureAIFallbackSettingsDefaults();
     const prompt = dom.aiFallbackCustomPrompt.value.trim();
     if (!prompt) {
@@ -1472,18 +1638,18 @@ export function wireAiRefinement(): void {
     ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
       ai.active_prompt_preset_id,
       ai.prompt_profile,
-      ai.prompt_presets
+      ai.prompt_presets,
     );
 
     const selectedUserPreset = findUserRefinementPromptPresetByOptionId(
       ai.prompt_presets,
-      ai.active_prompt_preset_id
+      ai.active_prompt_preset_id,
     );
     const activePresetSelection = ai.active_prompt_preset_id;
     const isBuiltIn =
-      activePresetSelection !== "custom"
-      && activePresetSelection !== NEW_REFINEMENT_PROMPT_OPTION_ID
-      && !activePresetSelection.startsWith("user:");
+      activePresetSelection !== "custom" &&
+      activePresetSelection !== NEW_REFINEMENT_PROMPT_OPTION_ID &&
+      !activePresetSelection.startsWith("user:");
     const requestedName = dom.aiFallbackPromptPresetName.value.trim();
 
     if (selectedUserPreset) {
@@ -1495,9 +1661,11 @@ export function wireAiRefinement(): void {
       ai.prompt_presets = ai.prompt_presets.map((preset) =>
         preset.id === selectedUserPreset.id
           ? { ...preset, name: nextName, prompt, previous_prompt: nextPrevious }
-          : preset
+          : preset,
       );
-      ai.active_prompt_preset_id = toUserRefinementPromptOptionId(selectedUserPreset.id);
+      ai.active_prompt_preset_id = toUserRefinementPromptOptionId(
+        selectedUserPreset.id,
+      );
       showToast({
         type: "success",
         title: "Preset updated",
@@ -1530,12 +1698,13 @@ export function wireAiRefinement(): void {
       });
     } else if (isBuiltIn) {
       const builtInId = normalizeRefinementPromptPreset(
-        activePresetSelection
+        activePresetSelection,
       ) as BuiltInRefinementPromptPreset;
       setPresetOverride(ai.prompt_preset_overrides, builtInId, prompt);
       const label =
-        BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS.find((p) => p.id === builtInId)?.label
-        ?? builtInId;
+        BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS.find(
+          (p) => p.id === builtInId,
+        )?.label ?? builtInId;
       showToast({
         type: "success",
         title: "Override saved",
@@ -1566,22 +1735,28 @@ export function wireAiRefinement(): void {
     const activeId = normalizeActiveRefinementPromptPresetId(
       ai.active_prompt_preset_id,
       ai.prompt_profile,
-      ai.prompt_presets
+      ai.prompt_presets,
     );
     const isBuiltIn =
-      activeId !== "custom"
-      && activeId !== NEW_REFINEMENT_PROMPT_OPTION_ID
-      && !activeId.startsWith("user:");
+      activeId !== "custom" &&
+      activeId !== NEW_REFINEMENT_PROMPT_OPTION_ID &&
+      !activeId.startsWith("user:");
     if (!isBuiltIn) return;
-    const builtInId = normalizeRefinementPromptPreset(activeId) as BuiltInRefinementPromptPreset;
+    const builtInId = normalizeRefinementPromptPreset(
+      activeId,
+    ) as BuiltInRefinementPromptPreset;
     const label =
-      BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS.find((p) => p.id === builtInId)?.label
-      ?? builtInId;
+      BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS.find((p) => p.id === builtInId)
+        ?.label ?? builtInId;
     const hasOverride =
-      typeof ai.prompt_preset_overrides[builtInId] === "string"
-      && ai.prompt_preset_overrides[builtInId]!.trim().length > 0;
+      typeof ai.prompt_preset_overrides[builtInId] === "string" &&
+      ai.prompt_preset_overrides[builtInId]!.trim().length > 0;
     if (!hasOverride) return;
-    if (!window.confirm(`Remove your customization for "${label}" and restore the factory default?`)) {
+    if (
+      !window.confirm(
+        `Remove your customization for "${label}" and restore the factory default?`,
+      )
+    ) {
       return;
     }
     removePresetOverride(ai.prompt_preset_overrides, builtInId);
@@ -1604,24 +1779,30 @@ export function wireAiRefinement(): void {
     ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
       ai.active_prompt_preset_id,
       ai.prompt_profile,
-      ai.prompt_presets
+      ai.prompt_presets,
     );
     const selectedUserPreset = findUserRefinementPromptPresetByOptionId(
       ai.prompt_presets,
-      ai.active_prompt_preset_id
+      ai.active_prompt_preset_id,
     );
     if (!selectedUserPreset) return;
     const previous = selectedUserPreset.previous_prompt?.trim();
     if (!previous) return;
-    if (!window.confirm(`Restore previous saved version of "${selectedUserPreset.name}"?`)) {
+    if (
+      !window.confirm(
+        `Restore previous saved version of "${selectedUserPreset.name}"?`,
+      )
+    ) {
       return;
     }
     ai.prompt_presets = ai.prompt_presets.map((preset) =>
       preset.id === selectedUserPreset.id
         ? { ...preset, prompt: previous, previous_prompt: preset.prompt }
-        : preset
+        : preset,
     );
-    ai.active_prompt_preset_id = toUserRefinementPromptOptionId(selectedUserPreset.id);
+    ai.active_prompt_preset_id = toUserRefinementPromptOptionId(
+      selectedUserPreset.id,
+    );
     syncActivePromptPresetSelection();
     refreshResolvedRefinementPromptInSettings();
     await persistSettings();
@@ -1649,11 +1830,11 @@ export function wireAiRefinement(): void {
     ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
       ai.active_prompt_preset_id,
       ai.prompt_profile,
-      ai.prompt_presets
+      ai.prompt_presets,
     );
     const selectedUserPreset = findUserRefinementPromptPresetByOptionId(
       ai.prompt_presets,
-      ai.active_prompt_preset_id
+      ai.active_prompt_preset_id,
     );
     if (!selectedUserPreset) {
       showToast({
@@ -1665,7 +1846,9 @@ export function wireAiRefinement(): void {
       return;
     }
 
-    ai.prompt_presets = ai.prompt_presets.filter((preset) => preset.id !== selectedUserPreset.id);
+    ai.prompt_presets = ai.prompt_presets.filter(
+      (preset) => preset.id !== selectedUserPreset.id,
+    );
     ai.custom_prompt = selectedUserPreset.prompt;
     ai.active_prompt_preset_id = DEFAULT_REFINEMENT_PROMPT_PRESET;
     syncActivePromptPresetSelection();
@@ -1686,13 +1869,13 @@ export function wireAiRefinement(): void {
     const activePresetId = normalizeActiveRefinementPromptPresetId(
       settings.ai_fallback.active_prompt_preset_id,
       settings.ai_fallback.prompt_profile,
-      settings.ai_fallback.prompt_presets
+      settings.ai_fallback.prompt_presets,
     );
     const isUserPreset = activePresetId.startsWith("user:");
     const isBuiltIn =
-      activePresetId !== "custom"
-      && activePresetId !== NEW_REFINEMENT_PROMPT_OPTION_ID
-      && !isUserPreset;
+      activePresetId !== "custom" &&
+      activePresetId !== NEW_REFINEMENT_PROMPT_OPTION_ID &&
+      !isUserPreset;
     if (isBuiltIn) {
       // Built-in edits are only persisted on Save. Just re-render for button-state updates.
       dom.aiFallbackCustomPrompt.classList.add("has-unsaved-edits");
@@ -1714,7 +1897,10 @@ export function wireAiRefinement(): void {
     const isSave = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s";
     if (isSave) {
       e.preventDefault();
-      if (dom.aiFallbackPromptPresetSave && !dom.aiFallbackPromptPresetSave.disabled) {
+      if (
+        dom.aiFallbackPromptPresetSave &&
+        !dom.aiFallbackPromptPresetSave.disabled
+      ) {
         dom.aiFallbackPromptPresetSave.click();
       }
       return;
@@ -1734,18 +1920,19 @@ export function wireAiRefinement(): void {
     const activePresetId = normalizeActiveRefinementPromptPresetId(
       settings.ai_fallback.active_prompt_preset_id,
       settings.ai_fallback.prompt_profile,
-      settings.ai_fallback.prompt_presets
+      settings.ai_fallback.prompt_presets,
     );
     const isUserPreset = activePresetId.startsWith("user:");
     const isEditablePreset =
-      activePresetId === "custom"
-      || activePresetId === NEW_REFINEMENT_PROMPT_OPTION_ID
-      || isUserPreset;
+      activePresetId === "custom" ||
+      activePresetId === NEW_REFINEMENT_PROMPT_OPTION_ID ||
+      isUserPreset;
     if (!isEditablePreset) {
       renderAIFallbackSettingsUi();
       return;
     }
-    settings.ai_fallback.custom_prompt = dom.aiFallbackCustomPrompt.value.trim();
+    settings.ai_fallback.custom_prompt =
+      dom.aiFallbackCustomPrompt.value.trim();
     settings.ai_fallback.active_prompt_preset_id = activePresetId;
     settings.ai_fallback.prompt_profile = "custom";
     settings.ai_fallback.custom_prompt_enabled = true;

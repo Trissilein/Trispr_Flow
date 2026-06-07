@@ -124,6 +124,15 @@ export function renderTranscriptionSettings(): void {
     }
     if (dom.audioCuesToggle) dom.audioCuesToggle.checked = settings.audio_cues;
     if (dom.pttUseVadToggle) dom.pttUseVadToggle.checked = settings.ptt_use_vad;
+    if (dom.diagnosticLoggingToggle) {
+        dom.diagnosticLoggingToggle.checked = settings.diagnostic_logging_enabled === true;
+    }
+    if (dom.pttHotKeepalive) {
+        dom.pttHotKeepalive.value = String(settings.ptt_hot_keepalive_ms ?? 30000);
+    }
+    if (dom.pttHotKeepaliveValue) {
+        dom.pttHotKeepaliveValue.textContent = `${Math.round((settings.ptt_hot_keepalive_ms ?? 30000) / 1000)}s`;
+    }
     if (dom.audioCuesVolume) dom.audioCuesVolume.value = Math.round(settings.audio_cues_volume * 100).toString();
     if (dom.audioCuesVolumeValue) {
         dom.audioCuesVolumeValue.textContent = `${Math.round(settings.audio_cues_volume * 100)}%`;

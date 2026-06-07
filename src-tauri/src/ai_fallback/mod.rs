@@ -5,8 +5,12 @@ pub mod models;
 pub mod provider;
 
 use crate::state::{save_settings_file, AppState, Settings};
-use crate::{require_capability_enabled, startup_status_snapshot, RuntimeCapability};
+use crate::{
+    capability_enabled, require_capability_enabled, startup_status_snapshot, RuntimeCapability,
+};
 use models::RefinementOptions;
+use std::thread;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Lock settings, apply a mutation, persist to disk, and emit a change event.
@@ -166,15 +170,30 @@ pub(crate) fn prepare_refinement(
     let mut repaired = false;
     if is_ollama {
         let endpoint = settings.providers.ollama.endpoint.clone();
-        let preferred = settings.providers.ollama.preferred_model.clone();
         provider::ping_ollama_quick(&endpoint).map_err(|error| error.to_string())?;
-        let resolved = provider::resolve_effective_local_model(&model, &preferred, &endpoint)
-            .map_err(|error| error.to_string())?;
-        repaired = resolved.repaired
-            || settings.ai_fallback.model.trim() != resolved.model
-            || settings.providers.ollama.preferred_model.trim() != resolved.model
-            || settings.postproc_llm_model.trim() != resolved.model;
-        model = resolved.model;
+
+        if model.is_empty() {
+            let preferred = settings.providers.ollama.preferred_model.trim();
+            let postproc = settings.postproc_llm_model.trim();
+            let cached = settings
+                .providers
+                .ollama
+                .available_models
+                .iter()
+                .map(|entry| entry.trim())
+                .find(|entry| !entry.is_empty());
+
+            if !preferred.is_empty() {
+                model = preferred.to_string();
+                repaired = true;
+            } else if !postproc.is_empty() {
+                model = postproc.to_string();
+                repaired = true;
+            } else if let Some(cached_model) = cached {
+                model = cached_model.to_string();
+                repaired = true;
+            }
+        }
     } else if is_lm_studio && model.is_empty() {
         model = settings
             .providers
@@ -245,4 +264,87 @@ pub(crate) fn prepare_refinement(
         repaired,
         options,
     })
+}
+
+fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
+    capability_enabled(settings, RuntimeCapability::AiRefinement)
+        && settings.ai_fallback.provider == "ollama"
+        && settings.ai_fallback.execution_mode == "local_primary"
+}
+
+pub(crate) fn ensure_ollama_runtime_ready_for_refinement(
+    app: &AppHandle,
+    settings: &Settings,
+) -> Result<(), String> {
+    let endpoint = settings.providers.ollama.endpoint.trim().to_string();
+    let state = app.state::<AppState>();
+    let startup_status = startup_status_snapshot(state.inner());
+    let autostart = should_autostart_ai_refinement_runtime(settings);
+    if crate::state::diagnostic_logging_enabled() {
+        tracing::info!(
+            "[ollama.runtime] ensure_ready_for_refinement start endpoint={} autostart={} ready={} starting={}",
+            endpoint,
+            autostart,
+            startup_status.ollama_ready,
+            startup_status.ollama_starting
+        );
+    }
+    if !autostart {
+        if crate::state::diagnostic_logging_enabled() {
+            tracing::info!(
+                "[ollama.runtime] ensure_ready_for_refinement skipped (autostart disabled) endpoint={}",
+                endpoint
+            );
+        }
+        return Ok(());
+    }
+
+    if startup_status.ollama_ready {
+        if crate::state::diagnostic_logging_enabled() {
+            tracing::info!(
+                "[ollama.runtime] ensure_ready_for_refinement already ready endpoint={}",
+                endpoint
+            );
+        }
+        return Ok(());
+    }
+
+    let start_result = tauri::async_runtime::block_on(commands::start_ollama_runtime(app.clone()))
+        .map_err(|error| format!("Failed to start Ollama runtime for refinement: {}", error))?;
+    if crate::state::diagnostic_logging_enabled() {
+        tracing::info!(
+            "[ollama.runtime] ensure_ready_for_refinement start result pending_start={} startup_wait_ms={}",
+            start_result.pending_start,
+            start_result.startup_wait_ms
+        );
+    }
+    if start_result.pending_start {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline && !startup_status_snapshot(state.inner()).ollama_ready {
+            if provider::ping_ollama_quick(&endpoint).is_ok() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+    }
+    tauri::async_runtime::block_on(commands::verify_ollama_runtime(app.clone()))
+        .map_err(|error| format!("Failed to verify Ollama runtime for refinement: {}", error))?;
+
+    if !startup_status_snapshot(state.inner()).ollama_ready {
+        if crate::state::diagnostic_logging_enabled() {
+            tracing::info!(
+                "[ollama.runtime] ensure_ready_for_refinement still not ready endpoint={}",
+                endpoint
+            );
+        }
+        return Err("Ollama runtime is still not ready after on-demand start.".to_string());
+    }
+
+    if crate::state::diagnostic_logging_enabled() {
+        tracing::info!(
+            "[ollama.runtime] ensure_ready_for_refinement ready endpoint={}",
+            endpoint
+        );
+    }
+    Ok(())
 }

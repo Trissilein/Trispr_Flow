@@ -1,6 +1,7 @@
 use crate::modules::TaskCaptureSettings;
 use crate::state::AppState;
 use tauri::{AppHandle, Manager};
+use tracing::info;
 
 pub const TASK_CAPTURE_KEYWORDS: &[&str] = &[
     "erinnere mich",
@@ -16,6 +17,15 @@ pub const TASK_CAPTURE_KEYWORDS: &[&str] = &[
 ];
 pub const TASK_CAPTURE_FILLERS: &[&str] = &["daran", "dass", "an"];
 pub const TASK_CAPTURE_REFINEMENT_PROMPT: &str = "Du bist ein Task-Formatierer. Formuliere den folgenden Sprachtext als klaren, konkreten Task in einem Satz. Antworte NUR mit dem formatierten Task, nichts anderes.";
+
+fn task_capture_refinement_enabled(settings: &crate::state::Settings) -> bool {
+    task_capture_enabled(settings)
+        && settings.ai_fallback.enabled
+        && settings
+            .module_settings
+            .enabled_modules
+            .contains(crate::state::AI_REFINEMENT_MODULE_ID)
+}
 
 pub fn find_matching_route<'a>(
     command_text: &str,
@@ -85,15 +95,31 @@ pub fn refine_task_text(
     custom_prompt: Option<&str>,
 ) -> String {
     let fallback = raw_text.trim().to_string();
-    if fallback.is_empty() || !settings.ai_fallback.enabled {
+    if fallback.is_empty() || !task_capture_refinement_enabled(settings) {
         return fallback;
     }
+    info!(
+        "[task_capture] refinement requested input_bytes={} provider={} model={} module_enabled={} ai_enabled={}",
+        fallback.len(),
+        settings.ai_fallback.provider,
+        settings.ai_fallback.model,
+        task_capture_enabled(settings),
+        settings.ai_fallback.enabled
+    );
     if !settings.workflow_agent.online_enabled
         && !crate::workflow_agent::ai_provider_is_local(&settings.ai_fallback.provider)
     {
         return fallback;
     }
 
+    if let Err(error) =
+        crate::ai_fallback::ensure_ollama_runtime_ready_for_refinement(app, settings)
+    {
+        tracing::warn!("reminder_capture refinement unavailable: {}", error);
+        return fallback;
+    }
+
+    let _activity_guard = crate::audio::start_refinement_activity_guard(app.clone());
     let setup = match crate::ai_fallback::prepare_refinement(app, settings) {
         Ok(value) => value,
         Err(error) => {
@@ -117,6 +143,13 @@ pub fn refine_task_text(
         .refine_transcript(&fallback, &setup.model, &options, &setup.api_key)
     {
         Ok(result) => {
+            info!(
+                "[task_capture] refinement finished provider={} model={} elapsed_ms={} output_bytes={}",
+                result.provider,
+                result.model,
+                result.execution_time_ms,
+                result.text.len()
+            );
             let refined = result.text.trim();
             if refined.is_empty() {
                 fallback
@@ -206,7 +239,8 @@ pub(crate) fn test_task_capture_endpoint(endpoint: String) -> Result<String, Str
 
 #[cfg(test)]
 mod tests {
-    use super::extract_task_text;
+    use super::{extract_task_text, task_capture_refinement_enabled};
+    use crate::state::Settings;
 
     #[test]
     fn extracts_reminder_text_after_keyword_and_fillers() {
@@ -237,5 +271,24 @@ mod tests {
         let result = extract_task_text("Trispr add to my agenda review the PR");
         assert!(!result.is_empty());
         assert!(result.contains("review"));
+    }
+
+    #[test]
+    fn task_capture_refinement_requires_both_modules() {
+        let mut settings = Settings::default();
+        settings
+            .module_settings
+            .enabled_modules
+            .insert("task_capture".to_string());
+        settings.ai_fallback.enabled = true;
+
+        assert!(!task_capture_refinement_enabled(&settings));
+
+        settings
+            .module_settings
+            .enabled_modules
+            .insert(crate::state::AI_REFINEMENT_MODULE_ID.to_string());
+
+        assert!(task_capture_refinement_enabled(&settings));
     }
 }

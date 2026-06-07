@@ -57,6 +57,8 @@ vi.hoisted(() => {
 
     <input id="audio-cues-toggle" type="checkbox" />
     <input id="ptt-use-vad-toggle" type="checkbox" />
+    <input id="ptt-hot-keepalive" type="range" min="5000" max="120000" value="30000" />
+    <span id="ptt-hot-keepalive-value"></span>
     <input id="audio-cues-volume" type="range" min="0" max="100" value="50" />
     <span id="audio-cues-volume-value"></span>
     <input id="hallucination-filter-toggle" type="checkbox" />
@@ -147,6 +149,7 @@ function freshSettings(): Settings {
     audio_cues: false,
     audio_cues_volume: 0.5,
     ptt_use_vad: false,
+    ptt_hot_keepalive_ms: 30000,
     hallucination_filter_enabled: false,
     activation_words_enabled: false,
     activation_words: [],
@@ -230,6 +233,8 @@ beforeEach(() => {
   if (dom.vadSilence) dom.vadSilence.value = "1200";
   if (dom.audioCuesToggle) dom.audioCuesToggle.checked = false;
   if (dom.pttUseVadToggle) dom.pttUseVadToggle.checked = false;
+  if (dom.pttHotKeepalive) dom.pttHotKeepalive.value = "30000";
+  if (dom.pttHotKeepaliveValue) dom.pttHotKeepaliveValue.textContent = "30s";
   if (dom.audioCuesVolume) dom.audioCuesVolume.value = "50";
   if (dom.hallucinationFilterToggle) dom.hallucinationFilterToggle.checked = false;
   if (dom.activationWordsToggle) dom.activationWordsToggle.checked = false;
@@ -327,6 +332,13 @@ describe("wireTranscription - hotkeys and devices", () => {
     fire(dom.transcribeDeviceSelect, "change");
     await flush();
     expect(settings!.transcribe_output_device).toBe("speakers");
+  });
+
+  it("ptt hot keepalive input updates settings", async () => {
+    if (dom.pttHotKeepalive) dom.pttHotKeepalive.value = "45000";
+    fire(dom.pttHotKeepalive, "input");
+    expect(settings!.ptt_hot_keepalive_ms).toBe(45000);
+    expect(dom.pttHotKeepaliveValue?.textContent).toBe("45s");
   });
 });
 

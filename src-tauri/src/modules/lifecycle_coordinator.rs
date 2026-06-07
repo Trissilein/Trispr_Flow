@@ -10,7 +10,7 @@ use crate::state::{
     normalize_assistant_presence_binding, normalize_product_mode_field, save_settings_file,
     AppState, AI_REFINEMENT_MODULE_ID,
 };
-use crate::transcription::{start_transcribe_monitor, stop_transcribe_monitor};
+use crate::transcription::{start_transcribe_monitor, stop_transcribe_monitor_and_release_whisper};
 use tauri::{AppHandle, Emitter};
 
 pub(crate) fn enable_module_actions(
@@ -105,7 +105,7 @@ pub(crate) fn enable_module_actions(
         if snapshot.transcribe_enabled && !prev_transcribe_enabled {
             let _ = start_transcribe_monitor(app, state, &snapshot);
         } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
-            stop_transcribe_monitor(app, state);
+            stop_transcribe_monitor_and_release_whisper(app, state);
         }
     }
 
@@ -236,7 +236,7 @@ pub(crate) fn disable_module_actions(
         if snapshot.transcribe_enabled && !prev_transcribe_enabled {
             let _ = start_transcribe_monitor(app, state, &snapshot);
         } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
-            stop_transcribe_monitor(app, state);
+            stop_transcribe_monitor_and_release_whisper(app, state);
         }
     }
 

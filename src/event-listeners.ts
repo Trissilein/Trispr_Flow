@@ -1,6 +1,10 @@
 // DOM event listeners setup
 
-import { ensureContinuousDumpDefaults } from "./settings";
+import {
+  ensureCaptureRuntimeDefaults,
+  ensureContinuousDumpDefaults,
+  ensureDiagnosticsDefaults,
+} from "./settings";
 import { persistSettings } from "./settings-persist";
 import { syncHistoryAliasesIntoSettings } from "./history-preferences";
 import { wireHistory } from "./wiring/history.wire";
@@ -18,6 +22,8 @@ export function cleanupWindowListeners(): void {
 
 export function wireEvents() {
   ensureContinuousDumpDefaults();
+  ensureCaptureRuntimeDefaults();
+  ensureDiagnosticsDefaults();
   if (syncHistoryAliasesIntoSettings()) {
     void persistSettings();
   }

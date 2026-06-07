@@ -63,6 +63,7 @@ use tracing::{error, info, warn};
 pub(crate) use audio::{
     get_last_recording_path, get_recordings_directory, open_recordings_directory,
 };
+#[cfg(feature = "module-confluence")]
 pub(crate) use gdd::confluence::{
     clear_confluence_secret, confluence_list_spaces, confluence_oauth_exchange,
     confluence_oauth_start, delete_pending_gdd_publish, list_pending_gdd_publishes,
@@ -4675,19 +4676,33 @@ pub fn run() {
             validate_gdd_draft,
             render_gdd_for_confluence,
             render_gdd_markdown,
+            #[cfg(feature = "module-confluence")]
             test_confluence_connection,
+            #[cfg(feature = "module-confluence")]
             confluence_oauth_start,
+            #[cfg(feature = "module-confluence")]
             confluence_oauth_exchange,
+            #[cfg(feature = "module-confluence")]
             confluence_list_spaces,
+            #[cfg(feature = "module-confluence")]
             load_gdd_template_from_file,
+            #[cfg(feature = "module-confluence")]
             load_gdd_template_from_confluence,
+            #[cfg(feature = "module-confluence")]
             suggest_confluence_target,
+            #[cfg(feature = "module-confluence")]
             publish_gdd_to_confluence,
+            #[cfg(feature = "module-confluence")]
             publish_or_queue_gdd_to_confluence,
+            #[cfg(feature = "module-confluence")]
             list_pending_gdd_publishes,
+            #[cfg(feature = "module-confluence")]
             retry_pending_gdd_publish,
+            #[cfg(feature = "module-confluence")]
             delete_pending_gdd_publish,
+            #[cfg(feature = "module-confluence")]
             save_confluence_secret,
+            #[cfg(feature = "module-confluence")]
             clear_confluence_secret,
             save_transcript,
             list_audio_devices,

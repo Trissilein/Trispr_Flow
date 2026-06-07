@@ -750,6 +750,7 @@ export function renderAIFallbackSettingsUi() {
         selected: version === selectedVersion,
         installed: version === runtimeCardState.version,
         recommended: version === "0.20.2",
+        prerelease: /(?:-rc|-alpha|-beta)/i.test(version),
         installable: false,
         installable_reason:
           "This version is not in the verified installable runtime catalog.",

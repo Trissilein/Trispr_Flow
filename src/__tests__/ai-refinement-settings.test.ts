@@ -188,7 +188,7 @@ beforeEach(() => {
     setOverlayHealth(null);
     runtimeCardMock.mockReturnValue(mkCard());
     runtimeCatalogMock.mockReturnValue([
-        { version: "0.20.2", source: "online", selected: true, installed: true, recommended: true, installable: true, installable_reason: "" },
+        { version: "0.20.2", source: "online", selected: true, installed: true, recommended: true, prerelease: false, installable: true, installable_reason: "" },
     ]);
     onlineFetchMock.mockReturnValue(false);
     renderHelpMock.mockClear();

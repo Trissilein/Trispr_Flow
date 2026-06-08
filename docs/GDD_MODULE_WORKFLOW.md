@@ -1,22 +1,25 @@
 # GDD Module Workflow
 
-Last updated: 2026-03-06
+Last updated: 2026-06-08
 
 This guide describes the current end-to-end workflow in Trisper Flow for generating and publishing Game Design Documents.
 
 ## Prerequisites
 
-1. GDD flow is a core capability and always available from the `Modules` tab.
+1. GDD flow belongs to the GDD module. The old core-always-on assumption was superseded on 2026-06-08.
 2. If publishing to Confluence is needed:
    - Configure Confluence auth (`OAuth` or `API token`).
    - Ensure `site_base_url` and (for OAuth) `oauth_cloud_id` are set.
    - Set a default space key if possible.
 3. Optional automation path:
    - Enable module `workflow_agent` for wakeword-driven command orchestration.
+4. Target installability:
+   - GDD should eventually be installable by unpacking a module package into a module directory.
+   - Confluence is part of the GDD module, not a separately installable module.
 
 ## Flow
 
-### Manual core flow
+### Manual GDD flow
 
 1. Open `Modules` tab and click `Open GDD Flow`.
 2. Select a GDD preset (or run `Auto-detect Preset`).

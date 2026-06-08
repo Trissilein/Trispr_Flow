@@ -318,7 +318,7 @@ Goal: Ship an optional `workflow_agent` module that converts wakeword-triggered 
 
 | Task | Name | Complexity | Dependencies | Status | Description |
 | --- | --- | --- | --- | --- | --- |
-| M1 | Core/module semantics cleanup (GDD core always-on) | High | L1, L2 | DONE | Module descriptor now supports `core` + `toggleable`; `gdd` and `integrations_confluence` are core-always-on. |
+| M1 | Core/module semantics cleanup (GDD core always-on) | High | L1, L2 | DONE, superseded 2026-06-08 | Historical implementation: module descriptor supports `core` + `toggleable`, and `gdd` plus `integrations_confluence` were treated as core-always-on. Superseded target: GDD is installable as a module, and Confluence is part of the GDD module. |
 | M2 | Workflow-agent settings schema + migration | High | M1 | DONE | Added `workflow_agent` settings defaults/normalization in Rust + frontend types. |
 | M3 | Raw command channel | High | M1 | DONE | New backend event `transcription:raw-result` emitted before activation-word drop filters. |
 | M4 | Agent parse + session search commands | High | M2, M3 | DONE | Added `agent_parse_command` and `search_transcript_sessions` with gap-based session grouping and scoring. |

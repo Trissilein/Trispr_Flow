@@ -4,7 +4,7 @@ This file is the canonical source for domain language in Trispr Flow.
 It is written for domain experts (users, designers, contributors), not for implementation details.
 Update this file inline as terms are resolved during design sessions.
 
-Last updated: 2026-06-07
+Last updated: 2026-06-08
 
 ---
 
@@ -98,13 +98,25 @@ A build/installer property: the code, binary, sidecar, or resource is included i
 ### Installed
 A local setup property: the capability's required local assets, sidecars, models, secrets, or runtime dependencies are present and configured on this machine. Installed does not mean enabled.
 
+Target module installability: Feature Modules should eventually be installable by unpacking a module package into a module directory. This is the product goal for module installation, not the current implementation state of every module.
+
+Confirmed 2026-06-08: the first target model for installable modules is package-based, not arbitrary runtime code loading. A module package may contain a manifest, presets/templates/assets, configuration defaults, and sidecar binaries or resources for host-known capabilities. The host app still owns the executable Rust/TypeScript capability surface through compiled code and feature gates.
+
+Confirmed 2026-06-08: an unpacked module is `Installed` only when its manifest is valid, its module ID and host capability are known, its version/schema constraints are compatible with the host, and all manifest-declared required assets are present and schema-valid. `Installed` is therefore a validation result, not a mere directory-exists check.
+
 ### Enabled
 A user-intent property: the user has turned the capability on in the Modules Hub or settings. Enabled does not guarantee availability; a capability can be enabled but degraded or unavailable.
+
+Confirmed 2026-06-08: `Enabled` stays user intent for installable modules. Enabling a module may launch consent or setup flows, but permissions, secrets, and external service configuration are not part of `Installed`. Missing setup means the module is enabled but degraded or not available.
 
 ### Available
 A runtime-health property: the capability can be used now. Availability depends on enabled state plus local runtime health, required assets, permissions, credentials, and external service reachability where applicable.
 
+For GDD, draft generation and validation can be available without Confluence auth. Confluence publishing is only available when the internal Confluence integration has valid configuration, credentials, required permissions, and service reachability.
+
 Feature Module lifecycle should distinguish these states: **Bundled → Installable/Installed → Enabled → Available/Healthy**. Trispr Core does not follow this module lifecycle; Core is always the baseline, though parts of Core can still be degraded (for example, if no Whisper model is available).
+
+Module installation should not imply that the app can load arbitrary third-party code into the process. If runtime plugin code is ever introduced, it needs a separate security and compatibility decision.
 
 ### Assistant Core (`assistant_core`)
 Wake-word listening, intent detection, and agent orchestration. Canonical ModuleId: `assistant_core`.
@@ -139,10 +151,18 @@ Task Capture owns its own route settings, endpoint checks, task-formatting promp
 ### GDD Automation (`gdd`)
 Optional Feature Module that turns transcript/history material into Game Design Document drafts and publishing workflows. GDD is not part of Trispr Core: Core provides transcript text and history; GDD is an optional document-generation capability on top of that material.
 
-### Confluence Integration (`integrations_confluence`)
-A GDD-owned integration surface. From a product perspective, Confluence belongs to the GDD publishing workflow rather than being a generic integration platform. Architecturally it keeps a separate integration boundary for auth, secrets, network access, spaces/pages, target routing, and publish queue behavior.
+Confirmed by Ingo on 2026-06-08: GDD should be installable as a Feature Module. It should not be treated as part of Trispr Core. The long-term module-install path is unpacking a module package into a module directory.
 
-Confluence may remain a separate ModuleId for lifecycle, permission, and security tracking. That implementation detail is reversible: it can later become an internal GDD sub-capability or remain separately toggleable without changing the Core boundary.
+Confirmed 2026-06-08: the first GDD module package boundary is descriptive and asset-oriented. A GDD package contains its manifest, presets, templates, validation/default schemas, UI-surface metadata, and Confluence configuration/template metadata as internal GDD assets. The host app still owns the Rust commands, TypeScript UI, permission enforcement, settings normalization, and feature-gated executable capability surface.
+
+Confirmed 2026-06-08: GDD is one Feature Module with internal sub-capabilities, not multiple product-level modules. Expected sub-capabilities include draft generation, validation, file template import, Confluence template import, Confluence publishing, and routing suggestions. These sub-capabilities may have separate health and setup states while the GDD Module remains installed and enabled.
+
+### Confluence Integration
+A GDD-owned integration surface. From a product perspective, Confluence belongs to the GDD publishing workflow rather than being a generic integration platform. Confirmed by Ingo on 2026-06-08: Confluence is part of the GDD Module, not a separately installable Feature Module. `integrations_confluence` remains a legacy/internal identifier until the implementation converges on the GDD module boundary.
+
+Confluence may keep an internal capability or permission boundary for auth, secrets, network access, spaces/pages, target routing, and queue behavior. That boundary is an implementation and security concern inside the GDD Module, not a product-level module boundary.
+
+Confluence-related GDD sub-capabilities can be unavailable while non-Confluence GDD capabilities remain available. For example, draft generation can be healthy when Confluence publishing is degraded due to missing credentials or network reachability.
 
 → `src-tauri/src/gdd/`, `src-tauri/src/gdd/confluence.rs`
 

@@ -257,10 +257,11 @@ Last updated: 2026-03-28
 
 ### DEC-040 GDD as core capability (2026-03-05)
 
-- Status: `implemented`
-- Decision: Treat `gdd` and `integrations_confluence` as core-always-on modules in the module registry and lifecycle.
+- Status: `superseded 2026-06-08`
+- Historical decision: Treat `gdd` and `integrations_confluence` as core-always-on modules in the module registry and lifecycle.
 - Context: Manual GDD flow should be always available; module toggles are reserved for autonomous orchestration capabilities.
 - Why: Removes misleading enablement friction and aligns module semantics with real product boundaries.
+- Superseded by Ingo clarification on 2026-06-08: GDD should be installable as a module. Confluence is part of the GDD module. Modules should eventually be installable by unpacking a module package into a module directory.
 
 ### DEC-041 Workflow-agent as optional automation module (2026-03-05)
 
@@ -374,10 +375,11 @@ Last updated: 2026-03-28
 
 ### DEC-054 Agent-Evolution Guardrails und Phasenpfad (2026-03-28)
 
-- Status: `accepted`
-- Decision: Die Agent-Entwicklung folgt verbindlich einem Phasenpfad `S13.5 -> T -> V -> O -> P` mit den Produktleitplanken **Hybrid activation**, **Plan+Confirm**, **GDD copilot first**, **Local-first**.
+- Status: `superseded priority 2026-06-08`
+- Historical decision: Die Agent-Entwicklung folgt verbindlich einem Phasenpfad `S13.5 -> T -> V -> O -> P` mit den Produktleitplanken **Hybrid activation**, **Plan+Confirm**, **GDD copilot first**, **Local-first**.
 - Context: Kernbausteine (Transkript, Archiv, TTS, Workflow-Agent, GDD) sind vorhanden, aber der Weg zum vollwertigen Assistant benötigte eine klare Priorisierungs- und Sicherheitslinie.
 - Why: Verhindert Scope-Drift, schützt den stabilen Transcribe-Flow und schafft abarbeitbare Exit-Kriterien je Ausbauphase.
+- Superseded priority note: Ingo clarified on 2026-06-08 that GDD Copilot is no longer a product priority. Hybrid activation, Plan+Confirm for side effects, Local-first, and Transcribe path stability remain useful guardrails.
 - Guardrails:
   - Wakeword-Auswertung nur im `assistant`-Modus.
   - Side-effect Aktionen bleiben confirm-pflichtig.

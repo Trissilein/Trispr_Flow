@@ -51,7 +51,7 @@ Release details:
 
 ### Modules (Managed)
 - GDD generation/publish flow
-- Confluence integration lane
+- Confluence publishing inside the GDD module
 - Workflow agent and multimodal modules (status per roadmap)
 
 ## Quick Start

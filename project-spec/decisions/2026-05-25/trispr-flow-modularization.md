@@ -4,6 +4,8 @@ Date: 2026-05-25
 Status: **candidates surfaced, not yet decided**
 Participants: Hendr (architect, on behalf of Ingo who raised the question)
 
+Update 2026-06-08: The installable module package model is now accepted in [`../2026-06-08/installable-module-package-model.md`](../2026-06-08/installable-module-package-model.md). GDD is the target installable module. Confluence is part of the GDD Module, not a separate product module. This candidate list remains useful as discovery history, but the GDD package model is the current direction.
+
 ---
 
 ## Context
@@ -50,7 +52,7 @@ Not yet decided. Each candidate's interface is intentionally not designed yet �
 
 **Problem**: "Core" is implicit — whatever is left after subtracting opt-ins. No module, file, or test surface says *this and only this is pure Trispr-Flow* (PTT/VAD capture → Continuous Dump → Whisper Backend → Post-Processing → emit). You cannot reason about what should *stay loaded* when AI Refinement, GDD, Confluence, Workflow Agent, Voice Output, Vision, Video Generation are all off, because no boundary describes it.
 
-**Solution**: Define Trispr Core as a first-class domain. Everything currently listed in the manifest as non-core (`ai_refinement`, `gdd`, `task_capture`, `assistant_core`, `assistant_presence`, `input_vision`, `output_voice_tts`, `output_video_generation`, `integrations_confluence`) sits behind the Module System seam. Core depends only on the registry, never on a specific Module's types.
+**Solution**: Define Trispr Core as a first-class domain. Everything currently listed in the manifest as non-core (`ai_refinement`, `gdd`, `task_capture`, `assistant_core`, `assistant_presence`, `input_vision`, `output_voice_tts`, `output_video_generation`) sits behind the Module System seam. Confluence belongs inside the GDD Module in the current target model. Core depends only on the registry, never on a specific Module's types.
 
 **Benefits**: Locality of the most-touched code path. The deletion test becomes meaningful — deleting `gdd/` would not break the core build. Tests gain a clear surface ("does Trispr Core work with zero Modules enabled?").
 

@@ -2,7 +2,7 @@
 
 Last updated: 2026-06-08
 
-This guide describes the current end-to-end workflow in Trisper Flow for generating and publishing Game Design Documents.
+This guide describes the current end-to-end workflow in Trispr Flow for generating and publishing Game Design Documents.
 
 ## Prerequisites
 
@@ -12,9 +12,10 @@ This guide describes the current end-to-end workflow in Trisper Flow for generat
    - Ensure `site_base_url` and (for OAuth) `oauth_cloud_id` are set.
    - Set a default space key if possible.
 3. Optional automation path:
-   - Enable module `workflow_agent` for wakeword-driven command orchestration.
+   - Enable Assistant Core (`assistant_core`, legacy ID `workflow_agent`) for wakeword-driven command orchestration.
 4. Target installability:
-   - GDD should eventually be installable by unpacking a module package into a module directory.
+   - GDD uses the installable module package model: an unpacked package with a valid manifest and required assets marks the module installed.
+   - Current backend support includes the GDD package fixture, manifest scanner, `module-gdd` gate, and package-aware registry state.
    - Confluence is part of the GDD module, not a separately installable module.
 
 ## Flow
@@ -44,10 +45,10 @@ This guide describes the current end-to-end workflow in Trisper Flow for generat
    - `manifest.json`
 4. Pending queue jobs can be retried or deleted directly from the GDD flow.
 
-### Workflow-agent flow (optional module)
+### Assistant Core flow (optional module)
 
-1. Enable `workflow_agent` in `Modules`.
-2. Speak or type a wakeword command (e.g. “Hey Trispr, create and publish a GDD from yesterday”).
+1. Enable Assistant Core in `Modules`.
+2. Speak or type a wakeword command (e.g. "Hey Trispr, create and publish a GDD from yesterday").
 3. Agent parses intent and returns candidate sessions (1-3).
 4. Confirm selected session.
 5. Select target language (always asked).

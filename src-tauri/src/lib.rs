@@ -1670,18 +1670,36 @@ async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<(), Str
 }
 
 #[tauri::command]
-fn list_modules(state: State<'_, AppState>) -> Vec<crate::modules::ModuleDescriptor> {
+fn list_modules(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Vec<crate::modules::ModuleDescriptor> {
+    let installed_package_ids = scan_installed_module_ids_lossy(&app);
     let settings = state
         .settings
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    module_registry::modules_as_descriptors(&settings.module_settings)
+    module_registry::modules_as_descriptors_with_packages(
+        &settings.module_settings,
+        &installed_package_ids,
+    )
 }
 
 #[tauri::command]
 fn scan_module_packages(app: AppHandle) -> Result<module_package::ModulePackageScanReport, String> {
     let modules_dir = crate::paths::resolve_modules_dir(&app);
     module_package::scan_modules_dir(&modules_dir)
+}
+
+fn scan_installed_module_ids_lossy(app: &AppHandle) -> std::collections::HashSet<String> {
+    let modules_dir = crate::paths::resolve_modules_dir(app);
+    match module_package::scan_installed_module_ids(&modules_dir) {
+        Ok(module_ids) => module_ids,
+        Err(error) => {
+            warn!("Failed to scan installed module packages: {}", error);
+            std::collections::HashSet::new()
+        }
+    }
 }
 
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
@@ -1841,14 +1859,20 @@ fn disable_module(
 
 #[tauri::command]
 fn get_module_health(
+    app: AppHandle,
     state: State<'_, AppState>,
     module_id: Option<String>,
 ) -> Vec<crate::modules::ModuleHealthStatus> {
+    let installed_package_ids = scan_installed_module_ids_lossy(&app);
     let settings = state
         .settings
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    module_health::get_health(&settings.module_settings, module_id.as_deref())
+    module_health::get_health_with_packages(
+        &settings.module_settings,
+        module_id.as_deref(),
+        &installed_package_ids,
+    )
 }
 
 #[tauri::command]
@@ -1857,11 +1881,16 @@ fn check_module_updates(
     state: State<'_, AppState>,
     module_id: Option<String>,
 ) -> Vec<crate::modules::ModuleUpdateInfo> {
+    let installed_package_ids = scan_installed_module_ids_lossy(&app);
     let settings = state
         .settings
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let updates = module_health::check_updates(&settings.module_settings, module_id.as_deref());
+    let updates = module_health::check_updates_with_packages(
+        &settings.module_settings,
+        module_id.as_deref(),
+        &installed_package_ids,
+    );
     for update in &updates {
         let _ = app.emit("module:update-available", update);
     }

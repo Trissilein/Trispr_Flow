@@ -76,7 +76,7 @@ pub fn manifests() -> Vec<ModuleManifest> {
             version: "0.2.0",
             bundled: cfg!(feature = "module-gdd"),
             core_always_on: false,
-            installed_by_default: cfg!(feature = "module-gdd"),
+            installed_by_default: false,
             restart_required_on_enable: false,
             dependencies: &[],
             permissions: &[],
@@ -266,10 +266,20 @@ fn module_is_enabled(settings: &ModuleSettings, module_id: &str) -> bool {
         .any(|enabled| canonicalize_module_id(enabled) == module_id)
 }
 
-pub fn module_is_installed(settings: &ModuleSettings, module_id: &str) -> bool {
+pub fn module_is_installed_with_packages(
+    settings: &ModuleSettings,
+    module_id: &str,
+    installed_package_ids: &HashSet<String>,
+) -> bool {
     let module_id = canonicalize_module_id(module_id);
     if let Some(manifest) = find_manifest(module_id) {
         if manifest.installed_by_default {
+            return true;
+        }
+        if installed_package_ids
+            .iter()
+            .any(|installed| canonicalize_module_id(installed) == module_id)
+        {
             return true;
         }
         return settings
@@ -281,11 +291,20 @@ pub fn module_is_installed(settings: &ModuleSettings, module_id: &str) -> bool {
     false
 }
 
-fn dependency_is_satisfied(settings: &ModuleSettings, module_id: &str) -> bool {
-    module_is_enabled(settings, module_id) || module_is_installed(settings, module_id)
+fn dependency_is_satisfied_with_packages(
+    settings: &ModuleSettings,
+    module_id: &str,
+    installed_package_ids: &HashSet<String>,
+) -> bool {
+    module_is_enabled(settings, module_id)
+        || module_is_installed_with_packages(settings, module_id, installed_package_ids)
 }
 
-pub fn missing_dependencies(settings: &ModuleSettings, module_id: &str) -> Vec<String> {
+pub fn missing_dependencies_with_packages(
+    settings: &ModuleSettings,
+    module_id: &str,
+    installed_package_ids: &HashSet<String>,
+) -> Vec<String> {
     let Some(manifest) = find_manifest(module_id) else {
         return Vec::new();
     };
@@ -293,20 +312,29 @@ pub fn missing_dependencies(settings: &ModuleSettings, module_id: &str) -> Vec<S
     manifest
         .dependencies
         .iter()
-        .filter(|dependency| !dependency_is_satisfied(settings, dependency))
+        .filter(|dependency| {
+            !dependency_is_satisfied_with_packages(settings, dependency, installed_package_ids)
+        })
         .map(|dependency| dependency.to_string())
         .collect()
 }
 
 pub fn modules_as_descriptors(settings: &ModuleSettings) -> Vec<ModuleDescriptor> {
+    modules_as_descriptors_with_packages(settings, &HashSet::new())
+}
+
+pub fn modules_as_descriptors_with_packages(
+    settings: &ModuleSettings,
+    installed_package_ids: &HashSet<String>,
+) -> Vec<ModuleDescriptor> {
     manifests()
         .into_iter()
         .map(|manifest| {
-            let installed = module_is_installed(settings, manifest.id);
-            let dependencies_satisfied = manifest
-                .dependencies
-                .iter()
-                .all(|dependency| dependency_is_satisfied(settings, dependency));
+            let installed =
+                module_is_installed_with_packages(settings, manifest.id, installed_package_ids);
+            let dependencies_satisfied = manifest.dependencies.iter().all(|dependency| {
+                dependency_is_satisfied_with_packages(settings, dependency, installed_package_ids)
+            });
             let last_error = last_error_for(settings, manifest.id);
             let state = if manifest.core_always_on && installed {
                 "active"
@@ -376,7 +404,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "module-gdd")]
-    fn gdd_is_bundled_but_not_core_when_feature_enabled() {
+    fn gdd_is_bundled_but_not_installed_without_package_when_feature_enabled() {
         let settings = ModuleSettings::default();
         let descriptor = modules_as_descriptors(&settings)
             .into_iter()
@@ -386,8 +414,38 @@ mod tests {
         assert!(descriptor.bundled);
         assert!(!descriptor.core);
         assert!(descriptor.toggleable);
-        assert_eq!(descriptor.state, "installed");
+        assert_eq!(descriptor.state, "not_installed");
         assert!(descriptor.dependencies.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "module-gdd")]
+    fn gdd_is_installed_when_validated_package_is_present() {
+        let settings = ModuleSettings::default();
+        let installed_packages = HashSet::from(["gdd".to_string()]);
+        let descriptor = modules_as_descriptors_with_packages(&settings, &installed_packages)
+            .into_iter()
+            .find(|module| module.id == "gdd")
+            .expect("GDD manifest should exist");
+
+        assert!(descriptor.bundled);
+        assert!(!descriptor.core);
+        assert!(descriptor.toggleable);
+        assert_eq!(descriptor.state, "installed");
+    }
+
+    #[test]
+    #[cfg(feature = "module-gdd")]
+    fn assistant_core_dependency_is_satisfied_by_validated_gdd_package() {
+        let settings = ModuleSettings::default();
+        let installed_packages = HashSet::from(["gdd".to_string()]);
+
+        assert!(missing_dependencies_with_packages(
+            &settings,
+            ASSISTANT_CORE_MODULE_ID,
+            &installed_packages,
+        )
+        .is_empty());
     }
 
     #[test]
@@ -403,7 +461,12 @@ mod tests {
         assert!(!descriptor.core);
         assert!(descriptor.toggleable);
         assert_eq!(descriptor.state, "not_installed");
-        assert!(missing_dependencies(&settings, ASSISTANT_CORE_MODULE_ID).is_empty());
+        assert!(missing_dependencies_with_packages(
+            &settings,
+            ASSISTANT_CORE_MODULE_ID,
+            &HashSet::new(),
+        )
+        .is_empty());
     }
 
     #[test]
@@ -435,7 +498,12 @@ mod tests {
         assert!(!descriptor.core);
         assert!(descriptor.toggleable);
         assert_eq!(descriptor.state, "not_installed");
-        assert!(missing_dependencies(&settings, "gdd").is_empty());
-        assert!(missing_dependencies(&settings, ASSISTANT_CORE_MODULE_ID).is_empty());
+        assert!(missing_dependencies_with_packages(&settings, "gdd", &HashSet::new()).is_empty());
+        assert!(missing_dependencies_with_packages(
+            &settings,
+            ASSISTANT_CORE_MODULE_ID,
+            &HashSet::new(),
+        )
+        .is_empty());
     }
 }

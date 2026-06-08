@@ -381,8 +381,6 @@ pub fn normalize_module_settings(settings: &mut ModuleSettings) {
 }
 
 pub fn normalize_gdd_module_settings(settings: &mut GddModuleSettings) {
-    // GDD is now a core capability and is always available.
-    settings.enabled = true;
     if settings.default_preset_id.trim().is_empty() {
         settings.default_preset_id = "universal_strict".to_string();
     }

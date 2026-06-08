@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -119,6 +120,18 @@ pub fn scan_modules_dir(modules_dir: &Path) -> Result<ModulePackageScanReport, S
     packages.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
     errors.sort_by(|left, right| left.package_dir.cmp(&right.package_dir));
     Ok(ModulePackageScanReport { packages, errors })
+}
+
+pub fn installed_module_ids(report: &ModulePackageScanReport) -> HashSet<String> {
+    report
+        .packages
+        .iter()
+        .map(|package| package.manifest.id.clone())
+        .collect()
+}
+
+pub fn scan_installed_module_ids(modules_dir: &Path) -> Result<HashSet<String>, String> {
+    scan_modules_dir(modules_dir).map(|report| installed_module_ids(&report))
 }
 
 pub fn scan_package_dir(package_dir: &Path) -> Result<ValidatedModulePackage, String> {

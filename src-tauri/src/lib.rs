@@ -130,8 +130,8 @@ use crate::modules::{
     canonicalize_module_id, health as module_health, normalize_confluence_settings,
     normalize_gdd_module_settings, normalize_module_settings, normalize_task_capture_settings,
     normalize_vision_input_settings, normalize_voice_output_settings,
-    normalize_workflow_agent_settings, registry as module_registry, ASSISTANT_CORE_MODULE_ID,
-    TASK_CAPTURE_MODULE_ID,
+    normalize_workflow_agent_settings, package as module_package, registry as module_registry,
+    ASSISTANT_CORE_MODULE_ID, TASK_CAPTURE_MODULE_ID,
 };
 use crate::state::{
     get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
@@ -1675,6 +1675,12 @@ fn list_modules(state: State<'_, AppState>) -> Vec<crate::modules::ModuleDescrip
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     module_registry::modules_as_descriptors(&settings.module_settings)
+}
+
+#[tauri::command]
+fn scan_module_packages(app: AppHandle) -> Result<module_package::ModulePackageScanReport, String> {
+    let modules_dir = crate::paths::resolve_modules_dir(&app);
+    module_package::scan_modules_dir(&modules_dir)
 }
 
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
@@ -4645,6 +4651,7 @@ pub fn run() {
             save_window_visibility_state,
             show_assistant_presence_window,
             list_modules,
+            scan_module_packages,
             enable_module,
             disable_module,
             get_module_health,

@@ -131,6 +131,12 @@ pub(crate) fn resolve_video_jobs_dir(app: &AppHandle) -> PathBuf {
     dir
 }
 
+pub(crate) fn resolve_modules_dir(app: &AppHandle) -> PathBuf {
+    let dir = resolve_base_dir(app).join("modules");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
 pub(crate) fn resolve_node_binary_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("TRISPR_NODE_BINARY") {
         let candidate = PathBuf::from(path);

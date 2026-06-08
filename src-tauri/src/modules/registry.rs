@@ -78,7 +78,11 @@ pub fn manifests() -> Vec<ModuleManifest> {
             core_always_on: true,
             installed_by_default: true,
             restart_required_on_enable: false,
-            dependencies: &["integrations_confluence"],
+            dependencies: if cfg!(feature = "module-confluence") {
+                &["integrations_confluence"]
+            } else {
+                &[]
+            },
             permissions: &[],
             surface: "shared",
             assistant_capable: true,
@@ -136,9 +140,9 @@ pub fn manifests() -> Vec<ModuleManifest> {
             id: "integrations_confluence",
             name: "Confluence Integration",
             version: "0.2.0",
-            bundled: true,
-            core_always_on: true,
-            installed_by_default: true,
+            bundled: cfg!(feature = "module-confluence"),
+            core_always_on: false,
+            installed_by_default: cfg!(feature = "module-confluence"),
             restart_required_on_enable: false,
             dependencies: &[],
             permissions: &[],
@@ -154,7 +158,11 @@ pub fn manifests() -> Vec<ModuleManifest> {
             core_always_on: false,
             installed_by_default: true,
             restart_required_on_enable: false,
-            dependencies: &["gdd", "integrations_confluence"],
+            dependencies: if cfg!(feature = "module-confluence") {
+                &["gdd", "integrations_confluence"]
+            } else {
+                &["gdd"]
+            },
             permissions: &[
                 "filesystem_history",
                 "filesystem_exports",
@@ -364,4 +372,41 @@ pub fn known_permissions(module_id: &str) -> HashSet<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "module-confluence")]
+    fn confluence_is_bundled_but_not_core_when_feature_enabled() {
+        let settings = ModuleSettings::default();
+        let descriptor = modules_as_descriptors(&settings)
+            .into_iter()
+            .find(|module| module.id == "integrations_confluence")
+            .expect("Confluence manifest should exist");
+
+        assert!(descriptor.bundled);
+        assert!(!descriptor.core);
+        assert!(descriptor.toggleable);
+        assert_eq!(descriptor.state, "installed");
+    }
+
+    #[test]
+    #[cfg(not(feature = "module-confluence"))]
+    fn confluence_is_not_bundled_or_installed_when_feature_disabled() {
+        let settings = ModuleSettings::default();
+        let descriptor = modules_as_descriptors(&settings)
+            .into_iter()
+            .find(|module| module.id == "integrations_confluence")
+            .expect("Confluence manifest should remain discoverable");
+
+        assert!(!descriptor.bundled);
+        assert!(!descriptor.core);
+        assert!(descriptor.toggleable);
+        assert_eq!(descriptor.state, "not_installed");
+        assert!(missing_dependencies(&settings, "gdd").is_empty());
+        assert!(missing_dependencies(&settings, ASSISTANT_CORE_MODULE_ID).is_empty());
+    }
 }

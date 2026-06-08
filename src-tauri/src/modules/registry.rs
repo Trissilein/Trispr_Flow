@@ -74,15 +74,11 @@ pub fn manifests() -> Vec<ModuleManifest> {
             id: "gdd",
             name: "GDD Automation",
             version: "0.2.0",
-            bundled: true,
-            core_always_on: true,
-            installed_by_default: true,
+            bundled: cfg!(feature = "module-gdd"),
+            core_always_on: false,
+            installed_by_default: cfg!(feature = "module-gdd"),
             restart_required_on_enable: false,
-            dependencies: if cfg!(feature = "module-confluence") {
-                &["integrations_confluence"]
-            } else {
-                &[]
-            },
+            dependencies: &[],
             permissions: &[],
             surface: "shared",
             assistant_capable: true,
@@ -144,7 +140,7 @@ pub fn manifests() -> Vec<ModuleManifest> {
             core_always_on: false,
             installed_by_default: cfg!(feature = "module-confluence"),
             restart_required_on_enable: false,
-            dependencies: &[],
+            dependencies: &["gdd"],
             permissions: &[],
             surface: "shared",
             assistant_capable: true,
@@ -158,10 +154,10 @@ pub fn manifests() -> Vec<ModuleManifest> {
             core_always_on: false,
             installed_by_default: true,
             restart_required_on_enable: false,
-            dependencies: if cfg!(feature = "module-confluence") {
-                &["gdd", "integrations_confluence"]
-            } else {
+            dependencies: if cfg!(feature = "module-gdd") {
                 &["gdd"]
+            } else {
+                &[]
             },
             permissions: &[
                 "filesystem_history",
@@ -379,6 +375,38 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "module-gdd")]
+    fn gdd_is_bundled_but_not_core_when_feature_enabled() {
+        let settings = ModuleSettings::default();
+        let descriptor = modules_as_descriptors(&settings)
+            .into_iter()
+            .find(|module| module.id == "gdd")
+            .expect("GDD manifest should exist");
+
+        assert!(descriptor.bundled);
+        assert!(!descriptor.core);
+        assert!(descriptor.toggleable);
+        assert_eq!(descriptor.state, "installed");
+        assert!(descriptor.dependencies.is_empty());
+    }
+
+    #[test]
+    #[cfg(not(feature = "module-gdd"))]
+    fn gdd_is_not_bundled_or_installed_when_feature_disabled() {
+        let settings = ModuleSettings::default();
+        let descriptor = modules_as_descriptors(&settings)
+            .into_iter()
+            .find(|module| module.id == "gdd")
+            .expect("GDD manifest should remain discoverable");
+
+        assert!(!descriptor.bundled);
+        assert!(!descriptor.core);
+        assert!(descriptor.toggleable);
+        assert_eq!(descriptor.state, "not_installed");
+        assert!(missing_dependencies(&settings, ASSISTANT_CORE_MODULE_ID).is_empty());
+    }
+
+    #[test]
     #[cfg(feature = "module-confluence")]
     fn confluence_is_bundled_but_not_core_when_feature_enabled() {
         let settings = ModuleSettings::default();
@@ -391,6 +419,7 @@ mod tests {
         assert!(!descriptor.core);
         assert!(descriptor.toggleable);
         assert_eq!(descriptor.state, "installed");
+        assert_eq!(descriptor.dependencies, vec!["gdd".to_string()]);
     }
 
     #[test]

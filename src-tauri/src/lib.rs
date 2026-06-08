@@ -71,6 +71,7 @@ pub(crate) use gdd::confluence::{
     publish_or_queue_gdd_to_confluence, retry_pending_gdd_publish, save_confluence_secret,
     suggest_confluence_target, test_confluence_connection,
 };
+#[cfg(feature = "module-gdd")]
 pub(crate) use gdd::{
     detect_gdd_preset, generate_gdd_draft, list_gdd_presets, render_gdd_for_confluence,
     render_gdd_markdown, save_gdd_preset_clone, validate_gdd_draft,
@@ -4676,12 +4677,19 @@ pub fn run() {
             speak_tts,
             stop_tts,
             test_tts_provider,
+            #[cfg(feature = "module-gdd")]
             list_gdd_presets,
+            #[cfg(feature = "module-gdd")]
             save_gdd_preset_clone,
+            #[cfg(feature = "module-gdd")]
             detect_gdd_preset,
+            #[cfg(feature = "module-gdd")]
             generate_gdd_draft,
+            #[cfg(feature = "module-gdd")]
             validate_gdd_draft,
+            #[cfg(feature = "module-gdd")]
             render_gdd_for_confluence,
+            #[cfg(feature = "module-gdd")]
             render_gdd_markdown,
             #[cfg(feature = "module-confluence")]
             test_confluence_connection,

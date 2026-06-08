@@ -15,7 +15,8 @@ This guide describes the current end-to-end workflow in Trispr Flow for generati
    - Enable Assistant Core (`assistant_core`, legacy ID `workflow_agent`) for wakeword-driven command orchestration.
 4. Target installability:
    - GDD uses the installable module package model: an unpacked package with a valid manifest and required assets marks the module installed.
-   - Current backend support includes the GDD package fixture, manifest scanner, `module-gdd` gate, and package-aware registry state.
+   - Current backend support includes the GDD package fixture, manifest scanner, `module-gdd` gate, package-aware registry state, and runtime command gates.
+   - GDD commands require installed module assets, enabled module state, and enabled GDD settings.
    - Confluence is part of the GDD module, not a separately installable module.
 
 ## Flow

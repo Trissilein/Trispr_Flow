@@ -13,6 +13,7 @@ use crate::gdd::GddPresetClone;
 
 pub const ASSISTANT_CORE_MODULE_ID: &str = "assistant_core";
 pub const ASSISTANT_PRESENCE_MODULE_ID: &str = "assistant_presence";
+pub const GDD_MODULE_ID: &str = "gdd";
 pub const LEGACY_WORKFLOW_AGENT_MODULE_ID: &str = "workflow_agent";
 pub const TASK_CAPTURE_MODULE_ID: &str = "task_capture";
 

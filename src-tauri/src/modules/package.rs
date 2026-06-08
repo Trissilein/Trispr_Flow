@@ -74,6 +74,15 @@ pub struct ModulePackageScanReport {
     pub errors: Vec<ModulePackageScanError>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ModulePackageInstallResult {
+    pub module_id: String,
+    pub source_dir: PathBuf,
+    pub target_dir: PathBuf,
+    pub installed: bool,
+    pub package: ValidatedModulePackage,
+}
+
 pub fn scan_modules_dir(modules_dir: &Path) -> Result<ModulePackageScanReport, String> {
     if !modules_dir.exists() {
         return Ok(ModulePackageScanReport {
@@ -132,6 +141,133 @@ pub fn installed_module_ids(report: &ModulePackageScanReport) -> HashSet<String>
 
 pub fn scan_installed_module_ids(modules_dir: &Path) -> Result<HashSet<String>, String> {
     scan_modules_dir(modules_dir).map(|report| installed_module_ids(&report))
+}
+
+pub fn install_package_from_dir(
+    source_dir: &Path,
+    modules_dir: &Path,
+) -> Result<ModulePackageInstallResult, String> {
+    let source_package = scan_package_dir(source_dir)?;
+    let module_id = source_package.manifest.id.clone();
+    let target_dir = modules_dir.join(&module_id);
+
+    if target_dir.exists() {
+        let target_package = scan_package_dir(&target_dir).map_err(|error| {
+            format!(
+                "Module package target '{}' already exists but is not valid: {}",
+                target_dir.display(),
+                error
+            )
+        })?;
+        if target_package.manifest.id != module_id {
+            return Err(format!(
+                "Module package target '{}' contains module '{}', expected '{}'.",
+                target_dir.display(),
+                target_package.manifest.id,
+                module_id
+            ));
+        }
+        return Ok(ModulePackageInstallResult {
+            module_id,
+            source_dir: source_dir.to_path_buf(),
+            target_dir,
+            installed: false,
+            package: target_package,
+        });
+    }
+
+    fs::create_dir_all(modules_dir).map_err(|error| {
+        format!(
+            "Failed to create module directory '{}': {}",
+            modules_dir.display(),
+            error
+        )
+    })?;
+
+    let staging_dir = modules_dir.join(format!(".{}.installing", module_id));
+    if staging_dir.exists() {
+        fs::remove_dir_all(&staging_dir).map_err(|error| {
+            format!(
+                "Failed to remove stale module install staging directory '{}': {}",
+                staging_dir.display(),
+                error
+            )
+        })?;
+    }
+
+    copy_dir_recursive(source_dir, &staging_dir)?;
+    scan_package_dir(&staging_dir)?;
+    fs::rename(&staging_dir, &target_dir).map_err(|error| {
+        let _ = fs::remove_dir_all(&staging_dir);
+        format!(
+            "Failed to install module package '{}' to '{}': {}",
+            module_id,
+            target_dir.display(),
+            error
+        )
+    })?;
+
+    let installed_package = scan_package_dir(&target_dir)?;
+    Ok(ModulePackageInstallResult {
+        module_id,
+        source_dir: source_dir.to_path_buf(),
+        target_dir,
+        installed: true,
+        package: installed_package,
+    })
+}
+
+fn copy_dir_recursive(source_dir: &Path, target_dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(target_dir).map_err(|error| {
+        format!(
+            "Failed to create directory '{}': {}",
+            target_dir.display(),
+            error
+        )
+    })?;
+
+    for entry in fs::read_dir(source_dir).map_err(|error| {
+        format!(
+            "Failed to read source directory '{}': {}",
+            source_dir.display(),
+            error
+        )
+    })? {
+        let entry = entry.map_err(|error| {
+            format!(
+                "Failed to read entry in source directory '{}': {}",
+                source_dir.display(),
+                error
+            )
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "Failed to read file type for '{}': {}",
+                entry.path().display(),
+                error
+            )
+        })?;
+        let source_path = entry.path();
+        let target_path = target_dir.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &target_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&source_path, &target_path).map_err(|error| {
+                format!(
+                    "Failed to copy '{}' to '{}': {}",
+                    source_path.display(),
+                    target_path.display(),
+                    error
+                )
+            })?;
+        } else {
+            return Err(format!(
+                "Module package source contains unsupported entry '{}'.",
+                source_path.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub fn scan_package_dir(package_dir: &Path) -> Result<ValidatedModulePackage, String> {
@@ -399,6 +535,39 @@ mod tests {
         assert_eq!(report.packages[0].manifest.id, "gdd");
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].error.contains("missing file"));
+        let _ = fs::remove_dir_all(modules_dir);
+    }
+
+    #[test]
+    fn installs_package_from_source_dir() {
+        let source_dir = write_valid_package("install-source");
+        let modules_dir = unique_package_dir("install-target");
+
+        let result = install_package_from_dir(&source_dir, &modules_dir).expect("install package");
+
+        assert!(result.installed);
+        assert_eq!(result.module_id, "gdd");
+        assert!(modules_dir.join("gdd").join(MODULE_MANIFEST_FILE).is_file());
+        assert!(modules_dir
+            .join("gdd")
+            .join("templates/universal-strict.md")
+            .is_file());
+        let _ = fs::remove_dir_all(source_dir);
+        let _ = fs::remove_dir_all(modules_dir);
+    }
+
+    #[test]
+    fn install_is_idempotent_for_valid_existing_target() {
+        let source_dir = write_valid_package("install-idempotent-source");
+        let modules_dir = unique_package_dir("install-idempotent-target");
+
+        let first = install_package_from_dir(&source_dir, &modules_dir).expect("first install");
+        let second = install_package_from_dir(&source_dir, &modules_dir).expect("second install");
+
+        assert!(first.installed);
+        assert!(!second.installed);
+        assert_eq!(second.package.manifest.id, "gdd");
+        let _ = fs::remove_dir_all(source_dir);
         let _ = fs::remove_dir_all(modules_dir);
     }
 }

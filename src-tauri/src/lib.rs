@@ -1702,6 +1702,45 @@ fn scan_installed_module_ids_lossy(app: &AppHandle) -> std::collections::HashSet
     }
 }
 
+fn bundled_module_package_source(app: &AppHandle, module_id: &str) -> Option<PathBuf> {
+    let module_id = canonicalize_module_id(module_id);
+    let mut candidates = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("module-packages").join(module_id));
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("module-packages")
+            .join(module_id),
+    );
+
+    candidates.into_iter().find(|candidate| candidate.is_dir())
+}
+
+#[tauri::command]
+fn install_bundled_module_package(
+    app: AppHandle,
+    module_id: String,
+) -> Result<module_package::ModulePackageInstallResult, String> {
+    let module_id = canonicalize_module_id(&module_id).to_string();
+    let manifest = module_registry::find_manifest(&module_id)
+        .ok_or_else(|| format!("Unknown module id '{}'.", module_id))?;
+    if !manifest.bundled {
+        return Err(format!(
+            "Module '{}' is not bundled in this build.",
+            module_id
+        ));
+    }
+    let source_dir = bundled_module_package_source(&app, &module_id).ok_or_else(|| {
+        format!(
+            "Bundled module package '{}' was not found in app resources.",
+            module_id
+        )
+    })?;
+    let modules_dir = crate::paths::resolve_modules_dir(&app);
+    module_package::install_package_from_dir(&source_dir, &modules_dir)
+}
+
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
     capability_enabled(settings, RuntimeCapability::AiRefinement)
         && settings.ai_fallback.provider == "ollama"
@@ -4682,6 +4721,7 @@ pub fn run() {
             show_assistant_presence_window,
             list_modules,
             scan_module_packages,
+            install_bundled_module_package,
             enable_module,
             disable_module,
             get_module_health,

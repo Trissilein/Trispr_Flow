@@ -1,15 +1,15 @@
 # Roadmap — Trispr Flow
 
-Last updated: 2026-04-29 — restructured to A-Z priority scheme with complexity / Codex-delegation tags.
+Last updated: 2026-06-09, refactoring plan closed and Block A gate status refreshed.
 
 This file is the canonical source for priorities and execution order. Block IDs (A, B, C, …) reflect **current** execution priority, not historical phase. The Legacy-ID-Mapping at the bottom maps old letter codes (U, V, W, …) used in commit history.
 
 ## Snapshot
 
 - **Released:** `v0.7.0`, `v0.7.1`, `v0.7.2`, `v0.7.3`, `v0.7.4`, `v0.7.5`
-- **Current phase:** `v0.8.x` assistant hardening; Block A (former U) gate-closure pending; Soak-runs intentionally skipped per 2026-04-29 decision.
-- **Foundation complete:** Blocks D, F, G, H, L, M, N, Q, S, T, V (legacy IDs).
-- **Active block:** A (gate-closure of v0.8.x release).
+- **Current phase:** `v0.8.x` assistant hardening; Block A gate closure is still active.
+- **Foundation complete:** Blocks D, F, G, H, L, M, N, Q, S, T, V (legacy IDs), plus the 2026-05 refactoring quality foundation.
+- **Active block:** A (release gate closure). Latest local pass: build, frontend tests, and Rust lib tests pass; strict benchmark linkage is blocked by `local_custom` Piper synthesis failure.
 
 ## Complexity Buckets (used in tables below)
 
@@ -37,6 +37,8 @@ Aligned with `~/.claude/skills/codex-delegate/SKILL.md`:
 | **F** | Assistant Presence Window (3D dot-cloud + TTS panel) | architecturally-tricky | ❌ Claude | 1–2 weeks | A, D | 📋 later |
 
 ### A — v0.8.x Release Gate Closure
+
+Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib` pass. `npm run benchmark:tts` still reports `release_gate_pass=false` because `local_custom` Piper synthesis exits during preflight, while `windows_native` passes with 100% success. `npm run qa:assistant -- --strict-benchmark` remains the required closure command and is not green yet.
 
 - **A1** Generate `bench/results/tts.latest.json` (run `npm run tts:benchmark`) — *trivial, Codex* — runs harness, captures result, attaches to gate. Fallback: I run it inline if Codex unavailable.
 - **A2** Run `npm run qa:assistant -- --strict-benchmark` (no `--require-soak`) — *trivial, Codex* — exit-criteria check. Sign-off doc in `docs/reports/`.

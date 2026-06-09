@@ -38,7 +38,7 @@ Aligned with `~/.claude/skills/codex-delegate/SKILL.md`:
 
 ### A — v0.8.x Release Gate Closure
 
-Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib` pass. `npm run benchmark:tts` still reports `release_gate_pass=false` because `local_custom` Piper synthesis exits during preflight, while `windows_native` passes with 100% success. `npm run qa:assistant -- --strict-benchmark` remains the required closure command and is not green yet.
+Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib` pass. `npm run benchmark:tts` now passes by gating the baseline provider (`windows_native`) and warning on degraded supported optional providers (`local_custom`). `npm run qa:assistant -- --strict-benchmark` remains red because `bench/results/latest.json` is missing; `npm run benchmark:latency` cannot produce it until a Whisper model is available locally.
 
 - **A1** Generate `bench/results/tts.latest.json` (run `npm run tts:benchmark`) — *trivial, Codex* — runs harness, captures result, attaches to gate. Fallback: I run it inline if Codex unavailable.
 - **A2** Run `npm run qa:assistant -- --strict-benchmark` (no `--require-soak`) — *trivial, Codex* — exit-criteria check. Sign-off doc in `docs/reports/`.

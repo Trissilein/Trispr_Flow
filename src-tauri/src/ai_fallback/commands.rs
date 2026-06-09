@@ -793,7 +793,8 @@ pub(crate) fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String>
             .settings
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let _ = unload_ollama_model_impl(&settings.providers.ollama.endpoint, &current_ollama_model);
+        let _ =
+            unload_ollama_model_impl(&settings.providers.ollama.endpoint, &current_ollama_model);
     }
 
     let _ = crate::whisper_server::kill_whisper_server(&state);

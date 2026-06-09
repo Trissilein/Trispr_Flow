@@ -64,7 +64,7 @@ Not yet decided. Each candidate's interface is intentionally not designed yet �
 
 **Problem**: There is no build configuration in which `ai_fallback`, `gdd`, `confluence`, `multimodal_io`, etc. are absent. "Module disabled" only suppresses runtime behavior. This is the literal "halb mitgeladen" Ingo named.
 
-**Solution**: Add a `[features]` block — one flag per opt-in Module, plus `default = ["ai_refinement", "gdd", …]` for the current full build. Wrap each `mod` declaration and each cross-module `use` site with `#[cfg(feature = "…")]`. Variant installers (`run_build.ps1` / `generate-tauri-variant-config.mjs`) pick the feature set; a "pure" variant excludes everything optional.
+**Solution**: Add a `[features]` block — one flag per opt-in Module, plus `default = ["ai_refinement", "gdd", …]` for the current full build. Wrap each `mod` declaration and each cross-module `use` site with `#[cfg(feature = "…")]`. Variant installers (`scripts\windows\build-installers.bat` / `scripts\generate-tauri-variant-config.mjs`) pick the feature set; a "pure" variant excludes everything optional.
 
 **Benefits**: Real load-time separation, smaller binary for stripped variants, compile-time enforcement that the core does not reach across the seam. `cargo build --no-default-features` either works or names every coupling violation.
 

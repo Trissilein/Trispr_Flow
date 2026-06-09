@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **TTS release-gate provider roles**: `windows_native` is the v0.8.2 baseline provider, `local_custom` Piper is supported optional, and `qwen3_tts` is experimental. Supported optional provider failures now pass the TTS release gate with warnings instead of blocking the release.
 - **Refactoring quality foundation closed**: The May 2026 refactoring plan is now closed as an implementation plan after backend command extraction and frontend event wiring decomposition. Remaining architecture cleanup is tracked as residual backlog rather than active release work.
+- **Root directory cleanup**: Moved stale one-off local helpers into `scripts\legacy\`, moved the Whisper CUDA rebuild helper into `scripts\windows\`, and archived the old progress snapshot under `docs\archive\`.
 - **Overlay → active virtual desktop**: `assistant_presence.rs` calls `IVirtualDesktopManager::MoveWindowToDesktop` on every `show_assistant_presence_window`. The KITT/HAL overlay now appears on whichever Windows virtual desktop is active. `Win32_UI_Shell` feature added to the `windows` crate.
 - **CUDA 13 DLL migration**: Runtime filenames updated from `cublas64_12/cublasLt64_12/cudart64_12` to `cublas64_13/cublasLt64_13/cudart64_13` across `transcription.rs`, `tauri.conf.json`, and all build/installer scripts (`first-run.ps1`, `generate-tauri-variant-config.mjs`, `hydrate-whisper-runtime-from-release.ps1`, `validate-whisper-runtime.mjs`, `windows/build-installers.bat`).
 

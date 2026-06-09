@@ -7,20 +7,21 @@ Last updated: 2026-06-09
 - Current release: `v0.8.2-dev`
 - Current planning phase: Block A release gate closure, see `ROADMAP.md`
 - Canonical next steps: `ROADMAP.md` (A → F active zone, Z1-Z4 deferred)
-- Current readiness: architecture refactoring foundation closed; TTS release-gate policy is fixed; strict assistant benchmark linkage is green.
+- Current readiness: architecture refactoring foundation closed; TTS release-gate policy is fixed; strict assistant benchmark linkage is green, but `v0.8.2` is not tagged until Vulkan latency is fixed or explicitly waived.
 
 ## Current Blockers
 
 1. No hard compile/test blockers in the current local verification pass: `npm run build`, `npm test`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib` pass.
 2. `npm run benchmark:tts` passes the release gate with `windows_native` as the baseline provider. `local_custom` Piper remains degraded and is tracked as supported optional follow-up work.
-3. `npm run qa:assistant -- --strict-benchmark` passes with both latency and TTS benchmark reports linked. Soak evidence is still optional and not attached.
+3. `npm run qa:assistant -- --strict-benchmark` passes with both latency and TTS benchmark reports linked. Soak evidence is still optional and not attached. The linked latency evidence used CPU fallback and missed the latency SLO, so Vulkan remains the release-quality blocker before tagging.
 
 ## Next Focus (Execution Order)
 
-1. Review and merge final `v0.8.2` gate docs and report artifacts.
-2. Cut and push tag `v0.8.2` after closure evidence is merged.
-3. Track Piper `local_custom` synthesis crash as follow-up, not as a v0.8.2 release blocker.
-4. Begin Block B UX/UI consistency and picker unification after the release tag is handled.
+1. Diagnose and fix the Vulkan Whisper backend on the target AMD machine.
+2. Rerun production-default latency evidence and `npm run qa:assistant -- --strict-benchmark` after Vulkan is fixed.
+3. Cut and push tag `v0.8.2` only after the Vulkan release constraint is satisfied or explicitly waived.
+4. Track Piper `local_custom` synthesis crash as follow-up, not as a v0.8.2 release blocker.
+5. Begin the Vite warning cleanup, then Block B UX/UI consistency, after the release tag path is settled.
 
 ## Working State
 
@@ -125,7 +126,8 @@ Last updated: 2026-06-09
 
 ## Next Focus
 
-1. Review and merge final `v0.8.2` gate docs and report artifacts.
-2. Cut and push tag `v0.8.2` after closure evidence is merged.
-3. Begin Block B UX/UI consistency and picker unification after the release tag is handled.
-4. Keep Piper `local_custom` and residual architecture cleanup as follow-up work, not release blockers.
+1. Diagnose and fix the Vulkan Whisper backend on the target AMD machine.
+2. Rerun production-default latency evidence and `npm run qa:assistant -- --strict-benchmark` after Vulkan is fixed.
+3. Cut and push tag `v0.8.2` only after the Vulkan release constraint is satisfied or explicitly waived.
+4. Begin the Vite warning cleanup, then Block B UX/UI consistency, after the release tag path is settled.
+5. Keep Piper `local_custom` and residual architecture cleanup as follow-up work, not release blockers.

@@ -5,6 +5,8 @@ param(
   [switch]$NoRefinement,
   [switch]$FailOnSloMiss,
   [string]$RefinementModel,
+  [ValidateSet("vulkan", "vulkan-only", "cuda-lite", "cuda-complete", "ci")]
+  [string]$TauriVariant = "vulkan",
   [string[]]$Fixtures
 )
 
@@ -17,12 +19,17 @@ Set-Location $RepoRoot
 $resultsDir = Join-Path $RepoRoot 'bench/results'
 $reportPath = Join-Path $resultsDir 'latest.json'
 $benchConfigPath = Join-Path $resultsDir 'tauri.benchmark.dev.json'
+$baseConfigPath = Join-Path $RepoRoot 'src-tauri/tauri.conf.json'
+$baseConfigBackupPath = Join-Path $resultsDir 'tauri.conf.base.bak.json'
 New-Item -ItemType Directory -Path $resultsDir -Force | Out-Null
 if (Test-Path $reportPath) {
   Remove-Item $reportPath -Force
 }
 if (Test-Path $benchConfigPath) {
   Remove-Item $benchConfigPath -Force
+}
+if (Test-Path $baseConfigBackupPath) {
+  Remove-Item $baseConfigBackupPath -Force
 }
 
 function Resolve-NpmCmd {
@@ -79,20 +86,30 @@ if ($Fixtures -and $Fixtures.Count -gt 0) {
   Remove-Item Env:TRISPR_BENCHMARK_FIXTURES -ErrorAction SilentlyContinue
 }
 
-Write-Host "[Latency Benchmark] Warmup=$Warmup Runs=$Runs Refinement=$([string](-not $NoRefinement)) FailOnSloMiss=$([string]$FailOnSloMiss) Model=$($env:TRISPR_BENCHMARK_REFINE_MODEL)"
+Write-Host "[Latency Benchmark] Warmup=$Warmup Runs=$Runs Refinement=$([string](-not $NoRefinement)) FailOnSloMiss=$([string]$FailOnSloMiss) Variant=$TauriVariant Model=$($env:TRISPR_BENCHMARK_REFINE_MODEL)"
 $devPort = Get-FreeTcpPort
 $npmCmd = Resolve-NpmCmd
-$overrideConfig = @{
-  build = @{
-    beforeDevCommand = "npm run dev:web -- --port $devPort --strictPort"
-    devUrl = "http://localhost:$devPort"
-  }
+
+& node scripts/generate-tauri-variant-config.mjs --variant $TauriVariant --out $benchConfigPath
+if ($LASTEXITCODE -ne 0) {
+  throw "failed to generate Tauri benchmark config for variant '$TauriVariant'"
 }
-$overrideConfig | ConvertTo-Json -Depth 5 | Set-Content -Path $benchConfigPath -Encoding UTF8
+
+$overrideConfig = Get-Content $benchConfigPath -Raw | ConvertFrom-Json
+$overrideConfig.build = @{
+  beforeDevCommand = "npm run dev:web -- --port $devPort --strictPort"
+  devUrl = "http://localhost:$devPort"
+}
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$benchmarkConfigJson = ($overrideConfig | ConvertTo-Json -Depth 20) + "`n"
+[System.IO.File]::WriteAllText($benchConfigPath, $benchmarkConfigJson, $utf8NoBom)
+Copy-Item -LiteralPath $baseConfigPath -Destination $baseConfigBackupPath -Force
+Copy-Item -LiteralPath $benchConfigPath -Destination $baseConfigPath -Force
 Write-Host "[Latency Benchmark] Using isolated dev server port: $devPort"
 
 # Ensure no stale app process keeps target/debug/trispr-flow.exe locked.
-Get-Process -Name "trispr-flow" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name "trispr-flow" -ErrorAction SilentlyContinue |
+  ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Milliseconds 250
 
 try {
@@ -101,6 +118,10 @@ try {
     throw "tauri dev benchmark run failed with exit code $LASTEXITCODE"
   }
 } finally {
+  if (Test-Path $baseConfigBackupPath) {
+    Copy-Item -LiteralPath $baseConfigBackupPath -Destination $baseConfigPath -Force
+    Remove-Item $baseConfigBackupPath -Force -ErrorAction SilentlyContinue
+  }
   Remove-Item Env:TRISPR_RUN_LATENCY_BENCHMARK -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_RUN_LATENCY_BENCHMARK_EXIT -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_BENCHMARK_WARMUP_RUNS -ErrorAction SilentlyContinue

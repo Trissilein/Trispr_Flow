@@ -7,11 +7,10 @@ Participants: Hendr (architect), automated challenger review
 
 Follow-on architectural work (Trispr Flow modularization) is tracked separately in [`../2026-05-25/trispr-flow-modularization.md`](../2026-05-25/trispr-flow-modularization.md).
 
-Closure note (2026-06-09): This plan is closed as an implementation plan. Its quality-foundation goal was to reduce the highest-risk architecture hotspots before new feature work: backend command implementations were moved to domain modules where the boundary was clean, frontend event wiring was split into domain wire modules, and the standalone state-tier refactor was intentionally cancelled in favour of per-slice accessors. Remaining cleanup items are residual architecture backlog, not blockers for closing this plan.
+Closure note (2026-06-09): This plan is closed as an implementation plan. Its quality-foundation goal was to reduce the highest-risk architecture hotspots before new feature work: backend command implementations were moved to domain modules where the boundary was clean, frontend event wiring was split into domain wire modules, and the standalone state-tier refactor was intentionally cancelled in favour of per-slice accessors. Remaining cleanup items are residual architecture backlog, not blockers for closing this plan. OQ-4 was resolved after closure by PR #12 / `c496baf refactor(settings): split settings render slices`.
 
 Residual backlog after closure:
 
-- Track OQ-4, the `settings-persist.ts` -> `settings/transcription.settings.ts` coupling risk, if either side grows a reverse import.
 - Consider a future settings/core/startup split for commands intentionally left in `lib.rs`.
 - Rename `workflow_agent.rs` to `assistant_core.rs` only if the naming mismatch starts causing navigation or domain-language confusion.
 - Continue GDD/module source decoupling under the module-installability decision, not under this refactoring plan.
@@ -314,15 +313,16 @@ The contract is fixed for all R2 slices so the pattern, once set on slice 1, is 
 
 ### OQ-4 — `settings-persist.ts` → `transcription.settings.ts` coupling risk
 
-**Open.**
+**RESOLVED 2026-06-09.**
 
-`settings-persist.ts` imports `derivePostprocLanguageFromAsr` from `settings/transcription.settings.ts`. `settings/index.ts` imports from `settings-persist.ts`. If `transcription.settings.ts` ever imports from `settings-persist.ts` or `settings/index.ts`, a new cycle forms. Identified during QW3 design review (2026-05-23). No action required now — log as backlog.
+Resolved by PR #12 / `c496baf refactor(settings): split settings render slices`. Pure ASR/Post-Processing language derivation moved to dependency-free `src/language-utils.ts`, and `settings-persist.ts` now imports `derivePostprocLanguageFromAsr` from that module instead of from `settings/transcription.settings.ts`. `settings/index.ts` remains the settings orchestrator, while Continuous Dump, Recording Quality, and Post-Processing rendering live in dedicated settings slices. The cycle risk is closed.
 
 ---
 
 ## Constraints (binding)
 
-- Active block (Block U, v0.8.x) remaining work is soak tests (U2/U3) and a release-gate doc (U4). No code changes to `event-listeners.ts`, `settings.ts`, or `lib.rs` are in progress. Merge conflict risk for Phase 1/2 refactoring is currently zero. (Updated 2026-05-15 — previous constraint named Block B, which is complete.)
+- This refactoring plan is closed and no longer controls active release work. Current release-gate closure is tracked in `ROADMAP.md` as Block A for v0.8.2.
+- Follow-up architecture cleanup from this plan is residual backlog only. New cleanup work should be tracked under the relevant roadmap or modularization decision instead of reopening this plan.
 - No framework additions to the TypeScript frontend (no React, Vue, Svelte, or signals library).
 - Git operations in native Windows shell only (per CLAUDE.md).
 - No retroactive ADRs for items already in `docs/DECISIONS.md`. New decisions go here.

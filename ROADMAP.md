@@ -9,7 +9,7 @@ This file is the canonical source for priorities and execution order. Block IDs 
 - **Released:** `v0.7.0`, `v0.7.1`, `v0.7.2`, `v0.7.3`, `v0.7.4`, `v0.7.5`
 - **Current phase:** `v0.8.x` assistant hardening; Block A gate closure is still active.
 - **Foundation complete:** Blocks D, F, G, H, L, M, N, Q, S, T, V (legacy IDs), plus the 2026-05 refactoring quality foundation.
-- **Active block:** A (release gate closure). Latest local pass: build, frontend tests, and Rust lib tests pass; strict benchmark linkage is blocked by `local_custom` Piper synthesis failure.
+- **Active block:** A (release gate closure). Latest local pass: build, frontend tests, Rust lib tests, TTS baseline gating, and strict benchmark linkage pass; optional TTS provider degradation remains warning-only follow-up work.
 
 ## Complexity Buckets (used in tables below)
 
@@ -38,12 +38,13 @@ Aligned with `~/.claude/skills/codex-delegate/SKILL.md`:
 
 ### A — v0.8.x Release Gate Closure
 
-Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib` pass. `npm run benchmark:tts` still reports `release_gate_pass=false` because `local_custom` Piper synthesis exits during preflight, while `windows_native` passes with 100% success. `npm run qa:assistant -- --strict-benchmark` remains the required closure command and is not green yet.
+Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib` pass. `npm run benchmark:tts` passes by gating the baseline provider (`windows_native`) and warning on degraded supported optional providers (`local_custom`). `npm run benchmark:latency` produced `bench/results/latest.json`, and `npm run qa:assistant -- --strict-benchmark` passes with benchmark linkage.
 
-- **A1** Generate `bench/results/tts.latest.json` (run `npm run tts:benchmark`) — *trivial, Codex* — runs harness, captures result, attaches to gate. Fallback: I run it inline if Codex unavailable.
-- **A2** Run `npm run qa:assistant -- --strict-benchmark` (no `--require-soak`) — *trivial, Codex* — exit-criteria check. Sign-off doc in `docs/reports/`.
-- **A3** Update `STATUS.md` + `CHANGELOG.md` with v0.8.x release notes — *simple, Codex* — boilerplate writes from gate-output JSON.
-- **A4** Cut tag `v0.8.0` and push — *trivial, manual* — Claude orchestrates, user runs `git tag` + `git push --tags` himself.
+- **A1** Generate `bench/results/tts.latest.json` (run `npm run benchmark:tts`) — *done* — TTS baseline gating passes with `windows_native`; `local_custom` remains supported-optional follow-up.
+- **A2** Generate `bench/results/latest.json` (run `npm run benchmark:latency`) — *done* — latency evidence is linked for the strict assistant gate.
+- **A3** Run `npm run qa:assistant -- --strict-benchmark` (no `--require-soak`) — *done* — exit-criteria check generated sign-off reports in `docs/reports/`.
+- **A4** Update `STATUS.md` + `CHANGELOG.md` with v0.8.2 release notes — *done* — status docs reflect gate-output JSON.
+- **A5** Cut tag `v0.8.2` and push — *trivial, manual* — Claude orchestrates, user runs `git tag` + `git push --tags` himself after closure evidence is merged.
 
 ### B — UX/UI consistency + Picker-Unification
 

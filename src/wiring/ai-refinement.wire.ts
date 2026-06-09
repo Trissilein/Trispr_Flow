@@ -31,9 +31,9 @@ import {
 } from "../settings/ai-refinement.settings";
 import { renderSettings } from "../settings";
 import {
-  resolveEffectiveAsrLanguageHint,
   derivePostprocLanguageFromAsr,
-} from "../settings/transcription.settings";
+  resolveEffectiveAsrLanguageHint,
+} from "../language-utils";
 import { persistSettings, syncDerivedLanguageSettings } from "../settings-persist";
 import { addVocabRow } from "../settings/vocabulary.settings";
 import { renderHero } from "../ui-state";

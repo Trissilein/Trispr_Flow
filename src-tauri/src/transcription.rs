@@ -1872,14 +1872,45 @@ fn whisper_cli_supports_gpu_layers(cli_path: &Path) -> bool {
     result
 }
 
+fn whisper_cli_supports_no_gpu(cli_path: &Path) -> bool {
+    static CACHE: std::sync::OnceLock<Mutex<HashMap<PathBuf, bool>>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    if let Ok(guard) = cache.lock() {
+        if let Some(&cached) = guard.get(cli_path) {
+            return cached;
+        }
+    }
+
+    let result = whisper_cli_probe_no_gpu(cli_path);
+
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(cli_path.to_path_buf(), result);
+    }
+
+    result
+}
+
+fn whisper_cli_probe_no_gpu(cli_path: &Path) -> bool {
+    whisper_cli_help_text(cli_path)
+        .map(|help_text| help_text.contains("-ng") || help_text.contains("--no-gpu"))
+        .unwrap_or(false)
+}
+
 fn whisper_cli_probe_gpu_layers(cli_path: &Path) -> bool {
+    whisper_cli_help_text(cli_path)
+        .map(|help_text| help_text.contains("-ngl") || help_text.contains("--gpu-layers"))
+        .unwrap_or(false)
+}
+
+fn whisper_cli_help_text(cli_path: &Path) -> Option<String> {
     if let Some(issue) = whisper_runtime_preflight_issue(cli_path) {
         warn!(
-            "Skipping whisper-cli GPU layer probe for '{}' due to runtime preflight issue: {}",
+            "Skipping whisper-cli arg probe for '{}' due to runtime preflight issue: {}",
             cli_path.display(),
             issue
         );
-        return false;
+        return None;
     }
 
     let mut probe = Command::new(cli_path);
@@ -1899,17 +1930,18 @@ fn whisper_cli_probe_gpu_layers(cli_path: &Path) -> bool {
                 cli_path.display(),
                 err
             );
-            return false;
+            return None;
         }
     };
 
-    let help_text = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+    Some(
+        format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .to_lowercase(),
     )
-    .to_lowercase();
-    help_text.contains("-ngl") || help_text.contains("--gpu-layers")
 }
 
 fn whisper_runtime_missing_message(detail: &str) -> String {
@@ -2640,6 +2672,9 @@ fn run_whisper_cli(
 
     // Explicitly enable GPU on CUDA/Vulkan builds if detected.
     // CPU fallback mode intentionally skips this.
+    if force_cpu && whisper_cli_supports_no_gpu(cli_path) {
+        command.arg("-ng");
+    }
     if backend_gpu_capable && !force_cpu {
         command.arg("-dev").arg("0");
     }

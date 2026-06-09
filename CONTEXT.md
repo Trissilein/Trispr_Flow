@@ -4,7 +4,7 @@ This file is the canonical source for domain language in Trispr Flow.
 It is written for domain experts (users, designers, contributors), not for implementation details.
 Update this file inline as terms are resolved during design sessions.
 
-Last updated: 2026-06-08
+Last updated: 2026-06-09
 
 ---
 
@@ -33,6 +33,17 @@ Whisper Backend is part of Trispr Core. Core owns the selected Whisper model, lo
 
 Model Management is only partially Core: the minimum ability to locate and use a model is Core, but larger management surfaces such as download/import/quantize/remove flows, online model discovery, benchmarking, and evaluation are optional tooling surfaces rather than the Core baseline.
 → `src-tauri/src/whisper_server.rs`, `src-tauri/src/models.rs`
+
+### Release Gate
+The evidence-backed check that decides whether the current release line can move forward. For v0.8.2, Block A is the active release-gate closure block.
+
+Confirmed 2026-06-09: Block A closes only when the strict assistant gate passes on fresh `main`. The gate must link both latency evidence (`bench/results/latest.json`) and TTS evidence (`bench/results/tts.latest.json`). TTS evidence is green after PR #11, while latency evidence still requires a local production-default Whisper model.
+
+Confirmed 2026-06-09: Block A latency evidence must use the production default Whisper model class, `ggml-large-v3-turbo.bin`, or an explicit `TRISPR_WHISPER_MODEL` pointing to equivalent large-v3-turbo evidence. Smaller smoke models are not accepted as final release evidence.
+
+Confirmed 2026-06-09: the final release target for this gate is v0.8.2. Older roadmap wording that names v0.8.0 for the final tag is stale.
+
+→ `scripts/assistant-release-gate.mjs`, `scripts/latency-benchmark.ps1`, `docs/V0.8.x_BLOCK_U_RELEASE_GATE.md`
 
 ### AI Refinement
 An optional post-transcription pass that sends raw transcript text to a local LLM (Ollama or LM Studio) or a cloud provider to correct, reformat, or summarize. A managed Module; disabled by default.
@@ -128,6 +139,14 @@ Legacy ID `workflow_agent` still exists in persisted user settings and as the Ru
 
 ### Voice Output TTS (`output_voice_tts`)
 Optional Feature Module that speaks text aloud. Voice Output TTS is not part of Trispr Core: Core can emit events or text that Voice Output consumes, but speech playback, provider/voice selection, Piper/Qwen/Windows runtime behavior, playback control, output policy, and voice settings belong to the Feature Module.
+
+Confirmed 2026-06-09: for the v0.8.2 release gate, Windows Native TTS is the supported baseline provider. Piper `local_custom` is still a provider we intend to fix, but it is not release-critical for v0.8.2. A Piper runtime failure should make that provider degraded and tracked as follow-up work, not block release when Windows Native TTS is healthy.
+
+Confirmed 2026-06-09: TTS providers use release-gate roles. A **baseline** provider must pass the release gate. A **supported optional** provider is supported and should be reported when degraded, but it does not block release if the baseline provider passes. An **experimental** provider is benchmark-observed only and does not block release. For v0.8.2, `windows_native` is baseline, `local_custom` is supported optional, and `qwen3_tts` is experimental.
+
+Confirmed 2026-06-09: a degraded supported optional TTS provider passes the release gate with a warning. The release report should make degraded optional providers visible without requiring a manual override flag.
+
+Confirmed 2026-06-09: for now, TTS provider release-gate roles are release policy, not runtime product configuration. The benchmark/release-gate scripts own the provider-tier mapping until a real product need appears to expose or share those roles elsewhere.
 
 → `src-tauri/src/multimodal_io.rs`, `src/settings/voice-output.settings.ts`
 

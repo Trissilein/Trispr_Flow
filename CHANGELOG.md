@@ -22,8 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Release-gate evidence refreshed**: The Block A local gate evidence now reflects the current state: build/tests and TTS baseline gating are green, while strict benchmark closure remains blocked by missing latency benchmark evidence on this host.
-- **`cargo test --lib` loader crash resolved**: `src-tauri/build.rs` now emits `/DELAYLOAD:comctl32.dll` and links `delayimp` for MSVC targets. Moves `comctl32.dll` from hard PE imports to delay imports, preventing `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139) at process startup. Root cause: `comctl32` v5.82 (`System32`) does not export `TaskDialogIndirect`; the test binary has no application manifest to activate the SxS v6 context that the production binary gets from `tauri-winres`. Since tests never call `TaskDialogIndirect`, delay-loading avoids the resolution entirely. `--no-run` workaround removed from `test:smoke` (both `package.json` and `scripts/release-qa.mjs`). Current local verification passes `cargo test --manifest-path src-tauri/Cargo.toml --lib` with 245 tests.
+- **Release-gate evidence refreshed**: The Block A local gate evidence now reflects the current state: build/tests and TTS baseline gating are green, while strict benchmark closure remains blocked by missing production-default latency benchmark evidence on this host.
+- **`cargo test --lib` loader crash resolved**: `src-tauri/build.rs` now emits `/DELAYLOAD:comctl32.dll` and links `delayimp` for MSVC targets. Moves `comctl32.dll` from hard PE imports to delay imports, preventing `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139) at process startup. Root cause: `comctl32` v5.82 (`System32`) does not export `TaskDialogIndirect`; the test binary has no application manifest to activate the SxS v6 context that the production binary gets from `tauri-winres`. Since tests never call `TaskDialogIndirect`, delay-loading avoids the resolution entirely. `--no-run` workaround removed from `test:smoke` (both `package.json` and `scripts/release-qa.mjs`). Current local verification passes `cargo test --manifest-path src-tauri/Cargo.toml --lib`.
 - **Vite dynamic-import chunk warnings**: `vocab-auto-learn.ts` was dynamically importing `settings.ts` (which it already statically imported), and `settings.ts` was dynamically importing `vocab-auto-learn.ts`. Both modules are always in the same chunk via `main.ts`; the dynamic imports achieved no code-splitting and triggered Vite `(!) dynamic import will not move module into another chunk` warnings. Converted to static imports on both sides.
 
 ## [0.8.1] - 2026-05-05
@@ -58,6 +58,12 @@ Block A release-gate closure for the v0.8.x assistant phase. Soak runs (U2/U3) i
 ### Known issues
 
 - `cargo test --manifest-path src-tauri/Cargo.toml --lib` fails at `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139) on the current Windows 11 build host — a DLL loader issue at test-binary startup, before any test code runs. Pre-existing: reproduces identically against `b3db990` (pre-vocab) and remains environment-specific. **Production binary is unaffected** (`trispr-flow.exe` runs cleanly). Full diagnosis archived in [`docs/KNOWN_ISSUES.md` #001](docs/KNOWN_ISSUES.md). Gate accepts `--skip-rust-lib-tests` as workaround.
+
+## [0.7.5] - 2026-04-12
+
+### Fixed
+
+- **Release-pipeline hardening**: Hardened Windows release builds for clean GitHub runners, kept installer runtime paths consistent under `<install>\bin\...`, prevented silent-install automation from stalling on runtime warning dialogs, and updated release tooling order to avoid tag/release drift.
 
 ## [0.7.4] - 2026-04-12
 

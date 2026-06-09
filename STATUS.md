@@ -17,7 +17,7 @@ Last updated: 2026-06-09
 
 ## Next Focus (Execution Order)
 
-1. Hydrate or point the benchmark host at a local Whisper model, then rerun `npm run benchmark:latency`.
+1. Hydrate or point the benchmark host at production-default `ggml-large-v3-turbo.bin`, then rerun `npm run benchmark:latency`.
 2. Rerun `npm run qa:assistant -- --strict-benchmark` and keep the generated report in `docs/reports/`.
 3. Track Piper `local_custom` synthesis crash as follow-up, not as a v0.8.2 release blocker.
 4. Only after Block A is green, move to Block B UX/UI consistency and picker unification.
@@ -125,7 +125,7 @@ Last updated: 2026-06-09
 
 ## Next Focus
 
-1. Complete Block U soak runs (U2/U3: 8h + 24h) and close `v0.8.x` release gate.
-2. Begin Block J: Task 44 word-diff extraction from refinement events → persistence threshold → vocabulary suggestion UI.
-3. Screen Recording Module (future): active-window capture before Enter/send-click → OCR diff → vocabulary ground-truth learning.
-4. Keep Block R follow-up (`R4`–`R6`) non-blocking and regression-safe.
+1. Finish Block A on fresh `main`: hydrate release Whisper runtime, provide `ggml-large-v3-turbo.bin`, run `npm run benchmark:latency`, then run `npm run qa:assistant -- --strict-benchmark`.
+2. Update final `v0.8.2` gate docs and report artifacts after the strict gate passes.
+3. Begin Block B UX/UI consistency and picker unification only after Block A is green.
+4. Keep Piper `local_custom` and residual architecture cleanup as follow-up work, not release blockers.

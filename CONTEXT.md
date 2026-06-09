@@ -4,7 +4,7 @@ This file is the canonical source for domain language in Trispr Flow.
 It is written for domain experts (users, designers, contributors), not for implementation details.
 Update this file inline as terms are resolved during design sessions.
 
-Last updated: 2026-06-08
+Last updated: 2026-06-09
 
 ---
 
@@ -33,6 +33,17 @@ Whisper Backend is part of Trispr Core. Core owns the selected Whisper model, lo
 
 Model Management is only partially Core: the minimum ability to locate and use a model is Core, but larger management surfaces such as download/import/quantize/remove flows, online model discovery, benchmarking, and evaluation are optional tooling surfaces rather than the Core baseline.
 → `src-tauri/src/whisper_server.rs`, `src-tauri/src/models.rs`
+
+### Release Gate
+The evidence-backed check that decides whether the current release line can move forward. For v0.8.2, Block A is the active release-gate closure block.
+
+Confirmed 2026-06-09: Block A closes only when the strict assistant gate passes on fresh `main`. The gate must link both latency evidence (`bench/results/latest.json`) and TTS evidence (`bench/results/tts.latest.json`). TTS evidence is green after PR #11, while latency evidence still requires a local production-default Whisper model.
+
+Confirmed 2026-06-09: Block A latency evidence must use the production default Whisper model class, `ggml-large-v3-turbo.bin`, or an explicit `TRISPR_WHISPER_MODEL` pointing to equivalent large-v3-turbo evidence. Smaller smoke models are not accepted as final release evidence.
+
+Confirmed 2026-06-09: the final release target for this gate is v0.8.2. Older roadmap wording that names v0.8.0 for the final tag is stale.
+
+→ `scripts/assistant-release-gate.mjs`, `scripts/latency-benchmark.ps1`, `docs/V0.8.x_BLOCK_U_RELEASE_GATE.md`
 
 ### AI Refinement
 An optional post-transcription pass that sends raw transcript text to a local LLM (Ollama or LM Studio) or a cloud provider to correct, reformat, or summarize. A managed Module; disabled by default.

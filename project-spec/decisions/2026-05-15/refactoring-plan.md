@@ -1,11 +1,20 @@
 # Refactoring Plan — Trispr Flow Quality Foundation
 
 Date: 2026-05-15  
-Last verified: 2026-05-25
-Status: **Phase 0 complete · Phase 1 complete · R2 complete · R1 execution complete (2026-05-25) · B8 coordinator extracted**
+Last verified: 2026-06-09
+Status: **closed (2026-06-09) · Phase 0 complete · Phase 1 complete · R1 complete · R2 complete · R3 cancelled/folded into R2**
 Participants: Hendr (architect), automated challenger review
 
 Follow-on architectural work (Trispr Flow modularization) is tracked separately in [`../2026-05-25/trispr-flow-modularization.md`](../2026-05-25/trispr-flow-modularization.md).
+
+Closure note (2026-06-09): This plan is closed as an implementation plan. Its quality-foundation goal was to reduce the highest-risk architecture hotspots before new feature work: backend command implementations were moved to domain modules where the boundary was clean, frontend event wiring was split into domain wire modules, and the standalone state-tier refactor was intentionally cancelled in favour of per-slice accessors. Remaining cleanup items are residual architecture backlog, not blockers for closing this plan.
+
+Residual backlog after closure:
+
+- Track OQ-4, the `settings-persist.ts` -> `settings/transcription.settings.ts` coupling risk, if either side grows a reverse import.
+- Consider a future settings/core/startup split for commands intentionally left in `lib.rs`.
+- Rename `workflow_agent.rs` to `assistant_core.rs` only if the naming mismatch starts causing navigation or domain-language confusion.
+- Continue GDD/module source decoupling under the module-installability decision, not under this refactoring plan.
 
 ---
 

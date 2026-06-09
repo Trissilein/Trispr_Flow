@@ -31,9 +31,9 @@
     }
   ],
   "benchmarks": {
-    "latency_present": true,
+        "latency_present": true,
     "tts_present": true,
-    "tts_release_gate_pass": true,
+        "tts_release_gate_pass": true,
     "tts_provider_consistency_ok": true,
     "tts_baseline_providers": [
       "windows_native"

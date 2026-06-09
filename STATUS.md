@@ -7,27 +7,27 @@ Last updated: 2026-06-09
 - Current release: `v0.8.2-dev`
 - Current planning phase: Block A release gate closure, see `ROADMAP.md`
 - Canonical next steps: `ROADMAP.md` (A → F active zone, Z1-Z4 deferred)
-- Current readiness: architecture refactoring foundation closed; TTS release-gate policy is fixed; release gate is not closed because latency benchmark evidence is missing.
+- Current readiness: architecture refactoring foundation closed; TTS release-gate policy is fixed; strict assistant benchmark linkage is green.
 
 ## Current Blockers
 
 1. No hard compile/test blockers in the current local verification pass: `npm run build`, `npm test`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib` pass.
 2. `npm run benchmark:tts` passes the release gate with `windows_native` as the baseline provider. `local_custom` Piper remains degraded and is tracked as supported optional follow-up work.
-3. `npm run qa:assistant -- --strict-benchmark` remains red because `bench/results/latest.json` is missing. `npm run benchmark:latency` currently fails before writing the report because no local Whisper model is available (`TRISPR_WHISPER_MODEL_DIR` or `TRISPR_WHISPER_MODEL`).
+3. `npm run qa:assistant -- --strict-benchmark` passes with both latency and TTS benchmark reports linked. Soak evidence is still optional and not attached.
 
 ## Next Focus (Execution Order)
 
-1. Hydrate or point the benchmark host at production-default `ggml-large-v3-turbo.bin`, then rerun `npm run benchmark:latency`.
-2. Rerun `npm run qa:assistant -- --strict-benchmark` and keep the generated report in `docs/reports/`.
+1. Review and merge final `v0.8.2` gate docs and report artifacts.
+2. Cut and push tag `v0.8.2` after closure evidence is merged.
 3. Track Piper `local_custom` synthesis crash as follow-up, not as a v0.8.2 release blocker.
-4. Only after Block A is green, move to Block B UX/UI consistency and picker unification.
+4. Begin Block B UX/UI consistency and picker unification after the release tag is handled.
 
 ## Working State
 
 - **Recent (2026-06-09)**:
   - **Refactoring plan closed**: `project-spec/decisions/2026-05-15/refactoring-plan.md` is closed as an implementation plan. R1 and R2 are complete, R3 was cancelled/folded into R2, and remaining cleanup is residual backlog.
   - **GDD module installability slice merged**: GDD has the first bundled module package path, manifest validation, registry install-state derivation, runtime command gates, and Modules Hub install action.
-  - **Block A gate refresh**: frontend build/tests and Rust lib tests pass locally. TTS baseline gating now passes with `windows_native`; `local_custom` Piper is reported as degraded supported optional. Strict assistant release gate remains blocked by missing latency benchmark evidence because the benchmark host has no local Whisper model.
+  - **Block A gate refresh**: frontend build/tests and Rust lib tests pass locally. TTS baseline gating now passes with `windows_native`; `local_custom` Piper is reported as degraded supported optional. Strict assistant release gate passes with latency and TTS benchmark reports linked.
 
 - **Recent (2026-05-18)**:
   - **CUDA 13 DLL migration**: `cublas64_12/cublasLt64_12/cudart64_12` → `*_13` across `transcription.rs`, `tauri.conf.json`, and all build/installer scripts. Matches CUDA Toolkit 13 library naming.
@@ -125,7 +125,7 @@ Last updated: 2026-06-09
 
 ## Next Focus
 
-1. Finish Block A on fresh `main`: hydrate release Whisper runtime, provide `ggml-large-v3-turbo.bin`, run `npm run benchmark:latency`, then run `npm run qa:assistant -- --strict-benchmark`.
-2. Update final `v0.8.2` gate docs and report artifacts after the strict gate passes.
-3. Begin Block B UX/UI consistency and picker unification only after Block A is green.
+1. Review and merge final `v0.8.2` gate docs and report artifacts.
+2. Cut and push tag `v0.8.2` after closure evidence is merged.
+3. Begin Block B UX/UI consistency and picker unification after the release tag is handled.
 4. Keep Piper `local_custom` and residual architecture cleanup as follow-up work, not release blockers.

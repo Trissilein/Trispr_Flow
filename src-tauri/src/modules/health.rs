@@ -1,7 +1,13 @@
 use super::{registry, ModuleHealthStatus, ModuleSettings, ModuleUpdateInfo};
+use std::collections::HashSet;
 
-pub fn get_health(settings: &ModuleSettings, module_id: Option<&str>) -> Vec<ModuleHealthStatus> {
-    let descriptors = registry::modules_as_descriptors(settings);
+pub fn get_health_with_packages(
+    settings: &ModuleSettings,
+    module_id: Option<&str>,
+    installed_package_ids: &HashSet<String>,
+) -> Vec<ModuleHealthStatus> {
+    let descriptors =
+        registry::modules_as_descriptors_with_packages(settings, installed_package_ids);
     descriptors
         .into_iter()
         .filter(|descriptor| {
@@ -32,8 +38,12 @@ pub fn get_health(settings: &ModuleSettings, module_id: Option<&str>) -> Vec<Mod
         .collect()
 }
 
-pub fn check_updates(settings: &ModuleSettings, module_id: Option<&str>) -> Vec<ModuleUpdateInfo> {
-    registry::modules_as_descriptors(settings)
+pub fn check_updates_with_packages(
+    settings: &ModuleSettings,
+    module_id: Option<&str>,
+    installed_package_ids: &HashSet<String>,
+) -> Vec<ModuleUpdateInfo> {
+    registry::modules_as_descriptors_with_packages(settings, installed_package_ids)
         .into_iter()
         .filter(|descriptor| {
             module_id

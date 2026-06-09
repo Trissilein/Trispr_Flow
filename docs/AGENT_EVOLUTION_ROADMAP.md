@@ -1,19 +1,16 @@
 # Agent Evolution Roadmap - Transkript-Tool -> vollwertiger Trispr-Agent
 
-Last updated: 2026-03-28
-Status: Accepted roadmap (execution-ready)
+Last updated: 2026-06-08
+Status: Prioritaeten teilweise ueberholt, Original-Roadmap bleibt zur Nachverfolgung erhalten
 
 ## Summary
 
-Trispr entwickelt sich in klaren, messbaren Stufen:
-- von Transkript + Archiv + TTS + Workflow-Agent
-- hin zum produktionsnahen **GDD-Copilot**
-- und danach zum vollwertigen, sprachgeführten Co-Worker.
+Diese Roadmap bleibt als historischer Planungskontext erhalten. Der urspruengliche Pfad fuehrte von Transkript + Archiv + TTS + Workflow-Agent zu einem produktionsnahen GDD-Copilot und danach zu einem breiteren sprachgefuehrten Co-Worker. Ingo hat am 2026-06-08 geklaert, dass GDD Copilot keine Produktprioritaet mehr ist. Die Phasenreihenfolge unten ist deshalb keine aktuelle Umsetzungsanweisung mehr.
 
 Fixe Leitplanken:
 - Aktivierung: **Hybrid** (Mode-Switch + Wakeword im Assistant-Modus)
 - Autonomie: **Plan+Confirm** für alle Side-Effects
-- Priorität: **GDD Copilot zuerst**
+- Priorität: **GDD Copilot ist nicht mehr vorrangig** (Ingo, 2026-06-08)
 - LLM-Strategie: **Local-first**, Cloud nur optionaler Fallback
 
 ## Phasen und Exit-Kriterien
@@ -39,7 +36,7 @@ Ziel:
 Exit-Kriterium:
 - Assistant-Modus stabil nutzbar ohne Regression des Transcribe-Modus
 
-### Phase 2 - GDD-Copilot Loop (2-3 Wochen, Block V)
+### Phase 2 - GDD-Copilot Loop (historical, not current priority)
 
 Ziel:
 - Workflow-Agent von Command-Trigger zu Copilot-Loop erweitern

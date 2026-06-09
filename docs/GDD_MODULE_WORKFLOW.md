@@ -1,22 +1,28 @@
 # GDD Module Workflow
 
-Last updated: 2026-03-06
+Last updated: 2026-06-08
 
-This guide describes the current end-to-end workflow in Trisper Flow for generating and publishing Game Design Documents.
+This guide describes the current end-to-end workflow in Trispr Flow for generating and publishing Game Design Documents.
 
 ## Prerequisites
 
-1. GDD flow is a core capability and always available from the `Modules` tab.
+1. GDD flow belongs to the GDD module. The old core-always-on assumption was superseded on 2026-06-08.
 2. If publishing to Confluence is needed:
    - Configure Confluence auth (`OAuth` or `API token`).
    - Ensure `site_base_url` and (for OAuth) `oauth_cloud_id` are set.
    - Set a default space key if possible.
 3. Optional automation path:
-   - Enable module `workflow_agent` for wakeword-driven command orchestration.
+   - Enable Assistant Core (`assistant_core`, legacy ID `workflow_agent`) for wakeword-driven command orchestration.
+4. Target installability:
+   - GDD uses the installable module package model: an unpacked package with a valid manifest and required assets marks the module installed.
+   - Current backend support includes the GDD package fixture, manifest scanner, `module-gdd` gate, package-aware registry state, and runtime command gates.
+   - The Modules tab install action calls `install_bundled_module_package` to unpack the bundled or development `gdd` package into the local module directory.
+   - GDD commands require installed module assets, enabled module state, and enabled GDD settings.
+   - Confluence is part of the GDD module, not a separately installable module.
 
 ## Flow
 
-### Manual core flow
+### Manual GDD flow
 
 1. Open `Modules` tab and click `Open GDD Flow`.
 2. Select a GDD preset (or run `Auto-detect Preset`).
@@ -41,10 +47,10 @@ This guide describes the current end-to-end workflow in Trisper Flow for generat
    - `manifest.json`
 4. Pending queue jobs can be retried or deleted directly from the GDD flow.
 
-### Workflow-agent flow (optional module)
+### Assistant Core flow (optional module)
 
-1. Enable `workflow_agent` in `Modules`.
-2. Speak or type a wakeword command (e.g. “Hey Trispr, create and publish a GDD from yesterday”).
+1. Enable Assistant Core in `Modules`.
+2. Speak or type a wakeword command (e.g. "Hey Trispr, create and publish a GDD from yesterday").
 3. Agent parses intent and returns candidate sessions (1-3).
 4. Confirm selected session.
 5. Select target language (always asked).

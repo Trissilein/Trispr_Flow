@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "gdd",
+  "name": "GDD Automation",
+  "version": "0.1.0",
+  "host_capability": "gdd",
+  "required_assets": [
+    {
+      "id": "universal_strict_template",
+      "path": "templates/universal-strict.md",
+      "kind": "file"
+    }
+  ],
+  "sub_capabilities": [
+    {
+      "id": "draft_generation",
+      "label": "Draft Generation"
+    },
+    {
+      "id": "validation",
+      "label": "Validation"
+    },
+    {
+      "id": "file_template_import",
+      "label": "File Template Import"
+    },
+    {
+      "id": "confluence_template_import",
+      "label": "Confluence Template Import",
+      "requires_setup": true
+    },
+    {
+      "id": "confluence_publishing",
+      "label": "Confluence Publishing",
+      "requires_setup": true
+    },
+    {
+      "id": "routing_suggestions",
+      "label": "Routing Suggestions",
+      "requires_setup": true
+    }
+  ]
+}

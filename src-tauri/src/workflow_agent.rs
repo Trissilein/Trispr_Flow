@@ -1575,6 +1575,7 @@ pub(crate) fn assistant_execute_direct_action(
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
+            crate::gdd::require_gdd_module_active(&app, &settings)?;
             settings.clone()
         };
 

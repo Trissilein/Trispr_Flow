@@ -13,6 +13,11 @@ use crate::state::{
 use crate::transcription::{start_transcribe_monitor, stop_transcribe_monitor_and_release_whisper};
 use tauri::{AppHandle, Emitter};
 
+fn scan_installed_module_ids(app: &AppHandle) -> Result<std::collections::HashSet<String>, String> {
+    let modules_dir = crate::paths::resolve_modules_dir(app);
+    crate::modules::package::scan_installed_module_ids(&modules_dir)
+}
+
 pub(crate) fn enable_module_actions(
     app: &AppHandle,
     state: &AppState,
@@ -25,6 +30,7 @@ pub(crate) fn enable_module_actions(
     }
 
     let grants = grant_permissions.unwrap_or_default();
+    let installed_package_ids = scan_installed_module_ids(app)?;
 
     // ==========================================
     // PHASE A: Settle (In-Memory State Settle)
@@ -36,10 +42,17 @@ pub(crate) fn enable_module_actions(
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let prev_transcribe_enabled = settings.transcribe_enabled;
 
-        let result =
-            module_lifecycle::enable_module(&mut settings.module_settings, &module_id, &grants);
+        let result = module_lifecycle::enable_module_with_packages(
+            &mut settings.module_settings,
+            &module_id,
+            &grants,
+            &installed_package_ids,
+        );
 
         if result.is_ok() {
+            if module_id == "gdd" {
+                settings.gdd_module_settings.enabled = true;
+            }
             if module_id == ASSISTANT_CORE_MODULE_ID {
                 settings.workflow_agent.enabled = true;
                 settings.assistant_presence_enabled = true;
@@ -76,7 +89,10 @@ pub(crate) fn enable_module_actions(
         normalize_voice_output_settings(&mut settings.voice_output_settings);
         crate::reconcile_assistant_transcribe_flag(&mut settings);
 
-        let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
+        let descriptors = module_registry::modules_as_descriptors_with_packages(
+            &settings.module_settings,
+            &installed_package_ids,
+        );
         (
             result,
             settings.clone(),
@@ -144,6 +160,7 @@ pub(crate) fn disable_module_actions(
     if module_id.is_empty() {
         return Err("Module id cannot be empty.".to_string());
     }
+    let installed_package_ids = scan_installed_module_ids(app).unwrap_or_default();
 
     // ==========================================
     // PHASE A: Settle (In-Memory State Settle)
@@ -158,6 +175,9 @@ pub(crate) fn disable_module_actions(
         let result = module_lifecycle::disable_module(&mut settings.module_settings, &module_id);
 
         if result.is_ok() {
+            if module_id == "gdd" {
+                settings.gdd_module_settings.enabled = false;
+            }
             if module_id == ASSISTANT_CORE_MODULE_ID {
                 settings.workflow_agent.enabled = false;
             }
@@ -189,7 +209,10 @@ pub(crate) fn disable_module_actions(
         normalize_voice_output_settings(&mut settings.voice_output_settings);
         crate::reconcile_assistant_transcribe_flag(&mut settings);
 
-        let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
+        let descriptors = module_registry::modules_as_descriptors_with_packages(
+            &settings.module_settings,
+            &installed_package_ids,
+        );
         (
             result,
             settings.clone(),

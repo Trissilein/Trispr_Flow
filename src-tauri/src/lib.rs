@@ -71,6 +71,7 @@ pub(crate) use gdd::confluence::{
     publish_or_queue_gdd_to_confluence, retry_pending_gdd_publish, save_confluence_secret,
     suggest_confluence_target, test_confluence_connection,
 };
+#[cfg(feature = "module-gdd")]
 pub(crate) use gdd::{
     detect_gdd_preset, generate_gdd_draft, list_gdd_presets, render_gdd_for_confluence,
     render_gdd_markdown, save_gdd_preset_clone, validate_gdd_draft,
@@ -130,8 +131,8 @@ use crate::modules::{
     canonicalize_module_id, health as module_health, normalize_confluence_settings,
     normalize_gdd_module_settings, normalize_module_settings, normalize_task_capture_settings,
     normalize_vision_input_settings, normalize_voice_output_settings,
-    normalize_workflow_agent_settings, registry as module_registry, ASSISTANT_CORE_MODULE_ID,
-    TASK_CAPTURE_MODULE_ID,
+    normalize_workflow_agent_settings, package as module_package, registry as module_registry,
+    ASSISTANT_CORE_MODULE_ID, TASK_CAPTURE_MODULE_ID,
 };
 use crate::state::{
     get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
@@ -1669,12 +1670,75 @@ async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<(), Str
 }
 
 #[tauri::command]
-fn list_modules(state: State<'_, AppState>) -> Vec<crate::modules::ModuleDescriptor> {
+fn list_modules(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Vec<crate::modules::ModuleDescriptor> {
+    let installed_package_ids = scan_installed_module_ids_lossy(&app);
     let settings = state
         .settings
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    module_registry::modules_as_descriptors(&settings.module_settings)
+    module_registry::modules_as_descriptors_with_packages(
+        &settings.module_settings,
+        &installed_package_ids,
+    )
+}
+
+#[tauri::command]
+fn scan_module_packages(app: AppHandle) -> Result<module_package::ModulePackageScanReport, String> {
+    let modules_dir = crate::paths::resolve_modules_dir(&app);
+    module_package::scan_modules_dir(&modules_dir)
+}
+
+fn scan_installed_module_ids_lossy(app: &AppHandle) -> std::collections::HashSet<String> {
+    let modules_dir = crate::paths::resolve_modules_dir(app);
+    match module_package::scan_installed_module_ids(&modules_dir) {
+        Ok(module_ids) => module_ids,
+        Err(error) => {
+            warn!("Failed to scan installed module packages: {}", error);
+            std::collections::HashSet::new()
+        }
+    }
+}
+
+fn bundled_module_package_source(app: &AppHandle, module_id: &str) -> Option<PathBuf> {
+    let module_id = canonicalize_module_id(module_id);
+    let mut candidates = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("module-packages").join(module_id));
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("module-packages")
+            .join(module_id),
+    );
+
+    candidates.into_iter().find(|candidate| candidate.is_dir())
+}
+
+#[tauri::command]
+fn install_bundled_module_package(
+    app: AppHandle,
+    module_id: String,
+) -> Result<module_package::ModulePackageInstallResult, String> {
+    let module_id = canonicalize_module_id(&module_id).to_string();
+    let manifest = module_registry::find_manifest(&module_id)
+        .ok_or_else(|| format!("Unknown module id '{}'.", module_id))?;
+    if !manifest.bundled {
+        return Err(format!(
+            "Module '{}' is not bundled in this build.",
+            module_id
+        ));
+    }
+    let source_dir = bundled_module_package_source(&app, &module_id).ok_or_else(|| {
+        format!(
+            "Bundled module package '{}' was not found in app resources.",
+            module_id
+        )
+    })?;
+    let modules_dir = crate::paths::resolve_modules_dir(&app);
+    module_package::install_package_from_dir(&source_dir, &modules_dir)
 }
 
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
@@ -1834,14 +1898,20 @@ fn disable_module(
 
 #[tauri::command]
 fn get_module_health(
+    app: AppHandle,
     state: State<'_, AppState>,
     module_id: Option<String>,
 ) -> Vec<crate::modules::ModuleHealthStatus> {
+    let installed_package_ids = scan_installed_module_ids_lossy(&app);
     let settings = state
         .settings
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    module_health::get_health(&settings.module_settings, module_id.as_deref())
+    module_health::get_health_with_packages(
+        &settings.module_settings,
+        module_id.as_deref(),
+        &installed_package_ids,
+    )
 }
 
 #[tauri::command]
@@ -1850,11 +1920,16 @@ fn check_module_updates(
     state: State<'_, AppState>,
     module_id: Option<String>,
 ) -> Vec<crate::modules::ModuleUpdateInfo> {
+    let installed_package_ids = scan_installed_module_ids_lossy(&app);
     let settings = state
         .settings
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let updates = module_health::check_updates(&settings.module_settings, module_id.as_deref());
+    let updates = module_health::check_updates_with_packages(
+        &settings.module_settings,
+        module_id.as_deref(),
+        &installed_package_ids,
+    );
     for update in &updates {
         let _ = app.emit("module:update-available", update);
     }
@@ -4645,6 +4720,8 @@ pub fn run() {
             save_window_visibility_state,
             show_assistant_presence_window,
             list_modules,
+            scan_module_packages,
+            install_bundled_module_package,
             enable_module,
             disable_module,
             get_module_health,
@@ -4669,12 +4746,19 @@ pub fn run() {
             speak_tts,
             stop_tts,
             test_tts_provider,
+            #[cfg(feature = "module-gdd")]
             list_gdd_presets,
+            #[cfg(feature = "module-gdd")]
             save_gdd_preset_clone,
+            #[cfg(feature = "module-gdd")]
             detect_gdd_preset,
+            #[cfg(feature = "module-gdd")]
             generate_gdd_draft,
+            #[cfg(feature = "module-gdd")]
             validate_gdd_draft,
+            #[cfg(feature = "module-gdd")]
             render_gdd_for_confluence,
+            #[cfg(feature = "module-gdd")]
             render_gdd_markdown,
             #[cfg(feature = "module-confluence")]
             test_confluence_connection,

@@ -155,6 +155,8 @@ function markdownReport(report) {
   lines.push(`- TTS report present: ${report.benchmarks.tts_present ? "yes" : "no"}`);
   lines.push(`- TTS release gate pass: ${report.benchmarks.tts_release_gate_pass ? "yes" : "no"}`);
   lines.push(`- TTS provider consistency: ${report.benchmarks.tts_provider_consistency_ok ? "yes" : "no"}`);
+  lines.push(`- TTS degraded optional providers: ${report.benchmarks.tts_degraded_supported_optional_providers.length > 0 ? report.benchmarks.tts_degraded_supported_optional_providers.join(", ") : "none"}`);
+  lines.push(`- TTS unavailable experimental providers: ${report.benchmarks.tts_unavailable_experimental_providers.length > 0 ? report.benchmarks.tts_unavailable_experimental_providers.join(", ") : "none"}`);
   lines.push(`- TTS uncategorized failures: ${report.benchmarks.tts_uncategorized_failure_count}`);
   lines.push("");
   lines.push("## Soak Evidence");
@@ -205,6 +207,12 @@ if (ttsReport && !bool(ttsReport.provider_consistency_ok)) {
 if (ttsReport && Number(ttsReport.uncategorized_failure_count ?? 0) !== 0) {
   warnings.push("TTS report has uncategorized failures.");
 }
+if (Array.isArray(ttsReport?.degraded_supported_optional_providers) && ttsReport.degraded_supported_optional_providers.length > 0) {
+  warnings.push(`TTS supported optional providers degraded: ${ttsReport.degraded_supported_optional_providers.join(", ")}.`);
+}
+if (Array.isArray(ttsReport?.unavailable_experimental_providers) && ttsReport.unavailable_experimental_providers.length > 0) {
+  warnings.push(`TTS experimental providers unavailable: ${ttsReport.unavailable_experimental_providers.join(", ")}.`);
+}
 if (!soak8?.available) warnings.push("8h soak evidence not attached.");
 if (!soak24?.available) warnings.push("24h soak evidence not attached.");
 
@@ -248,6 +256,9 @@ const report = {
     tts_present: Boolean(ttsReport),
     tts_release_gate_pass: bool(ttsReport?.release_gate_pass),
     tts_provider_consistency_ok: bool(ttsReport?.provider_consistency_ok),
+    tts_baseline_providers: Array.isArray(ttsReport?.baseline_providers) ? ttsReport.baseline_providers : [],
+    tts_degraded_supported_optional_providers: Array.isArray(ttsReport?.degraded_supported_optional_providers) ? ttsReport.degraded_supported_optional_providers : [],
+    tts_unavailable_experimental_providers: Array.isArray(ttsReport?.unavailable_experimental_providers) ? ttsReport.unavailable_experimental_providers : [],
     tts_uncategorized_failure_count: Number(ttsReport?.uncategorized_failure_count ?? 0),
     latency_report_path: path.join("bench", "results", "latest.json"),
     tts_report_path: path.join("bench", "results", "tts.latest.json"),

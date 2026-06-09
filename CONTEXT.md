@@ -129,6 +129,14 @@ Legacy ID `workflow_agent` still exists in persisted user settings and as the Ru
 ### Voice Output TTS (`output_voice_tts`)
 Optional Feature Module that speaks text aloud. Voice Output TTS is not part of Trispr Core: Core can emit events or text that Voice Output consumes, but speech playback, provider/voice selection, Piper/Qwen/Windows runtime behavior, playback control, output policy, and voice settings belong to the Feature Module.
 
+Confirmed 2026-06-09: for the v0.8.2 release gate, Windows Native TTS is the supported baseline provider. Piper `local_custom` is still a provider we intend to fix, but it is not release-critical for v0.8.2. A Piper runtime failure should make that provider degraded and tracked as follow-up work, not block release when Windows Native TTS is healthy.
+
+Confirmed 2026-06-09: TTS providers use release-gate roles. A **baseline** provider must pass the release gate. A **supported optional** provider is supported and should be reported when degraded, but it does not block release if the baseline provider passes. An **experimental** provider is benchmark-observed only and does not block release. For v0.8.2, `windows_native` is baseline, `local_custom` is supported optional, and `qwen3_tts` is experimental.
+
+Confirmed 2026-06-09: a degraded supported optional TTS provider passes the release gate with a warning. The release report should make degraded optional providers visible without requiring a manual override flag.
+
+Confirmed 2026-06-09: for now, TTS provider release-gate roles are release policy, not runtime product configuration. The benchmark/release-gate scripts own the provider-tier mapping until a real product need appears to expose or share those roles elsewhere.
+
 → `src-tauri/src/multimodal_io.rs`, `src/settings/voice-output.settings.ts`
 
 ### Assistant Presence (`assistant_presence`)

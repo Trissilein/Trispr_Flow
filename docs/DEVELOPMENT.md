@@ -123,6 +123,16 @@ If your whisper.cpp checkout is in `D:\!GIT\whisper.cpp`, you can run:
 This builds whisper.cpp with CUDA and writes `.env.local` with:
 `TRISPR_WHISPER_CLI` and `TRISPR_WHISPER_MODEL_DIR`.
 
+To build the Vulkan runtime instead, install the Vulkan SDK, ensure `VULKAN_SDK`
+and `glslc.exe` are available, then run:
+
+```
+.\scripts\setup-whisper.ps1 -Backend vulkan
+```
+
+For compatibility diagnosis on older CPUs, add `-ConservativeCpu` to disable
+AVX/FMA/F16C-specific CPU paths while keeping the Vulkan backend enabled.
+
 If you do not have the CUDA Toolkit installed yet, install it first so `nvcc`
 is available on PATH. As a temporary fallback, you can run:
 

@@ -8,7 +8,7 @@ Supersedes: none
 
 ## Scope
 
-This checkpoint covers the next release-quality task: make the Vulkan Whisper backend work on the target AMD machine before tagging `v0.8.2`.
+This checkpoint covers the next release-quality task: make the Vulkan Whisper backend work on the target AMD machine before the follow-up release. `v0.8.2` is already published, so this work now targets the next hotfix line (`v0.8.3` unless superseded).
 
 It does not cover the later Vite warning cleanup, Piper `local_custom` follow-up work, general refactoring, or Block B UX/UI work except as sequencing context.
 
@@ -45,13 +45,14 @@ It does not cover the later Vite warning cleanup, Piper `local_custom` follow-up
 
 Session observations to reproduce, not yet checkpoint-verified in repo files:
 
-- Published CUDA/Vulkan `whisper-cli` payloads were previously observed to crash on the AMD RX 6800 XT machine; Vulkan printed device info before exiting with a Windows crash code. This must be reproduced in the fresh session before fixing.
+- Published `v0.8.2` Vulkan `whisper-cli` payload was reproduced on the AMD RX 6800 XT machine: `--help` exits `0`, real inference prints Vulkan device info then exits `-1073741795` (`0xC000001D`).
 - The older memory that "Whisper without CLI" was problematic has no current source in this checkpoint. Treat it as unknown until code archaeology or logs prove the reason.
 
 ## Decisions
 
-- Do not tag `v0.8.2` until Vulkan is fixed, or until the user explicitly waives the CPU-fallback latency SLO miss. ADR: none; this is a release constraint recorded in [ROADMAP.md](../../../ROADMAP.md), [STATUS.md](../../../STATUS.md), and [docs/V0.8.x_BLOCK_U_RELEASE_GATE.md](../../../docs/V0.8.x_BLOCK_U_RELEASE_GATE.md).
-- CPU fallback is acceptable as fallback behavior, but not accepted as the final release-quality latency path for this tag. ADR: none; same release constraint as above.
+- Treat this work as the `v0.8.3` hotfix line because `v0.8.2` is already published. ADR: none; recorded in [CONTEXT.md](../../../CONTEXT.md).
+- CPU fallback is acceptable as fallback behavior, but not accepted as the final release-quality latency path for this hotfix unless the user explicitly waives the latency SLO miss. ADR: none; release constraint is tracked in [ROADMAP.md](../../../ROADMAP.md), [STATUS.md](../../../STATUS.md), and [docs/V0.8.x_BLOCK_U_RELEASE_GATE.md](../../../docs/V0.8.x_BLOCK_U_RELEASE_GATE.md).
+- The immediate fix path is to rebuild/package Vulkan runtime from a fresh `whisper.cpp` build, because published `v0.8.2` Vulkan crashes on real inference while fresh local Vulkan does not. ADR: none; this is operational packaging/build evidence rather than a hard-to-reverse architecture decision.
 - After the Vulkan release blocker, the next planned cleanup is the Vite mixed static/dynamic import warning for `src/settings/vocabulary.settings.ts`. ADR: none; simple follow-up cleanup.
 
 ## Progress
@@ -60,35 +61,37 @@ Session observations to reproduce, not yet checkpoint-verified in repo files:
 - Canonical release docs were updated during this checkpoint so they no longer instruct tagging immediately after gate-doc merge.
 - A checkpoint index was created at [project-spec/checkpoints/README.md](../README.md).
 - This checkpoint was created at [project-spec/checkpoints/2026-06-09/vulkan-whisper-fix.md](vulkan-whisper-fix.md).
-- No Vulkan code fix has been attempted in this checkpoint.
+- Follow-up session reproduced the published `v0.8.2` Vulkan CLI behavior: `--help` exits successfully on AMD RX 6800 XT, but real inference with `ggml-large-v3-turbo.bin` exited `-1073741795` (`0xC000001D`) after Vulkan device detection.
+- `scripts/setup-whisper.ps1` now supports `-Backend vulkan` and copies the full Vulkan runtime set, including `whisper-server.exe`, into `src-tauri/bin/vulkan/`. It also supports `-ConservativeCpu` for compatibility diagnosis.
+- A fresh default `whisper.cpp` Vulkan build from local `E:\code\ingo\whisper.cpp` runs the same direct fixture transcription successfully on AMD RX 6800 XT.
+- `scripts/latency-benchmark.ps1` now accepts `-TauriVariant` and temporarily swaps `src-tauri/tauri.conf.json` with the generated variant config so Vulkan-only benchmark runs do not require missing CUDA/Piper resources. It restores the base config in `finally`.
+- Short app benchmark with forced Vulkan now uses GPU and no longer crashes, but still misses latency SLO on this machine: `p50_ms=3152`, `p95_ms=3247`, `slo_pass=false` for `-Warmup 1 -Runs 3 -NoRefinement`.
 
 ## Stale Or Conflicting Context
 
-- The latest tracked gate report still says overall gate pass is yes. That is true for current gate semantics, but incomplete for release decision-making because the raw ignored latency report has `slo_pass=false` on CPU fallback. The release docs now state the extra Vulkan-before-tag constraint.
-- `STATUS.md` still contains older historical performance notes from prior NVIDIA/Q5 evidence. Those notes are historical, not the current `v0.8.2` target evidence. No edit needed for this Vulkan checkpoint.
-- Current local Git state is not a clean `origin/main` checkout. The receiving agent should start from `origin/main` or a fresh branch and should not inherit unrelated local `scripts/tts-benchmark.ps1` formatting changes by accident.
+- The latest tracked gate report still says overall gate pass is yes. That is true for current gate semantics, but incomplete for release decision-making because current Vulkan evidence still has `slo_pass=false`. The next agent should refresh reports only after final release policy/runtime decision.
+- Some imported local-main docs predated the `v0.8.3` correction and may still mention `v0.8.2` as the pending tag. Treat `CONTEXT.md` and this checkpoint as fresher for the hotfix target.
+- `scripts/tts-benchmark.ps1` from the other local `main` checkout was intentionally not imported; do not mix Piper/TTS formatting changes into this Vulkan thread unless explicitly requested.
 
 ## Open Questions
 
-- Does bundled `src-tauri/bin/vulkan/whisper-cli.exe --help` crash on the target AMD machine, or only real transcription calls?
-- Is the Vulkan failure caused by missing or mismatched DLLs, Vulkan driver/runtime compatibility, build CPU instruction flags, bad invocation args, model size/memory pressure, or app fallback orchestration?
-- Does a fresh local `whisper.cpp` Vulkan build work on the same machine with the same `ggml-large-v3-turbo.bin` model and fixtures?
-- Should `npm run qa:assistant -- --strict-benchmark` eventually fail when `bench/results/latest.json` has `slo_pass=false`, or is the Vulkan-before-tag policy enough for `v0.8.2`?
+- What exact binary/package source should become the final `v0.8.3` Vulkan payload? The working rebuilt `src-tauri/bin/vulkan/` directory is ignored by git.
+- Should the hotfix ship with Vulkan crash fixed even if the short benchmark remains above the current p50 SLO, or must the SLO be met before release?
+- Should `npm run qa:assistant -- --strict-benchmark` eventually fail when `bench/results/latest.json` has `slo_pass=false`, or is explicit release-policy review enough for the hotfix?
 - What was the old issue with "Whisper without CLI"? Unknown until source/log archaeology proves it.
 
 ## Next Actions
 
-1. Start from fresh `origin/main` after PR #16, not from the deleted `integration/block-a-release-gate-closure` branch.
-2. Preserve or deliberately discard the unrelated local `scripts/tts-benchmark.ps1` formatting changes before beginning Vulkan work.
-3. Verify bundled Vulkan runtime files exist under `src-tauri/bin/vulkan/` and include the required files listed in [src-tauri/src/transcription.rs](../../../src-tauri/src/transcription.rs).
-4. Run the bundled Vulkan CLI directly with `--help` and capture exit code, stdout, and stderr.
-5. Run a minimal fixture transcription through the bundled Vulkan CLI directly, using the production model at `%LOCALAPPDATA%\Trispr Flow\models\ggml-large-v3-turbo.bin` if available.
-6. Run the app benchmark with explicit Vulkan preference and a tiny fixture set. Keep `-Warmup 1 -Runs 3 -NoRefinement` for diagnosis before the full 30-run evidence pass.
-7. If bundled Vulkan crashes, build or obtain a fresh local `whisper.cpp` Vulkan runtime and compare direct CLI behavior on the same model and fixtures.
-8. Fix the confirmed root cause: runtime hydration/package mismatch, bundled DLL set, app invocation args, backend detection, or build flags.
-9. Rerun production-default latency evidence with `ggml-large-v3-turbo.bin`, then rerun `npm run qa:assistant -- --strict-benchmark`.
-10. Refresh release docs/reports and tag `v0.8.2` only after Vulkan evidence satisfies the release constraint or the user explicitly waives it.
-11. After Vulkan/tag path is settled, address the Vite mixed import warning for `src/settings/vocabulary.settings.ts`.
+1. Decide the final runtime payload source for `v0.8.3`: package the rebuilt ignored `src-tauri/bin/vulkan/` payload, rebuild in release workflow, or attach/copy a verified binary artifact.
+2. Run a longer Vulkan benchmark with production model defaults after final payload selection. Use `scripts/latency-benchmark.ps1 -Warmup 3 -Runs 30 -NoRefinement -TauriVariant vulkan` with Vulkan env overrides if needed.
+3. Decide release policy for the remaining p50 SLO miss if the longer run still misses.
+4. If policy requires strict SLO pass, investigate server warm path and timing: current short runs are GPU but around 3.1s p50.
+5. Refresh release docs/reports only after runtime payload and SLO policy are settled.
+6. After Vulkan/hotfix path is settled, address the Vite mixed import warning for `src/settings/vocabulary.settings.ts`.
+
+## Kickoff Prompt
+
+Use checkpoint-kickoff. Continue from `project-spec/checkpoints/2026-06-09/vulkan-whisper-fix.md`: finish the Vulkan Whisper hotfix by deciding/packaging the final verified Vulkan runtime payload and resolving the remaining latency SLO policy/performance gap. Use `/grill-with-docs` for release-policy or stale-doc uncertainty. Fix and commit; do not mix unrelated Piper/TTS changes.
 
 ## Verification
 
@@ -107,9 +110,16 @@ Passed before checkpoint, from PR #16 validation:
 - `cargo test --manifest-path src-tauri/Cargo.toml --lib`: 252 tests.
 - `git diff --check`: clean at PR #16 merge validation time.
 
-Not checked in this checkpoint:
+Checked in follow-up session:
 
-- Vulkan direct CLI reproduction.
-- Local Vulkan `whisper.cpp` build.
-- Full production latency rerun after Vulkan fix.
-- Fresh strict assistant gate after Vulkan fix.
+- Published `v0.8.2` Vulkan direct CLI `--help`: exit `0`.
+- Published `v0.8.2` Vulkan direct CLI fixture transcription: exit `-1073741795`.
+- Fresh local Vulkan `whisper.cpp` build: direct fixture transcription exit `0`.
+- Short app benchmark after fresh Vulkan build: GPU path, no crash, SLO miss (`p50_ms=3152`, `p95_ms=3247`).
+- `npm test`: 36 files, 637 tests passed.
+- Focused script validation: `scripts/setup-whisper.ps1` and `scripts/latency-benchmark.ps1` parse; `node scripts/generate-tauri-variant-config.mjs --variant vulkan` succeeds; `node scripts/validate-whisper-runtime.mjs --variant vulkan` succeeds.
+
+Not checked yet:
+
+- Full 30-run production latency rerun after final Vulkan package selection.
+- Fresh strict assistant gate after final Vulkan package selection.

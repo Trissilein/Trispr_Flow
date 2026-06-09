@@ -35,13 +35,13 @@ Model Management is only partially Core: the minimum ability to locate and use a
 → `src-tauri/src/whisper_server.rs`, `src-tauri/src/models.rs`
 
 ### Release Gate
-The evidence-backed check that decides whether the current release line can move forward. For v0.8.2, Block A is the active release-gate closure block.
+The evidence-backed check that decides whether the current release line can move forward. For v0.8.3, the Vulkan Whisper hotfix is the active release-gate closure block.
 
 Confirmed 2026-06-09: Block A closes only when the strict assistant gate passes on fresh `main`. The gate must link both latency evidence (`bench/results/latest.json`) and TTS evidence (`bench/results/tts.latest.json`). TTS evidence is green after PR #11, while latency evidence still requires a local production-default Whisper model.
 
 Confirmed 2026-06-09: Block A latency evidence must use the production default Whisper model class, `ggml-large-v3-turbo.bin`, or an explicit `TRISPR_WHISPER_MODEL` pointing to equivalent large-v3-turbo evidence. Smaller smoke models are not accepted as final release evidence.
 
-Confirmed 2026-06-09: the final release target for this gate is v0.8.2. Older roadmap wording that names v0.8.0 for the final tag is stale.
+Confirmed 2026-06-09: the final release target for this gate is v0.8.3 because v0.8.2 is already published. The v0.8.3 fix should hydrate from the published v0.8.2 installer payload to reproduce the shipped Vulkan failure before changing the runtime.
 
 → `scripts/assistant-release-gate.mjs`, `scripts/latency-benchmark.ps1`, `docs/V0.8.x_BLOCK_U_RELEASE_GATE.md`
 
@@ -251,4 +251,3 @@ Individual rules can be configurable. Alternative rule sets or rule versions are
 _Terms flagged as fuzzy — to be resolved with Ingo (repo owner)._
 
 - **"Session"**: intentionally overloaded (see Term entry above). No rename planned — documented as-is.
-

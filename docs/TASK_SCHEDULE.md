@@ -463,9 +463,9 @@ Goal: Evolve workflow-agent from wakeword command trigger to a transparent GDD c
 
 ---
 
-### Block U: Assistant UX + Soak + Release Gate (`v0.8.x`) --- ACTIVE
+### Block U: Assistant UX + Soak + Release Gate (`v0.8.x`) --- LEGACY, MAPPED TO ROADMAP BLOCK A
 
-**Duration**: 2-3 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block T + Block V | **Status**: Active
+**Duration**: 2-3 weeks | **Model**: Claude Opus + Sonnet | **Depends on**: Block T + Block V | **Status**: Legacy planning record, active closure tracked as Roadmap Block A
 
 Goal: Stabilize assistant UX and enforce long-run release gates before assistant-focused rollout.
 
@@ -474,7 +474,7 @@ Goal: Stabilize assistant UX and enforce long-run release gates before assistant
 | U1 | Assistant UX hardening | High | T | DONE | Tightened workflow-agent panel UX copy/status guidance, improved mode/module guard feedback, and surfaced `assistant:plan-ready` directly in live panel state. |
 | U2 | Soak: 8h stability run | High | U1 | PLANNED | Validate no manual restart requirement under continuous tray/assistant operation. |
 | U3 | Soak: 24h release soak | High | U2 | PLANNED | Validate bounded-recovery behavior and no restart loops over a full-day run. |
-| U4 | Release gate + evidence packet | High | U2, U3 | IN PROGRESS | Added `npm run qa:assistant` (`scripts/assistant-release-gate.mjs`) plus Block-U packet doc (`docs/V0.8.x_BLOCK_U_RELEASE_GATE.md`) and report artifacts under `docs/reports/`; final sign-off waits for U2/U3 soak attachments. |
+| U4 | Release gate + evidence packet | High | U1 | IN PROGRESS | Active closure is Roadmap Block A. Final sign-off uses `npm run qa:assistant -- --strict-benchmark` with latency and TTS benchmark evidence; soak attachments are not required for the current v0.8.2 gate. |
 
 ---
 

@@ -9,7 +9,7 @@ This file is the canonical source for priorities and execution order. Block IDs 
 - **Released:** `v0.7.0`, `v0.7.1`, `v0.7.2`, `v0.7.3`, `v0.7.4`, `v0.7.5`
 - **Current phase:** `v0.8.x` assistant hardening; Block A gate closure is still active.
 - **Foundation complete:** Blocks D, F, G, H, L, M, N, Q, S, T, V (legacy IDs), plus the 2026-05 refactoring quality foundation.
-- **Active block:** A (release gate closure). Latest local pass: build, frontend tests, and Rust lib tests pass; strict benchmark linkage is blocked by `local_custom` Piper synthesis failure.
+- **Active block:** A (release gate closure). Latest local pass: build, frontend tests, Rust lib tests, and TTS baseline gating pass; strict benchmark linkage is blocked by missing latency evidence because the benchmark host needs a local `ggml-large-v3-turbo.bin` Whisper model.
 
 ## Complexity Buckets (used in tables below)
 
@@ -40,10 +40,11 @@ Aligned with `~/.claude/skills/codex-delegate/SKILL.md`:
 
 Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib` pass. `npm run benchmark:tts` now passes by gating the baseline provider (`windows_native`) and warning on degraded supported optional providers (`local_custom`). `npm run qa:assistant -- --strict-benchmark` remains red because `bench/results/latest.json` is missing; `npm run benchmark:latency` cannot produce it until a Whisper model is available locally.
 
-- **A1** Generate `bench/results/tts.latest.json` (run `npm run tts:benchmark`) — *trivial, Codex* — runs harness, captures result, attaches to gate. Fallback: I run it inline if Codex unavailable.
-- **A2** Run `npm run qa:assistant -- --strict-benchmark` (no `--require-soak`) — *trivial, Codex* — exit-criteria check. Sign-off doc in `docs/reports/`.
-- **A3** Update `STATUS.md` + `CHANGELOG.md` with v0.8.x release notes — *simple, Codex* — boilerplate writes from gate-output JSON.
-- **A4** Cut tag `v0.8.0` and push — *trivial, manual* — Claude orchestrates, user runs `git tag` + `git push --tags` himself.
+- **A1** Generate `bench/results/tts.latest.json` (run `npm run benchmark:tts`) — *done* — TTS baseline gating passes with `windows_native`; `local_custom` remains supported-optional follow-up.
+- **A2** Generate `bench/results/latest.json` (run `npm run benchmark:latency`) — *simple, Codex* — hydrate release Whisper runtime and use production-default `ggml-large-v3-turbo.bin` evidence.
+- **A3** Run `npm run qa:assistant -- --strict-benchmark` (no `--require-soak`) — *trivial, Codex* — exit-criteria check. Sign-off doc in `docs/reports/`.
+- **A4** Update `STATUS.md` + `CHANGELOG.md` with v0.8.2 release notes — *simple, Codex* — boilerplate writes from gate-output JSON.
+- **A5** Cut tag `v0.8.2` and push — *trivial, manual* — Claude orchestrates, user runs `git tag` + `git push --tags` himself after closure evidence is merged.
 
 ### B — UX/UI consistency + Picker-Unification
 

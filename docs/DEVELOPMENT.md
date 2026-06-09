@@ -57,6 +57,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/hydrate-whisper-runt
 - `scripts/windows/upload-release-assets.ps1` creates a public release when missing and can mark it as `latest`.
 - This avoids the broken state where assets were uploaded against an unpublished draft while the tag was already visible.
 
+## Root directory entrypoints
+
+The repo root keeps only user-facing compatibility wrappers and app entry HTML files. Canonical Windows automation lives in `scripts\windows\`, generic scripts live in `scripts\`, and stale one-off local helpers live in `scripts\legacy\`.
+
 Notes:
 - `npm run dev` starts the desktop app (`tauri dev`) and reuses an already running Trispr Vite server on `http://localhost:1420`.
 - `npm run dev:web` starts only the Vite frontend dev server (web preview).

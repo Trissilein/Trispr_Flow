@@ -133,7 +133,7 @@ use crate::modules::{
     normalize_gdd_module_settings, normalize_module_settings, normalize_task_capture_settings,
     normalize_vision_input_settings, normalize_voice_output_settings,
     normalize_workflow_agent_settings, package as module_package, registry as module_registry,
-    ASSISTANT_CORE_MODULE_ID, TASK_CAPTURE_MODULE_ID,
+    ASSISTANT_CORE_MODULE_ID,
 };
 use crate::state::{
     get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
@@ -1950,7 +1950,6 @@ fn module_enabled(settings: &Settings, module_id: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeCapability {
     AiRefinement,
-    TaskCapture,
     WorkflowAgent,
     VisionInput,
     VoiceOutputTts,
@@ -1960,7 +1959,6 @@ impl RuntimeCapability {
     pub(crate) fn module_id(self) -> &'static str {
         match self {
             Self::AiRefinement => AI_REFINEMENT_MODULE_ID,
-            Self::TaskCapture => TASK_CAPTURE_MODULE_ID,
             Self::WorkflowAgent => ASSISTANT_CORE_MODULE_ID,
             Self::VisionInput => "input_vision",
             Self::VoiceOutputTts => "output_voice_tts",
@@ -1970,7 +1968,6 @@ impl RuntimeCapability {
     fn setting_enabled(self, settings: &Settings) -> bool {
         match self {
             Self::AiRefinement => settings.ai_fallback.enabled,
-            Self::TaskCapture => true,
             Self::WorkflowAgent => settings.workflow_agent.enabled,
             Self::VisionInput => settings.vision_input_settings.enabled,
             Self::VoiceOutputTts => settings.voice_output_settings.enabled,
@@ -1981,9 +1978,6 @@ impl RuntimeCapability {
         match self {
             Self::AiRefinement => {
                 "AI Refinement module is disabled. Enable module 'ai_refinement' first."
-            }
-            Self::TaskCapture => {
-                "Task Capture module is disabled. Enable module 'task_capture' first."
             }
             Self::WorkflowAgent => {
                 "Assistant Core module is disabled. Enable module 'assistant_core' first."
@@ -2000,7 +1994,6 @@ impl RuntimeCapability {
     fn setting_disabled_message(self) -> &'static str {
         match self {
             Self::AiRefinement => "AI refinement is disabled in settings.",
-            Self::TaskCapture => "Task Capture is disabled in settings.",
             Self::WorkflowAgent => "Assistant Core is disabled in settings.",
             Self::VisionInput => "Vision input is disabled in settings.",
             Self::VoiceOutputTts => "Voice output is disabled in settings.",
@@ -2044,7 +2037,6 @@ mod runtime_capability_gate_tests {
         }
         match capability {
             RuntimeCapability::AiRefinement => settings.ai_fallback.enabled = setting_enabled,
-            RuntimeCapability::TaskCapture => {}
             RuntimeCapability::WorkflowAgent => settings.workflow_agent.enabled = setting_enabled,
             RuntimeCapability::VisionInput => {
                 settings.vision_input_settings.enabled = setting_enabled
@@ -2547,10 +2539,7 @@ fn check_powershell_available() -> bool {
     false
 }
 
-fn build_dependency_preflight_report(
-    app: &AppHandle,
-    state: &AppState,
-) -> DependencyPreflightReport {
+fn build_dependency_preflight_report(state: &AppState) -> DependencyPreflightReport {
     let settings_snapshot = state
         .settings
         .read()
@@ -2731,7 +2720,7 @@ async fn get_dependency_preflight_status(app: AppHandle) -> DependencyPreflightR
     // which blocks for 1-5s; running that on a Tokio worker thread would starve IPC.
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        build_dependency_preflight_report(&app, state.inner())
+        build_dependency_preflight_report(state.inner())
     })
     .await
     .unwrap_or_else(|_| DependencyPreflightReport {
@@ -4044,7 +4033,7 @@ pub fn run() {
                 let handle = app.handle().clone();
                 crate::util::spawn_guarded("dependency_preflight", move || {
                     let state = handle.state::<AppState>();
-                    let report = build_dependency_preflight_report(&handle, state.inner());
+                    let report = build_dependency_preflight_report(state.inner());
                     if report.overall_status != "ok" {
                         for item in report.items.iter().filter(|item| item.status != "ok") {
                             warn!(

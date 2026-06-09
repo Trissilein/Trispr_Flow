@@ -7,11 +7,10 @@ Participants: Hendr (architect), automated challenger review
 
 Follow-on architectural work (Trispr Flow modularization) is tracked separately in [`../2026-05-25/trispr-flow-modularization.md`](../2026-05-25/trispr-flow-modularization.md).
 
-Closure note (2026-06-09): This plan is closed as an implementation plan. Its quality-foundation goal was to reduce the highest-risk architecture hotspots before new feature work: backend command implementations were moved to domain modules where the boundary was clean, frontend event wiring was split into domain wire modules, and the standalone state-tier refactor was intentionally cancelled in favour of per-slice accessors. Remaining cleanup items are residual architecture backlog, not blockers for closing this plan.
+Closure note (2026-06-09): This plan is closed as an implementation plan. Its quality-foundation goal was to reduce the highest-risk architecture hotspots before new feature work: backend command implementations were moved to domain modules where the boundary was clean, frontend event wiring was split into domain wire modules, and the standalone state-tier refactor was intentionally cancelled in favour of per-slice accessors. Remaining cleanup items are residual architecture backlog, not blockers for closing this plan. OQ-4 was resolved after closure by PR #12 / `c496baf refactor(settings): split settings render slices`.
 
 Residual backlog after closure:
 
-- Track OQ-4, the `settings-persist.ts` -> `settings/transcription.settings.ts` coupling risk, if either side grows a reverse import.
 - Consider a future settings/core/startup split for commands intentionally left in `lib.rs`.
 - Rename `workflow_agent.rs` to `assistant_core.rs` only if the naming mismatch starts causing navigation or domain-language confusion.
 - Continue GDD/module source decoupling under the module-installability decision, not under this refactoring plan.
@@ -125,11 +124,11 @@ Decision (2026-05-23 grill): timing is "after QW3" (not part of QW3) to keep eac
 
 ### Phase 2 — Structural refactoring (after Phase 1; each item requires an ADR before execution)
 
-| ID  | What                                                             | Depends on               | Status                                                                                                                                                                                                        |
-| --- | ---------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ID  | What                                                             | Depends on               | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --- | ---------------------------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | R1  | Move command implementations out of `lib.rs` into domain modules | OQ-2, QW3+QW4 as pattern | **execution complete (2026-05-25)** — `lib.rs` now has 21 `#[tauri::command]` functions (bootstrap/diagnostics only). Commands distributed: `ai_fallback/commands.rs` (16), `gdd/confluence.rs` (14), `multimodal_io.rs` (12), `models.rs` (9), `ollama_runtime.rs` (9), `history_partition.rs` (9), `workflow_agent.rs` (8), `audio.rs` (7), `gdd/mod.rs` (7), plus smaller. Completion commit: `b397260 refactor(overlay): complete R1 command extraction and B8 deferral`. Design notes below retained for traceability. |
-| R2  | Split `event-listeners.ts` by domain                             | QW2 resolved, T0a as net | **complete** — all 6 slices shipped; `event-listeners.ts` is a 30-line orchestrator                                                                                                                           |
-| R3  | ~~Separate state management tier~~                               | —                        | **cancelled as standalone**                                                                                                                                                                                   |
+| R2  | Split `event-listeners.ts` by domain                             | QW2 resolved, T0a as net | **complete** — all 6 slices shipped; `event-listeners.ts` is a 30-line orchestrator                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| R3  | ~~Separate state management tier~~                               | —                        | **cancelled as standalone**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 R3 decision: State modernization is folded into R2. Each domain slice extracted in R2 gets explicit accessor functions instead of direct module-level variable access. No big-bang pub-sub refactor. This is a one-way door of medium reversibility — see Trade-offs.
 
@@ -314,9 +313,9 @@ The contract is fixed for all R2 slices so the pattern, once set on slice 1, is 
 
 ### OQ-4 — `settings-persist.ts` → `transcription.settings.ts` coupling risk
 
-**Open.**
+**RESOLVED 2026-06-09.**
 
-`settings-persist.ts` imports `derivePostprocLanguageFromAsr` from `settings/transcription.settings.ts`. `settings/index.ts` imports from `settings-persist.ts`. If `transcription.settings.ts` ever imports from `settings-persist.ts` or `settings/index.ts`, a new cycle forms. Identified during QW3 design review (2026-05-23). No action required now — log as backlog.
+Resolved by PR #12 / `c496baf refactor(settings): split settings render slices`. Pure ASR/Post-Processing language derivation moved to dependency-free `src/language-utils.ts`, and `settings-persist.ts` now imports `derivePostprocLanguageFromAsr` from that module instead of from `settings/transcription.settings.ts`. `settings/index.ts` remains the settings orchestrator, while Continuous Dump, Recording Quality, and Post-Processing rendering live in dedicated settings slices. The cycle risk is closed.
 
 ---
 

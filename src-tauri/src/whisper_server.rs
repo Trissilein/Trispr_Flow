@@ -8,17 +8,15 @@ use crate::terminate_managed_child_slot;
 use crate::update_runtime_diagnostics;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tracing::{info, warn};
 
 /// Default port for Whisper-Server HTTP API.
 pub const WHISPER_SERVER_PORT: u16 = 8178;
-const WHISPER_SERVER_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
 const WHISPER_SERVER_IDLE_RETIRE_MS: u64 = 300_000;
 
-static WHISPER_SERVER_KEEPALIVE_STARTED: AtomicBool = AtomicBool::new(false);
 static WHISPER_SERVER_ACTIVE_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 
 pub fn active_request_count() -> usize {
@@ -42,11 +40,6 @@ impl Drop for WhisperServerRequestGuard {
 
 fn whisper_server_warm_deadline_ms() -> u64 {
     crate::util::now_ms().saturating_add(WHISPER_SERVER_IDLE_RETIRE_MS)
-}
-
-fn whisper_server_warm_window_active(state: &AppState) -> bool {
-    let warm_until = state.whisper_server_warm_until_ms.load(Ordering::Relaxed);
-    warm_until > crate::util::now_ms()
 }
 
 fn extend_whisper_server_warm_window(state: &AppState) -> u64 {
@@ -665,65 +658,6 @@ pub fn schedule_whisper_server_warmup(
                 );
             }
         }
-    });
-}
-
-pub fn ensure_whisper_server_keepalive(app: AppHandle) {
-    if WHISPER_SERVER_KEEPALIVE_STARTED
-        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-        .is_err()
-    {
-        return;
-    }
-
-    crate::util::spawn_guarded("whisper_server_keepalive", move || loop {
-        std::thread::sleep(WHISPER_SERVER_KEEPALIVE_INTERVAL);
-        let state = app.state::<AppState>();
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        if !crate::transcription::whisper_runtime_required(&settings) {
-            if ping_whisper_server(state.whisper_server_port.load(Ordering::Relaxed)) {
-                kill_whisper_server(state.inner());
-            }
-            continue;
-        }
-
-        let port = state.whisper_server_port.load(Ordering::Relaxed);
-        if !whisper_server_warm_window_active(state.inner()) {
-            if ping_whisper_server(port)
-                && WHISPER_SERVER_ACTIVE_REQUESTS.load(Ordering::Relaxed) == 0
-            {
-                kill_whisper_server(state.inner());
-            }
-            continue;
-        }
-        if ping_whisper_server(port) {
-            continue;
-        }
-        if WHISPER_SERVER_ACTIVE_REQUESTS.load(Ordering::Relaxed) > 0 {
-            if crate::state::diagnostic_logging_enabled() {
-                info!("whisper-server keepalive skipped restart while request is active");
-            }
-            continue;
-        }
-
-        let Some(model_path) = crate::models::resolve_model_path(&app, &settings.model) else {
-            if crate::state::diagnostic_logging_enabled() {
-                info!(
-                    "whisper-server keepalive skipped: model '{}' could not be resolved",
-                    settings.model
-                );
-            }
-            continue;
-        };
-
-        if crate::state::diagnostic_logging_enabled() {
-            info!("whisper-server keepalive restarting cold server");
-        }
-        schedule_whisper_server_warmup(&app, state.inner(), &model_path, &settings);
     });
 }
 

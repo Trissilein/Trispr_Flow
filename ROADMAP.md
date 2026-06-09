@@ -15,26 +15,26 @@ This file is the canonical source for priorities and execution order. Block IDs 
 
 Aligned with `~/.claude/skills/codex-delegate/SKILL.md`:
 
-| Bucket | Heuristic | Codex-default? |
-|---|---|---|
-| trivial | One file, no logic, replace/rename/typo | ✅ gpt-5.4-mini / minimal |
-| simple | Repeating known pattern, boilerplate | ✅ gpt-5.3-codex / medium |
-| moderate | Standard implementation from clear spec | ✅ gpt-5.4 / medium |
-| complex | Multi-file integration, non-trivial state | ⚠️ gpt-5.4 / high — split first |
-| architecturally-tricky | Design judgement needed, cross-cutting | ❌ Claude does it |
+| Bucket                 | Heuristic                                 | Codex-default?                 |
+| ---------------------- | ----------------------------------------- | ------------------------------ |
+| trivial                | One file, no logic, replace/rename/typo   | ✅ gpt-5.4-mini / minimal       |
+| simple                 | Repeating known pattern, boilerplate      | ✅ gpt-5.3-codex / medium       |
+| moderate               | Standard implementation from clear spec   | ✅ gpt-5.4 / medium             |
+| complex                | Multi-file integration, non-trivial state | ⚠️ gpt-5.4 / high — split first |
+| architecturally-tricky | Design judgement needed, cross-cutting    | ❌ Claude does it               |
 
 ---
 
 ## Active Zone (A → F)
 
-| ID | Title | Complexity | Codex-able | Effort | Depends on | Status |
-|---|---|---|---|---|---|---|
-| **A** | v0.8.x Release Gate Closure (no soak) | moderate | ✅ mostly | ~1 day | — | 🟡 active |
-| **B** | UX/UI consistency + Picker-Unification | complex | ⚠️ mixed | 3–5 days | A | 📋 next |
-| **C** | Adaptive AI Refinement (VRAM probe + quant matrix + keep-alive + vocab-ground-truth) | complex | ⚠️ mixed | 5–7 days | B | 📋 planned |
-| **D** | Reliability Hardening + Release-QA polish | complex | ⚠️ mixed | 5 days | C | 📋 planned |
-| **E** | Expert-Mode UX Toggle (standard/expert) | moderate | ✅ mostly | 2–3 days | B | 📋 planned |
-| **F** | Assistant Presence Window (3D dot-cloud + TTS panel) | architecturally-tricky | ❌ Claude | 1–2 weeks | A, D | 📋 later |
+| ID    | Title                                                                                | Complexity             | Codex-able | Effort    | Depends on | Status    |
+| ----- | ------------------------------------------------------------------------------------ | ---------------------- | ---------- | --------- | ---------- | --------- |
+| **A** | v0.8.x Release Gate Closure (no soak)                                                | moderate               | ✅ mostly   | ~1 day    | —          | 🟡 active  |
+| **B** | UX/UI consistency + Picker-Unification                                               | complex                | ⚠️ mixed    | 3–5 days  | A          | 📋 next    |
+| **C** | Adaptive AI Refinement (VRAM probe + quant matrix + keep-alive + vocab-ground-truth) | complex                | ⚠️ mixed    | 5–7 days  | B          | 📋 planned |
+| **D** | Reliability Hardening + Release-QA polish                                            | complex                | ⚠️ mixed    | 5 days    | C          | 📋 planned |
+| **E** | Expert-Mode UX Toggle (standard/expert)                                              | moderate               | ✅ mostly   | 2–3 days  | B          | 📋 planned |
+| **F** | Assistant Presence Window (3D dot-cloud + TTS panel)                                 | architecturally-tricky | ❌ Claude   | 1–2 weeks | A, D       | 📋 later   |
 
 ### A — v0.8.x Release Gate Closure
 
@@ -86,12 +86,12 @@ Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test 
 
 ## Deferred Zone (Z)
 
-| ID | Title | Reason | Unblock condition |
-|---|---|---|---|
-| **Z1** | Cloud provider rollout (OpenAI/Claude/Gemini for refinement) | Local-first is sufficient for now | when an explicit user need or business case appears |
-| **Z2** | LM Studio per-request thinking disable (was R6) | `chat_template_kwargs` ignored by llmster backend | when LM Studio adds API for per-request thinking control |
-| **Z3** | Screen-Recording ground-truth path (was 44d) | Depends on Screen-Recording module which doesn't exist yet | when Screen-Recording module lands (separate roadmap) |
-| **Z4** | UIA `RuntimeId`-based identity (additional to HWND/PID) | HWND/PID match has been sufficient in testing | only if false-positive learning re-appears across same-window controls |
+| ID     | Title                                                        | Reason                                                     | Unblock condition                                                      |
+| ------ | ------------------------------------------------------------ | ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Z1** | Cloud provider rollout (OpenAI/Claude/Gemini for refinement) | Local-first is sufficient for now                          | when an explicit user need or business case appears                    |
+| **Z2** | LM Studio per-request thinking disable (was R6)              | `chat_template_kwargs` ignored by llmster backend          | when LM Studio adds API for per-request thinking control               |
+| **Z3** | Screen-Recording ground-truth path (was 44d)                 | Depends on Screen-Recording module which doesn't exist yet | when Screen-Recording module lands (separate roadmap)                  |
+| **Z4** | UIA `RuntimeId`-based identity (additional to HWND/PID)      | HWND/PID match has been sufficient in testing              | only if false-positive learning re-appears across same-window controls |
 
 ---
 
@@ -99,14 +99,14 @@ Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test 
 
 The `codex-delegate` skill provides automatic failure handling. Claude triggers the bridge per task, with these outcomes:
 
-| `failure.kind` | Bridge response | What gets done |
-|---|---|---|
-| `ok` | accept Codex result | task closes |
-| `quota_exhausted` | **circuit-breaker trips** (2 consecutive → no further delegation that session) | Claude takes over remaining Codex-tagged tasks inline |
-| `rate_limit` | wait 60 s, retry once | if 2nd attempt fails → take over |
-| `auth_error` | surface to user (`codex login`) | take over current task; halt delegation until user re-auths |
-| `model_unavailable` | retry with `gpt-5.4` (next-tier fallback) | continue if recovery succeeds |
-| `timeout` | split task or take over | timeout typically means prompt was too ambitious |
+| `failure.kind`      | Bridge response                                                                | What gets done                                              |
+| ------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `ok`                | accept Codex result                                                            | task closes                                                 |
+| `quota_exhausted`   | **circuit-breaker trips** (2 consecutive → no further delegation that session) | Claude takes over remaining Codex-tagged tasks inline       |
+| `rate_limit`        | wait 60 s, retry once                                                          | if 2nd attempt fails → take over                            |
+| `auth_error`        | surface to user (`codex login`)                                                | take over current task; halt delegation until user re-auths |
+| `model_unavailable` | retry with `gpt-5.4` (next-tier fallback)                                      | continue if recovery succeeds                               |
+| `timeout`           | split task or take over                                                        | timeout typically means prompt was too ambitious            |
 
 **Robustness rules for this roadmap:**
 1. Every task in the Active Zone with "Codex-able: ✅" or "⚠️" has an implicit Claude fallback. If the bridge dies mid-block, Claude finishes the block.
@@ -120,18 +120,18 @@ The `codex-delegate` skill provides automatic failure handling. Claude triggers 
 
 ## Legacy Block-ID Mapping
 
-| Old ID | New ID | Notes |
-|---|---|---|
-| U | A | Assistant UX + Soak Gate; soak runs skipped per 2026-04-29 decision |
-| E | B | UX/UI consistency; absorbs R5 (Picker-Unification) |
-| J | C | Adaptive AI refinement; absorbs 43, 43a, 45, R4 |
-| F | D | Reliability hardening |
-| K | E | Expert-Mode toggle |
-| W | F | Assistant Presence Window |
-| G | Z1 | Cloud provider — deferred |
-| R6 | Z2 | LM Studio thinking-disable — externally blocked |
-| 44d | Z3 | Screen-Recording ground-truth — depends on new module |
-| D, H, L, M, N, Q, R1-R5, S, T, V | history | Completed in earlier phases — see History below |
+| Old ID                           | New ID  | Notes                                                               |
+| -------------------------------- | ------- | ------------------------------------------------------------------- |
+| U                                | A       | Assistant UX + Soak Gate; soak runs skipped per 2026-04-29 decision |
+| E                                | B       | UX/UI consistency; absorbs R5 (Picker-Unification)                  |
+| J                                | C       | Adaptive AI refinement; absorbs 43, 43a, 45, R4                     |
+| F                                | D       | Reliability hardening                                               |
+| K                                | E       | Expert-Mode toggle                                                  |
+| W                                | F       | Assistant Presence Window                                           |
+| G                                | Z1      | Cloud provider — deferred                                           |
+| R6                               | Z2      | LM Studio thinking-disable — externally blocked                     |
+| 44d                              | Z3      | Screen-Recording ground-truth — depends on new module               |
+| D, H, L, M, N, Q, R1-R5, S, T, V | history | Completed in earlier phases — see History below                     |
 
 ---
 

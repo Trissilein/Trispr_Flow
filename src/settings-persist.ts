@@ -4,7 +4,7 @@ import {
     normalizePersistedRefinementPromptPresetId,
     normalizeUserRefinementPromptPresets,
 } from "./refinement-prompts";
-import { derivePostprocLanguageFromAsr } from "./settings/transcription.settings";
+import { derivePostprocLanguageFromAsr } from "./language-utils";
 
 export function ensureSetupDefaults(): void {
     if (!settings) return;

@@ -44,7 +44,7 @@ import {
   persistSettings,
   syncDerivedLanguageSettings,
 } from "../settings-persist";
-import { resolveEffectiveAsrLanguageHint } from "./transcription.settings";
+import { resolveEffectiveAsrLanguageHint } from "../language-utils";
 
 // AI refinement settings rendering (R3 slice 5).
 //

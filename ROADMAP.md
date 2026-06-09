@@ -38,13 +38,13 @@ Aligned with `~/.claude/skills/codex-delegate/SKILL.md`:
 
 ### A — v0.8.x Release Gate Closure
 
-Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib` pass. `npm run benchmark:tts` passes by gating the baseline provider (`windows_native`) and warning on degraded supported optional providers (`local_custom`). `npm run benchmark:latency` produced `bench/results/latest.json`, and `npm run qa:assistant -- --strict-benchmark` passes with benchmark linkage.
+Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib` pass. `npm run benchmark:tts` passes by gating the baseline provider (`windows_native`) and warning on degraded supported optional providers (`local_custom`). `npm run benchmark:latency` produced `bench/results/latest.json`, and `npm run qa:assistant -- --strict-benchmark` passes with benchmark linkage. The linked latency evidence used CPU fallback and missed the latency SLO; do not tag `v0.8.2` until the Vulkan backend works on the target AMD machine or an explicit release decision supersedes this constraint.
 
 - **A1** Generate `bench/results/tts.latest.json` (run `npm run benchmark:tts`) — *done* — TTS baseline gating passes with `windows_native`; `local_custom` remains supported-optional follow-up.
 - **A2** Generate `bench/results/latest.json` (run `npm run benchmark:latency`) — *done* — latency evidence is linked for the strict assistant gate.
 - **A3** Run `npm run qa:assistant -- --strict-benchmark` (no `--require-soak`) — *done* — exit-criteria check generated sign-off reports in `docs/reports/`.
 - **A4** Update `STATUS.md` + `CHANGELOG.md` with v0.8.2 release notes — *done* — status docs reflect gate-output JSON.
-- **A5** Cut tag `v0.8.2` and push — *trivial, manual* — Claude orchestrates, user runs `git tag` + `git push --tags` himself after closure evidence is merged.
+- **A5** Fix Vulkan latency path before tag — *complex, Claude* — diagnose bundled Vulkan `whisper-cli` on the AMD target machine, rerun production-default latency evidence, then cut and push `v0.8.2` only after the release constraint is satisfied or explicitly waived.
 
 ### B — UX/UI consistency + Picker-Unification
 

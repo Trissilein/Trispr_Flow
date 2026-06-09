@@ -15,13 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **TTS release-gate provider roles**: `windows_native` is the v0.8.2 baseline provider, `local_custom` Piper is supported optional, and `qwen3_tts` is experimental. Supported optional provider failures now pass the TTS release gate with warnings instead of blocking the release.
 - **Refactoring quality foundation closed**: The May 2026 refactoring plan is now closed as an implementation plan after backend command extraction and frontend event wiring decomposition. Remaining architecture cleanup is tracked as residual backlog rather than active release work.
 - **Overlay → active virtual desktop**: `assistant_presence.rs` calls `IVirtualDesktopManager::MoveWindowToDesktop` on every `show_assistant_presence_window`. The KITT/HAL overlay now appears on whichever Windows virtual desktop is active. `Win32_UI_Shell` feature added to the `windows` crate.
 - **CUDA 13 DLL migration**: Runtime filenames updated from `cublas64_12/cublasLt64_12/cudart64_12` to `cublas64_13/cublasLt64_13/cudart64_13` across `transcription.rs`, `tauri.conf.json`, and all build/installer scripts (`first-run.ps1`, `generate-tauri-variant-config.mjs`, `hydrate-whisper-runtime-from-release.ps1`, `validate-whisper-runtime.mjs`, `windows/build-installers.bat`).
 
 ### Fixed
 
-- **Release-gate evidence refreshed**: The Block A local gate evidence now reflects the current state: build/tests are green, while strict benchmark closure remains blocked by the `local_custom` Piper preflight failure.
+- **Release-gate evidence refreshed**: The Block A local gate evidence now reflects the current state: build/tests and TTS baseline gating are green, while strict benchmark closure remains blocked by missing latency benchmark evidence on this host.
 - **`cargo test --lib` loader crash resolved**: `src-tauri/build.rs` now emits `/DELAYLOAD:comctl32.dll` and links `delayimp` for MSVC targets. Moves `comctl32.dll` from hard PE imports to delay imports, preventing `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139) at process startup. Root cause: `comctl32` v5.82 (`System32`) does not export `TaskDialogIndirect`; the test binary has no application manifest to activate the SxS v6 context that the production binary gets from `tauri-winres`. Since tests never call `TaskDialogIndirect`, delay-loading avoids the resolution entirely. `--no-run` workaround removed from `test:smoke` (both `package.json` and `scripts/release-qa.mjs`). Current local verification passes `cargo test --manifest-path src-tauri/Cargo.toml --lib` with 245 tests.
 - **Vite dynamic-import chunk warnings**: `vocab-auto-learn.ts` was dynamically importing `settings.ts` (which it already statically imported), and `settings.ts` was dynamically importing `vocab-auto-learn.ts`. Both modules are always in the same chunk via `main.ts`; the dynamic imports achieved no code-splitting and triggered Vite `(!) dynamic import will not move module into another chunk` warnings. Converted to static imports on both sides.
 

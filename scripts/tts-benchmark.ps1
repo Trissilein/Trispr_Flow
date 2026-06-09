@@ -39,16 +39,25 @@ $gateMinSuccessPerScenario = 2
 
 function Get-ProviderProfile {
   param([string]$Provider)
+  $releaseRole = switch ($Provider) {
+    'windows_native' { 'baseline' }
+    'windows_natural' { 'supported_optional' }
+    'local_custom' { 'supported_optional' }
+    'qwen3_tts' { 'experimental' }
+    default { 'experimental' }
+  }
   if ($Provider -eq 'qwen3_tts') {
     return [ordered]@{
       provider = $Provider
       surface = 'benchmark_experimental'
+      release_role = $releaseRole
       experimental_reason = 'Endpoint-backed runtime provider treated as experimental for release-gating.'
     }
   }
   return [ordered]@{
     provider = $Provider
     surface = 'runtime_stable'
+    release_role = $releaseRole
     experimental_reason = $null
   }
 }
@@ -559,8 +568,8 @@ foreach ($provider in $providerList) {
   $preflightChecks += $checks
   $preflightOkByProvider[$provider] = -not ($checks | Where-Object { -not $_.passed })
 
-  $profile = $profiles | Where-Object { $_.provider -eq $provider } | Select-Object -First 1
-  $isRuntimeStable = $profile.surface -eq 'runtime_stable'
+  $providerRoleInfo = $profiles | Where-Object { $_.provider -eq $provider } | Select-Object -First 1
+  $isRuntimeStable = $providerRoleInfo.surface -eq 'runtime_stable'
   if ($isRuntimeStable) {
     if ($runRuntimeSmoke) {
       if ($preflightOkByProvider[$provider]) {
@@ -667,8 +676,10 @@ $providerSummaries = @($providerList | ForEach-Object { Summarize-Provider -Prov
 $providerGateEvaluations = @()
 foreach ($summary in $providerSummaries) {
   $provider = $summary.provider
-  $profile = $profiles | Where-Object { $_.provider -eq $provider } | Select-Object -First 1
-  $isRuntimeStable = $profile.surface -eq 'runtime_stable'
+  $providerRoleInfo = $profiles | Where-Object { $_.provider -eq $provider } | Select-Object -First 1
+  $isRuntimeStable = $providerRoleInfo.surface -eq 'runtime_stable'
+  $releaseRole = if ($providerRoleInfo.release_role) { [string]$providerRoleInfo.release_role } else { if ($isRuntimeStable) { 'baseline' } else { 'experimental' } }
+  $blocksReleaseGate = $releaseRole -eq 'baseline'
 
   $preflightOk = -not ($preflightChecks | Where-Object { $_.provider -eq $provider -and -not $_.passed })
   $smokeCheck = $runtimeSmokeChecks | Where-Object { $_.provider -eq $provider } | Select-Object -First 1
@@ -689,7 +700,9 @@ foreach ($summary in $providerSummaries) {
 
   $providerGateEvaluations += [ordered]@{
     provider = $provider
-    evaluated_for_release = $isRuntimeStable
+    release_role = $releaseRole
+    evaluated_for_release = $blocksReleaseGate
+    blocks_release_gate = $blocksReleaseGate
     passes_release_gate = $passes
     preflight_ok = $preflightOk
     runtime_smoke_ok = $runtimeSmokeOk
@@ -705,26 +718,38 @@ foreach ($summary in $providerSummaries) {
 
 $fallbackOrder = Build-FallbackOrder -Summaries $providerSummaries -ReliabilityGate $gateReliability
 
-$runtimeEvals = @($providerGateEvaluations | Where-Object { $_.evaluated_for_release })
-$failedRuntime = @($runtimeEvals | Where-Object { -not $_.passes_release_gate })
+$baselineEvals = @($providerGateEvaluations | Where-Object { $_.release_role -eq 'baseline' })
+$failedBaseline = @($baselineEvals | Where-Object { -not $_.passes_release_gate })
+$supportedOptionalEvals = @($providerGateEvaluations | Where-Object { $_.release_role -eq 'supported_optional' })
+$degradedSupportedOptional = @($supportedOptionalEvals | Where-Object { -not $_.passes_release_gate })
+$experimentalEvals = @($providerGateEvaluations | Where-Object { $_.release_role -eq 'experimental' })
+$unavailableExperimental = @($experimentalEvals | Where-Object { -not $_.passes_release_gate })
 
 $releaseGatePass = $false
 $releaseGateReason = ''
-if ($runtimeEvals.Count -eq 0) {
+if ($baselineEvals.Count -eq 0) {
   $releaseGatePass = $false
-  $releaseGateReason = 'No runtime-stable providers available for release gate evaluation.'
-} elseif ($failedRuntime.Count -eq 0) {
+  $releaseGateReason = 'No baseline providers available for release gate evaluation.'
+} elseif ($failedBaseline.Count -eq 0) {
   $releaseGatePass = $true
-  $releaseGateReason = 'All runtime-stable providers passed release gate.'
+  if ($degradedSupportedOptional.Count -gt 0) {
+    $releaseGateReason = "Baseline providers passed; supported optional providers degraded: $($degradedSupportedOptional.provider -join ', ')"
+  } else {
+    $releaseGateReason = 'All baseline providers passed release gate.'
+  }
 } else {
   $releaseGatePass = $false
-  $releaseGateReason = "Release gate failed for providers: $($failedRuntime.provider -join ', ')"
+  $releaseGateReason = "Release gate failed for baseline providers: $($failedBaseline.provider -join ', ')"
+}
+
+if ($degradedSupportedOptional.Count -gt 0) {
+  $warnings += "Supported optional TTS providers degraded: $($degradedSupportedOptional.provider -join ', ')"
 }
 
 $recommendedDefaultProvider = $null
 $recommendationReason = ''
 if ($releaseGatePass) {
-  $passingRuntime = @($runtimeEvals | Where-Object { $_.passes_release_gate } |
+  $passingRuntime = @($baselineEvals | Where-Object { $_.passes_release_gate } |
     Sort-Object @{Expression = { [long]$_.p95_ms }; Ascending = $true }, @{Expression = { [long]$_.p50_ms }; Ascending = $true }, @{Expression = { $_.provider }; Ascending = $true })
   if ($passingRuntime.Count -gt 0) {
     $recommendedDefaultProvider = $passingRuntime[0].provider
@@ -794,6 +819,9 @@ $report = [ordered]@{
   samples = $samples
   provider_summaries = $providerSummaries
   provider_gate_evaluations = $providerGateEvaluations
+  baseline_providers = @($baselineEvals | ForEach-Object { $_.provider })
+  degraded_supported_optional_providers = @($degradedSupportedOptional | ForEach-Object { $_.provider })
+  unavailable_experimental_providers = @($unavailableExperimental | ForEach-Object { $_.provider })
   provider_consistency_ok = $true
   provider_consistency_detail = 'Benchmark scope and runtime provider surface are consistent.'
   fallback_order = $fallbackOrder
@@ -819,6 +847,12 @@ Write-Host "[TTS Benchmark] Release gate reason: $releaseGateReason"
 Write-Host '[TTS Benchmark] Provider consistency: True'
 Write-Host '[TTS Benchmark] Provider consistency detail: Benchmark scope and runtime provider surface are consistent.'
 Write-Host "[TTS Benchmark] Fallback order: $($fallbackOrder -join ' -> ')"
+if ($degradedSupportedOptional.Count -gt 0) {
+  Write-Host "[TTS Benchmark] Supported optional degraded: $($degradedSupportedOptional.provider -join ', ')"
+}
+if ($unavailableExperimental.Count -gt 0) {
+  Write-Host "[TTS Benchmark] Experimental unavailable: $($unavailableExperimental.provider -join ', ')"
+}
 Write-Host "[TTS Benchmark] Uncategorized failures: $uncategorizedFailureCount"
 
 foreach ($summary in $providerSummaries) {

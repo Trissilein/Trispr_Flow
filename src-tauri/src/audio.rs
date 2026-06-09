@@ -862,57 +862,6 @@ fn stop_ptt_hot_standby(state: &State<'_, AppState>) {
     }
 }
 
-fn schedule_ptt_hot_standby_shutdown(app: AppHandle, keepalive_ms: u64, generation: u64) {
-    if keepalive_ms == 0 {
-        return;
-    }
-    if crate::state::diagnostic_logging_enabled() {
-        info!(
-            "[runtime:ptt_audio_capture] scheduling warm standby stop in {} ms generation={}",
-            keepalive_ms, generation
-        );
-    }
-    crate::util::spawn_guarded("ptt_hot_idle_shutdown", move || {
-        thread::sleep(Duration::from_millis(keepalive_ms));
-        let state = app.state::<AppState>();
-        let should_stop = {
-            let recorder = state
-                .recorder
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            recorder.ptt_hot_join_handle.is_some()
-                && recorder.ptt_hot_device_id.is_some()
-                && recorder
-                    .ptt_hot_keepalive_generation
-                    .load(Ordering::Relaxed)
-                    == generation
-        };
-        if !should_stop {
-            if crate::state::diagnostic_logging_enabled() {
-                info!(
-                    "[runtime:ptt_audio_capture] keepalive expiry skipped generation={} (superseded)",
-                    generation
-                );
-            }
-            return;
-        }
-
-        if crate::state::diagnostic_logging_enabled() {
-            info!(
-                "[runtime:ptt_audio_capture] keepalive expired after {} ms; stopping warm standby",
-                keepalive_ms
-            );
-        }
-        stop_ptt_hot_standby(&state);
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        let _ = emit_capture_idle_overlay(&app, &settings);
-    });
-}
-
 fn start_ptt_hot_standby(
     app: &AppHandle,
     state: &State<'_, AppState>,
@@ -1378,22 +1327,31 @@ fn handle_transcription_ok(
             "source": source,
         })
     );
-    // If the OLLAMA model is not confirmed warm, paste the raw text immediately
-    // (paste_deferred=false) instead of waiting out the 20–60 s model load.
-    // Refinement still runs in the background and updates the history entry when
-    // it completes — we just don't block the user's paste on a cold model.
-    // Cold = model not confirmed warm, OR warmup is actively running (GPU at 100%).
-    // Both states mean: paste raw text immediately, don't block on refinement.
-    let ollama_cold = settings.ai_fallback.provider == "ollama"
-        && ai_refinement_capability_enabled(settings)
-        && (!state.ollama_model_warm.load(Ordering::SeqCst)
-            || state.ollama_warmup_in_progress.load(Ordering::SeqCst));
-
-    let paste_deferred = if ollama_cold {
-        false
+    // Just-in-time refinement gate. Rather than trust cached warm/warmup flags
+    // (which drift whenever OLLAMA loads or unloads the model on its own), ask
+    // OLLAMA right now whether the refinement model is actually resident in VRAM.
+    // /api/ps is the single source of truth, queried at the only instant that
+    // matters: the moment we decide whether to wait for refinement or paste raw.
+    //
+    //   model resident     -> refine inline: defer paste, show the refining pulse
+    //   not resident / cold -> bypass: paste raw now, no refinement, no pulse.
+    //
+    // On bypass the PTT eager-warmup (handle_ptt_press) is already loading the
+    // model in the background, so the *next* dictation will refine.
+    let refinement_enabled = ai_refinement_capability_enabled(settings);
+    let provider_is_ollama = settings.ai_fallback.provider == "ollama";
+    let model_resident = if provider_is_ollama {
+        crate::ai_fallback::provider::fetch_ollama_running_vram(&settings.providers.ollama.endpoint)
+            .map(|bytes| bytes > 0)
+            .unwrap_or(false)
     } else {
-        should_defer_paste_for_refinement(&app_handle, settings)
+        // lm_studio / oobabooga expose no /api/ps probe — keep prior behaviour.
+        true
     };
+    let should_refine = refinement_enabled && model_resident;
+    let ollama_cold = provider_is_ollama && refinement_enabled && !model_resident;
+
+    let paste_deferred = should_refine && should_defer_paste_for_refinement(&app_handle, settings);
     let _ = app_handle.emit(
         "transcription:result",
         TranscriptionResult {
@@ -1426,16 +1384,22 @@ fn handle_transcription_ok(
             state.refinement_active_count.load(Ordering::SeqCst)
         );
     }
-    maybe_spawn_ai_refinement(
-        app_handle.clone(),
-        processed_text.clone(),
-        source.to_string(),
-        "transcription_postprocess",
-        job_id,
-        entry_id,
-        settings,
-        paste_deferred,
-    );
+    // Only spawn refinement when the model is actually resident. On bypass we
+    // skip it entirely: the user already has the raw paste, and spawning now
+    // would fire the refining pulse and a cold-load GPU spike for a result no
+    // one is waiting on. The eager-warmup keeps loading the model for next time.
+    if should_refine {
+        maybe_spawn_ai_refinement(
+            app_handle.clone(),
+            processed_text.clone(),
+            source.to_string(),
+            "transcription_postprocess",
+            job_id,
+            entry_id,
+            settings,
+            paste_deferred,
+        );
+    }
 
     Some(processed_text.len())
 }
@@ -2894,7 +2858,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
                 info!("[runtime:ptt_audio_capture] finalize requested");
             }
             let state = app_handle.state::<AppState>();
-            let (buffer, keepalive_generation, was_active) = {
+            let (buffer, was_active) = {
                 let mut recorder = state
                     .recorder
                     .lock()
@@ -2912,10 +2876,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
                         );
                     }
                 }
-                let generation = recorder
-                    .ptt_hot_keepalive_generation
-                    .load(Ordering::Relaxed);
-                (recorder.buffer.clone(), generation, was_active)
+                (recorder.buffer.clone(), was_active)
             };
 
             if !was_active {
@@ -2946,11 +2907,9 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 recorder.transcribing = false;
-                schedule_ptt_hot_standby_shutdown(
-                    app_handle.clone(),
-                    settings.ptt_hot_keepalive_ms,
-                    keepalive_generation,
-                );
+                // PTT standby stays warm indefinitely (no shutdown on release).
+                // Prevents 0ms pre-roll after idle periods. Standby only stops on
+                // settings change/mode switch/app exit via sync_ptt_hot_standby.
                 return;
             }
 
@@ -2996,11 +2955,9 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
                 }
             }
 
-            schedule_ptt_hot_standby_shutdown(
-                app_handle.clone(),
-                settings.ptt_hot_keepalive_ms,
-                keepalive_generation,
-            );
+            // PTT standby stays warm indefinitely (no shutdown on release).
+            // Prevents 0ms pre-roll after idle periods. Standby only stops on
+            // settings change/mode switch/app exit via sync_ptt_hot_standby.
         });
         return;
     }
@@ -3159,6 +3116,14 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
     if settings.audio_cues {
         let _ = app.emit("audio:cue", "start");
     }
+
+    // Show the overlay in Recording state immediately, before anything that can
+    // block. start_ptt_hot_standby may block ~2s on audio-device cold-start;
+    // without this the overlay only appears afterwards. update_overlay_state is
+    // non-blocking (run_on_main_thread) and idempotent. Setting Recording here
+    // also means the subsequent OLLAMA warmup's Loading color is skipped
+    // (apply_overlay_ollama_state_to_window returns early during Recording).
+    let _ = crate::overlay::update_overlay_state(app, crate::overlay::OverlayState::Recording);
 
     if let Some(model_path) = crate::models::resolve_model_path(app, &settings.model) {
         crate::whisper_server::schedule_whisper_server_warmup(

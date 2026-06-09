@@ -681,25 +681,19 @@ fn adaptive_num_predict(
 /// fits comfortably in 16 GB VRAM.
 pub const OLLAMA_REFINEMENT_NUM_CTX: usize = 2048;
 
-fn build_ollama_options_payload(
-    options: &RefinementOptions,
-    input_text: &str,
-) -> serde_json::Value {
+/// The subset of OLLAMA options that determine *which runner* is loaded.
+/// Changing any of these — num_ctx, num_thread, num_gpu — forces a full model
+/// reload (~4-5 s for a 9B model). The warmup path and the refinement path MUST
+/// send byte-identical values here, otherwise the warmed runner is evicted and
+/// the first real refinement pays the cold-load cost, defeating the warmup.
+/// Sampling options (temperature, num_predict) do NOT affect runner identity and
+/// are layered on top by the refinement path only.
+pub fn ollama_runner_defining_options() -> serde_json::Map<String, serde_json::Value> {
     let mut payload = serde_json::Map::new();
-    payload.insert(
-        "temperature".to_string(),
-        serde_json::json!(options.temperature),
-    );
-    let num_predict = adaptive_num_predict(
-        input_text,
-        &options.prompt_profile,
-        options.max_tokens,
-        options.low_latency_mode,
-    );
-    payload.insert("num_predict".to_string(), serde_json::json!(num_predict));
-    // Fixed num_ctx so the model runner stays warm across requests (see
-    // OLLAMA_REFINEMENT_NUM_CTX docs). The env override must also be a single
-    // stable value if set — varying it per-request reintroduces reloads.
+
+    // Fixed num_ctx so the runner stays warm across requests (see
+    // OLLAMA_REFINEMENT_NUM_CTX docs). An env override must also be a single
+    // stable value — varying it per-request reintroduces reloads.
     let num_ctx = parse_env_usize("TRISPR_OLLAMA_NUM_CTX")
         .map(|n| n.clamp(1024, 8192))
         .unwrap_or(OLLAMA_REFINEMENT_NUM_CTX);
@@ -714,6 +708,28 @@ fn build_ollama_options_payload(
     if let Some(num_gpu) = parse_env_usize("TRISPR_OLLAMA_NUM_GPU") {
         payload.insert("num_gpu".to_string(), serde_json::json!(num_gpu));
     }
+
+    payload
+}
+
+fn build_ollama_options_payload(
+    options: &RefinementOptions,
+    input_text: &str,
+) -> serde_json::Value {
+    // Start from the runner-defining options so the warmup and refinement
+    // runners are identical, then layer sampling options on top.
+    let mut payload = ollama_runner_defining_options();
+    payload.insert(
+        "temperature".to_string(),
+        serde_json::json!(options.temperature),
+    );
+    let num_predict = adaptive_num_predict(
+        input_text,
+        &options.prompt_profile,
+        options.max_tokens,
+        options.low_latency_mode,
+    );
+    payload.insert("num_predict".to_string(), serde_json::json!(num_predict));
 
     serde_json::Value::Object(payload)
 }

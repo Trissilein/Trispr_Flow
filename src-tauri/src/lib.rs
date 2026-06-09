@@ -9510,15 +9510,20 @@ pub(crate) fn warmup_ollama_model_impl(endpoint: &str, model: &str) -> Result<()
     if is_ssrf_target(endpoint) {
         return Err("Ollama endpoint is not allowed for warmup.".to_string());
     }
+    // The runner-defining options (num_ctx, num_thread, num_gpu) MUST match the
+    // refinement path exactly, otherwise Ollama loads a separate runner for the
+    // warmup and reloads on the first real refinement — making the warmup useless.
+    // We add num_predict=1 (a sampling option, irrelevant to runner identity) to
+    // keep the warmup inference minimal.
+    let mut warmup_options = crate::ai_fallback::provider::ollama_runner_defining_options();
+    warmup_options.insert("num_predict".to_string(), serde_json::json!(1));
     let warmup_body = serde_json::json!({
         "model": model,
         "prompt": ".",
         "stream": false,
         "think": false,
         "keep_alive": -1_i64,
-        // num_ctx MUST match the refinement path exactly, otherwise Ollama loads
-        // a separate runner for warmup and reloads on the first real refinement.
-        "options": { "num_ctx": crate::ai_fallback::provider::OLLAMA_REFINEMENT_NUM_CTX, "num_predict": 1 }
+        "options": serde_json::Value::Object(warmup_options)
     });
 
     let agent = ureq::builder()
@@ -9681,7 +9686,6 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
     }
 }
 
-
 #[derive(serde::Serialize)]
 struct GpuStats {
     util_pct: Option<u32>,
@@ -9728,7 +9732,13 @@ async fn get_gpu_stats(app: AppHandle, state: State<'_, AppState>) -> Result<Gpu
             "--query-gpu=utilization.gpu,memory.used,memory.total",
             "--format=csv,noheader,nounits",
         ]) {
-            let parts: Vec<&str> = out.lines().next().unwrap_or("").split(',').map(|s| s.trim()).collect();
+            let parts: Vec<&str> = out
+                .lines()
+                .next()
+                .unwrap_or("")
+                .split(',')
+                .map(|s| s.trim())
+                .collect();
             if parts.len() == 3 {
                 util_pct = parts[0].parse::<u32>().ok();
                 if let Ok(used) = parts[1].parse::<f64>() {
@@ -9744,7 +9754,6 @@ async fn get_gpu_stats(app: AppHandle, state: State<'_, AppState>) -> Result<Gpu
         // Some(0) = OLLAMA up but no model loaded; None = OLLAMA unreachable.
         let refine_vram_bytes = crate::ai_fallback::provider::fetch_ollama_running_vram(&endpoint);
         let refine_vram_gb = refine_vram_bytes.map(|bytes| bytes as f64 / 1_073_741_824.0);
-        let ollama_reachable_no_model = refine_vram_bytes == Some(0);
 
         // 3. Whisper VRAM derived: everything that isn't the refinement model.
         let whisper_vram_gb = if vram_used_gb > 0.0 {
@@ -9755,31 +9764,61 @@ async fn get_gpu_stats(app: AppHandle, state: State<'_, AppState>) -> Result<Gpu
             None
         };
 
-        Ok::<(GpuStats, bool), String>((GpuStats {
-            util_pct,
-            vram_used_gb,
-            vram_total_gb,
-            whisper_vram_gb,
-            refine_vram_gb,
-        }, ollama_reachable_no_model))
+        Ok::<(GpuStats, Option<u64>), String>((
+            GpuStats {
+                util_pct,
+                vram_used_gb,
+                vram_total_gb,
+                whisper_vram_gb,
+                refine_vram_gb,
+            },
+            refine_vram_bytes,
+        ))
     })
     .await
-    .unwrap_or_else(|_| Ok((GpuStats {
-        util_pct: None,
-        vram_used_gb: 0.0,
-        vram_total_gb: 0.0,
-        whisper_vram_gb: None,
-        refine_vram_gb: None,
-    }, false)))?;
+    .unwrap_or_else(|_| {
+        Ok((
+            GpuStats {
+                util_pct: None,
+                vram_used_gb: 0.0,
+                vram_total_gb: 0.0,
+                whisper_vram_gb: None,
+                refine_vram_gb: None,
+            },
+            None,
+        ))
+    })?;
 
-    let (stats, ollama_reachable_no_model) = result;
+    let (stats, refine_vram_bytes) = result;
 
-    // If OLLAMA is reachable but no model is loaded, the warm flag is stale.
-    // Reset it so the next PTT press triggers warmup and shows the Loading overlay.
-    if ollama_reachable_no_model && warm_flag {
-        state.ollama_model_warm.store(false, Ordering::SeqCst);
-        state.ollama_warmup_in_progress.store(false, Ordering::SeqCst);
-        crate::overlay::update_overlay_ollama_state(&app, crate::overlay::OllamaModelState::Cold);
+    // Drive the header status light from /api/ps. The warm/warmup flags are now
+    // purely UI state (the bypass decision is made just-in-time in
+    // handle_transcription_ok via its own /api/ps probe), but the light still
+    // needs an authoritative signal, so keep the flags honest in both directions
+    // within the 2s poll interval.
+    // Some(0)=OLLAMA up, no model; Some(>0)=model loaded; None=OLLAMA unreachable.
+    let warmup_running = state.ollama_warmup_in_progress.load(Ordering::SeqCst);
+    match refine_vram_bytes {
+        Some(0) if warm_flag => {
+            // Model no longer in VRAM (OLLAMA unloaded it itself, etc.) — stale true.
+            state.ollama_model_warm.store(false, Ordering::SeqCst);
+            state
+                .ollama_warmup_in_progress
+                .store(false, Ordering::SeqCst);
+            crate::overlay::update_overlay_ollama_state(
+                &app,
+                crate::overlay::OllamaModelState::Cold,
+            );
+        }
+        Some(bytes) if bytes > 0 && !warm_flag && !warmup_running => {
+            // Model is resident but flag was stale-false — correct it.
+            state.ollama_model_warm.store(true, Ordering::SeqCst);
+            crate::overlay::update_overlay_ollama_state(
+                &app,
+                crate::overlay::OllamaModelState::Warm,
+            );
+        }
+        _ => {}
     }
 
     Ok(stats)

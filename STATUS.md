@@ -1,27 +1,32 @@
 # Trispr Flow - Status
 
-Last updated: 2026-05-18
+Last updated: 2026-06-09
 
 ## Snapshot
 
-- Current release: `v0.8.1` — developing toward `v0.8.2`
-- Current planning phase: Block B (UX/UI consistency + R5 picker-unification) — see `ROADMAP.md`
+- Current release: `v0.8.2-dev`
+- Current planning phase: Block A release gate closure, see `ROADMAP.md`
 - Canonical next steps: `ROADMAP.md` (A → F active zone, Z1-Z4 deferred)
-- Current readiness: v0.8.2-dev — CUDA 13 DLL migration + vocab cleanup job in progress
+- Current readiness: architecture refactoring foundation closed; release gate is not closed because strict TTS benchmark linkage is red.
 
 ## Current Blockers
 
-1. No hard compile/test blockers (`npm run build` green; `cargo check` green).
-2. `cargo test --lib` still failing with STATUS_ENTRYPOINT_NOT_FOUND on this host — pre-existing, documented in `docs/KNOWN_ISSUES.md` #001.
-3. Block U soak evidence still pending.
+1. No hard compile/test blockers in the current local verification pass: `npm run build`, `npm test`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib` pass.
+2. Block A strict benchmark linkage is blocked: `npm run benchmark:tts` writes `release_gate_pass=false` because `local_custom` Piper synthesis exits during preflight. `windows_native` passes with 100% success.
+3. `npm run qa:assistant -- --strict-benchmark` remains red until the TTS benchmark report passes. A non-strict report was generated for evidence only.
 
 ## Next Focus (Execution Order)
 
-1. Cut `v0.8.2` release once CUDA 13 migration validated.
-2. Screen Recording Module (future): vocabulary ground-truth via active-window capture + OCR diff.
-3. Keep baseline gates green (`npm test`, `npm run build`).
+1. Fix or explicitly de-scope the `local_custom` Piper release-gate failure, then rerun `npm run benchmark:tts`.
+2. Rerun `npm run qa:assistant -- --strict-benchmark` and keep the generated report in `docs/reports/`.
+3. Only after Block A is green, move to Block B UX/UI consistency and picker unification.
 
 ## Working State
+
+- **Recent (2026-06-09)**:
+  - **Refactoring plan closed**: `project-spec/decisions/2026-05-15/refactoring-plan.md` is closed as an implementation plan. R1 and R2 are complete, R3 was cancelled/folded into R2, and remaining cleanup is residual backlog.
+  - **GDD module installability slice merged**: GDD has the first bundled module package path, manifest validation, registry install-state derivation, runtime command gates, and Modules Hub install action.
+  - **Block A gate refresh**: frontend build/tests and Rust lib tests pass locally. Strict assistant release gate remains blocked by the TTS `local_custom` provider preflight crash.
 
 - **Recent (2026-05-18)**:
   - **CUDA 13 DLL migration**: `cublas64_12/cublasLt64_12/cudart64_12` → `*_13` across `transcription.rs`, `tauri.conf.json`, and all build/installer scripts. Matches CUDA Toolkit 13 library naming.

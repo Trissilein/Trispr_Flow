@@ -1951,4 +1951,46 @@ export function wireAiRefinement(): void {
     await renderTopicKeywords();
     await persistSettings();
   });
+
+  // ── Header quick-picker for refinement preset ─────────────────────────────
+  dom.engineRefinePreset?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const menu = dom.engineRefinePresetMenu;
+    if (!menu) return;
+    const nowOpen = menu.hidden;
+    menu.hidden = !nowOpen;
+    dom.engineRefinePreset?.setAttribute("aria-expanded", nowOpen ? "true" : "false");
+  });
+
+  dom.engineRefinePresetMenu?.addEventListener("click", async (e) => {
+    const btn = (e.target as HTMLElement).closest(
+      "button[data-preset-id]",
+    ) as HTMLButtonElement | null;
+    if (!btn || !settings) return;
+    const presetId = btn.dataset.presetId;
+    if (!presetId) return;
+
+    dom.engineRefinePresetMenu!.hidden = true;
+    dom.engineRefinePreset?.setAttribute("aria-expanded", "false");
+
+    if (presetId === "__off__") {
+      settings.ai_fallback.enabled = false;
+    } else {
+      settings.ai_fallback.enabled = true;
+      settings.ai_fallback.active_prompt_preset_id = presetId;
+      syncActivePromptPresetSelection();
+      refreshResolvedRefinementPromptInSettings();
+    }
+    await persistSettings();
+    renderHero();
+    renderAIFallbackSettingsUi();
+  });
+
+  document.addEventListener("click", () => {
+    const menu = dom.engineRefinePresetMenu;
+    if (menu && !menu.hidden) {
+      menu.hidden = true;
+      dom.engineRefinePreset?.setAttribute("aria-expanded", "false");
+    }
+  });
 }

@@ -25,6 +25,17 @@ pub enum OverlayState {
     Transcribing,
 }
 
+/// OLLAMA model readiness tri-state for overlay color indication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OllamaModelState {
+    /// Model not in VRAM — overlay shows muted grey.
+    Cold,
+    /// PTT warmup running — overlay shows amber.
+    Loading,
+    /// Model confirmed in VRAM — overlay shows user's preset color.
+    Warm,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverlaySettings {
     pub color: String,
@@ -66,6 +77,7 @@ pub struct OverlayController {
     pub last_level: f64,
     pub last_heartbeat_ms: u64,
     pub recovery_attempt: u32,
+    pub ollama_model_state: OllamaModelState,
 }
 
 impl Default for OverlayController {
@@ -78,6 +90,7 @@ impl Default for OverlayController {
             last_level: 0.0,
             last_heartbeat_ms: 0,
             recovery_attempt: 0,
+            ollama_model_state: OllamaModelState::Cold,
         }
     }
 }
@@ -807,7 +820,10 @@ fn schedule_overlay_window_creation(app: &AppHandle, reason: &str) {
     });
 }
 
-/// Updates the overlay state and shows/hides it accordingly
+/// Updates the overlay state and shows/hides it accordingly.
+/// Non-blocking: dispatches the Win32 show/eval work via run_on_main_thread
+/// so callers on background threads (e.g. PTT hotkey thread) are not stalled
+/// by Win32 SendMessage waiting for the main thread to process the message.
 pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), String> {
     with_overlay_controller(app, |controller| {
         controller.desired_state = state.clone();
@@ -822,7 +838,15 @@ pub fn update_overlay_state(app: &AppHandle, state: OverlayState) -> Result<(), 
         }
         return Ok(());
     };
-    apply_overlay_state_to_window(app, &window, state)
+    // Queue on main thread — same pattern as apply_overlay_settings and
+    // update_overlay_ollama_state.  window.show() + window.eval() require the
+    // Win32 message queue and must not be called synchronously from a
+    // background thread or they will block until the main thread is free.
+    let app_clone = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let _ = apply_overlay_state_to_window(&app_clone, &window, state);
+    });
+    Ok(())
 }
 
 pub fn update_overlay_tts_stop_visibility(app: &AppHandle, active: bool) -> Result<(), String> {
@@ -887,6 +911,90 @@ pub fn update_overlay_refining_indicator(app: &AppHandle, active: bool) -> Resul
         return Ok(());
     };
     apply_overlay_refining_to_window(app, &window, active)
+}
+
+/// Update the overlay dot/KITT color to reflect the current OLLAMA model state.
+/// Cold → muted grey, Loading → amber, Warm → user's preset color.
+/// No-op if OLLAMA refinement is not active in settings.
+pub fn update_overlay_ollama_state(app: &AppHandle, state: OllamaModelState) {
+    with_overlay_controller(app, |controller| {
+        controller.ollama_model_state = state;
+    });
+    // Push to the main window status light, independent of overlay existence.
+    let state_str = match state {
+        OllamaModelState::Cold => "cold",
+        OllamaModelState::Loading => "loading",
+        OllamaModelState::Warm => "warm",
+    };
+    let _ = app.emit("ollama:model-state", state_str);
+    if let Some(window) = app.get_webview_window("overlay") {
+        // Use run_on_main_thread so window.eval() dispatches via the Win32 message
+        // queue without blocking the calling thread (PTT hotkey thread or warmup
+        // thread). Same pattern as apply_overlay_settings.
+        let app_clone = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            apply_overlay_ollama_state_to_window(&app_clone, &window);
+        });
+    }
+}
+
+fn apply_overlay_ollama_state_to_window(app: &AppHandle, window: &WebviewWindow) {
+    let app_state = app.state::<AppState>();
+    let settings = app_state
+        .settings
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+
+    let is_ollama_active = settings.ai_fallback.provider == "ollama"
+        && settings.ai_fallback.enabled
+        && settings
+            .module_settings
+            .enabled_modules
+            .contains(crate::state::AI_REFINEMENT_MODULE_ID);
+
+    if !is_ollama_active {
+        return;
+    }
+
+    // During active recording or transcribing the overlay must stay visible
+    // with the user's preset color.  Overriding it with the cold/loading color
+    // (e.g. grey #c8c8c8) makes the overlay nearly invisible while dictating.
+    {
+        let controller = app_state
+            .overlay_controller
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if matches!(
+            controller.desired_state,
+            OverlayState::Recording | OverlayState::Transcribing
+        ) {
+            return;
+        }
+    }
+
+    let color = {
+        let controller = app_state
+            .overlay_controller
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let warm_color = controller
+            .desired_settings
+            .as_ref()
+            .map(|s| s.color.clone())
+            .unwrap_or_else(|| "#4be0d4".to_string());
+        match controller.ollama_model_state {
+            OllamaModelState::Cold => "#c8c8c8".to_string(),
+            OllamaModelState::Loading => "#f5a623".to_string(),
+            OllamaModelState::Warm => warm_color,
+        }
+    };
+
+    let js = format!(
+        "if(window.setOverlayColor){{window.setOverlayColor('{}');}}",
+        color
+    );
+    let _ = window.eval(&js);
 }
 
 pub fn sync_overlay_level(app: &AppHandle, level: f64) -> Result<(), String> {
@@ -1103,6 +1211,10 @@ fn apply_overlay_settings_to_window(
     window
         .eval(&tts_js)
         .map_err(|e| format!("Failed to apply overlay TTS stop config: {}", e))?;
+
+    // Re-apply OLLAMA state color last so it overrides the settings color
+    // whenever the model is cold or loading.
+    apply_overlay_ollama_state_to_window(window.app_handle(), window);
 
     Ok(())
 }

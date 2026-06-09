@@ -20,6 +20,7 @@ mod opus;
 mod overlay;
 mod paths;
 mod postprocessing;
+mod refinement_adaptation;
 mod session_manager;
 mod state;
 mod transcription;
@@ -153,7 +154,8 @@ pub(crate) use ai_fallback::commands::{
     install_ollama_runtime, list_ollama_runtime_versions, ping_refinement_model, pull_ollama_model,
     purge_gpu_memory, refine_transcript, save_ollama_endpoint, save_provider_api_key,
     set_strict_local_mode, start_ollama_runtime, stop_ollama_runtime, test_provider_connection,
-    unload_ollama_model, verify_ollama_runtime, verify_provider_auth,
+    unload_ollama_model, unload_ollama_model_impl, verify_ollama_runtime, verify_provider_auth,
+    warmup_ollama_model_impl,
 };
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
@@ -3952,6 +3954,10 @@ pub fn run() {
                 managed_whisper_server_child: Mutex::new(None),
                 whisper_server_port: AtomicU16::new(crate::whisper_server::WHISPER_SERVER_PORT),
                 whisper_server_warmup_started: AtomicBool::new(false),
+                ollama_model_warm: AtomicBool::new(false),
+                ollama_warmup_in_progress: AtomicBool::new(false),
+                whisper_server_warm_until_ms: AtomicU64::new(0),
+                whisper_server_retire_generation: AtomicU64::new(0),
                 vision_stream_running: AtomicBool::new(false),
                 vision_stream_started_ms: AtomicU64::new(0),
                 vision_stream_frame_seq: AtomicU64::new(0),

@@ -57,7 +57,7 @@ vi.hoisted(() => {
 
     <input id="audio-cues-toggle" type="checkbox" />
     <input id="ptt-use-vad-toggle" type="checkbox" />
-    <input id="ptt-hot-keepalive" type="range" min="5000" max="120000" value="30000" />
+    <input id="ptt-hot-keepalive" type="range" min="5000" max="600000" value="600000" />
     <span id="ptt-hot-keepalive-value"></span>
     <input id="audio-cues-volume" type="range" min="0" max="100" value="50" />
     <span id="audio-cues-volume-value"></span>
@@ -101,7 +101,7 @@ vi.hoisted(() => {
     <button id="gpu-backend-cuda"></button>
     <button id="gpu-backend-vulkan"></button>
     <button id="gpu-purge-btn"></button>
-    <span id="gpu-vram">123 MB</span>
+    <span id="engine-whisper-vram">123 MB</span>
 
     <select id="model-source-select"><option value="default">default</option><option value="custom">custom</option></select>
     <input id="model-custom-url" type="text" value="" />
@@ -149,7 +149,7 @@ function freshSettings(): Settings {
     audio_cues: false,
     audio_cues_volume: 0.5,
     ptt_use_vad: false,
-    ptt_hot_keepalive_ms: 30000,
+    ptt_hot_keepalive_ms: 600000,
     hallucination_filter_enabled: false,
     activation_words_enabled: false,
     activation_words: [],
@@ -233,8 +233,8 @@ beforeEach(() => {
   if (dom.vadSilence) dom.vadSilence.value = "1200";
   if (dom.audioCuesToggle) dom.audioCuesToggle.checked = false;
   if (dom.pttUseVadToggle) dom.pttUseVadToggle.checked = false;
-  if (dom.pttHotKeepalive) dom.pttHotKeepalive.value = "30000";
-  if (dom.pttHotKeepaliveValue) dom.pttHotKeepaliveValue.textContent = "30s";
+  if (dom.pttHotKeepalive) dom.pttHotKeepalive.value = "600000";
+  if (dom.pttHotKeepaliveValue) dom.pttHotKeepaliveValue.textContent = "10m";
   if (dom.audioCuesVolume) dom.audioCuesVolume.value = "50";
   if (dom.hallucinationFilterToggle) dom.hallucinationFilterToggle.checked = false;
   if (dom.activationWordsToggle) dom.activationWordsToggle.checked = false;
@@ -259,7 +259,7 @@ beforeEach(() => {
   if (dom.continuousMicSoftFlush) dom.continuousMicSoftFlush.value = "10000";
   if (dom.continuousMicSilenceFlush) dom.continuousMicSilenceFlush.value = "1200";
   if (dom.continuousMicHardCut) dom.continuousMicHardCut.value = "45000";
-  if (dom.gpuVramLabel) dom.gpuVramLabel.textContent = "123 MB";
+  if (dom.engineWhisperVram) dom.engineWhisperVram.textContent = "123 MB";
   if (dom.modelSourceSelect) dom.modelSourceSelect.value = "default";
   if (dom.modelCustomUrl) dom.modelCustomUrl.value = "";
   if (dom.modelStoragePath) dom.modelStoragePath.value = "";
@@ -334,7 +334,7 @@ describe("wireTranscription - hotkeys and devices", () => {
     expect(settings!.transcribe_output_device).toBe("speakers");
   });
 
-  it("ptt hot keepalive input updates settings", async () => {
+  it("ptt audio standby input updates ptt_hot_keepalive_ms", async () => {
     if (dom.pttHotKeepalive) dom.pttHotKeepalive.value = "45000";
     fire(dom.pttHotKeepalive, "input");
     expect(settings!.ptt_hot_keepalive_ms).toBe(45000);
@@ -555,7 +555,7 @@ describe("wireTranscription - whisper backend gpu controls", () => {
     dom.gpuBackendCudaBtn?.click();
     await flush();
     expect(settings!.local_backend_preference).toBe("cuda");
-    expect(document.querySelector("#toast-container")?.textContent).toContain("Backend updated");
+    expect(document.querySelector("#toast-container")?.textContent).toContain("Backend switched");
   });
 
   it("vulkan backend button updates preference", async () => {
@@ -564,14 +564,16 @@ describe("wireTranscription - whisper backend gpu controls", () => {
     expect(settings!.local_backend_preference).toBe("vulkan");
   });
 
-  it("gpu purge button calls backend and restores label after timeout", async () => {
+  it("gpu purge button calls backend and shows confirmation", async () => {
     vi.useFakeTimers();
     dom.gpuPurgeBtn?.click();
     await flush();
     expect(mockedInvoke).toHaveBeenCalledWith("purge_gpu_memory");
-    expect(dom.gpuVramLabel?.textContent).toBe("Purged ✓");
+    expect(dom.engineWhisperVram?.textContent).toBe("Purged ✓");
+    // Button re-enables after the timeout; the VRAM value is restored by the
+    // next GPU-stats poll, not by the handler.
     vi.advanceTimersByTime(2000);
-    expect(dom.gpuVramLabel?.textContent).toBe("123 MB");
+    expect(dom.gpuPurgeBtn?.disabled).toBe(false);
   });
 });
 

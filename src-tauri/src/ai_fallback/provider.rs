@@ -31,9 +31,9 @@ fn shared_agent() -> &'static ureq::Agent {
     })
 }
 
-/// Returns a per-request ureq agent whose read timeout scales with the combined
-/// token count of input text and system prompt.
-/// Range: 60 s (short inputs) … 120 s (long/multilingual prompts).
+/// Returns a per-request ureq agent with a short, fixed read timeout.
+/// Keep this below the frontend paste fallback timeout so local inference cannot
+/// keep the GPU hot after the user already received raw text.
 fn refinement_agent(input_text: &str, system_prompt: &str) -> ureq::Agent {
     let timeout_secs = refinement_timeout_secs(input_text, system_prompt);
     ureq::builder()
@@ -42,9 +42,8 @@ fn refinement_agent(input_text: &str, system_prompt: &str) -> ureq::Agent {
         .build()
 }
 
-fn refinement_timeout_secs(input_text: &str, system_prompt: &str) -> u64 {
-    let total_tokens = rough_token_estimate(input_text) + rough_token_estimate(system_prompt);
-    ((total_tokens as f64 / 500.0 * 1.5) + 30.0).clamp(60.0, 120.0) as u64
+fn refinement_timeout_secs(_input_text: &str, _system_prompt: &str) -> u64 {
+    25
 }
 
 // Prompt templates optimized for local models (Ollama: qwen3, mistral-small).
@@ -279,6 +278,38 @@ pub fn list_ollama_models_with_size(endpoint: &str) -> Vec<(String, u64)> {
     }
 
     vec![]
+}
+
+/// Sum the VRAM (bytes) of all currently loaded Ollama models via /api/ps.
+/// Returns None if Ollama is unreachable or no model is loaded.
+pub fn fetch_ollama_running_vram(endpoint: &str) -> Option<u64> {
+    let agent = ureq::builder()
+        .timeout_connect(Duration::from_millis(500))
+        .timeout_read(Duration::from_millis(750))
+        .build();
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/ps", candidate);
+        let Ok(resp) = agent.get(&url).call() else {
+            continue;
+        };
+        let Ok(json) = resp.into_json::<serde_json::Value>() else {
+            continue;
+        };
+        let Some(models) = json["models"].as_array() else {
+            continue;
+        };
+        if models.is_empty() {
+            // OLLAMA is reachable but no model is loaded.
+            // Return Some(0) so callers can distinguish "no model" from "OLLAMA down" (None).
+            return Some(0);
+        }
+        let total: u64 = models
+            .iter()
+            .map(|m| m["size_vram"].as_u64().unwrap_or(0))
+            .sum();
+        return Some(total);
+    }
+    None
 }
 
 /// Test whether Ollama is reachable at the given endpoint.
@@ -541,6 +572,9 @@ fn passthrough_refinement(
         provider: provider.id().to_string(),
         model: model.to_string(),
         execution_time_ms: 0,
+        ollama_load_ms: None,
+        ollama_prompt_eval_ms: None,
+        ollama_eval_ms: None,
     }
 }
 
@@ -585,11 +619,23 @@ fn parse_ollama_refined_text(json: &serde_json::Value) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-fn parse_ollama_usage(json: &serde_json::Value) -> (usize, usize) {
-    (
-        json["prompt_eval_count"].as_u64().unwrap_or(0) as usize,
-        json["eval_count"].as_u64().unwrap_or(0) as usize,
-    )
+struct OllamaUsage {
+    input_tokens: usize,
+    output_tokens: usize,
+    load_ms: Option<u64>,
+    prompt_eval_ms: Option<u64>,
+    eval_ms: Option<u64>,
+}
+
+fn parse_ollama_usage(json: &serde_json::Value) -> OllamaUsage {
+    let ns_to_ms = |ns: u64| ns / 1_000_000;
+    OllamaUsage {
+        input_tokens: json["prompt_eval_count"].as_u64().unwrap_or(0) as usize,
+        output_tokens: json["eval_count"].as_u64().unwrap_or(0) as usize,
+        load_ms: json["load_duration"].as_u64().map(ns_to_ms),
+        prompt_eval_ms: json["prompt_eval_duration"].as_u64().map(ns_to_ms),
+        eval_ms: json["eval_duration"].as_u64().map(ns_to_ms),
+    }
 }
 
 fn parse_env_usize(name: &str) -> Option<usize> {
@@ -612,57 +658,58 @@ fn default_ollama_num_thread() -> usize {
 
 fn adaptive_num_predict(
     input_text: &str,
-    system_prompt: &str,
+    prompt_profile: &str,
     configured_max: u32,
     low_latency_mode: bool,
 ) -> u32 {
     let configured = configured_max.clamp(128, 8192);
     let input_tokens = rough_token_estimate(input_text);
-    let prompt_tokens = rough_token_estimate(system_prompt);
-    let total = input_tokens + prompt_tokens;
-    let heuristic = if low_latency_mode {
-        ((total * 2) + 24).clamp(64, 512) as u32
-    } else {
-        ((total * 3) + 48).clamp(96, 1536) as u32
+    let profile = normalize_prompt_profile(prompt_profile);
+    let heuristic = match profile {
+        // Transcript correction should be close to input size. Basing this on
+        // the system prompt inflated tiny 10-word jobs to 512 output tokens,
+        // which kept Ollama on GPU long after the paste fallback fired.
+        "wording" => {
+            let multiplier = if low_latency_mode { 2 } else { 3 };
+            ((input_tokens * multiplier) + 32).clamp(48, 160) as u32
+        }
+        "summary" | "action_items" => ((input_tokens * 2) + 96).clamp(96, 384) as u32,
+        "technical_specs" | "llm_prompt" => ((input_tokens * 3) + 160).clamp(160, 512) as u32,
+        // Custom prompt can legitimately transform shape, but still keep a
+        // local ceiling because deferred paste fallback is intentionally short.
+        "custom" => ((input_tokens * 3) + 96).clamp(96, 384) as u32,
+        _ => ((input_tokens * 3) + 32).clamp(64, 192) as u32,
     };
-    configured.min(heuristic.max(64))
+    configured.min(heuristic.max(48))
 }
 
-fn adaptive_num_ctx(input_text: &str, system_prompt: &str, low_latency_mode: bool) -> usize {
-    let tokens = rough_token_estimate(input_text) + rough_token_estimate(system_prompt);
-    let max_ctx = if low_latency_mode { 2048 } else { 4096 };
-    let target = (tokens * 2).clamp(1024, max_ctx);
-    if target <= 1024 {
-        1024
-    } else if target <= 2048 {
-        2048
-    } else if !low_latency_mode && target <= 3072 {
-        3072
-    } else {
-        max_ctx
-    }
-}
+/// Fixed context window for ALL local Ollama refinement requests AND warmup.
+///
+/// This MUST be a single constant value, never adaptive. Ollama keys its loaded
+/// model runner on (model, num_ctx): any change in num_ctx forces a full model
+/// reload (~4-5 s for a 9B model), and with OLLAMA_MAX_LOADED_MODELS=1 the old
+/// runner is evicted. A previous adaptive scheme (1024 for short / 2048 for long
+/// inputs) caused a reload on every length change — the model never stayed warm.
+/// 2048 tokens covers virtually all dictation transcripts; qwen3.5:9b at ctx 2048
+/// fits comfortably in 16 GB VRAM.
+pub const OLLAMA_REFINEMENT_NUM_CTX: usize = 2048;
 
-fn build_ollama_options_payload(
-    options: &RefinementOptions,
-    input_text: &str,
-    system_prompt: &str,
-) -> serde_json::Value {
+/// The subset of OLLAMA options that determine *which runner* is loaded.
+/// Changing any of these — num_ctx, num_thread, num_gpu — forces a full model
+/// reload (~4-5 s for a 9B model). The warmup path and the refinement path MUST
+/// send byte-identical values here, otherwise the warmed runner is evicted and
+/// the first real refinement pays the cold-load cost, defeating the warmup.
+/// Sampling options (temperature, num_predict) do NOT affect runner identity and
+/// are layered on top by the refinement path only.
+pub fn ollama_runner_defining_options() -> serde_json::Map<String, serde_json::Value> {
     let mut payload = serde_json::Map::new();
-    payload.insert(
-        "temperature".to_string(),
-        serde_json::json!(options.temperature),
-    );
-    let num_predict = adaptive_num_predict(
-        input_text,
-        system_prompt,
-        options.max_tokens,
-        options.low_latency_mode,
-    );
-    payload.insert("num_predict".to_string(), serde_json::json!(num_predict));
+
+    // Fixed num_ctx so the runner stays warm across requests (see
+    // OLLAMA_REFINEMENT_NUM_CTX docs). An env override must also be a single
+    // stable value — varying it per-request reintroduces reloads.
     let num_ctx = parse_env_usize("TRISPR_OLLAMA_NUM_CTX")
         .map(|n| n.clamp(1024, 8192))
-        .unwrap_or_else(|| adaptive_num_ctx(input_text, system_prompt, options.low_latency_mode));
+        .unwrap_or(OLLAMA_REFINEMENT_NUM_CTX);
     payload.insert("num_ctx".to_string(), serde_json::json!(num_ctx));
 
     let num_thread =
@@ -674,6 +721,28 @@ fn build_ollama_options_payload(
     if let Some(num_gpu) = parse_env_usize("TRISPR_OLLAMA_NUM_GPU") {
         payload.insert("num_gpu".to_string(), serde_json::json!(num_gpu));
     }
+
+    payload
+}
+
+fn build_ollama_options_payload(
+    options: &RefinementOptions,
+    input_text: &str,
+) -> serde_json::Value {
+    // Start from the runner-defining options so the warmup and refinement
+    // runners are identical, then layer sampling options on top.
+    let mut payload = ollama_runner_defining_options();
+    payload.insert(
+        "temperature".to_string(),
+        serde_json::json!(options.temperature),
+    );
+    let num_predict = adaptive_num_predict(
+        input_text,
+        &options.prompt_profile,
+        options.max_tokens,
+        options.low_latency_mode,
+    );
+    payload.insert("num_predict".to_string(), serde_json::json!(num_predict));
 
     serde_json::Value::Object(payload)
 }
@@ -1043,6 +1112,25 @@ fn map_ollama_http_error(code: u16, detail: &str) -> AIError {
     AIError::NetworkError(format!("Ollama returned HTTP {}: {}", code, detail))
 }
 
+#[cfg(test)]
+fn is_ollama_runner_command_line(process_name: &str, command_line: &str) -> bool {
+    let name = process_name.trim().to_ascii_lowercase();
+    if name != "ollama.exe" && name != "ollama" {
+        return false;
+    }
+    command_line.split_whitespace().any(|part| {
+        let token = part
+            .trim_matches(|ch| matches!(ch, '"' | '\''))
+            .to_ascii_lowercase();
+        token == "runner"
+            || token == "runner.exe"
+            || token.ends_with("\\runner")
+            || token.ends_with("\\runner.exe")
+            || token.ends_with("/runner")
+            || token.ends_with("/runner.exe")
+    })
+}
+
 struct ClaudeProvider;
 struct OpenAIProvider;
 struct GeminiProvider;
@@ -1191,14 +1279,24 @@ impl AIProvider for OllamaProvider {
         // "think": false disables extended chain-of-thought mode on reasoning models
         // (e.g. qwen3, deepseek-r1). Without this, thinking models generate internal
         // reasoning tokens indefinitely before producing any output, causing apparent hangs.
-        let ollama_options = build_ollama_options_payload(options, text, system_prompt);
-        // Keep local refinement requests warm for a short window by default.
-        // Operators can override this with TRISPR_OLLAMA_KEEP_ALIVE if they want
-        // warmer or colder caching.
-        let keep_alive = std::env::var("TRISPR_OLLAMA_KEEP_ALIVE")
+        let ollama_options = build_ollama_options_payload(options, text);
+        // Keep the model loaded indefinitely between requests by default so the
+        // next hotkey press never has to wait for a cold reload. Operators can
+        // override with TRISPR_OLLAMA_KEEP_ALIVE (e.g. "30m" for a shorter window).
+        // Trispr Flow's own idle-release (4 h) is the primary unload mechanism.
+        let keep_alive_raw = std::env::var("TRISPR_OLLAMA_KEEP_ALIVE")
             .ok()
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "10m".to_string());
+            .unwrap_or_else(|| "-1".to_string());
+        // OLLAMA parses keep_alive as a Go duration string OR as a JSON number.
+        // "-1" as a string is rejected ("missing unit in duration"); -1 as an
+        // integer is accepted and means "keep forever". Parse here so callers can
+        // use env-var overrides with either integers ("-1") or durations ("30m").
+        let keep_alive: serde_json::Value = if let Ok(n) = keep_alive_raw.trim().parse::<i64>() {
+            serde_json::json!(n)
+        } else {
+            serde_json::json!(keep_alive_raw)
+        };
 
         let chat_body = serde_json::json!({
             "model": model,
@@ -1266,12 +1364,16 @@ impl AIProvider for OllamaProvider {
                 }
                 Err(ureq::Error::Transport(t)) => {
                     let msg = t.to_string().to_lowercase();
-                    last_transport_error =
-                        Some(if msg.contains("timed out") || msg.contains("timeout") {
-                            AIError::Timeout
-                        } else {
-                            AIError::OllamaNotRunning
-                        });
+                    if msg.contains("timed out") || msg.contains("timeout") {
+                        warn!(
+                            "[ollama.refine] timeout route=chat candidate={} model={} elapsed_ms={} — no endpoint retry; scheduling local abort",
+                            candidate,
+                            model,
+                            start.elapsed().as_millis()
+                        );
+                        return Err(AIError::Timeout);
+                    }
+                    last_transport_error = Some(AIError::OllamaNotRunning);
                     continue;
                 }
             };
@@ -1288,28 +1390,33 @@ impl AIProvider for OllamaProvider {
                 })?;
                 let refined_text = strip_thinking_tags(&refined_text);
                 let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
-                let (input_tokens, output_tokens) = parse_ollama_usage(&json);
+                let usage = parse_ollama_usage(&json);
                 let elapsed_ms = start.elapsed().as_millis() as u64;
                 if diagnostics_enabled {
                     info!(
-                        "[ollama.refine] success route=chat candidate={} elapsed_ms={} input_tokens={} output_tokens={} output_bytes={}",
+                        "[ollama.refine] success route=chat candidate={} elapsed_ms={} input_tokens={} output_tokens={} load_ms={:?} eval_ms={:?} output_bytes={}",
                         candidate,
                         elapsed_ms,
-                        input_tokens,
-                        output_tokens,
+                        usage.input_tokens,
+                        usage.output_tokens,
+                        usage.load_ms,
+                        usage.eval_ms,
                         refined_text.len()
                     );
                 }
                 return Ok(RefinementResult {
                     text: refined_text,
                     usage: TokenUsage {
-                        input_tokens,
-                        output_tokens,
+                        input_tokens: usage.input_tokens,
+                        output_tokens: usage.output_tokens,
                         total_cost_usd: 0.0,
                     },
                     provider: self.id().to_string(),
                     model: model.to_string(),
                     execution_time_ms: elapsed_ms,
+                    ollama_load_ms: usage.load_ms,
+                    ollama_prompt_eval_ms: usage.prompt_eval_ms,
+                    ollama_eval_ms: usage.eval_ms,
                 });
             }
 
@@ -1343,12 +1450,16 @@ impl AIProvider for OllamaProvider {
                 }
                 Err(ureq::Error::Transport(t)) => {
                     let msg = t.to_string().to_lowercase();
-                    last_transport_error =
-                        Some(if msg.contains("timed out") || msg.contains("timeout") {
-                            AIError::Timeout
-                        } else {
-                            AIError::OllamaNotRunning
-                        });
+                    if msg.contains("timed out") || msg.contains("timeout") {
+                        warn!(
+                            "[ollama.refine] timeout route=generate candidate={} model={} elapsed_ms={} — no endpoint retry; scheduling local abort",
+                            candidate,
+                            model,
+                            start.elapsed().as_millis()
+                        );
+                        return Err(AIError::Timeout);
+                    }
+                    last_transport_error = Some(AIError::OllamaNotRunning);
                     continue;
                 }
             };
@@ -1364,15 +1475,17 @@ impl AIProvider for OllamaProvider {
             })?;
             let refined_text = strip_thinking_tags(&refined_text);
             let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
-            let (input_tokens, output_tokens) = parse_ollama_usage(&json);
+            let usage = parse_ollama_usage(&json);
             let elapsed_ms = start.elapsed().as_millis() as u64;
             if diagnostics_enabled {
                 info!(
-                    "[ollama.refine] success route=generate candidate={} elapsed_ms={} input_tokens={} output_tokens={} output_bytes={}",
+                    "[ollama.refine] success route=generate candidate={} elapsed_ms={} input_tokens={} output_tokens={} load_ms={:?} eval_ms={:?} output_bytes={}",
                     candidate,
                     elapsed_ms,
-                    input_tokens,
-                    output_tokens,
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    usage.load_ms,
+                    usage.eval_ms,
                     refined_text.len()
                 );
             }
@@ -1380,13 +1493,16 @@ impl AIProvider for OllamaProvider {
             return Ok(RefinementResult {
                 text: refined_text,
                 usage: TokenUsage {
-                    input_tokens,
-                    output_tokens,
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
                     total_cost_usd: 0.0,
                 },
                 provider: self.id().to_string(),
                 model: model.to_string(),
                 execution_time_ms: elapsed_ms,
+                ollama_load_ms: usage.load_ms,
+                ollama_prompt_eval_ms: usage.prompt_eval_ms,
+                ollama_eval_ms: usage.eval_ms,
             });
         }
 
@@ -1586,6 +1702,9 @@ impl AIProvider for OpenAICompatProvider {
             provider: self.id().to_string(),
             model: model.to_string(),
             execution_time_ms: start.elapsed().as_millis() as u64,
+            ollama_load_ms: None,
+            ollama_prompt_eval_ms: None,
+            ollama_eval_ms: None,
         })
     }
 }
@@ -2183,6 +2302,48 @@ mod tests {
     #[test]
     fn token_estimate_is_at_least_one_for_empty_text() {
         assert!(rough_token_estimate("") >= 1);
+    }
+
+    #[test]
+    fn local_wording_num_predict_uses_input_not_prompt_size() {
+        let prompt = "long system prompt ".repeat(80);
+        let predicted = adaptive_num_predict("kurzer test text", "wording", 512, false);
+        let inflated_prompt_tokens = rough_token_estimate(&prompt);
+        assert!(inflated_prompt_tokens > 100);
+        assert!(
+            predicted <= 80,
+            "short transcript should not receive large generation budget, got {}",
+            predicted
+        );
+    }
+
+    #[test]
+    fn local_refinement_timeout_stays_below_paste_fallback_budget() {
+        assert!(refinement_timeout_secs("hello world", OLLAMA_PROMPT_AUTO) < 30);
+    }
+
+    #[test]
+    fn ollama_runner_command_detection_matches_runner_only() {
+        assert!(is_ollama_runner_command_line(
+            "ollama.exe",
+            r#""C:\Users\trist\AppData\Local\Trispr Flow\ollama-runtime\0.24.0\ollama.exe" runner --model blob --port 54914"#
+        ));
+        assert!(is_ollama_runner_command_line(
+            "ollama",
+            "/usr/bin/ollama runner --model blob"
+        ));
+        assert!(!is_ollama_runner_command_line(
+            "ollama.exe",
+            r#""C:\Users\trist\AppData\Local\Trispr Flow\ollama-runtime\0.24.0\ollama.exe" serve"#
+        ));
+        assert!(!is_ollama_runner_command_line(
+            "ollama.exe",
+            r#""C:\ollama.exe" serve --runner-dir C:\runners"#
+        ));
+        assert!(!is_ollama_runner_command_line(
+            "other.exe",
+            r#""C:\other.exe" runner"#
+        ));
     }
 
     // --- Task 32: list_ollama_models_with_size returns empty on bad endpoint ---

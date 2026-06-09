@@ -3,17 +3,15 @@
 import type { RecordingState, TranscriptionGpuActivityEvent } from "./types";
 import {
   settings,
-  devices,
-  outputDevices,
   models,
   dynamicSustainThreshold,
   runtimeDiagnostics,
-  startupStatus,
   isRefinementEnabled,
 } from "./state";
 import * as dom from "./dom-refs";
 import { updateRecordingStatus, updateRefiningStatus, updateTranscribeStatus } from "./accessibility";
-import { thresholdToPercent } from "./ui-helpers";
+import { thresholdToPercent, formatModelName, formatPresetLabel, formatVram } from "./ui-helpers";
+import { BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS } from "./refinement-prompts";
 import {
   applyFeedbackSettings,
   getFeedbackView,
@@ -22,10 +20,10 @@ import {
 } from "./feedback-state";
 
 let refiningRuntimeActive = false;
+let ollamaModelState: "cold" | "loading" | "warm" = "cold";
 let gpuRuntimeState: "idle" | "active" | "cpu" | "error" = "idle";
 let gpuAccelerator: "gpu" | "cpu" = "cpu";
 let gpuBackend = "unknown";
-let gpuKnown = false;
 const GPU_STATUS_STORAGE_KEY = "trispr_gpu_status_snapshot_v1";
 
 type GpuStatusSnapshot = {
@@ -46,7 +44,6 @@ function loadGpuStatusSnapshot(): void {
     ) {
       gpuAccelerator = parsed.accelerator;
       gpuBackend = parsed.backend;
-      gpuKnown = true;
     }
   } catch {
     // ignore
@@ -67,37 +64,6 @@ function persistGpuStatusSnapshot(): void {
 }
 
 loadGpuStatusSnapshot();
-
-function prettifyGpuBackend(backend: string): string {
-  const normalized = backend.trim().toLowerCase();
-  if (!normalized) return "Unknown";
-  if (normalized === "cuda") return "CUDA";
-  if (normalized === "vulkan") return "Vulkan";
-  if (normalized === "cpu") return "CPU";
-  return normalized.toUpperCase();
-}
-
-function whisperRuntimeLabel(): string | null {
-  const whisper = runtimeDiagnostics?.whisper;
-  if (!whisper) return null;
-  const backend = prettifyGpuBackend(whisper.backend_selected || gpuBackend);
-  if (whisper.mode === "server") {
-    return `GPU: Server warm (${backend})`;
-  }
-  if (whisper.mode === "cli" && whisper.accelerator === "gpu") {
-    return `GPU: CLI GPU (${backend})`;
-  }
-  if (whisper.mode === "cli" && whisper.backend_selected && whisper.backend_selected !== "cpu") {
-    if (whisper.last_error.toLowerCase().includes("server unavailable")) {
-      return `GPU: Server unavailable, CLI active (${backend})`;
-    }
-    return `GPU: CLI CPU fallback (${backend})`;
-  }
-  if (whisper.mode === "cli") {
-    return "GPU: CLI CPU";
-  }
-  return null;
-}
 
 function selectedWhisperBackendPreference(): "cuda" | "vulkan" {
   const configured = (settings?.local_backend_preference ?? "").trim().toLowerCase();
@@ -140,11 +106,6 @@ function renderFeedbackIndicators() {
     dom.transcribePill.classList.toggle("status-pill--enabled", transcribe.enabled);
     dom.transcribePill.classList.toggle("status-pill--disabled", !transcribe.enabled);
   }
-  if (dom.transcribeStatusPill) {
-    dom.transcribeStatusPill.textContent = transcribe.enabled ? "Enabled" : "Disabled";
-    dom.transcribeStatusPill.classList.toggle("status-pill--enabled", transcribe.enabled);
-    dom.transcribeStatusPill.classList.toggle("status-pill--disabled", !transcribe.enabled);
-  }
   updateTranscribeStatus(transcribe.labelState);
 
   const refiningEnabled = isRefinementEnabled();
@@ -153,24 +114,41 @@ function renderFeedbackIndicators() {
     : refiningRuntimeActive
       ? "refining"
       : "idle";
+  // Pipeline "Refine" dot: transient activity only.
   if (dom.refiningStatusDot) {
     dom.refiningStatusDot.dataset.state = refiningState;
   }
-  if (dom.refiningStatusLabel) {
-    const label =
-      refiningState === "refining"
-        ? "Active"
-        : refiningState === "disabled"
-          ? "Deactivated"
-          : "Idle";
-    dom.refiningStatusLabel.textContent = `Refining: ${label}`;
-  }
-  if (dom.refiningPill) {
-    dom.refiningPill.classList.toggle("status-pill--enabled", refiningEnabled);
-    dom.refiningPill.classList.toggle("status-pill--disabled", !refiningEnabled);
-  }
   updateRefiningStatus(refiningState);
 
+  // Refinement engine row: model readiness merged with active-inference state.
+  const refineRowVisible =
+    refiningEnabled && (settings?.ai_fallback?.provider ?? "ollama") === "ollama";
+  if (dom.engineRefineRow) {
+    dom.engineRefineRow.hidden = !refineRowVisible;
+  }
+  if (refineRowVisible) {
+    const engineState: "cold" | "loading" | "warm" | "refining" = refiningRuntimeActive
+      ? "refining"
+      : ollamaModelState;
+    if (dom.ollamaModelDot) {
+      dom.ollamaModelDot.dataset.state =
+        engineState === "warm"
+          ? "model-ready"
+          : engineState === "refining"
+            ? "refining"
+            : `model-${engineState}`;
+    }
+    if (dom.engineRefineLabel) {
+      dom.engineRefineLabel.textContent = {
+        cold: "Cold",
+        loading: "Loading…",
+        warm: "Ready",
+        refining: "Refining…",
+      }[engineState];
+    }
+  }
+
+  // Whisper engine dot (Backend acceleration state).
   const gpuDotState =
     gpuRuntimeState === "active"
       ? "gpu-active"
@@ -181,34 +159,6 @@ function renderFeedbackIndicators() {
           : "idle";
   if (dom.gpuStatusDot) {
     dom.gpuStatusDot.dataset.state = gpuDotState;
-  }
-  if (dom.gpuStatusLabel) {
-    const diagnosticsLabel = whisperRuntimeLabel();
-    if (diagnosticsLabel) {
-      dom.gpuStatusLabel.textContent = diagnosticsLabel;
-    } else if (!gpuKnown && gpuRuntimeState === "idle") {
-      dom.gpuStatusLabel.textContent = `GPU: Waiting for first run (${prettifyGpuBackend(selectedBackend)})`;
-    } else if (gpuRuntimeState === "active") {
-      dom.gpuStatusLabel.textContent = `GPU: Active (${prettifyGpuBackend(gpuBackend)})`;
-    } else if (gpuRuntimeState === "cpu") {
-      dom.gpuStatusLabel.textContent = "GPU: CPU mode";
-    } else if (gpuRuntimeState === "error") {
-      dom.gpuStatusLabel.textContent = "GPU: Runtime error";
-    } else {
-      dom.gpuStatusLabel.textContent =
-        gpuAccelerator === "gpu"
-          ? `GPU: Idle (${prettifyGpuBackend(gpuBackend)})`
-          : "GPU: Idle (CPU mode)";
-    }
-  }
-  if (dom.gpuPill) {
-    const diagnosticsGpuReady =
-      runtimeDiagnostics?.whisper?.mode === "server"
-      || runtimeDiagnostics?.whisper?.accelerator === "gpu";
-    const gpuEnabled =
-      diagnosticsGpuReady || (gpuKnown && (gpuAccelerator === "gpu" || gpuRuntimeState === "active"));
-    dom.gpuPill.classList.toggle("status-pill--enabled", gpuEnabled);
-    dom.gpuPill.classList.toggle("status-pill--disabled", !gpuEnabled);
   }
   if (dom.gpuBackendCudaBtn && dom.gpuBackendVulkanBtn) {
     const cudaActive = selectedBackend === "cuda";
@@ -234,11 +184,41 @@ export function setRefiningActive(active: boolean) {
   renderFeedbackIndicators();
 }
 
+export function setOllamaModelState(state: "cold" | "loading" | "warm") {
+  ollamaModelState = state;
+  renderFeedbackIndicators();
+}
+
+export interface GpuStats {
+  util_pct: number | null;
+  vram_used_gb: number;
+  vram_total_gb: number;
+  whisper_vram_gb: number | null;
+  refine_vram_gb: number | null;
+}
+
+export function setGpuStats(stats: GpuStats) {
+  if (dom.gpuUtil) {
+    dom.gpuUtil.textContent = stats.util_pct != null ? `GPU ${stats.util_pct}%` : "GPU —";
+  }
+  if (dom.gpuVramTotal) {
+    dom.gpuVramTotal.textContent =
+      stats.vram_total_gb > 0
+        ? `${stats.vram_used_gb.toFixed(1)} / ${stats.vram_total_gb.toFixed(1)} GB`
+        : "— / — GB";
+  }
+  if (dom.engineWhisperVram) {
+    dom.engineWhisperVram.textContent = formatVram(stats.whisper_vram_gb);
+  }
+  if (dom.engineRefineVram) {
+    dom.engineRefineVram.textContent = formatVram(stats.refine_vram_gb);
+  }
+}
+
 export function setGpuActivity(event: TranscriptionGpuActivityEvent) {
   gpuRuntimeState = event.state;
   gpuAccelerator = event.accelerator;
   gpuBackend = event.backend || "unknown";
-  gpuKnown = true;
   persistGpuStatusSnapshot();
   renderFeedbackIndicators();
 }
@@ -249,15 +229,6 @@ export function renderHero() {
   const provider = settings.ai_fallback?.provider ?? "ollama";
   const executionMode = settings.ai_fallback?.execution_mode ?? "local_primary";
   const isOnlineRefinement = aiFallbackOn && executionMode === "online_fallback" && provider !== "ollama";
-  const providerLabel =
-    provider === "openai"
-      ? "OpenAI"
-      : provider === "gemini"
-        ? "Gemini"
-        : provider === "ollama"
-          ? "Ollama"
-          : "Claude";
-
   const configuredModel = settings.ai_fallback?.model?.trim() || "";
   const providerModel =
     provider === "claude"
@@ -269,63 +240,65 @@ export function renderHero() {
           : settings.providers?.ollama?.preferred_model?.trim() || "";
   const effectiveRefinementModel = configuredModel || providerModel || "No model selected";
 
-  if (dom.cloudState) dom.cloudState.textContent = aiFallbackOn ? "Yes" : "No";
-  if (dom.cloudDetail) {
-    const runtimeDetail =
-      aiFallbackOn && provider === "ollama"
-        ? startupStatus?.ollama_ready
-          ? "Offline"
-          : startupStatus?.ollama_starting
-            ? "Offline • Starting in background"
-            : "Offline • Fallback active"
-        : isOnlineRefinement
-          ? "Online"
-          : "Offline";
-    dom.cloudDetail.textContent = aiFallbackOn
-      ? `${runtimeDetail} • ${effectiveRefinementModel} • ${providerLabel}`
-      : "Offline • AI refinement disabled";
-  }
-  if (dom.cloudCheck) dom.cloudCheck.classList.toggle("is-active", aiFallbackOn);
-  if (dom.aiModelState) dom.aiModelState.textContent = aiFallbackOn ? effectiveRefinementModel : "—";
   if (dom.dictationBadge) {
     dom.dictationBadge.textContent = isOnlineRefinement
       ? "AI Refinement (Online)"
       : "Private Mode (Offline)";
     dom.dictationBadge.classList.toggle("badge--online", isOnlineRefinement);
   }
-  if (dom.modeState) dom.modeState.textContent = settings.mode === "ptt" ? "PTT" : "Voice Activation";
-
-  // Input device
-  const device = devices.find((item) => item.id === settings?.input_device);
-  if (dom.deviceState) dom.deviceState.textContent = device?.label ?? "Default (System)";
-  updateDeviceLineClamp();
-
-  // Output device
-  const outputDevice = outputDevices.find((item) => item.id === settings?.transcribe_output_device);
-  if (dom.outputDeviceState) dom.outputDeviceState.textContent = outputDevice?.label ?? "Default (System)";
-
-  if (dom.modelState) {
+  if (dom.engineRefineModel) {
+    dom.engineRefineModel.textContent = aiFallbackOn ? formatModelName(effectiveRefinementModel) : "—";
+  }
+  if (dom.engineWhisperModel) {
     const active = models.find((model) => model.id === settings?.model);
-    dom.modelState.textContent = active?.label ?? settings?.model ?? "—";
+    dom.engineWhisperModel.textContent = active?.label ?? settings?.model ?? "—";
   }
 
+  renderPresetQuickMenu();
   applyFeedbackSettings(settings);
   renderFeedbackIndicators();
 }
 
-export function updateDeviceLineClamp() {
-  if (!dom.deviceState) return;
-  dom.deviceState.classList.remove("is-two-line");
-  requestAnimationFrame(() => {
-    if (!dom.deviceState) return;
-    const styles = getComputedStyle(dom.deviceState);
-    const lineHeight = parseFloat(styles.lineHeight);
-    if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
-    const height = dom.deviceState.getBoundingClientRect().height;
-    if (height > lineHeight * 1.6) {
-      dom.deviceState.classList.add("is-two-line");
-    }
-  });
+export function renderPresetQuickMenu() {
+  const btn = dom.engineRefinePreset;
+  const menu = dom.engineRefinePresetMenu;
+  if (!btn || !menu) return;
+  if (!settings) return;
+
+  const aiFallbackOn = isRefinementEnabled();
+  const activeId = settings.ai_fallback?.active_prompt_preset_id
+    ?? settings.ai_fallback?.prompt_profile
+    ?? "wording";
+
+  btn.textContent = aiFallbackOn
+    ? formatPresetLabel(settings.ai_fallback?.prompt_profile)
+    : "Off";
+  btn.dataset.state = aiFallbackOn ? "" : "off";
+
+  menu.innerHTML = "";
+  for (const opt of BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS) {
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = opt.label;
+    b.dataset.presetId = opt.id;
+    b.setAttribute("role", "option");
+    b.setAttribute("aria-selected", (opt.id === activeId && aiFallbackOn) ? "true" : "false");
+    li.appendChild(b);
+    menu.appendChild(li);
+  }
+  const sep = document.createElement("hr");
+  sep.className = "preset-quick-menu-separator";
+  menu.appendChild(sep);
+  const noRefLi = document.createElement("li");
+  const noRefBtn = document.createElement("button");
+  noRefBtn.type = "button";
+  noRefBtn.textContent = "No Refinement";
+  noRefBtn.dataset.presetId = "__off__";
+  noRefBtn.setAttribute("role", "option");
+  noRefBtn.setAttribute("aria-selected", (!aiFallbackOn).toString());
+  noRefLi.appendChild(noRefBtn);
+  menu.appendChild(noRefLi);
 }
 
 export function updateThresholdMarkers() {

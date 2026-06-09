@@ -45,77 +45,62 @@
             a privacy-first local pipeline and optional AI fallback refinement.
           </p>
           <div class="status" role="status" aria-live="polite">
-            <!-- Row 1: Recording + Transcribing -->
-            <div class="status-row">
-              <div class="status-item">
-                <span id="recording-pill" class="status-pill status-pill--disabled">Recording</span>
+            <!-- Pipeline activity (transient) + global GPU telemetry -->
+            <div class="pipeline-row">
+              <span class="pipe-item">
                 <span class="status-dot" id="status-dot" data-state="idle"
                       aria-label="Recording status: idle"></span>
-                <span id="status-label" class="status-label">Recording: Idle</span>
-              </div>
-              <div class="status-item">
-                <span id="transcribe-pill" class="status-pill status-pill--disabled">Transcribing</span>
+                <span class="pipe-label">Rec</span>
+              </span>
+              <span class="pipe-item">
                 <span class="status-dot" id="transcribe-dot" data-state="idle"
                       aria-label="Transcribing status: idle"></span>
-                <span id="transcribe-label" class="status-label">Transcribing: Idle</span>
-              </div>
-            </div>
-            <!-- Row 2: Refining + GPU -->
-            <div class="status-row">
-              <div class="status-item">
-                <span id="refining-pill" class="status-pill status-pill--disabled">Refining</span>
+                <span class="pipe-label">Transcribe</span>
+              </span>
+              <span class="pipe-item">
                 <span class="status-dot" id="refining-dot" data-state="idle"
                       aria-label="Refining status: idle"></span>
-                <span id="refining-label" class="status-label">Refining: Idle</span>
-              </div>
-              <div id="gpu-status-item" class="status-item gpu-item">
-                <span id="gpu-pill" class="status-pill status-pill--disabled">GPU</span>
-                <span class="status-dot" id="gpu-dot" data-state="idle"
-                      aria-label="GPU status: idle"></span>
-                <div class="gpu-status-group">
-                  <span id="gpu-label" class="status-label">GPU: Idle</span>
-                  <div id="gpu-backend-switch" class="gpu-backend-switch" role="group" aria-label="Whisper backend preference">
-                    <button id="gpu-backend-cuda" type="button" class="gpu-backend-btn" aria-pressed="false">CUDA</button>
-                    <button id="gpu-backend-vulkan" type="button" class="gpu-backend-btn" aria-pressed="false">Vulkan</button>
-                    <button id="gpu-purge-btn" type="button" class="gpu-purge-btn" title="Purge GPU VRAM cache">Purge</button>
-                  </div>
-                  <span id="gpu-vram" class="gpu-vram-label"></span>
-                </div>
-              </div>
+                <span class="pipe-label">Refine</span>
+              </span>
+              <span class="gpu-global">
+                <span id="gpu-util" class="gpu-util">GPU —</span>
+                <span class="gpu-sep">·</span>
+                <span id="gpu-vram-total" class="gpu-vram-total">— / — GB</span>
+              </span>
+            </div>
+            <!-- Whisper engine
+                 Grid cols: tag | dot | mid | model | vram | action -->
+            <div class="engine-row" id="engine-whisper">
+              <span class="engine-tag">WHISPER</span>
+              <span class="status-dot" id="gpu-dot" data-state="idle"
+                    aria-label="GPU status: idle"></span>
+              <span class="engine-mid" role="group" aria-label="Whisper backend preference">
+                <button id="gpu-backend-cuda" type="button" class="gpu-backend-btn" aria-pressed="false">CUDA</button>
+                <button id="gpu-backend-vulkan" type="button" class="gpu-backend-btn" aria-pressed="false">Vulkan</button>
+              </span>
+              <span id="engine-whisper-model" class="engine-detail">—</span>
+              <span id="engine-whisper-vram" class="engine-vram">—</span>
+              <button id="gpu-purge-btn" type="button" class="gpu-purge-btn" title="Purge GPU VRAM cache">Purge</button>
+            </div>
+            <!-- Refinement engine (only when refinement enabled)
+                 Grid cols: tag | dot | mid | model+preset | vram | action-slot -->
+            <div class="engine-row" id="engine-refine" hidden>
+              <span class="engine-tag">REFINE</span>
+              <span class="status-dot" id="ollama-model-dot" data-state="model-cold"
+                    aria-label="Refinement model status"></span>
+              <span id="engine-refine-label" class="engine-mid engine-state">Cold</span>
+              <span class="engine-detail-group">
+                <span id="engine-refine-model" class="engine-detail">—</span>
+                <button id="engine-refine-preset" type="button" class="engine-preset-btn"
+                        aria-haspopup="listbox" aria-expanded="false"
+                        title="Change refinement style">—</button>
+                <ul id="engine-refine-preset-menu" class="preset-quick-menu" hidden role="listbox"
+                    aria-label="Refinement style"></ul>
+              </span>
+              <span id="engine-refine-vram" class="engine-vram">—</span>
+              <span aria-hidden="true"></span>
             </div>
             <span id="status-message" class="status-message" role="alert"></span>
-          </div>
-        </div>
-        <div class="panel hero-card">
-          <div class="hero-item">
-            <span class="hero-label">AI refinement <span id="cloud-check" class="hero-check">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" style="width: 12px; height: 12px; display: inline-block; vertical-align: middle;">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-              </svg>
-            </span></span>
-            <span id="cloud-state" class="hero-value">No</span>
-            <span id="cloud-detail" class="hero-value truncate-two">Offline • No model selected</span>
-          </div>
-          <div class="hero-item">
-            <span class="hero-label">Input Transcription</span>
-            <span id="device-state" class="hero-value truncate-two">Default (System)</span>
-          </div>
-          <div class="hero-item">
-            <span class="hero-label">Capture Mode</span>
-            <span id="mode-state" class="hero-value">PTT</span>
-          </div>
-          <div class="hero-item">
-            <span class="hero-label">System Audio Transcription</span>
-            <span id="transcribe-status-pill" class="status-pill status-pill--disabled">Disabled</span>
-            <span id="output-device-state" class="hero-value truncate-two">Default (System)</span>
-          </div>
-          <div class="hero-item">
-            <span class="hero-label">Model</span>
-            <span id="model-state" class="hero-value truncate-two">—</span>
-          </div>
-          <div class="hero-item">
-            <span class="hero-label">AI Model</span>
-            <span id="ai-model-state" class="hero-value truncate-two">—</span>
           </div>
         </div>
       </header>
@@ -123,7 +108,7 @@
       <!-- Expert Mode global toggle -->
       <div id="expert-mode-global-bar" class="expert-mode-global-bar">
         <div class="global-control-group">
-          <div id="product-mode-control" class="global-mode-control">
+          <div id="product-mode-control" class="global-mode-control" hidden>
             <span class="global-mode-label">Product mode</span>
             <div class="global-mode-toggle" role="group" aria-label="Product mode toggle">
               <button
@@ -203,19 +188,19 @@
         <button id="tab-btn-ai-refinement" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-ai-refinement">
           AI Refinement
         </button>
-        <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output">
+        <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output" data-expert-only="true">
           Voice Output
         </button>
-        <button id="tab-btn-task-capture" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-task-capture">
+        <button id="tab-btn-task-capture" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-task-capture" data-expert-only="true">
           Task Capture
         </button>
-        <button id="tab-btn-video" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-video">
+        <button id="tab-btn-video" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-video" data-expert-only="true">
           Video
         </button>
-        <button id="tab-btn-agent" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-agent">
+        <button id="tab-btn-agent" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-agent" data-expert-only="true">
           Assistant Debug
         </button>
-        <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules">
+        <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules" data-expert-only="true">
           Modules
         </button>
       </div>
@@ -361,11 +346,11 @@
         <!-- Settings Tab -->
         <div id="tab-settings" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-settings">
         <!-- Expert mode toggle moved to global bar above tabs -->
-        <section class="panel capture-panel" data-panel="capture" data-default-collapsed="true" data-panel-group="input-source" style="--delay: 0.16s">
+        <section class="panel capture-panel" data-panel="capture" data-default-collapsed="false" data-panel-group="input-source" style="--delay: 0.16s">
           <div class="panel-header">
             <div class="panel-title">
-              <h2>Microphone Capture</h2>
-              <p>Microphone device, hotkeys, recording mode.</p>
+              <h2>Capture Basics</h2>
+              <p>Daily microphone controls, hotkey, and recording mode.</p>
             </div>
             <div class="panel-actions">
               <button class="panel-collapse-btn"
@@ -443,20 +428,21 @@
                 <span class="toggle-hint">Only record when audio exceeds threshold, even while holding PTT key</span>
               </div>
               <label class="field range span-2" data-expert-only="true">
-                <span class="field-label">PTT warm window</span>
+                <span class="field-label">PTT audio standby window</span>
                 <div class="range-row">
-                  <input id="ptt-hot-keepalive" type="range" min="5000" max="120000" step="5000"
-                         title="Keep the PTT audio stream warm for this long after release (ms)"
+                  <input id="ptt-hot-keepalive" type="range" min="5000" max="600000" step="5000"
+                         title="Keep the PTT audio stream warm after release. Does not keep Whisper or Ollama models loaded."
                          aria-valuemin="5000"
-                         aria-valuemax="120000"
-                         aria-valuenow="30000"
-                         aria-label="PTT hot standby keepalive"
+                         aria-valuemax="600000"
+                         aria-valuenow="600000"
+                         aria-label="PTT audio standby window"
                          aria-describedby="ptt-hot-keepalive-value" />
-                  <span id="ptt-hot-keepalive-value" class="range-value" aria-live="polite">30s</span>
+                  <span id="ptt-hot-keepalive-value" class="range-value" aria-live="polite">10m</span>
                 </div>
+                <span class="field-hint">Keeps mic stream and pre-roll ready after PTT release. Does not keep Whisper or Ollama models loaded.</span>
               </label>
             </div>
-            <div id="vad-block" class="field-group hidden">
+            <div id="vad-block" class="field-group hidden" data-expert-only="true">
               <label class="field range">
                 <span class="field-label">Voice Activation threshold</span>
                 <div class="range-row">
@@ -484,7 +470,7 @@
                 </div>
               </label>
             </div>
-            <div class="field span-2">
+            <div class="field span-2" data-expert-only="true">
               <span class="field-label">Input level <span id="vad-level-dbm" class="dbm-value">-∞ dB</span></span>
               <div class="vad-meter-container">
                 <div id="vad-meter" class="vad-meter">
@@ -500,7 +486,7 @@
                 </div>
               </div>
             </div>
-            <label class="field range span-2">
+            <label class="field range span-2" data-expert-only="true">
               <span class="field-label">Mic input gain</span>
               <div class="range-row">
                 <input id="mic-gain" type="range" min="-30" max="30" step="1"
@@ -513,7 +499,7 @@
                 <span id="mic-gain-value" class="range-value" aria-live="polite">+0 dB</span>
               </div>
             </label>
-            <div class="field toggle span-2">
+            <div class="field toggle span-2" data-expert-only="true">
               <label class="toggle-row">
                 <span class="field-label">Aufnahmen archivieren (OPUS)</span>
                 <input id="opus-archive-toggle" type="checkbox" checked title="Aufnahmen als OPUS-Dateien archivieren" />
@@ -523,7 +509,7 @@
             </div>
             <details class="expander span-2" data-expert-only="true">
               <summary>
-                <span>Audio Dumping</span>
+                <span>Capture Advanced</span>
                 <span class="expert-pill" aria-hidden="true">Expert</span>
               </summary>
               <div class="expander-content">
@@ -586,7 +572,7 @@
             </details>
             <details class="expander span-2" data-expert-only="true">
               <summary>
-                <span>Advanced</span>
+                <span>Diagnostics &amp; Filters</span>
                 <span class="expert-pill" aria-hidden="true">Expert</span>
               </summary>
               <div class="expander-content">
@@ -654,7 +640,7 @@
           </div>
         </section>
 
-        <section class="panel transcribe-panel" data-panel="system" data-default-collapsed="true" data-panel-group="input-source" style="--delay: 0.18s">
+        <section class="panel transcribe-panel" data-panel="system" data-default-collapsed="true" data-panel-group="input-source" data-expert-only="true" style="--delay: 0.18s">
           <div class="panel-header">
             <div class="panel-title">
               <h2>System Audio Capture</h2>
@@ -965,11 +951,11 @@
           </div>
         </section>
 
-        <section class="panel transcription-panel" data-panel="model" data-default-collapsed="true" style="--delay: 0.18s">
+        <section class="panel transcription-panel" data-panel="model" data-default-collapsed="false" style="--delay: 0.18s">
           <div class="panel-header">
             <div class="panel-title">
-              <h2>Whisper Model Manager</h2>
-              <p>Download and manage local whisper.cpp models.</p>
+              <h2>Whisper Runtime</h2>
+              <p>Language hint, active model, and local runtime storage.</p>
             </div>
             <div class="panel-actions">
               <button class="panel-collapse-btn"
@@ -1019,7 +1005,7 @@
             </div>
             <details class="expander" data-expert-only="true" style="margin-top: 8px;">
               <summary>
-                <span>Source &amp; Storage</span>
+                <span>Whisper Source &amp; Storage</span>
                 <span class="expert-pill" aria-hidden="true">Expert</span>
               </summary>
               <div class="expander-content model-settings-compact">
@@ -1051,11 +1037,11 @@
           </div>
         </section>
 
-        <section class="panel interface-panel" data-panel="interface" data-default-collapsed="true" style="--delay: 0.22s">
+        <section class="panel interface-panel" data-panel="interface" data-default-collapsed="true" data-expert-only="true" style="--delay: 0.22s">
           <div class="panel-header">
             <div class="panel-title">
-              <h2>Interface</h2>
-              <p>Overlay, layout, and visual feedback settings.</p>
+              <h2>Overlay &amp; Hotkeys</h2>
+              <p>Visual feedback, overlay tuning, and secondary hotkeys.</p>
             </div>
             <div class="panel-actions">
               <button class="panel-collapse-btn"
@@ -1373,7 +1359,7 @@
             </div>
             <div class="panel-body" id="ai-refinement-panel-body">
 
-              <!-- Prompt Style — always visible, primary control -->
+              <!-- Prompt Style — daily control -->
               <div class="ai-refine-section ai-refine-section--prompt-style">
                 <div class="prompt-style-header">
                   <h3 class="ai-refine-section-title">Prompt Style</h3>
@@ -1438,9 +1424,9 @@
                     <div class="panel-grid">
 
                       <div class="field span-2">
-                        <span class="field-label">Primary + fallback</span>
+                        <span class="field-label">Refinement flow</span>
                         <span id="refinement-pipeline-note" class="field-hint">
-                          Primary output: Rule-based refiner only (non-AI, zero token/API cost).
+                          Whisper creates raw text. Local cleanup runs first. If AI refinement is enabled, Ollama rewrites; if AI is off, fails, or times out, the safe fallback is inserted.
                         </span>
                       </div>
 
@@ -1467,7 +1453,7 @@
                             <article id="pipeline-node-rules" class="pipeline-node machine-node machine-node--rules" data-state="idle">
                               <span class="pipeline-node-step">2</span>
                               <h4>Rule-Based Refiner</h4>
-                              <p>Rule-based cleanup only. No AI inference, no token/API cost.</p>
+                              <p>Fast local cleanup before optional AI. No token/API cost.</p>
                               <label class="pipeline-node-toggle toggle-row">
                                 <span class="pipeline-node-toggle-label">Enable rule-based</span>
                                 <input id="postproc-enabled" type="checkbox" title="Run local punctuation/capitalization/normalization rules on every transcript" />
@@ -1478,7 +1464,7 @@
                             <article id="pipeline-node-ai" class="pipeline-node machine-node machine-node--ai" data-state="idle">
                               <span class="pipeline-node-step">3</span>
                               <h4>AI Refiner</h4>
-                              <p>Ollama local refinement for final wording.</p>
+                              <p>Optional Ollama rewrite for final wording.</p>
                               <label class="pipeline-node-toggle toggle-row">
                                 <span class="pipeline-node-toggle-label">Enable AI refinement</span>
                                 <input id="ai-fallback-enabled" type="checkbox" title="Send transcripts to an AI provider for refinement and correction" />
@@ -1489,7 +1475,7 @@
                             <article id="pipeline-node-gate" class="pipeline-node machine-node machine-node--gate" data-state="idle">
                               <span class="pipeline-node-step">4</span>
                               <h4>Deferred Insert Gate</h4>
-                              <p>Waits for refined result. Falls back after timeout.</p>
+                              <p>Waits briefly for AI, then chooses refined or fallback text.</p>
                             </article>
 
                             <article id="pipeline-node-output-refined" class="pipeline-node pipeline-node-output machine-node machine-node--refined" data-state="idle">
@@ -1499,7 +1485,7 @@
 
                             <article id="pipeline-node-output-raw" class="pipeline-node pipeline-node-output machine-node machine-node--raw" data-state="idle">
                               <h4>Output: Raw Fallback</h4>
-                              <p>Used on AI fail or timeout.</p>
+                              <p>Used when AI is off, fails, or times out.</p>
                             </article>
                           </div>
                         </div>
@@ -1509,7 +1495,7 @@
                         </div>
                       </div>
 
-                      <details class="expander span-2 refinement-pipeline-advanced">
+                      <details class="expander span-2 refinement-pipeline-advanced" data-expert-only="true">
                         <summary>Rule-Based Details</summary>
                         <div class="expander-content">
                           <div id="postproc-settings" class="span-2" style="display: none;">
@@ -1562,7 +1548,7 @@
               <div class="ai-refine-section">
                 <details id="ai-refinement-runtime-expander" class="expander ai-refine-expander" open>
                   <summary>
-                    <h3 id="ai-refinement-provider-model-title" class="ai-refine-section-title">Runtime &amp; Provider</h3>
+                    <h3 id="ai-refinement-provider-model-title" class="ai-refine-section-title">AI Runtime</h3>
                   </summary>
                   <div class="expander-body">
                     <div id="ai-fallback-settings" class="panel-grid span-2">
@@ -1581,7 +1567,7 @@
                             <span class="badge">Offline • Private</span>
                           </div>
                           <div class="ai-provider-lane-title" id="ai-fallback-local-lane-title-text">Ollama (Local)</div>
-                          <label class="field" style="margin-top:8px;">
+                          <label class="field" style="margin-top:8px;" data-expert-only="true">
                             <span class="field-label">Local backend</span>
                             <select id="ai-fallback-local-backend-select" title="Select the local AI backend to use for refinement">
                               <option value="ollama">Ollama (managed, port 11434)</option>
@@ -1596,7 +1582,7 @@
                             <button id="ai-fallback-local-primary-action" class="hotkey-record-btn is-recommended" type="button" title="Install or start local Ollama runtime">
                               Install local runtime
                             </button>
-                            <button id="ai-fallback-local-import-action" class="hotkey-record-btn" type="button" title="Import a local GGUF or Modelfile into Ollama">
+                            <button id="ai-fallback-local-import-action" class="hotkey-record-btn" type="button" title="Import a local GGUF or Modelfile into Ollama" data-expert-only="true">
                               Import model
                             </button>
                           </div>
@@ -1645,7 +1631,7 @@
                             </div>
                           </details>
                           <!-- OpenAI-compat backend config (LM Studio / Oobabooga) -->
-                          <div id="ai-fallback-compat-config" hidden>
+                          <div id="ai-fallback-compat-config" hidden data-expert-only="true">
                             <p id="ai-fallback-compat-guide" class="field-hint span-2" style="margin-bottom:0.5rem;"></p>
                             <label class="field span-2">
                               <span class="field-label">Server endpoint</span>
@@ -1701,7 +1687,7 @@
                           </div>
                         </div>
 
-                        <div id="ai-fallback-online-lane" data-lane="online" class="ai-provider-lane ai-provider-lane--online is-roadmap-disabled" role="button" tabindex="0" aria-pressed="false" aria-disabled="true">
+                        <div id="ai-fallback-online-lane" data-lane="online" class="ai-provider-lane ai-provider-lane--online is-roadmap-disabled" role="button" tabindex="0" aria-pressed="false" aria-disabled="true" data-expert-only="true">
                           <div class="ai-provider-lane-header">
                             <span id="ai-fallback-online-lane-title" class="field-label">Online Fallback (Roadmap)</span>
                             <span id="ai-fallback-online-status-badge" class="badge badge--online is-locked">Roadmap • Not active</span>
@@ -1731,7 +1717,7 @@
               </div>
 
               <!-- Refinement Quality — collapsed by default -->
-              <div class="ai-refine-section">
+              <div class="ai-refine-section" data-expert-only="true">
                 <details class="expander ai-refine-expander">
                   <summary>
                     <h3 class="ai-refine-section-title">Refinement Quality</h3>
@@ -1844,7 +1830,7 @@
               </div>
 
               <!-- Custom Vocabulary -->
-              <div class="ai-refine-section">
+              <div class="ai-refine-section" data-expert-only="true">
                 <details class="expander ai-refine-expander">
                   <summary>
                     <h3 class="ai-refine-section-title">Custom Vocabulary</h3>
@@ -1889,7 +1875,7 @@
               </div>
 
               <!-- Topic Detection -->
-              <div class="ai-refine-section">
+              <div class="ai-refine-section" data-expert-only="true">
                 <details id="ai-refinement-topic-expander" class="expander ai-refine-topic-expander">
                   <summary>
                     <span id="ai-refinement-topic-title" class="ai-refine-section-title">Topic Detection</span>
@@ -1912,7 +1898,7 @@
         </div>
 
         <!-- Voice Output Tab -->
-        <div id="tab-voice-output" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-voice-output">
+        <div id="tab-voice-output" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-voice-output" data-expert-only="true">
           <section class="panel" data-panel="voice-output" style="--delay: 0.12s">
             <div class="panel-header">
               <div class="panel-title">
@@ -2116,7 +2102,7 @@
           </section>
         </div>
 
-        <div id="tab-task-capture" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-task-capture">
+        <div id="tab-task-capture" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-task-capture" data-expert-only="true">
           <section class="panel" data-panel="task-capture" style="--delay: 0.12s">
             <div class="panel-header">
               <h2>Task Capture</h2>
@@ -2129,7 +2115,7 @@
         </div>
 
         <!-- Video Tab -->
-        <div id="tab-video" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-video">
+        <div id="tab-video" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-video" data-expert-only="true">
           <section class="panel" data-panel="video" style="--delay: 0.12s">
             <div class="panel-header">
               <div class="panel-title">
@@ -2237,7 +2223,7 @@
         </div>
 
         <!-- Agent Tab -->
-        <div id="tab-agent" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-agent">
+        <div id="tab-agent" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-agent" data-expert-only="true">
           <section class="panel" data-panel="agent" style="--delay: 0.12s">
             <div class="panel-header">
               <div class="panel-title">
@@ -2440,7 +2426,7 @@
         </div>
 
         <!-- Modules Tab -->
-        <div id="tab-modules" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-modules">
+        <div id="tab-modules" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-modules" data-expert-only="true">
           <section class="panel modules-panel" style="--delay: 0.12s">
             <div class="panel-header">
               <div class="panel-title">

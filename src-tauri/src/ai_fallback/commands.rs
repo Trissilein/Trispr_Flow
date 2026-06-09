@@ -2,7 +2,8 @@ use super::error::AIError;
 use super::keyring as ai_fallback_keyring;
 use super::provider::{
     default_models_for_provider, is_local_ollama_endpoint, is_ssrf_target, list_ollama_models,
-    list_ollama_models_with_size, ping_ollama, ping_ollama_quick, ProviderFactory,
+    list_ollama_models_with_size, ollama_endpoint_candidates, ping_ollama, ping_ollama_quick,
+    ProviderFactory,
 };
 use super::{check_strict_local_mode, prepare_refinement, update_and_persist_settings};
 use crate::state::{normalize_ai_fallback_fields, AppState};
@@ -683,14 +684,31 @@ fn get_ollama_model_info_impl(
 }
 
 #[tauri::command]
-pub(crate) async fn unload_ollama_model(model: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || unload_ollama_model_impl(model))
+pub(crate) async fn unload_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || unload_configured_ollama_model(&app, &model))
         .await
         .map_err(|e| format!("Unload Ollama model task failed: {}", e))?
 }
 
-fn unload_ollama_model_impl(model: String) -> Result<(), String> {
-    let ollama_endpoint = "http://127.0.0.1:11434";
+fn unload_configured_ollama_model(app: &AppHandle, model: &str) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    check_strict_local_mode(&settings)?;
+    unload_ollama_model_impl(&settings.providers.ollama.endpoint, model)
+}
+
+pub(crate) fn unload_ollama_model_impl(endpoint: &str, model: &str) -> Result<(), String> {
+    let model = model.trim();
+    if model.is_empty() {
+        return Ok(());
+    }
+    if is_ssrf_target(endpoint) {
+        return Err("Ollama endpoint is not allowed for unload.".to_string());
+    }
     let unload_body = serde_json::json!({
         "model": model,
         "prompt": "",
@@ -703,13 +721,62 @@ fn unload_ollama_model_impl(model: String) -> Result<(), String> {
         .timeout_read(std::time::Duration::from_secs(5))
         .build();
 
-    let url = format!("{}/api/generate", ollama_endpoint);
-    let _ = agent
-        .post(&url)
-        .set("Content-Type", "application/json")
-        .send_json(&unload_body);
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/generate", candidate);
+        if agent
+            .post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&unload_body)
+            .is_ok()
+        {
+            return Ok(());
+        }
+    }
 
     Ok(())
+}
+
+pub(crate) fn warmup_ollama_model_impl(endpoint: &str, model: &str) -> Result<(), String> {
+    let model = model.trim();
+    if model.is_empty() {
+        return Ok(());
+    }
+    if is_ssrf_target(endpoint) {
+        return Err("Ollama endpoint is not allowed for warmup.".to_string());
+    }
+
+    let mut warmup_options = super::provider::ollama_runner_defining_options();
+    warmup_options.insert("num_predict".to_string(), serde_json::json!(1));
+    let warmup_body = serde_json::json!({
+        "model": model,
+        "prompt": ".",
+        "stream": false,
+        "keep_alive": -1,
+        "options": serde_json::Value::Object(warmup_options),
+    });
+
+    let agent = ureq::builder()
+        .timeout_connect(std::time::Duration::from_secs(2))
+        .timeout_read(std::time::Duration::from_secs(90))
+        .build();
+
+    let mut last_error: Option<String> = None;
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/generate", candidate);
+        match agent
+            .post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(warmup_body.clone())
+        {
+            Ok(_) => return Ok(()),
+            Err(error) => last_error = Some(error.to_string()),
+        }
+    }
+
+    Err(format!(
+        "Failed to warm Ollama model: {}",
+        last_error.unwrap_or_else(|| "unable to reach Ollama endpoint".to_string())
+    ))
 }
 
 #[tauri::command]
@@ -722,7 +789,12 @@ pub(crate) fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String>
     drop(settings);
 
     if !current_ollama_model.is_empty() {
-        let _ = unload_ollama_model_impl(current_ollama_model);
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _ =
+            unload_ollama_model_impl(&settings.providers.ollama.endpoint, &current_ollama_model);
     }
 
     let _ = crate::whisper_server::kill_whisper_server(&state);

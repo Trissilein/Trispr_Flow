@@ -2044,7 +2044,7 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
     let server_keep_alive = std::env::var("TRISPR_OLLAMA_KEEP_ALIVE")
         .ok()
         .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "10m".to_string());
+        .unwrap_or_else(|| "90s".to_string());
     if crate::state::diagnostic_logging_enabled() {
         info!(
             "[ollama.runtime] spawning managed runtime binary={} host={} keep_alive={} runners_dir_present={} dependency_dirs={}",

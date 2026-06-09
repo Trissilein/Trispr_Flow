@@ -523,7 +523,7 @@ impl Default for Settings {
       audio_cues_volume: 0.3,
       diagnostic_logging_enabled: false,
       ptt_use_vad: false,
-      ptt_hot_keepalive_ms: 30_000,
+      ptt_hot_keepalive_ms: 600_000,
       vad_threshold: VAD_THRESHOLD_START_DEFAULT,
       vad_threshold_start: VAD_THRESHOLD_START_DEFAULT,
       vad_threshold_sustain: VAD_THRESHOLD_SUSTAIN_DEFAULT,
@@ -741,6 +741,8 @@ pub(crate) struct OllamaRuntimeDiagnostics {
     pub(crate) managed_pid: Option<u32>,
     pub(crate) endpoint: String,
     pub(crate) reachable: bool,
+    pub(crate) active_requests: usize,
+    pub(crate) idle_release_ms: u64,
 }
 
 impl Default for OllamaRuntimeDiagnostics {
@@ -753,6 +755,8 @@ impl Default for OllamaRuntimeDiagnostics {
             managed_pid: None,
             endpoint: String::new(),
             reachable: false,
+            active_requests: 0,
+            idle_release_ms: 90_000,
         }
     }
 }
@@ -767,6 +771,9 @@ pub(crate) struct WhisperRuntimeDiagnostics {
     pub(crate) accelerator: String,
     pub(crate) gpu_layers_requested: Option<usize>,
     pub(crate) gpu_layers_applied: Option<usize>,
+    pub(crate) active_requests: usize,
+    pub(crate) warm_until_ms: u64,
+    pub(crate) idle_retire_ms: u64,
     pub(crate) last_error: String,
 }
 
@@ -780,6 +787,9 @@ impl Default for WhisperRuntimeDiagnostics {
             accelerator: "cpu".to_string(),
             gpu_layers_requested: None,
             gpu_layers_applied: None,
+            active_requests: 0,
+            warm_until_ms: 0,
+            idle_retire_ms: 300_000,
             last_error: String::new(),
         }
     }
@@ -914,6 +924,14 @@ pub(crate) struct AppState {
     /// Port for Whisper-Server HTTP API (default 8178).
     pub(crate) whisper_server_port: AtomicU16,
     pub(crate) whisper_server_warmup_started: AtomicBool,
+    /// True once the OLLAMA model is confirmed loaded in VRAM (after warmup or
+    /// successful refinement). Reset to false when the model is unloaded.
+    pub(crate) ollama_model_warm: AtomicBool,
+    /// True while the PTT warmup thread is running (between spawn and completion).
+    /// Combined with ollama_model_warm, gives Cold/Loading/Warm tri-state for the overlay.
+    pub(crate) ollama_warmup_in_progress: AtomicBool,
+    pub(crate) whisper_server_warm_until_ms: AtomicU64,
+    pub(crate) whisper_server_retire_generation: AtomicU64,
     pub(crate) vision_stream_running: AtomicBool,
     pub(crate) vision_stream_started_ms: AtomicU64,
     pub(crate) vision_stream_frame_seq: AtomicU64,
@@ -1614,7 +1632,10 @@ pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
     settings.continuous_post_roll_ms = settings.continuous_post_roll_ms.clamp(0, 1_500);
     settings.continuous_idle_keepalive_ms =
         settings.continuous_idle_keepalive_ms.clamp(10_000, 120_000);
-    settings.ptt_hot_keepalive_ms = settings.ptt_hot_keepalive_ms.clamp(5_000, 120_000);
+    if settings.ptt_hot_keepalive_ms == 30_000 {
+        settings.ptt_hot_keepalive_ms = 600_000;
+    }
+    settings.ptt_hot_keepalive_ms = settings.ptt_hot_keepalive_ms.clamp(5_000, 600_000);
 
     settings.continuous_mic_soft_flush_ms =
         settings.continuous_mic_soft_flush_ms.clamp(4_000, 30_000);

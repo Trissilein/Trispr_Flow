@@ -21,6 +21,13 @@ import { dbToLevel, VAD_DB_FLOOR } from "../ui-helpers";
 import { onChangePersist, scheduleSettingsRender } from "./wire-helpers";
 import { refreshModels, refreshModelsDir } from "../models";
 
+function formatKeepalive(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds >= 60 && seconds % 60 === 0) return `${seconds / 60}m`;
+  if (seconds >= 60) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${seconds}s`;
+}
+
 function applyContinuousProfile(profile: "balanced" | "low_latency" | "high_quality") {
   if (!settings) return;
   if (profile === "low_latency") {
@@ -98,12 +105,16 @@ async function setWhisperBackendPreference(backend: "cuda" | "vulkan"): Promise<
     settings.local_backend_preference = backend;
     renderHero();
     await persistSettings();
+    // Fire-and-forget: kill the running server so it restarts with the new
+    // binary on the next recording.  Not awaited so the UI feedback (toast)
+    // is not delayed by the server shutdown round-trip.
+    void invoke("kill_whisper_server").catch(() => {});
     renderHero();
     showToast({
-      type: "success",
-      title: "Backend updated",
-      message: `Whisper backend preference set to ${backend.toUpperCase()}.`,
-      duration: 2200,
+      type: "info",
+      title: "Backend switched",
+      message: `Whisper will use ${backend.toUpperCase()} on the next recording.`,
+      duration: 3000,
     });
   } finally {
     backendSwitchBusy = false;
@@ -327,10 +338,10 @@ export function wireTranscription(): void {
 
   dom.pttHotKeepalive?.addEventListener("input", () => {
     if (!settings || !dom.pttHotKeepalive) return;
-    const value = Math.max(5000, Math.min(120000, Number(dom.pttHotKeepalive.value)));
+    const value = Math.max(5000, Math.min(600000, Number(dom.pttHotKeepalive.value)));
     settings.ptt_hot_keepalive_ms = value;
     if (dom.pttHotKeepaliveValue) {
-      dom.pttHotKeepaliveValue.textContent = `${Math.round(value / 1000)}s`;
+      dom.pttHotKeepaliveValue.textContent = formatKeepalive(value);
     }
     updateRangeAria("ptt-hot-keepalive", value);
   });
@@ -553,48 +564,22 @@ export function wireTranscription(): void {
     void setWhisperBackendPreference("vulkan");
   });
 
-  const purgeTrigger = dom.gpuPurgeBtn ?? dom.gpuStatusItem;
-  purgeTrigger?.addEventListener("click", async () => {
-    if (!dom.gpuVramLabel) return;
-    const originalVramText = dom.gpuVramLabel.textContent;
-    if (dom.gpuPurgeBtn) {
-      dom.gpuPurgeBtn.disabled = true;
-    } else if (dom.gpuStatusItem) {
-      dom.gpuStatusItem.style.pointerEvents = "none";
-    }
-    dom.gpuVramLabel.textContent = "Purging...";
+  dom.gpuPurgeBtn?.addEventListener("click", async () => {
+    const label = dom.engineWhisperVram;
+    if (dom.gpuPurgeBtn) dom.gpuPurgeBtn.disabled = true;
+    if (label) label.textContent = "Purging…";
     try {
       await invoke("purge_gpu_memory");
-      dom.gpuVramLabel.textContent = "Purged ✓";
-      setTimeout(() => {
-        dom.gpuVramLabel!.textContent = originalVramText;
-        if (dom.gpuPurgeBtn) {
-          dom.gpuPurgeBtn.disabled = false;
-        } else if (dom.gpuStatusItem) {
-          dom.gpuStatusItem.style.pointerEvents = "auto";
-        }
-      }, 2000);
+      if (label) label.textContent = "Purged ✓";
     } catch (error) {
-      dom.gpuVramLabel.textContent = "Error";
-      if (dom.gpuPurgeBtn) {
-        dom.gpuPurgeBtn.disabled = false;
-      } else if (dom.gpuStatusItem) {
-        dom.gpuStatusItem.style.pointerEvents = "auto";
-      }
+      if (label) label.textContent = "Error";
+    } finally {
+      // The 2s GPU-stats poll restores the real VRAM value on its own.
       setTimeout(() => {
-        dom.gpuVramLabel!.textContent = originalVramText;
-      }, 3000);
+        if (dom.gpuPurgeBtn) dom.gpuPurgeBtn.disabled = false;
+      }, 2000);
     }
   });
-
-  if (!dom.gpuPurgeBtn) {
-    dom.gpuStatusItem?.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        dom.gpuStatusItem?.click();
-      }
-    });
-  }
 
   // Whisper model source & storage controls (R2 slice 4 backfill).
   dom.modelSourceSelect?.addEventListener("change", async () => {

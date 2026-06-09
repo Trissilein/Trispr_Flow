@@ -486,6 +486,14 @@ pub struct RefinementResult {
     pub provider: String,
     pub model: String,
     pub execution_time_ms: u64,
+    /// OLLAMA-internal: nanoseconds from response divided by 1_000_000.
+    /// None for non-Ollama providers. >0 means model was cold-loaded this request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ollama_load_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ollama_prompt_eval_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ollama_eval_ms: Option<u64>,
 }
 
 pub fn normalize_provider_id(provider: &str) -> &'static str {

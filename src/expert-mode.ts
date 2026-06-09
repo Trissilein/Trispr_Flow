@@ -22,6 +22,14 @@ function persistExpertModePreference(enabled: boolean): void {
 function applyExpertModeClass(enabled: boolean): void {
   document.documentElement.classList.toggle("expert-mode", enabled);
   document.documentElement.classList.toggle("standard-mode", !enabled);
+  if (!enabled) {
+    const activeExpertTab = document.querySelector<HTMLElement>(
+      ".main-tab-content.active[data-expert-only='true']",
+    );
+    if (activeExpertTab) {
+      document.getElementById("tab-btn-transcription")?.click();
+    }
+  }
   if (dom.expertModeLabel) {
     dom.expertModeLabel.textContent = enabled
       ? "Expert mode active: advanced controls visible."

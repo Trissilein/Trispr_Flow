@@ -14,6 +14,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import indexHtml from "../../index.html?raw";
 
 const EXPERT_MODE_KEY = "trispr-expert-mode";
 
@@ -185,5 +186,88 @@ describe("Block K K5 — Expert Mode Toggle", () => {
 
     // Classes should still reflect standard mode, not flip state
     expect(document.documentElement.classList.contains("standard-mode")).toBe(true);
+  });
+
+  it("redirects from an expert-only active tab when standard mode applies", async () => {
+    setupFixture(null);
+    let redirected = false;
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `
+        <button id="tab-btn-transcription" type="button"></button>
+        <div id="tab-agent" class="main-tab-content active" data-expert-only="true"></div>
+      `,
+    );
+    document.getElementById("tab-btn-transcription")?.addEventListener("click", () => {
+      redirected = true;
+    });
+
+    const { initExpertMode } = await import("../expert-mode");
+    initExpertMode();
+
+    expect(redirected).toBe(true);
+  });
+
+  it("keeps daily settings visible and marks advanced settings as expert-only in index", () => {
+    const template = document.createElement("template");
+    template.innerHTML = indexHtml;
+    const root = template.content;
+    const byId = (id: string): HTMLElement => {
+      const element = root.querySelector<HTMLElement>(`#${id}`);
+      if (!element) throw new Error(`Missing #${id} in index.html`);
+      return element;
+    };
+    const expectStandardControl = (id: string): void => {
+      expect(byId(id).closest('[data-expert-only="true"]')).toBeNull();
+    };
+    const expectExpertControl = (id: string): void => {
+      expect(byId(id).closest('[data-expert-only="true"]')).not.toBeNull();
+    };
+
+    expect(indexHtml).toContain("PTT audio standby window");
+    expect(indexHtml).toContain("Capture Basics");
+    expect(indexHtml).toContain("AI Runtime");
+    expect(indexHtml).toContain("Diagnostics &amp; Filters");
+    expect(indexHtml).toContain("Does not keep Whisper or Ollama models loaded");
+    expect(indexHtml).toContain("Refinement flow");
+    expect(indexHtml).toContain("Whisper creates raw text");
+    expect(indexHtml).toMatch(/data-panel="system"[^>]*data-expert-only="true"/);
+    expect(indexHtml).toMatch(/data-panel="interface"[^>]*data-expert-only="true"/);
+    expect(indexHtml).toMatch(/id="ptt-hot-keepalive"[\s\S]*aria-label="PTT audio standby window"/);
+
+    [
+      "capture-enabled-toggle",
+      "device-select",
+      "mode-select",
+      "ptt-hotkey",
+      "whisper-input-language-select",
+      "ai-fallback-enabled",
+      "ai-fallback-local-primary-status",
+      "ai-refinement-models-expander",
+      "refinement-pipeline-note",
+      "pipeline-node-transcribe",
+      "pipeline-node-rules",
+      "pipeline-node-ai",
+      "pipeline-node-gate",
+      "pipeline-node-output-refined",
+      "pipeline-node-output-raw",
+      "prompt-preset-list",
+      "ai-fallback-custom-prompt",
+    ].forEach(expectStandardControl);
+
+    [
+      "toggle-hotkey",
+      "ptt-use-vad-toggle",
+      "ptt-hot-keepalive",
+      "vad-block",
+      "opus-archive-toggle",
+      "continuous-mic-hard-cut",
+      "model-source-select",
+      "overlay-style",
+      "diagnostic-logging-toggle",
+      "postproc-punctuation",
+      "ai-fallback-local-backend-select",
+      "tab-btn-modules",
+    ].forEach(expectExpertControl);
   });
 });

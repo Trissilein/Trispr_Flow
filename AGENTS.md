@@ -101,6 +101,17 @@ During work:
 At the end of a substantial session:
 - Call `mempalace_diary_write` with `agent_name="codex"` and record a compact AAAK-style summary of what changed, what mattered, and what should be resumed next.
 
+## Caveman Communication
+
+This rule is mandatory for assistant prose in this repo.
+
+- Default to caveman style for user-facing prose, status updates, and review comments.
+- Confluence prose is exempt by default; use normal, fuller wording there unless the user asks for terse style.
+- Apply caveman when the user asks for caveman, brevity, fewer tokens, direct wording, or references the caveman plugin/repo.
+- Keep code, commands, file paths, URLs, identifiers, and quoted error text exact.
+- Switch to normal prose only for security warnings, irreversible confirmations, ambiguity, or `normal mode` / `stop caveman`.
+- The local implementation lives in `.claude/skills/caveman/`.
+
 ## PR workflow
 
 - PRs from contributors are opened as **drafts** while in progress.

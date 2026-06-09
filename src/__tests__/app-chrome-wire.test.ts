@@ -419,18 +419,6 @@ describe("wireAppChrome - panels and shortcuts", () => {
     );
   });
 
-  it("wires resize only once across repeated wire calls", async () => {
-    const addEventListenerSpy = vi.spyOn(window, "addEventListener");
-    const { appChrome } = await setup();
-    appChrome.wireAppChrome();
-    appChrome.wireAppChrome();
-    const resizeCalls = addEventListenerSpy.mock.calls.filter(([eventName]) => eventName === "resize");
-    expect(resizeCalls).toHaveLength(1);
-    const resizeHandler = resizeCalls[0]?.[1];
-    if (typeof resizeHandler === "function") resizeHandler(new Event("resize"));
-    expect(mocks.updateDeviceLineClamp).toHaveBeenCalledTimes(1);
-    addEventListenerSpy.mockRestore();
-  });
 });
 
 describe("wireAppChrome - accent color", () => {

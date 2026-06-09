@@ -1561,9 +1561,10 @@ pub(crate) fn maybe_spawn_ai_refinement(
                     job_id, trigger, source, provider_id, settings_snapshot.ai_fallback.model
                 );
             }
-            if let Err(error) =
-                crate::ensure_ollama_runtime_ready_for_refinement(&app_handle, &settings_snapshot)
-            {
+            if let Err(error) = crate::ai_fallback::ensure_ollama_runtime_ready_for_refinement(
+                &app_handle,
+                &settings_snapshot,
+            ) {
                 error!(
                     "[refinement:{}] runtime prep skipped trigger={} source={} provider={} error={}",
                     job_id,
@@ -1606,43 +1607,45 @@ pub(crate) fn maybe_spawn_ai_refinement(
             // This performs model resolution BEFORE signalling "started" — if
             // Ollama is down or no model is available the frontend never sees a
             // spinner for a doomed job.
-            let setup = match crate::prepare_refinement(&app_handle, &settings_snapshot) {
-                Ok(s) => s,
-                Err(error) => {
-                    error!(
+            let setup =
+                match crate::ai_fallback::prepare_refinement(&app_handle, &settings_snapshot) {
+                    Ok(s) => s,
+                    Err(error) => {
+                        error!(
                         "[refinement:{}] prepare failed trigger={} source={} provider={} error={}",
                         job_id, trigger, source, provider_id, error
                     );
-                    let reason_code = if error.to_ascii_lowercase().contains("not ready") {
-                        "runtime_not_ready"
-                    } else {
-                        "prepare_failed"
-                    };
-                    record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
-                    if let Some(entry_id_value) = entry_id.as_deref() {
-                        let _ = mark_entry_refinement_failed(
-                            &app_handle,
-                            entry_id_value,
-                            &job_id,
-                            &text,
-                            &error,
+                        let reason_code = if error.to_ascii_lowercase().contains("not ready") {
+                            "runtime_not_ready"
+                        } else {
+                            "prepare_failed"
+                        };
+                        record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
+                        if let Some(entry_id_value) = entry_id.as_deref() {
+                            let _ = mark_entry_refinement_failed(
+                                &app_handle,
+                                entry_id_value,
+                                &job_id,
+                                &text,
+                                &error,
+                            );
+                            return;
+                        }
+                        let _ = app_handle.emit(
+                            "transcription:refinement-failed",
+                            serde_json::json!({
+                                "job_id": job_id.clone(),
+                                "entry_id": entry_id.clone(),
+                                "source": source.clone(),
+                                "trigger": trigger,
+                                "original": text.clone(),
+                                "error": error,
+                                "reason": reason_code,
+                            }),
                         );
+                        return;
                     }
-                    let _ = app_handle.emit(
-                        "transcription:refinement-failed",
-                        serde_json::json!({
-                            "job_id": job_id.clone(),
-                            "entry_id": entry_id.clone(),
-                            "source": source.clone(),
-                            "trigger": trigger,
-                            "original": text.clone(),
-                            "error": error,
-                            "reason": reason_code,
-                        }),
-                    );
-                    return;
-                }
-            };
+                };
 
             if diagnostics_enabled {
                 info!(
@@ -3084,6 +3087,69 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
             }
         }
     });
+}
+
+#[tauri::command]
+pub(crate) fn get_last_recording_path(
+    source: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let path = if source == "output" || source == "system" {
+        state
+            .last_system_recording_path
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    } else {
+        state
+            .last_mic_recording_path
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    };
+    Ok(path)
+}
+
+#[tauri::command]
+pub(crate) fn get_recordings_directory(app: AppHandle) -> Result<String, String> {
+    let data_dir = crate::paths::resolve_base_dir(&app);
+    let recordings_dir = data_dir.join("recordings");
+
+    std::fs::create_dir_all(&recordings_dir)
+        .map_err(|e| format!("Failed to create recordings dir: {}", e))?;
+
+    Ok(recordings_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub(crate) fn open_recordings_directory(app: AppHandle) -> Result<(), String> {
+    let recordings_dir = get_recordings_directory(app.clone())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&recordings_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open directory: {}", e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&recordings_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open directory: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&recordings_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open directory: {}", e))?;
+    }
+
+    Ok(())
 }
 
 pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {

@@ -24,6 +24,7 @@ mod refinement_adaptation;
 mod session_manager;
 mod state;
 mod transcription;
+mod tts_benchmark;
 mod uiautomation_capture;
 mod util;
 mod video_generation;
@@ -35,14 +36,11 @@ mod workflow_agent;
 use arboard::{Clipboard, ImageData};
 use enigo::{Enigo, Key, KeyboardControllable};
 use errors::{AppError, ErrorEvent};
-use overlay::{emit_capture_idle_overlay, update_overlay_refining_indicator};
-use state::{
-    AppState, AssistantOrchestratorState, HistoryEntry, RuntimeDiagnostics, Settings, StartupStatus,
-};
-use std::collections::{HashMap, HashSet};
+use overlay::emit_capture_idle_overlay;
+use state::{AppState, RuntimeDiagnostics, Settings, StartupStatus};
+use std::collections::HashSet;
 use std::fs;
-use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{
     AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering,
 };
@@ -53,20 +51,63 @@ use std::sync::Mutex;
 // Backoff schedule: 1st fail→immediate, 2nd→2 s, 3rd→4 s, 4th→8 s, 5+→30 s.
 static OLLAMA_DIAG_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
 static OLLAMA_DIAG_NEXT_MS: AtomicU64 = AtomicU64::new(0);
-static ASSISTANT_CONFIRM_TOKEN_SEQ: AtomicU64 = AtomicU64::new(1_000);
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::menu::{CheckMenuItem, MenuItem};
 use tauri::Wry;
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tracing::{error, info, warn};
 
+pub(crate) use audio::{
+    get_last_recording_path, get_recordings_directory, open_recordings_directory,
+};
+#[cfg(feature = "module-confluence")]
+pub(crate) use gdd::confluence::{
+    clear_confluence_secret, confluence_list_spaces, confluence_oauth_exchange,
+    confluence_oauth_start, delete_pending_gdd_publish, list_pending_gdd_publishes,
+    load_gdd_template_from_confluence, load_gdd_template_from_file, publish_gdd_to_confluence,
+    publish_or_queue_gdd_to_confluence, retry_pending_gdd_publish, save_confluence_secret,
+    suggest_confluence_target, test_confluence_connection,
+};
+#[cfg(feature = "module-gdd")]
+pub(crate) use gdd::{
+    detect_gdd_preset, generate_gdd_draft, list_gdd_presets, render_gdd_for_confluence,
+    render_gdd_markdown, save_gdd_preset_clone, validate_gdd_draft,
+};
+pub(crate) use history_partition::{
+    add_history_entry, add_transcribe_entry, clear_active_transcript_history,
+    delete_active_transcript_entry, get_history, get_transcribe_history, list_history_partitions,
+    load_history_partition, save_transcript,
+};
+pub(crate) use hotkeys::{get_hotkey_conflicts, test_hotkey, validate_hotkey};
+pub(crate) use modules::task_capture::{
+    get_task_capture_settings, save_task_capture_settings, test_task_capture_endpoint,
+};
+pub(crate) use multimodal_io::{
+    capture_vision_snapshot, download_piper_voice_key, get_vision_stream_health,
+    list_piper_voice_catalog, list_screen_sources, list_tts_providers, list_tts_voices, speak_tts,
+    start_vision_stream, stop_tts, stop_vision_stream, test_tts_provider,
+};
+pub(crate) use opus::{check_ffmpeg, encode_to_opus, get_ffmpeg_version_info};
+pub(crate) use paths::open_log_directory;
+pub(crate) use session_manager::{clear_crash_recovery, save_crash_recovery};
+pub(crate) use tts_benchmark::{run_latency_benchmark, run_tts_benchmark};
+pub(crate) use util::{frontend_heartbeat, log_frontend_event};
+pub(crate) use video_generation::{video_generate, video_get_output_dir, video_open_output_dir};
+pub(crate) use video_ingest::{video_ingest_history_entry, video_ingest_sources};
+pub(crate) use workflow_agent::{
+    agent_build_execution_plan, agent_cancel_pending_confirmation, agent_compose_unknown_reply,
+    agent_execute_gdd_plan, agent_list_supported_actions, agent_parse_command,
+    assistant_execute_direct_action, search_transcript_sessions,
+};
+
 /// Wrap a Tauri command body in `catch_unwind` so that a panic inside module
 /// code returns a clean `Err(String)` instead of crashing the app.
 /// Works for any command that returns `Result<T, String>`.
+#[macro_export]
 macro_rules! guarded_command {
     ($label:expr, $body:expr) => {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $body)) {
@@ -80,14 +121,7 @@ macro_rules! guarded_command {
     };
 }
 
-use crate::ai_fallback::error::AIError;
-use crate::ai_fallback::keyring as ai_fallback_keyring;
-use crate::ai_fallback::models::RefinementOptions;
-use crate::ai_fallback::provider::{
-    default_models_for_provider, is_local_ollama_endpoint, is_ssrf_target, list_ollama_models,
-    list_ollama_models_with_size, ollama_endpoint_candidates, ping_ollama, ping_ollama_quick,
-    prompt_for_profile, AIProvider, ProviderFactory,
-};
+use crate::ai_fallback::provider::ping_ollama_quick;
 use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
 use crate::history_partition::PartitionedHistory;
 use crate::models::{
@@ -95,32 +129,33 @@ use crate::models::{
     hide_external_model, list_models, pick_model_dir, quantize_model, remove_model,
 };
 use crate::modules::{
-    canonicalize_module_id, health as module_health, lifecycle as module_lifecycle,
-    normalize_confluence_settings, normalize_gdd_module_settings, normalize_module_settings,
-    normalize_task_capture_settings, normalize_vision_input_settings,
-    normalize_voice_output_settings, normalize_workflow_agent_settings,
-    registry as module_registry, ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID,
-    TASK_CAPTURE_MODULE_ID,
+    canonicalize_module_id, health as module_health, normalize_confluence_settings,
+    normalize_gdd_module_settings, normalize_module_settings, normalize_task_capture_settings,
+    normalize_vision_input_settings, normalize_voice_output_settings,
+    normalize_workflow_agent_settings, package as module_package, registry as module_registry,
+    ASSISTANT_CORE_MODULE_ID, TASK_CAPTURE_MODULE_ID,
 };
-use crate::ollama_runtime::{
-    detect_ollama_runtime, download_ollama_runtime, fetch_ollama_online_versions,
-    import_ollama_model_from_file, install_ollama_runtime, list_ollama_runtime_versions,
-    set_strict_local_mode, start_ollama_runtime, verify_ollama_runtime,
-};
-use crate::refinement_adaptation::resolve_adaptive_low_latency;
 use crate::state::{
     get_runtime_metrics_snapshot as runtime_metrics_snapshot, load_settings,
     normalize_ai_fallback_fields, normalize_ai_refinement_module_binding,
     normalize_assistant_core_binding, normalize_assistant_presence_binding,
     normalize_continuous_dump_fields, normalize_history_alias_fields, normalize_product_mode_field,
-    push_history_entry_inner, push_transcribe_entry_inner, record_refinement_fallback_timed_out,
-    record_refinement_timeout, save_settings_file, sync_model_dir_env, AI_REFINEMENT_MODULE_ID,
+    record_refinement_fallback_timed_out, record_refinement_timeout, save_settings_file,
+    sync_model_dir_env, AI_REFINEMENT_MODULE_ID,
 };
 use crate::transcription::{
-    expand_transcribe_backlog as expand_transcribe_backlog_inner, last_transcription_accelerator,
-    reconcile_whisper_runtime, start_transcribe_monitor, stop_transcribe_monitor,
-    toggle_transcribe_state, transcribe_audio, warm_transcribe_runtime,
-    whisper_runtime_auto_warm_required, whisper_runtime_required,
+    expand_transcribe_backlog as expand_transcribe_backlog_inner, start_transcribe_monitor,
+    stop_transcribe_monitor_and_release_whisper, toggle_transcribe_state,
+};
+pub(crate) use ai_fallback::commands::{
+    clear_provider_api_key, delete_ollama_model, detect_ollama_runtime, download_ollama_runtime,
+    fetch_available_models, fetch_ollama_models_with_size, fetch_ollama_online_versions,
+    get_ollama_model_info, import_ollama_model_from_file, install_lm_studio,
+    install_ollama_runtime, list_ollama_runtime_versions, ping_refinement_model, pull_ollama_model,
+    purge_gpu_memory, refine_transcript, save_ollama_endpoint, save_provider_api_key,
+    set_strict_local_mode, start_ollama_runtime, stop_ollama_runtime, test_provider_connection,
+    unload_ollama_model, unload_ollama_model_impl, verify_ollama_runtime, verify_provider_auth,
+    warmup_ollama_model_impl,
 };
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
@@ -140,16 +175,6 @@ const CLIPBOARD_RETRY_INTERVAL_MS: u64 = 50;
 const CLIPBOARD_CAPTURE_TIMEOUT_MS: u64 = 1_000;
 const CLIPBOARD_RESTORE_DELAY_MS: u64 = 350;
 const CLIPBOARD_RESTORE_TIMEOUT_MS: u64 = 3_000;
-
-#[derive(Debug, Clone)]
-struct PendingAssistantConfirmation {
-    plan: crate::workflow_agent::AgentExecutionPlan,
-    confirm_token: String,
-    expires_at_ms: u64,
-}
-
-static ASSISTANT_PENDING_CONFIRMATION: Mutex<Option<PendingAssistantConfirmation>> =
-    Mutex::new(None);
 
 static LAST_TRAY_CLICK_MS: AtomicU64 = AtomicU64::new(0);
 static TRAY_CAPTURE_STATE: AtomicU8 = AtomicU8::new(0);
@@ -523,8 +548,6 @@ pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> 
         diagnostics.ollama.managed_pid = managed_pid;
         diagnostics.ollama.endpoint = endpoint.clone();
         diagnostics.ollama.reachable = reachable;
-        diagnostics.ollama.active_requests = state.refinement_active_count.load(Ordering::SeqCst);
-        diagnostics.ollama.idle_release_ms = 90_000;
         if reachable {
             diagnostics.ollama.spawn_stage = "ready".to_string();
             diagnostics.ollama.last_error.clear();
@@ -537,10 +560,6 @@ pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> 
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
         diagnostics.whisper.backend_selected = whisper_backend.clone();
-        diagnostics.whisper.active_requests = crate::whisper_server::active_request_count();
-        diagnostics.whisper.warm_until_ms =
-            state.whisper_server_warm_until_ms.load(Ordering::Relaxed);
-        diagnostics.whisper.idle_retire_ms = 300_000;
         if diagnostics.whisper.mode == "idle" && settings.capture_enabled {
             diagnostics.whisper.mode = "cli".to_string();
         }
@@ -728,373 +747,6 @@ pub(crate) fn cleanup_managed_processes(app: &AppHandle, state: &AppState) {
         &state.managed_whisper_server_child,
     );
     crate::uiautomation_capture::shutdown(&state.enter_capture);
-}
-
-/// Guard that rejects requests when strict-local-mode is active and the
-/// configured Ollama endpoint is not a local address.
-/// Lock settings, apply a mutation, persist to disk, and emit a change event.
-///
-/// The closure receives `&mut Settings` and may return `Err` to abort.  On
-/// success the updated settings are saved and broadcast.
-fn update_and_persist_settings<F>(app: &AppHandle, state: &AppState, f: F) -> Result<(), String>
-where
-    F: FnOnce(&mut Settings) -> Result<(), String>,
-{
-    let snapshot = {
-        let mut settings = state.settings.write().map_err(|e| e.to_string())?;
-        f(&mut settings)?;
-        settings.clone()
-    };
-    save_settings_file(app, &snapshot)?;
-    let _ = app.emit("settings-changed", snapshot);
-    Ok(())
-}
-
-pub(crate) fn check_strict_local_mode(settings: &Settings) -> Result<(), String> {
-    if settings.ai_fallback.strict_local_mode
-        && !is_local_ollama_endpoint(&settings.providers.ollama.endpoint)
-    {
-        return Err(
-            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
-/// Common result of preparing a refinement call: provider client, API key,
-/// resolved model name, whether the model resolution repaired a stale setting,
-/// and the `RefinementOptions` to pass to the provider.
-pub(crate) struct RefinementSetup {
-    pub provider: Box<dyn AIProvider>,
-    pub api_key: String,
-    pub model: String,
-    pub repaired: bool,
-    pub options: RefinementOptions,
-}
-
-/// Append a "preserve these terms verbatim" clause to the refinement system
-/// prompt. This prevents the LLM from mangling user-specific proper nouns
-/// and acronyms during refinement (e.g. "MemPalace" → "Mem Palace",
-/// "XPBar" → "xp bar"). Returns None if neither the base prompt nor the
-/// terms list produce usable content.
-fn augment_prompt_with_vocab_terms(base: Option<String>, terms: &[String]) -> Option<String> {
-    let mut cleaned: Vec<&str> = terms
-        .iter()
-        .map(|t| t.trim())
-        .filter(|t| !t.is_empty())
-        .collect();
-    if cleaned.is_empty() {
-        return base;
-    }
-    let mut seen = std::collections::HashSet::new();
-    cleaned.retain(|t| seen.insert(t.to_lowercase()));
-    const MAX_TERMS_CHARS: usize = 600;
-    let mut joined = String::new();
-    for term in cleaned {
-        let delim = if joined.is_empty() { "" } else { ", " };
-        if joined.len() + delim.len() + term.len() > MAX_TERMS_CHARS {
-            break;
-        }
-        joined.push_str(delim);
-        joined.push_str(term);
-    }
-    if joined.is_empty() {
-        return base;
-    }
-    let suffix = format!(
-        "\n\nKnown terms (proper nouns, acronyms, product names) — preserve these exactly as written, do not translate or normalize them: {}",
-        joined
-    );
-    match base {
-        Some(b) if !b.trim().is_empty() => Some(format!("{}{}", b, suffix)),
-        _ => Some(suffix.trim_start().to_string()),
-    }
-}
-
-/// Shared refinement-context preparation used by the Tauri command, the
-/// benchmark helper, and the auto-refinement worker.  Validates settings,
-/// creates the provider client, resolves the model, and builds options.
-///
-/// Does **not** persist model-repair changes — callers decide if/how to do that.
-pub(crate) fn prepare_refinement(
-    app: &AppHandle,
-    settings: &Settings,
-) -> Result<RefinementSetup, String> {
-    require_capability_enabled(settings, RuntimeCapability::AiRefinement)?;
-
-    let ai = &settings.ai_fallback;
-
-    let is_ollama = ai.provider == "ollama";
-    let is_lm_studio = ai.provider == "lm_studio";
-    let is_oobabooga = ai.provider == "oobabooga";
-    let is_local_compat = is_lm_studio || is_oobabooga;
-    if crate::state::diagnostic_logging_enabled() {
-        info!(
-            "[refinement:prepare] start provider={} model={} ollama={} ai_enabled={} module_enabled={}",
-            ai.provider,
-            ai.model,
-            is_ollama,
-            settings.ai_fallback.enabled,
-            settings
-                .module_settings
-                .enabled_modules
-                .contains(crate::state::AI_REFINEMENT_MODULE_ID)
-        );
-    }
-
-    if is_ollama {
-        let state = app.state::<AppState>();
-        let startup_status = startup_status_snapshot(state.inner());
-        if !startup_status.ollama_ready {
-            return Err(
-                "Ollama refinement is not ready yet. Raw or rule-based fallback remains active."
-                    .to_string(),
-            );
-        }
-    }
-
-    let provider: Box<dyn crate::ai_fallback::provider::AIProvider> = if is_ollama {
-        check_strict_local_mode(settings)?;
-        ProviderFactory::create_ollama(settings.providers.ollama.endpoint.clone())
-    } else if is_lm_studio {
-        // Quick pre-flight: verify LM Studio is reachable and has a model loaded
-        // before attempting refinement.  Avoids a slow timeout + confusing error.
-        if let Err(e) = crate::ai_fallback::provider::ping_lm_studio_quick(
-            &settings.providers.lm_studio.endpoint,
-        ) {
-            return Err(format!("LM Studio not ready: {}", e));
-        }
-        ProviderFactory::create_lm_studio(
-            settings.providers.lm_studio.endpoint.clone(),
-            settings.providers.lm_studio.api_key.clone(),
-        )
-    } else if is_oobabooga {
-        ProviderFactory::create_oobabooga(
-            settings.providers.oobabooga.endpoint.clone(),
-            settings.providers.oobabooga.api_key.clone(),
-        )
-    } else {
-        ProviderFactory::create(&ai.provider).map_err(|e| e.to_string())?
-    };
-
-    let api_key = if is_ollama || is_local_compat {
-        String::new()
-    } else {
-        ai_fallback_keyring::read_api_key(app, &ai.provider)?
-            .ok_or_else(|| format!("No API key stored for provider '{}'.", ai.provider))?
-    };
-
-    if !is_ollama && !is_local_compat {
-        provider
-            .validate_api_key(&api_key)
-            .map_err(|e| e.to_string())?;
-    }
-
-    let mut model = ai.model.trim().to_string();
-    let mut repaired = false;
-    if is_ollama {
-        let endpoint = settings.providers.ollama.endpoint.clone();
-        crate::ai_fallback::provider::ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
-
-        if model.is_empty() {
-            let preferred = settings.providers.ollama.preferred_model.trim();
-            let postproc = settings.postproc_llm_model.trim();
-            let cached = settings
-                .providers
-                .ollama
-                .available_models
-                .iter()
-                .map(|entry| entry.trim())
-                .find(|entry| !entry.is_empty());
-
-            if !preferred.is_empty() {
-                model = preferred.to_string();
-                repaired = true;
-            } else if !postproc.is_empty() {
-                model = postproc.to_string();
-                repaired = true;
-            } else if let Some(cached_model) = cached {
-                model = cached_model.to_string();
-                repaired = true;
-            }
-        }
-    } else if is_lm_studio && model.is_empty() {
-        model = settings
-            .providers
-            .lm_studio
-            .preferred_model
-            .trim()
-            .to_string();
-    } else if is_oobabooga && model.is_empty() {
-        model = settings
-            .providers
-            .oobabooga
-            .preferred_model
-            .trim()
-            .to_string();
-    } else if model.is_empty() {
-        model = match ai.provider.as_str() {
-            "claude" => settings.providers.claude.preferred_model.trim().to_string(),
-            "openai" => settings.providers.openai.preferred_model.trim().to_string(),
-            "gemini" => settings.providers.gemini.preferred_model.trim().to_string(),
-            _ => String::new(),
-        };
-    }
-
-    if model.is_empty() {
-        return Err(if is_ollama {
-            "No local Ollama model configured. Download a model and set it active first."
-                .to_string()
-        } else if is_lm_studio {
-            "No model selected for LM Studio. Load a model in LM Studio and set it active."
-                .to_string()
-        } else if is_oobabooga {
-            "No model selected for Oobabooga. Load a model and set it active in settings."
-                .to_string()
-        } else {
-            "No cloud model configured for the selected provider.".to_string()
-        });
-    }
-
-    let adaptive_low_latency = resolve_adaptive_low_latency(app, settings, &model);
-    let effective_low_latency = ai.low_latency_mode || adaptive_low_latency.enabled;
-    let effective_max_tokens = if effective_low_latency {
-        ai.max_tokens.min(512)
-    } else {
-        ai.max_tokens
-    };
-    let effective_temperature = if effective_low_latency && ai.temperature > 0.2 {
-        0.15
-    } else {
-        ai.temperature
-    };
-
-    let effective_language = if settings.language_pinned {
-        settings.language_mode.clone()
-    } else {
-        "auto".to_string()
-    };
-    let enforce_language_guard = ai.preserve_source_language && ai.prompt_profile != "llm_prompt";
-
-    let options = RefinementOptions {
-        temperature: effective_temperature,
-        max_tokens: effective_max_tokens,
-        low_latency_mode: effective_low_latency,
-        language: Some(effective_language.clone()),
-        custom_prompt: augment_prompt_with_vocab_terms(
-            prompt_for_profile(
-                &ai.prompt_profile,
-                &effective_language,
-                Some(ai.custom_prompt.as_str()),
-                ai.preserve_source_language,
-            ),
-            &settings.vocab_terms,
-        ),
-        enforce_language_guard,
-        prompt_profile: ai.prompt_profile.clone(),
-    };
-
-    if crate::state::diagnostic_logging_enabled() {
-        info!(
-            "[refinement:prepare] resolved provider={} model={} repaired={} prompt_profile={} low_latency={} adaptive_low_latency={} adaptive_reason={} max_tokens={} temperature={} guard={}",
-            ai.provider,
-            model,
-            repaired,
-            options.prompt_profile,
-            options.low_latency_mode,
-            adaptive_low_latency.enabled,
-            adaptive_low_latency.reason,
-            options.max_tokens,
-            options.temperature,
-            options.enforce_language_guard
-        );
-    }
-
-    Ok(RefinementSetup {
-        provider,
-        api_key,
-        model,
-        repaired,
-        options,
-    })
-}
-
-fn ensure_ollama_runtime_ready_for_refinement(
-    app: &AppHandle,
-    settings: &Settings,
-) -> Result<(), String> {
-    let endpoint = settings.providers.ollama.endpoint.trim().to_string();
-    let state = app.state::<AppState>();
-    let startup_status = startup_status_snapshot(state.inner());
-    let autostart = should_autostart_ai_refinement_runtime(settings);
-    if crate::state::diagnostic_logging_enabled() {
-        info!(
-            "[ollama.runtime] ensure_ready_for_refinement start endpoint={} autostart={} ready={} starting={}",
-            endpoint,
-            autostart,
-            startup_status.ollama_ready,
-            startup_status.ollama_starting
-        );
-    }
-    if !autostart {
-        if crate::state::diagnostic_logging_enabled() {
-            info!(
-                "[ollama.runtime] ensure_ready_for_refinement skipped (autostart disabled) endpoint={}",
-                endpoint
-            );
-        }
-        return Ok(());
-    }
-
-    if startup_status.ollama_ready {
-        if crate::state::diagnostic_logging_enabled() {
-            info!(
-                "[ollama.runtime] ensure_ready_for_refinement already ready endpoint={}",
-                endpoint
-            );
-        }
-        return Ok(());
-    }
-
-    let start_result = tauri::async_runtime::block_on(start_ollama_runtime(app.clone()))
-        .map_err(|error| format!("Failed to start Ollama runtime for refinement: {}", error))?;
-    if crate::state::diagnostic_logging_enabled() {
-        info!(
-            "[ollama.runtime] ensure_ready_for_refinement start result pending_start={} startup_wait_ms={}",
-            start_result.pending_start,
-            start_result.startup_wait_ms
-        );
-    }
-    if start_result.pending_start {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while Instant::now() < deadline && !startup_status_snapshot(state.inner()).ollama_ready {
-            if ping_ollama_quick(&endpoint).is_ok() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(500));
-        }
-    }
-    tauri::async_runtime::block_on(verify_ollama_runtime(app.clone()))
-        .map_err(|error| format!("Failed to verify Ollama runtime for refinement: {}", error))?;
-
-    if !startup_status_snapshot(state.inner()).ollama_ready {
-        if crate::state::diagnostic_logging_enabled() {
-            info!(
-                "[ollama.runtime] ensure_ready_for_refinement still not ready endpoint={}",
-                endpoint
-            );
-        }
-        return Err("Ollama runtime is still not ready after on-demand start.".to_string());
-    }
-
-    if crate::state::diagnostic_logging_enabled() {
-        info!(
-            "[ollama.runtime] ensure_ready_for_refinement ready endpoint={}",
-            endpoint
-        );
-    }
-    Ok(())
 }
 
 fn cancel_backlog_auto_expand(_app: &AppHandle) {
@@ -1435,7 +1087,8 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         match manager.on_shortcut(hotkey, |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
                 let app = app.clone();
-                let _ = stop_tts_internal(&app, app.state::<AppState>().inner());
+                let _ =
+                    crate::multimodal_io::stop_tts_internal(&app, app.state::<AppState>().inner());
             }
         }) {
             Ok(_) => {
@@ -1603,48 +1256,6 @@ async fn get_settings(app: AppHandle) -> Settings {
 }
 
 #[tauri::command]
-async fn get_task_capture_settings(app: AppHandle) -> crate::modules::TaskCaptureSettings {
-    let state = app.state::<AppState>();
-    let settings = state.settings.read().unwrap_or_else(|p| p.into_inner());
-    settings.task_capture_settings.clone()
-}
-
-#[tauri::command]
-async fn save_task_capture_settings(
-    app: AppHandle,
-    task_capture_settings: crate::modules::TaskCaptureSettings,
-) -> Result<(), String> {
-    let state = app.state::<AppState>();
-    let mut settings = {
-        let current = state.settings.read().unwrap_or_else(|p| p.into_inner());
-        current.clone()
-    };
-    settings.task_capture_settings = task_capture_settings;
-    save_settings_inner(&app, &mut settings)
-}
-
-#[tauri::command]
-fn test_task_capture_endpoint(endpoint: String) -> Result<String, String> {
-    let endpoint = endpoint.trim().to_string();
-    if endpoint.is_empty() {
-        return Err("Endpoint URL is empty".to_string());
-    }
-    match ureq::post(&endpoint)
-        .set("Content-Type", "application/json")
-        .timeout(std::time::Duration::from_secs(5))
-        .send_json(serde_json::json!({ "text": "[Test] Verbindungstest von Trispr Flow" }))
-    {
-        Ok(response) => Ok(format!("OK (status {})", response.status())),
-        Err(ureq::Error::Status(code, response)) => Err(crate::format_ureq_status_error(
-            "Test request",
-            code,
-            response,
-        )),
-        Err(ureq::Error::Transport(transport)) => Err(format!("Connection failed: {}", transport)),
-    }
-}
-
-#[tauri::command]
 async fn get_startup_status(app: AppHandle) -> StartupStatus {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -1665,978 +1276,21 @@ async fn get_runtime_diagnostics(app: AppHandle) -> RuntimeDiagnostics {
 }
 
 #[tauri::command]
-async fn fetch_available_models(
-    app: AppHandle,
+fn get_runtime_metrics_snapshot(
     state: State<'_, AppState>,
-    provider: String,
-) -> Result<Vec<String>, String> {
-    let provider_id = provider.trim().to_lowercase();
-    if provider_id == "ollama" {
-        let endpoint = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            check_strict_local_mode(&settings)?;
-            settings.providers.ollama.endpoint.clone()
-        };
-        return tauri::async_runtime::spawn_blocking(move || {
-            fetch_available_models_ollama_impl(endpoint)
-        })
-        .await
-        .map_err(|e| format!("Fetch available models task failed: {}", e))?;
-    }
-
-    if provider_id == "lm_studio" || provider_id == "oobabooga" {
-        let (endpoint, api_key) = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if provider_id == "lm_studio" {
-                (
-                    settings.providers.lm_studio.endpoint.clone(),
-                    settings.providers.lm_studio.api_key.clone(),
-                )
-            } else {
-                (
-                    settings.providers.oobabooga.endpoint.clone(),
-                    settings.providers.oobabooga.api_key.clone(),
-                )
-            }
-        };
-        return tauri::async_runtime::spawn_blocking(move || {
-            let models =
-                crate::ai_fallback::provider::list_openai_compat_models(&endpoint, &api_key);
-            if models.is_empty() {
-                Err(format!(
-                    "No models found at {}. Is the server running?",
-                    endpoint
-                ))
-            } else {
-                Ok(models)
-            }
-        })
-        .await
-        .map_err(|e| format!("Fetch available models task failed: {}", e))?;
-    }
-
-    let app_handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || fetch_available_models_impl(&app_handle, provider))
-        .await
-        .map_err(|e| format!("Fetch available models task failed: {}", e))?
+) -> crate::state::RuntimeMetricsSnapshot {
+    runtime_metrics_snapshot(state.inner())
 }
 
 #[tauri::command]
-fn open_log_directory() -> Result<(), String> {
-    let log_dir = std::env::var("LOCALAPPDATA")
-        .map(|d| std::path::PathBuf::from(d).join("Trispr Flow").join("logs"))
-        .map_err(|e| e.to_string())?;
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-        Command::new("explorer.exe")
-            .arg(&log_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open log directory: {}", e))?;
-        Ok(())
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        // On macOS and Linux, use the `open` command
-        use std::process::Command;
-        Command::new("open")
-            .arg(&log_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open log directory: {}", e))?;
-        Ok(())
-    }
-}
-
-fn fetch_available_models_ollama_impl(endpoint: String) -> Result<Vec<String>, String> {
-    let models = list_ollama_models(&endpoint);
-    if models.is_empty() {
-        // Distinguish "Ollama not reachable" from "reachable but no models installed".
-        ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
-    }
-    Ok(models)
-}
-
-fn fetch_available_models_impl(app: &AppHandle, provider: String) -> Result<Vec<String>, String> {
-    let provider_id = provider.trim().to_lowercase();
-
-    let from_settings = {
-        let state = app.state::<AppState>();
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        settings
-            .providers
-            .get(&provider_id)
-            .map(|cfg| cfg.available_models.clone())
-            .unwrap_or_default()
-    };
-
-    if !from_settings.is_empty() {
-        return Ok(from_settings);
-    }
-
-    let defaults = default_models_for_provider(&provider_id);
-    if defaults.is_empty() {
-        return Err(format!("Unknown AI provider: {}", provider));
-    }
-    Ok(defaults)
-}
-
-#[tauri::command]
-async fn fetch_ollama_models_with_size(
-    state: State<'_, AppState>,
-) -> Result<Vec<serde_json::Value>, String> {
-    let endpoint = {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        check_strict_local_mode(&settings)?;
-        settings.providers.ollama.endpoint.clone()
-    };
-    tauri::async_runtime::spawn_blocking(move || fetch_ollama_models_with_size_impl(endpoint))
-        .await
-        .map_err(|e| format!("Fetch Ollama models task failed: {}", e))?
-}
-
-fn fetch_ollama_models_with_size_impl(endpoint: String) -> Result<Vec<serde_json::Value>, String> {
-    let models = list_ollama_models_with_size(&endpoint);
-    if models.is_empty() {
-        // Distinguish "Ollama not reachable" from "reachable but no models installed".
-        // Use quick ping (300ms) to avoid blocking the command thread for seconds.
-        ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
-    }
-    Ok(models
-        .into_iter()
-        .map(|(name, size_bytes)| serde_json::json!({ "name": name, "size_bytes": size_bytes }))
-        .collect())
-}
-
-#[tauri::command]
-async fn test_provider_connection(
-    state: State<'_, AppState>,
-    provider: String,
-    api_key: String,
-) -> Result<serde_json::Value, String> {
-    let provider_id = provider.trim().to_lowercase();
-
-    // Ollama: perform a real HTTP ping instead of API key validation
-    if provider_id == "ollama" {
-        let endpoint = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            check_strict_local_mode(&settings)?;
-            settings.providers.ollama.endpoint.clone()
-        };
-        return tauri::async_runtime::spawn_blocking(move || {
-            test_provider_connection_ollama_impl(endpoint)
-        })
-        .await
-        .map_err(|e| format!("Test provider connection task failed: {}", e))?;
-    }
-
-    // OpenAI-compat backends (LM Studio, Oobabooga)
-    if provider_id == "lm_studio" || provider_id == "oobabooga" {
-        let (endpoint, stored_key, label) = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if provider_id == "lm_studio" {
-                (
-                    settings.providers.lm_studio.endpoint.clone(),
-                    settings.providers.lm_studio.api_key.clone(),
-                    "LM Studio".to_string(),
-                )
-            } else {
-                (
-                    settings.providers.oobabooga.endpoint.clone(),
-                    settings.providers.oobabooga.api_key.clone(),
-                    "Oobabooga".to_string(),
-                )
-            }
-        };
-        let effective_key = if api_key.trim().is_empty() {
-            stored_key
-        } else {
-            api_key
-        };
-        return tauri::async_runtime::spawn_blocking(move || {
-            let models = crate::ai_fallback::provider::list_openai_compat_models(&endpoint, &effective_key);
-            if models.is_empty() {
-                Err(format!("{} not reachable at {}. Is the server running?", label, endpoint))
-            } else {
-                Ok(serde_json::json!({
-                    "ok": true,
-                    "provider": provider_id,
-                    "message": format!("{} is running. {} model(s) available.", label, models.len()),
-                    "models": models,
-                }))
-            }
-        })
-        .await
-        .map_err(|e| format!("Test provider connection task failed: {}", e))?;
-    }
-
-    tauri::async_runtime::spawn_blocking(move || {
-        test_provider_connection_impl(provider_id, api_key)
-    })
-    .await
-    .map_err(|e| format!("Test provider connection task failed: {}", e))?
-}
-
-fn test_provider_connection_ollama_impl(endpoint: String) -> Result<serde_json::Value, String> {
-    ping_ollama(&endpoint).map_err(|e| e.to_string())?;
-    let models = list_ollama_models(&endpoint);
-    Ok(serde_json::json!({
-        "ok": true,
-        "provider": "ollama",
-        "message": format!("Ollama is running. {} model(s) available.", models.len()),
-        "models": models,
-    }))
-}
-
-fn test_provider_connection_impl(
-    provider_id: String,
-    api_key: String,
-) -> Result<serde_json::Value, String> {
-    let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
-    provider_client
-        .validate_api_key(api_key.trim())
-        .map_err(|e| e.to_string())?;
-
-    Ok(serde_json::json!({
-      "ok": true,
-      "provider": provider_id,
-      "message": "API key format looks valid. Live provider connection checks are activated with provider integrations.",
-    }))
-}
-
-#[tauri::command]
-fn save_provider_api_key(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    provider: String,
-    api_key: String,
-) -> Result<serde_json::Value, String> {
-    let provider_id = provider.trim().to_lowercase();
-    let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
-    provider_client
-        .validate_api_key(api_key.trim())
-        .map_err(|e| e.to_string())?;
-    ai_fallback_keyring::store_api_key(&app, &provider_id, api_key.trim())?;
-
-    update_and_persist_settings(&app, state.inner(), |s| {
-        s.providers.set_api_key_stored(&provider_id, true)?;
-        normalize_ai_fallback_fields(s);
-        Ok(())
-    })?;
-
-    Ok(serde_json::json!({
-      "status": "success",
-      "provider": provider_id,
-      "stored": true,
-      "auth_status": "locked",
-    }))
-}
-
-#[tauri::command]
-fn clear_provider_api_key(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    provider: String,
-) -> Result<serde_json::Value, String> {
-    let provider_id = provider.trim().to_lowercase();
-    ai_fallback_keyring::clear_api_key(&app, &provider_id)?;
-
-    update_and_persist_settings(&app, state.inner(), |s| {
-        s.providers.set_api_key_stored(&provider_id, false)?;
-        normalize_ai_fallback_fields(s);
-        Ok(())
-    })?;
-
-    Ok(serde_json::json!({
-      "status": "success",
-      "provider": provider_id,
-      "stored": false,
-      "auth_status": "locked",
-    }))
-}
-
-#[tauri::command]
-fn verify_provider_auth(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    provider: String,
-    method: Option<String>,
-) -> Result<serde_json::Value, String> {
-    let provider_id = provider.trim().to_lowercase();
-    let method_id = method.as_deref().unwrap_or("api_key").trim().to_lowercase();
-
-    if provider_id == "ollama" {
-        return Err("Ollama does not require cloud credential verification.".to_string());
-    }
-    if !matches!(provider_id.as_str(), "claude" | "openai" | "gemini") {
-        return Err(format!("Unknown AI provider: {}", provider));
-    }
-    if method_id != "api_key" && method_id != "oauth" {
-        return Err(format!(
-            "Unsupported auth verification method '{}'.",
-            method_id
-        ));
-    }
-
-    if method_id == "oauth" {
-        update_and_persist_settings(&app, state.inner(), |s| {
-            s.providers.lock_auth(&provider_id)?;
-            normalize_ai_fallback_fields(s);
+fn record_runtime_metric(state: State<'_, AppState>, metric: String) -> Result<(), String> {
+    match metric.trim() {
+        "refinement_timeout" | "refinement_fallback_timed_out" => {
+            record_refinement_timeout(state.inner());
+            record_refinement_fallback_timed_out(state.inner());
             Ok(())
-        })?;
-        return Err(
-            "OAuth verification is not supported yet. Use API key verification.".to_string(),
-        );
-    }
-
-    let stored_key = ai_fallback_keyring::read_api_key(&app, &provider_id)?;
-    let Some(api_key) = stored_key else {
-        update_and_persist_settings(&app, state.inner(), |s| {
-            s.providers.lock_auth(&provider_id)?;
-            normalize_ai_fallback_fields(s);
-            Ok(())
-        })?;
-        return Err(format!(
-            "No stored API key found for provider '{}'.",
-            provider_id
-        ));
-    };
-
-    let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
-    if let Err(error) = provider_client.validate_api_key(api_key.trim()) {
-        update_and_persist_settings(&app, state.inner(), |s| {
-            s.providers.lock_auth(&provider_id)?;
-            normalize_ai_fallback_fields(s);
-            Ok(())
-        })?;
-        return Err(error.to_string());
-    }
-
-    let verified_at = now_iso();
-    update_and_persist_settings(&app, state.inner(), |s| {
-        s.providers.set_auth_verified(
-            &provider_id,
-            "verified_api_key",
-            Some(verified_at.clone()),
-        )?;
-        normalize_ai_fallback_fields(s);
-        Ok(())
-    })?;
-
-    Ok(serde_json::json!({
-      "ok": true,
-      "provider": provider_id,
-      "method": "verified_api_key",
-      "verified_at": verified_at,
-      "message": "Provider credentials verified successfully.",
-    }))
-}
-
-#[tauri::command]
-fn save_ollama_endpoint(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    endpoint: String,
-) -> Result<serde_json::Value, String> {
-    let trimmed = endpoint.trim().to_string();
-    if trimmed.is_empty() {
-        return Err("Endpoint cannot be empty.".to_string());
-    }
-    // Block SSRF-sensitive targets (cloud metadata, link-local)
-    if is_ssrf_target(&trimmed) {
-        return Err("This endpoint address is not allowed (SSRF protection).".to_string());
-    }
-    {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if settings.ai_fallback.strict_local_mode && !is_local_ollama_endpoint(&trimmed) {
-            return Err(
-                "Strict local mode is enabled. Only localhost/127.0.0.1:11434 is allowed."
-                    .to_string(),
-            );
         }
-    }
-    update_and_persist_settings(&app, state.inner(), |s| {
-        s.providers.ollama.endpoint = trimmed.clone();
-        Ok(())
-    })?;
-    Ok(serde_json::json!({
-        "status": "success",
-        "endpoint": trimmed,
-    }))
-}
-
-#[tauri::command]
-async fn refine_transcript(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    transcript: String,
-) -> Result<serde_json::Value, String> {
-    let settings_snapshot = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-
-    ensure_ollama_runtime_ready_for_refinement(&app, &settings_snapshot)?;
-    let setup = prepare_refinement(&app, &settings_snapshot)?;
-
-    if setup.repaired {
-        let model = setup.model.clone();
-        update_and_persist_settings(&app, state.inner(), |s| {
-            s.ai_fallback.model = model.clone();
-            s.providers.ollama.preferred_model = model.clone();
-            s.postproc_llm_model = model;
-            normalize_ai_fallback_fields(s);
-            Ok(())
-        })?;
-    }
-
-    // The HTTP call to the AI provider can block for many seconds (local LLM
-    // inference, slow network, etc.).  Running it on a blocking worker thread
-    // prevents it from stalling the Tauri event loop and triggering tao's
-    // "NewEvents without RedrawEventsCleared" warning that leads to a UI freeze.
-    let _activity_guard = crate::audio::start_refinement_activity_guard(
-        app.clone(),
-        setup.provider.id().to_string(),
-        setup.model.clone(),
-    );
-    let app_clone = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        setup
-            .provider
-            .refine_transcript(&transcript, &setup.model, &setup.options, &setup.api_key)
-    })
-    .await
-    .map_err(|e| format!("refine_transcript task failed: {}", e))?;
-
-    // Emit health-degraded event on transport failures so the frontend can
-    // re-check Ollama state without requiring a full app restart.
-    if let Err(AIError::Timeout | AIError::OllamaNotRunning) = &result {
-        let _ = app_clone.emit("ai_fallback:health_degraded", ());
-    }
-
-    let result = result.map_err(|e| e.to_string())?;
-    serde_json::to_value(&result).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn ping_refinement_model(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
-    let settings_snapshot = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-
-    // Health check only: do not run inference here. The UI keepalive path uses this
-    // to verify that local refinement is reachable without keeping a model hot.
-    if !settings_snapshot.ai_fallback.enabled {
-        return Ok(false);
-    }
-
-    let provider = settings_snapshot.ai_fallback.provider.as_str();
-    if provider != "ollama" && provider != "lm_studio" && provider != "oobabooga" {
-        return Ok(false);
-    }
-
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        prepare_refinement(&app, &settings_snapshot).map(|_| true)
-    })
-    .await
-    .map_err(|e| format!("ping_refinement_model task failed: {}", e))?;
-
-    Ok(result.unwrap_or(false))
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(default)]
-struct LatencyBenchmarkRequest {
-    fixture_paths: Vec<String>,
-    warmup_runs: u32,
-    measure_runs: u32,
-    include_refinement: bool,
-    refinement_model: Option<String>,
-}
-
-impl Default for LatencyBenchmarkRequest {
-    fn default() -> Self {
-        Self {
-            fixture_paths: Vec::new(),
-            warmup_runs: 3,
-            measure_runs: 30,
-            include_refinement: true,
-            refinement_model: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct LatencyBenchmarkSample {
-    fixture: String,
-    whisper_ms: u64,
-    refine_ms: u64,
-    total_ms: u64,
-    mode: String,
-    accelerator: String,
-    refinement_model: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct LatencyBenchmarkResult {
-    warmup_runs: u32,
-    measure_runs: u32,
-    p50_ms: u64,
-    p95_ms: u64,
-    slo_p50_ms: u64,
-    slo_p95_ms: u64,
-    slo_pass: bool,
-    samples: Vec<LatencyBenchmarkSample>,
-    warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-#[serde(default)]
-struct TtsBenchmarkScenario {
-    id: String,
-    text: String,
-    length_bucket: String, // "short" | "long"
-    language: String,      // "de" | "en"
-    thermal: String,       // "cold" | "warm"
-}
-
-impl Default for TtsBenchmarkScenario {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            text: String::new(),
-            length_bucket: String::new(),
-            language: String::new(),
-            thermal: String::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(default)]
-struct TtsBenchmarkRequest {
-    providers: Vec<String>,
-    scenarios: Vec<TtsBenchmarkScenario>,
-    warmup_runs: u32,
-    measure_runs: u32,
-    rate: f32,
-    volume: f32,
-    piper_binary_path: Option<String>,
-    piper_model_path: Option<String>,
-    qwen3_tts_endpoint: Option<String>,
-    qwen3_tts_model: Option<String>,
-    qwen3_tts_voice: Option<String>,
-    qwen3_tts_api_key: Option<String>,
-    qwen3_tts_timeout_sec: Option<u64>,
-    lock_matrix: bool,
-    run_runtime_smoke: bool,
-}
-
-impl Default for TtsBenchmarkRequest {
-    fn default() -> Self {
-        Self {
-            providers: vec![
-                "windows_native".to_string(),
-                "local_custom".to_string(),
-                "qwen3_tts".to_string(),
-            ],
-            scenarios: Vec::new(),
-            warmup_runs: 1,
-            measure_runs: 3,
-            rate: 1.0,
-            volume: 1.0,
-            piper_binary_path: None,
-            piper_model_path: None,
-            qwen3_tts_endpoint: None,
-            qwen3_tts_model: None,
-            qwen3_tts_voice: None,
-            qwen3_tts_api_key: None,
-            qwen3_tts_timeout_sec: None,
-            lock_matrix: true,
-            run_runtime_smoke: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct TtsBenchmarkSample {
-    provider: String,
-    scenario: String,
-    run: u32,
-    elapsed_ms: u64,
-    success: bool,
-    error: Option<String>,
-    failure_category: Option<String>, // missing_binary | missing_model | endpoint_unreachable | auth_missing | runtime_error
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct TtsBenchmarkProviderSummary {
-    provider: String,
-    attempts: u32,
-    success_count: u32,
-    failure_count: u32,
-    success_rate: f32,
-    p50_ms: Option<u64>,
-    p95_ms: Option<u64>,
-    avg_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct TtsBenchmarkGateConfig {
-    reliability_min_success_rate: f32,
-    latency_target_p50_ms: u64,
-    latency_target_p95_ms: u64,
-    min_success_per_scenario: u32,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct TtsProviderProfile {
-    provider: String,
-    surface: String, // "runtime_stable" | "benchmark_experimental"
-    experimental_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct TtsPreflightCheck {
-    provider: String,
-    check: String,
-    passed: bool,
-    category: Option<String>,
-    detail: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct TtsRuntimeSmokeCheck {
-    provider: String,
-    passed: bool,
-    category: Option<String>,
-    detail: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct TtsProviderGateEvaluation {
-    provider: String,
-    evaluated_for_release: bool,
-    passes_release_gate: bool,
-    preflight_ok: bool,
-    runtime_smoke_ok: bool,
-    reliability_ok: bool,
-    latency_ok: bool,
-    scenario_success_ok: bool,
-    success_rate: f32,
-    p50_ms: Option<u64>,
-    p95_ms: Option<u64>,
-    min_success_in_any_scenario: u32,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct TtsBenchmarkResult {
-    artifact_version: String,
-    generated_at: String,
-    warmup_runs: u32,
-    measure_runs: u32,
-    providers: Vec<String>,
-    scenarios: Vec<String>,
-    scenario_matrix_locked: bool,
-    gates: TtsBenchmarkGateConfig,
-    provider_profiles: Vec<TtsProviderProfile>,
-    preflight_checks: Vec<TtsPreflightCheck>,
-    runtime_smoke_checks: Vec<TtsRuntimeSmokeCheck>,
-    samples: Vec<TtsBenchmarkSample>,
-    provider_summaries: Vec<TtsBenchmarkProviderSummary>,
-    provider_gate_evaluations: Vec<TtsProviderGateEvaluation>,
-    provider_consistency_ok: bool,
-    provider_consistency_detail: String,
-    fallback_order: Vec<String>,
-    release_gate_pass: bool,
-    release_gate_reason: String,
-    recommended_default_provider: Option<String>,
-    recommendation_reason: String,
-    uncategorized_failure_count: u32,
-    warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-struct Qwen3TtsBenchmarkConfig {
-    endpoint: String,
-    model: String,
-    voice: String,
-    api_key: Option<String>,
-    timeout_sec: u64,
-}
-
-const TTS_PROVIDER_SURFACE_RUNTIME_STABLE: &str = "runtime_stable";
-const TTS_PROVIDER_SURFACE_BENCHMARK_EXPERIMENTAL: &str = "benchmark_experimental";
-const TTS_FAILURE_MISSING_BINARY: &str = "missing_binary";
-const TTS_FAILURE_MISSING_MODEL: &str = "missing_model";
-const TTS_FAILURE_ENDPOINT_UNREACHABLE: &str = "endpoint_unreachable";
-const TTS_FAILURE_AUTH_MISSING: &str = "auth_missing";
-const TTS_FAILURE_STREAM_CONFIG_UNSUPPORTED: &str = "stream_config_unsupported";
-const TTS_FAILURE_RUNTIME_ERROR: &str = "runtime_error";
-
-fn default_tts_benchmark_gates() -> TtsBenchmarkGateConfig {
-    TtsBenchmarkGateConfig {
-        reliability_min_success_rate: 0.95,
-        latency_target_p50_ms: 700,
-        latency_target_p95_ms: 1500,
-        min_success_per_scenario: 2,
-    }
-}
-
-fn tts_provider_profile(provider: &str) -> TtsProviderProfile {
-    match provider {
-        "qwen3_tts" => TtsProviderProfile {
-            provider: provider.to_string(),
-            surface: TTS_PROVIDER_SURFACE_BENCHMARK_EXPERIMENTAL.to_string(),
-            experimental_reason: Some(
-                "Endpoint-backed runtime provider treated as experimental for release-gating."
-                    .to_string(),
-            ),
-        },
-        _ => TtsProviderProfile {
-            provider: provider.to_string(),
-            surface: TTS_PROVIDER_SURFACE_RUNTIME_STABLE.to_string(),
-            experimental_reason: None,
-        },
-    }
-}
-
-fn is_runtime_stable_provider(provider: &str) -> bool {
-    tts_provider_profile(provider).surface == TTS_PROVIDER_SURFACE_RUNTIME_STABLE
-}
-
-fn classify_tts_failure(error: &str) -> String {
-    let normalized = error.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        return TTS_FAILURE_RUNTIME_ERROR.to_string();
-    }
-
-    if normalized.contains("binary not found")
-        || normalized.contains("npm.cmd not found")
-        || normalized.contains("failed to start piper")
-        || normalized.contains("no such file")
-    {
-        return TTS_FAILURE_MISSING_BINARY.to_string();
-    }
-    if normalized.contains("model not found")
-        || normalized.contains("no piper voice model found")
-        || normalized.contains("set piper_model_path")
-        || normalized.contains("onnx")
-    {
-        return TTS_FAILURE_MISSING_MODEL.to_string();
-    }
-    if normalized.contains("http 401")
-        || normalized.contains("http 403")
-        || normalized.contains("unauthorized")
-        || normalized.contains("forbidden")
-        || normalized.contains("api key")
-        || normalized.contains("authorization")
-    {
-        return TTS_FAILURE_AUTH_MISSING.to_string();
-    }
-    if normalized.contains("[tts_output_stream_config_unsupported]")
-        || normalized.contains("stream configuration is not supported")
-        || normalized.contains("streamconfignotsupported")
-    {
-        return TTS_FAILURE_STREAM_CONFIG_UNSUPPORTED.to_string();
-    }
-    if normalized.contains("endpoint")
-        || normalized.contains("timed out")
-        || normalized.contains("connection")
-        || normalized.contains("refused")
-        || normalized.contains("dns")
-        || normalized.contains("transport")
-        || normalized.contains("failed to connect")
-    {
-        return TTS_FAILURE_ENDPOINT_UNREACHABLE.to_string();
-    }
-    TTS_FAILURE_RUNTIME_ERROR.to_string()
-}
-
-fn default_tts_benchmark_scenarios() -> Vec<TtsBenchmarkScenario> {
-    vec![
-        TtsBenchmarkScenario {
-            id: "short_de_cold".to_string(),
-            text: "Kurzer Benchmark-Check.".to_string(),
-            length_bucket: "short".to_string(),
-            language: "de".to_string(),
-            thermal: "cold".to_string(),
-        },
-        TtsBenchmarkScenario {
-            id: "short_de_warm".to_string(),
-            text: "Kurzer Benchmark-Check.".to_string(),
-            length_bucket: "short".to_string(),
-            language: "de".to_string(),
-            thermal: "warm".to_string(),
-        },
-        TtsBenchmarkScenario {
-            id: "short_en_cold".to_string(),
-            text: "Short benchmark check.".to_string(),
-            length_bucket: "short".to_string(),
-            language: "en".to_string(),
-            thermal: "cold".to_string(),
-        },
-        TtsBenchmarkScenario {
-            id: "short_en_warm".to_string(),
-            text: "Short benchmark check.".to_string(),
-            length_bucket: "short".to_string(),
-            language: "en".to_string(),
-            thermal: "warm".to_string(),
-        },
-        TtsBenchmarkScenario {
-            id: "long_de_cold".to_string(),
-            text: "Dies ist ein längerer deutscher Benchmark-Satz, der Antworttempo und Stabilität unter praxisnahen Bedingungen vergleicht."
-                .to_string(),
-            length_bucket: "long".to_string(),
-            language: "de".to_string(),
-            thermal: "cold".to_string(),
-        },
-        TtsBenchmarkScenario {
-            id: "long_de_warm".to_string(),
-            text: "Dies ist ein längerer deutscher Benchmark-Satz, der Antworttempo und Stabilität unter praxisnahen Bedingungen vergleicht."
-                .to_string(),
-            length_bucket: "long".to_string(),
-            language: "de".to_string(),
-            thermal: "warm".to_string(),
-        },
-        TtsBenchmarkScenario {
-            id: "long_en_cold".to_string(),
-            text: "This is a longer benchmark sentence to compare synthesis latency and stability under realistic assistant output conditions."
-                .to_string(),
-            length_bucket: "long".to_string(),
-            language: "en".to_string(),
-            thermal: "cold".to_string(),
-        },
-        TtsBenchmarkScenario {
-            id: "long_en_warm".to_string(),
-            text: "This is a longer benchmark sentence to compare synthesis latency and stability under realistic assistant output conditions."
-                .to_string(),
-            length_bucket: "long".to_string(),
-            language: "en".to_string(),
-            thermal: "warm".to_string(),
-        },
-    ]
-}
-
-fn normalize_tts_benchmark_providers(requested: &[String]) -> Vec<String> {
-    let mut providers = Vec::<String>::new();
-    for value in requested {
-        let normalized = value.trim().to_lowercase();
-        if normalized != "windows_native"
-            && normalized != "windows_natural"
-            && normalized != "local_custom"
-            && normalized != "qwen3_tts"
-        {
-            continue;
-        }
-        if !providers.contains(&normalized) {
-            providers.push(normalized);
-        }
-    }
-    if providers.is_empty() {
-        vec![
-            "windows_native".to_string(),
-            "local_custom".to_string(),
-            "qwen3_tts".to_string(),
-        ]
-    } else {
-        providers
-    }
-}
-
-fn resolve_qwen3_tts_benchmark_config(request: &TtsBenchmarkRequest) -> Qwen3TtsBenchmarkConfig {
-    let endpoint = request
-        .qwen3_tts_endpoint
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("http://127.0.0.1:8000/v1/audio/speech")
-        .to_string();
-    let model = request
-        .qwen3_tts_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
-        .to_string();
-    let voice = request
-        .qwen3_tts_voice
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("vivian")
-        .to_string();
-    let api_key = request
-        .qwen3_tts_api_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string());
-    let timeout_sec = request.qwen3_tts_timeout_sec.unwrap_or(45).clamp(3, 180);
-
-    Qwen3TtsBenchmarkConfig {
-        endpoint,
-        model,
-        voice,
-        api_key,
-        timeout_sec,
-    }
-}
-
-fn resolve_qwen3_tts_runtime_config(
-    settings: &crate::modules::VoiceOutputSettings,
-) -> Qwen3TtsBenchmarkConfig {
-    let endpoint = settings.qwen3_tts_endpoint.trim();
-    let model = settings.qwen3_tts_model.trim();
-    let voice = settings.qwen3_tts_voice.trim();
-    let api_key = settings.qwen3_tts_api_key.trim();
-    Qwen3TtsBenchmarkConfig {
-        endpoint: if endpoint.is_empty() {
-            "http://127.0.0.1:8000/v1/audio/speech".to_string()
-        } else {
-            endpoint.to_string()
-        },
-        model: if model.is_empty() {
-            "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice".to_string()
-        } else {
-            model.to_string()
-        },
-        voice: if voice.is_empty() {
-            "vivian".to_string()
-        } else {
-            voice.to_string()
-        },
-        api_key: if api_key.is_empty() {
-            None
-        } else {
-            Some(api_key.to_string())
-        },
-        timeout_sec: settings.qwen3_tts_timeout_sec.clamp(3, 180),
+        other => Err(format!("Unknown runtime metric '{}'", other)),
     }
 }
 
@@ -2652,535 +1306,6 @@ pub(crate) fn format_ureq_status_error(
         format!("{} failed with HTTP {}", context, code)
     } else {
         format!("{} failed with HTTP {}: {}", context, code, body)
-    }
-}
-
-fn request_qwen3_tts_audio_bytes(
-    text: &str,
-    rate: f32,
-    config: &Qwen3TtsBenchmarkConfig,
-) -> Result<(Vec<u8>, String), String> {
-    let text = text.trim();
-    if text.is_empty() {
-        return Err("TTS text is empty.".to_string());
-    }
-
-    let agent = ureq::builder()
-        .timeout(Duration::from_secs(config.timeout_sec))
-        .build();
-    let mut request = agent
-        .post(&config.endpoint)
-        .set("Content-Type", "application/json")
-        .set(
-            "Accept",
-            "audio/wav, audio/mpeg, application/octet-stream, application/json",
-        );
-    if let Some(api_key) = config.api_key.as_ref() {
-        request = request.set("Authorization", &format!("Bearer {}", api_key));
-    }
-
-    let body = serde_json::json!({
-        "model": config.model,
-        "input": text,
-        "voice": config.voice,
-        "response_format": "wav",
-        "stream": false,
-        "speed": rate.clamp(0.5, 2.0),
-    });
-
-    let response = match request.send_json(body) {
-        Ok(response) => response,
-        Err(ureq::Error::Status(code, response)) => {
-            return Err(format_ureq_status_error(
-                "Qwen3-TTS benchmark request",
-                code,
-                response,
-            ));
-        }
-        Err(ureq::Error::Transport(transport)) => {
-            return Err(format!(
-                "Qwen3-TTS benchmark request failed: {} (endpoint={})",
-                transport, config.endpoint
-            ));
-        }
-    };
-
-    let content_type = response
-        .header("Content-Type")
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let mut reader = response.into_reader();
-    let mut bytes = Vec::new();
-    reader
-        .read_to_end(&mut bytes)
-        .map_err(|err| format!("Qwen3-TTS response read failed: {}", err))?;
-
-    Ok((bytes, content_type))
-}
-
-fn benchmark_qwen3_tts_synthesis(
-    text: &str,
-    rate: f32,
-    config: &Qwen3TtsBenchmarkConfig,
-) -> Result<(), String> {
-    let (bytes, content_type) = request_qwen3_tts_audio_bytes(text, rate, config)?;
-
-    if bytes.is_empty() {
-        return Err("Qwen3-TTS returned an empty response body.".to_string());
-    }
-    if content_type.contains("application/json") {
-        let text = String::from_utf8_lossy(&bytes).trim().to_string();
-        return Err(format!(
-            "Qwen3-TTS returned JSON instead of audio: {}",
-            text
-        ));
-    }
-
-    Ok(())
-}
-
-fn speak_qwen3_tts(
-    text: &str,
-    rate: f32,
-    volume: f32,
-    output_device_id: &str,
-    config: &Qwen3TtsBenchmarkConfig,
-    playback_control: Option<std::sync::Arc<crate::multimodal_io::TtsPlaybackControl>>,
-) -> Result<(), String> {
-    let (bytes, content_type) = request_qwen3_tts_audio_bytes(text, rate, config)?;
-    if bytes.is_empty() {
-        return Err("Qwen3-TTS returned an empty response body.".to_string());
-    }
-    if content_type.contains("application/json") {
-        let body = String::from_utf8_lossy(&bytes).trim().to_string();
-        return Err(format!(
-            "Qwen3-TTS returned JSON instead of audio: {}",
-            body
-        ));
-    }
-    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
-        return Err(format!(
-            "Qwen3-TTS response is not WAV audio (content-type='{}').",
-            content_type
-        ));
-    }
-    crate::multimodal_io::play_wav_bytes(&bytes, volume, output_device_id, playback_control)
-}
-
-fn normalize_tts_benchmark_scenarios(
-    requested: &[TtsBenchmarkScenario],
-    lock_matrix: bool,
-) -> Vec<TtsBenchmarkScenario> {
-    if lock_matrix {
-        return default_tts_benchmark_scenarios();
-    }
-
-    let mut scenarios = Vec::<TtsBenchmarkScenario>::new();
-    for (idx, scenario) in requested.iter().enumerate() {
-        let text = scenario.text.trim();
-        if text.is_empty() {
-            continue;
-        }
-        let id = if scenario.id.trim().is_empty() {
-            format!("scenario_{}", idx + 1)
-        } else {
-            scenario.id.trim().to_lowercase().replace(' ', "_")
-        };
-        let length_bucket = match scenario.length_bucket.trim().to_ascii_lowercase().as_str() {
-            "short" => "short".to_string(),
-            "long" => "long".to_string(),
-            _ => "short".to_string(),
-        };
-        let language = match scenario.language.trim().to_ascii_lowercase().as_str() {
-            "de" => "de".to_string(),
-            "en" => "en".to_string(),
-            _ => "en".to_string(),
-        };
-        let thermal = match scenario.thermal.trim().to_ascii_lowercase().as_str() {
-            "cold" => "cold".to_string(),
-            "warm" => "warm".to_string(),
-            _ => "warm".to_string(),
-        };
-        scenarios.push(TtsBenchmarkScenario {
-            id,
-            text: text.to_string(),
-            length_bucket,
-            language,
-            thermal,
-        });
-    }
-    if scenarios.is_empty() {
-        default_tts_benchmark_scenarios()
-    } else {
-        scenarios
-    }
-}
-
-fn run_tts_provider_once(
-    provider: &str,
-    text: &str,
-    rate: f32,
-    volume: f32,
-    windows_voice_id: &str,
-    piper_binary_path: &str,
-    piper_model_path: &str,
-    qwen3_config: &Qwen3TtsBenchmarkConfig,
-) -> Result<(), String> {
-    let selected_windows_voice = windows_voice_id.trim();
-    let selected_windows_voice = if selected_windows_voice.is_empty() {
-        None
-    } else {
-        Some(selected_windows_voice)
-    };
-    match provider {
-        "windows_native" => crate::multimodal_io::benchmark_windows_native_synthesis(
-            text,
-            rate,
-            volume,
-            selected_windows_voice,
-        ),
-        "windows_natural" => crate::multimodal_io::benchmark_windows_natural_synthesis(
-            text,
-            rate,
-            volume,
-            selected_windows_voice,
-        ),
-        "local_custom" => crate::multimodal_io::benchmark_piper_synthesis(
-            text,
-            piper_binary_path,
-            piper_model_path,
-            rate,
-        ),
-        "qwen3_tts" => benchmark_qwen3_tts_synthesis(text, rate, qwen3_config),
-        _ => Err(format!(
-            "Unsupported TTS benchmark provider '{}'.",
-            provider
-        )),
-    }
-}
-
-fn run_tts_runtime_smoke_once(
-    state: &AppState,
-    provider: &str,
-    rate: f32,
-    windows_voice_id: &str,
-    piper_binary_path: &str,
-    piper_model_path: &str,
-    output_device_id: &str,
-) -> Result<(), String> {
-    let smoke_text = "Trispr Flow runtime smoke test.";
-    let selected_windows_voice = windows_voice_id.trim();
-    let selected_windows_voice = if selected_windows_voice.is_empty() {
-        None
-    } else {
-        Some(selected_windows_voice)
-    };
-    match provider {
-        "windows_native" => crate::multimodal_io::speak_windows_native(
-            smoke_text,
-            rate,
-            0.0,
-            output_device_id,
-            selected_windows_voice,
-            None,
-        ),
-        "windows_natural" => crate::multimodal_io::speak_windows_natural(
-            smoke_text,
-            rate,
-            0.0,
-            output_device_id,
-            selected_windows_voice,
-            None,
-        ),
-        "local_custom" => crate::multimodal_io::speak_piper(
-            &state.piper_daemon,
-            smoke_text,
-            piper_binary_path,
-            piper_model_path,
-            rate,
-            0.0,
-            output_device_id,
-            None,
-        ),
-        _ => Err(format!(
-            "Runtime smoke is unsupported for benchmark-only provider '{}'.",
-            provider
-        )),
-    }
-}
-
-fn summarize_tts_provider(
-    provider: &str,
-    samples: &[TtsBenchmarkSample],
-) -> TtsBenchmarkProviderSummary {
-    let mut latencies: Vec<u64> = samples
-        .iter()
-        .filter(|sample| sample.success)
-        .map(|sample| sample.elapsed_ms)
-        .collect();
-    latencies.sort_unstable();
-    let attempts = samples.len() as u32;
-    let success_count = latencies.len() as u32;
-    let failure_count = attempts.saturating_sub(success_count);
-    let success_rate = if attempts == 0 {
-        0.0
-    } else {
-        success_count as f32 / attempts as f32
-    };
-    let avg_ms = if latencies.is_empty() {
-        None
-    } else {
-        Some(latencies.iter().sum::<u64>() / latencies.len() as u64)
-    };
-
-    TtsBenchmarkProviderSummary {
-        provider: provider.to_string(),
-        attempts,
-        success_count,
-        failure_count,
-        success_rate,
-        p50_ms: if latencies.is_empty() {
-            None
-        } else {
-            Some(percentile(&latencies, 0.50))
-        },
-        p95_ms: if latencies.is_empty() {
-            None
-        } else {
-            Some(percentile(&latencies, 0.95))
-        },
-        avg_ms,
-    }
-}
-
-fn build_tts_fallback_order(
-    summaries: &[TtsBenchmarkProviderSummary],
-    reliability_gate: f32,
-) -> Vec<String> {
-    let mut eligible: Vec<&TtsBenchmarkProviderSummary> = summaries
-        .iter()
-        .filter(|summary| summary.success_rate >= reliability_gate && summary.p95_ms.is_some())
-        .collect();
-    eligible.sort_by(|a, b| {
-        a.p95_ms
-            .unwrap_or(u64::MAX)
-            .cmp(&b.p95_ms.unwrap_or(u64::MAX))
-            .then_with(|| {
-                a.p50_ms
-                    .unwrap_or(u64::MAX)
-                    .cmp(&b.p50_ms.unwrap_or(u64::MAX))
-            })
-            .then_with(|| a.provider.cmp(&b.provider))
-    });
-
-    let mut fallback_sorted: Vec<&TtsBenchmarkProviderSummary> = summaries.iter().collect();
-    fallback_sorted.sort_by(|a, b| {
-        b.success_rate
-            .partial_cmp(&a.success_rate)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.failure_count.cmp(&b.failure_count))
-            .then_with(|| {
-                a.p95_ms
-                    .unwrap_or(u64::MAX)
-                    .cmp(&b.p95_ms.unwrap_or(u64::MAX))
-            })
-            .then_with(|| {
-                a.p50_ms
-                    .unwrap_or(u64::MAX)
-                    .cmp(&b.p50_ms.unwrap_or(u64::MAX))
-            })
-            .then_with(|| a.provider.cmp(&b.provider))
-    });
-
-    let mut order: Vec<String> = Vec::new();
-    for item in eligible.into_iter().chain(fallback_sorted.into_iter()) {
-        if !order.iter().any(|provider| provider == &item.provider) {
-            order.push(item.provider.clone());
-        }
-    }
-    order
-}
-
-fn scenario_success_counts_for_provider(
-    provider: &str,
-    scenarios: &[TtsBenchmarkScenario],
-    samples: &[TtsBenchmarkSample],
-) -> HashMap<String, u32> {
-    let mut out = HashMap::<String, u32>::new();
-    for scenario in scenarios {
-        let success = samples
-            .iter()
-            .filter(|sample| {
-                sample.provider == provider && sample.scenario == scenario.id && sample.success
-            })
-            .count() as u32;
-        out.insert(scenario.id.clone(), success);
-    }
-    out
-}
-
-fn provider_consistency_from_runtime_surface(
-    providers: &[String],
-    qwen3_tts_enabled: bool,
-) -> (bool, String) {
-    let runtime_surface = crate::multimodal_io::list_tts_providers(qwen3_tts_enabled)
-        .into_iter()
-        .map(|info| (info.id, info.surface))
-        .collect::<HashMap<_, _>>();
-
-    let mut mismatches: Vec<String> = Vec::new();
-    for provider in providers {
-        if let Some(surface) = runtime_surface.get(provider) {
-            if provider == "qwen3_tts" && surface != TTS_PROVIDER_SURFACE_BENCHMARK_EXPERIMENTAL {
-                mismatches.push(format!(
-                    "{} should be '{}' in runtime surface, got '{}'",
-                    provider, TTS_PROVIDER_SURFACE_BENCHMARK_EXPERIMENTAL, surface
-                ));
-            }
-            if provider != "qwen3_tts" && surface != TTS_PROVIDER_SURFACE_RUNTIME_STABLE {
-                mismatches.push(format!(
-                    "{} should be '{}' in runtime surface, got '{}'",
-                    provider, TTS_PROVIDER_SURFACE_RUNTIME_STABLE, surface
-                ));
-            }
-        } else {
-            mismatches.push(format!(
-                "{} missing from runtime provider exposure list",
-                provider
-            ));
-        }
-    }
-
-    if mismatches.is_empty() {
-        (
-            true,
-            "Benchmark scope and runtime provider surface are consistent.".to_string(),
-        )
-    } else {
-        (false, mismatches.join(" | "))
-    }
-}
-
-#[cfg(test)]
-mod tts_benchmark_tests {
-    use super::{
-        build_tts_fallback_order, classify_tts_failure, normalize_tts_benchmark_providers,
-        TtsBenchmarkProviderSummary, TTS_FAILURE_AUTH_MISSING, TTS_FAILURE_ENDPOINT_UNREACHABLE,
-        TTS_FAILURE_MISSING_BINARY, TTS_FAILURE_MISSING_MODEL, TTS_FAILURE_RUNTIME_ERROR,
-        TTS_FAILURE_STREAM_CONFIG_UNSUPPORTED,
-    };
-
-    #[test]
-    fn fallback_order_prefers_reliability_gate_then_latency() {
-        let summaries = vec![
-            TtsBenchmarkProviderSummary {
-                provider: "windows_native".to_string(),
-                attempts: 9,
-                success_count: 9,
-                failure_count: 0,
-                success_rate: 1.0,
-                p50_ms: Some(190),
-                p95_ms: Some(290),
-                avg_ms: Some(210),
-            },
-            TtsBenchmarkProviderSummary {
-                provider: "local_custom".to_string(),
-                attempts: 9,
-                success_count: 9,
-                failure_count: 0,
-                success_rate: 1.0,
-                p50_ms: Some(170),
-                p95_ms: Some(240),
-                avg_ms: Some(185),
-            },
-        ];
-
-        let order = build_tts_fallback_order(&summaries, 0.95);
-        assert_eq!(
-            order,
-            vec!["local_custom".to_string(), "windows_native".to_string()]
-        );
-    }
-
-    #[test]
-    fn fallback_order_still_returns_best_available_when_gate_not_met() {
-        let summaries = vec![
-            TtsBenchmarkProviderSummary {
-                provider: "windows_native".to_string(),
-                attempts: 9,
-                success_count: 7,
-                failure_count: 2,
-                success_rate: 7.0 / 9.0,
-                p50_ms: Some(210),
-                p95_ms: Some(330),
-                avg_ms: Some(230),
-            },
-            TtsBenchmarkProviderSummary {
-                provider: "local_custom".to_string(),
-                attempts: 9,
-                success_count: 5,
-                failure_count: 4,
-                success_rate: 5.0 / 9.0,
-                p50_ms: Some(260),
-                p95_ms: Some(390),
-                avg_ms: Some(280),
-            },
-        ];
-
-        let order = build_tts_fallback_order(&summaries, 0.95);
-        assert_eq!(order.first().map(String::as_str), Some("windows_native"));
-    }
-
-    #[test]
-    fn classifies_tts_failures_into_fixed_categories() {
-        assert_eq!(
-            classify_tts_failure("Piper TTS binary not found."),
-            TTS_FAILURE_MISSING_BINARY.to_string()
-        );
-        assert_eq!(
-            classify_tts_failure("Piper model not found: D:\\voices\\de.onnx"),
-            TTS_FAILURE_MISSING_MODEL.to_string()
-        );
-        assert_eq!(
-            classify_tts_failure("Qwen3-TTS benchmark request failed: connection refused"),
-            TTS_FAILURE_ENDPOINT_UNREACHABLE.to_string()
-        );
-        assert_eq!(
-            classify_tts_failure("Qwen3-TTS benchmark request failed with HTTP 401"),
-            TTS_FAILURE_AUTH_MISSING.to_string()
-        );
-        assert_eq!(
-            classify_tts_failure(
-                "[tts_output_stream_config_unsupported] device='wasapi:xyz' wav=22050Hz/1ch/int16 -> target=48000Hz/2ch/f32 reason=The requested stream configuration is not supported by the device."
-            ),
-            TTS_FAILURE_STREAM_CONFIG_UNSUPPORTED.to_string()
-        );
-        assert_eq!(
-            classify_tts_failure("unexpected panic in voice backend"),
-            TTS_FAILURE_RUNTIME_ERROR.to_string()
-        );
-    }
-
-    #[test]
-    fn provider_normalization_accepts_windows_natural_qwen3_and_deduplicates() {
-        let input = vec![
-            " windows_native ".to_string(),
-            "windows_natural".to_string(),
-            "qwen3_tts".to_string(),
-            "local_custom".to_string(),
-            "QWEN3_TTS".to_string(),
-            "unsupported".to_string(),
-        ];
-        let providers = normalize_tts_benchmark_providers(&input);
-        assert_eq!(
-            providers,
-            vec![
-                "windows_native".to_string(),
-                "windows_natural".to_string(),
-                "qwen3_tts".to_string(),
-                "local_custom".to_string(),
-            ]
-        );
     }
 }
 
@@ -3227,1006 +1352,6 @@ mod piper_daemon_lifecycle_tests {
         );
     }
 }
-
-fn run_latency_benchmark_inner(
-    app: &AppHandle,
-    state: &AppState,
-    request: &LatencyBenchmarkRequest,
-) -> Result<LatencyBenchmarkResult, String> {
-    let warmup_runs = request.warmup_runs.min(10);
-    let measure_runs = request.measure_runs.clamp(1, 200);
-    let include_refinement = request.include_refinement;
-
-    let fixture_paths: Vec<PathBuf> = if request.fixture_paths.is_empty() {
-        default_latency_fixture_paths()
-    } else {
-        // Validate user-provided paths against app data directory
-        let allowed_root = crate::paths::resolve_base_dir(&app);
-        let mut validated = Vec::new();
-        for path_str in &request.fixture_paths {
-            validated.push(validate_path_within(path_str, &allowed_root)?);
-        }
-        validated
-    };
-
-    if fixture_paths.is_empty() {
-        return Err(
-            "No benchmark fixtures found. Add WAV files under bench/fixtures/short/.".to_string(),
-        );
-    }
-
-    let mut fixtures: Vec<(String, Vec<i16>)> = Vec::new();
-    for path in fixture_paths {
-        let samples = read_wav_for_latency_benchmark(&path)?;
-        let label = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(|name| name.to_string())
-            .unwrap_or_else(|| path.display().to_string());
-        fixtures.push((label, samples));
-    }
-
-    let mut settings_snapshot = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    if include_refinement {
-        if let Some(model) = request
-            .refinement_model
-            .as_ref()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            let model = model.to_string();
-            settings_snapshot.ai_fallback.enabled = true;
-            settings_snapshot.ai_fallback.provider = "ollama".to_string();
-            settings_snapshot.ai_fallback.execution_mode = "local_primary".to_string();
-            settings_snapshot.ai_fallback.model = model.clone();
-            settings_snapshot.postproc_llm_model = model.clone();
-            settings_snapshot.providers.ollama.preferred_model = model;
-        }
-    }
-    let active_refinement_model = if include_refinement && settings_snapshot.ai_fallback.enabled {
-        Some(settings_snapshot.ai_fallback.model.clone())
-    } else {
-        None
-    };
-    let mut samples: Vec<LatencyBenchmarkSample> = Vec::with_capacity(measure_runs as usize);
-    let mut warnings: Vec<String> = Vec::new();
-    let total_runs = warmup_runs + measure_runs;
-
-    for run_idx in 0..total_runs {
-        let fixture_idx = run_idx as usize % fixtures.len();
-        let (fixture_name, fixture_samples) = (&fixtures[fixture_idx].0, &fixtures[fixture_idx].1);
-
-        let whisper_started = Instant::now();
-        let (raw_text, _source) = transcribe_audio(app, &settings_snapshot, fixture_samples)?;
-        let whisper_ms = whisper_started.elapsed().as_millis() as u64;
-
-        let mut refine_ms = 0u64;
-        let mut mode = "raw".to_string();
-        let mut refinement_model_used = active_refinement_model.clone();
-        if include_refinement && settings_snapshot.ai_fallback.enabled {
-            let refine_started = Instant::now();
-            match refine_transcript_for_benchmark(app, &settings_snapshot, &raw_text) {
-                Ok(result) => {
-                    refine_ms = refine_started.elapsed().as_millis() as u64;
-                    mode = "refined".to_string();
-                    refinement_model_used = Some(result.model);
-                }
-                Err(error) => {
-                    refine_ms = refine_started.elapsed().as_millis() as u64;
-                    mode = if error.to_lowercase().contains("timed out") {
-                        "fallback_timeout".to_string()
-                    } else {
-                        "fallback_error".to_string()
-                    };
-                    warnings.push(format!("{}: {}", fixture_name, error));
-                }
-            }
-        }
-
-        if run_idx < warmup_runs {
-            continue;
-        }
-
-        let total_ms = whisper_ms.saturating_add(refine_ms);
-        samples.push(LatencyBenchmarkSample {
-            fixture: fixture_name.clone(),
-            whisper_ms,
-            refine_ms,
-            total_ms,
-            mode,
-            accelerator: last_transcription_accelerator().to_string(),
-            refinement_model: refinement_model_used,
-        });
-    }
-
-    let mut totals: Vec<u64> = samples.iter().map(|sample| sample.total_ms).collect();
-    totals.sort_unstable();
-    let p50_ms = percentile(&totals, 0.50);
-    let p95_ms = percentile(&totals, 0.95);
-    let slo_p50_ms = 2_500;
-    let slo_p95_ms = 4_000;
-    let slo_pass = p50_ms <= slo_p50_ms && p95_ms <= slo_p95_ms;
-
-    Ok(LatencyBenchmarkResult {
-        warmup_runs,
-        measure_runs,
-        p50_ms,
-        p95_ms,
-        slo_p50_ms,
-        slo_p95_ms,
-        slo_pass,
-        samples,
-        warnings,
-    })
-}
-
-fn write_latency_benchmark_report(result: &LatencyBenchmarkResult) -> Result<PathBuf, String> {
-    let root = resolve_benchmark_root_dir();
-    let out_dir = root.join("bench").join("results");
-    std::fs::create_dir_all(&out_dir).map_err(|e| {
-        format!(
-            "Failed creating benchmark output dir '{}': {}",
-            out_dir.display(),
-            e
-        )
-    })?;
-    let out_path = out_dir.join("latest.json");
-    let serialized = serde_json::to_string_pretty(result).map_err(|e| e.to_string())?;
-    std::fs::write(&out_path, serialized).map_err(|e| {
-        format!(
-            "Failed writing benchmark report '{}': {}",
-            out_path.display(),
-            e
-        )
-    })?;
-    Ok(out_path)
-}
-
-fn run_tts_benchmark_inner(
-    state: &AppState,
-    request: &TtsBenchmarkRequest,
-) -> Result<TtsBenchmarkResult, String> {
-    let warmup_runs = request.warmup_runs.min(5);
-    let measure_runs = request.measure_runs.clamp(3, 100);
-    let gates = default_tts_benchmark_gates();
-    let providers = normalize_tts_benchmark_providers(&request.providers);
-    let scenarios = normalize_tts_benchmark_scenarios(&request.scenarios, request.lock_matrix);
-    let qwen3_config = resolve_qwen3_tts_benchmark_config(request);
-    let rate = if request.rate.is_finite() {
-        request.rate.clamp(0.5, 2.0)
-    } else {
-        1.0
-    };
-    let volume = if request.volume.is_finite() {
-        request.volume.clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
-
-    let voice_settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .voice_output_settings
-        .clone();
-    let piper_binary_path = request
-        .piper_binary_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| voice_settings.piper_binary_path.clone());
-    let piper_model_path = request
-        .piper_model_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| voice_settings.piper_model_path.clone());
-    let piper_model_dir = voice_settings.piper_model_dir.clone();
-
-    let mut samples: Vec<TtsBenchmarkSample> = Vec::new();
-    let mut preflight_checks: Vec<TtsPreflightCheck> = Vec::new();
-    let mut runtime_smoke_checks: Vec<TtsRuntimeSmokeCheck> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
-    let provider_profiles = providers
-        .iter()
-        .map(|provider| tts_provider_profile(provider))
-        .collect::<Vec<_>>();
-
-    for provider in &providers {
-        let mut provider_preflight: Vec<TtsPreflightCheck> = Vec::new();
-        if is_runtime_stable_provider(provider) {
-            let module_enabled = voice_settings.enabled;
-            provider_preflight.push(TtsPreflightCheck {
-                provider: provider.clone(),
-                check: "module_enabled".to_string(),
-                passed: module_enabled,
-                category: if module_enabled {
-                    None
-                } else {
-                    Some(TTS_FAILURE_RUNTIME_ERROR.to_string())
-                },
-                detail: if module_enabled {
-                    "Voice output module is enabled.".to_string()
-                } else {
-                    "Voice output module is disabled. Enable module 'output_voice_tts' before release benchmarking."
-                        .to_string()
-                },
-            });
-        }
-        match provider.as_str() {
-            "windows_native" => {
-                let passed = cfg!(target_os = "windows");
-                provider_preflight.push(TtsPreflightCheck {
-                    provider: provider.clone(),
-                    check: "platform".to_string(),
-                    passed,
-                    category: if passed {
-                        None
-                    } else {
-                        Some(TTS_FAILURE_RUNTIME_ERROR.to_string())
-                    },
-                    detail: if passed {
-                        "Windows runtime detected for windows_native provider.".to_string()
-                    } else {
-                        "windows_native provider requires Windows runtime.".to_string()
-                    },
-                });
-            }
-            "windows_natural" => {
-                let platform_ok = cfg!(target_os = "windows");
-                provider_preflight.push(TtsPreflightCheck {
-                    provider: provider.clone(),
-                    check: "platform".to_string(),
-                    passed: platform_ok,
-                    category: if platform_ok {
-                        None
-                    } else {
-                        Some(TTS_FAILURE_RUNTIME_ERROR.to_string())
-                    },
-                    detail: if platform_ok {
-                        "Windows runtime detected for windows_natural provider.".to_string()
-                    } else {
-                        "windows_natural provider requires Windows runtime.".to_string()
-                    },
-                });
-
-                let natural_voices_ok = crate::multimodal_io::windows_natural_voice_available();
-                provider_preflight.push(TtsPreflightCheck {
-                    provider: provider.clone(),
-                    check: "natural_voice".to_string(),
-                    passed: natural_voices_ok,
-                    category: if natural_voices_ok {
-                        None
-                    } else {
-                        Some(TTS_FAILURE_RUNTIME_ERROR.to_string())
-                    },
-                    detail: if natural_voices_ok {
-                        "Detected Windows Natural voice(s) via SAPI.".to_string()
-                    } else {
-                        "No Windows Natural voice detected. Install NaturalVoiceSAPIAdapter and a Natural voice pack."
-                            .to_string()
-                    },
-                });
-            }
-            "local_custom" => {
-                let binary_preflight =
-                    crate::multimodal_io::piper_binary_preflight(&piper_binary_path);
-                let binary_ok = binary_preflight.is_ok();
-                provider_preflight.push(TtsPreflightCheck {
-                    provider: provider.clone(),
-                    check: "binary".to_string(),
-                    passed: binary_ok,
-                    category: if binary_ok {
-                        None
-                    } else {
-                        Some(TTS_FAILURE_MISSING_BINARY.to_string())
-                    },
-                    detail: binary_preflight
-                        .map(|_| "Piper runtime resolved.".to_string())
-                        .unwrap_or_else(|error| error),
-                });
-
-                let model_ok = crate::multimodal_io::piper_model_available(
-                    &piper_model_path,
-                    &piper_model_dir,
-                );
-                provider_preflight.push(TtsPreflightCheck {
-                    provider: provider.clone(),
-                    check: "model".to_string(),
-                    passed: model_ok,
-                    category: if model_ok {
-                        None
-                    } else {
-                        Some(TTS_FAILURE_MISSING_MODEL.to_string())
-                    },
-                    detail: if model_ok {
-                        "Piper model resolved.".to_string()
-                    } else {
-                        "Piper model not found. Configure piper_model_path or provide a voices directory."
-                            .to_string()
-                    },
-                });
-            }
-            "qwen3_tts" => {
-                let endpoint_ok = qwen3_config.endpoint.starts_with("http://")
-                    || qwen3_config.endpoint.starts_with("https://");
-                provider_preflight.push(TtsPreflightCheck {
-                    provider: provider.clone(),
-                    check: "endpoint_format".to_string(),
-                    passed: endpoint_ok,
-                    category: if endpoint_ok {
-                        None
-                    } else {
-                        Some(TTS_FAILURE_ENDPOINT_UNREACHABLE.to_string())
-                    },
-                    detail: if endpoint_ok {
-                        "Qwen3 endpoint format accepted.".to_string()
-                    } else {
-                        format!(
-                            "Qwen3 endpoint '{}' is invalid. Expected http:// or https:// URL.",
-                            qwen3_config.endpoint
-                        )
-                    },
-                });
-
-                if endpoint_ok {
-                    let probe =
-                        benchmark_qwen3_tts_synthesis("Preflight ping.", 1.0, &qwen3_config);
-                    provider_preflight.push(TtsPreflightCheck {
-                        provider: provider.clone(),
-                        check: "endpoint_auth_probe".to_string(),
-                        passed: probe.is_ok(),
-                        category: probe
-                            .as_ref()
-                            .err()
-                            .map(|error| classify_tts_failure(error)),
-                        detail: match probe {
-                            Ok(()) => "Qwen3 endpoint/auth probe succeeded.".to_string(),
-                            Err(error) => format!("Qwen3 probe failed: {}", error),
-                        },
-                    });
-                }
-            }
-            _ => {
-                provider_preflight.push(TtsPreflightCheck {
-                    provider: provider.clone(),
-                    check: "provider".to_string(),
-                    passed: false,
-                    category: Some(TTS_FAILURE_RUNTIME_ERROR.to_string()),
-                    detail: format!("Unsupported benchmark provider '{}'.", provider),
-                });
-            }
-        }
-
-        let preflight_ok = provider_preflight.iter().all(|check| check.passed);
-        preflight_checks.extend(provider_preflight.clone());
-
-        if is_runtime_stable_provider(provider) {
-            if request.run_runtime_smoke {
-                if preflight_ok {
-                    match run_tts_runtime_smoke_once(
-                        state,
-                        provider,
-                        rate,
-                        &voice_settings.voice_id_windows,
-                        &piper_binary_path,
-                        &piper_model_path,
-                        &voice_settings.output_device,
-                    ) {
-                        Ok(()) => runtime_smoke_checks.push(TtsRuntimeSmokeCheck {
-                            provider: provider.clone(),
-                            passed: true,
-                            category: None,
-                            detail: "Runtime smoke speak path succeeded.".to_string(),
-                        }),
-                        Err(error) => runtime_smoke_checks.push(TtsRuntimeSmokeCheck {
-                            provider: provider.clone(),
-                            passed: false,
-                            category: Some(classify_tts_failure(&error)),
-                            detail: format!("Runtime smoke speak path failed: {}", error),
-                        }),
-                    }
-                } else {
-                    runtime_smoke_checks.push(TtsRuntimeSmokeCheck {
-                        provider: provider.clone(),
-                        passed: false,
-                        category: Some(TTS_FAILURE_RUNTIME_ERROR.to_string()),
-                        detail: "Runtime smoke skipped due to preflight failure.".to_string(),
-                    });
-                }
-            } else {
-                runtime_smoke_checks.push(TtsRuntimeSmokeCheck {
-                    provider: provider.clone(),
-                    passed: true,
-                    category: None,
-                    detail: "Runtime smoke disabled by request.".to_string(),
-                });
-            }
-        }
-
-        if !preflight_ok {
-            let first_failed = provider_preflight
-                .iter()
-                .find(|check| !check.passed)
-                .cloned()
-                .unwrap_or(TtsPreflightCheck {
-                    provider: provider.clone(),
-                    check: "unknown".to_string(),
-                    passed: false,
-                    category: Some(TTS_FAILURE_RUNTIME_ERROR.to_string()),
-                    detail: "Unknown preflight failure.".to_string(),
-                });
-            warnings.push(format!(
-                "provider={} preflight failed check={} category={} detail={}",
-                provider,
-                first_failed.check,
-                first_failed
-                    .category
-                    .clone()
-                    .unwrap_or_else(|| TTS_FAILURE_RUNTIME_ERROR.to_string()),
-                first_failed.detail
-            ));
-            for scenario in &scenarios {
-                for run in 1..=measure_runs {
-                    samples.push(TtsBenchmarkSample {
-                        provider: provider.clone(),
-                        scenario: scenario.id.clone(),
-                        run,
-                        elapsed_ms: 0,
-                        success: false,
-                        error: Some(format!(
-                            "Preflight failed ({}): {}",
-                            first_failed.check, first_failed.detail
-                        )),
-                        failure_category: Some(
-                            first_failed
-                                .category
-                                .clone()
-                                .unwrap_or_else(|| TTS_FAILURE_RUNTIME_ERROR.to_string()),
-                        ),
-                    });
-                }
-            }
-            continue;
-        }
-
-        for scenario in &scenarios {
-            let scenario_warmup = if scenario.thermal == "warm" {
-                warmup_runs
-            } else {
-                0
-            };
-            for run_idx in 0..(scenario_warmup + measure_runs) {
-                let started = Instant::now();
-                let outcome = run_tts_provider_once(
-                    provider,
-                    &scenario.text,
-                    rate,
-                    volume,
-                    &voice_settings.voice_id_windows,
-                    &piper_binary_path,
-                    &piper_model_path,
-                    &qwen3_config,
-                );
-                let elapsed_ms = started.elapsed().as_millis() as u64;
-
-                if run_idx < scenario_warmup {
-                    continue;
-                }
-
-                let run = run_idx - scenario_warmup + 1;
-                match outcome {
-                    Ok(()) => samples.push(TtsBenchmarkSample {
-                        provider: provider.clone(),
-                        scenario: scenario.id.clone(),
-                        run,
-                        elapsed_ms,
-                        success: true,
-                        error: None,
-                        failure_category: None,
-                    }),
-                    Err(error) => {
-                        let category = classify_tts_failure(&error);
-                        warnings.push(format!(
-                            "provider={} scenario={} run={} category={} error={}",
-                            provider, scenario.id, run, category, error
-                        ));
-                        samples.push(TtsBenchmarkSample {
-                            provider: provider.clone(),
-                            scenario: scenario.id.clone(),
-                            run,
-                            elapsed_ms,
-                            success: false,
-                            error: Some(error),
-                            failure_category: Some(category),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    let mut grouped: HashMap<String, Vec<TtsBenchmarkSample>> = HashMap::new();
-    for sample in &samples {
-        grouped
-            .entry(sample.provider.clone())
-            .or_default()
-            .push(sample.clone());
-    }
-
-    if providers.iter().any(|provider| provider == "qwen3_tts") {
-        warnings.push(format!(
-            "provider=qwen3_tts config endpoint={} model={} voice={} timeout_sec={}",
-            qwen3_config.endpoint, qwen3_config.model, qwen3_config.voice, qwen3_config.timeout_sec
-        ));
-    }
-    if providers.iter().any(|provider| provider == "local_custom") {
-        warnings.push(format!(
-            "provider=local_custom config piper_binary_path={} piper_model_path={}",
-            if piper_binary_path.trim().is_empty() {
-                "<auto-resolve>"
-            } else {
-                piper_binary_path.as_str()
-            },
-            if piper_model_path.trim().is_empty() {
-                "<auto-resolve>"
-            } else {
-                piper_model_path.as_str()
-            }
-        ));
-    }
-
-    let provider_summaries = providers
-        .iter()
-        .map(|provider| {
-            let provider_samples = grouped.get(provider).cloned().unwrap_or_default();
-            summarize_tts_provider(provider, &provider_samples)
-        })
-        .collect::<Vec<_>>();
-
-    let preflight_ok_by_provider = providers
-        .iter()
-        .map(|provider| {
-            let ok = preflight_checks
-                .iter()
-                .filter(|check| check.provider == *provider)
-                .all(|check| check.passed);
-            (provider.clone(), ok)
-        })
-        .collect::<HashMap<_, _>>();
-    let smoke_ok_by_provider = runtime_smoke_checks
-        .iter()
-        .map(|check| (check.provider.clone(), check.passed))
-        .collect::<HashMap<_, _>>();
-
-    let provider_gate_evaluations = providers
-        .iter()
-        .map(|provider| {
-            let summary = provider_summaries
-                .iter()
-                .find(|summary| summary.provider == *provider)
-                .cloned()
-                .unwrap_or(TtsBenchmarkProviderSummary {
-                    provider: provider.clone(),
-                    attempts: 0,
-                    success_count: 0,
-                    failure_count: 0,
-                    success_rate: 0.0,
-                    p50_ms: None,
-                    p95_ms: None,
-                    avg_ms: None,
-                });
-            let scenario_success =
-                scenario_success_counts_for_provider(provider, &scenarios, &samples);
-            let min_success_in_any_scenario = scenario_success.values().copied().min().unwrap_or(0);
-            let evaluated_for_release = is_runtime_stable_provider(provider);
-            let preflight_ok = *preflight_ok_by_provider.get(provider).unwrap_or(&false);
-            let runtime_smoke_ok = if evaluated_for_release {
-                *smoke_ok_by_provider.get(provider).unwrap_or(&false)
-            } else {
-                true
-            };
-            let reliability_ok = summary.success_rate >= gates.reliability_min_success_rate;
-            let latency_ok = summary
-                .p50_ms
-                .map(|value| value <= gates.latency_target_p50_ms)
-                .unwrap_or(false)
-                && summary
-                    .p95_ms
-                    .map(|value| value <= gates.latency_target_p95_ms)
-                    .unwrap_or(false);
-            let scenario_success_ok = min_success_in_any_scenario >= gates.min_success_per_scenario;
-            let passes_release_gate = evaluated_for_release
-                && preflight_ok
-                && runtime_smoke_ok
-                && reliability_ok
-                && latency_ok
-                && scenario_success_ok;
-            TtsProviderGateEvaluation {
-                provider: provider.clone(),
-                evaluated_for_release,
-                passes_release_gate,
-                preflight_ok,
-                runtime_smoke_ok,
-                reliability_ok,
-                latency_ok,
-                scenario_success_ok,
-                success_rate: summary.success_rate,
-                p50_ms: summary.p50_ms,
-                p95_ms: summary.p95_ms,
-                min_success_in_any_scenario,
-            }
-        })
-        .collect::<Vec<_>>();
-
-    let (provider_consistency_ok, provider_consistency_detail) =
-        provider_consistency_from_runtime_surface(&providers, true); // TODO: pass qwen3_tts_enabled from settings if this function gets State access
-
-    let release_evaluations = provider_gate_evaluations
-        .iter()
-        .filter(|evaluation| evaluation.evaluated_for_release)
-        .collect::<Vec<_>>();
-    let release_gate_pass = !release_evaluations.is_empty()
-        && release_evaluations
-            .iter()
-            .all(|evaluation| evaluation.passes_release_gate);
-    let release_gate_reason = if release_gate_pass {
-        "All runtime-stable providers passed release gates.".to_string()
-    } else if release_evaluations.is_empty() {
-        "No runtime-stable providers available for release gate evaluation.".to_string()
-    } else {
-        let failed = release_evaluations
-            .iter()
-            .filter(|evaluation| !evaluation.passes_release_gate)
-            .map(|evaluation| evaluation.provider.clone())
-            .collect::<Vec<_>>();
-        format!("Release gate failed for providers: {}", failed.join(", "))
-    };
-
-    let runtime_summaries = provider_summaries
-        .iter()
-        .filter(|summary| is_runtime_stable_provider(&summary.provider))
-        .cloned()
-        .collect::<Vec<_>>();
-    let fallback_order =
-        build_tts_fallback_order(&runtime_summaries, gates.reliability_min_success_rate);
-
-    let recommended_default_provider = if release_gate_pass {
-        fallback_order.first().cloned()
-    } else {
-        fallback_order
-            .iter()
-            .find(|provider| {
-                provider_gate_evaluations
-                    .iter()
-                    .find(|evaluation| &evaluation.provider == *provider)
-                    .map(|evaluation| {
-                        evaluation.preflight_ok
-                            && evaluation.runtime_smoke_ok
-                            && evaluation.success_rate > 0.0
-                    })
-                    .unwrap_or(false)
-            })
-            .cloned()
-    };
-    let recommendation_reason = if let Some(provider) = recommended_default_provider.as_ref() {
-        if release_gate_pass {
-            format!(
-                "Selected '{}' as default (release gate pass; deterministic fallback order applied).",
-                provider
-            )
-        } else {
-            format!(
-                "Selected '{}' as best available runtime fallback while release gate is failing.",
-                provider
-            )
-        }
-    } else {
-        "No runtime provider recommendation available. Resolve preflight/smoke failures first."
-            .to_string()
-    };
-
-    let uncategorized_failure_count = samples
-        .iter()
-        .filter(|sample| !sample.success && sample.failure_category.is_none())
-        .count() as u32;
-
-    Ok(TtsBenchmarkResult {
-        artifact_version: "tts-benchmark-v2".to_string(),
-        generated_at: now_iso(),
-        warmup_runs,
-        measure_runs,
-        providers,
-        scenarios: scenarios
-            .iter()
-            .map(|scenario| scenario.id.clone())
-            .collect(),
-        scenario_matrix_locked: request.lock_matrix,
-        gates,
-        provider_profiles,
-        preflight_checks,
-        runtime_smoke_checks,
-        samples,
-        provider_summaries,
-        provider_gate_evaluations,
-        provider_consistency_ok,
-        provider_consistency_detail,
-        fallback_order,
-        release_gate_pass,
-        release_gate_reason,
-        recommended_default_provider,
-        recommendation_reason,
-        uncategorized_failure_count,
-        warnings,
-    })
-}
-
-fn write_tts_benchmark_report(result: &TtsBenchmarkResult) -> Result<PathBuf, String> {
-    let root = resolve_benchmark_root_dir();
-    let out_dir = root.join("bench").join("results");
-    std::fs::create_dir_all(&out_dir).map_err(|e| {
-        format!(
-            "Failed creating benchmark output dir '{}': {}",
-            out_dir.display(),
-            e
-        )
-    })?;
-    let out_path = out_dir.join("tts.latest.json");
-    let serialized = serde_json::to_string_pretty(result).map_err(|e| e.to_string())?;
-    std::fs::write(&out_path, serialized).map_err(|e| {
-        format!(
-            "Failed writing TTS benchmark report '{}': {}",
-            out_path.display(),
-            e
-        )
-    })?;
-    Ok(out_path)
-}
-
-fn default_latency_fixture_paths() -> Vec<PathBuf> {
-    let root = resolve_benchmark_root_dir();
-    let fixture_dir = root.join("bench").join("fixtures").join("short");
-    let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&fixture_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let is_wav = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext.eq_ignore_ascii_case("wav"))
-                .unwrap_or(false);
-            if is_wav {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    files
-}
-
-fn resolve_benchmark_root_dir() -> PathBuf {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if cwd.join("bench").is_dir() {
-        return cwd;
-    }
-
-    let mut candidate = cwd.clone();
-    for _ in 0..4 {
-        if let Some(parent) = candidate.parent() {
-            if parent.join("bench").is_dir() {
-                return parent.to_path_buf();
-            }
-            candidate = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-
-    cwd
-}
-
-fn read_wav_for_latency_benchmark(path: &Path) -> Result<Vec<i16>, String> {
-    let mut reader = hound::WavReader::open(path)
-        .map_err(|e| format!("Failed to open WAV fixture '{}': {}", path.display(), e))?;
-    let spec = reader.spec();
-    if spec.sample_rate != crate::constants::TARGET_SAMPLE_RATE {
-        return Err(format!(
-            "Fixture '{}' uses unsupported sample rate {} (expected {}).",
-            path.display(),
-            spec.sample_rate,
-            crate::constants::TARGET_SAMPLE_RATE
-        ));
-    }
-
-    let channels = spec.channels.max(1) as usize;
-    let mut mono = Vec::<i16>::new();
-
-    match spec.sample_format {
-        hound::SampleFormat::Int => {
-            if spec.bits_per_sample != 16 {
-                return Err(format!(
-                    "Fixture '{}' must be 16-bit PCM for benchmark (got {} bits).",
-                    path.display(),
-                    spec.bits_per_sample
-                ));
-            }
-            let samples: Vec<i16> = reader
-                .samples::<i16>()
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("Failed reading fixture '{}': {}", path.display(), e))?;
-            for frame in samples.chunks(channels) {
-                if let Some(first) = frame.first() {
-                    mono.push(*first);
-                }
-            }
-        }
-        hound::SampleFormat::Float => {
-            let samples: Vec<f32> = reader
-                .samples::<f32>()
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("Failed reading float fixture '{}': {}", path.display(), e))?;
-            for frame in samples.chunks(channels) {
-                if let Some(first) = frame.first() {
-                    let clamped = first.clamp(-1.0, 1.0);
-                    mono.push((clamped * i16::MAX as f32) as i16);
-                }
-            }
-        }
-    }
-
-    if mono.is_empty() {
-        return Err(format!(
-            "Fixture '{}' has no audio samples.",
-            path.display()
-        ));
-    }
-    Ok(mono)
-}
-
-fn percentile(sorted_values: &[u64], quantile: f64) -> u64 {
-    if sorted_values.is_empty() {
-        return 0;
-    }
-    let q = quantile.clamp(0.0, 1.0);
-    let idx = ((sorted_values.len() - 1) as f64 * q).round() as usize;
-    sorted_values[idx]
-}
-
-fn refine_transcript_for_benchmark(
-    app: &AppHandle,
-    settings_snapshot: &Settings,
-    transcript: &str,
-) -> Result<crate::ai_fallback::models::RefinementResult, String> {
-    ensure_ollama_runtime_ready_for_refinement(app, settings_snapshot)?;
-    let setup = prepare_refinement(app, settings_snapshot)?;
-
-    setup
-        .provider
-        .refine_transcript(transcript, &setup.model, &setup.options, &setup.api_key)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn run_latency_benchmark(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: Option<LatencyBenchmarkRequest>,
-) -> Result<LatencyBenchmarkResult, String> {
-    let request = request.unwrap_or_default();
-    run_latency_benchmark_inner(&app, state.inner(), &request)
-}
-
-#[tauri::command]
-fn run_tts_benchmark(
-    state: State<'_, AppState>,
-    request: Option<TtsBenchmarkRequest>,
-) -> Result<TtsBenchmarkResult, String> {
-    let request = request.unwrap_or_default();
-    run_tts_benchmark_inner(state.inner(), &request)
-}
-
-#[tauri::command]
-fn get_runtime_metrics_snapshot(
-    state: State<'_, AppState>,
-) -> crate::state::RuntimeMetricsSnapshot {
-    runtime_metrics_snapshot(state.inner())
-}
-
-/// Current OLLAMA refinement-model readiness for the main-window status light.
-/// Lets the frontend recover the true state after a reload instead of assuming cold.
-#[tauri::command]
-fn get_ollama_model_state(state: State<'_, AppState>) -> String {
-    if state.ollama_warmup_in_progress.load(Ordering::SeqCst) {
-        "loading".to_string()
-    } else if state.ollama_model_warm.load(Ordering::SeqCst) {
-        "warm".to_string()
-    } else {
-        "cold".to_string()
-    }
-}
-
-#[tauri::command]
-fn record_runtime_metric(state: State<'_, AppState>, metric: String) -> Result<(), String> {
-    match metric.trim() {
-        "refinement_timeout" | "refinement_fallback_timed_out" => {
-            record_refinement_timeout(state.inner());
-            record_refinement_fallback_timed_out(state.inner());
-            Ok(())
-        }
-        other => Err(format!("Unknown runtime metric '{}'", other)),
-    }
-}
-
-#[tauri::command]
-fn frontend_heartbeat(state: State<'_, AppState>) {
-    state
-        .frontend_last_heartbeat_ms
-        .store(crate::util::now_ms(), Ordering::Relaxed);
-}
-
-#[tauri::command]
-fn log_frontend_event(
-    app: AppHandle,
-    level: String,
-    context: String,
-    message: String,
-) -> Result<(), String> {
-    let normalized_context = context.trim();
-    let normalized_message = message.trim();
-    if normalized_message.is_empty() {
-        return Ok(());
-    }
-    let diagnostics_enabled = app
-        .state::<AppState>()
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .diagnostic_logging_enabled;
-    match level.trim().to_ascii_lowercase().as_str() {
-        "error" => error!(
-            "[frontend:{}] {}",
-            if normalized_context.is_empty() {
-                "unknown"
-            } else {
-                normalized_context
-            },
-            normalized_message
-        ),
-        "warn" => {
-            warn!(
-                "[frontend:{}] {}",
-                if normalized_context.is_empty() {
-                    "unknown"
-                } else {
-                    normalized_context
-                },
-                normalized_message
-            )
-        }
-        _ => {
-            if !diagnostics_enabled {
-                return Ok(());
-            }
-            info!(
-                "[frontend:{}] {}",
-                if normalized_context.is_empty() {
-                    "unknown"
-                } else {
-                    normalized_context
-                },
-                normalized_message
-            )
-        }
-    }
-    Ok(())
-}
-
 fn assistant_requires_transcribe(settings: &Settings) -> bool {
     settings
         .product_mode
@@ -4236,7 +1361,7 @@ fn assistant_requires_transcribe(settings: &Settings) -> bool {
         && settings.workflow_agent.hands_free_enabled
 }
 
-fn reconcile_assistant_transcribe_flag(settings: &mut Settings) -> bool {
+pub(crate) fn reconcile_assistant_transcribe_flag(settings: &mut Settings) -> bool {
     if assistant_requires_transcribe(settings) && !settings.transcribe_enabled {
         settings.transcribe_enabled = true;
         return true;
@@ -4278,7 +1403,7 @@ fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String
             return Err(err);
         }
     } else {
-        crate::transcription::stop_transcribe_monitor_and_release_whisper(app, &state);
+        stop_transcribe_monitor_and_release_whisper(app, &state);
     }
 
     let _ = app.emit("settings-changed", settings.clone());
@@ -4286,220 +1411,15 @@ fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String
     Ok(effective_enabled)
 }
 
-#[tauri::command]
-fn pull_ollama_model(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    model: String,
-) -> Result<(), String> {
-    use crate::ai_fallback::provider::{
-        precheck_ollama_registry_model_tag, pull_ollama_model_inner, validate_ollama_model_name,
-    };
-
-    validate_ollama_model_name(&model)?;
-
-    // Prevent duplicate pulls for the same model
-    {
-        let mut pulls = state
-            .ollama_pulls
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if pulls.contains(&model) {
-            return Err(format!("Pull already in progress for '{}'", model));
-        }
-        pulls.insert(model.clone());
-    }
-
-    let endpoint = {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Err(e) = check_strict_local_mode(&settings) {
-            let mut pulls = state
-                .ollama_pulls
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            pulls.remove(&model);
-            return Err(e);
-        }
-        settings.providers.ollama.endpoint.clone()
-    };
-
-    if let Err(error) = precheck_ollama_registry_model_tag(&model) {
-        warn!(
-            "[ollama.pull] registry precheck failed model={} endpoint={} error={} - continuing with real pull",
-            model,
-            endpoint,
-            error
-        );
-    } else {
-        info!(
-            "[ollama.pull] registry precheck ok model={} endpoint={}",
-            model, endpoint
-        );
-    }
-
-    // Drop-Guard ensures the model is removed from ollama_pulls even if the
-    // thread panics (e.g. due to a bug in pull_ollama_model_inner).
-    struct PullGuard {
-        app: AppHandle,
-        model: String,
-    }
-    impl Drop for PullGuard {
-        fn drop(&mut self) {
-            if let Ok(mut pulls) = self.app.state::<AppState>().ollama_pulls.lock() {
-                pulls.remove(&self.model);
-            }
-        }
-    }
-
-    let app_handle = app.clone();
-    let model_clone = model.clone();
-    crate::util::spawn_guarded("ollama_model_pull", move || {
-        let _guard = PullGuard {
-            app: app_handle.clone(),
-            model: model_clone.clone(),
-        };
-        pull_ollama_model_inner(app_handle, model_clone, endpoint);
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-async fn delete_ollama_model(state: State<'_, AppState>, model: String) -> Result<(), String> {
-    use crate::ai_fallback::provider::validate_ollama_model_name;
-
-    validate_ollama_model_name(&model)?;
-
-    let endpoint = {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        check_strict_local_mode(&settings)?;
-        settings.providers.ollama.endpoint.clone()
-    };
-
-    tauri::async_runtime::spawn_blocking(move || delete_ollama_model_impl(endpoint, model))
-        .await
-        .map_err(|e| format!("Delete Ollama model task failed: {}", e))?
-}
-
-fn delete_ollama_model_impl(endpoint: String, model: String) -> Result<(), String> {
-    use crate::ai_fallback::provider::ollama_endpoint_candidates;
-
-    let body = serde_json::json!({ "model": model.clone() });
-
-    let agent = ureq::builder()
-        .timeout_connect(std::time::Duration::from_secs(5))
-        .timeout_read(std::time::Duration::from_secs(30))
-        .build();
-
-    let mut last_transport_error: Option<String> = None;
-    for candidate in ollama_endpoint_candidates(&endpoint) {
-        let url = format!("{}/api/delete", candidate);
-        let request = agent
-            .request("DELETE", &url)
-            .set("Content-Type", "application/json");
-
-        match request.send_json(body.clone()) {
-            Ok(_) => return Ok(()),
-            Err(ureq::Error::Status(404, _)) => {
-                return Err(format!("Model '{}' not found in Ollama", model));
-            }
-            Err(ureq::Error::Transport(t)) => {
-                last_transport_error = Some(t.to_string());
-                continue;
-            }
-            Err(e) => return Err(format!("Failed to delete model: {}", e)),
-        }
-    }
-
-    Err(format!(
-        "Failed to delete model: {}",
-        last_transport_error.unwrap_or_else(|| "unable to reach Ollama endpoint".to_string())
-    ))
-}
-
-#[tauri::command]
-async fn get_ollama_model_info(
-    state: State<'_, AppState>,
-    model: String,
-) -> Result<serde_json::Value, String> {
-    use crate::ai_fallback::provider::validate_ollama_model_name;
-
-    validate_ollama_model_name(&model)?;
-
-    let endpoint = {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        check_strict_local_mode(&settings)?;
-        settings.providers.ollama.endpoint.clone()
-    };
-
-    tauri::async_runtime::spawn_blocking(move || get_ollama_model_info_impl(endpoint, model))
-        .await
-        .map_err(|e| format!("Get Ollama model info task failed: {}", e))?
-}
-
-fn get_ollama_model_info_impl(
-    endpoint: String,
-    model: String,
-) -> Result<serde_json::Value, String> {
-    use crate::ai_fallback::provider::ollama_endpoint_candidates;
-
-    let body = serde_json::json!({ "model": model });
-
-    let agent = ureq::builder()
-        .timeout_connect(std::time::Duration::from_secs(5))
-        .timeout_read(std::time::Duration::from_secs(10))
-        .build();
-
-    let mut last_transport_error: Option<String> = None;
-    for candidate in ollama_endpoint_candidates(&endpoint) {
-        let url = format!("{}/api/show", candidate);
-        let response = match agent
-            .post(&url)
-            .set("Content-Type", "application/json")
-            .send_json(body.clone())
-        {
-            Ok(r) => r,
-            Err(ureq::Error::Transport(t)) => {
-                last_transport_error = Some(t.to_string());
-                continue;
-            }
-            Err(e) => return Err(format!("Failed to get model info: {}", e)),
-        };
-
-        return response
-            .into_json::<serde_json::Value>()
-            .map_err(|e| format!("Failed to parse response: {}", e));
-    }
-
-    Err(format!(
-        "Failed to get model info: {}",
-        last_transport_error.unwrap_or_else(|| "unable to reach Ollama endpoint".to_string())
-    ))
-}
-
 /// Synchronous core of save_settings — used by both the async Tauri command
 /// and internal callers (e.g. tray menu handlers) that cannot await.
-fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), String> {
-    let diagnostics_enabled = settings.diagnostic_logging_enabled;
-    if diagnostics_enabled {
-        info!(
-            "[DIAG] save_settings_inner: enter (thread {:?})",
-            std::thread::current().id()
-        );
-    }
+pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), String> {
+    info!(
+        "[DIAG] save_settings_inner: enter (thread {:?})",
+        std::thread::current().id()
+    );
     let state = app.state::<AppState>();
-    if diagnostics_enabled {
-        info!("[DIAG] save_settings_inner: acquiring settings lock (read)");
-    }
+    info!("[DIAG] save_settings_inner: acquiring settings lock (read)");
     let (
         prev_mode,
         prev_device,
@@ -4525,9 +1445,7 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
             current.ai_fallback.provider.clone(),
         )
     };
-    if diagnostics_enabled {
-        info!("[DIAG] save_settings_inner: normalizing");
-    }
+    info!("[DIAG] save_settings_inner: normalizing");
     normalize_ai_fallback_fields(settings);
     normalize_continuous_dump_fields(settings);
     normalize_history_alias_fields(settings);
@@ -4544,9 +1462,7 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
     normalize_task_capture_settings(&mut settings.task_capture_settings);
     reconcile_assistant_transcribe_flag(settings);
 
-    if diagnostics_enabled {
-        info!("[DIAG] save_settings_inner: acquiring settings lock (write)");
-    }
+    info!("[DIAG] save_settings_inner: acquiring settings lock (write)");
     {
         let mut current = state
             .settings
@@ -4555,9 +1471,7 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         *current = settings.clone();
     }
     crate::state::sync_diagnostic_logging_enabled(settings);
-    if diagnostics_enabled {
-        info!("[DIAG] save_settings_inner: saving file");
-    }
+    info!("[DIAG] save_settings_inner: saving file");
     sync_model_dir_env(settings);
     save_settings_file(app, settings)?;
     schedule_piper_daemon_reconcile(
@@ -4607,18 +1521,14 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         }
     }
 
-    if diagnostics_enabled {
-        info!("[DIAG] save_settings_inner: hotkeys spawned, acquiring recorder lock");
-    }
+    info!("[DIAG] save_settings_inner: hotkeys spawned, acquiring recorder lock");
     if let Ok(recorder) = state.recorder.lock() {
         recorder.input_gain_db.store(
             (settings.mic_input_gain_db * 1000.0) as i64,
             Ordering::Relaxed,
         );
     }
-    if diagnostics_enabled {
-        info!("[DIAG] save_settings_inner: recorder lock released, checking mode change");
-    }
+    info!("[DIAG] save_settings_inner: recorder lock released, checking mode change");
 
     let mode_changed = prev_mode != settings.mode;
     let device_changed = prev_device != settings.input_device;
@@ -4655,16 +1565,13 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         prev_transcribe_output_device != settings.transcribe_output_device;
     if transcribe_enabled_changed {
         if !settings.transcribe_enabled {
-            crate::transcription::stop_transcribe_monitor_and_release_whisper(app, &state);
+            stop_transcribe_monitor_and_release_whisper(app, &state);
         } else {
             let _ = start_transcribe_monitor(app, &state, settings);
         }
     } else if transcribe_device_changed && settings.transcribe_enabled {
-        stop_transcribe_monitor(app, &state);
+        stop_transcribe_monitor_and_release_whisper(app, &state);
         let _ = start_transcribe_monitor(app, &state, settings);
-    }
-    if capture_enabled_changed && !settings.transcribe_enabled {
-        reconcile_whisper_runtime(app, &state, settings);
     }
 
     let local_backend_changed = !prev_local_backend_preference
@@ -4675,47 +1582,33 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
             "Whisper backend preference changed: '{}' -> '{}'",
             prev_local_backend_preference, settings.local_backend_preference
         );
-        if whisper_runtime_required(settings) {
-            if let Some(model_path) = crate::models::resolve_model_path(app, &settings.model) {
-                let port = state.whisper_server_port.load(Ordering::Relaxed);
-                if crate::whisper_server::ping_whisper_server(port) {
-                    if let Err(err) = crate::whisper_server::restart_whisper_server_if_running(
-                        app,
-                        &state,
-                        &model_path,
-                    ) {
-                        warn!(
-                            "Failed to restart whisper-server after backend switch: {}",
-                            err
-                        );
-                    }
-                } else if whisper_runtime_auto_warm_required(settings) {
-                    crate::whisper_server::schedule_whisper_server_warmup(
-                        app,
-                        state.inner(),
-                        &model_path,
-                        settings,
-                    );
-                }
-            } else {
+        if let Some(model_path) = crate::models::resolve_model_path(app, &settings.model) {
+            if let Err(err) =
+                crate::whisper_server::restart_whisper_server_if_running(app, &state, &model_path)
+            {
                 warn!(
-                    "Skipping immediate backend switch warmup: model '{}' could not be resolved.",
-                    settings.model
+                    "Failed to restart whisper-server after backend switch: {}",
+                    err
                 );
             }
+            crate::whisper_server::schedule_whisper_server_warmup(
+                app,
+                state.inner(),
+                &model_path,
+                settings,
+            );
         } else {
-            crate::whisper_server::kill_whisper_server(state.inner());
+            warn!(
+                "Skipping immediate backend switch warmup: model '{}' could not be resolved.",
+                settings.model
+            );
         }
     }
 
-    if diagnostics_enabled {
-        info!("[DIAG] save_settings_inner: applying overlay settings");
-    }
+    info!("[DIAG] save_settings_inner: applying overlay settings");
     let overlay_settings = build_overlay_settings(settings);
     let _ = overlay::apply_overlay_settings(app, &overlay_settings);
-    if diagnostics_enabled {
-        info!("[DIAG] save_settings_inner: overlay done");
-    }
+    info!("[DIAG] save_settings_inner: overlay done");
 
     if prev_ai_refinement_enabled && !settings.ai_fallback.enabled {
         crate::audio::force_reset_refinement_activity(app, "forced_reset");
@@ -4723,9 +1616,7 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         schedule_ai_refinement_reenable_bootstrap(app.clone());
     }
 
-    if diagnostics_enabled {
-        info!("[DIAG] save_settings_inner: acquiring recorder lock (2nd)");
-    }
+    info!("[DIAG] save_settings_inner: acquiring recorder lock (2nd)");
     let recorder = state
         .recorder
         .lock()
@@ -4734,9 +1625,7 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         let _ = emit_capture_idle_overlay(app, settings);
     }
     drop(recorder);
-    if diagnostics_enabled {
-        info!("[DIAG] save_settings_inner: recorder lock released, refreshing status");
-    }
+    info!("[DIAG] save_settings_inner: recorder lock released, refreshing status");
 
     // Fire startup-status refresh on a detached thread: resolve_model_path()
     // does blocking filesystem I/O (exists() checks, current_dir()) that can
@@ -4758,19 +1647,18 @@ fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), S
         });
     }
 
-    if diagnostics_enabled {
-        if diagnostics_enabled {
-            info!("[DIAG] save_settings_inner: emitting settings-changed");
-        }
-    }
+    info!("[DIAG] save_settings_inner: emitting settings-changed");
     let _ = app.emit("settings-changed", settings.clone());
     assistant_presence::reconcile_assistant_presence_window(app, settings);
-    let _ = emit_assistant_baseline_state(app, state.inner(), settings, "save_settings");
+    let _ = workflow_agent::emit_assistant_baseline_state(
+        app,
+        state.inner(),
+        settings,
+        "save_settings",
+    );
     let _ = app.emit("menu:update-mic", settings.capture_enabled);
     let _ = app.emit("menu:update-transcribe", settings.transcribe_enabled);
-    if diagnostics_enabled {
-        info!("[DIAG] save_settings_inner: done");
-    }
+    info!("[DIAG] save_settings_inner: done");
     Ok(())
 }
 
@@ -4784,33 +1672,94 @@ async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<(), Str
 }
 
 #[tauri::command]
-fn list_modules(state: State<'_, AppState>) -> Vec<crate::modules::ModuleDescriptor> {
+fn list_modules(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Vec<crate::modules::ModuleDescriptor> {
+    let installed_package_ids = scan_installed_module_ids_lossy(&app);
     let settings = state
         .settings
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    module_registry::modules_as_descriptors(&settings.module_settings)
+    module_registry::modules_as_descriptors_with_packages(
+        &settings.module_settings,
+        &installed_package_ids,
+    )
+}
+
+#[tauri::command]
+fn scan_module_packages(app: AppHandle) -> Result<module_package::ModulePackageScanReport, String> {
+    let modules_dir = crate::paths::resolve_modules_dir(&app);
+    module_package::scan_modules_dir(&modules_dir)
+}
+
+fn scan_installed_module_ids_lossy(app: &AppHandle) -> std::collections::HashSet<String> {
+    let modules_dir = crate::paths::resolve_modules_dir(app);
+    match module_package::scan_installed_module_ids(&modules_dir) {
+        Ok(module_ids) => module_ids,
+        Err(error) => {
+            warn!("Failed to scan installed module packages: {}", error);
+            std::collections::HashSet::new()
+        }
+    }
+}
+
+fn bundled_module_package_source(app: &AppHandle, module_id: &str) -> Option<PathBuf> {
+    let module_id = canonicalize_module_id(module_id);
+    let mut candidates = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("module-packages").join(module_id));
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("module-packages")
+            .join(module_id),
+    );
+
+    candidates.into_iter().find(|candidate| candidate.is_dir())
+}
+
+#[tauri::command]
+fn install_bundled_module_package(
+    app: AppHandle,
+    module_id: String,
+) -> Result<module_package::ModulePackageInstallResult, String> {
+    let module_id = canonicalize_module_id(&module_id).to_string();
+    let manifest = module_registry::find_manifest(&module_id)
+        .ok_or_else(|| format!("Unknown module id '{}'.", module_id))?;
+    if !manifest.bundled {
+        return Err(format!(
+            "Module '{}' is not bundled in this build.",
+            module_id
+        ));
+    }
+    let source_dir = bundled_module_package_source(&app, &module_id).ok_or_else(|| {
+        format!(
+            "Bundled module package '{}' was not found in app resources.",
+            module_id
+        )
+    })?;
+    let modules_dir = crate::paths::resolve_modules_dir(&app);
+    module_package::install_package_from_dir(&source_dir, &modules_dir)
 }
 
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
     capability_enabled(settings, RuntimeCapability::AiRefinement)
         && settings.ai_fallback.provider == "ollama"
         && settings.ai_fallback.execution_mode == "local_primary"
-        && is_local_ollama_endpoint(&settings.providers.ollama.endpoint)
 }
 
-fn check_ai_refinement_runtime_ready_once(
-    app: &AppHandle,
-    settings: &Settings,
-) -> Result<(), String> {
-    // Metadata-only readiness check — no inference here.
-    // Model warmup happens on first PTT press (concurrent with recording),
-    // not at app start where the GPU spike would be unexpected.
-    let _ = prepare_refinement(app, settings)?;
-    Ok(())
+fn warmup_ai_refinement_model_once(app: &AppHandle, settings: &Settings) -> Result<(), String> {
+    let setup = crate::ai_fallback::prepare_refinement(app, settings)?;
+    let warmup_text = "Warmup: local AI refinement runtime.";
+    setup
+        .provider
+        .refine_transcript(warmup_text, &setup.model, &setup.options, &setup.api_key)
+        .map(|_| ())
+        .map_err(|err| err.to_string())
 }
 
-fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
+pub(crate) fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
     crate::util::spawn_guarded("ai_refinement_reenable_bootstrap", move || {
         let initial_settings = {
             let state = app.state::<AppState>();
@@ -4825,9 +1774,9 @@ fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
             return;
         }
 
-        if let Err(error) = ensure_ollama_runtime_ready_for_refinement(&app, &initial_settings) {
+        if let Err(error) = tauri::async_runtime::block_on(start_ollama_runtime(app.clone())) {
             warn!(
-                "AI refinement runtime autostart failed after enable/bootstrap (non-fatal): {}",
+                "AI refinement re-enable autostart failed (continuing with raw fallback): {}",
                 error
             );
             return;
@@ -4858,10 +1807,10 @@ fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
             return;
         }
 
-        match check_ai_refinement_runtime_ready_once(&app, &latest_settings) {
-            Ok(()) => info!("AI refinement runtime ready after module re-enable"),
+        match warmup_ai_refinement_model_once(&app, &latest_settings) {
+            Ok(()) => info!("AI refinement warmup completed after module re-enable"),
             Err(error) => warn!(
-                "AI refinement readiness check failed after module re-enable (non-fatal): {}",
+                "AI refinement warmup failed after module re-enable (non-fatal): {}",
                 error
             ),
         }
@@ -4884,7 +1833,7 @@ fn piper_daemon_lifecycle_action(
     }
 }
 
-fn schedule_piper_daemon_reconcile(
+pub(crate) fn schedule_piper_daemon_reconcile(
     app: AppHandle,
     voice_settings: crate::modules::VoiceOutputSettings,
     trigger: &'static str,
@@ -4925,102 +1874,12 @@ fn enable_module(
     grant_permissions: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
     guarded_command!("enable_module", {
-        let module_id = canonicalize_module_id(module_id.trim()).to_string();
-        if module_id.is_empty() {
-            return Err("Module id cannot be empty.".to_string());
-        }
-
-        let grants = grant_permissions.unwrap_or_default();
-        let (result, snapshot, descriptors, prev_transcribe_enabled) = {
-            let mut settings = state
-                .settings
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let prev_transcribe_enabled = settings.transcribe_enabled;
-            let result =
-                module_lifecycle::enable_module(&mut settings.module_settings, &module_id, &grants);
-            if result.is_ok() {
-                if module_id == ASSISTANT_CORE_MODULE_ID {
-                    settings.workflow_agent.enabled = true;
-                    settings.assistant_presence_enabled = true;
-                    settings
-                        .module_settings
-                        .enabled_modules
-                        .insert(ASSISTANT_PRESENCE_MODULE_ID.to_string());
-                }
-                if module_id == ASSISTANT_PRESENCE_MODULE_ID {
-                    settings.assistant_presence_enabled = true;
-                }
-                if module_id == "input_vision" {
-                    settings.vision_input_settings.enabled = true;
-                }
-                if module_id == "output_voice_tts" {
-                    settings.voice_output_settings.enabled = true;
-                }
-                if module_id == AI_REFINEMENT_MODULE_ID {
-                    settings.ai_fallback.enabled = true;
-                    settings.postproc_llm_enabled = true;
-                }
-                if module_id == TASK_CAPTURE_MODULE_ID {}
-            }
-            normalize_module_settings(&mut settings.module_settings);
-            normalize_assistant_core_binding(&mut settings);
-            normalize_product_mode_field(&mut settings);
-            normalize_ai_refinement_module_binding(&mut settings);
-            normalize_gdd_module_settings(&mut settings.gdd_module_settings);
-            normalize_confluence_settings(&mut settings.confluence_settings);
-            normalize_workflow_agent_settings(&mut settings.workflow_agent);
-            normalize_assistant_presence_binding(&mut settings);
-            normalize_vision_input_settings(&mut settings.vision_input_settings);
-            normalize_voice_output_settings(&mut settings.voice_output_settings);
-            reconcile_assistant_transcribe_flag(&mut settings);
-            let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
-            (
-                result,
-                settings.clone(),
-                descriptors,
-                prev_transcribe_enabled,
-            )
-        };
-
-        save_settings_file(&app, &snapshot)?;
-        if result.is_ok() && module_id == "output_voice_tts" {
-            schedule_piper_daemon_reconcile(
-                app.clone(),
-                snapshot.voice_output_settings.clone(),
-                "enable_module",
-            );
-        }
-        if result.is_ok() {
-            if snapshot.transcribe_enabled && !prev_transcribe_enabled {
-                let _ = start_transcribe_monitor(&app, &state, &snapshot);
-            } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
-                crate::transcription::stop_transcribe_monitor_and_release_whisper(&app, &state);
-            }
-        }
-        let _ = app.emit("settings-changed", snapshot.clone());
-        let _ = app.emit("menu:update-transcribe", snapshot.transcribe_enabled);
-        let _ = app.emit("module:state-changed", descriptors);
-        assistant_presence::reconcile_assistant_presence_window(&app, &snapshot);
-        let _ = emit_assistant_runtime_state_from_current_settings(
+        crate::modules::lifecycle_coordinator::enable_module_actions(
             &app,
             state.inner(),
-            "enable_module",
-        );
-        if result.is_ok() && module_id == AI_REFINEMENT_MODULE_ID {
-            schedule_ai_refinement_reenable_bootstrap(app.clone());
-        }
-
-        match result {
-            Ok(lifecycle) => Ok(serde_json::json!(lifecycle)),
-            Err(error) => {
-                let _ = app.emit(
-                    "module:error",
-                    serde_json::json!({ "module_id": module_id, "error": error }),
-                );
-                Err(error)
-            }
-        }
+            module_id,
+            grant_permissions,
+        )
     })
 }
 
@@ -5031,125 +1890,30 @@ fn disable_module(
     module_id: String,
 ) -> Result<serde_json::Value, String> {
     guarded_command!("disable_module", {
-        let module_id = canonicalize_module_id(module_id.trim()).to_string();
-        if module_id.is_empty() {
-            return Err("Module id cannot be empty.".to_string());
-        }
-
-        let (result, snapshot, descriptors, prev_transcribe_enabled) = {
-            let mut settings = state
-                .settings
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let prev_transcribe_enabled = settings.transcribe_enabled;
-            let result =
-                module_lifecycle::disable_module(&mut settings.module_settings, &module_id);
-            if result.is_ok() {
-                if module_id == ASSISTANT_CORE_MODULE_ID {
-                    settings.workflow_agent.enabled = false;
-                }
-                if module_id == ASSISTANT_PRESENCE_MODULE_ID {
-                    settings.assistant_presence_enabled = false;
-                }
-                if module_id == "input_vision" {
-                    settings.vision_input_settings.enabled = false;
-                }
-                if module_id == "output_voice_tts" {
-                    settings.voice_output_settings.enabled = false;
-                }
-                if module_id == AI_REFINEMENT_MODULE_ID {
-                    settings.ai_fallback.enabled = false;
-                    settings.postproc_llm_enabled = false;
-                }
-                if module_id == TASK_CAPTURE_MODULE_ID {}
-            }
-            normalize_module_settings(&mut settings.module_settings);
-            normalize_assistant_core_binding(&mut settings);
-            normalize_product_mode_field(&mut settings);
-            normalize_ai_refinement_module_binding(&mut settings);
-            normalize_gdd_module_settings(&mut settings.gdd_module_settings);
-            normalize_confluence_settings(&mut settings.confluence_settings);
-            normalize_workflow_agent_settings(&mut settings.workflow_agent);
-            normalize_assistant_presence_binding(&mut settings);
-            normalize_vision_input_settings(&mut settings.vision_input_settings);
-            normalize_voice_output_settings(&mut settings.voice_output_settings);
-            reconcile_assistant_transcribe_flag(&mut settings);
-            let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
-            (
-                result,
-                settings.clone(),
-                descriptors,
-                prev_transcribe_enabled,
-            )
-        };
-
-        if result.is_ok() {
-            match module_id.as_str() {
-                "input_vision" => {
-                    let _ = stop_vision_stream_internal(&app, state.inner());
-                }
-                "output_voice_tts" => {
-                    let _ = stop_tts_internal(&app, state.inner());
-                    crate::multimodal_io::shutdown_piper_daemon(state.inner());
-                }
-                "ai_refinement" => {
-                    crate::audio::force_reset_refinement_activity(&app, "forced_reset");
-
-                    let provider = snapshot.ai_fallback.provider.clone();
-                    if provider == "ollama" {
-                        let app_clone = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let _ = stop_ollama_runtime(app_clone).await;
-                        });
-                    } else if provider == "lm_studio" {
-                        crate::util::spawn_guarded("lms_daemon_stop_module_disable", || {
-                            lms_daemon_command("stop");
-                        });
-                    }
-                }
-                _ => {}
-            }
-            if snapshot.transcribe_enabled && !prev_transcribe_enabled {
-                let _ = start_transcribe_monitor(&app, &state, &snapshot);
-            } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
-                crate::transcription::stop_transcribe_monitor_and_release_whisper(&app, &state);
-            }
-        }
-
-        save_settings_file(&app, &snapshot)?;
-        let _ = app.emit("settings-changed", snapshot.clone());
-        let _ = app.emit("menu:update-transcribe", snapshot.transcribe_enabled);
-        let _ = app.emit("module:state-changed", descriptors);
-        assistant_presence::reconcile_assistant_presence_window(&app, &snapshot);
-        let _ = emit_assistant_runtime_state_from_current_settings(
+        crate::modules::lifecycle_coordinator::disable_module_actions(
             &app,
             state.inner(),
-            "disable_module",
-        );
-
-        match result {
-            Ok(lifecycle) => Ok(serde_json::json!(lifecycle)),
-            Err(error) => {
-                let _ = app.emit(
-                    "module:error",
-                    serde_json::json!({ "module_id": module_id, "error": error }),
-                );
-                Err(error)
-            }
-        }
+            module_id,
+        )
     })
 }
 
 #[tauri::command]
 fn get_module_health(
+    app: AppHandle,
     state: State<'_, AppState>,
     module_id: Option<String>,
 ) -> Vec<crate::modules::ModuleHealthStatus> {
+    let installed_package_ids = scan_installed_module_ids_lossy(&app);
     let settings = state
         .settings
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    module_health::get_health(&settings.module_settings, module_id.as_deref())
+    module_health::get_health_with_packages(
+        &settings.module_settings,
+        module_id.as_deref(),
+        &installed_package_ids,
+    )
 }
 
 #[tauri::command]
@@ -5158,45 +1922,20 @@ fn check_module_updates(
     state: State<'_, AppState>,
     module_id: Option<String>,
 ) -> Vec<crate::modules::ModuleUpdateInfo> {
+    let installed_package_ids = scan_installed_module_ids_lossy(&app);
     let settings = state
         .settings
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let updates = module_health::check_updates(&settings.module_settings, module_id.as_deref());
+    let updates = module_health::check_updates_with_packages(
+        &settings.module_settings,
+        module_id.as_deref(),
+        &installed_package_ids,
+    );
     for update in &updates {
         let _ = app.emit("module:update-available", update);
     }
     updates
-}
-
-fn collect_partitioned_entries(history: &PartitionedHistory) -> Vec<HistoryEntry> {
-    let mut out = Vec::new();
-    for partition in history.list_partitions() {
-        if let Ok(key) = crate::history_partition::PartitionKey::parse(&partition.key) {
-            out.extend(history.load_partition(&key));
-        }
-    }
-    out
-}
-
-fn collect_all_transcript_entries(state: &AppState) -> Vec<HistoryEntry> {
-    let mut entries = Vec::new();
-    {
-        let history = state
-            .history
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        entries.extend(collect_partitioned_entries(&history));
-    }
-    {
-        let history = state
-            .history_transcribe
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        entries.extend(collect_partitioned_entries(&history));
-    }
-    entries.sort_by_key(|entry| entry.timestamp_ms);
-    entries
 }
 
 fn module_enabled(settings: &Settings, module_id: &str) -> bool {
@@ -5209,9 +1948,8 @@ fn module_enabled(settings: &Settings, module_id: &str) -> bool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RuntimeCapability {
+pub(crate) enum RuntimeCapability {
     AiRefinement,
-    #[allow(dead_code)]
     TaskCapture,
     WorkflowAgent,
     VisionInput,
@@ -5219,7 +1957,7 @@ enum RuntimeCapability {
 }
 
 impl RuntimeCapability {
-    fn module_id(self) -> &'static str {
+    pub(crate) fn module_id(self) -> &'static str {
         match self {
             Self::AiRefinement => AI_REFINEMENT_MODULE_ID,
             Self::TaskCapture => TASK_CAPTURE_MODULE_ID,
@@ -5270,11 +2008,11 @@ impl RuntimeCapability {
     }
 }
 
-fn capability_enabled(settings: &Settings, capability: RuntimeCapability) -> bool {
+pub(crate) fn capability_enabled(settings: &Settings, capability: RuntimeCapability) -> bool {
     module_enabled(settings, capability.module_id()) && capability.setting_enabled(settings)
 }
 
-fn require_capability_enabled(
+pub(crate) fn require_capability_enabled(
     settings: &Settings,
     capability: RuntimeCapability,
 ) -> Result<(), String> {
@@ -5287,460 +2025,9 @@ fn require_capability_enabled(
     Ok(())
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-struct AssistantCapabilitySnapshot {
-    product_mode: String,
-    assistant_mode: bool,
-    assistant_core_available: bool,
-    workflow_agent_available: bool,
-    tts_available: bool,
-    vision_available: bool,
-    degraded: bool,
-    hard_blocked: bool,
-    missing_capabilities: Vec<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-struct AssistantStateChangedEvent {
-    state: AssistantOrchestratorState,
-    previous_state: AssistantOrchestratorState,
-    reason: String,
-    transition_id: u64,
-    changed_at_ms: u64,
-    capability: AssistantCapabilitySnapshot,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-struct AssistantPlanReadyEvent {
-    state: AssistantOrchestratorState,
-    reason: String,
-    plan: crate::workflow_agent::AgentExecutionPlan,
-    capability: AssistantCapabilitySnapshot,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-struct AssistantIntentDetectedEvent {
-    state: AssistantOrchestratorState,
-    reason: String,
-    parse: crate::workflow_agent::AgentCommandParseResult,
-    capability: AssistantCapabilitySnapshot,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-struct AssistantAwaitingConfirmationEvent {
-    state: AssistantOrchestratorState,
-    reason: String,
-    plan: crate::workflow_agent::AgentExecutionPlan,
-    confirm_token: String,
-    confirm_timeout_sec: u16,
-    expires_at_ms: u64,
-    capability: AssistantCapabilitySnapshot,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-struct AssistantConfirmationExpiredEvent {
-    state: AssistantOrchestratorState,
-    reason: String,
-    expired_at_ms: u64,
-    capability: AssistantCapabilitySnapshot,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-struct AssistantActionResultEvent {
-    state: AssistantOrchestratorState,
-    reason: String,
-    result: crate::workflow_agent::AgentExecutionResult,
-    capability: AssistantCapabilitySnapshot,
-}
-
-#[derive(Debug)]
-enum PendingConfirmationError {
-    Missing,
-    Expired { expired_at_ms: u64 },
-    TokenMismatch,
-    PlanMismatch,
-}
-
-fn next_confirmation_token() -> String {
-    let seq = ASSISTANT_CONFIRM_TOKEN_SEQ.fetch_add(1, Ordering::Relaxed);
-    let code = (seq % 9_000) + 1_000;
-    format!("{code:04}")
-}
-
-fn normalize_confirmation_token(value: &str) -> String {
-    value
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .flat_map(|ch| ch.to_lowercase())
-        .collect()
-}
-
-fn plans_match_for_confirmation(
-    left: &crate::workflow_agent::AgentExecutionPlan,
-    right: &crate::workflow_agent::AgentExecutionPlan,
-) -> bool {
-    left.intent == right.intent
-        && left.session_id == right.session_id
-        && left.target_language == right.target_language
-        && left.publish == right.publish
-}
-
-fn register_pending_confirmation(
-    plan: &crate::workflow_agent::AgentExecutionPlan,
-    confirm_timeout_sec: u16,
-) -> (String, u64) {
-    let token = next_confirmation_token();
-    let expires_at_ms = crate::util::now_ms().saturating_add(confirm_timeout_sec as u64 * 1_000);
-    let mut pending = ASSISTANT_PENDING_CONFIRMATION
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *pending = Some(PendingAssistantConfirmation {
-        plan: plan.clone(),
-        confirm_token: token.clone(),
-        expires_at_ms,
-    });
-    (token, expires_at_ms)
-}
-
-fn clear_pending_confirmation() {
-    let mut pending = ASSISTANT_PENDING_CONFIRMATION
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *pending = None;
-}
-
-fn clear_pending_confirmation_for_plan(plan: &crate::workflow_agent::AgentExecutionPlan) {
-    let mut pending = ASSISTANT_PENDING_CONFIRMATION
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if pending
-        .as_ref()
-        .map(|entry| plans_match_for_confirmation(&entry.plan, plan))
-        .unwrap_or(false)
-    {
-        *pending = None;
-    }
-}
-
-fn consume_pending_confirmation(
-    plan: &crate::workflow_agent::AgentExecutionPlan,
-    token: &str,
-) -> Result<(), PendingConfirmationError> {
-    let now_ms = crate::util::now_ms();
-    let mut pending = ASSISTANT_PENDING_CONFIRMATION
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let Some(current) = pending.as_ref() else {
-        return Err(PendingConfirmationError::Missing);
-    };
-    if now_ms > current.expires_at_ms {
-        let expired_at_ms = current.expires_at_ms;
-        *pending = None;
-        return Err(PendingConfirmationError::Expired { expired_at_ms });
-    }
-    if !plans_match_for_confirmation(&current.plan, plan) {
-        return Err(PendingConfirmationError::PlanMismatch);
-    }
-    if normalize_confirmation_token(token)
-        != normalize_confirmation_token(current.confirm_token.as_str())
-    {
-        return Err(PendingConfirmationError::TokenMismatch);
-    }
-    *pending = None;
-    Ok(())
-}
-
-fn assistant_product_mode(settings: &Settings) -> &'static str {
-    if settings
-        .product_mode
-        .trim()
-        .eq_ignore_ascii_case("assistant")
-    {
-        "assistant"
-    } else {
-        "transcribe"
-    }
-}
-
-fn assistant_capability_snapshot(settings: &Settings) -> AssistantCapabilitySnapshot {
-    let assistant_mode = assistant_product_mode(settings) == "assistant";
-    let assistant_core_available = capability_enabled(settings, RuntimeCapability::WorkflowAgent);
-    let tts_available = capability_enabled(settings, RuntimeCapability::VoiceOutputTts);
-    let vision_available = capability_enabled(settings, RuntimeCapability::VisionInput);
-    let mut missing_capabilities: Vec<String> = Vec::new();
-    if !assistant_mode {
-        missing_capabilities.push("product_mode_assistant".to_string());
-    }
-    if !assistant_core_available {
-        missing_capabilities.push(ASSISTANT_CORE_MODULE_ID.to_string());
-    }
-    if !tts_available {
-        missing_capabilities.push("output_voice_tts".to_string());
-    }
-    if !vision_available {
-        missing_capabilities.push("input_vision".to_string());
-    }
-    AssistantCapabilitySnapshot {
-        product_mode: assistant_product_mode(settings).to_string(),
-        assistant_mode,
-        assistant_core_available,
-        workflow_agent_available: assistant_core_available,
-        tts_available,
-        vision_available,
-        degraded: assistant_mode
-            && assistant_core_available
-            && (!tts_available || !vision_available),
-        hard_blocked: !assistant_mode || !assistant_core_available,
-        missing_capabilities,
-    }
-}
-
-fn assistant_baseline_state(
-    capability: &AssistantCapabilitySnapshot,
-) -> (AssistantOrchestratorState, &'static str) {
-    if !capability.assistant_mode {
-        return (AssistantOrchestratorState::Idle, "product_mode_transcribe");
-    }
-    if !capability.assistant_core_available {
-        return (
-            AssistantOrchestratorState::Idle,
-            "assistant_core_unavailable",
-        );
-    }
-    if capability.degraded {
-        return (
-            AssistantOrchestratorState::Listening,
-            "assistant_degraded_capability",
-        );
-    }
-    (AssistantOrchestratorState::Listening, "assistant_ready")
-}
-
-fn transition_assistant_state_with_settings(
-    app: &AppHandle,
-    state: &AppState,
-    settings: &Settings,
-    next_state: AssistantOrchestratorState,
-    reason: impl Into<String>,
-) -> AssistantStateChangedEvent {
-    let reason = reason.into();
-    let capability = assistant_capability_snapshot(settings);
-    let now_ms = crate::util::now_ms();
-    let (previous_state, changed_at_ms, transition_id) = {
-        let mut tracker = state
-            .assistant_orchestrator
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous_state = tracker.state;
-        let has_changed = tracker.state != next_state || tracker.last_reason != reason;
-        if has_changed {
-            tracker.transition_id = tracker.transition_id.saturating_add(1);
-            tracker.changed_at_ms = now_ms;
-            tracker.state = next_state;
-            tracker.last_reason = reason.clone();
-        }
-        (
-            previous_state,
-            if has_changed {
-                tracker.changed_at_ms
-            } else if tracker.changed_at_ms == 0 {
-                now_ms
-            } else {
-                tracker.changed_at_ms
-            },
-            tracker.transition_id,
-        )
-    };
-
-    let payload = AssistantStateChangedEvent {
-        state: next_state,
-        previous_state,
-        reason,
-        transition_id,
-        changed_at_ms,
-        capability,
-    };
-    let _ = app.emit("assistant:state-changed", &payload);
-    payload
-}
-
-fn emit_assistant_baseline_state(
-    app: &AppHandle,
-    state: &AppState,
-    settings: &Settings,
-    trigger: &str,
-) -> AssistantStateChangedEvent {
-    let capability = assistant_capability_snapshot(settings);
-    let (baseline_state, baseline_reason) = assistant_baseline_state(&capability);
-    clear_pending_confirmation();
-    let reason = if trigger.trim().is_empty() {
-        baseline_reason.to_string()
-    } else {
-        format!("{}:{}", trigger.trim(), baseline_reason)
-    };
-    transition_assistant_state_with_settings(app, state, settings, baseline_state, reason)
-}
-
-fn emit_assistant_runtime_state_from_current_settings(
-    app: &AppHandle,
-    state: &AppState,
-    trigger: &str,
-) -> AssistantStateChangedEvent {
-    let settings_snapshot = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    emit_assistant_baseline_state(app, state, &settings_snapshot, trigger)
-}
-
-fn emit_assistant_plan_ready(
-    app: &AppHandle,
-    settings: &Settings,
-    plan: &crate::workflow_agent::AgentExecutionPlan,
-    reason: &str,
-) {
-    let capability = assistant_capability_snapshot(settings);
-    if !capability.assistant_mode {
-        return;
-    }
-    let payload = AssistantPlanReadyEvent {
-        state: AssistantOrchestratorState::AwaitingConfirm,
-        reason: reason.to_string(),
-        plan: plan.clone(),
-        capability,
-    };
-    let _ = app.emit("assistant:plan-ready", &payload);
-}
-
-fn emit_assistant_intent_detected(
-    app: &AppHandle,
-    settings: &Settings,
-    parse: &crate::workflow_agent::AgentCommandParseResult,
-    reason: &str,
-) {
-    let capability = assistant_capability_snapshot(settings);
-    if !capability.assistant_mode {
-        return;
-    }
-    let payload = AssistantIntentDetectedEvent {
-        state: AssistantOrchestratorState::Parsing,
-        reason: reason.to_string(),
-        parse: parse.clone(),
-        capability,
-    };
-    let _ = app.emit("assistant:intent-detected", &payload);
-}
-
-fn emit_assistant_awaiting_confirmation(
-    app: &AppHandle,
-    settings: &Settings,
-    plan: &crate::workflow_agent::AgentExecutionPlan,
-    reason: &str,
-) {
-    let capability = assistant_capability_snapshot(settings);
-    if !capability.assistant_mode {
-        return;
-    }
-    let confirm_timeout_sec = settings.workflow_agent.confirm_timeout_sec.clamp(10, 300);
-    let (confirm_token, expires_at_ms) = register_pending_confirmation(plan, confirm_timeout_sec);
-    let payload = AssistantAwaitingConfirmationEvent {
-        state: AssistantOrchestratorState::AwaitingConfirm,
-        reason: reason.to_string(),
-        plan: plan.clone(),
-        confirm_token,
-        confirm_timeout_sec,
-        expires_at_ms,
-        capability,
-    };
-    let _ = app.emit("assistant:awaiting-confirmation", &payload);
-}
-
-fn emit_assistant_confirmation_expired(
-    app: &AppHandle,
-    settings: &Settings,
-    reason: &str,
-    expired_at_ms: u64,
-) {
-    let capability = assistant_capability_snapshot(settings);
-    if !capability.assistant_mode {
-        return;
-    }
-    let payload = AssistantConfirmationExpiredEvent {
-        state: AssistantOrchestratorState::Recovering,
-        reason: reason.to_string(),
-        expired_at_ms,
-        capability,
-    };
-    let _ = app.emit("assistant:confirmation-expired", &payload);
-}
-
-fn expire_pending_confirmation_if_needed(
-    app: &AppHandle,
-    state: &AppState,
-    settings: &Settings,
-    trigger: &str,
-) -> bool {
-    let now_ms = crate::util::now_ms();
-    let expired_at_ms = {
-        let mut pending = ASSISTANT_PENDING_CONFIRMATION
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match pending.as_ref() {
-            Some(entry) if now_ms > entry.expires_at_ms => {
-                let expired_at_ms = entry.expires_at_ms;
-                *pending = None;
-                Some(expired_at_ms)
-            }
-            _ => None,
-        }
-    };
-    if let Some(expired_at_ms) = expired_at_ms {
-        emit_assistant_confirmation_expired(
-            app,
-            settings,
-            &format!("{}:timeout", trigger),
-            expired_at_ms,
-        );
-        let _ = emit_assistant_baseline_state(app, state, settings, trigger);
-        return true;
-    }
-    false
-}
-
-fn emit_assistant_action_result(
-    app: &AppHandle,
-    settings: &Settings,
-    state: AssistantOrchestratorState,
-    result: &crate::workflow_agent::AgentExecutionResult,
-    reason: &str,
-) {
-    let capability = assistant_capability_snapshot(settings);
-    if !capability.assistant_mode {
-        return;
-    }
-    let payload = AssistantActionResultEvent {
-        state,
-        reason: reason.to_string(),
-        result: result.clone(),
-        capability,
-    };
-    let _ = app.emit("assistant:action-result", &payload);
-}
-
 #[cfg(test)]
 mod runtime_capability_gate_tests {
-    use super::{
-        capability_enabled, require_capability_enabled, should_autostart_ai_refinement_runtime,
-        RuntimeCapability,
-    };
+    use super::{capability_enabled, require_capability_enabled, RuntimeCapability};
     use crate::state::Settings;
 
     fn settings_for_capability(
@@ -5847,3239 +2134,6 @@ mod runtime_capability_gate_tests {
                 .unwrap_err();
         assert_eq!(setting_error, "Voice output is disabled in settings.");
     }
-
-    #[test]
-    fn ollama_autostart_requires_enabled_local_ai_refinement() {
-        let mut settings = settings_for_capability(RuntimeCapability::AiRefinement, true, true);
-        settings.ai_fallback.provider = "ollama".to_string();
-        settings.ai_fallback.execution_mode = "local_primary".to_string();
-        settings.providers.ollama.endpoint = "http://127.0.0.1:11434".to_string();
-        assert!(should_autostart_ai_refinement_runtime(&settings));
-
-        settings.ai_fallback.enabled = false;
-        assert!(!should_autostart_ai_refinement_runtime(&settings));
-
-        settings.ai_fallback.enabled = true;
-        settings.providers.ollama.endpoint = "http://192.168.1.20:11434".to_string();
-        assert!(!should_autostart_ai_refinement_runtime(&settings));
-    }
-}
-
-#[cfg(test)]
-mod assistant_orchestrator_tests {
-    use super::{assistant_baseline_state, assistant_capability_snapshot, RuntimeCapability};
-    use crate::state::{AssistantOrchestratorState, Settings};
-
-    fn settings_for_assistant_mode(
-        product_mode: &str,
-        workflow_enabled: bool,
-        tts_enabled: bool,
-        vision_enabled: bool,
-    ) -> Settings {
-        let mut settings = Settings::default();
-        settings.product_mode = product_mode.to_string();
-
-        if workflow_enabled {
-            settings
-                .module_settings
-                .enabled_modules
-                .insert(RuntimeCapability::WorkflowAgent.module_id().to_string());
-            settings.workflow_agent.enabled = true;
-        }
-        if tts_enabled {
-            settings
-                .module_settings
-                .enabled_modules
-                .insert(RuntimeCapability::VoiceOutputTts.module_id().to_string());
-            settings.voice_output_settings.enabled = true;
-        }
-        if vision_enabled {
-            settings
-                .module_settings
-                .enabled_modules
-                .insert(RuntimeCapability::VisionInput.module_id().to_string());
-            settings.vision_input_settings.enabled = true;
-        }
-
-        settings
-    }
-
-    #[test]
-    fn assistant_baseline_is_idle_when_product_mode_is_transcribe() {
-        let settings = settings_for_assistant_mode("transcribe", true, true, true);
-        let capability = assistant_capability_snapshot(&settings);
-        assert!(!capability.assistant_mode);
-        assert!(capability.hard_blocked);
-        let (state, reason) = assistant_baseline_state(&capability);
-        assert_eq!(state, AssistantOrchestratorState::Idle);
-        assert_eq!(reason, "product_mode_transcribe");
-    }
-
-    #[test]
-    fn assistant_baseline_is_listening_with_degraded_capabilities() {
-        let settings = settings_for_assistant_mode("assistant", true, false, true);
-        let capability = assistant_capability_snapshot(&settings);
-        assert!(capability.assistant_mode);
-        assert!(capability.assistant_core_available);
-        assert!(capability.degraded);
-        assert!(!capability.hard_blocked);
-        assert!(capability
-            .missing_capabilities
-            .iter()
-            .any(|id| id == "output_voice_tts"));
-        let (state, reason) = assistant_baseline_state(&capability);
-        assert_eq!(state, AssistantOrchestratorState::Listening);
-        assert_eq!(reason, "assistant_degraded_capability");
-    }
-
-    #[test]
-    fn assistant_baseline_is_idle_when_workflow_agent_is_unavailable() {
-        let settings = settings_for_assistant_mode("assistant", false, true, true);
-        let capability = assistant_capability_snapshot(&settings);
-        assert!(capability.assistant_mode);
-        assert!(!capability.assistant_core_available);
-        assert!(capability.hard_blocked);
-        let (state, reason) = assistant_baseline_state(&capability);
-        assert_eq!(state, AssistantOrchestratorState::Idle);
-        assert_eq!(reason, "assistant_core_unavailable");
-    }
-}
-
-#[tauri::command]
-fn agent_list_supported_actions() -> Vec<String> {
-    vec![
-        "gdd_generate_publish".to_string(),
-        "session_recap".to_string(),
-        "plan_status".to_string(),
-        "confirm_or_cancel".to_string(),
-        "reminder_capture".to_string(),
-        "web_search".to_string(),
-        "open_module".to_string(),
-        "open_app".to_string(),
-    ]
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-struct AssistantExecuteDirectActionRequest {
-    intent: String,
-    command_text: String,
-}
-
-pub(crate) fn normalize_assistant_action_text(text: &str) -> String {
-    text.trim()
-        .to_lowercase()
-        .chars()
-        .map(|ch| {
-            if ch.is_alphanumeric() || ch.is_whitespace() {
-                ch
-            } else {
-                ' '
-            }
-        })
-        .collect::<String>()
-}
-
-fn open_external_target(target: &str) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", target])
-            .spawn()
-            .map_err(|err| format!("Failed to open target '{target}': {err}"))?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(target)
-            .spawn()
-            .map_err(|err| format!("Failed to open target '{target}': {err}"))?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(target)
-            .spawn()
-            .map_err(|err| format!("Failed to open target '{target}': {err}"))?;
-        return Ok(());
-    }
-}
-
-fn extract_web_search_query(command_text: &str) -> String {
-    let lower = normalize_assistant_action_text(command_text);
-    let stripped = lower
-        .replace("hey trispr", " ")
-        .replace("trispr agent", " ")
-        .replace("trispr", " ")
-        .replace("search for", " ")
-        .replace("look up", " ")
-        .replace("google", " ")
-        .replace("find online", " ")
-        .replace("search", " ");
-    let cleaned = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
-    if cleaned.is_empty() {
-        command_text.trim().to_string()
-    } else {
-        cleaned
-    }
-}
-
-fn resolve_module_target(command_text: &str) -> Option<(&'static str, &'static str)> {
-    let text = normalize_assistant_action_text(command_text);
-    if text.contains("gdd") || text.contains("game design") {
-        return Some(("gdd_flow", "GDD Flow"));
-    }
-    if text.contains("voice output") || text.contains("tts") {
-        return Some(("voice-output", "Voice Output"));
-    }
-    if text.contains("refinement") || text.contains("ai refinement") {
-        return Some(("ai-refinement", "AI Refinement"));
-    }
-    if text.contains("assistant debug")
-        || text.contains("assistant tab")
-        || text.contains("agent tab")
-    {
-        return Some(("agent", "Assistant Debug"));
-    }
-    if text.contains("settings") {
-        return Some(("settings", "Settings"));
-    }
-    if text.contains("module") {
-        return Some(("modules", "Modules"));
-    }
-    if text.contains("transcription") || text.contains("transcribe") {
-        return Some(("transcription", "Transcription"));
-    }
-    None
-}
-
-fn launch_named_app(command_text: &str) -> Result<&'static str, String> {
-    #[cfg(target_os = "windows")]
-    {
-        let text = normalize_assistant_action_text(command_text);
-        let launch =
-            |program: &str, args: &[&str], label: &'static str| -> Result<&'static str, String> {
-                std::process::Command::new(program)
-                    .args(args)
-                    .spawn()
-                    .map_err(|err| format!("Failed to launch {label}: {err}"))?;
-                Ok(label)
-            };
-
-        if text.contains("explorer") || text.contains("file explorer") || text.contains("files") {
-            return launch("explorer", &[], "File Explorer");
-        }
-        if text.contains("notepad") {
-            return launch("notepad.exe", &[], "Notepad");
-        }
-        if text.contains("calculator") || text.contains("calc") {
-            return launch("calc.exe", &[], "Calculator");
-        }
-        if text.contains("terminal") || text.contains("powershell") {
-            return launch("powershell.exe", &[], "Terminal");
-        }
-        if text.contains("cursor") {
-            return launch("cmd", &["/C", "start", "", "cursor"], "Cursor");
-        }
-        if text.contains("browser") || text.contains("chrome") || text.contains("edge") {
-            open_external_target("https://www.google.com")?;
-            return Ok("Default Browser");
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    let _ = command_text;
-
-    Err("No supported desktop app target was detected.".to_string())
-}
-
-#[tauri::command]
-fn assistant_execute_direct_action(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: AssistantExecuteDirectActionRequest,
-) -> Result<crate::workflow_agent::AgentExecutionResult, String> {
-    guarded_command!("assistant_execute_direct_action", {
-        let settings_snapshot = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
-            settings.clone()
-        };
-
-        let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
-        if assistant_mode {
-            let _ = transition_assistant_state_with_settings(
-                &app,
-                state.inner(),
-                &settings_snapshot,
-                AssistantOrchestratorState::Executing,
-                "assistant_execute_direct_action:start",
-            );
-        }
-
-        let result = match request.intent.trim() {
-            "reminder_capture" => {
-                if !crate::modules::task_capture::task_capture_enabled(&settings_snapshot) {
-                    tracing::info!("[task_capture] module disabled, rejecting intent");
-                    crate::workflow_agent::AgentExecutionResult {
-                        status: "failed".to_string(),
-                        message:
-                            "Task Capture module is disabled. Enable 'task_capture' in modules."
-                                .to_string(),
-                        draft: None,
-                        publish_result: None,
-                        queued_job: None,
-                        error: Some("module_disabled".to_string()),
-                    }
-                } else {
-                    let tc_settings = settings_snapshot.task_capture_settings.clone();
-                    tracing::info!("[task_capture] raw input: {:?}", request.command_text);
-
-                    let matched_route = crate::modules::task_capture::find_matching_route(
-                        &request.command_text,
-                        &tc_settings,
-                    );
-                    let route = match matched_route {
-                        Some(r) => {
-                            tracing::info!("[task_capture] matched route: {:?}", r.label);
-                            r.clone()
-                        }
-                        None => {
-                            tracing::info!(
-                                "[task_capture] no route matched, using first route as fallback"
-                            );
-                            tc_settings.routes.first().cloned().unwrap_or_default()
-                        }
-                    };
-
-                    let raw_task =
-                        crate::modules::task_capture::extract_task_text(&request.command_text);
-                    tracing::info!("[task_capture] extracted text: {:?}", raw_task);
-                    if raw_task.is_empty() {
-                        crate::workflow_agent::AgentExecutionResult {
-                            status: "failed".to_string(),
-                            message: "No reminder text was detected.".to_string(),
-                            draft: None,
-                            publish_result: None,
-                            queued_job: None,
-                            error: Some("reminder_text_missing".to_string()),
-                        }
-                    } else {
-                        let _ = app.emit(
-                            "agent:execution-progress",
-                            serde_json::json!({
-                                "intent": "reminder_capture",
-                                "stage": "enqueue",
-                                "message": format!("{}: Entry recognized", route.label),
-                                "text": raw_task.clone(),
-                            }),
-                        );
-
-                        let app_clone = app.clone();
-                        let settings_clone = settings_snapshot.clone();
-                        let queued_task = raw_task.clone();
-                        let route_clone = route.clone();
-                        let ai_enabled = tc_settings.ai_refinement_enabled
-                            && settings_snapshot.ai_fallback.enabled
-                            && settings_snapshot
-                                .module_settings
-                                .enabled_modules
-                                .contains(AI_REFINEMENT_MODULE_ID);
-                        let custom_prompt = tc_settings.refinement_prompt.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let refined_text = if ai_enabled {
-                                let _ = app_clone.emit(
-                                    "agent:execution-progress",
-                                    serde_json::json!({
-                                        "intent": "reminder_capture",
-                                        "stage": "refining",
-                                        "message": "Ollama is refining the task...",
-                                        "text": queued_task.clone(),
-                                    }),
-                                );
-                                let _ = update_overlay_refining_indicator(&app_clone, true);
-
-                                let app_for_refine = app_clone.clone();
-                                let settings_for_refine = settings_clone.clone();
-                                let raw_for_refine = queued_task.clone();
-                                let prompt_for_refine = custom_prompt.clone();
-                                match tauri::async_runtime::spawn_blocking(move || {
-                                    crate::modules::task_capture::refine_task_text(
-                                        &app_for_refine,
-                                        &settings_for_refine,
-                                        &raw_for_refine,
-                                        Some(&prompt_for_refine),
-                                    )
-                                })
-                                .await
-                                {
-                                    Ok(text) if !text.trim().is_empty() => {
-                                        tracing::info!(
-                                            "[task_capture] refined text: {:?}",
-                                            text.trim()
-                                        );
-                                        text.trim().to_string()
-                                    }
-                                    Ok(_) => {
-                                        tracing::warn!(
-                                            "[task_capture] refinement returned empty, using raw"
-                                        );
-                                        queued_task.clone()
-                                    }
-                                    Err(error) => {
-                                        tracing::warn!(
-                                            "[task_capture] refinement task join failed: {}",
-                                            error
-                                        );
-                                        queued_task.clone()
-                                    }
-                                }
-                            } else {
-                                tracing::info!(
-                                    "[task_capture] AI refinement disabled, using raw text"
-                                );
-                                queued_task.clone()
-                            };
-
-                            let _ = app_clone.emit(
-                                "agent:execution-progress",
-                                serde_json::json!({
-                                    "intent": "reminder_capture",
-                                    "stage": "posting",
-                                    "message": format!("Sending task to {}...", route_clone.label),
-                                    "text": refined_text.clone(),
-                                }),
-                            );
-
-                            tracing::info!("[task_capture] posting to: {}", route_clone.endpoint);
-                            let post_text = refined_text.clone();
-                            let post_endpoint = route_clone.endpoint.clone();
-                            let agenda_post_result =
-                                match tauri::async_runtime::spawn_blocking(move || {
-                                    crate::modules::task_capture::post_task_to_endpoint(
-                                        &post_text,
-                                        &post_endpoint,
-                                    )
-                                })
-                                .await
-                                {
-                                    Ok(result) => result,
-                                    Err(error) => Err(format!(
-                                        "Task capture request task join failed: {}",
-                                        error
-                                    )),
-                                };
-
-                            let _ = update_overlay_refining_indicator(&app_clone, false);
-                            tracing::info!("[task_capture] post result: {:?}", agenda_post_result);
-
-                            let (result, notification_payload) = match agenda_post_result {
-                                Ok(()) => (
-                                    crate::workflow_agent::AgentExecutionResult {
-                                        status: "completed".to_string(),
-                                        message: format!("{}: {}", route_clone.label, refined_text),
-                                        draft: None,
-                                        publish_result: None,
-                                        queued_job: None,
-                                        error: None,
-                                    },
-                                    serde_json::json!({
-                                        "ok": true,
-                                        "title": route_clone.label,
-                                        "message": format!("{}: {}", route_clone.label, refined_text),
-                                        "text": refined_text,
-                                    }),
-                                ),
-                                Err(error) => {
-                                    tracing::error!("[task_capture] post failed: {}", error);
-                                    (
-                                        crate::workflow_agent::AgentExecutionResult {
-                                            status: "failed".to_string(),
-                                            message: format!(
-                                                "{} error: {}",
-                                                route_clone.label, error
-                                            ),
-                                            draft: None,
-                                            publish_result: None,
-                                            queued_job: None,
-                                            error: Some(error.clone()),
-                                        },
-                                        serde_json::json!({
-                                            "ok": false,
-                                            "title": route_clone.label,
-                                            "message": format!("Error: {}", error),
-                                        }),
-                                    )
-                                }
-                            };
-
-                            let _ = app_clone.emit("agenda:notification", &notification_payload);
-                            if result.status == "failed" {
-                                let _ = app_clone.emit("agent:execution-failed", &result);
-                            } else {
-                                let _ = app_clone.emit("agent:execution-finished", &result);
-                            }
-
-                            if assistant_mode {
-                                let assistant_state = if result.status == "failed" {
-                                    AssistantOrchestratorState::Recovering
-                                } else {
-                                    AssistantOrchestratorState::Listening
-                                };
-                                emit_assistant_action_result(
-                                    &app_clone,
-                                    &settings_clone,
-                                    assistant_state,
-                                    &result,
-                                    "assistant_execute_direct_action:reminder_capture",
-                                );
-                                let state_handle = app_clone.state::<AppState>();
-                                let _ = emit_assistant_baseline_state(
-                                    &app_clone,
-                                    state_handle.inner(),
-                                    &settings_clone,
-                                    "assistant_execute_direct_action:reminder_capture_complete",
-                                );
-                            }
-
-                            let result_status = result.status.clone();
-                            let result_message = result.message.clone();
-                            let _ = app_clone.emit(
-                                "agent:execution-progress",
-                                serde_json::json!({
-                                    "intent": "reminder_capture",
-                                    "stage": "done",
-                                    "status": result_status,
-                                    "message": result_message,
-                                }),
-                            );
-                        });
-
-                        crate::workflow_agent::AgentExecutionResult {
-                            status: "queued".to_string(),
-                            message: format!("{}: Task wird verarbeitet…", route.label),
-                            draft: None,
-                            publish_result: None,
-                            queued_job: None,
-                            error: None,
-                        }
-                    }
-                }
-            }
-            "web_search" => {
-                if !settings_snapshot.workflow_agent.online_enabled {
-                    crate::workflow_agent::AgentExecutionResult {
-                        status: "failed".to_string(),
-                        message: "Web search is disabled in Offline mode.".to_string(),
-                        draft: None,
-                        publish_result: None,
-                        queued_job: None,
-                        error: Some("online_disabled".to_string()),
-                    }
-                } else {
-                    let query = extract_web_search_query(&request.command_text);
-                    let encoded: String =
-                        url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
-                    let target = format!("https://www.google.com/search?q={encoded}");
-                    open_external_target(&target)?;
-                    crate::workflow_agent::AgentExecutionResult {
-                        status: "completed".to_string(),
-                        message: format!("Opened web search for “{}”.", query.trim()),
-                        draft: None,
-                        publish_result: None,
-                        queued_job: None,
-                        error: None,
-                    }
-                }
-            }
-            "open_module" => match resolve_module_target(&request.command_text) {
-                Some((target, label)) => {
-                    show_main_window(&app);
-                    let _ = app.emit(
-                        "assistant:open-module",
-                        serde_json::json!({
-                            "target": target,
-                            "reason": "assistant_execute_direct_action",
-                        }),
-                    );
-                    crate::workflow_agent::AgentExecutionResult {
-                        status: "completed".to_string(),
-                        message: format!("Opened {}.", label),
-                        draft: None,
-                        publish_result: None,
-                        queued_job: None,
-                        error: None,
-                    }
-                }
-                None => crate::workflow_agent::AgentExecutionResult {
-                    status: "failed".to_string(),
-                    message: "No supported Trispr surface was detected in that request."
-                        .to_string(),
-                    draft: None,
-                    publish_result: None,
-                    queued_job: None,
-                    error: Some("module_target_missing".to_string()),
-                },
-            },
-            "open_app" => match launch_named_app(&request.command_text) {
-                Ok(label) => crate::workflow_agent::AgentExecutionResult {
-                    status: "completed".to_string(),
-                    message: format!("Opened {}.", label),
-                    draft: None,
-                    publish_result: None,
-                    queued_job: None,
-                    error: None,
-                },
-                Err(error) => crate::workflow_agent::AgentExecutionResult {
-                    status: "failed".to_string(),
-                    message: error.clone(),
-                    draft: None,
-                    publish_result: None,
-                    queued_job: None,
-                    error: Some(error),
-                },
-            },
-            _ => crate::workflow_agent::AgentExecutionResult {
-                status: "failed".to_string(),
-                message: "Unsupported direct assistant action.".to_string(),
-                draft: None,
-                publish_result: None,
-                queued_job: None,
-                error: Some("unsupported_direct_action".to_string()),
-            },
-        };
-
-        if assistant_mode {
-            let assistant_state = if result.status == "failed" {
-                AssistantOrchestratorState::Recovering
-            } else {
-                AssistantOrchestratorState::Listening
-            };
-            emit_assistant_action_result(
-                &app,
-                &settings_snapshot,
-                assistant_state,
-                &result,
-                "assistant_execute_direct_action",
-            );
-            let _ = emit_assistant_baseline_state(
-                &app,
-                state.inner(),
-                &settings_snapshot,
-                "assistant_execute_direct_action:complete",
-            );
-        }
-
-        Ok(result)
-    })
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-struct AgentComposeUnknownReplyRequest {
-    command_text: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-struct AgentComposeReplyResult {
-    text: String,
-    source: String,
-    reason_code: String,
-}
-
-fn merged_workflow_wakewords(settings: &crate::modules::WorkflowAgentSettings) -> Vec<String> {
-    let mut merged = settings.wakewords.clone();
-    merged.extend(settings.wakeword_aliases.clone());
-    merged
-}
-
-fn unknown_rule_reply(command_text: &str, online_enabled: bool) -> String {
-    let normalized = command_text.to_lowercase();
-    let english_hint = weather::weather_query_english_hint(&normalized);
-    let weather_like = weather::weather_query_like(&normalized);
-    if weather_like {
-        if online_enabled {
-            return weather::online_weather_unavailable_reply(command_text);
-        }
-        if english_hint {
-            return "I do not have live weather access in local mode. I can still help with plan status, session recaps, or GDD drafts from your transcripts.".to_string();
-        }
-        return "Ich habe lokal keinen Live-Wetterzugriff. Ich kann dir aber einen Plan, Recap oder GDD-Draft aus deinen Transkripten erstellen.".to_string();
-    }
-    if english_hint {
-        return "I can currently handle GDD drafts, session recaps, and plan status from your local transcripts. Please rephrase your request within that scope.".to_string();
-    }
-    "Ich kann aktuell GDD-Drafts, Session-Recaps und Plan-Status aus deinen lokalen Transkripten verarbeiten. Formuliere die Anfrage bitte in diesem Scope.".to_string()
-}
-
-pub(crate) fn ai_provider_is_local(provider: &str) -> bool {
-    matches!(provider, "ollama" | "lm_studio" | "oobabooga")
-}
-
-#[tauri::command]
-fn agent_compose_unknown_reply(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: AgentComposeUnknownReplyRequest,
-) -> Result<AgentComposeReplyResult, String> {
-    guarded_command!("agent_compose_unknown_reply", {
-        let settings_snapshot = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
-            settings.clone()
-        };
-
-        let command_text = request.command_text.trim();
-        if command_text.is_empty() {
-            return Ok(AgentComposeReplyResult {
-                text: unknown_rule_reply("", false),
-                source: "rule".to_string(),
-                reason_code: "empty_command".to_string(),
-            });
-        }
-
-        let workflow_cfg = &settings_snapshot.workflow_agent;
-        let online_enabled = workflow_cfg.online_enabled;
-        let weather_like = weather::weather_query_like(&command_text.to_lowercase());
-        if weather_like && online_enabled {
-            match weather::fetch_live_weather_reply(command_text) {
-                Ok(text) => {
-                    return Ok(AgentComposeReplyResult {
-                        text,
-                        source: "weather_api".to_string(),
-                        reason_code: "weather_api_success".to_string(),
-                    });
-                }
-                Err(error) => {
-                    warn!("weather_api_error: {}", error);
-                    return Ok(AgentComposeReplyResult {
-                        text: weather::online_weather_unavailable_reply(command_text),
-                        source: "rule".to_string(),
-                        reason_code: "weather_api_error".to_string(),
-                    });
-                }
-            }
-        }
-        if workflow_cfg.reply_mode != "hybrid_local_llm" {
-            return Ok(AgentComposeReplyResult {
-                text: unknown_rule_reply(command_text, online_enabled),
-                source: "rule".to_string(),
-                reason_code: "rule_only_mode".to_string(),
-            });
-        }
-
-        if !settings_snapshot.ai_fallback.enabled {
-            return Ok(AgentComposeReplyResult {
-                text: unknown_rule_reply(command_text, online_enabled),
-                source: "rule".to_string(),
-                reason_code: "ai_refinement_disabled".to_string(),
-            });
-        }
-
-        if !online_enabled && !ai_provider_is_local(&settings_snapshot.ai_fallback.provider) {
-            return Ok(AgentComposeReplyResult {
-                text: unknown_rule_reply(command_text, online_enabled),
-                source: "rule".to_string(),
-                reason_code: "non_local_provider_blocked".to_string(),
-            });
-        }
-
-        if let Err(error) = ensure_ollama_runtime_ready_for_refinement(&app, &settings_snapshot) {
-            return Ok(AgentComposeReplyResult {
-                text: unknown_rule_reply(command_text, online_enabled),
-                source: "rule".to_string(),
-                reason_code: format!("local_runtime_unavailable:{error}"),
-            });
-        }
-
-        let setup = match prepare_refinement(&app, &settings_snapshot) {
-            Ok(value) => value,
-            Err(error) => {
-                return Ok(AgentComposeReplyResult {
-                    text: unknown_rule_reply(command_text, online_enabled),
-                    source: "rule".to_string(),
-                    reason_code: format!("local_runtime_unavailable:{error}"),
-                });
-            }
-        };
-
-        let mut options = setup.options.clone();
-        options.max_tokens = options.max_tokens.clamp(128, 512);
-        options.custom_prompt = Some(if online_enabled {
-            "You are Trispr. Reply in the same language as the user. Keep answers concise and practical. Online models are allowed, but live web lookup tools may be unavailable. Never fabricate citations or claim verified live data unless explicit tool results are provided. Output only the reply.".to_string()
-        } else {
-            "You are Trispr, a local assistant. Reply in the same language as the user. Keep answers concise and practical. Never claim live internet access. If the request needs real-time external data, say this capability is unavailable locally and suggest a supported local action. Output only the reply."
-                .to_string()
-        });
-        options.enforce_language_guard = false;
-
-        let _activity_guard = crate::audio::start_refinement_activity_guard(
-            app.clone(),
-            setup.provider.id().to_string(),
-            setup.model.clone(),
-        );
-        match setup
-            .provider
-            .refine_transcript(command_text, &setup.model, &options, &setup.api_key)
-        {
-            Ok(reply) => {
-                let text = reply.text.trim();
-                if text.is_empty() {
-                    return Ok(AgentComposeReplyResult {
-                        text: unknown_rule_reply(command_text, online_enabled),
-                        source: "rule".to_string(),
-                        reason_code: "local_llm_empty".to_string(),
-                    });
-                }
-                Ok(AgentComposeReplyResult {
-                    text: text.to_string(),
-                    source: "local_llm".to_string(),
-                    reason_code: "local_llm_success".to_string(),
-                })
-            }
-            Err(error) => Ok(AgentComposeReplyResult {
-                text: unknown_rule_reply(command_text, online_enabled),
-                source: "rule".to_string(),
-                reason_code: format!("local_llm_error:{error}"),
-            }),
-        }
-    })
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-struct AgentCancelPendingConfirmationRequest {
-    reason: Option<String>,
-}
-
-#[tauri::command]
-fn agent_cancel_pending_confirmation(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: Option<AgentCancelPendingConfirmationRequest>,
-) -> Result<crate::workflow_agent::AgentExecutionResult, String> {
-    guarded_command!("agent_cancel_pending_confirmation", {
-        let settings_snapshot = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            settings.clone()
-        };
-        let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
-        let reason = request
-            .and_then(|value| value.reason)
-            .unwrap_or_else(|| "cancelled_by_user".to_string());
-        let reason_trimmed = reason.trim().to_string();
-        let pending = {
-            let mut guard = ASSISTANT_PENDING_CONFIRMATION
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            guard.take()
-        };
-
-        if pending.is_none() {
-            return Ok(crate::workflow_agent::AgentExecutionResult {
-                status: "cancelled".to_string(),
-                message: "No pending confirmation to cancel.".to_string(),
-                draft: None,
-                publish_result: None,
-                queued_job: None,
-                error: None,
-            });
-        }
-
-        let pending = pending.expect("checked is_some");
-        let result = crate::workflow_agent::AgentExecutionResult {
-            status: "cancelled".to_string(),
-            message: "Pending confirmation cancelled.".to_string(),
-            draft: None,
-            publish_result: None,
-            queued_job: None,
-            error: None,
-        };
-
-        if assistant_mode {
-            if reason_trimmed.eq_ignore_ascii_case("timeout") {
-                emit_assistant_confirmation_expired(
-                    &app,
-                    &settings_snapshot,
-                    "agent_cancel_pending_confirmation:timeout",
-                    pending.expires_at_ms,
-                );
-            } else {
-                emit_assistant_action_result(
-                    &app,
-                    &settings_snapshot,
-                    AssistantOrchestratorState::Recovering,
-                    &result,
-                    "agent_cancel_pending_confirmation",
-                );
-            }
-            let _ = emit_assistant_baseline_state(
-                &app,
-                state.inner(),
-                &settings_snapshot,
-                "agent_cancel_pending_confirmation",
-            );
-        }
-
-        Ok(result)
-    })
-}
-
-#[tauri::command]
-fn agent_parse_command(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: crate::workflow_agent::AgentParseCommandRequest,
-) -> Result<crate::workflow_agent::AgentCommandParseResult, String> {
-    guarded_command!("agent_parse_command", {
-        let settings_snapshot = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
-            settings.clone()
-        };
-        let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
-        if assistant_mode {
-            let _ = expire_pending_confirmation_if_needed(
-                &app,
-                state.inner(),
-                &settings_snapshot,
-                "agent_parse_command",
-            );
-        }
-        if assistant_mode {
-            let _ = transition_assistant_state_with_settings(
-                &app,
-                state.inner(),
-                &settings_snapshot,
-                AssistantOrchestratorState::Parsing,
-                "agent_parse_command:start",
-            );
-        }
-        let workflow_settings = settings_snapshot.workflow_agent.clone();
-        let intent_keywords = workflow_settings
-            .intent_keywords
-            .get("gdd_generate_publish")
-            .cloned()
-            .unwrap_or_default();
-        let wakewords = merged_workflow_wakewords(&workflow_settings);
-        let parsed = crate::workflow_agent::parse_command(&request, &wakewords, &intent_keywords);
-        if parsed.detected || parsed.wakeword_matched {
-            let _ = app.emit("agent:command-detected", &parsed);
-            if assistant_mode {
-                emit_assistant_intent_detected(
-                    &app,
-                    &settings_snapshot,
-                    &parsed,
-                    if parsed.detected {
-                        "agent_parse_command:detected"
-                    } else {
-                        "agent_parse_command:wakeword_unknown"
-                    },
-                );
-            }
-        }
-        if assistant_mode {
-            let trigger = if parsed.detected {
-                "agent_parse_command:detected"
-            } else if parsed.wakeword_matched {
-                "agent_parse_command:wakeword_unknown"
-            } else {
-                "agent_parse_command:ignored"
-            };
-            let _ = emit_assistant_baseline_state(&app, state.inner(), &settings_snapshot, trigger);
-        }
-        Ok(parsed)
-    })
-}
-
-#[tauri::command]
-fn search_transcript_sessions(
-    state: State<'_, AppState>,
-    mut request: crate::workflow_agent::SearchTranscriptSessionsRequest,
-) -> Result<Vec<crate::workflow_agent::TranscriptSessionCandidate>, String> {
-    guarded_command!("search_transcript_sessions", {
-        let defaults = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
-            (
-                settings.workflow_agent.session_gap_minutes,
-                settings.workflow_agent.max_candidates,
-            )
-        };
-        if request.session_gap_minutes.unwrap_or(0) == 0 {
-            request.session_gap_minutes = Some(defaults.0);
-        }
-        if request.max_candidates.unwrap_or(0) == 0 {
-            request.max_candidates = Some(defaults.1);
-        }
-
-        let entries = collect_all_transcript_entries(&state);
-        let sessions = crate::workflow_agent::build_sessions(
-            &entries,
-            request.session_gap_minutes.unwrap_or(defaults.0),
-        );
-        Ok(crate::workflow_agent::score_sessions(&sessions, &request))
-    })
-}
-
-#[tauri::command]
-fn agent_build_execution_plan(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: crate::workflow_agent::AgentBuildExecutionPlanRequest,
-) -> Result<crate::workflow_agent::AgentExecutionPlan, String> {
-    guarded_command!("agent_build_execution_plan", {
-        let settings_snapshot = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
-            settings.clone()
-        };
-        let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
-        if assistant_mode {
-            let _ = expire_pending_confirmation_if_needed(
-                &app,
-                state.inner(),
-                &settings_snapshot,
-                "agent_build_execution_plan",
-            );
-        }
-        if request.intent.trim().is_empty() {
-            return Err("Intent is required.".to_string());
-        }
-        if request.session_id.trim().is_empty() {
-            return Err("Session id is required.".to_string());
-        }
-        const ALLOWED_LANGUAGES: &[&str] = &[
-            "source", "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "ko", "zh", "ar",
-            "tr", "hi",
-        ];
-        let lang = request.target_language.trim();
-        if !ALLOWED_LANGUAGES.contains(&lang) {
-            return Err(format!(
-                "Invalid target language '{}'. Allowed: {}",
-                lang,
-                ALLOWED_LANGUAGES.join(", ")
-            ));
-        }
-        if assistant_mode {
-            let _ = transition_assistant_state_with_settings(
-                &app,
-                state.inner(),
-                &settings_snapshot,
-                AssistantOrchestratorState::Planning,
-                "agent_build_execution_plan:start",
-            );
-        }
-        let plan = crate::workflow_agent::default_execution_plan(&request);
-        let _ = app.emit("agent:plan-ready", &plan);
-        if assistant_mode {
-            let _ = transition_assistant_state_with_settings(
-                &app,
-                state.inner(),
-                &settings_snapshot,
-                AssistantOrchestratorState::AwaitingConfirm,
-                "agent_build_execution_plan:ready",
-            );
-            emit_assistant_plan_ready(
-                &app,
-                &settings_snapshot,
-                &plan,
-                "agent_build_execution_plan:ready",
-            );
-            emit_assistant_awaiting_confirmation(
-                &app,
-                &settings_snapshot,
-                &plan,
-                "agent_build_execution_plan:ready",
-            );
-        }
-        Ok(plan)
-    })
-}
-
-#[tauri::command]
-fn agent_execute_gdd_plan(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: crate::workflow_agent::AgentExecuteGddPlanRequest,
-) -> Result<crate::workflow_agent::AgentExecutionResult, String> {
-    guarded_command!("agent_execute_gdd_plan", {
-        let plan = request.plan.clone();
-        let settings_snapshot = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            require_capability_enabled(&settings, RuntimeCapability::WorkflowAgent)?;
-            settings.clone()
-        };
-        let assistant_mode = assistant_product_mode(&settings_snapshot) == "assistant";
-        if assistant_mode {
-            let _ = expire_pending_confirmation_if_needed(
-                &app,
-                state.inner(),
-                &settings_snapshot,
-                "agent_execute_gdd_plan",
-            );
-        }
-        if assistant_mode {
-            let _ = transition_assistant_state_with_settings(
-                &app,
-                state.inner(),
-                &settings_snapshot,
-                AssistantOrchestratorState::Executing,
-                "agent_execute_gdd_plan:start",
-            );
-        }
-        let confirmation_token = request
-            .confirmation_token
-            .as_deref()
-            .map(str::trim)
-            .filter(|token| !token.is_empty())
-            .map(str::to_string);
-
-        if let Some(token) = confirmation_token.as_deref() {
-            match consume_pending_confirmation(&plan, token) {
-                Ok(()) => {}
-                Err(PendingConfirmationError::Missing) => {
-                    let result = crate::workflow_agent::AgentExecutionResult {
-                        status: "failed".to_string(),
-                        message: "No pending confirmation for this execution.".to_string(),
-                        draft: None,
-                        publish_result: None,
-                        queued_job: None,
-                        error: Some("confirmation_missing".to_string()),
-                    };
-                    if assistant_mode {
-                        emit_assistant_action_result(
-                            &app,
-                            &settings_snapshot,
-                            AssistantOrchestratorState::Recovering,
-                            &result,
-                            "agent_execute_gdd_plan:confirmation_missing",
-                        );
-                        let _ = emit_assistant_baseline_state(
-                            &app,
-                            state.inner(),
-                            &settings_snapshot,
-                            "agent_execute_gdd_plan:confirmation_missing",
-                        );
-                    }
-                    return Ok(result);
-                }
-                Err(PendingConfirmationError::Expired { expired_at_ms }) => {
-                    let result = crate::workflow_agent::AgentExecutionResult {
-                        status: "failed".to_string(),
-                        message: "Confirmation token expired. Build a new plan and confirm again."
-                            .to_string(),
-                        draft: None,
-                        publish_result: None,
-                        queued_job: None,
-                        error: Some("confirmation_expired".to_string()),
-                    };
-                    if assistant_mode {
-                        emit_assistant_confirmation_expired(
-                            &app,
-                            &settings_snapshot,
-                            "agent_execute_gdd_plan:confirmation_expired",
-                            expired_at_ms,
-                        );
-                        emit_assistant_action_result(
-                            &app,
-                            &settings_snapshot,
-                            AssistantOrchestratorState::Recovering,
-                            &result,
-                            "agent_execute_gdd_plan:confirmation_expired",
-                        );
-                        let _ = emit_assistant_baseline_state(
-                            &app,
-                            state.inner(),
-                            &settings_snapshot,
-                            "agent_execute_gdd_plan:confirmation_expired",
-                        );
-                    }
-                    return Ok(result);
-                }
-                Err(PendingConfirmationError::TokenMismatch) => {
-                    let result = crate::workflow_agent::AgentExecutionResult {
-                        status: "failed".to_string(),
-                        message: "Invalid confirmation token.".to_string(),
-                        draft: None,
-                        publish_result: None,
-                        queued_job: None,
-                        error: Some("confirmation_token_mismatch".to_string()),
-                    };
-                    if assistant_mode {
-                        emit_assistant_action_result(
-                            &app,
-                            &settings_snapshot,
-                            AssistantOrchestratorState::Recovering,
-                            &result,
-                            "agent_execute_gdd_plan:confirmation_token_mismatch",
-                        );
-                        let _ = emit_assistant_baseline_state(
-                            &app,
-                            state.inner(),
-                            &settings_snapshot,
-                            "agent_execute_gdd_plan:confirmation_token_mismatch",
-                        );
-                    }
-                    return Ok(result);
-                }
-                Err(PendingConfirmationError::PlanMismatch) => {
-                    let result = crate::workflow_agent::AgentExecutionResult {
-                        status: "failed".to_string(),
-                        message: "Confirmation token does not match the active plan.".to_string(),
-                        draft: None,
-                        publish_result: None,
-                        queued_job: None,
-                        error: Some("confirmation_plan_mismatch".to_string()),
-                    };
-                    if assistant_mode {
-                        emit_assistant_action_result(
-                            &app,
-                            &settings_snapshot,
-                            AssistantOrchestratorState::Recovering,
-                            &result,
-                            "agent_execute_gdd_plan:confirmation_plan_mismatch",
-                        );
-                        let _ = emit_assistant_baseline_state(
-                            &app,
-                            state.inner(),
-                            &settings_snapshot,
-                            "agent_execute_gdd_plan:confirmation_plan_mismatch",
-                        );
-                    }
-                    return Ok(result);
-                }
-            }
-        } else {
-            clear_pending_confirmation_for_plan(&plan);
-        }
-
-        let execution_result =
-            (|| -> Result<crate::workflow_agent::AgentExecutionResult, String> {
-                if plan.intent != "gdd_generate_publish" {
-                    let result = crate::workflow_agent::AgentExecutionResult {
-                        status: "failed".to_string(),
-                        message: "Unsupported agent intent.".to_string(),
-                        draft: None,
-                        publish_result: None,
-                        queued_job: None,
-                        error: Some(format!("Unsupported intent '{}'.", plan.intent)),
-                    };
-                    let _ = app.emit("agent:execution-failed", &result);
-                    return Ok(result);
-                }
-
-                let _ = app.emit(
-                    "agent:execution-progress",
-                    serde_json::json!({
-                        "session_id": plan.session_id,
-                        "stage": "load_session",
-                    }),
-                );
-
-                let workflow_gap_minutes = settings_snapshot.workflow_agent.session_gap_minutes;
-                let preset_clones = settings_snapshot.gdd_module_settings.preset_clones.clone();
-                let confluence_settings = settings_snapshot.confluence_settings.clone();
-                let one_click_threshold = settings_snapshot
-                    .gdd_module_settings
-                    .one_click_confidence_threshold;
-                let vision_bridge_enabled =
-                    capability_enabled(&settings_snapshot, RuntimeCapability::VisionInput);
-                let tts_bridge_enabled =
-                    capability_enabled(&settings_snapshot, RuntimeCapability::VoiceOutputTts)
-                        && settings_snapshot.workflow_agent.voice_feedback_enabled;
-                let maybe_agent_speak = |context: &str, message: &str| {
-                    if !tts_bridge_enabled || message.trim().is_empty() {
-                        return;
-                    }
-                    let request = crate::multimodal_io::TtsSpeakRequest {
-                        provider: String::new(),
-                        text: message.trim().to_string(),
-                        rate: None,
-                        volume: None,
-                        context: Some(context.to_string()),
-                    };
-                    if let Err(tts_error) = speak_tts_internal(&app, state.inner(), request) {
-                        info!("workflow_agent tts skipped: {}", tts_error);
-                    }
-                };
-                let entries = collect_all_transcript_entries(&state);
-                let sessions =
-                    crate::workflow_agent::build_sessions(&entries, workflow_gap_minutes);
-                let session = match sessions
-                    .iter()
-                    .find(|candidate| candidate.id == plan.session_id)
-                    .cloned()
-                {
-                    Some(session) => session,
-                    None => {
-                        let result = crate::workflow_agent::AgentExecutionResult {
-                            status: "failed".to_string(),
-                            message: format!("Session '{}' not found.", plan.session_id),
-                            draft: None,
-                            publish_result: None,
-                            queued_job: None,
-                            error: Some(format!("Session '{}' not found.", plan.session_id)),
-                        };
-                        let _ = app.emit("agent:execution-failed", &result);
-                        return Ok(result);
-                    }
-                };
-
-                let transcript = session
-                    .entries
-                    .iter()
-                    .map(|entry| entry.text.trim())
-                    .filter(|text| !text.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if transcript.trim().is_empty() {
-                    let result = crate::workflow_agent::AgentExecutionResult {
-                        status: "failed".to_string(),
-                        message: "Session has no transcript content.".to_string(),
-                        draft: None,
-                        publish_result: None,
-                        queued_job: None,
-                        error: Some("Session content was empty.".to_string()),
-                    };
-                    let _ = app.emit("agent:execution-failed", &result);
-                    return Ok(result);
-                }
-
-                let title = request
-                    .title
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| format!("GDD Session {}", session.start_ms));
-                let target_language = plan.target_language.trim().to_string();
-                let mut template_hints: Vec<String> = Vec::new();
-                if !target_language.is_empty() {
-                    template_hints.push(format!(
-                    "Target output language preference: {}. Keep source facts unchanged and avoid invention.",
-                    target_language
-                ));
-                }
-                if vision_bridge_enabled {
-                    let _ = app.emit(
-                        "agent:execution-progress",
-                        serde_json::json!({
-                            "session_id": plan.session_id,
-                            "stage": "vision_context",
-                        }),
-                    );
-                    match capture_vision_snapshot_internal(&app, state.inner()) {
-                        Ok(snapshot) => {
-                            let dimensions = match (snapshot.width, snapshot.height) {
-                                (Some(w), Some(h)) => format!("{}x{}", w, h),
-                                _ => "unknown".to_string(),
-                            };
-                            let scope = snapshot
-                                .source_scope
-                                .as_deref()
-                                .unwrap_or("unknown")
-                                .to_string();
-                            template_hints.push(format!(
-                            "Vision context available (scope={}, sources={}, frame={}, timestamp_ms={}). Treat this as supporting context only.",
-                            scope,
-                            snapshot.source_count,
-                            dimensions,
-                            snapshot.timestamp_ms
-                        ));
-                            let _ = app.emit(
-                                "agent:execution-progress",
-                                serde_json::json!({
-                                    "session_id": plan.session_id,
-                                    "stage": "vision_context_ready",
-                                    "source_scope": scope,
-                                    "source_count": snapshot.source_count,
-                                    "timestamp_ms": snapshot.timestamp_ms,
-                                }),
-                            );
-                        }
-                        Err(error) => {
-                            warn!("workflow_agent vision context unavailable: {}", error);
-                            let _ = app.emit(
-                                "agent:execution-progress",
-                                serde_json::json!({
-                                    "session_id": plan.session_id,
-                                    "stage": "vision_context_unavailable",
-                                    "error": error,
-                                }),
-                            );
-                        }
-                    }
-                }
-                let template_hint = if template_hints.is_empty() {
-                    None
-                } else {
-                    Some(template_hints.join(" "))
-                };
-
-                let _ = app.emit(
-                    "agent:execution-progress",
-                    serde_json::json!({
-                        "session_id": plan.session_id,
-                        "stage": "generate_draft",
-                        "target_language": target_language,
-                    }),
-                );
-
-                let draft_request = crate::gdd::GenerateGddDraftRequest {
-                    transcript,
-                    preset_id: request.preset_id.clone(),
-                    title: Some(title.clone()),
-                    max_chunk_chars: request.max_chunk_chars,
-                    template_hint,
-                    template_label: Some("workflow_agent".to_string()),
-                };
-                let draft = crate::gdd::generate_draft(&draft_request, &preset_clones);
-
-                let publish_after_draft = crate::workflow_agent::should_publish_after_draft(&plan);
-                if !publish_after_draft {
-                    let skipped_reason = if plan.publish {
-                        "Draft generated. Publish skipped because the execution lane had no publish step."
-                    } else {
-                        "Draft generated. Publish skipped by plan."
-                    };
-                    let result = crate::workflow_agent::AgentExecutionResult {
-                        status: "completed".to_string(),
-                        message: skipped_reason.to_string(),
-                        draft: Some(draft.clone()),
-                        publish_result: None,
-                        queued_job: None,
-                        error: None,
-                    };
-                    let _ = app.emit("agent:execution-finished", &result);
-                    maybe_agent_speak(
-                        "agent_reply",
-                        "Workflow Agent: Draft generated. Publish was skipped.",
-                    );
-                    return Ok(result);
-                }
-
-                let space_key = request
-                    .space_key
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string)
-                    .or_else(|| {
-                        let fallback = confluence_settings.default_space_key.trim();
-                        if fallback.is_empty() {
-                            None
-                        } else {
-                            Some(fallback.to_string())
-                        }
-                    })
-                    .ok_or_else(|| "No Confluence space key provided for publish.".to_string())?;
-                let parent_page_id = request
-                    .parent_page_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string)
-                    .or_else(|| {
-                        let fallback = confluence_settings.default_parent_page_id.trim();
-                        if fallback.is_empty() {
-                            None
-                        } else {
-                            Some(fallback.to_string())
-                        }
-                    });
-                let target_page_id = request
-                    .target_page_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string);
-
-                let _ = app.emit(
-                    "agent:execution-progress",
-                    serde_json::json!({
-                        "session_id": plan.session_id,
-                        "stage": "publish_or_queue",
-                        "space_key": space_key,
-                    }),
-                );
-
-                let storage_body = crate::gdd::render_storage::render_confluence_storage(&draft);
-                let publish_request = crate::gdd::confluence::ConfluencePublishRequest {
-                    title,
-                    storage_body,
-                    space_key: space_key.clone(),
-                    parent_page_id,
-                    target_page_id,
-                };
-
-                let publish_result =
-                    crate::gdd::confluence::publish(&app, &confluence_settings, &publish_request);
-                match publish_result {
-                    Ok(publish) => {
-                        {
-                            let mut settings = state
-                                .settings
-                                .write()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner());
-                            let route_key = crate::gdd::confluence::routing_key_for(
-                                &space_key,
-                                &publish_request.title,
-                            );
-                            settings
-                                .confluence_settings
-                                .routing_memory
-                                .insert(route_key, publish.page_id.clone());
-                            normalize_confluence_settings(&mut settings.confluence_settings);
-                            let _ = save_settings_file(&app, &settings);
-                            let _ = app.emit("settings-changed", settings.clone());
-                        }
-                        let result = crate::workflow_agent::AgentExecutionResult {
-                            status: "completed".to_string(),
-                            message: "Draft generated and published to Confluence.".to_string(),
-                            draft: Some(draft),
-                            publish_result: Some(publish),
-                            queued_job: None,
-                            error: None,
-                        };
-                        let _ = app.emit("agent:execution-finished", &result);
-                        maybe_agent_speak(
-                            "agent_reply",
-                            "Workflow Agent: Draft generated and published to Confluence.",
-                        );
-                        Ok(result)
-                    }
-                    Err(error) => {
-                        if crate::gdd::publish_queue::is_queueable_publish_error(&error) {
-                            let queue_request =
-                                crate::gdd::publish_queue::GddPublishOrQueueRequest {
-                                    draft: draft.clone(),
-                                    publish_request,
-                                    routing_confidence: Some(one_click_threshold),
-                                    routing_reasoning: Some("workflow_agent execution".to_string()),
-                                };
-                            let queued_job = crate::gdd::publish_queue::queue_publish_request(
-                                &app,
-                                &queue_request,
-                                &error,
-                            )?;
-                            let result = crate::workflow_agent::AgentExecutionResult {
-                                status: "queued".to_string(),
-                                message: "Confluence unavailable. Publish request queued locally."
-                                    .to_string(),
-                                draft: Some(draft),
-                                publish_result: None,
-                                queued_job: Some(queued_job),
-                                error: Some(error),
-                            };
-                            let _ = app.emit("agent:execution-finished", &result);
-                            maybe_agent_speak(
-                            "agent_event",
-                            "Workflow Agent: Confluence unavailable. Publish request was queued locally.",
-                        );
-                            Ok(result)
-                        } else {
-                            let result = crate::workflow_agent::AgentExecutionResult {
-                                status: "failed".to_string(),
-                                message: "Publish failed with non-queueable error.".to_string(),
-                                draft: Some(draft),
-                                publish_result: None,
-                                queued_job: None,
-                                error: Some(error.clone()),
-                            };
-                            let _ = app.emit("agent:execution-failed", &result);
-                            maybe_agent_speak(
-                                "agent_event",
-                                "Workflow Agent: Publish failed with a non-queueable error.",
-                            );
-                            Ok(result)
-                        }
-                    }
-                }
-            })();
-
-        match execution_result {
-            Ok(result) => {
-                if assistant_mode {
-                    let assistant_state = if result.status == "failed" {
-                        let _ = transition_assistant_state_with_settings(
-                            &app,
-                            state.inner(),
-                            &settings_snapshot,
-                            AssistantOrchestratorState::Recovering,
-                            "agent_execute_gdd_plan:result_failed",
-                        );
-                        AssistantOrchestratorState::Recovering
-                    } else {
-                        AssistantOrchestratorState::Executing
-                    };
-                    emit_assistant_action_result(
-                        &app,
-                        &settings_snapshot,
-                        assistant_state,
-                        &result,
-                        "agent_execute_gdd_plan:result",
-                    );
-                    let _ = emit_assistant_baseline_state(
-                        &app,
-                        state.inner(),
-                        &settings_snapshot,
-                        "agent_execute_gdd_plan:complete",
-                    );
-                }
-                Ok(result)
-            }
-            Err(error) => {
-                if assistant_mode {
-                    let _ = transition_assistant_state_with_settings(
-                        &app,
-                        state.inner(),
-                        &settings_snapshot,
-                        AssistantOrchestratorState::Recovering,
-                        "agent_execute_gdd_plan:error",
-                    );
-                    let synthetic_result = crate::workflow_agent::AgentExecutionResult {
-                        status: "failed".to_string(),
-                        message: "Workflow execution failed before completion.".to_string(),
-                        draft: None,
-                        publish_result: None,
-                        queued_job: None,
-                        error: Some(error.clone()),
-                    };
-                    emit_assistant_action_result(
-                        &app,
-                        &settings_snapshot,
-                        AssistantOrchestratorState::Recovering,
-                        &synthetic_result,
-                        "agent_execute_gdd_plan:error",
-                    );
-                    let _ = emit_assistant_baseline_state(
-                        &app,
-                        state.inner(),
-                        &settings_snapshot,
-                        "agent_execute_gdd_plan:error",
-                    );
-                }
-                Err(error)
-            }
-        }
-    })
-}
-
-#[tauri::command]
-fn list_screen_sources(
-    app: AppHandle,
-) -> Result<Vec<crate::multimodal_io::VisionSourceInfo>, String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "Main window not found.".to_string())?;
-    let monitors = window
-        .available_monitors()
-        .map_err(|error| format!("Failed to list monitors: {}", error))?;
-
-    let mut sources = Vec::new();
-    for (index, monitor) in monitors.iter().enumerate() {
-        let size = monitor.size();
-        let label = monitor
-            .name()
-            .map(|name| name.to_string())
-            .unwrap_or_else(|| format!("Monitor {}", index + 1));
-        sources.push(crate::multimodal_io::VisionSourceInfo {
-            id: format!("monitor_{}", index + 1),
-            label,
-            width: size.width,
-            height: size.height,
-        });
-    }
-    if sources.is_empty() {
-        if let Some(current) = window.current_monitor().map_err(|e| e.to_string())? {
-            let size = current.size();
-            sources.push(crate::multimodal_io::VisionSourceInfo {
-                id: "monitor_1".to_string(),
-                label: current
-                    .name()
-                    .map(|name| name.to_string())
-                    .unwrap_or_else(|| "Primary monitor".to_string()),
-                width: size.width,
-                height: size.height,
-            });
-        }
-    }
-    Ok(sources)
-}
-
-#[tauri::command]
-fn start_vision_stream(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<crate::multimodal_io::VisionStreamHealth, String> {
-    guarded_command!("start_vision_stream", {
-        let (fps, source_scope, max_width, jpeg_quality, ram_buffer_seconds) = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            require_capability_enabled(&settings, RuntimeCapability::VisionInput)?;
-            (
-                settings.vision_input_settings.fps,
-                settings.vision_input_settings.source_scope.clone(),
-                settings.vision_input_settings.max_width,
-                settings.vision_input_settings.jpeg_quality,
-                settings.vision_input_settings.ram_buffer_seconds,
-            )
-        };
-
-        let already_running = state.vision_stream_running.swap(true, Ordering::AcqRel);
-        if !already_running {
-            state.vision_stream_frame_seq.store(0, Ordering::Release);
-            state
-                .vision_stream_started_ms
-                .store(crate::util::now_ms(), Ordering::Release);
-            state
-                .vision_frame_buffer
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .clear();
-            let source_scope_for_thread = source_scope.clone();
-            let buffer_frame_cap =
-                (usize::from(fps.max(1)) * usize::from(ram_buffer_seconds.max(1))).max(1);
-            let app_c = app.clone();
-            crate::util::spawn_guarded("vision_frame_capture", move || loop {
-                let state = app_c.state::<AppState>();
-                if !state.vision_stream_running.load(Ordering::Acquire) {
-                    break;
-                }
-                match crate::multimodal_io::capture_vision_frame(
-                    &app_c,
-                    &source_scope_for_thread,
-                    max_width,
-                    jpeg_quality,
-                ) {
-                    Ok(mut frame) => {
-                        frame.seq =
-                            state.vision_stream_frame_seq.fetch_add(1, Ordering::AcqRel) + 1;
-                        let meta = state
-                            .vision_frame_buffer
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .push(frame, buffer_frame_cap);
-                        let _ = app_c.emit("vision:frame-meta", &meta);
-                    }
-                    Err(error) => {
-                        let _ = app_c.emit(
-                            "vision:stream-error",
-                            serde_json::json!({
-                                "timestamp_ms": crate::util::now_ms(),
-                                "source_scope": source_scope_for_thread,
-                                "error": error,
-                            }),
-                        );
-                    }
-                }
-                let frame_sleep_ms = (1000u64 / (fps.max(1) as u64)).clamp(50, 1000);
-                std::thread::sleep(Duration::from_millis(frame_sleep_ms));
-            });
-            let _ = app.emit(
-                "vision:stream-started",
-                serde_json::json!({
-                    "timestamp_ms": crate::util::now_ms(),
-                    "fps": fps,
-                }),
-            );
-        }
-
-        let buffer_stats = state
-            .vision_frame_buffer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .stats();
-        Ok(crate::multimodal_io::VisionStreamHealth {
-            running: true,
-            fps,
-            source_scope,
-            started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
-            frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
-            buffered_frames: buffer_stats.buffered_frames,
-            buffered_bytes: buffer_stats.buffered_bytes,
-            last_frame_timestamp_ms: buffer_stats.last_frame_timestamp_ms,
-            last_frame_width: buffer_stats.last_frame_width,
-            last_frame_height: buffer_stats.last_frame_height,
-        })
-    })
-}
-
-#[tauri::command]
-fn stop_vision_stream(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<crate::multimodal_io::VisionStreamHealth, String> {
-    guarded_command!("stop_vision_stream", {
-        Ok(stop_vision_stream_internal(&app, state.inner()))
-    })
-}
-
-fn stop_vision_stream_internal(
-    app: &AppHandle,
-    state: &AppState,
-) -> crate::multimodal_io::VisionStreamHealth {
-    state.vision_stream_running.store(false, Ordering::Release);
-    let (fps, source_scope) = {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        (
-            settings.vision_input_settings.fps,
-            settings.vision_input_settings.source_scope.clone(),
-        )
-    };
-    let buffer_stats = state
-        .vision_frame_buffer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .stats();
-    let health = crate::multimodal_io::VisionStreamHealth {
-        running: false,
-        fps,
-        source_scope,
-        started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
-        frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
-        buffered_frames: buffer_stats.buffered_frames,
-        buffered_bytes: buffer_stats.buffered_bytes,
-        last_frame_timestamp_ms: buffer_stats.last_frame_timestamp_ms,
-        last_frame_width: buffer_stats.last_frame_width,
-        last_frame_height: buffer_stats.last_frame_height,
-    };
-    state
-        .vision_frame_buffer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clear();
-    let _ = app.emit("vision:stream-stopped", &health);
-    health
-}
-
-#[tauri::command]
-fn get_vision_stream_health(
-    state: State<'_, AppState>,
-) -> crate::multimodal_io::VisionStreamHealth {
-    let (fps, source_scope) = {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        (
-            settings.vision_input_settings.fps,
-            settings.vision_input_settings.source_scope.clone(),
-        )
-    };
-    let buffer_stats = state
-        .vision_frame_buffer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .stats();
-    crate::multimodal_io::VisionStreamHealth {
-        running: state.vision_stream_running.load(Ordering::Acquire),
-        fps,
-        source_scope,
-        started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
-        frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
-        buffered_frames: buffer_stats.buffered_frames,
-        buffered_bytes: buffer_stats.buffered_bytes,
-        last_frame_timestamp_ms: buffer_stats.last_frame_timestamp_ms,
-        last_frame_width: buffer_stats.last_frame_width,
-        last_frame_height: buffer_stats.last_frame_height,
-    }
-}
-
-fn capture_vision_snapshot_internal(
-    app: &AppHandle,
-    state: &AppState,
-) -> Result<crate::multimodal_io::VisionSnapshotResult, String> {
-    let vision_settings = {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        require_capability_enabled(&settings, RuntimeCapability::VisionInput)?;
-        settings.vision_input_settings.clone()
-    };
-    let source_scope = vision_settings.source_scope.clone();
-    if let Some(frame) = state
-        .vision_frame_buffer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .latest()
-        .cloned()
-    {
-        return Ok(crate::multimodal_io::vision_snapshot_from_frame(
-            &frame,
-            "Snapshot returned from in-memory vision buffer.".to_string(),
-        ));
-    }
-
-    let mut frame = crate::multimodal_io::capture_vision_frame(
-        app,
-        &source_scope,
-        vision_settings.max_width,
-        vision_settings.jpeg_quality,
-    )?;
-    frame.seq = state.vision_stream_frame_seq.load(Ordering::Acquire);
-    Ok(crate::multimodal_io::vision_snapshot_from_frame(
-        &frame,
-        if source_scope == "active_window" {
-            "Snapshot captured from active monitor fallback for active_window scope.".to_string()
-        } else {
-            "Snapshot captured from in-memory vision path without disk persistence.".to_string()
-        },
-    ))
-}
-
-#[tauri::command]
-fn capture_vision_snapshot(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<crate::multimodal_io::VisionSnapshotResult, String> {
-    capture_vision_snapshot_internal(&app, state.inner())
-}
-
-#[tauri::command]
-fn list_tts_providers(state: State<'_, AppState>) -> Vec<crate::multimodal_io::TtsProviderInfo> {
-    let settings = state.settings.read().unwrap_or_else(|p| p.into_inner());
-    crate::multimodal_io::list_tts_providers(settings.voice_output_settings.qwen3_tts_enabled)
-}
-
-#[tauri::command]
-fn list_tts_voices(
-    state: State<'_, AppState>,
-    provider: Option<String>,
-) -> Vec<crate::multimodal_io::TtsVoiceInfo> {
-    let provider = provider.as_deref().unwrap_or("windows_native");
-    if provider == "local_custom" {
-        let model_dir = state
-            .settings
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .voice_output_settings
-            .piper_model_dir
-            .clone();
-        crate::multimodal_io::list_piper_voices(&model_dir)
-    } else {
-        crate::multimodal_io::list_tts_voices(provider)
-    }
-}
-
-#[tauri::command]
-fn list_piper_voice_catalog(
-    state: State<'_, AppState>,
-) -> Result<Vec<crate::multimodal_io::PiperVoiceCatalogEntry>, String> {
-    let model_dir = {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        require_capability_enabled(&settings, RuntimeCapability::VoiceOutputTts)?;
-        settings.voice_output_settings.piper_model_dir.clone()
-    };
-    Ok(crate::multimodal_io::list_piper_voice_catalog(&model_dir))
-}
-
-#[tauri::command]
-fn download_piper_voice_key(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    voice_key: String,
-) -> Result<String, String> {
-    {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        require_capability_enabled(&settings, RuntimeCapability::VoiceOutputTts)?;
-    }
-    let path =
-        crate::multimodal_io::download_piper_voice_with_progress(voice_key.trim(), |progress| {
-            let _ = app.emit("piper:voice-download-progress", progress);
-        })?;
-    Ok(path.to_string_lossy().to_string())
-}
-
-fn pinned_tts_language_hint(language_mode: &str, language_pinned: bool) -> Option<String> {
-    if !language_pinned {
-        return None;
-    }
-    let normalized = language_mode.trim().to_ascii_lowercase();
-    if normalized.is_empty() || normalized == "auto" {
-        return None;
-    }
-    if normalized.starts_with("de") {
-        return Some("de".to_string());
-    }
-    if normalized.starts_with("en") {
-        return Some("en".to_string());
-    }
-    Some(normalized.chars().take(2).collect())
-}
-
-fn infer_tts_language_hint(
-    text: &str,
-    language_mode: &str,
-    language_pinned: bool,
-) -> Option<String> {
-    if let Some(pinned) = pinned_tts_language_hint(language_mode, language_pinned) {
-        return Some(pinned);
-    }
-
-    let lowered = text.trim().to_lowercase();
-    if lowered.is_empty() {
-        return None;
-    }
-    if lowered.contains('ä')
-        || lowered.contains('ö')
-        || lowered.contains('ü')
-        || lowered.contains('ß')
-    {
-        return Some("de".to_string());
-    }
-
-    let mut de_score = 0_u32;
-    let mut en_score = 0_u32;
-    for token in lowered.split(|ch: char| !ch.is_alphabetic()) {
-        if token.is_empty() {
-            continue;
-        }
-        match token {
-            "der" | "die" | "das" | "und" | "nicht" | "ich" | "ist" | "mit" | "für" | "den"
-            | "dem" | "ein" | "eine" => de_score += 1,
-            "the" | "and" | "not" | "you" | "is" | "are" | "with" | "for" | "this" | "that"
-            | "a" | "an" | "to" | "of" => en_score += 1,
-            _ => {}
-        }
-    }
-
-    if de_score > en_score && de_score >= 2 {
-        return Some("de".to_string());
-    }
-    if en_score > de_score && en_score >= 2 {
-        return Some("en".to_string());
-    }
-    None
-}
-
-fn resolve_windows_voice_for_provider(
-    provider: &str,
-    manual_voice_id: &str,
-    auto_by_language_enabled: bool,
-    language_hint: Option<&str>,
-) -> Option<String> {
-    if provider != "windows_native" && provider != "windows_natural" {
-        return None;
-    }
-
-    if auto_by_language_enabled {
-        if let Some(language) = language_hint {
-            if let Some(auto_voice) =
-                crate::multimodal_io::select_windows_voice_for_language(provider, language)
-            {
-                return Some(auto_voice);
-            }
-        }
-    }
-
-    let manual = manual_voice_id.trim();
-    if manual.is_empty() {
-        None
-    } else {
-        Some(manual.to_string())
-    }
-}
-
-fn resolve_manual_windows_voice_id_for_lane(
-    lane_provider: &str,
-    default_provider: &str,
-    fallback_provider: &str,
-    default_voice_id: &str,
-    fallback_voice_id: &str,
-) -> String {
-    if lane_provider == fallback_provider && lane_provider != default_provider {
-        let fallback = fallback_voice_id.trim();
-        if !fallback.is_empty() {
-            return fallback.to_string();
-        }
-    }
-    default_voice_id.trim().to_string()
-}
-
-fn piper_effective_volume(global_volume: f32, piper_gain_db: f32) -> f32 {
-    let gain = 10_f32.powf(piper_gain_db.clamp(-24.0, 6.0) / 20.0);
-    (global_volume.clamp(0.0, 1.0) * gain).clamp(0.0, 1.0)
-}
-
-fn is_tts_output_device_unavailable_error(error: &str) -> bool {
-    error
-        .to_ascii_lowercase()
-        .contains("[tts_output_device_unavailable]")
-}
-
-#[allow(dead_code)]
-fn tts_playback_control_snapshot(
-    state: &AppState,
-) -> Option<std::sync::Arc<crate::multimodal_io::TtsPlaybackControl>> {
-    state
-        .tts_playback_control
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-}
-
-fn replace_tts_playback_control(
-    state: &AppState,
-    control: Option<std::sync::Arc<crate::multimodal_io::TtsPlaybackControl>>,
-) -> Option<std::sync::Arc<crate::multimodal_io::TtsPlaybackControl>> {
-    let mut guard = state
-        .tts_playback_control
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let previous = guard.take();
-    *guard = control;
-    previous
-}
-
-fn clear_tts_playback_control_if_session(state: &AppState, session_id: u64) -> bool {
-    let mut guard = state
-        .tts_playback_control
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    match guard.as_ref() {
-        Some(control) if control.session_id == session_id => {
-            *guard = None;
-            true
-        }
-        _ => false,
-    }
-}
-
-fn speak_tts_internal(
-    app: &AppHandle,
-    state: &AppState,
-    request: crate::multimodal_io::TtsSpeakRequest,
-) -> Result<crate::multimodal_io::TtsSpeakResult, String> {
-    let text = request.text.trim().to_string();
-    if text.is_empty() {
-        return Err("TTS text cannot be empty.".to_string());
-    }
-
-    let (voice_settings, language_mode, language_pinned) = {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        require_capability_enabled(&settings, RuntimeCapability::VoiceOutputTts)?;
-        (
-            settings.voice_output_settings.clone(),
-            settings.language_mode.clone(),
-            settings.language_pinned,
-        )
-    };
-
-    let context = request
-        .context
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("manual_user")
-        .to_lowercase();
-    if !crate::multimodal_io::is_tts_policy_allowed(&voice_settings.output_policy, &context) {
-        return Err(format!(
-            "Voice output policy '{}' blocks context '{}'.",
-            voice_settings.output_policy, context
-        ));
-    }
-
-    let preferred_provider = if request.provider.trim().is_empty() {
-        voice_settings.default_provider.clone()
-    } else {
-        request.provider.trim().to_string()
-    };
-    let fallback_provider = voice_settings.fallback_provider.clone();
-    let rate = request.rate.unwrap_or(voice_settings.rate).clamp(0.5, 2.0);
-    let volume = request
-        .volume
-        .unwrap_or(voice_settings.volume)
-        .clamp(0.0, 1.0);
-    let piper_gain_db = voice_settings.piper_gain_db.clamp(-24.0, 6.0);
-    let session_id = state
-        .tts_session_counter
-        .fetch_add(1, Ordering::AcqRel)
-        .saturating_add(1);
-    let playback_control =
-        std::sync::Arc::new(crate::multimodal_io::TtsPlaybackControl::new(session_id));
-    if let Some(previous) =
-        replace_tts_playback_control(state, Some(std::sync::Arc::clone(&playback_control)))
-    {
-        previous.cancel();
-    }
-
-    state.tts_speaking.store(true, Ordering::Release);
-    let _ = crate::overlay::update_overlay_tts_stop_visibility(app, true);
-    let _ = app.emit(
-        "tts:speech-started",
-        serde_json::json!({
-            "session_id": session_id,
-            "provider": preferred_provider.clone(),
-            "text_len": text.len(),
-            "context": context.clone(),
-        }),
-    );
-
-    let piper_binary_path = voice_settings.piper_binary_path.clone();
-    let piper_model_path = voice_settings.piper_model_path.clone();
-    let qwen3_runtime_config = resolve_qwen3_tts_runtime_config(&voice_settings);
-    let output_device_id = voice_settings.output_device.clone();
-    let default_provider_config = voice_settings.default_provider.clone();
-    let fallback_provider_config = voice_settings.fallback_provider.clone();
-    let windows_voice_id_default = voice_settings.voice_id_windows.clone();
-    let windows_voice_id_fallback = voice_settings.voice_id_windows_fallback.clone();
-    let auto_voice_by_language_enabled = voice_settings.auto_voice_by_detected_language;
-    let auto_voice_language_hint = if auto_voice_by_language_enabled {
-        infer_tts_language_hint(&text, &language_mode, language_pinned)
-    } else {
-        None
-    };
-
-    let preferred_provider_for_thread = preferred_provider.clone();
-    let fallback_provider_for_thread = fallback_provider.clone();
-    let context_for_thread = context.clone();
-    let playback_control_for_thread = std::sync::Arc::clone(&playback_control);
-    let app_c = app.clone();
-    crate::util::spawn_guarded("tts_playback", move || {
-        let run_chain = |selected_output_device: &str| {
-            if playback_control_for_thread.is_cancelled() {
-                return Err("[tts_playback_cancelled] TTS request cancelled.".to_string());
-            }
-            crate::multimodal_io::execute_tts_with_fallback(
-                &preferred_provider_for_thread,
-                &fallback_provider_for_thread,
-                Some(std::sync::Arc::clone(&playback_control_for_thread)),
-                |provider| match provider {
-                    "windows_native" => {
-                        let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
-                            "windows_native",
-                            &default_provider_config,
-                            &fallback_provider_config,
-                            &windows_voice_id_default,
-                            &windows_voice_id_fallback,
-                        );
-                        let resolved_voice = resolve_windows_voice_for_provider(
-                            "windows_native",
-                            &manual_voice_id,
-                            auto_voice_by_language_enabled,
-                            auto_voice_language_hint.as_deref(),
-                        );
-                        crate::multimodal_io::speak_windows_native(
-                            &text,
-                            rate,
-                            volume,
-                            selected_output_device,
-                            resolved_voice.as_deref(),
-                            Some(std::sync::Arc::clone(&playback_control_for_thread)),
-                        )
-                    }
-                    "windows_natural" => {
-                        let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
-                            "windows_natural",
-                            &default_provider_config,
-                            &fallback_provider_config,
-                            &windows_voice_id_default,
-                            &windows_voice_id_fallback,
-                        );
-                        let resolved_voice = resolve_windows_voice_for_provider(
-                            "windows_natural",
-                            &manual_voice_id,
-                            auto_voice_by_language_enabled,
-                            auto_voice_language_hint.as_deref(),
-                        );
-                        crate::multimodal_io::speak_windows_natural(
-                            &text,
-                            rate,
-                            volume,
-                            selected_output_device,
-                            resolved_voice.as_deref(),
-                            Some(std::sync::Arc::clone(&playback_control_for_thread)),
-                        )
-                    }
-                    "local_custom" => crate::multimodal_io::speak_piper(
-                        &app_c.state::<AppState>().piper_daemon,
-                        &text,
-                        &piper_binary_path,
-                        &piper_model_path,
-                        rate,
-                        piper_effective_volume(volume, piper_gain_db),
-                        selected_output_device,
-                        Some(std::sync::Arc::clone(&playback_control_for_thread)),
-                    ),
-                    "qwen3_tts" => speak_qwen3_tts(
-                        &text,
-                        rate,
-                        volume,
-                        selected_output_device,
-                        &qwen3_runtime_config,
-                        Some(std::sync::Arc::clone(&playback_control_for_thread)),
-                    ),
-                    _ => Err(format!("Unknown TTS provider '{}'.", provider)),
-                },
-            )
-        };
-
-        let mut recovered_output_device = false;
-        let result = match run_chain(&output_device_id) {
-            Ok(outcome) => Ok(outcome),
-            Err(error)
-                if output_device_id != "default"
-                    && is_tts_output_device_unavailable_error(&error) =>
-            {
-                tracing::warn!(
-                    "tts playback retrying with default output device after unavailable device '{}': {}",
-                    output_device_id,
-                    error
-                );
-                match run_chain("default") {
-                    Ok(outcome) => {
-                        recovered_output_device = true;
-                        Ok(outcome)
-                    }
-                    Err(retry_error) => Err(format!(
-                        "{error} Retry with default device failed: {retry_error}"
-                    )),
-                }
-            }
-            Err(error) => Err(error),
-        };
-
-        let state = app_c.state::<AppState>();
-        if playback_control_for_thread.is_cancelled() {
-            if clear_tts_playback_control_if_session(&state, session_id) {
-                state.tts_speaking.store(false, Ordering::Release);
-                let _ = crate::overlay::update_overlay_tts_stop_visibility(&app_c, false);
-            }
-            return;
-        }
-
-        let is_current_session = clear_tts_playback_control_if_session(&state, session_id);
-        if !is_current_session {
-            return;
-        }
-
-        state.tts_speaking.store(false, Ordering::Release);
-        let _ = crate::overlay::update_overlay_tts_stop_visibility(&app_c, false);
-        match result {
-            Ok(outcome) => {
-                if recovered_output_device {
-                    let mut snapshot = {
-                        let mut settings = state
-                            .settings
-                            .write()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        settings.voice_output_settings.output_device = "default".to_string();
-                        settings.clone()
-                    };
-                    crate::modules::normalize_voice_output_settings(
-                        &mut snapshot.voice_output_settings,
-                    );
-                    let _ = save_settings_file(&app_c, &snapshot);
-                    let _ = app_c.emit("settings-changed", snapshot);
-                }
-                let _ = app_c.emit(
-                    "tts:speech-finished",
-                    serde_json::json!({
-                        "session_id": session_id,
-                        "provider_used": outcome.provider_used,
-                        "preferred_provider": preferred_provider_for_thread,
-                        "fallback_provider": fallback_provider_for_thread,
-                        "used_fallback": outcome.used_fallback,
-                        "primary_error": outcome.primary_error,
-                        "output_device_recovered": recovered_output_device,
-                        "context": context_for_thread,
-                        "timestamp_ms": crate::util::now_ms(),
-                    }),
-                );
-            }
-            Err(error) => {
-                let _ = app_c.emit(
-                    "tts:speech-error",
-                    serde_json::json!({
-                        "session_id": session_id,
-                        "provider": preferred_provider_for_thread.clone(),
-                        "preferred_provider": preferred_provider_for_thread.clone(),
-                        "fallback_provider": fallback_provider_for_thread.clone(),
-                        "context": context_for_thread.clone(),
-                        "error": error,
-                        "timestamp_ms": crate::util::now_ms(),
-                    }),
-                );
-            }
-        }
-    });
-
-    let accepted_message = if preferred_provider == fallback_provider {
-        format!("TTS request accepted (provider: {}).", preferred_provider)
-    } else {
-        format!(
-            "TTS request accepted (fallback chain: {} -> {}).",
-            preferred_provider, fallback_provider
-        )
-    };
-
-    Ok(crate::multimodal_io::TtsSpeakResult {
-        provider_used: preferred_provider.clone(),
-        accepted: true,
-        message: accepted_message,
-        used_fallback: None,
-        preferred_provider: Some(preferred_provider),
-        fallback_provider: Some(fallback_provider),
-        primary_error: None,
-    })
-}
-
-#[tauri::command]
-fn speak_tts(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: crate::multimodal_io::TtsSpeakRequest,
-) -> Result<crate::multimodal_io::TtsSpeakResult, String> {
-    guarded_command!("speak_tts", {
-        speak_tts_internal(&app, state.inner(), request)
-    })
-}
-
-#[tauri::command]
-fn stop_tts(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
-    Ok(stop_tts_internal(&app, state.inner()))
-}
-
-fn stop_tts_internal(app: &AppHandle, state: &AppState) -> bool {
-    let active_control = {
-        let mut guard = state
-            .tts_playback_control
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.take()
-    };
-    if let Some(control) = active_control.as_ref() {
-        control.cancel();
-    }
-    let was_speaking = state.tts_speaking.swap(false, Ordering::AcqRel) || active_control.is_some();
-    if !was_speaking {
-        return false;
-    }
-    let _ = crate::overlay::update_overlay_tts_stop_visibility(app, false);
-    let _ = app.emit(
-        "tts:speech-finished",
-        serde_json::json!({
-            "session_id": active_control.as_ref().map(|control| control.session_id),
-            "stopped": was_speaking,
-            "timestamp_ms": crate::util::now_ms(),
-        }),
-    );
-    was_speaking
-}
-
-#[tauri::command]
-fn test_tts_provider(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    provider: Option<String>,
-) -> Result<crate::multimodal_io::TtsSpeakResult, String> {
-    guarded_command!("test_tts_provider", {
-        let preferred_provider = provider
-            .unwrap_or_else(|| "windows_native".to_string())
-            .trim()
-            .to_string();
-        let (voice_settings, language_mode, language_pinned) = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            require_capability_enabled(&settings, RuntimeCapability::VoiceOutputTts)?;
-            (
-                settings.voice_output_settings.clone(),
-                settings.language_mode.clone(),
-                settings.language_pinned,
-            )
-        };
-
-        let fallback_provider = voice_settings.fallback_provider.clone();
-        let rate = voice_settings.rate.clamp(0.5, 2.0);
-        let volume = voice_settings.volume.clamp(0.0, 1.0);
-        let piper_gain_db = voice_settings.piper_gain_db.clamp(-24.0, 6.0);
-        let piper_binary_path = voice_settings.piper_binary_path.clone();
-        let piper_model_path = voice_settings.piper_model_path.clone();
-        let qwen3_runtime_config = resolve_qwen3_tts_runtime_config(&voice_settings);
-        let output_device_id = voice_settings.output_device.clone();
-        let default_provider_config = voice_settings.default_provider.clone();
-        let fallback_provider_config = voice_settings.fallback_provider.clone();
-        let windows_voice_id_default = voice_settings.voice_id_windows.clone();
-        let windows_voice_id_fallback = voice_settings.voice_id_windows_fallback.clone();
-        let auto_voice_by_language_enabled = voice_settings.auto_voice_by_detected_language;
-        let sample_text = "Trisper Flow voice output test.";
-        let playback_control = std::sync::Arc::new(crate::multimodal_io::TtsPlaybackControl::new(
-            crate::util::now_ms(),
-        ));
-        let auto_voice_language_hint = if auto_voice_by_language_enabled {
-            infer_tts_language_hint(sample_text, &language_mode, language_pinned)
-        } else {
-            None
-        };
-
-        let run_chain = |selected_output_device: &str| {
-            crate::multimodal_io::execute_tts_with_fallback(
-                &preferred_provider,
-                &fallback_provider,
-                Some(std::sync::Arc::clone(&playback_control)),
-                |lane| match lane {
-                    "windows_native" => {
-                        let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
-                            "windows_native",
-                            &default_provider_config,
-                            &fallback_provider_config,
-                            &windows_voice_id_default,
-                            &windows_voice_id_fallback,
-                        );
-                        let resolved_voice = resolve_windows_voice_for_provider(
-                            "windows_native",
-                            &manual_voice_id,
-                            auto_voice_by_language_enabled,
-                            auto_voice_language_hint.as_deref(),
-                        );
-                        crate::multimodal_io::speak_windows_native(
-                            sample_text,
-                            rate,
-                            volume,
-                            selected_output_device,
-                            resolved_voice.as_deref(),
-                            None,
-                        )
-                    }
-                    "windows_natural" => {
-                        let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
-                            "windows_natural",
-                            &default_provider_config,
-                            &fallback_provider_config,
-                            &windows_voice_id_default,
-                            &windows_voice_id_fallback,
-                        );
-                        let resolved_voice = resolve_windows_voice_for_provider(
-                            "windows_natural",
-                            &manual_voice_id,
-                            auto_voice_by_language_enabled,
-                            auto_voice_language_hint.as_deref(),
-                        );
-                        crate::multimodal_io::speak_windows_natural(
-                            sample_text,
-                            rate,
-                            volume,
-                            selected_output_device,
-                            resolved_voice.as_deref(),
-                            None,
-                        )
-                    }
-                    "local_custom" => crate::multimodal_io::speak_piper(
-                        &state.piper_daemon,
-                        sample_text,
-                        &piper_binary_path,
-                        &piper_model_path,
-                        rate,
-                        piper_effective_volume(volume, piper_gain_db),
-                        selected_output_device,
-                        None,
-                    ),
-                    "qwen3_tts" => speak_qwen3_tts(
-                        sample_text,
-                        rate,
-                        volume,
-                        selected_output_device,
-                        &qwen3_runtime_config,
-                        None,
-                    ),
-                    _ => Err(format!("Unknown TTS provider '{}'.", lane)),
-                },
-            )
-        };
-
-        let mut recovered_output_device = false;
-        let outcome = match run_chain(&output_device_id) {
-            Ok(outcome) => outcome,
-            Err(error)
-                if output_device_id != "default"
-                    && is_tts_output_device_unavailable_error(&error) =>
-            {
-                tracing::warn!(
-                    "test_tts_provider retrying with default output device after unavailable '{}': {}",
-                    output_device_id,
-                    error
-                );
-                match run_chain("default") {
-                    Ok(outcome) => {
-                        recovered_output_device = true;
-                        {
-                            let mut settings_guard = state
-                                .settings
-                                .write()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner());
-                            settings_guard.voice_output_settings.output_device =
-                                "default".to_string();
-                        }
-                        let snapshot = state
-                            .settings
-                            .read()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner())
-                            .clone();
-                        let _ = save_settings_file(&app, &snapshot);
-                        let _ = app.emit("settings-changed", snapshot);
-                        outcome
-                    }
-                    Err(retry_error) => {
-                        let merged =
-                            format!("{error} Retry with default device failed: {retry_error}");
-                        tracing::error!(
-                            "test_tts_provider failed preferred='{}' fallback='{}' device='{}': {}",
-                            preferred_provider,
-                            fallback_provider,
-                            output_device_id,
-                            merged
-                        );
-                        let _ = app.emit(
-                            "tts:speech-error",
-                            serde_json::json!({
-                                "provider": preferred_provider.clone(),
-                                "preferred_provider": preferred_provider.clone(),
-                                "fallback_provider": fallback_provider.clone(),
-                                "context": "manual_test",
-                                "error": merged.clone(),
-                                "timestamp_ms": crate::util::now_ms(),
-                            }),
-                        );
-                        return Err(merged);
-                    }
-                }
-            }
-            Err(error) => {
-                tracing::error!(
-                    "test_tts_provider failed preferred='{}' fallback='{}' device='{}': {}",
-                    preferred_provider,
-                    fallback_provider,
-                    output_device_id,
-                    error
-                );
-                let _ = app.emit(
-                    "tts:speech-error",
-                    serde_json::json!({
-                        "provider": preferred_provider.clone(),
-                        "preferred_provider": preferred_provider.clone(),
-                        "fallback_provider": fallback_provider.clone(),
-                        "context": "manual_test",
-                        "error": error.clone(),
-                        "timestamp_ms": crate::util::now_ms(),
-                    }),
-                );
-                return Err(error);
-            }
-        };
-
-        let provider_used = outcome.provider_used.clone();
-        let primary_error = outcome.primary_error.clone();
-        let used_fallback = outcome.used_fallback;
-
-        if used_fallback {
-            let _ = app.emit(
-                "tts:speech-finished",
-                serde_json::json!({
-                    "provider_used": provider_used.clone(),
-                    "preferred_provider": preferred_provider.clone(),
-                    "fallback_provider": fallback_provider.clone(),
-                    "used_fallback": true,
-                    "primary_error": primary_error.clone(),
-                    "output_device_recovered": recovered_output_device,
-                    "context": "manual_test",
-                    "timestamp_ms": crate::util::now_ms(),
-                }),
-            );
-        }
-
-        Ok(crate::multimodal_io::TtsSpeakResult {
-            provider_used: provider_used.clone(),
-            accepted: true,
-            message: if used_fallback {
-                let fallback_msg = format!(
-                    "Fallback used: {} -> {}.",
-                    preferred_provider, provider_used
-                );
-                if recovered_output_device {
-                    format!("{fallback_msg} Gerät ungültig, auf Default zurückgesetzt.")
-                } else {
-                    fallback_msg
-                }
-            } else {
-                let base = format!("Provider '{}' responded.", provider_used);
-                if recovered_output_device {
-                    format!("{base} Gerät ungültig, auf Default zurückgesetzt.")
-                } else {
-                    base
-                }
-            },
-            used_fallback: Some(used_fallback),
-            preferred_provider: Some(preferred_provider),
-            fallback_provider: Some(fallback_provider),
-            primary_error,
-        })
-    })
-}
-
-#[tauri::command]
-fn list_gdd_presets(state: State<'_, AppState>) -> Vec<crate::gdd::GddPreset> {
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    crate::gdd::list_presets(&settings.gdd_module_settings.preset_clones)
-}
-
-#[tauri::command]
-fn save_gdd_preset_clone(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    mut preset: crate::gdd::GddPresetClone,
-) -> Result<Vec<crate::gdd::GddPreset>, String> {
-    guarded_command!("save_gdd_preset_clone", {
-        preset.id = preset.id.trim().to_lowercase();
-        if preset.id.is_empty() {
-            return Err("Preset clone id cannot be empty.".to_string());
-        }
-        if preset.section_order.is_empty() {
-            return Err("Preset clone requires at least one section.".to_string());
-        }
-        if preset.name.trim().is_empty() {
-            return Err("Preset clone name cannot be empty.".to_string());
-        }
-
-        let snapshot = {
-            let mut settings = state
-                .settings
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(existing) = settings
-                .gdd_module_settings
-                .preset_clones
-                .iter_mut()
-                .find(|candidate| candidate.id == preset.id)
-            {
-                *existing = preset;
-            } else {
-                settings.gdd_module_settings.preset_clones.push(preset);
-            }
-            normalize_gdd_module_settings(&mut settings.gdd_module_settings);
-            settings.clone()
-        };
-
-        save_settings_file(&app, &snapshot)?;
-        let _ = app.emit("settings-changed", snapshot.clone());
-
-        Ok(crate::gdd::list_presets(
-            &snapshot.gdd_module_settings.preset_clones,
-        ))
-    })
-}
-
-#[tauri::command]
-fn detect_gdd_preset(
-    state: State<'_, AppState>,
-    request: crate::gdd::DetectGddPresetRequest,
-) -> crate::gdd::GddRecognitionResult {
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let presets = crate::gdd::list_presets(&settings.gdd_module_settings.preset_clones);
-    crate::gdd::detect_preset(&request.transcript, &presets)
-}
-
-#[tauri::command]
-fn generate_gdd_draft(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: crate::gdd::GenerateGddDraftRequest,
-) -> Result<crate::gdd::GddDraft, String> {
-    guarded_command!("generate_gdd_draft", {
-        let _ = app.emit(
-            "gdd:generation-started",
-            serde_json::json!({ "preset": request.preset_id }),
-        );
-        let draft = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            crate::gdd::generate_draft(&request, &settings.gdd_module_settings.preset_clones)
-        };
-        let markdown_preview = crate::gdd::render_storage::render_markdown(&draft);
-        let confluence_storage = crate::gdd::render_storage::render_confluence_storage(&draft);
-        let _ = app.emit(
-            "gdd:generation-progress",
-            serde_json::json!({
-                "stage": "synthesized",
-                "chunk_count": draft.chunk_count,
-                "markdown_chars": markdown_preview.len(),
-                "storage_chars": confluence_storage.len(),
-            }),
-        );
-        let _ = app.emit("gdd:generation-finished", &draft);
-        Ok(draft)
-    })
-}
-
-#[tauri::command]
-fn validate_gdd_draft(draft: crate::gdd::GddDraft) -> crate::gdd::ValidateGddDraftResult {
-    crate::gdd::validate_draft(&draft)
-}
-
-#[tauri::command]
-fn render_gdd_for_confluence(draft: crate::gdd::GddDraft) -> String {
-    crate::gdd::render_storage::render_confluence_storage(&draft)
-}
-
-#[tauri::command]
-fn render_gdd_markdown(draft: crate::gdd::GddDraft) -> String {
-    crate::gdd::render_storage::render_markdown(&draft)
-}
-
-#[tauri::command]
-fn test_confluence_connection(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<crate::gdd::confluence::ConfluenceConnectionResult, String> {
-    guarded_command!("test_confluence_connection", {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        crate::gdd::confluence::test_connection(&app, &settings.confluence_settings)
-    })
-}
-
-#[tauri::command]
-fn confluence_oauth_start() -> Result<crate::gdd::confluence::ConfluenceOauthStartResult, String> {
-    guarded_command!("confluence_oauth_start", {
-        crate::gdd::confluence::oauth_start()
-    })
-}
-
-#[tauri::command]
-fn confluence_oauth_exchange(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    code: String,
-) -> Result<serde_json::Value, String> {
-    guarded_command!("confluence_oauth_exchange", {
-        let exchange_result = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            crate::gdd::confluence::oauth_exchange(&app, &settings.confluence_settings, &code)?
-        };
-
-        let snapshot = {
-            let mut settings = state
-                .settings
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            settings.confluence_settings.enabled = true;
-            settings.confluence_settings.auth_mode = "oauth".to_string();
-            settings.confluence_settings.site_base_url = exchange_result.selected_site_url.clone();
-            settings.confluence_settings.oauth_cloud_id = exchange_result.selected_cloud_id.clone();
-            normalize_confluence_settings(&mut settings.confluence_settings);
-            settings.clone()
-        };
-
-        save_settings_file(&app, &snapshot)?;
-        let _ = app.emit("settings-changed", snapshot);
-
-        serde_json::to_value(exchange_result).map_err(|error| error.to_string())
-    })
-}
-
-#[tauri::command]
-fn confluence_list_spaces(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<Vec<crate::gdd::confluence::ConfluenceSpace>, String> {
-    guarded_command!("confluence_list_spaces", {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        crate::gdd::confluence::list_spaces(&app, &settings.confluence_settings)
-    })
-}
-
-#[tauri::command]
-fn load_gdd_template_from_file(
-    file_path: String,
-) -> Result<crate::gdd::GddTemplateSourceResult, String> {
-    guarded_command!("load_gdd_template_from_file", {
-        crate::gdd::load_template_from_file(&file_path)
-    })
-}
-
-#[tauri::command]
-fn load_gdd_template_from_confluence(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    source_url: String,
-) -> Result<crate::gdd::GddTemplateSourceResult, String> {
-    guarded_command!("load_gdd_template_from_confluence", {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let page = crate::gdd::confluence::load_page_template_from_url(
-            &app,
-            &settings.confluence_settings,
-            &source_url,
-        )?;
-        Ok(crate::gdd::template_sources::from_confluence_page(
-            page.source_url,
-            page.page_title,
-            page.text,
-        ))
-    })
-}
-
-#[tauri::command]
-fn suggest_confluence_target(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: crate::gdd::confluence::ConfluenceTargetSuggestionRequest,
-) -> Result<crate::gdd::confluence::ConfluenceTargetSuggestion, String> {
-    guarded_command!("suggest_confluence_target", {
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        crate::gdd::confluence::suggest_target(&app, &settings.confluence_settings, &request)
-    })
-}
-
-#[tauri::command]
-fn publish_gdd_to_confluence(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: crate::gdd::confluence::ConfluencePublishRequest,
-) -> Result<crate::gdd::confluence::ConfluencePublishResult, String> {
-    guarded_command!("publish_gdd_to_confluence", {
-        let _ = app.emit(
-            "gdd:publish-started",
-            serde_json::json!({ "title": request.title }),
-        );
-
-        let settings_snapshot = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        let result =
-            crate::gdd::confluence::publish(&app, &settings_snapshot.confluence_settings, &request);
-
-        match result {
-            Ok(publish) => {
-                {
-                    let mut settings = state
-                        .settings
-                        .write()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                    let route_key =
-                        crate::gdd::confluence::routing_key_for(&request.space_key, &request.title);
-                    settings
-                        .confluence_settings
-                        .routing_memory
-                        .insert(route_key, publish.page_id.clone());
-                    normalize_confluence_settings(&mut settings.confluence_settings);
-                    let _ = save_settings_file(&app, &settings);
-                    let _ = app.emit("settings-changed", settings.clone());
-                }
-                let _ = app.emit("gdd:publish-finished", &publish);
-                Ok(publish)
-            }
-            Err(error) => {
-                let _ = app.emit(
-                    "gdd:publish-failed",
-                    serde_json::json!({ "title": request.title, "error": error }),
-                );
-                Err(error)
-            }
-        }
-    })
-}
-
-#[tauri::command]
-fn publish_or_queue_gdd_to_confluence(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: crate::gdd::publish_queue::GddPublishOrQueueRequest,
-) -> Result<crate::gdd::publish_queue::GddPublishAttemptResult, String> {
-    guarded_command!("publish_or_queue_gdd_to_confluence", {
-        let _ = app.emit(
-            "gdd:publish-started",
-            serde_json::json!({ "title": request.publish_request.title }),
-        );
-
-        let settings_snapshot = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        let publish_result = crate::gdd::confluence::publish(
-            &app,
-            &settings_snapshot.confluence_settings,
-            &request.publish_request,
-        );
-
-        match publish_result {
-            Ok(publish) => {
-                {
-                    let mut settings = state
-                        .settings
-                        .write()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                    let route_key = crate::gdd::confluence::routing_key_for(
-                        &request.publish_request.space_key,
-                        &request.publish_request.title,
-                    );
-                    settings
-                        .confluence_settings
-                        .routing_memory
-                        .insert(route_key, publish.page_id.clone());
-                    normalize_confluence_settings(&mut settings.confluence_settings);
-                    let _ = save_settings_file(&app, &settings);
-                    let _ = app.emit("settings-changed", settings.clone());
-                }
-
-                let _ = app.emit("gdd:publish-finished", &publish);
-                Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
-                    status: "published".to_string(),
-                    publish_result: Some(publish),
-                    queued_job: None,
-                    error: None,
-                })
-            }
-            Err(error) => {
-                if crate::gdd::publish_queue::is_queueable_publish_error(&error) {
-                    let queued_job =
-                        crate::gdd::publish_queue::queue_publish_request(&app, &request, &error)?;
-                    let _ = app.emit(
-                        "gdd:publish-queued",
-                        serde_json::json!({
-                            "job_id": queued_job.job_id,
-                            "title": queued_job.title,
-                            "error": error,
-                        }),
-                    );
-                    return Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
-                        status: "queued".to_string(),
-                        publish_result: None,
-                        queued_job: Some(queued_job),
-                        error: Some(error),
-                    });
-                }
-
-                let _ = app.emit(
-                    "gdd:publish-failed",
-                    serde_json::json!({
-                        "title": request.publish_request.title,
-                        "error": error,
-                    }),
-                );
-                Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
-                    status: "failed".to_string(),
-                    publish_result: None,
-                    queued_job: None,
-                    error: Some(error),
-                })
-            }
-        }
-    })
-}
-
-#[tauri::command]
-fn list_pending_gdd_publishes(
-    app: AppHandle,
-) -> Result<Vec<crate::gdd::publish_queue::GddPendingPublishJob>, String> {
-    guarded_command!("list_pending_gdd_publishes", {
-        crate::gdd::publish_queue::list_pending_jobs(&app)
-    })
-}
-
-#[tauri::command]
-fn retry_pending_gdd_publish(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    job_id: String,
-) -> Result<crate::gdd::publish_queue::GddPublishAttemptResult, String> {
-    guarded_command!("retry_pending_gdd_publish", {
-        let job_id = job_id.trim().to_string();
-        if job_id.is_empty() {
-            return Err("job_id is required.".to_string());
-        }
-        let mut job = crate::gdd::publish_queue::load_pending_job(&app, &job_id)?
-            .ok_or_else(|| format!("Pending publish job '{}' not found.", job_id))?;
-        let publish_request = crate::gdd::publish_queue::load_publish_request_for_job(&job)?;
-
-        let _ = app.emit(
-            "gdd:publish-started",
-            serde_json::json!({ "title": publish_request.title, "job_id": job.job_id }),
-        );
-
-        let settings_snapshot = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        let publish_result = crate::gdd::confluence::publish(
-            &app,
-            &settings_snapshot.confluence_settings,
-            &publish_request,
-        );
-
-        match publish_result {
-            Ok(publish) => {
-                let _ = crate::gdd::publish_queue::consume_pending_job(&app, &job.job_id)?;
-                {
-                    let mut settings = state
-                        .settings
-                        .write()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                    let route_key = crate::gdd::confluence::routing_key_for(
-                        &publish_request.space_key,
-                        &publish_request.title,
-                    );
-                    settings
-                        .confluence_settings
-                        .routing_memory
-                        .insert(route_key, publish.page_id.clone());
-                    normalize_confluence_settings(&mut settings.confluence_settings);
-                    let _ = save_settings_file(&app, &settings);
-                    let _ = app.emit("settings-changed", settings.clone());
-                }
-                let _ = app.emit("gdd:publish-finished", &publish);
-                Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
-                    status: "published".to_string(),
-                    publish_result: Some(publish),
-                    queued_job: None,
-                    error: None,
-                })
-            }
-            Err(error) => {
-                crate::gdd::publish_queue::mark_retry_failure(&mut job, &error);
-                crate::gdd::publish_queue::persist_pending_job(&app, &job)?;
-                let _ = app.emit(
-                    "gdd:publish-failed",
-                    serde_json::json!({
-                        "title": publish_request.title,
-                        "error": error,
-                        "job_id": job.job_id,
-                    }),
-                );
-                Ok(crate::gdd::publish_queue::GddPublishAttemptResult {
-                    status: if crate::gdd::publish_queue::is_queueable_publish_error(&error) {
-                        "queued".to_string()
-                    } else {
-                        "failed".to_string()
-                    },
-                    publish_result: None,
-                    queued_job: Some(job),
-                    error: Some(error),
-                })
-            }
-        }
-    })
-}
-
-#[tauri::command]
-fn delete_pending_gdd_publish(app: AppHandle, job_id: String) -> Result<bool, String> {
-    guarded_command!("delete_pending_gdd_publish", {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err("job_id is required.".to_string());
-        }
-        crate::gdd::publish_queue::delete_pending_job(&app, job_id)
-    })
-}
-
-#[tauri::command]
-fn save_confluence_secret(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    secret_id: String,
-    secret_value: String,
-) -> Result<serde_json::Value, String> {
-    guarded_command!("save_confluence_secret", {
-        let secret_id = secret_id.trim().to_lowercase();
-        confluence::keyring::store_secret(&app, &secret_id, &secret_value)?;
-
-        let snapshot = {
-            let mut settings = state
-                .settings
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            settings.confluence_settings.enabled = true;
-            settings.clone()
-        };
-        save_settings_file(&app, &snapshot)?;
-        let _ = app.emit("settings-changed", snapshot);
-
-        Ok(serde_json::json!({
-            "status": "success",
-            "secret_id": secret_id
-        }))
-    })
-}
-
-#[tauri::command]
-fn clear_confluence_secret(app: AppHandle, secret_id: String) -> Result<serde_json::Value, String> {
-    guarded_command!("clear_confluence_secret", {
-        let secret_id = secret_id.trim().to_lowercase();
-        confluence::keyring::clear_secret(&app, &secret_id)?;
-        Ok(serde_json::json!({
-            "status": "success",
-            "secret_id": secret_id
-        }))
-    })
 }
 
 #[tauri::command]
@@ -9183,178 +2237,6 @@ fn show_assistant_presence_window(
 }
 
 #[tauri::command]
-fn get_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
-    state
-        .history
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .active
-        .iter()
-        .cloned()
-        .collect()
-}
-
-#[tauri::command]
-fn get_transcribe_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
-    state
-        .history_transcribe
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .active
-        .iter()
-        .cloned()
-        .collect()
-}
-
-#[tauri::command]
-fn clear_active_transcript_history(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<u64, String> {
-    let mic_deleted = {
-        let mut history = state
-            .history
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let deleted = history.active.len() as u64;
-        history.active.clear();
-        history.flush_to_disk()?;
-        let updated: Vec<_> = history.active.iter().cloned().collect();
-        drop(history);
-        let _ = app.emit("history:updated", updated);
-        deleted
-    };
-
-    let system_deleted = {
-        let mut history = state
-            .history_transcribe
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let deleted = history.active.len() as u64;
-        history.active.clear();
-        history.flush_to_disk()?;
-        let updated: Vec<_> = history.active.iter().cloned().collect();
-        drop(history);
-        let _ = app.emit("transcribe:history-updated", updated);
-        deleted
-    };
-
-    Ok(mic_deleted + system_deleted)
-}
-
-#[tauri::command]
-fn delete_active_transcript_entry(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    entry_id: String,
-) -> Result<u64, String> {
-    let entry_id = entry_id.trim();
-    if entry_id.is_empty() {
-        return Ok(0);
-    }
-
-    let mic_deleted = {
-        let mut history = state
-            .history
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let before = history.active.len();
-        history.active.retain(|entry| entry.id != entry_id);
-        let deleted = before.saturating_sub(history.active.len()) as u64;
-        if deleted > 0 {
-            history.flush_to_disk()?;
-            let updated: Vec<_> = history.active.iter().cloned().collect();
-            drop(history);
-            let _ = app.emit("history:updated", updated);
-        }
-        deleted
-    };
-
-    let system_deleted = {
-        let mut history = state
-            .history_transcribe
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let before = history.active.len();
-        history.active.retain(|entry| entry.id != entry_id);
-        let deleted = before.saturating_sub(history.active.len()) as u64;
-        if deleted > 0 {
-            history.flush_to_disk()?;
-            let updated: Vec<_> = history.active.iter().cloned().collect();
-            drop(history);
-            let _ = app.emit("transcribe:history-updated", updated);
-        }
-        deleted
-    };
-
-    Ok(mic_deleted + system_deleted)
-}
-
-#[tauri::command]
-fn list_history_partitions(
-    app: AppHandle,
-    kind: String,
-) -> Result<Vec<crate::history_partition::PartitionInfo>, String> {
-    let state = app.state::<AppState>();
-    match kind.as_str() {
-        "mic" => Ok(state
-            .history
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .list_partitions()),
-        "system" => Ok(state
-            .history_transcribe
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .list_partitions()),
-        _ => Err(format!("Unknown history kind: {}", kind)),
-    }
-}
-
-#[tauri::command]
-fn load_history_partition(
-    app: AppHandle,
-    kind: String,
-    key: String,
-) -> Result<Vec<HistoryEntry>, String> {
-    let state = app.state::<AppState>();
-    let pk = crate::history_partition::PartitionKey::parse(&key)?;
-    match kind.as_str() {
-        "mic" => Ok(state
-            .history
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .load_partition(&pk)),
-        "system" => Ok(state
-            .history_transcribe
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .load_partition(&pk)),
-        _ => Err(format!("Unknown history kind: {}", kind)),
-    }
-}
-
-#[tauri::command]
-fn add_history_entry(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    text: String,
-    source: Option<String>,
-) -> Result<Vec<HistoryEntry>, String> {
-    let source = source.unwrap_or_else(|| "local".to_string());
-    push_history_entry_inner(&app, &state.history, text, source)
-}
-
-#[tauri::command]
-fn add_transcribe_entry(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    text: String,
-) -> Result<Vec<HistoryEntry>, String> {
-    push_transcribe_entry_inner(&app, &state.history_transcribe, text)
-}
-
-#[tauri::command]
 fn toggle_transcribe(app: AppHandle) -> Result<(), String> {
     toggle_transcribe_state(&app);
     Ok(())
@@ -9381,6 +2263,7 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
             .settings
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let old_model = settings.model.clone();
         settings.model = model_id.clone();
         drop(settings);
 
@@ -9393,42 +2276,43 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
         )?;
 
-        // If any transcription lane is active, refresh the resident Whisper runtime.
-        let new_settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        if whisper_runtime_required(&new_settings) {
-            if let Some(new_model_path) = crate::models::resolve_model_path(&app, &model_id) {
-                let port = state.whisper_server_port.load(Ordering::Relaxed);
-                if crate::whisper_server::ping_whisper_server(port) {
-                    if let Err(err) = crate::whisper_server::restart_whisper_server_if_running(
-                        &app,
-                        &state,
-                        &new_model_path,
-                    ) {
-                        warn!(
-                            "Failed to restart whisper-server after model switch: {}",
-                            err
-                        );
-                    }
-                } else if whisper_runtime_auto_warm_required(&new_settings) {
-                    crate::whisper_server::schedule_whisper_server_warmup(
-                        &app,
-                        state.inner(),
-                        &new_model_path,
-                        &new_settings,
-                    );
-                }
-            } else {
-                warn!(
-                    "Skipping whisper-server model switch: model '{}' could not be resolved.",
-                    model_id
+        // If transcription is active or Whisper server is running, restart with new model
+        // to clear old model from VRAM and load new model
+        if state.transcribe_active.load(Ordering::Relaxed) {
+            stop_transcribe_monitor_and_release_whisper(&app, &state);
+            let new_settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            if let Err(err) = start_transcribe_monitor(&app, &state, &new_settings) {
+                // Restore old model if restart fails
+                let mut settings = state
+                    .settings
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                settings.model = old_model;
+                drop(settings);
+                let _ = save_settings_file(
+                    &app,
+                    &state
+                        .settings
+                        .read()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()),
                 );
+                state.transcribe_active.store(false, Ordering::Relaxed);
+                return Err(format!("Failed to apply model: {}", err));
             }
         } else {
-            crate::transcription::stop_transcribe_monitor_and_release_whisper(&app, &state);
+            // Even if transcription is inactive, restart Whisper server if it's running
+            // to clear old model from VRAM and load new model
+            if let Some(new_model_path) = crate::models::resolve_model_path(&app, &model_id) {
+                let _ = crate::whisper_server::restart_whisper_server_if_running(
+                    &app,
+                    &state,
+                    &new_model_path,
+                );
+            }
         }
 
         refresh_startup_status(&app, state.inner());
@@ -9438,112 +2322,6 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
     })
     .await
     .unwrap_or_else(|e| Err(format!("apply_model panicked: {e}")))
-}
-
-#[tauri::command]
-async fn unload_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || unload_configured_ollama_model(&app, &model))
-        .await
-        .map_err(|e| format!("Unload Ollama model task failed: {}", e))?
-}
-
-pub(crate) fn unload_configured_ollama_model(app: &AppHandle, model: &str) -> Result<(), String> {
-    let state = app.state::<AppState>();
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    check_strict_local_mode(&settings)?;
-    let endpoint = settings.providers.ollama.endpoint.trim();
-    if is_ssrf_target(endpoint) {
-        return Err("Ollama endpoint is not allowed for unload.".to_string());
-    }
-    unload_ollama_model_impl(endpoint, model)
-}
-
-pub(crate) fn unload_ollama_model_impl(endpoint: &str, model: &str) -> Result<(), String> {
-    // Send a request to Ollama to unload the model from VRAM.
-    // This uses a minimal POST to /api/generate with keep_alive: "0m" to signal
-    // that the model should be unloaded immediately.
-
-    if model.trim().is_empty() {
-        return Ok(());
-    }
-    if is_ssrf_target(endpoint) {
-        return Err("Ollama endpoint is not allowed for unload.".to_string());
-    }
-    let unload_body = serde_json::json!({
-        "model": model,
-        "prompt": "",
-        "keep_alive": "0m",
-        "stream": false
-    });
-
-    let agent = ureq::builder()
-        .timeout_connect(std::time::Duration::from_secs(2))
-        .timeout_read(std::time::Duration::from_secs(5))
-        .build();
-
-    for candidate in ollama_endpoint_candidates(endpoint) {
-        let url = format!("{}/api/generate", candidate);
-        if agent
-            .post(&url)
-            .set("Content-Type", "application/json")
-            .send_json(&unload_body)
-            .is_ok()
-        {
-            return Ok(());
-        }
-    }
-
-    Ok(())
-}
-
-pub(crate) fn warmup_ollama_model_impl(endpoint: &str, model: &str) -> Result<(), String> {
-    // Load the model into VRAM by sending a minimal inference request.
-    // keep_alive: -1 (integer) keeps the model loaded until Ollama exits or an
-    // explicit unload is sent — Trispr Flow's own idle-release (4 h) handles the latter.
-    if model.trim().is_empty() {
-        return Ok(());
-    }
-    if is_ssrf_target(endpoint) {
-        return Err("Ollama endpoint is not allowed for warmup.".to_string());
-    }
-    // The runner-defining options (num_ctx, num_thread, num_gpu) MUST match the
-    // refinement path exactly, otherwise Ollama loads a separate runner for the
-    // warmup and reloads on the first real refinement — making the warmup useless.
-    // We add num_predict=1 (a sampling option, irrelevant to runner identity) to
-    // keep the warmup inference minimal.
-    let mut warmup_options = crate::ai_fallback::provider::ollama_runner_defining_options();
-    warmup_options.insert("num_predict".to_string(), serde_json::json!(1));
-    let warmup_body = serde_json::json!({
-        "model": model,
-        "prompt": ".",
-        "stream": false,
-        "think": false,
-        "keep_alive": -1_i64,
-        "options": serde_json::Value::Object(warmup_options)
-    });
-
-    let agent = ureq::builder()
-        .timeout_connect(std::time::Duration::from_secs(5))
-        .timeout_read(std::time::Duration::from_secs(90)) // generous — cold disk load can take 60 s
-        .build();
-
-    for candidate in ollama_endpoint_candidates(endpoint) {
-        let url = format!("{}/api/generate", candidate);
-        if agent
-            .post(&url)
-            .set("Content-Type", "application/json")
-            .send_json(&warmup_body)
-            .is_ok()
-        {
-            return Ok(());
-        }
-    }
-
-    Ok(())
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -9686,405 +2464,54 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
     }
 }
 
-#[derive(serde::Serialize)]
-struct GpuStats {
-    util_pct: Option<u32>,
-    vram_used_gb: f64,
-    vram_total_gb: f64,
-    whisper_vram_gb: Option<f64>,
-    refine_vram_gb: Option<f64>,
-}
-
-/// Run nvidia-smi with the given args, hiding the console window on Windows.
-/// Returns trimmed stdout, or None if the binary is missing / call failed.
-fn run_nvidia_smi(args: &[&str]) -> Option<String> {
-    use std::process::Command;
-    let mut cmd = Command::new("nvidia-smi");
-    cmd.args(args);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    let output = cmd.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8(output.stdout).ok()?.trim().to_string())
-}
-
 #[tauri::command]
-async fn get_gpu_stats(app: AppHandle, state: State<'_, AppState>) -> Result<GpuStats, String> {
-    let endpoint = state
-        .settings
-        .read()
-        .map(|s| s.providers.ollama.endpoint.clone())
-        .unwrap_or_default();
-    let warm_flag = state.ollama_model_warm.load(Ordering::SeqCst);
+async fn get_gpu_vram_usage() -> Result<String, String> {
+    // Query NVIDIA GPU VRAM usage via nvidia-smi — wrapped in spawn_blocking to
+    // avoid blocking the Tokio worker thread during the nvidia-smi process spawn.
+    tauri::async_runtime::spawn_blocking(|| {
+        use std::process::Command;
 
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        // 1. Overall utilization + total/used VRAM.
-        let mut util_pct = None;
-        let mut vram_used_gb = 0.0;
-        let mut vram_total_gb = 0.0;
-        if let Some(out) = run_nvidia_smi(&[
-            "--query-gpu=utilization.gpu,memory.used,memory.total",
+        let mut cmd = Command::new("nvidia-smi");
+        cmd.args(&[
+            "--query-gpu=memory.used,memory.total",
             "--format=csv,noheader,nounits",
-        ]) {
-            let parts: Vec<&str> = out
-                .lines()
-                .next()
-                .unwrap_or("")
-                .split(',')
-                .map(|s| s.trim())
-                .collect();
-            if parts.len() == 3 {
-                util_pct = parts[0].parse::<u32>().ok();
-                if let Ok(used) = parts[1].parse::<f64>() {
-                    vram_used_gb = used / 1024.0;
-                }
-                if let Ok(total) = parts[2].parse::<f64>() {
-                    vram_total_gb = total / 1024.0;
-                }
+        ]);
+
+        // On Windows, hide the command window to prevent visual pop-ups
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let output = cmd
+            .output()
+            .map_err(|_| "nvidia-smi not found".to_string())?;
+
+        if !output.status.success() {
+            return Ok(String::new());
+        }
+
+        let result = String::from_utf8(output.stdout)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        let parts: Vec<&str> = result.split(',').map(|s| s.trim()).collect();
+        if parts.len() == 2 {
+            if let (Ok(used_mb), Ok(total_mb)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>())
+            {
+                let used_gb = used_mb / 1024.0;
+                let total_gb = total_mb / 1024.0;
+                return Ok(format!("{:.1} GB / {:.1} GB", used_gb, total_gb));
             }
         }
 
-        // 2. Refinement model VRAM from Ollama /api/ps.
-        // Some(0) = OLLAMA up but no model loaded; None = OLLAMA unreachable.
-        let refine_vram_bytes = crate::ai_fallback::provider::fetch_ollama_running_vram(&endpoint);
-        let refine_vram_gb = refine_vram_bytes.map(|bytes| bytes as f64 / 1_073_741_824.0);
-
-        // 3. Whisper VRAM derived: everything that isn't the refinement model.
-        let whisper_vram_gb = if vram_used_gb > 0.0 {
-            let ollama = refine_vram_gb.unwrap_or(0.0);
-            let derived = (vram_used_gb - ollama).max(0.0);
-            Some(derived)
-        } else {
-            None
-        };
-
-        Ok::<(GpuStats, Option<u64>), String>((
-            GpuStats {
-                util_pct,
-                vram_used_gb,
-                vram_total_gb,
-                whisper_vram_gb,
-                refine_vram_gb,
-            },
-            refine_vram_bytes,
-        ))
+        Ok(String::new())
     })
     .await
-    .unwrap_or_else(|_| {
-        Ok((
-            GpuStats {
-                util_pct: None,
-                vram_used_gb: 0.0,
-                vram_total_gb: 0.0,
-                whisper_vram_gb: None,
-                refine_vram_gb: None,
-            },
-            None,
-        ))
-    })?;
-
-    let (stats, refine_vram_bytes) = result;
-
-    // Drive the header status light from /api/ps. The warm/warmup flags are now
-    // purely UI state (the bypass decision is made just-in-time in
-    // handle_transcription_ok via its own /api/ps probe), but the light still
-    // needs an authoritative signal, so keep the flags honest in both directions
-    // within the 2s poll interval.
-    // Some(0)=OLLAMA up, no model; Some(>0)=model loaded; None=OLLAMA unreachable.
-    let warmup_running = state.ollama_warmup_in_progress.load(Ordering::SeqCst);
-    match refine_vram_bytes {
-        Some(0) if warm_flag => {
-            // Model no longer in VRAM (OLLAMA unloaded it itself, etc.) — stale true.
-            state.ollama_model_warm.store(false, Ordering::SeqCst);
-            state
-                .ollama_warmup_in_progress
-                .store(false, Ordering::SeqCst);
-            crate::overlay::update_overlay_ollama_state(
-                &app,
-                crate::overlay::OllamaModelState::Cold,
-            );
-        }
-        Some(bytes) if bytes > 0 && !warm_flag && !warmup_running => {
-            // Model is resident but flag was stale-false — correct it.
-            state.ollama_model_warm.store(true, Ordering::SeqCst);
-            crate::overlay::update_overlay_ollama_state(
-                &app,
-                crate::overlay::OllamaModelState::Warm,
-            );
-        }
-        _ => {}
-    }
-
-    Ok(stats)
-}
-
-#[tauri::command]
-fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String> {
-    // Purge GPU memory by unloading all loaded models from both Ollama and Whisper
-
-    // Unload current Ollama model if set
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let current_ollama_model = settings.ai_fallback.model.clone();
-    drop(settings);
-
-    if !current_ollama_model.is_empty() {
-        let endpoint = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .providers
-            .ollama
-            .endpoint
-            .clone();
-        let _ = unload_ollama_model_impl(&endpoint, &current_ollama_model);
-    }
-
-    // Kill and restart Whisper server to clear old model
-    // This is the most reliable way to free VRAM from Whisper
-    let _ = crate::whisper_server::kill_whisper_server(&state);
-    state
-        .whisper_server_warmup_started
-        .store(false, Ordering::Relaxed);
-
-    Ok(())
-}
-
-#[tauri::command]
-async fn stop_ollama_runtime(app: AppHandle) -> Result<(), String> {
-    // Stop the managed Ollama runtime process
-    // This is called when user disables AI refinement or exits the app
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
-        crate::ollama_runtime::clear_ollama_pid_lockfile(&app);
-
-        let endpoint = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .clone();
-            settings.providers.ollama.endpoint
-        };
-        let runtime_reachable = ping_ollama_quick(&endpoint).is_ok();
-        update_startup_status(&app, state.inner(), |status| {
-            status.ollama_ready = runtime_reachable;
-            status.ollama_starting = false;
-        });
-        update_runtime_diagnostics(&app, state.inner(), |diagnostics| {
-            diagnostics.ollama.managed_pid = None;
-            diagnostics.ollama.reachable = runtime_reachable;
-            diagnostics.ollama.spawn_stage = if runtime_reachable {
-                "running_externally".to_string()
-            } else {
-                "stopped".to_string()
-            };
-            if !runtime_reachable {
-                diagnostics.ollama.last_error.clear();
-            }
-        });
-
-        Ok(())
-    })
-    .await
-    .unwrap_or_else(|_| Ok(()))
-}
-
-#[tauri::command]
-fn install_lm_studio() -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        // Opens a new PowerShell console window running the official LM Studio install script.
-        // Uses `cmd /C start` to ensure a visible window is spawned even from a windowless
-        // Tauri process. CREATE_NO_WINDOW on the cmd.exe wrapper avoids a brief flash.
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-        std::process::Command::new("cmd")
-            .args([
-                "/C",
-                "start",
-                "powershell",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-NoExit",
-                "-Command",
-                "Write-Host 'Trispr Flow: Installing LM Studio...' -ForegroundColor Cyan; irm 'https://lmstudio.ai/install.ps1' | iex",
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| format!("Failed to launch LM Studio installer: {e}"))?;
-        Ok(())
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Err("LM Studio installer helper is only supported on Windows.".to_string())
-    }
-}
-
-#[tauri::command]
-fn validate_hotkey(key: String) -> hotkeys::ValidationResult {
-    hotkeys::validate_hotkey_format(&key)
-}
-
-#[tauri::command]
-fn test_hotkey(app: AppHandle, key: String) -> Result<(), String> {
-    hotkeys::test_hotkey_registration(&app, &key)
-}
-
-#[tauri::command]
-fn get_hotkey_conflicts(state: State<'_, AppState>) -> Vec<hotkeys::ConflictInfo> {
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let hotkeys = vec![
-        settings.hotkey_ptt.clone(),
-        settings.hotkey_toggle.clone(),
-        settings.transcribe_hotkey.clone(),
-        settings.hotkey_product_mode_toggle.clone(),
-    ];
-    hotkeys::detect_conflicts(hotkeys)
-}
-
-#[tauri::command]
-fn save_transcript(filename: String, content: String, format: String) -> Result<String, String> {
-    // Determine file extension based on format
-    let extension = match format.as_str() {
-        "txt" => "txt",
-        "md" => "md",
-        "json" => "json",
-        _ => "txt", // fallback
-    };
-
-    // Show save file dialog
-    let file_path = rfd::FileDialog::new()
-        .set_file_name(&filename)
-        .add_filter(&format.to_uppercase(), &[extension])
-        .save_file()
-        .ok_or("File save cancelled")?;
-
-    // Write content to file
-    std::fs::write(&file_path, content).map_err(|e| format!("Failed to write file: {}", e))?;
-
-    // Return the saved file path
-    Ok(file_path.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-fn save_crash_recovery(app: AppHandle, content: String) -> Result<(), String> {
-    // Write to app data dir (user-private) instead of world-readable %TEMP%
-    let data_dir = crate::paths::resolve_base_dir(&app);
-    let _ = std::fs::create_dir_all(&data_dir);
-
-    let crash_file = data_dir.join(".crash_recovery.json");
-    std::fs::write(&crash_file, content)
-        .map_err(|e| format!("Failed to save crash recovery: {}", e))?;
-
-    Ok(())
-}
-
-#[tauri::command]
-fn clear_crash_recovery(app: AppHandle) -> Result<(), String> {
-    let data_dir = crate::paths::resolve_base_dir(&app);
-
-    let crash_file = data_dir.join(".crash_recovery.json");
-    if crash_file.exists() {
-        std::fs::remove_file(&crash_file)
-            .map_err(|e| format!("Failed to clear crash recovery: {}", e))?;
-    }
-
-    // Also clean up legacy TEMP file if it exists
-    let legacy_temp = if cfg!(windows) {
-        std::env::var("TEMP").ok()
-    } else {
-        std::env::var("TMPDIR").ok().or(Some("/tmp".to_string()))
-    };
-    if let Some(temp_dir) = legacy_temp {
-        let legacy_file = PathBuf::from(&temp_dir).join("trispr_crash_recovery.json");
-        let _ = std::fs::remove_file(&legacy_file); // best-effort cleanup
-    }
-
-    Ok(())
-}
-
-/// Validate that a path resolves within the allowed root directory.
-/// For existing files: canonicalize the full path.
-/// For new files (output): canonicalize the parent directory.
-fn validate_path_within(
-    path_str: &str,
-    allowed_root: &std::path::Path,
-) -> Result<std::path::PathBuf, String> {
-    // Reject UNC paths (\\server\share) before canonicalize — they trigger an SMB
-    // round-trip which can leak NTLM credentials even if starts_with() later rejects them.
-    if path_str.starts_with("\\\\") || path_str.starts_with("//") {
-        return Err(format!("UNC paths are not allowed: '{}'", path_str));
-    }
-    let path = std::path::PathBuf::from(path_str);
-
-    // For existing files, canonicalize directly
-    if path.exists() {
-        let canonical = path
-            .canonicalize()
-            .map_err(|e| format!("Cannot resolve path '{}': {}", path_str, e))?;
-        if !canonical.starts_with(allowed_root) {
-            return Err(format!("Path '{}' is outside allowed directory", path_str));
-        }
-        return Ok(canonical);
-    }
-
-    // For non-existing files (e.g. output), canonicalize the parent
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("Path '{}' has no parent directory", path_str))?;
-    if !parent.exists() {
-        return Err(format!("Parent directory of '{}' does not exist", path_str));
-    }
-    let canonical_parent = parent
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve parent of '{}': {}", path_str, e))?;
-    if !canonical_parent.starts_with(allowed_root) {
-        return Err(format!("Path '{}' is outside allowed directory", path_str));
-    }
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| format!("Path '{}' has no file name", path_str))?;
-    Ok(canonical_parent.join(file_name))
-}
-
-#[tauri::command]
-fn encode_to_opus(
-    app: tauri::AppHandle,
-    input_path: String,
-    output_path: String,
-    bitrate_kbps: Option<u32>,
-) -> Result<opus::OpusEncodeResult, String> {
-    let allowed_root = crate::paths::resolve_base_dir(&app);
-
-    let input = validate_path_within(&input_path, &allowed_root)?;
-    let output = validate_path_within(&output_path, &allowed_root)?;
-
-    if let Some(bitrate) = bitrate_kbps {
-        let mut config = opus::OpusEncoderConfig::default();
-        config.bitrate_kbps = bitrate;
-        opus::encode_wav_to_opus(&input, &output, &config)
-    } else {
-        opus::encode_wav_to_opus_default(&input, &output)
-    }
-}
-
-#[tauri::command]
-fn check_ffmpeg() -> Result<bool, String> {
-    Ok(opus::check_ffmpeg_available())
+    .unwrap_or_else(|_| Ok(String::new()))
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -10188,70 +2615,6 @@ fn build_dependency_preflight_report(
                     .to_string(),
             ),
         });
-    }
-
-    let model_ready = check_model_available(app.clone(), settings_snapshot.model.clone());
-    if model_ready {
-        items.push(DependencyPreflightItem {
-            id: "whisper_model".to_string(),
-            status: "ok".to_string(),
-            required: true,
-            message: format!("Speech model '{}' is available.", settings_snapshot.model),
-            hint: None,
-        });
-    } else {
-        items.push(DependencyPreflightItem {
-            id: "whisper_model".to_string(),
-            status: "error".to_string(),
-            required: true,
-            message: format!(
-                "Speech model '{}' is not installed.",
-                settings_snapshot.model
-            ),
-            hint: Some("Download a model in Whisper Model Manager.".to_string()),
-        });
-    }
-
-    let quantize = paths::resolve_quantize_path(app);
-    if let Some(path) = quantize {
-        items.push(DependencyPreflightItem {
-            id: "quantize_binary".to_string(),
-            status: "ok".to_string(),
-            required: false,
-            message: format!("Quantize binary found: {}", path.display()),
-            hint: None,
-        });
-    } else {
-        items.push(DependencyPreflightItem {
-            id: "quantize_binary".to_string(),
-            status: "warning".to_string(),
-            required: false,
-            message: "Model optimization binary (quantize.exe) not found.".to_string(),
-            hint: Some(
-                "Optimize in Whisper Model Manager will be unavailable until quantize.exe is bundled."
-                    .to_string(),
-            ),
-        });
-    }
-
-    match opus::find_ffmpeg_for_opus() {
-        Ok(path) => items.push(DependencyPreflightItem {
-            id: "ffmpeg".to_string(),
-            status: "ok".to_string(),
-            required: false,
-            message: format!("FFmpeg with libopus found: {}", path.display()),
-            hint: None,
-        }),
-        Err(error) => items.push(DependencyPreflightItem {
-            id: "ffmpeg".to_string(),
-            status: "warning".to_string(),
-            required: false,
-            message: "FFmpeg with libopus encoder is not available.".to_string(),
-            hint: Some(format!(
-                "{} OPUS encode/merge features may not work until FFmpeg is available.",
-                error
-            )),
-        }),
     }
 
     let powershell_ok = check_powershell_available();
@@ -10380,75 +2743,6 @@ async fn get_dependency_preflight_status(app: AppHandle) -> DependencyPreflightR
     })
 }
 
-#[tauri::command]
-fn get_ffmpeg_version_info() -> Result<String, String> {
-    opus::get_ffmpeg_version()
-}
-
-#[tauri::command]
-fn get_last_recording_path(
-    source: String, // "mic" or "output"
-    state: State<'_, AppState>,
-) -> Result<Option<String>, String> {
-    let path = if source == "output" || source == "system" {
-        state
-            .last_system_recording_path
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    } else {
-        state
-            .last_mic_recording_path
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    };
-    Ok(path)
-}
-
-#[tauri::command]
-fn get_recordings_directory(app: AppHandle) -> Result<String, String> {
-    let data_dir = crate::paths::resolve_base_dir(&app);
-    let recordings_dir = data_dir.join("recordings");
-
-    // Create directory if it doesn't exist
-    std::fs::create_dir_all(&recordings_dir)
-        .map_err(|e| format!("Failed to create recordings dir: {}", e))?;
-
-    Ok(recordings_dir.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-fn open_recordings_directory(app: AppHandle) -> Result<(), String> {
-    let recordings_dir = get_recordings_directory(app.clone())?;
-
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(&recordings_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open directory: {}", e))?;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&recordings_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open directory: {}", e))?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&recordings_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open directory: {}", e))?;
-    }
-
-    Ok(())
-}
-
 pub(crate) fn save_recording_opus(
     app: &AppHandle,
     samples: &[i16],
@@ -10561,7 +2855,7 @@ fn sanitize_session_name(name: &str) -> String {
 /// Start or stop the LM Studio daemon via its CLI (`lms daemon up|stop`).
 /// True fire-and-forget: spawns the process and detaches immediately.
 /// The daemon runs independently — we never wait for it.
-fn lms_daemon_command(action: &str) {
+pub(crate) fn lms_daemon_command(action: &str) {
     use std::process::{Command, Stdio};
 
     let candidates = [
@@ -10819,137 +3113,6 @@ fn env_flag(name: &str) -> bool {
             .as_deref(),
         Some("1") | Some("true") | Some("yes") | Some("on")
     )
-}
-
-fn latency_benchmark_request_from_env() -> LatencyBenchmarkRequest {
-    let mut request = LatencyBenchmarkRequest::default();
-
-    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_WARMUP_RUNS") {
-        if let Ok(parsed) = value.trim().parse::<u32>() {
-            request.warmup_runs = parsed;
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_MEASURE_RUNS") {
-        if let Ok(parsed) = value.trim().parse::<u32>() {
-            request.measure_runs = parsed;
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_INCLUDE_REFINEMENT") {
-        request.include_refinement = matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        );
-    }
-    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_FIXTURES") {
-        let fixtures = value
-            .split(';')
-            .map(|part| part.trim())
-            .filter(|part| !part.is_empty())
-            .map(|part| part.to_string())
-            .collect::<Vec<_>>();
-        if !fixtures.is_empty() {
-            request.fixture_paths = fixtures;
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_BENCHMARK_REFINE_MODEL") {
-        let model = value.trim();
-        if !model.is_empty() {
-            request.refinement_model = Some(model.to_string());
-        }
-    }
-
-    request
-}
-
-fn tts_benchmark_request_from_env() -> TtsBenchmarkRequest {
-    let mut request = TtsBenchmarkRequest::default();
-
-    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_WARMUP_RUNS") {
-        if let Ok(parsed) = value.trim().parse::<u32>() {
-            request.warmup_runs = parsed;
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_MEASURE_RUNS") {
-        if let Ok(parsed) = value.trim().parse::<u32>() {
-            request.measure_runs = parsed;
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_RATE") {
-        if let Ok(parsed) = value.trim().parse::<f32>() {
-            request.rate = parsed;
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_VOLUME") {
-        if let Ok(parsed) = value.trim().parse::<f32>() {
-            request.volume = parsed;
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_PROVIDERS") {
-        let providers = value
-            .split(';')
-            .map(|part| part.trim())
-            .filter(|part| !part.is_empty())
-            .map(|part| part.to_string())
-            .collect::<Vec<_>>();
-        if !providers.is_empty() {
-            request.providers = providers;
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_PIPER_BINARY_PATH") {
-        let path = value.trim();
-        if !path.is_empty() {
-            request.piper_binary_path = Some(path.to_string());
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_PIPER_MODEL_PATH") {
-        let path = value.trim();
-        if !path.is_empty() {
-            request.piper_model_path = Some(path.to_string());
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_QWEN3_ENDPOINT") {
-        let endpoint = value.trim();
-        if !endpoint.is_empty() {
-            request.qwen3_tts_endpoint = Some(endpoint.to_string());
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_QWEN3_MODEL") {
-        let model = value.trim();
-        if !model.is_empty() {
-            request.qwen3_tts_model = Some(model.to_string());
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_QWEN3_VOICE") {
-        let voice = value.trim();
-        if !voice.is_empty() {
-            request.qwen3_tts_voice = Some(voice.to_string());
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_QWEN3_API_KEY") {
-        let key = value.trim();
-        if !key.is_empty() {
-            request.qwen3_tts_api_key = Some(key.to_string());
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_QWEN3_TIMEOUT_SEC") {
-        if let Ok(parsed) = value.trim().parse::<u64>() {
-            request.qwen3_tts_timeout_sec = Some(parsed);
-        }
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_LOCK_MATRIX") {
-        request.lock_matrix = !matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "0" | "false" | "no" | "off"
-        );
-    }
-    if let Ok(value) = std::env::var("TRISPR_TTS_BENCHMARK_RUNTIME_SMOKE") {
-        request.run_runtime_smoke = matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        );
-    }
-
-    request
 }
 
 /// Snapshot of clipboard content before we overwrite it.
@@ -11501,7 +3664,7 @@ fn recover_main_window_webview(app: &AppHandle, reason: &str) -> Result<(), Stri
     })
 }
 
-fn show_main_window(app: &AppHandle) {
+pub(crate) fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         // Restore window geometry on first show
         if !MAIN_WINDOW_RESTORED.swap(true, Ordering::AcqRel) {
@@ -11594,7 +3757,7 @@ pub(crate) fn toggle_product_mode_async(app: AppHandle) {
                 let _ = save_settings_file(&app, &settings);
                 let _ = app.emit("settings-changed", snapshot.clone());
                 assistant_presence::reconcile_assistant_presence_window(&app, &snapshot);
-                let _ = emit_assistant_baseline_state(
+                let _ = workflow_agent::emit_assistant_baseline_state(
                     &app,
                     state.inner(),
                     &snapshot,
@@ -11624,13 +3787,13 @@ pub(crate) fn toggle_product_mode_async(app: AppHandle) {
         if snapshot.transcribe_enabled && !prev_transcribe_enabled {
             let _ = start_transcribe_monitor(&app, &state, &snapshot);
         } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
-            crate::transcription::stop_transcribe_monitor_and_release_whisper(&app, &state);
+            stop_transcribe_monitor_and_release_whisper(&app, &state);
         }
 
         let _ = app.emit("settings-changed", snapshot.clone());
         let _ = app.emit("menu:update-transcribe", snapshot.transcribe_enabled);
         assistant_presence::reconcile_assistant_presence_window(&app, &snapshot);
-        let _ = emit_assistant_baseline_state(
+        let _ = workflow_agent::emit_assistant_baseline_state(
             &app,
             state.inner(),
             &snapshot,
@@ -11679,99 +3842,6 @@ pub(crate) fn format_panic_payload(payload: &(dyn std::any::Any + Send)) -> Stri
     } else {
         "unknown panic".to_string()
     }
-}
-
-#[tauri::command]
-async fn video_ingest_sources(
-    paths: Vec<String>,
-    app: AppHandle,
-) -> Result<Vec<crate::video_ingest::SourceItem>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let max_mb = state
-            .settings
-            .read()
-            .map(|s| s.video_generation_settings.max_upload_mb)
-            .unwrap_or(500);
-
-        // Transient workdir: ingest classifies + extracts text only; the real
-        // render creates its own workdir and calls materialize_assets().
-        let workdir = crate::video_ingest::JobWorkdir::create(&app)
-            .map_err(|e| format!("prepare ingest workdir: {}", e))?;
-        let outcome = crate::video_ingest::ingest_dropped_paths(
-            paths.into_iter().map(std::path::PathBuf::from).collect(),
-            &workdir,
-            0,
-            max_mb,
-        );
-        workdir.cleanup();
-
-        if outcome.items.is_empty() && !outcome.errors.is_empty() {
-            return Err(outcome.errors.join("; "));
-        }
-        if !outcome.errors.is_empty() {
-            warn!(
-                "[video-ingest] {} items ingested, {} errors: {}",
-                outcome.items.len(),
-                outcome.errors.len(),
-                outcome.errors.join("; ")
-            );
-        }
-        Ok(outcome.items)
-    })
-    .await
-    .map_err(|e| format!("ingest join error: {}", e))?
-}
-
-#[tauri::command]
-async fn video_ingest_history_entry(
-    entry_id: String,
-    app: AppHandle,
-) -> Result<crate::video_ingest::SourceItem, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        crate::video_ingest::ingest_history_entry(&entry_id, state.inner(), 0)
-    })
-    .await
-    .map_err(|e| format!("history ingest join error: {}", e))?
-}
-
-#[tauri::command]
-async fn video_generate(
-    request: crate::video_generation::VideoJobRequest,
-    app: AppHandle,
-) -> Result<crate::video_generation::VideoJobResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::video_generation::render_video(&app, request)
-    })
-    .await
-    .map_err(|e| format!("video_generate join error: {}", e))?
-}
-
-#[tauri::command]
-fn video_get_output_dir(app: AppHandle) -> Result<String, String> {
-    let dir = crate::paths::resolve_video_output_dir(&app);
-    Ok(dir.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-fn video_open_output_dir(app: AppHandle) -> Result<(), String> {
-    let dir = crate::paths::resolve_video_output_dir(&app);
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(&dir)
-            .spawn()
-            .map_err(|e| format!("open explorer: {}", e))?;
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = dir; // not used on other OSes in Phase 1
-        return Err(
-            "Opening the output directory is only wired for Windows in Phase 1.".to_string(),
-        );
-    }
-    Ok(())
 }
 
 pub fn run() {
@@ -11948,6 +4018,28 @@ pub fn run() {
                 });
             }
 
+            // Eagerly start whisper-server in background so the first transcription
+            // uses the fast HTTP path instead of the slow CLI cold-start (~50s → <1s).
+            {
+                let handle = app.handle().clone();
+                crate::util::spawn_guarded("eager_whisper_server", move || {
+                    let state = handle.state::<AppState>();
+                    let model_id = {
+                        let s = state.settings.read()
+                            .unwrap_or_else(|p| p.into_inner());
+                        s.model.clone()
+                    };
+                    if let Some(model_path) = crate::models::resolve_model_path(&handle, &model_id) {
+                        match crate::whisper_server::start_whisper_server(&handle, state.inner(), &model_path) {
+                            Ok(()) => info!("Eager whisper-server started successfully"),
+                            Err(e) => warn!("Eager whisper-server start failed (CLI fallback available): {}", e),
+                        }
+                    } else {
+                        warn!("Eager whisper-server skipped: model '{}' not found on disk", model_id);
+                    }
+                });
+            }
+
             {
                 let handle = app.handle().clone();
                 crate::util::spawn_guarded("dependency_preflight", move || {
@@ -11970,14 +4062,18 @@ pub fn run() {
             if env_flag("TRISPR_RUN_LATENCY_BENCHMARK") {
                 let app_handle = app.handle().clone();
                 crate::util::spawn_guarded("latency_benchmark", move || {
-                    let request = latency_benchmark_request_from_env();
+                    let request = crate::tts_benchmark::latency_benchmark_request_from_env();
                     let result = {
                         let state = app_handle.state::<AppState>();
-                        run_latency_benchmark_inner(&app_handle, state.inner(), &request)
+                        crate::tts_benchmark::run_latency_benchmark_inner(
+                            &app_handle,
+                            state.inner(),
+                            &request,
+                        )
                     };
 
                     match result {
-                        Ok(report) => match write_latency_benchmark_report(&report) {
+                        Ok(report) => match crate::tts_benchmark::write_latency_benchmark_report(&report) {
                             Ok(path) => {
                                 info!(
                                     "Latency benchmark complete: p50={}ms p95={}ms (report: {})",
@@ -12013,45 +4109,16 @@ pub fn run() {
             if env_flag("TRISPR_RUN_TTS_BENCHMARK") {
                 let app_handle = app.handle().clone();
                 crate::util::spawn_guarded("tts_benchmark", move || {
-                    let request = tts_benchmark_request_from_env();
+                    let request = tts_benchmark::tts_benchmark_request_from_env();
                     let result = {
                         let state = app_handle.state::<AppState>();
-                        run_tts_benchmark_inner(state.inner(), &request)
+                        tts_benchmark::run_tts_benchmark_inner(state.inner(), &request)
                     };
 
                     match result {
-                        Ok(report) => match write_tts_benchmark_report(&report) {
+                        Ok(report) => match tts_benchmark::write_tts_benchmark_report(&report) {
                             Ok(path) => {
-                                info!(
-                                    "TTS benchmark complete: recommended_default={:?} release_gate_pass={} (report: {})",
-                                    report.recommended_default_provider,
-                                    report.release_gate_pass,
-                                    path.display()
-                                );
-                                if let Some(provider) = report.recommended_default_provider.as_ref()
-                                {
-                                    info!(
-                                        "TTS benchmark recommendation: provider='{}' reason='{}'",
-                                        provider, report.recommendation_reason
-                                    );
-                                } else {
-                                    warn!(
-                                        "TTS benchmark produced no recommendation: {}",
-                                        report.recommendation_reason
-                                    );
-                                }
-                                if !report.release_gate_pass {
-                                    warn!(
-                                        "TTS release gate failed: {}",
-                                        report.release_gate_reason
-                                    );
-                                }
-                                if report.uncategorized_failure_count > 0 {
-                                    warn!(
-                                        "TTS benchmark uncategorized failures: {}",
-                                        report.uncategorized_failure_count
-                                    );
-                                }
+                                report.log_summary(&path);
                             }
                             Err(err) => {
                                 error!("Failed to write TTS benchmark report: {}", err);
@@ -12088,37 +4155,24 @@ pub fn run() {
                 }
             }
 
-            if settings.diagnostic_logging_enabled {
-                info!("[DIAG] setup: registering hotkeys...");
-            }
+            info!("[DIAG] setup: registering hotkeys...");
             if let Err(err) = register_hotkeys(app.handle(), &settings) {
                 warn!("Failed to register hotkeys: {}", err);
             }
-            if settings.diagnostic_logging_enabled {
-                info!("[DIAG] setup: hotkeys done");
-                info!(
-                    "[DIAG] runtime profile: mode={} capture_enabled={} transcribe_enabled={} ptt_use_vad={} ptt_hot_keepalive_ms={} continuous_idle_keepalive_ms={} system_asr_boot_autostart=off",
-                    settings.mode,
-                    settings.capture_enabled,
-                    settings.transcribe_enabled,
-                    settings.ptt_use_vad,
-                    settings.ptt_hot_keepalive_ms,
-                    settings.continuous_idle_keepalive_ms
-                );
-            }
-            {
+            info!("[DIAG] setup: hotkeys done");
+
+            if settings.transcribe_enabled {
                 let state = app.state::<AppState>();
-                let runtime_settings = state
-                    .settings
-                    .read()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .clone();
-                crate::whisper_server::ensure_whisper_server_keepalive(app.handle().clone());
-                if whisper_runtime_auto_warm_required(&runtime_settings) {
-                    warm_transcribe_runtime(app.handle(), &state, &runtime_settings);
-                }
-                if should_autostart_ai_refinement_runtime(&runtime_settings) {
-                    schedule_ai_refinement_reenable_bootstrap(app.handle().clone());
+                if let Err(err) = start_transcribe_monitor(app.handle(), &state, &settings) {
+                    warn!("Failed to start transcribe monitor during setup: {}", err);
+                    settings.transcribe_enabled = false;
+                    {
+                        let mut current = state
+                            .settings
+                            .write()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        current.transcribe_enabled = false;
+                    }
                 }
             }
 
@@ -12365,23 +4419,15 @@ pub fn run() {
                     }
                 });
             }
-            if settings.diagnostic_logging_enabled {
-                info!("[DIAG] setup: sync_ptt_hot_standby...");
-            }
+            info!("[DIAG] setup: sync_ptt_hot_standby...");
             crate::audio::sync_ptt_hot_standby(app.handle(), &app.state::<AppState>(), &settings);
-            if settings.diagnostic_logging_enabled {
-                info!("[DIAG] setup: ptt done, priming overlay state...");
-            }
+            info!("[DIAG] setup: ptt done, priming overlay state...");
 
             let overlay_app = app.handle().clone();
             app.listen("overlay:ready", move |_| {
-                if settings.diagnostic_logging_enabled {
-                    info!("[DIAG] overlay:ready event received");
-                }
+                info!("[DIAG] overlay:ready event received");
                 overlay::mark_overlay_ready(&overlay_app);
-                if settings.diagnostic_logging_enabled {
-                    info!("[DIAG] overlay:ready handled");
-                }
+                info!("[DIAG] overlay:ready handled");
             });
             let overlay_heartbeat_app = app.handle().clone();
             app.listen("overlay:heartbeat", move |_| {
@@ -12397,9 +4443,7 @@ pub fn run() {
                     overlay::idle_overlay_state_for_settings(&settings),
                 );
                 overlay::preload_overlay_window(&app.handle());
-                if settings.diagnostic_logging_enabled {
-                    info!("[DIAG] setup: overlay state primed + window pre-warmed, building tray...");
-                }
+                info!("[DIAG] setup: overlay state primed + window pre-warmed, building tray...");
             }
             assistant_presence::reconcile_assistant_presence_window(&app.handle(), &settings);
 
@@ -12682,6 +4726,8 @@ pub fn run() {
             save_window_visibility_state,
             show_assistant_presence_window,
             list_modules,
+            scan_module_packages,
+            install_bundled_module_package,
             enable_module,
             disable_module,
             get_module_health,
@@ -12706,26 +4752,47 @@ pub fn run() {
             speak_tts,
             stop_tts,
             test_tts_provider,
+            #[cfg(feature = "module-gdd")]
             list_gdd_presets,
+            #[cfg(feature = "module-gdd")]
             save_gdd_preset_clone,
+            #[cfg(feature = "module-gdd")]
             detect_gdd_preset,
+            #[cfg(feature = "module-gdd")]
             generate_gdd_draft,
+            #[cfg(feature = "module-gdd")]
             validate_gdd_draft,
+            #[cfg(feature = "module-gdd")]
             render_gdd_for_confluence,
+            #[cfg(feature = "module-gdd")]
             render_gdd_markdown,
+            #[cfg(feature = "module-confluence")]
             test_confluence_connection,
+            #[cfg(feature = "module-confluence")]
             confluence_oauth_start,
+            #[cfg(feature = "module-confluence")]
             confluence_oauth_exchange,
+            #[cfg(feature = "module-confluence")]
             confluence_list_spaces,
+            #[cfg(feature = "module-confluence")]
             load_gdd_template_from_file,
+            #[cfg(feature = "module-confluence")]
             load_gdd_template_from_confluence,
+            #[cfg(feature = "module-confluence")]
             suggest_confluence_target,
+            #[cfg(feature = "module-confluence")]
             publish_gdd_to_confluence,
+            #[cfg(feature = "module-confluence")]
             publish_or_queue_gdd_to_confluence,
+            #[cfg(feature = "module-confluence")]
             list_pending_gdd_publishes,
+            #[cfg(feature = "module-confluence")]
             retry_pending_gdd_publish,
+            #[cfg(feature = "module-confluence")]
             delete_pending_gdd_publish,
+            #[cfg(feature = "module-confluence")]
             save_confluence_secret,
+            #[cfg(feature = "module-confluence")]
             clear_confluence_secret,
             save_transcript,
             list_audio_devices,
@@ -12787,8 +4854,6 @@ pub fn run() {
             run_latency_benchmark,
             run_tts_benchmark,
             get_runtime_metrics_snapshot,
-            get_ollama_model_state,
-            get_gpu_stats,
             record_runtime_metric,
             frontend_heartbeat,
             log_frontend_event,
@@ -12796,6 +4861,7 @@ pub fn run() {
             delete_ollama_model,
             get_ollama_model_info,
             unload_ollama_model,
+            get_gpu_vram_usage,
             get_hardware_info,
             purge_gpu_memory,
             stop_ollama_runtime,

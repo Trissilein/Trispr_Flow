@@ -1,7 +1,8 @@
+use crate::state::AppState;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -10,8 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-#[cfg(target_os = "windows")]
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -270,6 +270,15 @@ pub struct TtsFallbackOutcome {
     pub provider_used: String,
     pub used_fallback: bool,
     pub primary_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Qwen3TtsConfig {
+    pub endpoint: String,
+    pub model: String,
+    pub voice: String,
+    pub api_key: Option<String>,
+    pub timeout_sec: u64,
 }
 
 #[derive(Debug)]
@@ -600,7 +609,1060 @@ pub fn capture_vision_frame(
     Err("Vision capture is currently available on Windows only.".to_string())
 }
 
-pub fn list_tts_providers(qwen3_tts_enabled: bool) -> Vec<TtsProviderInfo> {
+#[tauri::command]
+pub(crate) fn list_screen_sources(app: AppHandle) -> Result<Vec<VisionSourceInfo>, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found.".to_string())?;
+    let monitors = window
+        .available_monitors()
+        .map_err(|error| format!("Failed to list monitors: {}", error))?;
+
+    let mut sources = Vec::new();
+    for (index, monitor) in monitors.iter().enumerate() {
+        let size = monitor.size();
+        let label = monitor
+            .name()
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| format!("Monitor {}", index + 1));
+        sources.push(VisionSourceInfo {
+            id: format!("monitor_{}", index + 1),
+            label,
+            width: size.width,
+            height: size.height,
+        });
+    }
+    if sources.is_empty() {
+        if let Some(current) = window.current_monitor().map_err(|e| e.to_string())? {
+            let size = current.size();
+            sources.push(VisionSourceInfo {
+                id: "monitor_1".to_string(),
+                label: current
+                    .name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| "Primary monitor".to_string()),
+                width: size.width,
+                height: size.height,
+            });
+        }
+    }
+    Ok(sources)
+}
+
+#[tauri::command]
+pub(crate) fn start_vision_stream(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<VisionStreamHealth, String> {
+    crate::guarded_command!("start_vision_stream", {
+        let (fps, source_scope, max_width, jpeg_quality, ram_buffer_seconds) = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            crate::require_capability_enabled(&settings, crate::RuntimeCapability::VisionInput)?;
+            (
+                settings.vision_input_settings.fps,
+                settings.vision_input_settings.source_scope.clone(),
+                settings.vision_input_settings.max_width,
+                settings.vision_input_settings.jpeg_quality,
+                settings.vision_input_settings.ram_buffer_seconds,
+            )
+        };
+
+        let already_running = state.vision_stream_running.swap(true, Ordering::AcqRel);
+        if !already_running {
+            state.vision_stream_frame_seq.store(0, Ordering::Release);
+            state
+                .vision_stream_started_ms
+                .store(crate::util::now_ms(), Ordering::Release);
+            state
+                .vision_frame_buffer
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clear();
+            let source_scope_for_thread = source_scope.clone();
+            let buffer_frame_cap =
+                (usize::from(fps.max(1)) * usize::from(ram_buffer_seconds.max(1))).max(1);
+            let app_c = app.clone();
+            crate::util::spawn_guarded("vision_frame_capture", move || loop {
+                let state = app_c.state::<AppState>();
+                if !state.vision_stream_running.load(Ordering::Acquire) {
+                    break;
+                }
+                match capture_vision_frame(
+                    &app_c,
+                    &source_scope_for_thread,
+                    max_width,
+                    jpeg_quality,
+                ) {
+                    Ok(mut frame) => {
+                        frame.seq =
+                            state.vision_stream_frame_seq.fetch_add(1, Ordering::AcqRel) + 1;
+                        let meta = state
+                            .vision_frame_buffer
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .push(frame, buffer_frame_cap);
+                        let _ = app_c.emit("vision:frame-meta", &meta);
+                    }
+                    Err(error) => {
+                        let _ = app_c.emit(
+                            "vision:stream-error",
+                            serde_json::json!({
+                                "timestamp_ms": crate::util::now_ms(),
+                                "source_scope": source_scope_for_thread,
+                                "error": error,
+                            }),
+                        );
+                    }
+                }
+                let frame_sleep_ms = (1000u64 / (fps.max(1) as u64)).clamp(50, 1000);
+                std::thread::sleep(Duration::from_millis(frame_sleep_ms));
+            });
+            let _ = app.emit(
+                "vision:stream-started",
+                serde_json::json!({
+                    "timestamp_ms": crate::util::now_ms(),
+                    "fps": fps,
+                }),
+            );
+        }
+
+        let buffer_stats = state
+            .vision_frame_buffer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .stats();
+        Ok(VisionStreamHealth {
+            running: true,
+            fps,
+            source_scope,
+            started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
+            frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
+            buffered_frames: buffer_stats.buffered_frames,
+            buffered_bytes: buffer_stats.buffered_bytes,
+            last_frame_timestamp_ms: buffer_stats.last_frame_timestamp_ms,
+            last_frame_width: buffer_stats.last_frame_width,
+            last_frame_height: buffer_stats.last_frame_height,
+        })
+    })
+}
+
+#[tauri::command]
+pub(crate) fn stop_vision_stream(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<VisionStreamHealth, String> {
+    crate::guarded_command!("stop_vision_stream", {
+        Ok(stop_vision_stream_internal(&app, state.inner()))
+    })
+}
+
+pub(crate) fn stop_vision_stream_internal(app: &AppHandle, state: &AppState) -> VisionStreamHealth {
+    state.vision_stream_running.store(false, Ordering::Release);
+    let (fps, source_scope) = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (
+            settings.vision_input_settings.fps,
+            settings.vision_input_settings.source_scope.clone(),
+        )
+    };
+    let buffer_stats = state
+        .vision_frame_buffer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .stats();
+    let health = VisionStreamHealth {
+        running: false,
+        fps,
+        source_scope,
+        started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
+        frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
+        buffered_frames: buffer_stats.buffered_frames,
+        buffered_bytes: buffer_stats.buffered_bytes,
+        last_frame_timestamp_ms: buffer_stats.last_frame_timestamp_ms,
+        last_frame_width: buffer_stats.last_frame_width,
+        last_frame_height: buffer_stats.last_frame_height,
+    };
+    state
+        .vision_frame_buffer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+    let _ = app.emit("vision:stream-stopped", &health);
+    health
+}
+
+#[tauri::command]
+pub(crate) fn get_vision_stream_health(state: State<'_, AppState>) -> VisionStreamHealth {
+    let (fps, source_scope) = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (
+            settings.vision_input_settings.fps,
+            settings.vision_input_settings.source_scope.clone(),
+        )
+    };
+    let buffer_stats = state
+        .vision_frame_buffer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .stats();
+    VisionStreamHealth {
+        running: state.vision_stream_running.load(Ordering::Acquire),
+        fps,
+        source_scope,
+        started_at_ms: Some(state.vision_stream_started_ms.load(Ordering::Acquire)),
+        frame_seq: state.vision_stream_frame_seq.load(Ordering::Acquire),
+        buffered_frames: buffer_stats.buffered_frames,
+        buffered_bytes: buffer_stats.buffered_bytes,
+        last_frame_timestamp_ms: buffer_stats.last_frame_timestamp_ms,
+        last_frame_width: buffer_stats.last_frame_width,
+        last_frame_height: buffer_stats.last_frame_height,
+    }
+}
+
+pub(crate) fn capture_vision_snapshot_internal(
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<VisionSnapshotResult, String> {
+    let vision_settings = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        crate::require_capability_enabled(&settings, crate::RuntimeCapability::VisionInput)?;
+        settings.vision_input_settings.clone()
+    };
+    let source_scope = vision_settings.source_scope.clone();
+    if let Some(frame) = state
+        .vision_frame_buffer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .latest()
+        .cloned()
+    {
+        return Ok(vision_snapshot_from_frame(
+            &frame,
+            "Snapshot returned from in-memory vision buffer.".to_string(),
+        ));
+    }
+
+    let mut frame = capture_vision_frame(
+        app,
+        &source_scope,
+        vision_settings.max_width,
+        vision_settings.jpeg_quality,
+    )?;
+    frame.seq = state.vision_stream_frame_seq.load(Ordering::Acquire);
+    Ok(vision_snapshot_from_frame(
+        &frame,
+        if source_scope == "active_window" {
+            "Snapshot captured from active monitor fallback for active_window scope.".to_string()
+        } else {
+            "Snapshot captured from in-memory vision path without disk persistence.".to_string()
+        },
+    ))
+}
+
+#[tauri::command]
+pub(crate) fn capture_vision_snapshot(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<VisionSnapshotResult, String> {
+    capture_vision_snapshot_internal(&app, state.inner())
+}
+
+#[tauri::command]
+pub(crate) fn list_tts_providers(state: State<'_, AppState>) -> Vec<TtsProviderInfo> {
+    let settings = state.settings.read().unwrap_or_else(|p| p.into_inner());
+    list_tts_provider_infos(settings.voice_output_settings.qwen3_tts_enabled)
+}
+
+#[tauri::command]
+pub(crate) fn list_tts_voices(
+    state: State<'_, AppState>,
+    provider: Option<String>,
+) -> Vec<TtsVoiceInfo> {
+    let provider = provider.as_deref().unwrap_or("windows_native");
+    if provider == "local_custom" {
+        let model_dir = state
+            .settings
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .voice_output_settings
+            .piper_model_dir
+            .clone();
+        list_piper_voices(&model_dir)
+    } else {
+        list_tts_voice_infos(provider)
+    }
+}
+
+#[tauri::command]
+pub(crate) fn list_piper_voice_catalog(
+    state: State<'_, AppState>,
+) -> Result<Vec<PiperVoiceCatalogEntry>, String> {
+    let model_dir = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        crate::require_capability_enabled(&settings, crate::RuntimeCapability::VoiceOutputTts)?;
+        settings.voice_output_settings.piper_model_dir.clone()
+    };
+    Ok(list_piper_voice_catalog_entries(&model_dir))
+}
+
+#[tauri::command]
+pub(crate) fn download_piper_voice_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    voice_key: String,
+) -> Result<String, String> {
+    {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        crate::require_capability_enabled(&settings, crate::RuntimeCapability::VoiceOutputTts)?;
+    }
+    let path = download_piper_voice_with_progress(voice_key.trim(), |progress| {
+        let _ = app.emit("piper:voice-download-progress", progress);
+    })?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn pinned_tts_language_hint(language_mode: &str, language_pinned: bool) -> Option<String> {
+    if !language_pinned {
+        return None;
+    }
+    let normalized = language_mode.trim().to_ascii_lowercase();
+    if normalized.is_empty() || normalized == "auto" {
+        return None;
+    }
+    if normalized.starts_with("de") {
+        return Some("de".to_string());
+    }
+    if normalized.starts_with("en") {
+        return Some("en".to_string());
+    }
+    Some(normalized.chars().take(2).collect())
+}
+
+fn infer_tts_language_hint(
+    text: &str,
+    language_mode: &str,
+    language_pinned: bool,
+) -> Option<String> {
+    if let Some(pinned) = pinned_tts_language_hint(language_mode, language_pinned) {
+        return Some(pinned);
+    }
+
+    let lowered = text.trim().to_lowercase();
+    if lowered.is_empty() {
+        return None;
+    }
+    if lowered.contains('ä')
+        || lowered.contains('ö')
+        || lowered.contains('ü')
+        || lowered.contains('ß')
+    {
+        return Some("de".to_string());
+    }
+
+    let mut de_score = 0_u32;
+    let mut en_score = 0_u32;
+    for token in lowered.split(|ch: char| !ch.is_alphabetic()) {
+        if token.is_empty() {
+            continue;
+        }
+        match token {
+            "der" | "die" | "das" | "und" | "nicht" | "ich" | "ist" | "mit" | "für" | "den"
+            | "dem" | "ein" | "eine" => de_score += 1,
+            "the" | "and" | "not" | "you" | "is" | "are" | "with" | "for" | "this" | "that"
+            | "a" | "an" | "to" | "of" => en_score += 1,
+            _ => {}
+        }
+    }
+
+    if de_score > en_score && de_score >= 2 {
+        return Some("de".to_string());
+    }
+    if en_score > de_score && en_score >= 2 {
+        return Some("en".to_string());
+    }
+    None
+}
+
+fn resolve_windows_voice_for_provider(
+    provider: &str,
+    manual_voice_id: &str,
+    auto_by_language_enabled: bool,
+    language_hint: Option<&str>,
+) -> Option<String> {
+    if provider != "windows_native" && provider != "windows_natural" {
+        return None;
+    }
+
+    if auto_by_language_enabled {
+        if let Some(language) = language_hint {
+            if let Some(auto_voice) = select_windows_voice_for_language(provider, language) {
+                return Some(auto_voice);
+            }
+        }
+    }
+
+    let manual = manual_voice_id.trim();
+    if manual.is_empty() {
+        None
+    } else {
+        Some(manual.to_string())
+    }
+}
+
+fn resolve_manual_windows_voice_id_for_lane(
+    lane_provider: &str,
+    default_provider: &str,
+    fallback_provider: &str,
+    default_voice_id: &str,
+    fallback_voice_id: &str,
+) -> String {
+    if lane_provider == fallback_provider && lane_provider != default_provider {
+        let fallback = fallback_voice_id.trim();
+        if !fallback.is_empty() {
+            return fallback.to_string();
+        }
+    }
+    default_voice_id.trim().to_string()
+}
+
+fn piper_effective_volume(global_volume: f32, piper_gain_db: f32) -> f32 {
+    let gain = 10_f32.powf(piper_gain_db.clamp(-24.0, 6.0) / 20.0);
+    (global_volume.clamp(0.0, 1.0) * gain).clamp(0.0, 1.0)
+}
+
+fn is_tts_output_device_unavailable_error(error: &str) -> bool {
+    error
+        .to_ascii_lowercase()
+        .contains("[tts_output_device_unavailable]")
+}
+
+#[allow(dead_code)]
+fn tts_playback_control_snapshot(state: &AppState) -> Option<Arc<TtsPlaybackControl>> {
+    state
+        .tts_playback_control
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+fn replace_tts_playback_control(
+    state: &AppState,
+    control: Option<Arc<TtsPlaybackControl>>,
+) -> Option<Arc<TtsPlaybackControl>> {
+    let mut guard = state
+        .tts_playback_control
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let previous = guard.take();
+    *guard = control;
+    previous
+}
+
+fn clear_tts_playback_control_if_session(state: &AppState, session_id: u64) -> bool {
+    let mut guard = state
+        .tts_playback_control
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match guard.as_ref() {
+        Some(control) if control.session_id == session_id => {
+            *guard = None;
+            true
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn speak_tts_internal(
+    app: &AppHandle,
+    state: &AppState,
+    request: TtsSpeakRequest,
+) -> Result<TtsSpeakResult, String> {
+    let text = request.text.trim().to_string();
+    if text.is_empty() {
+        return Err("TTS text cannot be empty.".to_string());
+    }
+
+    let (voice_settings, language_mode, language_pinned) = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        crate::require_capability_enabled(&settings, crate::RuntimeCapability::VoiceOutputTts)?;
+        (
+            settings.voice_output_settings.clone(),
+            settings.language_mode.clone(),
+            settings.language_pinned,
+        )
+    };
+
+    let context = request
+        .context
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("manual_user")
+        .to_lowercase();
+    if !is_tts_policy_allowed(&voice_settings.output_policy, &context) {
+        return Err(format!(
+            "Voice output policy '{}' blocks context '{}'.",
+            voice_settings.output_policy, context
+        ));
+    }
+
+    let preferred_provider = if request.provider.trim().is_empty() {
+        voice_settings.default_provider.clone()
+    } else {
+        request.provider.trim().to_string()
+    };
+    let fallback_provider = voice_settings.fallback_provider.clone();
+    let rate = request.rate.unwrap_or(voice_settings.rate).clamp(0.5, 2.0);
+    let volume = request
+        .volume
+        .unwrap_or(voice_settings.volume)
+        .clamp(0.0, 1.0);
+    let piper_gain_db = voice_settings.piper_gain_db.clamp(-24.0, 6.0);
+    let session_id = state
+        .tts_session_counter
+        .fetch_add(1, Ordering::AcqRel)
+        .saturating_add(1);
+    let playback_control = Arc::new(TtsPlaybackControl::new(session_id));
+    if let Some(previous) = replace_tts_playback_control(state, Some(Arc::clone(&playback_control)))
+    {
+        previous.cancel();
+    }
+
+    state.tts_speaking.store(true, Ordering::Release);
+    let _ = crate::overlay::update_overlay_tts_stop_visibility(app, true);
+    let _ = app.emit(
+        "tts:speech-started",
+        serde_json::json!({
+            "session_id": session_id,
+            "provider": preferred_provider.clone(),
+            "text_len": text.len(),
+            "context": context.clone(),
+        }),
+    );
+
+    let piper_binary_path = voice_settings.piper_binary_path.clone();
+    let piper_model_path = voice_settings.piper_model_path.clone();
+    let qwen3_runtime_config = resolve_qwen3_tts_runtime_config(&voice_settings);
+    let output_device_id = voice_settings.output_device.clone();
+    let default_provider_config = voice_settings.default_provider.clone();
+    let fallback_provider_config = voice_settings.fallback_provider.clone();
+    let windows_voice_id_default = voice_settings.voice_id_windows.clone();
+    let windows_voice_id_fallback = voice_settings.voice_id_windows_fallback.clone();
+    let auto_voice_by_language_enabled = voice_settings.auto_voice_by_detected_language;
+    let auto_voice_language_hint = if auto_voice_by_language_enabled {
+        infer_tts_language_hint(&text, &language_mode, language_pinned)
+    } else {
+        None
+    };
+
+    let preferred_provider_for_thread = preferred_provider.clone();
+    let fallback_provider_for_thread = fallback_provider.clone();
+    let context_for_thread = context.clone();
+    let playback_control_for_thread = Arc::clone(&playback_control);
+    let app_c = app.clone();
+    crate::util::spawn_guarded("tts_playback", move || {
+        let run_chain = |selected_output_device: &str| {
+            if playback_control_for_thread.is_cancelled() {
+                return Err("[tts_playback_cancelled] TTS request cancelled.".to_string());
+            }
+            execute_tts_with_fallback(
+                &preferred_provider_for_thread,
+                &fallback_provider_for_thread,
+                Some(Arc::clone(&playback_control_for_thread)),
+                |provider| match provider {
+                    "windows_native" => {
+                        let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
+                            "windows_native",
+                            &default_provider_config,
+                            &fallback_provider_config,
+                            &windows_voice_id_default,
+                            &windows_voice_id_fallback,
+                        );
+                        let resolved_voice = resolve_windows_voice_for_provider(
+                            "windows_native",
+                            &manual_voice_id,
+                            auto_voice_by_language_enabled,
+                            auto_voice_language_hint.as_deref(),
+                        );
+                        speak_windows_native(
+                            &text,
+                            rate,
+                            volume,
+                            selected_output_device,
+                            resolved_voice.as_deref(),
+                            Some(Arc::clone(&playback_control_for_thread)),
+                        )
+                    }
+                    "windows_natural" => {
+                        let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
+                            "windows_natural",
+                            &default_provider_config,
+                            &fallback_provider_config,
+                            &windows_voice_id_default,
+                            &windows_voice_id_fallback,
+                        );
+                        let resolved_voice = resolve_windows_voice_for_provider(
+                            "windows_natural",
+                            &manual_voice_id,
+                            auto_voice_by_language_enabled,
+                            auto_voice_language_hint.as_deref(),
+                        );
+                        speak_windows_natural(
+                            &text,
+                            rate,
+                            volume,
+                            selected_output_device,
+                            resolved_voice.as_deref(),
+                            Some(Arc::clone(&playback_control_for_thread)),
+                        )
+                    }
+                    "local_custom" => speak_piper(
+                        &app_c.state::<AppState>().piper_daemon,
+                        &text,
+                        &piper_binary_path,
+                        &piper_model_path,
+                        rate,
+                        piper_effective_volume(volume, piper_gain_db),
+                        selected_output_device,
+                        Some(Arc::clone(&playback_control_for_thread)),
+                    ),
+                    "qwen3_tts" => speak_qwen3_tts(
+                        &text,
+                        rate,
+                        volume,
+                        selected_output_device,
+                        &qwen3_runtime_config,
+                        Some(Arc::clone(&playback_control_for_thread)),
+                    ),
+                    _ => Err(format!("Unknown TTS provider '{}'.", provider)),
+                },
+            )
+        };
+
+        let mut recovered_output_device = false;
+        let result = match run_chain(&output_device_id) {
+            Ok(outcome) => Ok(outcome),
+            Err(error)
+                if output_device_id != "default"
+                    && is_tts_output_device_unavailable_error(&error) =>
+            {
+                tracing::warn!(
+                    "tts playback retrying with default output device after unavailable device '{}': {}",
+                    output_device_id,
+                    error
+                );
+                match run_chain("default") {
+                    Ok(outcome) => {
+                        recovered_output_device = true;
+                        Ok(outcome)
+                    }
+                    Err(retry_error) => Err(format!(
+                        "{error} Retry with default device failed: {retry_error}"
+                    )),
+                }
+            }
+            Err(error) => Err(error),
+        };
+
+        let state = app_c.state::<AppState>();
+        if playback_control_for_thread.is_cancelled() {
+            if clear_tts_playback_control_if_session(&state, session_id) {
+                state.tts_speaking.store(false, Ordering::Release);
+                let _ = crate::overlay::update_overlay_tts_stop_visibility(&app_c, false);
+            }
+            return;
+        }
+
+        let is_current_session = clear_tts_playback_control_if_session(&state, session_id);
+        if !is_current_session {
+            return;
+        }
+
+        state.tts_speaking.store(false, Ordering::Release);
+        let _ = crate::overlay::update_overlay_tts_stop_visibility(&app_c, false);
+        match result {
+            Ok(outcome) => {
+                if recovered_output_device {
+                    let mut snapshot = {
+                        let mut settings = state
+                            .settings
+                            .write()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        settings.voice_output_settings.output_device = "default".to_string();
+                        settings.clone()
+                    };
+                    crate::modules::normalize_voice_output_settings(
+                        &mut snapshot.voice_output_settings,
+                    );
+                    let _ = crate::state::save_settings_file(&app_c, &snapshot);
+                    let _ = app_c.emit("settings-changed", snapshot);
+                }
+                let _ = app_c.emit(
+                    "tts:speech-finished",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "provider_used": outcome.provider_used,
+                        "preferred_provider": preferred_provider_for_thread,
+                        "fallback_provider": fallback_provider_for_thread,
+                        "used_fallback": outcome.used_fallback,
+                        "primary_error": outcome.primary_error,
+                        "output_device_recovered": recovered_output_device,
+                        "context": context_for_thread,
+                        "timestamp_ms": crate::util::now_ms(),
+                    }),
+                );
+            }
+            Err(error) => {
+                let _ = app_c.emit(
+                    "tts:speech-error",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "provider": preferred_provider_for_thread.clone(),
+                        "preferred_provider": preferred_provider_for_thread.clone(),
+                        "fallback_provider": fallback_provider_for_thread.clone(),
+                        "context": context_for_thread.clone(),
+                        "error": error,
+                        "timestamp_ms": crate::util::now_ms(),
+                    }),
+                );
+            }
+        }
+    });
+
+    let accepted_message = if preferred_provider == fallback_provider {
+        format!("TTS request accepted (provider: {}).", preferred_provider)
+    } else {
+        format!(
+            "TTS request accepted (fallback chain: {} -> {}).",
+            preferred_provider, fallback_provider
+        )
+    };
+
+    Ok(TtsSpeakResult {
+        provider_used: preferred_provider.clone(),
+        accepted: true,
+        message: accepted_message,
+        used_fallback: None,
+        preferred_provider: Some(preferred_provider),
+        fallback_provider: Some(fallback_provider),
+        primary_error: None,
+    })
+}
+
+#[tauri::command]
+pub(crate) fn speak_tts(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: TtsSpeakRequest,
+) -> Result<TtsSpeakResult, String> {
+    crate::guarded_command!("speak_tts", {
+        speak_tts_internal(&app, state.inner(), request)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn stop_tts(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(stop_tts_internal(&app, state.inner()))
+}
+
+pub(crate) fn stop_tts_internal(app: &AppHandle, state: &AppState) -> bool {
+    let active_control = {
+        let mut guard = state
+            .tts_playback_control
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.take()
+    };
+    if let Some(control) = active_control.as_ref() {
+        control.cancel();
+    }
+    let was_speaking = state.tts_speaking.swap(false, Ordering::AcqRel) || active_control.is_some();
+    if !was_speaking {
+        return false;
+    }
+    let _ = crate::overlay::update_overlay_tts_stop_visibility(app, false);
+    let _ = app.emit(
+        "tts:speech-finished",
+        serde_json::json!({
+            "session_id": active_control.as_ref().map(|control| control.session_id),
+            "stopped": was_speaking,
+            "timestamp_ms": crate::util::now_ms(),
+        }),
+    );
+    was_speaking
+}
+
+#[tauri::command]
+pub(crate) fn test_tts_provider(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: Option<String>,
+) -> Result<TtsSpeakResult, String> {
+    crate::guarded_command!("test_tts_provider", {
+        let preferred_provider = provider
+            .unwrap_or_else(|| "windows_native".to_string())
+            .trim()
+            .to_string();
+        let (voice_settings, language_mode, language_pinned) = {
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            crate::require_capability_enabled(&settings, crate::RuntimeCapability::VoiceOutputTts)?;
+            (
+                settings.voice_output_settings.clone(),
+                settings.language_mode.clone(),
+                settings.language_pinned,
+            )
+        };
+
+        let fallback_provider = voice_settings.fallback_provider.clone();
+        let rate = voice_settings.rate.clamp(0.5, 2.0);
+        let volume = voice_settings.volume.clamp(0.0, 1.0);
+        let piper_gain_db = voice_settings.piper_gain_db.clamp(-24.0, 6.0);
+        let piper_binary_path = voice_settings.piper_binary_path.clone();
+        let piper_model_path = voice_settings.piper_model_path.clone();
+        let qwen3_runtime_config = resolve_qwen3_tts_runtime_config(&voice_settings);
+        let output_device_id = voice_settings.output_device.clone();
+        let default_provider_config = voice_settings.default_provider.clone();
+        let fallback_provider_config = voice_settings.fallback_provider.clone();
+        let windows_voice_id_default = voice_settings.voice_id_windows.clone();
+        let windows_voice_id_fallback = voice_settings.voice_id_windows_fallback.clone();
+        let auto_voice_by_language_enabled = voice_settings.auto_voice_by_detected_language;
+        let sample_text = "Trisper Flow voice output test.";
+        let playback_control = Arc::new(TtsPlaybackControl::new(crate::util::now_ms()));
+        let auto_voice_language_hint = if auto_voice_by_language_enabled {
+            infer_tts_language_hint(sample_text, &language_mode, language_pinned)
+        } else {
+            None
+        };
+
+        let run_chain = |selected_output_device: &str| {
+            execute_tts_with_fallback(
+                &preferred_provider,
+                &fallback_provider,
+                Some(Arc::clone(&playback_control)),
+                |lane| match lane {
+                    "windows_native" => {
+                        let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
+                            "windows_native",
+                            &default_provider_config,
+                            &fallback_provider_config,
+                            &windows_voice_id_default,
+                            &windows_voice_id_fallback,
+                        );
+                        let resolved_voice = resolve_windows_voice_for_provider(
+                            "windows_native",
+                            &manual_voice_id,
+                            auto_voice_by_language_enabled,
+                            auto_voice_language_hint.as_deref(),
+                        );
+                        speak_windows_native(
+                            sample_text,
+                            rate,
+                            volume,
+                            selected_output_device,
+                            resolved_voice.as_deref(),
+                            None,
+                        )
+                    }
+                    "windows_natural" => {
+                        let manual_voice_id = resolve_manual_windows_voice_id_for_lane(
+                            "windows_natural",
+                            &default_provider_config,
+                            &fallback_provider_config,
+                            &windows_voice_id_default,
+                            &windows_voice_id_fallback,
+                        );
+                        let resolved_voice = resolve_windows_voice_for_provider(
+                            "windows_natural",
+                            &manual_voice_id,
+                            auto_voice_by_language_enabled,
+                            auto_voice_language_hint.as_deref(),
+                        );
+                        speak_windows_natural(
+                            sample_text,
+                            rate,
+                            volume,
+                            selected_output_device,
+                            resolved_voice.as_deref(),
+                            None,
+                        )
+                    }
+                    "local_custom" => speak_piper(
+                        &state.piper_daemon,
+                        sample_text,
+                        &piper_binary_path,
+                        &piper_model_path,
+                        rate,
+                        piper_effective_volume(volume, piper_gain_db),
+                        selected_output_device,
+                        None,
+                    ),
+                    "qwen3_tts" => speak_qwen3_tts(
+                        sample_text,
+                        rate,
+                        volume,
+                        selected_output_device,
+                        &qwen3_runtime_config,
+                        None,
+                    ),
+                    _ => Err(format!("Unknown TTS provider '{}'.", lane)),
+                },
+            )
+        };
+
+        let mut recovered_output_device = false;
+        let outcome = match run_chain(&output_device_id) {
+            Ok(outcome) => outcome,
+            Err(error)
+                if output_device_id != "default"
+                    && is_tts_output_device_unavailable_error(&error) =>
+            {
+                tracing::warn!(
+                    "test_tts_provider retrying with default output device after unavailable '{}': {}",
+                    output_device_id,
+                    error
+                );
+                match run_chain("default") {
+                    Ok(outcome) => {
+                        recovered_output_device = true;
+                        {
+                            let mut settings_guard = state
+                                .settings
+                                .write()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            settings_guard.voice_output_settings.output_device =
+                                "default".to_string();
+                        }
+                        let snapshot = state
+                            .settings
+                            .read()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .clone();
+                        let _ = crate::state::save_settings_file(&app, &snapshot);
+                        let _ = app.emit("settings-changed", snapshot);
+                        outcome
+                    }
+                    Err(retry_error) => {
+                        let merged =
+                            format!("{error} Retry with default device failed: {retry_error}");
+                        tracing::error!(
+                            "test_tts_provider failed preferred='{}' fallback='{}' device='{}': {}",
+                            preferred_provider,
+                            fallback_provider,
+                            output_device_id,
+                            merged
+                        );
+                        let _ = app.emit(
+                            "tts:speech-error",
+                            serde_json::json!({
+                                "provider": preferred_provider.clone(),
+                                "preferred_provider": preferred_provider.clone(),
+                                "fallback_provider": fallback_provider.clone(),
+                                "context": "manual_test",
+                                "error": merged.clone(),
+                                "timestamp_ms": crate::util::now_ms(),
+                            }),
+                        );
+                        return Err(merged);
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::error!(
+                    "test_tts_provider failed preferred='{}' fallback='{}' device='{}': {}",
+                    preferred_provider,
+                    fallback_provider,
+                    output_device_id,
+                    error
+                );
+                let _ = app.emit(
+                    "tts:speech-error",
+                    serde_json::json!({
+                        "provider": preferred_provider.clone(),
+                        "preferred_provider": preferred_provider.clone(),
+                        "fallback_provider": fallback_provider.clone(),
+                        "context": "manual_test",
+                        "error": error.clone(),
+                        "timestamp_ms": crate::util::now_ms(),
+                    }),
+                );
+                return Err(error);
+            }
+        };
+
+        let provider_used = outcome.provider_used.clone();
+        let primary_error = outcome.primary_error.clone();
+        let used_fallback = outcome.used_fallback;
+
+        if used_fallback {
+            let _ = app.emit(
+                "tts:speech-finished",
+                serde_json::json!({
+                    "provider_used": provider_used.clone(),
+                    "preferred_provider": preferred_provider.clone(),
+                    "fallback_provider": fallback_provider.clone(),
+                    "used_fallback": true,
+                    "primary_error": primary_error.clone(),
+                    "output_device_recovered": recovered_output_device,
+                    "context": "manual_test",
+                    "timestamp_ms": crate::util::now_ms(),
+                }),
+            );
+        }
+
+        Ok(TtsSpeakResult {
+            provider_used: provider_used.clone(),
+            accepted: true,
+            message: if used_fallback {
+                let fallback_msg = format!(
+                    "Fallback used: {} -> {}.",
+                    preferred_provider, provider_used
+                );
+                if recovered_output_device {
+                    format!("{fallback_msg} Gerät ungültig, auf Default zurückgesetzt.")
+                } else {
+                    fallback_msg
+                }
+            } else {
+                let base = format!("Provider '{}' responded.", provider_used);
+                if recovered_output_device {
+                    format!("{base} Gerät ungültig, auf Default zurückgesetzt.")
+                } else {
+                    base
+                }
+            },
+            used_fallback: Some(used_fallback),
+            preferred_provider: Some(preferred_provider),
+            fallback_provider: Some(fallback_provider),
+            primary_error,
+        })
+    })
+}
+
+pub fn list_tts_provider_infos(qwen3_tts_enabled: bool) -> Vec<TtsProviderInfo> {
     let mut providers = vec![
         TtsProviderInfo {
             id: "windows_native".to_string(),
@@ -838,7 +1900,7 @@ fn list_qwen3_tts_voices() -> Vec<TtsVoiceInfo> {
         .collect()
 }
 
-pub fn list_tts_voices(provider: &str) -> Vec<TtsVoiceInfo> {
+pub fn list_tts_voice_infos(provider: &str) -> Vec<TtsVoiceInfo> {
     match provider {
         "windows_native" => list_windows_voices(),
         "windows_natural" => list_windows_natural_voices(),
@@ -1045,7 +2107,7 @@ pub fn list_piper_voices(model_dir: &str) -> Vec<TtsVoiceInfo> {
     voices
 }
 
-pub fn list_piper_voice_catalog(model_dir: &str) -> Vec<PiperVoiceCatalogEntry> {
+pub fn list_piper_voice_catalog_entries(model_dir: &str) -> Vec<PiperVoiceCatalogEntry> {
     let mut installed_by_key: HashMap<String, String> = HashMap::new();
     for dir in collect_piper_catalog_model_dirs(model_dir) {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2531,6 +3593,129 @@ pub fn play_wav_bytes(
     let play_result = play_wav_blocking(&temp_path, volume, output_device_id, playback_control);
     let _ = std::fs::remove_file(&temp_path);
     play_result
+}
+
+pub(crate) fn resolve_qwen3_tts_runtime_config(
+    settings: &crate::modules::VoiceOutputSettings,
+) -> Qwen3TtsConfig {
+    let endpoint = settings.qwen3_tts_endpoint.trim();
+    let model = settings.qwen3_tts_model.trim();
+    let voice = settings.qwen3_tts_voice.trim();
+    let api_key = settings.qwen3_tts_api_key.trim();
+    Qwen3TtsConfig {
+        endpoint: if endpoint.is_empty() {
+            "http://127.0.0.1:8000/v1/audio/speech".to_string()
+        } else {
+            endpoint.to_string()
+        },
+        model: if model.is_empty() {
+            "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice".to_string()
+        } else {
+            model.to_string()
+        },
+        voice: if voice.is_empty() {
+            "vivian".to_string()
+        } else {
+            voice.to_string()
+        },
+        api_key: if api_key.is_empty() {
+            None
+        } else {
+            Some(api_key.to_string())
+        },
+        timeout_sec: settings.qwen3_tts_timeout_sec.clamp(3, 180),
+    }
+}
+
+pub(crate) fn request_qwen3_tts_audio_bytes(
+    text: &str,
+    rate: f32,
+    config: &Qwen3TtsConfig,
+) -> Result<(Vec<u8>, String), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("TTS text is empty.".to_string());
+    }
+
+    let agent = ureq::builder()
+        .timeout(Duration::from_secs(config.timeout_sec))
+        .build();
+    let mut request = agent
+        .post(&config.endpoint)
+        .set("Content-Type", "application/json")
+        .set(
+            "Accept",
+            "audio/wav, audio/mpeg, application/octet-stream, application/json",
+        );
+    if let Some(api_key) = config.api_key.as_ref() {
+        request = request.set("Authorization", &format!("Bearer {}", api_key));
+    }
+
+    let body = serde_json::json!({
+        "model": config.model,
+        "input": text,
+        "voice": config.voice,
+        "response_format": "wav",
+        "stream": false,
+        "speed": rate.clamp(0.5, 2.0),
+    });
+
+    let response = match request.send_json(body) {
+        Ok(response) => response,
+        Err(ureq::Error::Status(code, response)) => {
+            return Err(crate::format_ureq_status_error(
+                "Qwen3-TTS benchmark request",
+                code,
+                response,
+            ));
+        }
+        Err(ureq::Error::Transport(transport)) => {
+            return Err(format!(
+                "Qwen3-TTS benchmark request failed: {} (endpoint={})",
+                transport, config.endpoint
+            ));
+        }
+    };
+
+    let content_type = response
+        .header("Content-Type")
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mut reader = response.into_reader();
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|err| format!("Qwen3-TTS response read failed: {}", err))?;
+
+    Ok((bytes, content_type))
+}
+
+pub(crate) fn speak_qwen3_tts(
+    text: &str,
+    rate: f32,
+    volume: f32,
+    output_device_id: &str,
+    config: &Qwen3TtsConfig,
+    playback_control: Option<Arc<TtsPlaybackControl>>,
+) -> Result<(), String> {
+    let (bytes, content_type) = request_qwen3_tts_audio_bytes(text, rate, config)?;
+    if bytes.is_empty() {
+        return Err("Qwen3-TTS returned an empty response body.".to_string());
+    }
+    if content_type.contains("application/json") {
+        let body = String::from_utf8_lossy(&bytes).trim().to_string();
+        return Err(format!(
+            "Qwen3-TTS returned JSON instead of audio: {}",
+            body
+        ));
+    }
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err(format!(
+            "Qwen3-TTS response is not WAV audio (content-type='{}').",
+            content_type
+        ));
+    }
+    play_wav_bytes(&bytes, volume, output_device_id, playback_control)
 }
 
 pub fn benchmark_piper_synthesis(

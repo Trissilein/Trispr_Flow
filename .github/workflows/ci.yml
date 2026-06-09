@@ -7,9 +7,10 @@ on:
   push:
     branches:
       - main
-      - "refactor/**"
-      - "feat/**"
-      - "fix/**"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ── Blocking gate ──────────────────────────────────────────────────────────
@@ -34,13 +35,14 @@ jobs:
       - name: Unit tests
         run: npm test
 
-  # ── Informational (non-blocking) ───────────────────────────────────────────
-  # Runs Rust build + cargo tests on Windows to catch backend regressions.
-  # Not a required check — promoted to required once CI runtime is measured.
-  smoke:
-    name: Rust smoke (windows-latest)
+      - name: Build frontend
+        run: npm run build
+
+  # ── Rust blocking gate ─────────────────────────────────────────────────────
+  # Required status check for Tauri/Rust regressions.
+  rust-gate:
+    name: Rust check + tests
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -55,67 +57,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
 
-      - name: Install NPM dependencies
-        run: npm ci
+      - name: Generate CI tauri config
+        run: node scripts/generate-tauri-variant-config.mjs --variant ci --out src-tauri/tauri.conf.json
 
       - name: Rust format check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
-      - name: Seed Whisper runtime placeholders for smoke
-        shell: pwsh
-        run: |
-          $binRoot = Join-Path $PWD "src-tauri\bin"
+      - name: Rust check
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
 
-          function Ensure-File([string]$relativePath) {
-            $path = Join-Path $binRoot $relativePath
-            $dir = Split-Path -Parent $path
-            New-Item -ItemType Directory -Force -Path $dir | Out-Null
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-              Set-Content -LiteralPath $path -Value "smoke-placeholder"
-            }
-          }
+      - name: Rust tests lib
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib
 
-          function Ensure-DirPlaceholder([string]$relativeDir) {
-            $dir = Join-Path $binRoot $relativeDir
-            New-Item -ItemType Directory -Force -Path $dir | Out-Null
-            $placeholder = Join-Path $dir ".placeholder"
-            if (-not (Test-Path -LiteralPath $placeholder -PathType Leaf)) {
-              Set-Content -LiteralPath $placeholder -Value "smoke-placeholder"
-            }
-          }
-
-          @(
-            "cuda\whisper-cli.exe",
-            "cuda\whisper.dll",
-            "cuda\ggml.dll",
-            "cuda\ggml-base.dll",
-            "cuda\ggml-cpu.dll",
-            "cuda\ggml-cuda.dll",
-            "cuda\cublas64_13.dll",
-            "cuda\cublasLt64_13.dll",
-            "cuda\cudart64_13.dll",
-            "cuda\whisper-server.exe",
-            "vulkan\whisper-cli.exe",
-            "vulkan\whisper.dll",
-            "vulkan\ggml.dll",
-            "vulkan\ggml-base.dll",
-            "vulkan\ggml-cpu.dll",
-            "vulkan\ggml-vulkan.dll",
-            "quantize.exe",
-            "ffmpeg\ffmpeg.exe",
-            "piper\piper.exe",
-            "piper\espeak-ng.dll",
-            "piper\piper_phonemize.dll",
-            "piper\libtashkeel_model.ort",
-            "piper\onnxruntime.dll",
-            "piper\onnxruntime_providers_shared.dll",
-            "piper\voices\de_DE-thorsten-medium.onnx",
-            "piper\voices\de_DE-thorsten-medium.onnx.json"
-          ) | ForEach-Object { Ensure-File $_ }
-
-          Ensure-DirPlaceholder "piper\espeak-ng-data"
-
-      - name: Smoke test
-        run: npm run test:smoke
+      - name: Rust tests bins
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --bins

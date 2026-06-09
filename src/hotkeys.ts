@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ValidationResult } from "./types";
 import { settings } from "./state";
-import { persistSettings } from "./settings";
+import { persistSettings } from "./settings-persist";
 import { formatHotkeyForDisplay } from "./ui-helpers";
 
 // Map event.code → tauri-compatible key name for layout-independent recognition

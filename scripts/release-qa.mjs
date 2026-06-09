@@ -45,7 +45,7 @@ runOrExit(steps, "test", "npm test");
 runOrExit(
   steps,
   "cargo-test-no-default-features",
-  "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --lib --no-run"
+  "cargo test --manifest-path src-tauri/Cargo.toml --lib"
 );
 runOrExit(
   steps,

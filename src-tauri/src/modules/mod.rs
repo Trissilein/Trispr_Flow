@@ -1,5 +1,7 @@
 pub mod health;
 pub mod lifecycle;
+pub mod lifecycle_coordinator;
+pub mod package;
 pub mod permissions;
 pub mod registry;
 pub mod task_capture;
@@ -11,6 +13,7 @@ use crate::gdd::GddPresetClone;
 
 pub const ASSISTANT_CORE_MODULE_ID: &str = "assistant_core";
 pub const ASSISTANT_PRESENCE_MODULE_ID: &str = "assistant_presence";
+pub const GDD_MODULE_ID: &str = "gdd";
 pub const LEGACY_WORKFLOW_AGENT_MODULE_ID: &str = "workflow_agent";
 pub const TASK_CAPTURE_MODULE_ID: &str = "task_capture";
 
@@ -379,8 +382,6 @@ pub fn normalize_module_settings(settings: &mut ModuleSettings) {
 }
 
 pub fn normalize_gdd_module_settings(settings: &mut GddModuleSettings) {
-    // GDD is now a core capability and is always available.
-    settings.enabled = true;
     if settings.default_preset_id.trim().is_empty() {
         settings.default_preset_id = "universal_strict".to_string();
     }

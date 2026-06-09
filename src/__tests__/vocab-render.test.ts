@@ -1,14 +1,14 @@
 /**
  * Safety-net tests for renderVocabulary and renderLearnedVocabChips.
  *
- * These functions live in settings.ts (moved from event-listeners.ts in QW2
- * to break the circular dependency between the two files).
+ * These functions live in settings/vocabulary.settings.ts.
  *
  * The DOM elements are injected via vi.hoisted so dom-refs.ts picks them up
  * at module-load time (before any import is processed).
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 
 // Inject DOM nodes before any module import so dom-refs.ts sees them.
 vi.hoisted(() => {
@@ -20,9 +20,11 @@ vi.hoisted(() => {
   `;
 });
 
-import { renderVocabulary, renderLearnedVocabChips } from "../settings";
-import { setSettings } from "../state";
+import { addVocabRow, renderVocabulary, renderLearnedVocabChips } from "../settings/vocabulary.settings";
+import { setSettings, settings } from "../state";
 import type { Settings } from "../types";
+
+const mockedInvoke = vi.mocked(invoke);
 
 function makeSettings(overrides: Partial<Settings>): Settings {
   return overrides as unknown as Settings;
@@ -40,6 +42,8 @@ describe("renderVocabulary", () => {
   beforeEach(() => {
     vocabRows().innerHTML = "";
     setSettings(null);
+    mockedInvoke.mockReset();
+    mockedInvoke.mockResolvedValue(undefined);
   });
 
   it("is a no-op when settings is null", () => {
@@ -74,6 +78,46 @@ describe("renderVocabulary", () => {
     const inputs = vocabRows().querySelectorAll<HTMLInputElement>(".vocab-input");
     expect(inputs[0]?.value).toBe("api");
     expect(inputs[1]?.value).toBe("API");
+  });
+});
+
+// --- addVocabRow ---
+
+describe("addVocabRow", () => {
+  beforeEach(() => {
+    vocabRows().innerHTML = "";
+    setSettings(makeSettings({ postproc_custom_vocab: {} }));
+    mockedInvoke.mockReset();
+    mockedInvoke.mockResolvedValue(undefined);
+  });
+
+  it("appends a row with original and replacement inputs", () => {
+    addVocabRow("api", "API");
+    const row = vocabRows().querySelector(".vocab-row");
+    const inputs = row?.querySelectorAll<HTMLInputElement>("input");
+    expect(row).toBeTruthy();
+    expect(inputs?.[0]?.value).toBe("api");
+    expect(inputs?.[1]?.value).toBe("API");
+  });
+
+  it("persists the current row values on input change", async () => {
+    addVocabRow("api", "API");
+    const inputs = vocabRows().querySelectorAll<HTMLInputElement>("input");
+    inputs[0]!.value = "gdd";
+    inputs[1]!.value = "GDD";
+    inputs[1]!.dispatchEvent(new Event("change"));
+
+    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    expect(settings?.postproc_custom_vocab).toEqual({ gdd: "GDD" });
+  });
+
+  it("removes the row and persists when remove is clicked", async () => {
+    addVocabRow("api", "API");
+    vocabRows().querySelector<HTMLButtonElement>(".vocab-remove")!.click();
+
+    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()));
+    expect(vocabRows().querySelectorAll(".vocab-row")).toHaveLength(0);
+    expect(settings?.postproc_custom_vocab).toEqual({});
   });
 });
 

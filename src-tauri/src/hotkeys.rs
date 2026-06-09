@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
+
+use crate::state::AppState;
 // tauri_plugin_global_shortcut::GlobalShortcutExt not needed here.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,6 +216,31 @@ pub fn test_hotkey_registration(_app: &AppHandle, key: &str) -> Result<(), Strin
     // For now, we just validate the format.
 
     Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn validate_hotkey(key: String) -> ValidationResult {
+    validate_hotkey_format(&key)
+}
+
+#[tauri::command]
+pub(crate) fn test_hotkey(app: AppHandle, key: String) -> Result<(), String> {
+    test_hotkey_registration(&app, &key)
+}
+
+#[tauri::command]
+pub(crate) fn get_hotkey_conflicts(state: State<'_, AppState>) -> Vec<ConflictInfo> {
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let hotkeys = vec![
+        settings.hotkey_ptt.clone(),
+        settings.hotkey_toggle.clone(),
+        settings.transcribe_hotkey.clone(),
+        settings.hotkey_product_mode_toggle.clone(),
+    ];
+    detect_conflicts(hotkeys)
 }
 
 #[cfg(test)]

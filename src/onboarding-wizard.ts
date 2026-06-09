@@ -1,6 +1,6 @@
 import * as dom from "./dom-refs";
 import { settings, updateSettings } from "./state";
-import { persistSettings as saveSettings } from "./settings";
+import { persistSettings as saveSettings } from "./settings-persist";
 import { showToast } from "./toast";
 import { setupHotkeyRecorder } from "./hotkeys";
 

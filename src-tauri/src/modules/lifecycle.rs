@@ -1,4 +1,5 @@
 use super::{permissions, registry, ModuleSettings};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ModuleLifecycleResult {
@@ -10,10 +11,11 @@ pub struct ModuleLifecycleResult {
     pub message: String,
 }
 
-pub fn enable_module(
+pub fn enable_module_with_packages(
     settings: &mut ModuleSettings,
     module_id: &str,
     grant_permissions: &[String],
+    installed_package_ids: &HashSet<String>,
 ) -> Result<ModuleLifecycleResult, String> {
     let manifest = registry::find_manifest(module_id)
         .ok_or_else(|| format!("Unknown module '{}'.", module_id))?;
@@ -29,7 +31,7 @@ pub fn enable_module(
         });
     }
 
-    if !registry::module_is_installed(settings, module_id) {
+    if !registry::module_is_installed_with_packages(settings, module_id, installed_package_ids) {
         registry::set_last_error(settings, module_id, "Module is not installed.");
         return Err(format!(
             "Module '{}' is not installed. Install module assets first.",
@@ -41,7 +43,8 @@ pub fn enable_module(
         permissions::grant_permissions(settings, module_id, grant_permissions);
     }
 
-    let missing_dependencies = registry::missing_dependencies(settings, module_id);
+    let missing_dependencies =
+        registry::missing_dependencies_with_packages(settings, module_id, installed_package_ids);
     if !missing_dependencies.is_empty() {
         let message = format!(
             "Missing dependencies for '{}': {}",

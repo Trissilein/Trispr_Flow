@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 use tracing::warn;
 
@@ -47,6 +47,72 @@ pub(crate) fn resolve_data_path(app: &AppHandle, filename: &str) -> PathBuf {
     base.join(filename)
 }
 
+#[tauri::command]
+pub(crate) fn open_log_directory() -> Result<(), String> {
+    let log_dir = std::env::var("LOCALAPPDATA")
+        .map(|d| PathBuf::from(d).join("Trispr Flow").join("logs"))
+        .map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        Command::new("explorer.exe")
+            .arg(&log_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open log directory: {}", e))?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::process::Command;
+        Command::new("open")
+            .arg(&log_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open log directory: {}", e))?;
+        Ok(())
+    }
+}
+
+/// Validate that a path resolves within the allowed root directory.
+/// For existing files: canonicalize the full path.
+/// For new files (output): canonicalize the parent directory.
+pub(crate) fn validate_path_within(path_str: &str, allowed_root: &Path) -> Result<PathBuf, String> {
+    // Reject UNC paths (\\server\share) before canonicalize — they trigger an SMB
+    // round-trip which can leak NTLM credentials even if starts_with() later rejects them.
+    if path_str.starts_with("\\\\") || path_str.starts_with("//") {
+        return Err(format!("UNC paths are not allowed: '{}'", path_str));
+    }
+    let path = PathBuf::from(path_str);
+
+    if path.exists() {
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve path '{}': {}", path_str, e))?;
+        if !canonical.starts_with(allowed_root) {
+            return Err(format!("Path '{}' is outside allowed directory", path_str));
+        }
+        return Ok(canonical);
+    }
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Path '{}' has no parent directory", path_str))?;
+    if !parent.exists() {
+        return Err(format!("Parent directory of '{}' does not exist", path_str));
+    }
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve parent of '{}': {}", path_str, e))?;
+    if !canonical_parent.starts_with(allowed_root) {
+        return Err(format!("Path '{}' is outside allowed directory", path_str));
+    }
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("Path '{}' has no file name", path_str))?;
+    Ok(canonical_parent.join(file_name))
+}
+
 pub(crate) fn resolve_recordings_dir(app: &AppHandle) -> PathBuf {
     let dir = resolve_base_dir(app).join("recordings");
     let _ = fs::create_dir_all(&dir);
@@ -61,6 +127,12 @@ pub(crate) fn resolve_video_output_dir(app: &AppHandle) -> PathBuf {
 
 pub(crate) fn resolve_video_jobs_dir(app: &AppHandle) -> PathBuf {
     let dir = resolve_base_dir(app).join("video_jobs");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+pub(crate) fn resolve_modules_dir(app: &AppHandle) -> PathBuf {
+    let dir = resolve_base_dir(app).join("modules");
     let _ = fs::create_dir_all(&dir);
     dir
 }

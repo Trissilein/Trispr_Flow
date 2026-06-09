@@ -5,12 +5,14 @@ import type { Settings } from "../types";
 import * as dom from "../dom-refs";
 import { settings } from "../state";
 import {
-  persistSettings,
   updateTranscribeVadVisibility,
   updateTranscribeThreshold,
   syncCaptureModeVisibility,
+} from "../settings/transcription.settings";
+import {
   renderSettings,
 } from "../settings";
+import { persistSettings } from "../settings-persist";
 import { renderHero, updateThresholdMarkers } from "../ui-state";
 import { setupHotkeyRecorder } from "../hotkeys";
 import { updateRangeAria } from "../accessibility";

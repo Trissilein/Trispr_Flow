@@ -319,12 +319,15 @@ function cardActions(moduleInfo: ModuleDescriptor): string {
 
   const canEnable = moduleInfo.toggleable && (moduleInfo.state === "installed" || moduleInfo.state === "error");
   const canDisable = moduleInfo.toggleable && (moduleInfo.state === "active" || moduleInfo.state === "enabled");
+  const canInstall = moduleInfo.toggleable && moduleInfo.bundled && moduleInfo.state === "not_installed";
 
   const primary = canEnable
     ? `<button class="hotkey-record-btn" data-module-action="enable" data-module-id="${moduleInfo.id}">Enable</button>`
     : canDisable
       ? `<button class="hotkey-record-btn" data-module-action="disable" data-module-id="${moduleInfo.id}">Disable</button>`
-      : `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${moduleInfo.id}" disabled>Install (planned)</button>`;
+      : canInstall
+        ? `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${moduleInfo.id}">Install</button>`
+        : `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${moduleInfo.id}" disabled>Install</button>`;
 
   return `${primary}
     <button class="hotkey-record-btn" data-module-action="health" data-module-id="${moduleInfo.id}">Health</button>
@@ -477,6 +480,31 @@ async function handleEnable(moduleId: string): Promise<void> {
   }
 }
 
+async function handleInstall(moduleId: string): Promise<void> {
+  const moduleInfo = moduleSnapshot.find((candidate) => candidate.id === moduleId);
+  if (!moduleInfo) return;
+  try {
+    const result = await invoke<{ installed: boolean; target_dir: string }>("install_bundled_module_package", {
+      moduleId,
+    });
+    await refreshModuleState();
+    showToast({
+      type: "success",
+      title: result.installed ? "Module installed" : "Module already installed",
+      message: `${moduleInfo.name} package is available locally.`,
+      duration: 3600,
+    });
+  } catch (error) {
+    showToast({
+      type: "error",
+      title: "Install failed",
+      message: String(error),
+      duration: 5200,
+    });
+    await refreshModuleState();
+  }
+}
+
 async function handleDisable(moduleId: string): Promise<void> {
   const moduleInfo = moduleSnapshot.find((candidate) => candidate.id === moduleId);
   if (moduleInfo && !moduleInfo.toggleable) {
@@ -562,6 +590,10 @@ function bindModulesEvents(): void {
 
     if (action === "enable") {
       void handleEnable(moduleId);
+      return;
+    }
+    if (action === "install") {
+      void handleInstall(moduleId);
       return;
     }
     if (action === "disable") {

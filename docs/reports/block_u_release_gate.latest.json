@@ -1,11 +1,11 @@
 {
-  "generated_at": "2026-06-09T14:48:10.932Z",
-  "started_at": "2026-06-09T14:47:43.154Z",
-  "ended_at": "2026-06-09T14:48:10.932Z",
-  "git_commit": "7dc89650386c8d94765ad82ddc2248fb4f38e7b1",
+  "generated_at": "2026-06-09T16:27:44.556Z",
+  "started_at": "2026-06-09T16:27:16.525Z",
+  "ended_at": "2026-06-09T16:27:44.556Z",
+  "git_commit": "94be0bcadc1dafaf714ee7fab5a69e95e9536aca",
   "options": {
     "require_soak": false,
-    "strict_benchmark": false,
+    "strict_benchmark": true,
     "skip_rust_lib_tests": false,
     "soak8_path": null,
     "soak24_path": null
@@ -15,26 +15,35 @@
       "name": "build",
       "command": "npm run build",
       "status": 0,
-      "duration_ms": 4017
+      "duration_ms": 4060
     },
     {
       "name": "test",
       "command": "npm test",
       "status": 0,
-      "duration_ms": 11165
+      "duration_ms": 11402
     },
     {
       "name": "cargo-test-lib",
       "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib",
       "status": 0,
-      "duration_ms": 12514
+      "duration_ms": 12490
     }
   ],
   "benchmarks": {
-    "latency_present": false,
+    "latency_present": true,
     "tts_present": true,
-    "tts_release_gate_pass": false,
+    "tts_release_gate_pass": true,
     "tts_provider_consistency_ok": true,
+    "tts_baseline_providers": [
+      "windows_native"
+    ],
+    "tts_degraded_supported_optional_providers": [
+      "local_custom"
+    ],
+    "tts_unavailable_experimental_providers": [
+      "qwen3_tts"
+    ],
     "tts_uncategorized_failure_count": 0,
     "latency_report_path": "bench\\results\\latest.json",
     "tts_report_path": "bench\\results\\tts.latest.json"
@@ -45,13 +54,13 @@
   },
   "gates": {
     "automated_checks_pass": true,
-    "benchmark_linked_pass": false,
+    "benchmark_linked_pass": true,
     "soak_evidence_attached": false,
     "overall_pass": true
   },
   "warnings": [
-    "Latency benchmark report (bench/results/latest.json) missing.",
-    "TTS report indicates release_gate_pass=false.",
+    "TTS supported optional providers degraded: local_custom.",
+    "TTS experimental providers unavailable: qwen3_tts.",
     "8h soak evidence not attached.",
     "24h soak evidence not attached."
   ]

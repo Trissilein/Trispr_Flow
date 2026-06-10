@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ModuleDescriptor, Settings } from "../types";
+import type { ModuleDescriptor, ModuleHealthStatus, Settings } from "../types";
 
 const invokeMock = vi.fn();
 const showToastMock = vi.fn();
@@ -168,6 +168,48 @@ describe("modules-hub consent messaging", () => {
       "[data-module-card='input_vision'] .module-card-feedback"
     ) as HTMLElement | null;
     expect(feedback?.textContent).toContain("Screen capture consent missing");
+  });
+
+  it("renders setup health as a warning instead of descriptor error", async () => {
+    const modules: ModuleDescriptor[] = [
+      moduleDefaults({
+        id: "assistant_core",
+        name: "Assistant Core",
+        state: "error",
+        permissions: ["filesystem_history"],
+        last_error: "Enabled module needs setup before it can run.",
+      }),
+    ];
+    const health: ModuleHealthStatus[] = [
+      {
+        module_id: "assistant_core",
+        state: "needs_setup",
+        detail: "Consent required before this module is available: filesystem_history.",
+      },
+    ];
+
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "list_modules") return modules;
+      if (command === "get_module_health") return health;
+      return null;
+    });
+
+    const modulesHub = await import("../modules-hub");
+    modulesHub.initModulesHub();
+    await flushAsync();
+
+    const badge = document.querySelector(
+      "[data-module-card='assistant_core'] .model-status"
+    ) as HTMLElement | null;
+    expect(badge?.textContent).toBe("Needs setup");
+    expect(badge?.className).toContain("model-status--warning");
+    expect(badge?.className).not.toContain("is-error");
+
+    const feedback = document.querySelector(
+      "[data-module-card='assistant_core'] .module-card-feedback"
+    ) as HTMLElement | null;
+    expect(feedback?.className).toContain("is-warning");
+    expect(feedback?.className).not.toContain("is-error");
   });
 
   it("uses detailed consent text on enable and forwards grant permissions", async () => {

@@ -8,7 +8,7 @@ Supersedes: none
 
 ## Scope
 
-This checkpoint covers the documentation refresh and first implementation slice for making v0.8.3 release-clean by separating Trispr Core and Vulkan Whisper release blockers from optional Feature Module setup gaps.
+This checkpoint covers the documentation refresh and implementation slices for making v0.8.3 release-clean by separating Trispr Core and Vulkan Whisper release blockers from optional Feature Module setup gaps.
 
 It does not rewrite the module lifecycle state machine, redesign the Modules Hub, add deep AI Refinement/Ollama runtime readiness checks, add a dedicated release-gate script hook, or decide the durable source for the verified Vulkan runtime payload.
 
@@ -44,7 +44,8 @@ It does not rewrite the module lifecycle state machine, redesign the Modules Hub
 - Enabling a module records missing install, dependency, or consent failures into `last_error`; disabling or successful enable clears `last_error`. Source: [src-tauri/src/modules/lifecycle.rs](../../../src-tauri/src/modules/lifecycle.rs).
 - Fresh defaults do not enable Feature Modules through `ModuleSettings::default()`, and `WorkflowAgentSettings::default()` starts with `enabled: false`. Source: [src-tauri/src/modules/mod.rs](../../../src-tauri/src/modules/mod.rs).
 - Assistant Core migration can enable Assistant Core when legacy usage signals exist, including assistant product mode, consent history, overrides, customized wakewords, or workflow-agent flags. Source: [src-tauri/src/state.rs](../../../src-tauri/src/state.rs).
-- Existing Modules Hub cards still derive labels and status classes directly from descriptor state. The health toast now maps `needs_setup`, `fallback_active`, and `local_warning` to warnings, and `release_blocker` to error. Source: [src/modules-hub.ts](../../../src/modules-hub.ts).
+- Dependency preflight suppresses Assistant Core `needs_setup` startup warnings while `product_mode` is `transcribe`, and still surfaces them when Assistant mode is the active product surface. Source: [src-tauri/src/runtime_commands.rs](../../../src-tauri/src/runtime_commands.rs).
+- Modules Hub cards consume module health output for card badge severity, so descriptor `error` plus health `needs_setup` renders as `Needs setup` with warning styling instead of `ERROR`. Source: [src/modules-hub.ts](../../../src/modules-hub.ts).
 - The Vulkan runtime validator requires `whisper-cli.exe`, `whisper-server.exe`, `whisper.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-cpu.dll`, and `ggml-vulkan.dll` for the Vulkan variant. Source: [scripts/validate-whisper-runtime.mjs](../../../scripts/validate-whisper-runtime.mjs).
 - The latency benchmark script forces `TRISPR_LOCAL_BACKEND=vulkan` for Vulkan variants and restores the previous environment value afterward. Source: [scripts/latency-benchmark.ps1](../../../scripts/latency-benchmark.ps1).
 
@@ -66,6 +67,9 @@ It does not rewrite the module lifecycle state machine, redesign the Modules Hub
 - Updated dependency preflight in [src-tauri/src/runtime_commands.rs](../../../src-tauri/src/runtime_commands.rs) so stale disabled Assistant Core errors no longer produce startup Dependency Warnings.
 - Added focused Rust tests for fresh default optional modules, stale disabled Assistant Core `last_error`, enabled Assistant Core without consent, enabled not-installed optional module setup, and Core error release blocking.
 - Added dependency-preflight tests for ignoring stale disabled optional module errors and warning for enabled setup gaps.
+- Completed the second startup gating slice: Assistant Core `needs_setup` is hidden from global dependency preflight while the app is in transcribe mode, and still reported when `product_mode` is `assistant`.
+- Completed the Modules Hub UI slice: card badges and feedback styling use health semantics, rendering setup gaps as warnings instead of false red errors.
+- Added frontend regression coverage for descriptor `error` plus health `needs_setup` rendering as `Needs setup` without `is-error` styling.
 
 ## Stale Or Conflicting Context
 
@@ -83,10 +87,10 @@ It does not rewrite the module lifecycle state machine, redesign the Modules Hub
 
 ## Next Actions
 
-1. Decide whether a dedicated release-health command or script hook is needed beyond `get_module_health` and dependency preflight.
-2. If needed, add an aggregate release-health path that combines module health with Core/Vulkan runtime checks and local warnings such as hotkey conflicts.
-3. Integrate AI Refinement/Ollama readiness only after choosing the aggregate health surface, because current module health only receives `ModuleSettings`.
-4. Re-check the Modules Hub cards after runtime testing. Only change card labels/severity if false red states remain outside the health toast and dependency preflight.
+1. Run a manual `npm run dev` smoke on the affected local profile and confirm startup no longer shows the Assistant Core `needs_setup` dependency toast in transcribe mode.
+2. Decide whether a dedicated release-health command or script hook is needed beyond `get_module_health` and dependency preflight.
+3. If needed, add an aggregate release-health path that combines module health with Core/Vulkan runtime checks and local warnings such as hotkey conflicts.
+4. Integrate AI Refinement/Ollama readiness only after choosing the aggregate health surface, because current module health only receives `ModuleSettings`.
 5. Run the Vulkan benchmark path after any release-gate wiring changes.
 6. Update this checkpoint with final release-gate evidence before handoff or closure.
 
@@ -102,9 +106,10 @@ Passed:
 - Sources above were read for the audited surface.
 - ADR creation gate was evaluated. No new ADR was created because the decision is a scoped release-health interpretation over accepted module lifecycle decisions, not a separate hard-to-reverse architecture choice.
 - `cargo test --manifest-path src-tauri/Cargo.toml modules::health`: 5 passed.
-- `cargo test --manifest-path src-tauri/Cargo.toml runtime_commands`: 2 passed.
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib`: 259 passed.
-- `npm test`: 36 files passed, 637 tests passed.
+- `cargo test --manifest-path src-tauri/Cargo.toml runtime_commands`: 3 passed.
+- `npm test -- src/tests/modules-hub.test.ts`: 1 file passed, 5 tests passed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`: 260 passed.
+- `npm test`: 36 files passed, 638 tests passed.
 - `node scripts/validate-whisper-runtime.mjs --variant vulkan`: passed.
 - Editor diagnostics on changed Rust and TypeScript files: no errors.
 
@@ -112,4 +117,5 @@ Not checked:
 
 - No Vulkan latency benchmark was run in this implementation slice.
 - No full `npm run build` or strict assistant release gate was run.
+- No manual `npm run dev` smoke was run after the second slice.
 - Deep AI Refinement/Ollama runtime/model readiness is not yet part of module health.

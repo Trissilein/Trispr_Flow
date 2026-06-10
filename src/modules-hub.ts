@@ -13,6 +13,7 @@ import type { ModuleDescriptor, ModuleHealthStatus, ModuleUpdateInfo } from "./t
 
 let initialized = false;
 let moduleSnapshot: ModuleDescriptor[] = [];
+let moduleHealthSnapshot = new Map<string, ModuleHealthStatus>();
 
 function escapeHtml(value: string): string {
   return value
@@ -29,6 +30,20 @@ function moduleStateLabel(moduleState: ModuleDescriptor["state"]): string {
   if (moduleState === "enabled") return "Enabled";
   if (moduleState === "not_installed") return "Not installed";
   return "Error";
+}
+
+function moduleHealthLabel(healthState: ModuleHealthStatus["state"]): string {
+  if (healthState === "needs_setup") return "Needs setup";
+  if (healthState === "fallback_active") return "Fallback";
+  if (healthState === "local_warning") return "Warning";
+  if (healthState === "release_blocker") return "Error";
+  if (healthState === "degraded") return "Warning";
+  if (healthState === "error") return "Error";
+  return "Ok";
+}
+
+function moduleCardHealth(moduleInfo: ModuleDescriptor): ModuleHealthStatus | undefined {
+  return moduleHealthSnapshot.get(moduleInfo.id);
 }
 
 type PermissionCopy = {
@@ -190,12 +205,25 @@ function moduleStateKey(moduleInfo: ModuleDescriptor): string {
 }
 
 function moduleStatusClass(moduleInfo: ModuleDescriptor): string {
+  const health = moduleCardHealth(moduleInfo);
+  if (health && health.state !== "ok") {
+    if (health.state === "release_blocker" || health.state === "error") {
+      return "model-status is-error";
+    }
+    return "model-status model-status--warning";
+  }
   if (moduleInfo.core) return "model-status active";
   if (moduleInfo.state === "active") return "model-status downloaded";
   if (moduleInfo.state === "enabled" || moduleInfo.state === "installed")
     return "model-status model-status--installed";
   if (moduleInfo.state === "error") return "model-status is-error";
   return "model-status available";
+}
+
+function moduleStatusLabel(moduleInfo: ModuleDescriptor): string {
+  const health = moduleCardHealth(moduleInfo);
+  if (health && health.state !== "ok") return moduleHealthLabel(health.state);
+  return moduleInfo.core ? "Core" : moduleStateLabel(moduleInfo.state);
 }
 
 function openModuleConfig(moduleId: string): void {
@@ -346,6 +374,10 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
       const summary = `Deps ${moduleInfo.dependencies.length} · Perms ${moduleInfo.permissions.length}`;
       const summaryTitle = escapeHtml(`Dependencies: ${moduleInfo.dependencies.join(", ") || "none"}\nPermissions: ${moduleInfo.permissions.join(", ") || "none"}`);
       const guide = moduleGuide(moduleInfo.id);
+      const health = moduleCardHealth(moduleInfo);
+      const healthIsSetupWarning = health
+        ? ["needs_setup", "fallback_active", "local_warning", "degraded"].includes(health.state)
+        : false;
       const missing = missingConsents(moduleInfo);
       const scopeHint = moduleScopeHint(moduleInfo.id);
       const consentMessage = consentFeedback(moduleInfo, missing);
@@ -364,7 +396,7 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
         })
         .join("\n");
       const feedbackTitle = escapeHtml([feedbackParts.join("\n"), consentDetails].filter(Boolean).join("\n"));
-      const feedbackClass = moduleInfo.last_error
+      const feedbackClass = moduleInfo.last_error && !healthIsSetupWarning
         ? "module-card-feedback is-error"
         : consentMessage
           ? "module-card-feedback is-warning"
@@ -383,7 +415,7 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
             <div class="model-name">${moduleInfo.name}</div>
             <div class="model-meta">ID: <code>${moduleInfo.id}</code> · v${moduleInfo.version}</div>
           </div>
-          <span class="${moduleStatusClass(moduleInfo)}">${moduleInfo.core ? "Core" : moduleStateLabel(moduleInfo.state)}</span>
+          <span class="${moduleStatusClass(moduleInfo)}">${moduleStatusLabel(moduleInfo)}</span>
         </div>
         <div class="model-meta" title="${summaryTitle}">${summary}</div>
         <div class="module-card-desc">${escapeHtml(guide.description)}</div>
@@ -402,6 +434,14 @@ function sortModules(modules: ModuleDescriptor[]): ModuleDescriptor[] {
 
 async function refreshModuleState(): Promise<void> {
   const modules = await invoke<ModuleDescriptor[]>("list_modules");
+  try {
+    const health = await invoke<ModuleHealthStatus[]>("get_module_health");
+    moduleHealthSnapshot = new Map(
+      Array.isArray(health) ? health.map((entry) => [entry.module_id, entry]) : []
+    );
+  } catch {
+    moduleHealthSnapshot = new Map();
+  }
   moduleSnapshot = modules;
   renderModulesList(sortModules(modules));
   syncWorkflowAgentConsoleState();

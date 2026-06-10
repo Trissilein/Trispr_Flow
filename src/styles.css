@@ -3023,6 +3023,12 @@ button.refinement-chip:focus-visible {
   border: 1px solid rgba(96, 165, 250, 0.3);
 }
 
+.model-status--warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: rgb(251, 191, 36);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
 .model-status.active,
 .model-status--active {
   background: rgba(var(--accent-2-rgb), 0.25);

@@ -49,6 +49,47 @@ pub(crate) fn check_strict_local_mode(settings: &Settings) -> Result<(), String>
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OllamaModelResolution {
+    pub model: String,
+    pub repaired: bool,
+}
+
+/// Resolve which Ollama model to use for refinement.
+/// Falls back through: requested → preferred_model → postproc_llm_model → first installed.
+/// Returns None only when no model is installed at all.
+pub(crate) fn resolve_ollama_refinement_model(
+    settings: &crate::state::Settings,
+    requested_model: &str,
+    installed_models: &[String],
+) -> Option<OllamaModelResolution> {
+    let find = |candidate: &str| -> Option<&str> {
+        let candidate = candidate.trim();
+        if candidate.is_empty() {
+            return None;
+        }
+        installed_models
+            .iter()
+            .map(String::as_str)
+            .find(|m| m.trim().eq_ignore_ascii_case(candidate))
+    };
+
+    let requested = requested_model.trim();
+    let selected = find(requested)
+        .or_else(|| find(settings.providers.ollama.preferred_model.trim()))
+        .or_else(|| find(settings.postproc_llm_model.trim()))
+        .or_else(|| {
+            installed_models
+                .iter()
+                .map(String::as_str)
+                .find(|m| !m.trim().is_empty())
+        })?
+        .to_string();
+
+    let repaired = requested.is_empty() || !selected.eq_ignore_ascii_case(requested);
+    Some(OllamaModelResolution { model: selected, repaired })
+}
+
 /// Common result of preparing a refinement call: provider client, API key,
 /// resolved model name, whether the model resolution repaired a stale setting,
 /// and the `RefinementOptions` to pass to the provider.
@@ -172,28 +213,22 @@ pub(crate) fn prepare_refinement(
         let endpoint = settings.providers.ollama.endpoint.clone();
         provider::ping_ollama_quick(&endpoint).map_err(|error| error.to_string())?;
 
-        if model.is_empty() {
-            let preferred = settings.providers.ollama.preferred_model.trim();
-            let postproc = settings.postproc_llm_model.trim();
-            let cached = settings
-                .providers
-                .ollama
-                .available_models
-                .iter()
-                .map(|entry| entry.trim())
-                .find(|entry| !entry.is_empty());
-
-            if !preferred.is_empty() {
-                model = preferred.to_string();
-                repaired = true;
-            } else if !postproc.is_empty() {
-                model = postproc.to_string();
-                repaired = true;
-            } else if let Some(cached_model) = cached {
-                model = cached_model.to_string();
-                repaired = true;
-            }
+        let installed_models = provider::list_ollama_models(&endpoint);
+        let resolution =
+            resolve_ollama_refinement_model(settings, &model, &installed_models).ok_or_else(
+                || {
+                    "No installed Ollama models found. Download a model and set it active first."
+                        .to_string()
+                },
+            )?;
+        if crate::state::diagnostic_logging_enabled() {
+            tracing::info!(
+                "[refinement:prepare] ollama model resolution requested={} selected={} repaired={} installed={}",
+                model, resolution.model, resolution.repaired, installed_models.len()
+            );
         }
+        model = resolution.model;
+        repaired = resolution.repaired;
     } else if is_lm_studio && model.is_empty() {
         model = settings
             .providers
@@ -347,4 +382,61 @@ pub(crate) fn ensure_ollama_runtime_ready_for_refinement(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod ollama_model_resolution_tests {
+    use super::*;
+    use crate::state::Settings;
+
+    fn settings_with_models(preferred: &str, postproc: &str) -> Settings {
+        let mut s = Settings::default();
+        s.providers.ollama.preferred_model = preferred.to_string();
+        s.postproc_llm_model = postproc.to_string();
+        s
+    }
+
+    #[test]
+    fn ollama_model_resolution_keeps_installed_model() {
+        let s = settings_with_models("qwen2.5-coder:14b", "");
+        let installed = vec!["qwen2.5-coder:14b".to_string(), "llama3:8b".to_string()];
+        let res = resolve_ollama_refinement_model(&s, "qwen2.5-coder:14b", &installed).unwrap();
+        assert_eq!(res.model, "qwen2.5-coder:14b");
+        assert!(!res.repaired);
+    }
+
+    #[test]
+    fn ollama_model_resolution_repairs_stale_config_to_installed_preference() {
+        let s = settings_with_models("qwen2.5-coder:14b", "");
+        let installed = vec!["qwen2.5-coder:14b".to_string()];
+        // requested model is stale (not in installed list)
+        let res = resolve_ollama_refinement_model(&s, "old-model:7b", &installed).unwrap();
+        assert_eq!(res.model, "qwen2.5-coder:14b");
+        assert!(res.repaired);
+    }
+
+    #[test]
+    fn ollama_model_resolution_empty_config_falls_back_to_first_installed() {
+        let s = settings_with_models("", "");
+        let installed = vec!["llama3:8b".to_string()];
+        let res = resolve_ollama_refinement_model(&s, "", &installed).unwrap();
+        assert_eq!(res.model, "llama3:8b");
+        assert!(res.repaired);
+    }
+
+    #[test]
+    fn ollama_model_resolution_returns_none_when_no_models_installed() {
+        let s = settings_with_models("", "");
+        let res = resolve_ollama_refinement_model(&s, "any", &[]);
+        assert!(res.is_none());
+    }
+
+    #[test]
+    fn ollama_model_resolution_case_insensitive_match() {
+        let s = settings_with_models("", "");
+        let installed = vec!["Qwen2.5-Coder:14b".to_string()];
+        let res = resolve_ollama_refinement_model(&s, "qwen2.5-coder:14b", &installed).unwrap();
+        assert_eq!(res.model, "Qwen2.5-Coder:14b");
+        assert!(!res.repaired);
+    }
 }

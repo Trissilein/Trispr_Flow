@@ -24,7 +24,7 @@ impl Default for LatencyBenchmarkRequest {
     fn default() -> Self {
         Self {
             fixture_paths: Vec::new(),
-            warmup_runs: 3,
+            warmup_runs: 5,
             measure_runs: 30,
             include_refinement: true,
             refinement_model: None,

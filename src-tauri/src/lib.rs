@@ -2452,6 +2452,106 @@ async fn get_gpu_vram_usage() -> Result<String, String> {
     .unwrap_or_else(|_| Ok(String::new()))
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+struct GpuStats {
+    util_pct: Option<f64>,
+    vram_used_gb: f64,
+    vram_total_gb: f64,
+    whisper_vram_gb: Option<f64>,
+    refine_vram_gb: Option<f64>,
+}
+
+fn gpu_stats_nvidia() -> Option<GpuStats> {
+    use std::process::Command;
+    let mut cmd = Command::new("nvidia-smi");
+    cmd.args([
+        "--query-gpu=utilization.gpu,memory.used,memory.total",
+        "--format=csv,noheader,nounits",
+    ]);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8(out.stdout).ok()?;
+    let parts: Vec<&str> = s.trim().split(',').map(str::trim).collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let util_pct = parts[0].parse::<f64>().ok();
+    let used_mb = parts[1].parse::<f64>().ok()?;
+    let total_mb = parts[2].parse::<f64>().ok()?;
+    Some(GpuStats {
+        util_pct,
+        vram_used_gb: used_mb / 1024.0,
+        vram_total_gb: total_mb / 1024.0,
+        whisper_vram_gb: None,
+        refine_vram_gb: None,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn gpu_stats_dxgi() -> Option<GpuStats> {
+    use windows::Win32::Graphics::Dxgi::{
+        CreateDXGIFactory1, IDXGIAdapter3, IDXGIFactory1, DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
+        DXGI_QUERY_VIDEO_MEMORY_INFO,
+    };
+    use windows::core::Interface;
+    unsafe {
+        let factory = CreateDXGIFactory1::<IDXGIFactory1>().ok()?;
+        let adapter1 = factory.EnumAdapters1(0).ok()?;
+        let desc = adapter1.GetDesc1().ok()?;
+        let total_bytes = desc.DedicatedVideoMemory as f64;
+        if total_bytes <= 0.0 {
+            return None;
+        }
+        let adapter3: IDXGIAdapter3 = adapter1.cast().ok()?;
+        let mut info = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
+        adapter3
+            .QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut info)
+            .ok()?;
+        Some(GpuStats {
+            util_pct: None,
+            vram_used_gb: info.CurrentUsage as f64 / (1024.0_f64.powi(3)),
+            vram_total_gb: total_bytes / (1024.0_f64.powi(3)),
+            whisper_vram_gb: None,
+            refine_vram_gb: None,
+        })
+    }
+}
+
+#[tauri::command]
+async fn get_gpu_stats() -> GpuStats {
+    tauri::async_runtime::spawn_blocking(|| {
+        if let Some(s) = gpu_stats_nvidia() {
+            return s;
+        }
+        #[cfg(target_os = "windows")]
+        if let Some(s) = gpu_stats_dxgi() {
+            return s;
+        }
+        GpuStats {
+            util_pct: None,
+            vram_used_gb: 0.0,
+            vram_total_gb: 0.0,
+            whisper_vram_gb: None,
+            refine_vram_gb: None,
+        }
+    })
+    .await
+    .unwrap_or_else(|_| GpuStats {
+        util_pct: None,
+        vram_used_gb: 0.0,
+        vram_total_gb: 0.0,
+        whisper_vram_gb: None,
+        refine_vram_gb: None,
+    })
+}
+
 pub(crate) fn save_recording_opus(
     app: &AppHandle,
     samples: &[i16],
@@ -4564,6 +4664,7 @@ pub fn run() {
             get_ollama_model_info,
             unload_ollama_model,
             get_gpu_vram_usage,
+            get_gpu_stats,
             get_hardware_info,
             purge_gpu_memory,
             stop_ollama_runtime,

@@ -38,10 +38,10 @@ Other architectures (Ampere RTX 30xx = sm_86, A100 = sm_80, Hopper H100 = sm_90)
 # But edit the CUDA architectures line first (see below).
 
 cd c:\GIT\Trispr_Flow
-powershell -ExecutionPolicy Bypass -File build-whisper-server.ps1
+powershell -ExecutionPolicy Bypass -File scripts\windows\build-whisper-server.ps1
 ```
 
-The script lives at `build-whisper-server.ps1` in the repo root. It currently has:
+The script lives at `scripts\windows\build-whisper-server.ps1`. It currently has:
 
 ```powershell
 -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89"
@@ -77,7 +77,7 @@ Copy-Item "C:\temp\whisper.cpp-build\whisper.cpp\build-cuda\bin\Release\whisper-
 
 ## Follow-up improvements (optional)
 
-- Update `build-whisper-server.ps1` to also build and copy `whisper-cli.exe`
+- Update `scripts\windows\build-whisper-server.ps1` to also build and copy `whisper-cli.exe`
 - Add `-DCMAKE_CUDA_FLAGS="-Wno-deprecated-gpu-targets"` to suppress noise from sm_75 deprecation warnings (not blocking)
 - Document the build prerequisites in the script header (CUDA Toolkit version, Visual Studio version) — current script assumes CUDA 13.0 + VS 2026
 

@@ -3794,6 +3794,11 @@ pub fn run() {
                         },
                         Err(err) => {
                             error!("Latency benchmark failed: {}", err);
+                            if let Err(write_err) =
+                                crate::tts_benchmark::write_latency_benchmark_error(&err)
+                            {
+                                error!("Failed to write latency benchmark error: {}", write_err);
+                            }
                         }
                     }
 

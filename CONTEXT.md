@@ -4,7 +4,7 @@ This file is the canonical source for domain language in Trispr Flow.
 It is written for domain experts (users, designers, contributors), not for implementation details.
 Update this file inline as terms are resolved during design sessions.
 
-Last updated: 2026-06-09
+Last updated: 2026-06-10
 
 ---
 
@@ -35,13 +35,15 @@ Model Management is only partially Core: the minimum ability to locate and use a
 → `src-tauri/src/whisper_server.rs`, `src-tauri/src/models.rs`
 
 ### Release Gate
-The evidence-backed check that decides whether the current release line can move forward. For v0.8.2, Block A is the active release-gate closure block.
+The evidence-backed check that decides whether the current release line can move forward. For v0.8.3, the Vulkan Whisper hotfix is the active release-gate closure block.
 
 Confirmed 2026-06-09: Block A closes only when the strict assistant gate passes on fresh `main`. The gate must link both latency evidence (`bench/results/latest.json`) and TTS evidence (`bench/results/tts.latest.json`). TTS evidence is green after PR #11, while latency evidence still requires a local production-default Whisper model.
 
 Confirmed 2026-06-09: Block A latency evidence must use the production default Whisper model class, `ggml-large-v3-turbo.bin`, or an explicit `TRISPR_WHISPER_MODEL` pointing to equivalent large-v3-turbo evidence. Smaller smoke models are not accepted as final release evidence.
 
-Confirmed 2026-06-09: the final release target for this gate is v0.8.2. Older roadmap wording that names v0.8.0 for the final tag is stale.
+Confirmed 2026-06-09: the final release target for this gate is v0.8.3 because v0.8.2 is already published. The v0.8.3 fix should hydrate from the published v0.8.2 installer payload to reproduce the shipped Vulkan failure before changing the runtime.
+
+Confirmed 2026-06-10: for the v0.8.3 Vulkan Whisper hotfix, release-clean means Trispr Core and the active Vulkan Whisper path pass their gate, and a fresh/default profile does not show false red errors for optional Feature Modules. Optional modules such as Assistant Core, AI Refinement/Ollama, GDD, Confluence, and experimental or supported-optional TTS providers do not block the hotfix unless they are enabled, part of the default flow, or actively selected by the user.
 
 → `scripts/assistant-release-gate.mjs`, `scripts/latency-benchmark.ps1`, `docs/V0.8.x_BLOCK_U_RELEASE_GATE.md`
 
@@ -87,6 +89,8 @@ A registry of opt-in feature modules (e.g. `gdd`, `ai_refinement`, `assistant_co
 
 **Note:** "Module" is an overloaded term in this codebase. It also refers to Rust crate modules (`mod audio` in `lib.rs`) and occasionally to UI panels ("Model Manager module"). In domain/user-facing contexts, "Module" always means a Feature Module from this registry.
 
+Setup and health reporting must separate lifecycle state from user intent. Disabled, uninstalled, or unused optional Feature Modules are not global app errors. Missing consent, runtime, model, secret, or dependency setup is user-facing setup work only when the user has enabled the feature, selected a product mode that depends on it, or is actively using that feature surface. Trispr Core failures remain release blockers.
+
 → `src-tauri/src/modules/`, `src/modules-hub.ts`, `src/types.ts:ModuleId`
 
 ### Core Settings
@@ -122,6 +126,8 @@ Confirmed 2026-06-08: `Enabled` stays user intent for installable modules. Enabl
 
 ### Available
 A runtime-health property: the capability can be used now. Availability depends on enabled state plus local runtime health, required assets, permissions, credentials, and external service reachability where applicable.
+
+For release and setup reporting, unavailable optional features should be classified by intent. If the feature is disabled or unused, report it neutrally in feature-local surfaces. If the feature is enabled or selected, report the missing prerequisite as setup-needed or fallback-active. Reserve global error language for Trispr Core failures, active release-gate failures, and optional capabilities the current default or selected flow depends on.
 
 For GDD, draft generation and validation can be available without Confluence auth. Confluence publishing is only available when the internal Confluence integration has valid configuration, credentials, required permissions, and service reachability.
 
@@ -251,4 +257,3 @@ Individual rules can be configurable. Alternative rule sets or rule versions are
 _Terms flagged as fuzzy — to be resolved with Ingo (repo owner)._
 
 - **"Session"**: intentionally overloaded (see Term entry above). No rename planned — documented as-is.
-

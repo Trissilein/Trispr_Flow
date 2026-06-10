@@ -5,6 +5,8 @@ param(
   [switch]$NoRefinement,
   [switch]$FailOnSloMiss,
   [string]$RefinementModel,
+  [ValidateSet("vulkan", "vulkan-only", "cuda-lite", "cuda-complete", "ci")]
+  [string]$TauriVariant = "vulkan",
   [string[]]$Fixtures
 )
 
@@ -16,13 +18,22 @@ Set-Location $RepoRoot
 
 $resultsDir = Join-Path $RepoRoot 'bench/results'
 $reportPath = Join-Path $resultsDir 'latest.json'
+$errorPath = Join-Path $resultsDir 'latest-error.txt'
 $benchConfigPath = Join-Path $resultsDir 'tauri.benchmark.dev.json'
+$baseConfigPath = Join-Path $RepoRoot 'src-tauri/tauri.conf.json'
+$baseConfigBackupPath = Join-Path $resultsDir 'tauri.conf.base.bak.json'
 New-Item -ItemType Directory -Path $resultsDir -Force | Out-Null
 if (Test-Path $reportPath) {
   Remove-Item $reportPath -Force
 }
+if (Test-Path $errorPath) {
+  Remove-Item $errorPath -Force
+}
 if (Test-Path $benchConfigPath) {
   Remove-Item $benchConfigPath -Force
+}
+if (Test-Path $baseConfigBackupPath) {
+  Remove-Item $baseConfigBackupPath -Force
 }
 
 function Resolve-NpmCmd {
@@ -63,6 +74,15 @@ $env:TRISPR_RUN_LATENCY_BENCHMARK_EXIT = '1'
 $env:TRISPR_BENCHMARK_WARMUP_RUNS = [string]$Warmup
 $env:TRISPR_BENCHMARK_MEASURE_RUNS = [string]$Runs
 $env:TRISPR_BENCHMARK_INCLUDE_REFINEMENT = if ($NoRefinement) { '0' } else { '1' }
+$hadLocalBackendEnv = Test-Path Env:TRISPR_LOCAL_BACKEND
+$previousLocalBackendEnv = $env:TRISPR_LOCAL_BACKEND
+if ($TauriVariant -eq 'vulkan' -or $TauriVariant -eq 'vulkan-only') {
+  $env:TRISPR_LOCAL_BACKEND = 'vulkan'
+} elseif ($TauriVariant -eq 'cuda-lite' -or $TauriVariant -eq 'cuda-complete') {
+  $env:TRISPR_LOCAL_BACKEND = 'cuda'
+} else {
+  Remove-Item Env:TRISPR_LOCAL_BACKEND -ErrorAction SilentlyContinue
+}
 if ([string]::IsNullOrWhiteSpace($RefinementModel)) {
   Remove-Item Env:TRISPR_BENCHMARK_REFINE_MODEL -ErrorAction SilentlyContinue
 } else {
@@ -79,20 +99,31 @@ if ($Fixtures -and $Fixtures.Count -gt 0) {
   Remove-Item Env:TRISPR_BENCHMARK_FIXTURES -ErrorAction SilentlyContinue
 }
 
-Write-Host "[Latency Benchmark] Warmup=$Warmup Runs=$Runs Refinement=$([string](-not $NoRefinement)) FailOnSloMiss=$([string]$FailOnSloMiss) Model=$($env:TRISPR_BENCHMARK_REFINE_MODEL)"
+Write-Host "[Latency Benchmark] Warmup=$Warmup Runs=$Runs Refinement=$([string](-not $NoRefinement)) FailOnSloMiss=$([string]$FailOnSloMiss) Variant=$TauriVariant Model=$($env:TRISPR_BENCHMARK_REFINE_MODEL)"
+Write-Host "[Latency Benchmark] LocalBackend=$($env:TRISPR_LOCAL_BACKEND)"
 $devPort = Get-FreeTcpPort
 $npmCmd = Resolve-NpmCmd
-$overrideConfig = @{
-  build = @{
-    beforeDevCommand = "npm run dev:web -- --port $devPort --strictPort"
-    devUrl = "http://localhost:$devPort"
-  }
+
+& node scripts/generate-tauri-variant-config.mjs --variant $TauriVariant --out $benchConfigPath
+if ($LASTEXITCODE -ne 0) {
+  throw "failed to generate Tauri benchmark config for variant '$TauriVariant'"
 }
-$overrideConfig | ConvertTo-Json -Depth 5 | Set-Content -Path $benchConfigPath -Encoding UTF8
+
+$overrideConfig = Get-Content $benchConfigPath -Raw | ConvertFrom-Json
+$overrideConfig.build = @{
+  beforeDevCommand = "npm run dev:web -- --port $devPort --strictPort"
+  devUrl = "http://localhost:$devPort"
+}
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$benchmarkConfigJson = ($overrideConfig | ConvertTo-Json -Depth 20) + "`n"
+[System.IO.File]::WriteAllText($benchConfigPath, $benchmarkConfigJson, $utf8NoBom)
+Copy-Item -LiteralPath $baseConfigPath -Destination $baseConfigBackupPath -Force
+Copy-Item -LiteralPath $benchConfigPath -Destination $baseConfigPath -Force
 Write-Host "[Latency Benchmark] Using isolated dev server port: $devPort"
 
 # Ensure no stale app process keeps target/debug/trispr-flow.exe locked.
-Get-Process -Name "trispr-flow" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name "trispr-flow" -ErrorAction SilentlyContinue |
+  ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Milliseconds 250
 
 try {
@@ -101,6 +132,10 @@ try {
     throw "tauri dev benchmark run failed with exit code $LASTEXITCODE"
   }
 } finally {
+  if (Test-Path $baseConfigBackupPath) {
+    Copy-Item -LiteralPath $baseConfigBackupPath -Destination $baseConfigPath -Force
+    Remove-Item $baseConfigBackupPath -Force -ErrorAction SilentlyContinue
+  }
   Remove-Item Env:TRISPR_RUN_LATENCY_BENCHMARK -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_RUN_LATENCY_BENCHMARK_EXIT -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_BENCHMARK_WARMUP_RUNS -ErrorAction SilentlyContinue
@@ -108,10 +143,20 @@ try {
   Remove-Item Env:TRISPR_BENCHMARK_INCLUDE_REFINEMENT -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_BENCHMARK_REFINE_MODEL -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_BENCHMARK_FIXTURES -ErrorAction SilentlyContinue
+  if ($hadLocalBackendEnv) {
+    $env:TRISPR_LOCAL_BACKEND = $previousLocalBackendEnv
+  } else {
+    Remove-Item Env:TRISPR_LOCAL_BACKEND -ErrorAction SilentlyContinue
+  }
   Remove-Item $benchConfigPath -ErrorAction SilentlyContinue
 }
 
 if (-not (Test-Path $reportPath)) {
+  if (Test-Path $errorPath) {
+    $benchmarkError = Get-Content $errorPath -Raw
+    Write-Error "Latency benchmark failed before writing report: $benchmarkError"
+    exit 1
+  }
   Write-Error "Latency benchmark report not found: $reportPath"
   exit 1
 }

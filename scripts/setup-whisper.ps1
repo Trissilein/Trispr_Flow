@@ -1,9 +1,12 @@
 param(
+  [ValidateSet("", "cuda", "vulkan", "cpu")]
+  [string]$Backend = "",
   [switch]$CpuFallback,
   [string]$CudaRoot = "",
   [string]$CudaToolset = "",
   [string]$WhisperRoot = "",
-  [string]$CudaArch = ""
+  [string]$CudaArch = "",
+  [switch]$ConservativeCpu
 )
 
 $ErrorActionPreference = "Stop"
@@ -128,10 +131,48 @@ function Resolve-CudaBuildCustomization {
   }
 }
 
+function Ensure-SpirvHeadersConfig {
+  if ([string]::IsNullOrWhiteSpace($env:VULKAN_SDK)) {
+    return ""
+  }
+
+  $existing = Get-ChildItem -Path $env:VULKAN_SDK -Recurse -File -Include "SPIRV-HeadersConfig.cmake", "spirv-headers-config.cmake" -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+  if ($existing) {
+    return $existing.DirectoryName
+  }
+
+  $includeDir = Join-Path $env:VULKAN_SDK "Include"
+  if (-not (Test-Path (Join-Path $includeDir "spirv\unified1\spirv.hpp"))) {
+    return ""
+  }
+
+  $configDir = Join-Path $env:TEMP "trispr-spirv-headers-cmake"
+  New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+  $cmakeIncludeDir = $includeDir.Replace("\", "/")
+  $config = @"
+set(SPIRV-Headers_FOUND TRUE)
+if(NOT TARGET SPIRV-Headers::SPIRV-Headers)
+  add_library(SPIRV-Headers::SPIRV-Headers INTERFACE IMPORTED)
+  set_target_properties(SPIRV-Headers::SPIRV-Headers PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "$cmakeIncludeDir")
+endif()
+"@
+  Set-Content -Path (Join-Path $configDir "SPIRV-HeadersConfig.cmake") -Value $config -Encoding UTF8
+  return $configDir
+}
+
 $WhisperRoot = Resolve-WhisperRoot -ExplicitRoot $WhisperRoot -RepoRootPath $RepoRoot
+
+if ($CpuFallback) {
+  $Backend = "cpu"
+} elseif ([string]::IsNullOrWhiteSpace($Backend)) {
+  $Backend = "cuda"
+}
 
 Write-Section "Trispr Flow :: whisper.cpp build"
 Write-Host "Root: $WhisperRoot"
+Write-Host "Backend: $Backend"
 
 $instances = Get-VSInstances
 $vs2022 = $instances | Where-Object { $_.installationVersion -like "17.*" } | Select-Object -First 1
@@ -140,7 +181,7 @@ $vs18 = $instances | Where-Object { $_.installationVersion -like "18.*" } | Sele
 $selectedVs = $null
 $generatorName = ""
 
-if (-not $CpuFallback) {
+if ($Backend -ne "cpu") {
   if ($vs2022) {
     $selectedVs = $vs2022
     $generatorName = "Visual Studio 17 2022"
@@ -164,7 +205,8 @@ if ($selectedVs) {
   Import-VsDevCmd -VsPath $selectedVs.installationPath
 }
 
-$useCuda = -not $CpuFallback
+$useCuda = $Backend -eq "cuda"
+$useVulkan = $Backend -eq "vulkan"
 if ($useCuda) {
   $vcTag = if ($generatorName -eq "Visual Studio 17 2022") { "v170" } else { "v180" }
   $cudaBuildCustomization = Resolve-CudaBuildCustomization -VsPath $selectedVs.installationPath -VcTag $vcTag -RequestedToolset $CudaToolset
@@ -222,12 +264,13 @@ if (-not $cl) {
 
 Push-Location $WhisperRoot
 try {
-  $buildDirName = if ($CpuFallback) { "build-cpu" } else { "build-cuda" }
+  $buildDirName = "build-$Backend"
   $buildDirPath = Join-Path $WhisperRoot $buildDirName
   if (Test-Path $buildDirPath) {
     Remove-Item -Recurse -Force $buildDirPath
   }
 
+  $commonCmakeArgs = @("-DWHISPER_BUILD_TESTS=OFF")
   if ($useCuda) {
     $generatorArgs = @("-G", $generatorName, "-A", "x64")
     $toolsetArgs = @("-T", "cuda=$CudaToolset")
@@ -238,12 +281,32 @@ try {
     }
     $cudaFlags = @("-DCMAKE_CUDA_FLAGS=--allow-unsupported-compiler")
     if ($env:CUDACXX) {
-      cmake -B $buildDirName -S . -DGGML_CUDA=ON -DWHISPER_BUILD_TESTS=OFF -DCMAKE_CUDA_COMPILER=$env:CUDACXX @generatorArgs @toolsetArgs @instanceArg @archArg @cudaFlags
+      cmake -B $buildDirName -S . -DGGML_CUDA=ON @commonCmakeArgs -DCMAKE_CUDA_COMPILER=$env:CUDACXX @generatorArgs @toolsetArgs @instanceArg @archArg @cudaFlags
     } else {
-      cmake -B $buildDirName -S . -DGGML_CUDA=ON -DWHISPER_BUILD_TESTS=OFF @generatorArgs @toolsetArgs @instanceArg @archArg @cudaFlags
+      cmake -B $buildDirName -S . -DGGML_CUDA=ON @commonCmakeArgs @generatorArgs @toolsetArgs @instanceArg @archArg @cudaFlags
     }
+  } elseif ($useVulkan) {
+    $generatorArgs = @("-G", $generatorName, "-A", "x64")
+    $instanceArg = @("-DCMAKE_GENERATOR_INSTANCE=$($selectedVs.installationPath)")
+    $spirvHeadersDir = Ensure-SpirvHeadersConfig
+    $spirvHeadersArg = @()
+    if (-not [string]::IsNullOrWhiteSpace($spirvHeadersDir)) {
+      $spirvHeadersArg = @("-DSPIRV-Headers_DIR=$spirvHeadersDir")
+    }
+    $conservativeCpuArgs = @()
+    if ($ConservativeCpu) {
+      $conservativeCpuArgs = @(
+        "-DGGML_NATIVE=OFF",
+        "-DGGML_AVX=OFF",
+        "-DGGML_AVX2=OFF",
+        "-DGGML_FMA=OFF",
+        "-DGGML_F16C=OFF",
+        "-DGGML_AVX512=OFF"
+      )
+    }
+    cmake -B $buildDirName -S . -DGGML_VULKAN=ON @commonCmakeArgs @conservativeCpuArgs @spirvHeadersArg @generatorArgs @instanceArg
   } else {
-    cmake -B $buildDirName -S . -DGGML_CUDA=OFF -DWHISPER_CUDA=OFF -DWHISPER_BUILD_TESTS=OFF
+    cmake -B $buildDirName -S . -DGGML_CUDA=OFF -DWHISPER_CUDA=OFF @commonCmakeArgs
   }
 
   cmake --build $buildDirName --config Release --target whisper-cli --target whisper-server --parallel
@@ -280,6 +343,30 @@ if ($useCuda) {
     $src = Join-Path $releaseDir $file
     if (Test-Path $src) {
       Copy-Item $src $binCudaDir -Force
+      Write-Host "  OK: $file"
+    } else {
+      Write-Warning "  skip (not found): $file"
+    }
+  }
+}
+
+if ($useVulkan) {
+  Write-Section "Copying Vulkan binaries -> src-tauri/bin/vulkan"
+  $binVulkanDir = Join-Path $RepoRoot "src-tauri\bin\vulkan"
+  if (-not (Test-Path $binVulkanDir)) { New-Item -ItemType Directory -Force $binVulkanDir | Out-Null }
+  $copyTargets = @(
+    "whisper-cli.exe",
+    "whisper-server.exe",
+    "whisper.dll",
+    "ggml.dll",
+    "ggml-base.dll",
+    "ggml-cpu.dll",
+    "ggml-vulkan.dll"
+  )
+  foreach ($file in $copyTargets) {
+    $src = Join-Path $releaseDir $file
+    if (Test-Path $src) {
+      Copy-Item $src $binVulkanDir -Force
       Write-Host "  OK: $file"
     } else {
       Write-Warning "  skip (not found): $file"

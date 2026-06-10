@@ -54,7 +54,7 @@ pub struct AssistantActionDescriptor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleHealthStatus {
     pub module_id: String,
-    pub state: String, // "ok" | "degraded" | "error"
+    pub state: String, // "ok" | "needs_setup" | "fallback_active" | "local_warning" | "release_blocker" | "degraded" | "error"
     pub detail: String,
 }
 

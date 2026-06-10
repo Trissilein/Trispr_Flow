@@ -79,15 +79,15 @@ Installer build/upload shortcuts:
 
 ## Status and Roadmap
 
-| Version | Status | Focus |
-| --- | --- | --- |
-| `v0.7.0` | Released | Stable baseline for local-first transcription |
-| `v0.7.1` | Released | Stabilization, UX consistency, reliability hardening |
-| `v0.7.2` | Released | Repo cleanup, Ollama hardening, WebView recovery watchdog |
-| `v0.7.3` | Released | UI redesigns, vocabulary learning, casing bug fix |
-| `v0.7.4` | Released | Release runtime hydration and installer path normalization |
-| `v0.7.5` | Released | Release-pipeline hardening for clean GitHub runners |
-| `v0.8.2` | In progress | Block A release-gate closure |
+| Version  | Status      | Focus                                                      |
+| -------- | ----------- | ---------------------------------------------------------- |
+| `v0.7.0` | Released    | Stable baseline for local-first transcription              |
+| `v0.7.1` | Released    | Stabilization, UX consistency, reliability hardening       |
+| `v0.7.2` | Released    | Repo cleanup, Ollama hardening, WebView recovery watchdog  |
+| `v0.7.3` | Released    | UI redesigns, vocabulary learning, casing bug fix          |
+| `v0.7.4` | Released    | Release runtime hydration and installer path normalization |
+| `v0.7.5` | Released    | Release-pipeline hardening for clean GitHub runners        |
+| `v0.8.2` | In progress | Block A release-gate closure                               |
 
 Canonical planning docs:
 - [ROADMAP.md](ROADMAP.md)

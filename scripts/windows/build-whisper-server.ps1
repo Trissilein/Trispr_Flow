@@ -1,5 +1,5 @@
 # Build whisper-server.exe from whisper.cpp source
-# Usage: powershell -ExecutionPolicy Bypass -File build-whisper-server.ps1
+# Usage: powershell -ExecutionPolicy Bypass -File scripts\windows\build-whisper-server.ps1
 
 param(
     [string]$BuildDir = "C:\temp\whisper.cpp-build",

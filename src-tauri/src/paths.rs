@@ -225,7 +225,7 @@ fn normalize_backend_preference(preference: Option<&str>) -> &'static str {
     let env_override = std::env::var("TRISPR_LOCAL_BACKEND")
         .ok()
         .map(|value| value.trim().to_ascii_lowercase());
-    match explicit.or(env_override).as_deref() {
+    match env_override.or(explicit).as_deref() {
         Some("cuda") => "cuda",
         Some("vulkan") => "vulkan",
         _ => "auto",

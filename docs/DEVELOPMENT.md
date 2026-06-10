@@ -57,6 +57,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/hydrate-whisper-runt
 - `scripts/windows/upload-release-assets.ps1` creates a public release when missing and can mark it as `latest`.
 - This avoids the broken state where assets were uploaded against an unpublished draft while the tag was already visible.
 
+## Root directory entrypoints
+
+The repo root keeps only user-facing compatibility wrappers and app entry HTML files. Canonical Windows automation lives in `scripts\windows\`, generic scripts live in `scripts\`, and stale one-off local helpers live in `scripts\legacy\`.
+
 Notes:
 - `npm run dev` starts the desktop app (`tauri dev`) and reuses an already running Trispr Vite server on `http://localhost:1420`.
 - `npm run dev:web` starts only the Vite frontend dev server (web preview).
@@ -122,6 +126,16 @@ If your whisper.cpp checkout is in `D:\!GIT\whisper.cpp`, you can run:
 
 This builds whisper.cpp with CUDA and writes `.env.local` with:
 `TRISPR_WHISPER_CLI` and `TRISPR_WHISPER_MODEL_DIR`.
+
+To build the Vulkan runtime instead, install the Vulkan SDK, ensure `VULKAN_SDK`
+and `glslc.exe` are available, then run:
+
+```
+.\scripts\setup-whisper.ps1 -Backend vulkan
+```
+
+For compatibility diagnosis on older CPUs, add `-ConservativeCpu` to disable
+AVX/FMA/F16C-specific CPU paths while keeping the Vulkan backend enabled.
 
 If you do not have the CUDA Toolkit installed yet, install it first so `nvcc`
 is available on PATH. As a temporary fallback, you can run:

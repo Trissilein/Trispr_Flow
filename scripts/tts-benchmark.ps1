@@ -48,21 +48,21 @@ function Get-ProviderProfile {
   }
   if ($Provider -eq 'qwen3_tts') {
     return [ordered]@{
-      provider = $Provider
-      surface = 'benchmark_experimental'
-      release_role = $releaseRole
+      provider            = $Provider
+      surface             = 'benchmark_experimental'
+      release_role        = $releaseRole
       experimental_reason = 'Endpoint-backed runtime provider treated as experimental for release-gating.'
     }
   }
   return [ordered]@{
-    provider = $Provider
-    surface = 'runtime_stable'
-    release_role = $releaseRole
+    provider            = $Provider
+    surface             = 'runtime_stable'
+    release_role        = $releaseRole
     experimental_reason = $null
   }
 }
 
-function Normalize-Providers {
+function ConvertTo-NormalizedProviders {
   param([string[]]$Requested)
   $out = @()
   foreach ($provider in $Requested) {
@@ -83,20 +83,20 @@ function Normalize-Providers {
 
 function Get-DefaultScenarios {
   return @(
-    [ordered]@{ id='short_de_cold'; text='Kurzer Benchmark-Check.'; length_bucket='short'; language='de'; thermal='cold' },
-    [ordered]@{ id='short_de_warm'; text='Kurzer Benchmark-Check.'; length_bucket='short'; language='de'; thermal='warm' },
-    [ordered]@{ id='short_en_cold'; text='Short benchmark check.'; length_bucket='short'; language='en'; thermal='cold' },
-    [ordered]@{ id='short_en_warm'; text='Short benchmark check.'; length_bucket='short'; language='en'; thermal='warm' },
-    [ordered]@{ id='long_de_cold'; text='Dies ist ein längerer deutscher Benchmark-Satz, der Antworttempo und Stabilität unter praxisnahen Bedingungen vergleicht.'; length_bucket='long'; language='de'; thermal='cold' },
-    [ordered]@{ id='long_de_warm'; text='Dies ist ein längerer deutscher Benchmark-Satz, der Antworttempo und Stabilität unter praxisnahen Bedingungen vergleicht.'; length_bucket='long'; language='de'; thermal='warm' },
-    [ordered]@{ id='long_en_cold'; text='This is a longer benchmark sentence to compare synthesis latency and stability under realistic assistant output conditions.'; length_bucket='long'; language='en'; thermal='cold' },
-    [ordered]@{ id='long_en_warm'; text='This is a longer benchmark sentence to compare synthesis latency and stability under realistic assistant output conditions.'; length_bucket='long'; language='en'; thermal='warm' }
+    [ordered]@{ id = 'short_de_cold'; text = 'Kurzer Benchmark-Check.'; length_bucket = 'short'; language = 'de'; thermal = 'cold' },
+    [ordered]@{ id = 'short_de_warm'; text = 'Kurzer Benchmark-Check.'; length_bucket = 'short'; language = 'de'; thermal = 'warm' },
+    [ordered]@{ id = 'short_en_cold'; text = 'Short benchmark check.'; length_bucket = 'short'; language = 'en'; thermal = 'cold' },
+    [ordered]@{ id = 'short_en_warm'; text = 'Short benchmark check.'; length_bucket = 'short'; language = 'en'; thermal = 'warm' },
+    [ordered]@{ id = 'long_de_cold'; text = 'Dies ist ein längerer deutscher Benchmark-Satz, der Antworttempo und Stabilität unter praxisnahen Bedingungen vergleicht.'; length_bucket = 'long'; language = 'de'; thermal = 'cold' },
+    [ordered]@{ id = 'long_de_warm'; text = 'Dies ist ein längerer deutscher Benchmark-Satz, der Antworttempo und Stabilität unter praxisnahen Bedingungen vergleicht.'; length_bucket = 'long'; language = 'de'; thermal = 'warm' },
+    [ordered]@{ id = 'long_en_cold'; text = 'This is a longer benchmark sentence to compare synthesis latency and stability under realistic assistant output conditions.'; length_bucket = 'long'; language = 'en'; thermal = 'cold' },
+    [ordered]@{ id = 'long_en_warm'; text = 'This is a longer benchmark sentence to compare synthesis latency and stability under realistic assistant output conditions.'; length_bucket = 'long'; language = 'en'; thermal = 'warm' }
   )
 }
 
-function Classify-Failure {
-  param([string]$Error)
-  $errorValue = if ($null -eq $Error) { '' } else { [string]$Error }
+function Get-FailureCategory {
+  param([string]$ErrorMessage)
+  $errorValue = if ($null -eq $ErrorMessage) { '' } else { [string]$ErrorMessage }
   $normalized = $errorValue.Trim().ToLowerInvariant()
   if ([string]::IsNullOrWhiteSpace($normalized)) {
     return 'runtime_error'
@@ -202,7 +202,8 @@ function Invoke-WindowsNativeSynthesisToFile {
     $synth.SetOutputToWaveFile($OutputFile)
     $synth.Speak($Text)
     $synth.SetOutputToNull()
-  } finally {
+  }
+  finally {
     $synth.Dispose()
   }
 }
@@ -212,17 +213,18 @@ function Get-WindowsNaturalVoiceName {
   $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
   try {
     $voice = $synth.GetInstalledVoices() |
-      ForEach-Object { $_.VoiceInfo.Name } |
-      Where-Object { $_ -match 'Natural|Multilingual|Online' } |
-      Sort-Object `
-        @{Expression = { if ($_ -match 'Multilingual') { 0 } elseif ($_ -match 'Natural') { 1 } else { 2 } }; Ascending = $true }, `
-        @{Expression = { $_ }; Ascending = $true } |
-      Select-Object -First 1
+    ForEach-Object { $_.VoiceInfo.Name } |
+    Where-Object { $_ -match 'Natural|Multilingual|Online' } |
+    Sort-Object `
+    @{Expression = { if ($_ -match 'Multilingual') { 0 } elseif ($_ -match 'Natural') { 1 } else { 2 } }; Ascending = $true }, `
+    @{Expression = { $_ }; Ascending = $true } |
+    Select-Object -First 1
     if ([string]::IsNullOrWhiteSpace($voice)) {
       return $null
     }
     return [string]$voice
-  } finally {
+  }
+  finally {
     $synth.Dispose()
   }
 }
@@ -251,7 +253,8 @@ function Invoke-WindowsNaturalSynthesisToFile {
     $synth.SetOutputToWaveFile($OutputFile)
     $synth.Speak($Text)
     $synth.SetOutputToNull()
-  } finally {
+  }
+  finally {
     $synth.Dispose()
   }
 }
@@ -308,12 +311,12 @@ function Invoke-QwenSynthesisToFile {
     $headers['Authorization'] = "Bearer $ApiKey"
   }
   $body = [ordered]@{
-    model = $Model
-    input = $Text
-    voice = $Voice
+    model           = $Model
+    input           = $Text
+    voice           = $Voice
     response_format = 'wav'
-    stream = $false
-    speed = [Math]::Max(0.5, [Math]::Min(2.0, $Rate))
+    stream          = $false
+    speed           = [Math]::Max(0.5, [Math]::Min(2.0, $Rate))
   } | ConvertTo-Json -Compress
 
   $parent = Split-Path -Parent $OutputFile
@@ -331,21 +334,21 @@ function New-SampleObject {
     [int]$Run,
     [long]$ElapsedMs,
     [bool]$Success,
-    [string]$Error,
+    [string]$ErrorMessage,
     [string]$FailureCategory
   )
   return [ordered]@{
-    provider = $Provider
-    scenario = $Scenario
-    run = $Run
-    elapsed_ms = $ElapsedMs
-    success = $Success
-    error = if ($Success) { $null } else { $Error }
+    provider         = $Provider
+    scenario         = $Scenario
+    run              = $Run
+    elapsed_ms       = $ElapsedMs
+    success          = $Success
+    error            = if ($Success) { $null } else { $ErrorMessage }
     failure_category = if ($Success) { $null } else { $FailureCategory }
   }
 }
 
-function Summarize-Provider {
+function Get-ProviderSummary {
   param(
     [string]$Provider,
     [object[]]$Samples
@@ -364,14 +367,14 @@ function Summarize-Provider {
   }
 
   return [ordered]@{
-    provider = $Provider
-    attempts = $attempts
+    provider      = $Provider
+    attempts      = $attempts
     success_count = $successCount
     failure_count = $failureCount
-    success_rate = [Math]::Round($successRate, 6)
-    p50_ms = Get-Percentile -Values $latencies -Percentile 0.5
-    p95_ms = Get-Percentile -Values $latencies -Percentile 0.95
-    avg_ms = $avg
+    success_rate  = [Math]::Round($successRate, 6)
+    p50_ms        = Get-Percentile -Values $latencies -Percentile 0.5
+    p95_ms        = Get-Percentile -Values $latencies -Percentile 0.95
+    avg_ms        = $avg
   }
 }
 
@@ -406,7 +409,7 @@ if (Test-Path $reportPath) {
   Remove-Item $reportPath -Force
 }
 
-$providerList = Normalize-Providers -Requested $Providers
+$providerList = ConvertTo-NormalizedProviders -Requested $Providers
 $scenarios = Get-DefaultScenarios
 if ($UnlockMatrix) {
   Write-Host '[TTS Benchmark] UnlockMatrix was set, but no custom scenario input is wired in this headless harness. Using default scenario matrix.'
@@ -424,7 +427,8 @@ Write-Host "[TTS Benchmark] MatrixLocked=$(-not $UnlockMatrix) RuntimeSmoke=$run
 if ($providerList -contains 'local_custom') {
   if ([string]::IsNullOrWhiteSpace($PiperBinaryPath)) {
     Write-Host '[TTS Benchmark] local_custom piper_binary=<auto-resolve>'
-  } else {
+  }
+  else {
     Write-Host "[TTS Benchmark] local_custom piper_binary=$PiperBinaryPath"
   }
 }
@@ -433,7 +437,7 @@ if ($providerList -contains 'qwen3_tts') {
 }
 
 $warnings = @()
-$profiles = @($providerList | ForEach-Object { Get-ProviderProfile -Provider $_ })
+$providerProfiles = @($providerList | ForEach-Object { Get-ProviderProfile -Provider $_ })
 $preflightChecks = @()
 $runtimeSmokeChecks = @()
 $samples = @()
@@ -453,58 +457,62 @@ foreach ($provider in $providerList) {
 
   switch ($provider) {
     'windows_native' {
-      $isWindows = $env:OS -eq 'Windows_NT'
+      $runsOnWindows = $env:OS -eq 'Windows_NT'
       $checks += [ordered]@{
         provider = $provider
-        check = 'runtime_windows'
-        passed = $isWindows
-        category = if ($isWindows) { $null } else { 'runtime_error' }
-        detail = if ($isWindows) { 'Windows runtime detected for windows_native provider.' } else { 'windows_native provider requires Windows runtime.' }
+        check    = 'runtime_windows'
+        passed   = $runsOnWindows
+        category = if ($runsOnWindows) { $null } else { 'runtime_error' }
+        detail   = if ($runsOnWindows) { 'Windows runtime detected for windows_native provider.' } else { 'windows_native provider requires Windows runtime.' }
       }
 
-      if ($isWindows) {
+      if ($runsOnWindows) {
         $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("tts_preflight_windows_{0}.wav" -f [guid]::NewGuid().ToString('N'))
         try {
           Invoke-WindowsNativeSynthesisToFile -Text 'Preflight ping.' -Rate 1.0 -Volume 0.2 -OutputFile $tmp
-          $checks += [ordered]@{ provider=$provider; check='synthesis_probe'; passed=$true; category=$null; detail='Windows synthesis probe succeeded.' }
-        } catch {
+          $checks += [ordered]@{ provider = $provider; check = 'synthesis_probe'; passed = $true; category = $null; detail = 'Windows synthesis probe succeeded.' }
+        }
+        catch {
           $msg = "Windows synthesis probe failed: $($_.Exception.Message)"
-          $checks += [ordered]@{ provider=$provider; check='synthesis_probe'; passed=$false; category=(Classify-Failure -Error $msg); detail=$msg }
-        } finally {
+          $checks += [ordered]@{ provider = $provider; check = 'synthesis_probe'; passed = $false; category = (Get-FailureCategory -ErrorMessage $msg); detail = $msg }
+        }
+        finally {
           if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
         }
       }
     }
     'windows_natural' {
-      $isWindows = $env:OS -eq 'Windows_NT'
+      $runsOnWindows = $env:OS -eq 'Windows_NT'
       $checks += [ordered]@{
         provider = $provider
-        check = 'runtime_windows'
-        passed = $isWindows
-        category = if ($isWindows) { $null } else { 'runtime_error' }
-        detail = if ($isWindows) { 'Windows runtime detected for windows_natural provider.' } else { 'windows_natural provider requires Windows runtime.' }
+        check    = 'runtime_windows'
+        passed   = $runsOnWindows
+        category = if ($runsOnWindows) { $null } else { 'runtime_error' }
+        detail   = if ($runsOnWindows) { 'Windows runtime detected for windows_natural provider.' } else { 'windows_natural provider requires Windows runtime.' }
       }
 
-      if ($isWindows) {
+      if ($runsOnWindows) {
         $voiceName = Get-WindowsNaturalVoiceName
         $voiceOk = -not [string]::IsNullOrWhiteSpace($voiceName)
         $checks += [ordered]@{
           provider = $provider
-          check = 'natural_voice_available'
-          passed = $voiceOk
+          check    = 'natural_voice_available'
+          passed   = $voiceOk
           category = if ($voiceOk) { $null } else { 'runtime_error' }
-          detail = if ($voiceOk) { "Natural voice found: $voiceName" } else { 'No Windows Natural voice found (NaturalVoiceSAPIAdapter + voice pack required).' }
+          detail   = if ($voiceOk) { "Natural voice found: $voiceName" } else { 'No Windows Natural voice found (NaturalVoiceSAPIAdapter + voice pack required).' }
         }
 
         if ($voiceOk) {
           $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("tts_preflight_windows_natural_{0}.wav" -f [guid]::NewGuid().ToString('N'))
           try {
             Invoke-WindowsNaturalSynthesisToFile -Text 'Preflight ping.' -Rate 1.0 -Volume 0.2 -OutputFile $tmp
-            $checks += [ordered]@{ provider=$provider; check='synthesis_probe'; passed=$true; category=$null; detail='Windows natural synthesis probe succeeded.' }
-          } catch {
+            $checks += [ordered]@{ provider = $provider; check = 'synthesis_probe'; passed = $true; category = $null; detail = 'Windows natural synthesis probe succeeded.' }
+          }
+          catch {
             $msg = "Windows natural synthesis probe failed: $($_.Exception.Message)"
-            $checks += [ordered]@{ provider=$provider; check='synthesis_probe'; passed=$false; category=(Classify-Failure -Error $msg); detail=$msg }
-          } finally {
+            $checks += [ordered]@{ provider = $provider; check = 'synthesis_probe'; passed = $false; category = (Get-FailureCategory -ErrorMessage $msg); detail = $msg }
+          }
+          finally {
             if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
           }
         }
@@ -514,29 +522,31 @@ foreach ($provider in $providerList) {
       $binaryOk = -not [string]::IsNullOrWhiteSpace($piperResolvedBinary)
       $checks += [ordered]@{
         provider = $provider
-        check = 'binary_available'
-        passed = $binaryOk
+        check    = 'binary_available'
+        passed   = $binaryOk
         category = if ($binaryOk) { $null } else { 'missing_binary' }
-        detail = if ($binaryOk) { "Piper binary found: $piperResolvedBinary" } else { 'Piper binary not found.' }
+        detail   = if ($binaryOk) { "Piper binary found: $piperResolvedBinary" } else { 'Piper binary not found.' }
       }
       $modelOk = -not [string]::IsNullOrWhiteSpace($piperResolvedModel)
       $checks += [ordered]@{
         provider = $provider
-        check = 'model_available'
-        passed = $modelOk
+        check    = 'model_available'
+        passed   = $modelOk
         category = if ($modelOk) { $null } else { 'missing_model' }
-        detail = if ($modelOk) { "Piper model found: $piperResolvedModel" } else { 'Piper model not found (.onnx).' }
+        detail   = if ($modelOk) { "Piper model found: $piperResolvedModel" } else { 'Piper model not found (.onnx).' }
       }
 
       if ($binaryOk -and $modelOk) {
         $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("tts_preflight_piper_{0}.wav" -f [guid]::NewGuid().ToString('N'))
         try {
           Invoke-PiperSynthesisToFile -Text 'Preflight ping.' -Binary $piperResolvedBinary -Model $piperResolvedModel -Rate 1.0 -OutputFile $tmp
-          $checks += [ordered]@{ provider=$provider; check='synthesis_probe'; passed=$true; category=$null; detail='Piper synthesis probe succeeded.' }
-        } catch {
+          $checks += [ordered]@{ provider = $provider; check = 'synthesis_probe'; passed = $true; category = $null; detail = 'Piper synthesis probe succeeded.' }
+        }
+        catch {
           $msg = "Piper synthesis probe failed: $($_.Exception.Message)"
-          $checks += [ordered]@{ provider=$provider; check='synthesis_probe'; passed=$false; category=(Classify-Failure -Error $msg); detail=$msg }
-        } finally {
+          $checks += [ordered]@{ provider = $provider; check = 'synthesis_probe'; passed = $false; category = (Get-FailureCategory -ErrorMessage $msg); detail = $msg }
+        }
+        finally {
           if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
         }
       }
@@ -545,20 +555,22 @@ foreach ($provider in $providerList) {
       $endpointOk = $Qwen3Endpoint.StartsWith('http://') -or $Qwen3Endpoint.StartsWith('https://')
       $checks += [ordered]@{
         provider = $provider
-        check = 'endpoint_format'
-        passed = $endpointOk
+        check    = 'endpoint_format'
+        passed   = $endpointOk
         category = if ($endpointOk) { $null } else { 'endpoint_unreachable' }
-        detail = if ($endpointOk) { 'Qwen3 endpoint format accepted.' } else { "Qwen3 endpoint '$Qwen3Endpoint' is invalid. Expected http:// or https:// URL." }
+        detail   = if ($endpointOk) { 'Qwen3 endpoint format accepted.' } else { "Qwen3 endpoint '$Qwen3Endpoint' is invalid. Expected http:// or https:// URL." }
       }
       if ($endpointOk) {
         $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("tts_preflight_qwen_{0}.wav" -f [guid]::NewGuid().ToString('N'))
         try {
           Invoke-QwenSynthesisToFile -Text 'Preflight ping.' -Rate 1.0 -Endpoint $Qwen3Endpoint -Model $Qwen3Model -Voice $Qwen3Voice -ApiKey $Qwen3ApiKey -TimeoutSec $Qwen3TimeoutSec -OutputFile $tmp
-          $checks += [ordered]@{ provider=$provider; check='endpoint_auth_probe'; passed=$true; category=$null; detail='Qwen3 endpoint/auth probe succeeded.' }
-        } catch {
+          $checks += [ordered]@{ provider = $provider; check = 'endpoint_auth_probe'; passed = $true; category = $null; detail = 'Qwen3 endpoint/auth probe succeeded.' }
+        }
+        catch {
           $msg = "Qwen3 probe failed: $($_.Exception.Message)"
-          $checks += [ordered]@{ provider=$provider; check='endpoint_auth_probe'; passed=$false; category=(Classify-Failure -Error $msg); detail=$msg }
-        } finally {
+          $checks += [ordered]@{ provider = $provider; check = 'endpoint_auth_probe'; passed = $false; category = (Get-FailureCategory -ErrorMessage $msg); detail = $msg }
+        }
+        finally {
           if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
         }
       }
@@ -568,7 +580,7 @@ foreach ($provider in $providerList) {
   $preflightChecks += $checks
   $preflightOkByProvider[$provider] = -not ($checks | Where-Object { -not $_.passed })
 
-  $providerRoleInfo = $profiles | Where-Object { $_.provider -eq $provider } | Select-Object -First 1
+  $providerRoleInfo = $providerProfiles | Where-Object { $_.provider -eq $provider } | Select-Object -First 1
   $isRuntimeStable = $providerRoleInfo.surface -eq 'runtime_stable'
   if ($isRuntimeStable) {
     if ($runRuntimeSmoke) {
@@ -580,18 +592,22 @@ foreach ($provider in $providerList) {
             'windows_natural' { Invoke-WindowsNaturalSynthesisToFile -Text 'Trispr Flow runtime smoke test.' -Rate $Rate -Volume 0.2 -OutputFile $tmp }
             'local_custom' { Invoke-PiperSynthesisToFile -Text 'Trispr Flow runtime smoke test.' -Binary $piperResolvedBinary -Model $piperResolvedModel -Rate $Rate -OutputFile $tmp }
           }
-          $runtimeSmokeChecks += [ordered]@{ provider=$provider; passed=$true; category=$null; detail='Runtime smoke speak path succeeded.' }
-        } catch {
+          $runtimeSmokeChecks += [ordered]@{ provider = $provider; passed = $true; category = $null; detail = 'Runtime smoke speak path succeeded.' }
+        }
+        catch {
           $msg = "Runtime smoke speak path failed: $($_.Exception.Message)"
-          $runtimeSmokeChecks += [ordered]@{ provider=$provider; passed=$false; category=(Classify-Failure -Error $msg); detail=$msg }
-        } finally {
+          $runtimeSmokeChecks += [ordered]@{ provider = $provider; passed = $false; category = (Get-FailureCategory -ErrorMessage $msg); detail = $msg }
+        }
+        finally {
           if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
         }
-      } else {
-        $runtimeSmokeChecks += [ordered]@{ provider=$provider; passed=$false; category='runtime_error'; detail='Runtime smoke skipped due to preflight failure.' }
       }
-    } else {
-      $runtimeSmokeChecks += [ordered]@{ provider=$provider; passed=$true; category=$null; detail='Runtime smoke disabled by request.' }
+      else {
+        $runtimeSmokeChecks += [ordered]@{ provider = $provider; passed = $false; category = 'runtime_error'; detail = 'Runtime smoke skipped due to preflight failure.' }
+      }
+    }
+    else {
+      $runtimeSmokeChecks += [ordered]@{ provider = $provider; passed = $true; category = $null; detail = 'Runtime smoke disabled by request.' }
     }
   }
 }
@@ -604,7 +620,7 @@ foreach ($provider in $providerList) {
       if (-not $preflightOk) {
         $failedCheck = $preflightChecks | Where-Object { $_.provider -eq $provider -and -not $_.passed } | Select-Object -First 1
         $msg = "Preflight failed ($($failedCheck.check)): $($failedCheck.detail)"
-        $samples += (New-SampleObject -Provider $provider -Scenario $scenario.id -Run $run -ElapsedMs 0 -Success $false -Error $msg -FailureCategory (Classify-Failure -Error $msg))
+        $samples += (New-SampleObject -Provider $provider -Scenario $scenario.id -Run $run -ElapsedMs 0 -Success $false -ErrorMessage $msg -FailureCategory (Get-FailureCategory -ErrorMessage $msg))
         continue
       }
 
@@ -636,7 +652,7 @@ foreach ($provider in $providerList) {
           throw 'Synthesis returned no output file.'
         }
 
-        $samples += (New-SampleObject -Provider $provider -Scenario $scenario.id -Run $run -ElapsedMs $elapsedMs -Success $true -Error $null -FailureCategory $null)
+        $samples += (New-SampleObject -Provider $provider -Scenario $scenario.id -Run $run -ElapsedMs $elapsedMs -Success $true -ErrorMessage $null -FailureCategory $null)
 
         if ($saveExamples) {
           $exampleKey = "$provider|$($scenario.id)"
@@ -646,23 +662,25 @@ foreach ($provider in $providerList) {
             Copy-Item -Path $tmpFile -Destination $examplePath -Force
             $exampleTaken[$exampleKey] = $true
             $exampleClips += [ordered]@{
-              provider = $provider
-              scenario = $scenario.id
-              language = $scenario.language
+              provider      = $provider
+              scenario      = $scenario.id
+              language      = $scenario.language
               length_bucket = $scenario.length_bucket
-              thermal = $scenario.thermal
-              source_text = $scenario.text
-              run = $run
-              elapsed_ms = $elapsedMs
-              file = $exampleName
-              file_path = $examplePath
+              thermal       = $scenario.thermal
+              source_text   = $scenario.text
+              run           = $run
+              elapsed_ms    = $elapsedMs
+              file          = $exampleName
+              file_path     = $examplePath
             }
           }
         }
-      } catch {
+      }
+      catch {
         $msg = $_.Exception.Message
-        $samples += (New-SampleObject -Provider $provider -Scenario $scenario.id -Run $run -ElapsedMs $elapsedMs -Success $false -Error $msg -FailureCategory (Classify-Failure -Error $msg))
-      } finally {
+        $samples += (New-SampleObject -Provider $provider -Scenario $scenario.id -Run $run -ElapsedMs $elapsedMs -Success $false -ErrorMessage $msg -FailureCategory (Get-FailureCategory -ErrorMessage $msg))
+      }
+      finally {
         if (Test-Path $tmpFile) {
           Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
         }
@@ -671,12 +689,12 @@ foreach ($provider in $providerList) {
   }
 }
 
-$providerSummaries = @($providerList | ForEach-Object { Summarize-Provider -Provider $_ -Samples $samples })
+$providerSummaries = @($providerList | ForEach-Object { Get-ProviderSummary -Provider $_ -Samples $samples })
 
 $providerGateEvaluations = @()
 foreach ($summary in $providerSummaries) {
   $provider = $summary.provider
-  $providerRoleInfo = $profiles | Where-Object { $_.provider -eq $provider } | Select-Object -First 1
+  $providerRoleInfo = $providerProfiles | Where-Object { $_.provider -eq $provider } | Select-Object -First 1
   $isRuntimeStable = $providerRoleInfo.surface -eq 'runtime_stable'
   $releaseRole = if ($providerRoleInfo.release_role) { [string]$providerRoleInfo.release_role } else { if ($isRuntimeStable) { 'baseline' } else { 'experimental' } }
   $blocksReleaseGate = $releaseRole -eq 'baseline'
@@ -699,19 +717,19 @@ foreach ($summary in $providerSummaries) {
   $passes = $isRuntimeStable -and $preflightOk -and $runtimeSmokeOk -and $reliabilityOk -and $latencyOk -and $scenarioSuccessOk
 
   $providerGateEvaluations += [ordered]@{
-    provider = $provider
-    release_role = $releaseRole
-    evaluated_for_release = $blocksReleaseGate
-    blocks_release_gate = $blocksReleaseGate
-    passes_release_gate = $passes
-    preflight_ok = $preflightOk
-    runtime_smoke_ok = $runtimeSmokeOk
-    reliability_ok = $reliabilityOk
-    latency_ok = $latencyOk
-    scenario_success_ok = $scenarioSuccessOk
-    success_rate = [double]$summary.success_rate
-    p50_ms = $summary.p50_ms
-    p95_ms = $summary.p95_ms
+    provider                    = $provider
+    release_role                = $releaseRole
+    evaluated_for_release       = $blocksReleaseGate
+    blocks_release_gate         = $blocksReleaseGate
+    passes_release_gate         = $passes
+    preflight_ok                = $preflightOk
+    runtime_smoke_ok            = $runtimeSmokeOk
+    reliability_ok              = $reliabilityOk
+    latency_ok                  = $latencyOk
+    scenario_success_ok         = $scenarioSuccessOk
+    success_rate                = [double]$summary.success_rate
+    p50_ms                      = $summary.p50_ms
+    p95_ms                      = $summary.p95_ms
     min_success_in_any_scenario = $minScenarioSuccess
   }
 }
@@ -730,14 +748,17 @@ $releaseGateReason = ''
 if ($baselineEvals.Count -eq 0) {
   $releaseGatePass = $false
   $releaseGateReason = 'No baseline providers available for release gate evaluation.'
-} elseif ($failedBaseline.Count -eq 0) {
+}
+elseif ($failedBaseline.Count -eq 0) {
   $releaseGatePass = $true
   if ($degradedSupportedOptional.Count -gt 0) {
     $releaseGateReason = "Baseline providers passed; supported optional providers degraded: $($degradedSupportedOptional.provider -join ', ')"
-  } else {
+  }
+  else {
     $releaseGateReason = 'All baseline providers passed release gate.'
   }
-} else {
+}
+else {
   $releaseGatePass = $false
   $releaseGateReason = "Release gate failed for baseline providers: $($failedBaseline.provider -join ', ')"
 }
@@ -755,10 +776,12 @@ if ($releaseGatePass) {
     $recommendedDefaultProvider = $passingRuntime[0].provider
     $best = $passingRuntime[0]
     $recommendationReason = "Selected '$recommendedDefaultProvider' (success_rate=$([Math]::Round($best.success_rate * 100.0, 1))%, p95=$($best.p95_ms)ms, p50=$($best.p50_ms)ms) among providers meeting reliability gate >=$([Math]::Round($gateReliability * 100.0, 1))%."
-  } else {
+  }
+  else {
     $recommendationReason = 'Release gate passed but no runtime provider candidate was found.'
   }
-} else {
+}
+else {
   $recommendationReason = 'No runtime provider recommendation available. Resolve preflight/smoke failures first.'
 }
 
@@ -778,19 +801,19 @@ if ($saveExamples -and $exampleDir) {
 
     $blindMap = @()
     $index = 1
-    foreach ($clip in @($exampleClips | Sort-Object @{Expression={ $_.scenario }; Ascending=$true }, @{Expression={ $_.provider }; Ascending=$true })) {
+    foreach ($clip in @($exampleClips | Sort-Object @{Expression = { $_.scenario }; Ascending = $true }, @{Expression = { $_.provider }; Ascending = $true })) {
       $blindName = ("sample_{0:D2}.wav" -f $index)
       $blindPath = Join-Path $blindExamplesDir $blindName
       Copy-Item -Path $clip.file_path -Destination $blindPath -Force
       $blindMap += [ordered]@{
-        blind_id = $blindName
-        provider = $clip.provider
-        scenario = $clip.scenario
-        language = $clip.language
+        blind_id      = $blindName
+        provider      = $clip.provider
+        scenario      = $clip.scenario
+        language      = $clip.language
         length_bucket = $clip.length_bucket
-        thermal = $clip.thermal
-        source_text = $clip.source_text
-        elapsed_ms = $clip.elapsed_ms
+        thermal       = $clip.thermal
+        source_text   = $clip.source_text
+        elapsed_ms    = $clip.elapsed_ms
       }
       $index++
     }
@@ -800,42 +823,42 @@ if ($saveExamples -and $exampleDir) {
 }
 
 $report = [ordered]@{
-  artifact_version = 'tts-benchmark/v2-headless'
-  generated_at = (Get-Date).ToUniversalTime().ToString('o')
-  warmup_runs = $Warmup
-  measure_runs = $Runs
-  providers = $providerList
-  scenarios = @($scenarios | ForEach-Object { $_.id })
-  scenario_matrix_locked = (-not $UnlockMatrix)
-  gates = [ordered]@{
+  artifact_version                      = 'tts-benchmark/v2-headless'
+  generated_at                          = (Get-Date).ToUniversalTime().ToString('o')
+  warmup_runs                           = $Warmup
+  measure_runs                          = $Runs
+  providers                             = $providerList
+  scenarios                             = @($scenarios | ForEach-Object { $_.id })
+  scenario_matrix_locked                = (-not $UnlockMatrix)
+  gates                                 = [ordered]@{
     reliability_min_success_rate = $gateReliability
-    latency_target_p50_ms = $gateLatencyP50
-    latency_target_p95_ms = $gateLatencyP95
-    min_success_per_scenario = $gateMinSuccessPerScenario
+    latency_target_p50_ms        = $gateLatencyP50
+    latency_target_p95_ms        = $gateLatencyP95
+    min_success_per_scenario     = $gateMinSuccessPerScenario
   }
-  provider_profiles = $profiles
-  preflight_checks = $preflightChecks
-  runtime_smoke_checks = $runtimeSmokeChecks
-  samples = $samples
-  provider_summaries = $providerSummaries
-  provider_gate_evaluations = $providerGateEvaluations
-  baseline_providers = @($baselineEvals | ForEach-Object { $_.provider })
+  provider_profiles                     = $providerProfiles
+  preflight_checks                      = $preflightChecks
+  runtime_smoke_checks                  = $runtimeSmokeChecks
+  samples                               = $samples
+  provider_summaries                    = $providerSummaries
+  provider_gate_evaluations             = $providerGateEvaluations
+  baseline_providers                    = @($baselineEvals | ForEach-Object { $_.provider })
   degraded_supported_optional_providers = @($degradedSupportedOptional | ForEach-Object { $_.provider })
-  unavailable_experimental_providers = @($unavailableExperimental | ForEach-Object { $_.provider })
-  provider_consistency_ok = $true
-  provider_consistency_detail = 'Benchmark scope and runtime provider surface are consistent.'
-  fallback_order = $fallbackOrder
-  release_gate_pass = $releaseGatePass
-  release_gate_reason = $releaseGateReason
-  recommended_default_provider = $recommendedDefaultProvider
-  recommendation_reason = $recommendationReason
-  uncategorized_failure_count = $uncategorizedFailureCount
-  warnings = $warnings
-  example_clips_dir = if ($saveExamples) { $exampleDir } else { $null }
-  example_manifest_path = $exampleManifestPath
-  example_clips = $exampleClips
-  blind_examples_dir = $blindExamplesDir
-  blind_mapping_path = $blindMappingPath
+  unavailable_experimental_providers    = @($unavailableExperimental | ForEach-Object { $_.provider })
+  provider_consistency_ok               = $true
+  provider_consistency_detail           = 'Benchmark scope and runtime provider surface are consistent.'
+  fallback_order                        = $fallbackOrder
+  release_gate_pass                     = $releaseGatePass
+  release_gate_reason                   = $releaseGateReason
+  recommended_default_provider          = $recommendedDefaultProvider
+  recommendation_reason                 = $recommendationReason
+  uncategorized_failure_count           = $uncategorizedFailureCount
+  warnings                              = $warnings
+  example_clips_dir                     = if ($saveExamples) { $exampleDir } else { $null }
+  example_manifest_path                 = $exampleManifestPath
+  example_clips                         = $exampleClips
+  blind_examples_dir                    = $blindExamplesDir
+  blind_mapping_path                    = $blindMappingPath
 }
 
 $report | ConvertTo-Json -Depth 8 | Set-Content -Path $reportPath -Encoding UTF8
@@ -882,7 +905,8 @@ if ($PlayExamples -and $saveExamples -and (Test-Path $exampleDir -PathType Conta
     try {
       $player = New-Object System.Media.SoundPlayer($clip.FullName)
       $player.PlaySync()
-    } catch {
+    }
+    catch {
       Write-Warning "Failed to play '$($clip.FullName)': $($_.Exception.Message)"
     }
   }
@@ -895,7 +919,8 @@ if ($PlayBlindExamples -and $saveExamples -and $blindExamplesDir -and (Test-Path
     try {
       $player = New-Object System.Media.SoundPlayer($clip.FullName)
       $player.PlaySync()
-    } catch {
+    }
+    catch {
       Write-Warning "Failed to play '$($clip.FullName)': $($_.Exception.Message)"
     }
   }

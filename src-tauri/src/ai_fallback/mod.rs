@@ -275,10 +275,20 @@ pub(crate) fn prepare_refinement(
     };
     let enforce_language_guard = ai.preserve_source_language && ai.prompt_profile != "llm_prompt";
 
+    let low_latency_decision =
+        crate::refinement_adaptation::resolve_adaptive_low_latency(app, settings, &model);
+    if crate::state::diagnostic_logging_enabled() {
+        tracing::info!(
+            "[refinement:prepare] low_latency={} reason={}",
+            low_latency_decision.enabled,
+            low_latency_decision.reason
+        );
+    }
+
     let options = RefinementOptions {
         temperature: ai.temperature,
         max_tokens: ai.max_tokens,
-        low_latency_mode: ai.low_latency_mode,
+        low_latency_mode: low_latency_decision.enabled,
         language: Some(effective_language.clone()),
         custom_prompt: augment_prompt_with_vocab_terms(
             provider::prompt_for_profile(

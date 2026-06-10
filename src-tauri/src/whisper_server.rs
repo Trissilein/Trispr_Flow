@@ -33,7 +33,6 @@ pub fn last_server_cold_start_ms() -> Option<u64> {
     }
 }
 
-
 struct WhisperServerRequestGuard;
 
 impl WhisperServerRequestGuard {
@@ -57,7 +56,6 @@ fn whisper_server_warm_window_active(state: &AppState) -> bool {
     let warm_until = state.whisper_server_warm_until_ms.load(Ordering::Relaxed);
     warm_until > crate::util::now_ms()
 }
-
 
 fn extend_whisper_server_warm_window(state: &AppState) -> u64 {
     state

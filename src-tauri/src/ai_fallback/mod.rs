@@ -87,7 +87,10 @@ pub(crate) fn resolve_ollama_refinement_model(
         .to_string();
 
     let repaired = requested.is_empty() || !selected.eq_ignore_ascii_case(requested);
-    Some(OllamaModelResolution { model: selected, repaired })
+    Some(OllamaModelResolution {
+        model: selected,
+        repaired,
+    })
 }
 
 /// Common result of preparing a refinement call: provider client, API key,
@@ -214,13 +217,11 @@ pub(crate) fn prepare_refinement(
         provider::ping_ollama_quick(&endpoint).map_err(|error| error.to_string())?;
 
         let installed_models = provider::list_ollama_models(&endpoint);
-        let resolution =
-            resolve_ollama_refinement_model(settings, &model, &installed_models).ok_or_else(
-                || {
-                    "No installed Ollama models found. Download a model and set it active first."
-                        .to_string()
-                },
-            )?;
+        let resolution = resolve_ollama_refinement_model(settings, &model, &installed_models)
+            .ok_or_else(|| {
+                "No installed Ollama models found. Download a model and set it active first."
+                    .to_string()
+            })?;
         if crate::state::diagnostic_logging_enabled() {
             tracing::info!(
                 "[refinement:prepare] ollama model resolution requested={} selected={} repaired={} installed={}",

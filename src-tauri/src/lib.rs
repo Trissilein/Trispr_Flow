@@ -2496,11 +2496,11 @@ fn gpu_stats_nvidia() -> Option<GpuStats> {
 
 #[cfg(target_os = "windows")]
 fn gpu_stats_dxgi() -> Option<GpuStats> {
+    use windows::core::Interface;
     use windows::Win32::Graphics::Dxgi::{
         CreateDXGIFactory1, IDXGIAdapter3, IDXGIFactory1, DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
         DXGI_QUERY_VIDEO_MEMORY_INFO,
     };
-    use windows::core::Interface;
     unsafe {
         let factory = CreateDXGIFactory1::<IDXGIFactory1>().ok()?;
         let adapter1 = factory.EnumAdapters1(0).ok()?;

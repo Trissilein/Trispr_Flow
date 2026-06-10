@@ -2524,32 +2524,45 @@ fn gpu_stats_dxgi() -> Option<GpuStats> {
     }
 }
 
-#[tauri::command]
-async fn get_gpu_stats() -> GpuStats {
-    tauri::async_runtime::spawn_blocking(|| {
-        if let Some(s) = gpu_stats_nvidia() {
-            return s;
-        }
-        #[cfg(target_os = "windows")]
-        if let Some(s) = gpu_stats_dxgi() {
-            return s;
-        }
-        GpuStats {
-            util_pct: None,
-            vram_used_gb: 0.0,
-            vram_total_gb: 0.0,
-            whisper_vram_gb: None,
-            refine_vram_gb: None,
-        }
-    })
-    .await
-    .unwrap_or_else(|_| GpuStats {
+fn hardware_gpu_stats() -> GpuStats {
+    if let Some(s) = gpu_stats_nvidia() {
+        return s;
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(s) = gpu_stats_dxgi() {
+        return s;
+    }
+    GpuStats {
         util_pct: None,
         vram_used_gb: 0.0,
         vram_total_gb: 0.0,
         whisper_vram_gb: None,
         refine_vram_gb: None,
-    })
+    }
+}
+
+#[tauri::command]
+fn get_gpu_stats(state: State<'_, AppState>) -> GpuStats {
+    let ollama_endpoint: Option<String> = {
+        let settings = state.settings.read().unwrap_or_else(|p| p.into_inner());
+        if settings.ai_fallback.provider == "ollama" {
+            Some(settings.providers.ollama.endpoint.clone())
+        } else {
+            None
+        }
+    };
+
+    let mut stats = hardware_gpu_stats();
+
+    if let Some(endpoint) = ollama_endpoint {
+        let refine_bytes = crate::ai_fallback::provider::fetch_ollama_running_vram(&endpoint);
+        let refine_gb = refine_bytes.map(|b| b as f64 / (1024.0_f64.powi(3)));
+        stats.refine_vram_gb = refine_gb;
+        // Whisper ≈ total used minus OLLAMA model; clamp to 0 for measurement skew
+        stats.whisper_vram_gb = refine_gb.map(|r| (stats.vram_used_gb - r).max(0.0));
+    }
+
+    stats
 }
 
 pub(crate) fn save_recording_opus(

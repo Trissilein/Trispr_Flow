@@ -1,5 +1,7 @@
 use crate::ai_fallback::provider::ping_ollama_quick;
+use crate::modules::health as module_health;
 use crate::modules::registry as module_registry;
+use crate::modules::ModuleSettings;
 use crate::state::{
     self, AppState, RuntimeDiagnostics, RuntimeMetricsSnapshot, Settings, StartupStatus,
 };
@@ -93,6 +95,40 @@ fn check_powershell_available() -> bool {
     cmd.output()
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+fn build_module_dependency_preflight_items(
+    module_settings: &ModuleSettings,
+) -> Vec<DependencyPreflightItem> {
+    let installed_package_ids = std::collections::HashSet::new();
+    let descriptors = module_registry::modules_as_descriptors(module_settings);
+    let health =
+        module_health::get_health_with_packages(module_settings, None, &installed_package_ids);
+
+    health
+        .into_iter()
+        .filter(|entry| entry.state != "ok")
+        .filter_map(|entry| {
+            let descriptor = descriptors
+                .iter()
+                .find(|descriptor| descriptor.id == entry.module_id)?;
+            let (status, required) = match entry.state.as_str() {
+                "release_blocker" | "error" => ("error", true),
+                "needs_setup" | "fallback_active" | "local_warning" | "degraded" => {
+                    ("warning", false)
+                }
+                _ => return None,
+            };
+
+            Some(DependencyPreflightItem {
+                id: format!("module_{}", entry.module_id),
+                status: status.to_string(),
+                required,
+                message: format!("Module '{}' health: {}", descriptor.name, entry.detail),
+                hint: Some("Open Modules tab and run Health / dependency checks.".to_string()),
+            })
+        })
+        .collect()
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -237,24 +273,9 @@ pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyP
         });
     }
 
-    let module_descriptors =
-        module_registry::modules_as_descriptors(&settings_snapshot.module_settings);
-    for descriptor in module_descriptors
-        .iter()
-        .filter(|module| module.state == "error")
-    {
-        let message = descriptor
-            .last_error
-            .clone()
-            .unwrap_or_else(|| "Module is in error state.".to_string());
-        items.push(DependencyPreflightItem {
-            id: format!("module_{}", descriptor.id),
-            status: "warning".to_string(),
-            required: false,
-            message: format!("Module '{}' has an issue: {}", descriptor.name, message),
-            hint: Some("Open Modules tab and run Health / dependency checks.".to_string()),
-        });
-    }
+    items.extend(build_module_dependency_preflight_items(
+        &settings_snapshot.module_settings,
+    ));
 
     let blocking_count = items.iter().filter(|item| item.status == "error").count();
     let warning_count = items.iter().filter(|item| item.status == "warning").count();
@@ -272,6 +293,44 @@ pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyP
         blocking_count,
         warning_count,
         items,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::{registry, ASSISTANT_CORE_MODULE_ID};
+
+    #[test]
+    fn dependency_preflight_ignores_stale_disabled_optional_module_error() {
+        let mut module_settings = ModuleSettings::default();
+        registry::set_last_error(
+            &mut module_settings,
+            ASSISTANT_CORE_MODULE_ID,
+            "Module is in error state.",
+        );
+
+        let items = build_module_dependency_preflight_items(&module_settings);
+
+        assert!(items.iter().all(|item| item.id != "module_assistant_core"));
+    }
+
+    #[test]
+    fn dependency_preflight_warns_for_enabled_module_setup_gap() {
+        let mut module_settings = ModuleSettings::default();
+        module_settings
+            .enabled_modules
+            .insert(ASSISTANT_CORE_MODULE_ID.to_string());
+
+        let items = build_module_dependency_preflight_items(&module_settings);
+        let assistant_item = items
+            .iter()
+            .find(|item| item.id == "module_assistant_core")
+            .expect("enabled Assistant Core setup gap should be reported");
+
+        assert_eq!(assistant_item.status, "warning");
+        assert!(!assistant_item.required);
+        assert!(assistant_item.message.contains("Assistant Core"));
     }
 }
 

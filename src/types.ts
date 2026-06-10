@@ -1140,7 +1140,7 @@ export interface PartitionInfo {
 
 export interface ModuleHealthStatus {
   module_id: string;
-  state: "ok" | "degraded" | "error";
+  state: "ok" | "needs_setup" | "fallback_active" | "local_warning" | "release_blocker" | "degraded" | "error";
   detail: string;
 }
 

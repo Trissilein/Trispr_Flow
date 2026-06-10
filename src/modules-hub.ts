@@ -541,8 +541,13 @@ async function handleHealth(moduleId: string): Promise<void> {
     const health = await invoke<ModuleHealthStatus[]>("get_module_health", { moduleId });
     const entry = health[0];
     if (!entry) return;
+    const toastType = entry.state === "ok"
+      ? "success"
+      : entry.state === "release_blocker" || entry.state === "error"
+        ? "error"
+        : "warning";
     showToast({
-      type: entry.state === "ok" ? "success" : entry.state === "degraded" ? "warning" : "error",
+      type: toastType,
       title: `${moduleId} health: ${entry.state}`,
       message: entry.detail,
       duration: 4500,

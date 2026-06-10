@@ -8,7 +8,7 @@ use crate::terminate_managed_child_slot;
 use crate::update_runtime_diagnostics;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tracing::{info, warn};
@@ -18,9 +18,17 @@ pub const WHISPER_SERVER_PORT: u16 = 8178;
 const WHISPER_SERVER_IDLE_RETIRE_MS: u64 = 300_000;
 
 static WHISPER_SERVER_ACTIVE_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+static LAST_WHISPER_SERVER_COLD_START_MS: AtomicU64 = AtomicU64::new(0);
 
 pub fn active_request_count() -> usize {
     WHISPER_SERVER_ACTIVE_REQUESTS.load(Ordering::Relaxed)
+}
+
+pub fn last_server_cold_start_ms() -> Option<u64> {
+    match LAST_WHISPER_SERVER_COLD_START_MS.load(Ordering::Relaxed) {
+        0 => None,
+        value => Some(value),
+    }
 }
 
 struct WhisperServerRequestGuard;
@@ -140,6 +148,18 @@ fn ping_whisper_server_with_attempts(port: u16, attempts: u32) -> bool {
                         "[ping] attempt {}/{} SUCCESS in {:.1}ms",
                         attempt + 1,
                         attempts.max(1),
+                        elapsed.as_secs_f64() * 1000.0
+                    );
+                }
+                return true;
+            }
+            Err(ureq::Error::Status(code, _)) => {
+                if diagnostics_enabled {
+                    info!(
+                        "[ping] attempt {}/{} HTTP {} in {:.1}ms; treating server as reachable",
+                        attempt + 1,
+                        attempts.max(1),
+                        code,
                         elapsed.as_secs_f64() * 1000.0
                     );
                 }
@@ -350,6 +370,7 @@ pub fn start_whisper_server(
     if diagnostics_enabled {
         info!("[whisper_server:startup] spawning whisper-server process");
     }
+    let cold_start_started = std::time::Instant::now();
     let spawn_result = spawn_managed_child(
         state,
         "managed Whisper-Server runtime",
@@ -385,8 +406,11 @@ pub fn start_whisper_server(
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
         if ping_whisper_server(port) {
+            let cold_start_ms = cold_start_started.elapsed().as_millis() as u64;
+            LAST_WHISPER_SERVER_COLD_START_MS.store(cold_start_ms, Ordering::Relaxed);
             if diagnostics_enabled {
                 info!("[whisper_server:startup] start_whisper_server() SUCCESS");
+                info!("[TIMING] whisper_server_cold_start: {}ms", cold_start_ms);
                 info!("whisper-server ready on port {}", port);
             }
             touch_whisper_server_recent_use(app, state);
@@ -400,6 +424,10 @@ pub fn start_whisper_server(
     if diagnostics_enabled {
         info!("[whisper_server:startup] start_whisper_server() TIMEOUT after 30s");
     }
+    LAST_WHISPER_SERVER_COLD_START_MS.store(
+        cold_start_started.elapsed().as_millis() as u64,
+        Ordering::Relaxed,
+    );
     warn!("whisper-server startup timeout (30s) — will fall back to CLI transcription for now");
     update_whisper_server_diagnostics(
         app,

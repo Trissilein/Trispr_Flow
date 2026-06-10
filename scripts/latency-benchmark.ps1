@@ -18,12 +18,16 @@ Set-Location $RepoRoot
 
 $resultsDir = Join-Path $RepoRoot 'bench/results'
 $reportPath = Join-Path $resultsDir 'latest.json'
+$errorPath = Join-Path $resultsDir 'latest-error.txt'
 $benchConfigPath = Join-Path $resultsDir 'tauri.benchmark.dev.json'
 $baseConfigPath = Join-Path $RepoRoot 'src-tauri/tauri.conf.json'
 $baseConfigBackupPath = Join-Path $resultsDir 'tauri.conf.base.bak.json'
 New-Item -ItemType Directory -Path $resultsDir -Force | Out-Null
 if (Test-Path $reportPath) {
   Remove-Item $reportPath -Force
+}
+if (Test-Path $errorPath) {
+  Remove-Item $errorPath -Force
 }
 if (Test-Path $benchConfigPath) {
   Remove-Item $benchConfigPath -Force
@@ -70,6 +74,15 @@ $env:TRISPR_RUN_LATENCY_BENCHMARK_EXIT = '1'
 $env:TRISPR_BENCHMARK_WARMUP_RUNS = [string]$Warmup
 $env:TRISPR_BENCHMARK_MEASURE_RUNS = [string]$Runs
 $env:TRISPR_BENCHMARK_INCLUDE_REFINEMENT = if ($NoRefinement) { '0' } else { '1' }
+$hadLocalBackendEnv = Test-Path Env:TRISPR_LOCAL_BACKEND
+$previousLocalBackendEnv = $env:TRISPR_LOCAL_BACKEND
+if ($TauriVariant -eq 'vulkan' -or $TauriVariant -eq 'vulkan-only') {
+  $env:TRISPR_LOCAL_BACKEND = 'vulkan'
+} elseif ($TauriVariant -eq 'cuda-lite' -or $TauriVariant -eq 'cuda-complete') {
+  $env:TRISPR_LOCAL_BACKEND = 'cuda'
+} else {
+  Remove-Item Env:TRISPR_LOCAL_BACKEND -ErrorAction SilentlyContinue
+}
 if ([string]::IsNullOrWhiteSpace($RefinementModel)) {
   Remove-Item Env:TRISPR_BENCHMARK_REFINE_MODEL -ErrorAction SilentlyContinue
 } else {
@@ -87,6 +100,7 @@ if ($Fixtures -and $Fixtures.Count -gt 0) {
 }
 
 Write-Host "[Latency Benchmark] Warmup=$Warmup Runs=$Runs Refinement=$([string](-not $NoRefinement)) FailOnSloMiss=$([string]$FailOnSloMiss) Variant=$TauriVariant Model=$($env:TRISPR_BENCHMARK_REFINE_MODEL)"
+Write-Host "[Latency Benchmark] LocalBackend=$($env:TRISPR_LOCAL_BACKEND)"
 $devPort = Get-FreeTcpPort
 $npmCmd = Resolve-NpmCmd
 
@@ -129,10 +143,20 @@ try {
   Remove-Item Env:TRISPR_BENCHMARK_INCLUDE_REFINEMENT -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_BENCHMARK_REFINE_MODEL -ErrorAction SilentlyContinue
   Remove-Item Env:TRISPR_BENCHMARK_FIXTURES -ErrorAction SilentlyContinue
+  if ($hadLocalBackendEnv) {
+    $env:TRISPR_LOCAL_BACKEND = $previousLocalBackendEnv
+  } else {
+    Remove-Item Env:TRISPR_LOCAL_BACKEND -ErrorAction SilentlyContinue
+  }
   Remove-Item $benchConfigPath -ErrorAction SilentlyContinue
 }
 
 if (-not (Test-Path $reportPath)) {
+  if (Test-Path $errorPath) {
+    $benchmarkError = Get-Content $errorPath -Raw
+    Write-Error "Latency benchmark failed before writing report: $benchmarkError"
+    exit 1
+  }
   Write-Error "Latency benchmark report not found: $reportPath"
   exit 1
 }

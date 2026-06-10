@@ -26,6 +26,7 @@ const requiredCudaComplete = [
 
 const requiredVulkan = [
   "whisper-cli.exe",
+  "whisper-server.exe",
   "whisper.dll",
   "ggml.dll",
   "ggml-base.dll",

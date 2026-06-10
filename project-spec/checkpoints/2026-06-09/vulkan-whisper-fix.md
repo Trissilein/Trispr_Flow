@@ -1,10 +1,12 @@
 # Vulkan Whisper Fix Checkpoint
 
-Status: active
+Status: superseded
 Created: 2026-06-09
-Updated: 2026-06-09
+Updated: 2026-06-10
 Slug: vulkan-whisper-fix
 Supersedes: none
+
+Superseded by: ../2026-06-10/vulkan-whisper-fix.md
 
 ## Scope
 

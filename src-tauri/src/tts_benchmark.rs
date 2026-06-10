@@ -1,7 +1,9 @@
 use super::{now_iso, AppState};
 use crate::multimodal_io::Qwen3TtsConfig;
 use crate::state::Settings;
-use crate::transcription::{last_transcription_accelerator, transcribe_audio};
+use crate::transcription::{
+    last_transcription_accelerator, last_transcription_timing_summary, transcribe_audio,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -38,7 +40,28 @@ struct LatencyBenchmarkSample {
     total_ms: u64,
     mode: String,
     accelerator: String,
+    whisper_path: String,
+    backend: String,
+    language_pinned: bool,
+    language_mode: String,
+    model_class: String,
+    model_path: String,
+    model_drive: String,
+    runtime_path: String,
+    runtime_drive: String,
+    ping_ms: Option<u64>,
+    cold_server_start_ms: Option<u64>,
+    warm_server_inference_ms: Option<u64>,
+    cli_gpu_inference_ms: Option<u64>,
+    cli_cpu_fallback_ms: Option<u64>,
+    pipeline_overhead_ms: Option<u64>,
     refinement_model: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct LatencyBenchmarkPathSummary {
+    whisper_path: String,
+    sample_count: u32,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -50,6 +73,11 @@ pub(crate) struct LatencyBenchmarkResult {
     pub(crate) slo_p50_ms: u64,
     pub(crate) slo_p95_ms: u64,
     pub(crate) slo_pass: bool,
+    classification_pass: bool,
+    cold_server_start_ms: Option<u64>,
+    cold_server_start_target_ms: u64,
+    cold_server_start_target_pass: Option<bool>,
+    whisper_path_summary: Vec<LatencyBenchmarkPathSummary>,
     samples: Vec<LatencyBenchmarkSample>,
     warnings: Vec<String>,
 }
@@ -157,6 +185,7 @@ pub(crate) fn run_latency_benchmark_inner(
         }
 
         let total_ms = whisper_ms.saturating_add(refine_ms);
+        let timing = last_transcription_timing_summary();
         samples.push(LatencyBenchmarkSample {
             fixture: fixture_name.clone(),
             whisper_ms,
@@ -164,6 +193,21 @@ pub(crate) fn run_latency_benchmark_inner(
             total_ms,
             mode,
             accelerator: last_transcription_accelerator().to_string(),
+            whisper_path: timing.whisper_path,
+            backend: timing.backend,
+            language_pinned: timing.language_pinned,
+            language_mode: timing.language_mode,
+            model_class: timing.model_class,
+            model_path: timing.model_path,
+            model_drive: timing.model_drive,
+            runtime_path: timing.runtime_path,
+            runtime_drive: timing.runtime_drive,
+            ping_ms: timing.ping_ms,
+            cold_server_start_ms: timing.cold_server_start_ms,
+            warm_server_inference_ms: timing.warm_server_inference_ms,
+            cli_gpu_inference_ms: timing.cli_gpu_inference_ms,
+            cli_cpu_fallback_ms: timing.cli_cpu_fallback_ms,
+            pipeline_overhead_ms: timing.pipeline_overhead_ms,
             refinement_model: refinement_model_used,
         });
     }
@@ -174,7 +218,30 @@ pub(crate) fn run_latency_benchmark_inner(
     let p95_ms = percentile(&totals, 0.95);
     let slo_p50_ms = 2_500;
     let slo_p95_ms = 4_000;
-    let slo_pass = p50_ms <= slo_p50_ms && p95_ms <= slo_p95_ms;
+    let classification_pass = samples
+        .iter()
+        .all(|sample| !sample.whisper_path.trim().is_empty() && sample.whisper_path != "unknown");
+    if !classification_pass {
+        warnings
+            .push("One or more latency samples have unknown Whisper execution path.".to_string());
+    }
+    let slo_pass = p50_ms <= slo_p50_ms && p95_ms <= slo_p95_ms && classification_pass;
+    let cold_server_start_ms = crate::whisper_server::last_server_cold_start_ms();
+    let cold_server_start_target_ms = 10_000;
+    let cold_server_start_target_pass =
+        cold_server_start_ms.map(|value| value <= cold_server_start_target_ms);
+    let mut path_counts: HashMap<String, u32> = HashMap::new();
+    for sample in &samples {
+        *path_counts.entry(sample.whisper_path.clone()).or_insert(0) += 1;
+    }
+    let mut whisper_path_summary: Vec<LatencyBenchmarkPathSummary> = path_counts
+        .into_iter()
+        .map(|(whisper_path, sample_count)| LatencyBenchmarkPathSummary {
+            whisper_path,
+            sample_count,
+        })
+        .collect();
+    whisper_path_summary.sort_by(|a, b| a.whisper_path.cmp(&b.whisper_path));
 
     Ok(LatencyBenchmarkResult {
         warmup_runs,
@@ -184,6 +251,11 @@ pub(crate) fn run_latency_benchmark_inner(
         slo_p50_ms,
         slo_p95_ms,
         slo_pass,
+        classification_pass,
+        cold_server_start_ms,
+        cold_server_start_target_ms,
+        cold_server_start_target_pass,
+        whisper_path_summary,
         samples,
         warnings,
     })
@@ -206,6 +278,27 @@ pub(crate) fn write_latency_benchmark_report(
     std::fs::write(&out_path, serialized).map_err(|e| {
         format!(
             "Failed writing benchmark report '{}': {}",
+            out_path.display(),
+            e
+        )
+    })?;
+    Ok(out_path)
+}
+
+pub(crate) fn write_latency_benchmark_error(error: &str) -> Result<PathBuf, String> {
+    let root = resolve_benchmark_root_dir();
+    let out_dir = root.join("bench").join("results");
+    std::fs::create_dir_all(&out_dir).map_err(|e| {
+        format!(
+            "Failed creating benchmark output dir '{}': {}",
+            out_dir.display(),
+            e
+        )
+    })?;
+    let out_path = out_dir.join("latest-error.txt");
+    std::fs::write(&out_path, error).map_err(|e| {
+        format!(
+            "Failed writing benchmark error '{}': {}",
             out_path.display(),
             e
         )

@@ -34,7 +34,7 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 #[cfg(target_os = "windows")]
@@ -48,6 +48,7 @@ const TRANSCRIPTION_ACCEL_UNKNOWN: u8 = 0;
 const TRANSCRIPTION_ACCEL_CPU: u8 = 1;
 const TRANSCRIPTION_ACCEL_GPU: u8 = 2;
 static LAST_TRANSCRIPTION_ACCELERATOR: AtomicU8 = AtomicU8::new(TRANSCRIPTION_ACCEL_UNKNOWN);
+static LAST_TRANSCRIPTION_TIMING: OnceLock<Mutex<TranscriptionTimingSummary>> = OnceLock::new();
 static CUDA_BACKEND_UNSTABLE: AtomicBool = AtomicBool::new(false);
 const CUDA_RUNTIME_REQUIRED_FILES: &[&str] = &[
     "whisper-cli.exe",
@@ -75,6 +76,128 @@ pub(crate) fn last_transcription_accelerator() -> &'static str {
         TRANSCRIPTION_ACCEL_CPU => "cpu",
         _ => "unknown",
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct TranscriptionTimingSummary {
+    pub(crate) whisper_path: String,
+    pub(crate) backend: String,
+    pub(crate) accelerator: String,
+    pub(crate) language_pinned: bool,
+    pub(crate) language_mode: String,
+    pub(crate) model_class: String,
+    pub(crate) model_path: String,
+    pub(crate) model_drive: String,
+    pub(crate) runtime_path: String,
+    pub(crate) runtime_drive: String,
+    pub(crate) ping_ms: Option<u64>,
+    pub(crate) cold_server_start_ms: Option<u64>,
+    pub(crate) warm_server_inference_ms: Option<u64>,
+    pub(crate) cli_gpu_inference_ms: Option<u64>,
+    pub(crate) cli_cpu_fallback_ms: Option<u64>,
+    pub(crate) pipeline_overhead_ms: Option<u64>,
+}
+
+impl Default for TranscriptionTimingSummary {
+    fn default() -> Self {
+        Self {
+            whisper_path: "unknown".to_string(),
+            backend: "unknown".to_string(),
+            accelerator: "unknown".to_string(),
+            language_pinned: false,
+            language_mode: "auto".to_string(),
+            model_class: String::new(),
+            model_path: String::new(),
+            model_drive: String::new(),
+            runtime_path: String::new(),
+            runtime_drive: String::new(),
+            ping_ms: None,
+            cold_server_start_ms: None,
+            warm_server_inference_ms: None,
+            cli_gpu_inference_ms: None,
+            cli_cpu_fallback_ms: None,
+            pipeline_overhead_ms: None,
+        }
+    }
+}
+
+pub(crate) fn last_transcription_timing_summary() -> TranscriptionTimingSummary {
+    LAST_TRANSCRIPTION_TIMING
+        .get_or_init(|| Mutex::new(TranscriptionTimingSummary::default()))
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default()
+}
+
+fn record_transcription_timing(summary: TranscriptionTimingSummary) {
+    if let Ok(mut guard) = LAST_TRANSCRIPTION_TIMING
+        .get_or_init(|| Mutex::new(TranscriptionTimingSummary::default()))
+        .lock()
+    {
+        *guard = summary;
+    }
+}
+
+fn reset_transcription_timing(settings: &Settings) {
+    record_transcription_timing(TranscriptionTimingSummary {
+        language_pinned: settings.language_pinned,
+        language_mode: effective_language_mode(settings),
+        model_class: settings.model.clone(),
+        ..TranscriptionTimingSummary::default()
+    });
+}
+
+fn effective_language_mode(settings: &Settings) -> String {
+    if settings.language_pinned {
+        settings.language_mode.clone()
+    } else {
+        "auto".to_string()
+    }
+}
+
+fn path_drive_label(path: &Path) -> String {
+    let rendered = path.to_string_lossy();
+    let mut chars = rendered.chars();
+    match (chars.next(), chars.next()) {
+        (Some(letter), Some(':')) if letter.is_ascii_alphabetic() => {
+            format!("{}:", letter.to_ascii_uppercase())
+        }
+        _ => String::new(),
+    }
+}
+
+fn timing_context(
+    settings: &Settings,
+    model_path: &Path,
+    runtime_path: Option<&Path>,
+) -> TranscriptionTimingSummary {
+    TranscriptionTimingSummary {
+        language_pinned: settings.language_pinned,
+        language_mode: effective_language_mode(settings),
+        model_class: settings.model.clone(),
+        model_path: model_path.to_string_lossy().to_string(),
+        model_drive: path_drive_label(model_path),
+        runtime_path: runtime_path
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        runtime_drive: runtime_path.map(path_drive_label).unwrap_or_default(),
+        cold_server_start_ms: crate::whisper_server::last_server_cold_start_ms(),
+        ..TranscriptionTimingSummary::default()
+    }
+}
+
+fn saturating_overhead_ms(total_ms: u64, primary_ms: u64) -> u64 {
+    total_ms.saturating_sub(primary_ms)
+}
+
+fn truncate_cli_stream(value: &str, max_chars: usize) -> String {
+    let trimmed = value.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let mut result: String = trimmed.chars().take(max_chars).collect();
+    result.push_str("...");
+    result
 }
 
 #[cfg(target_os = "windows")]
@@ -2043,6 +2166,12 @@ fn whisper_error_indicates_cuda_runtime_failure(message: &str) -> bool {
 }
 
 fn effective_cli_backend_preference(settings: &Settings) -> String {
+    if let Ok(value) = std::env::var("TRISPR_LOCAL_BACKEND") {
+        let normalized = value.trim().to_ascii_lowercase();
+        if normalized == "cuda" || normalized == "vulkan" {
+            return normalized;
+        }
+    }
     let configured = settings
         .local_backend_preference
         .trim()
@@ -2055,12 +2184,7 @@ fn effective_cli_backend_preference(settings: &Settings) -> String {
 }
 
 fn strict_backend_from_preference(settings: &Settings) -> Option<&'static str> {
-    match settings
-        .local_backend_preference
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
+    match effective_cli_backend_preference(settings).as_str() {
         "cuda" => Some("cuda"),
         "vulkan" => Some("vulkan"),
         _ => None,
@@ -2086,12 +2210,7 @@ fn resolve_whisper_server_path_for_exact_backend(backend: &str) -> Option<PathBu
 }
 
 fn gpu_backend_attempt_order(settings: &Settings) -> Vec<&'static str> {
-    match settings
-        .local_backend_preference
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
+    match effective_cli_backend_preference(settings).as_str() {
         // Explicit Vulkan means "no hidden switch back to CUDA".
         "vulkan" => vec!["vulkan"],
         "cuda" => vec!["cuda", "vulkan"],
@@ -2137,9 +2256,8 @@ fn resolve_cpu_cli_fallback_path(settings: &Settings, attempted: &[PathBuf]) -> 
     if let Some(path) = resolve_whisper_cli_path_for_exact_backend("vulkan") {
         push_unique_path(&mut candidates, path);
     }
-    if let Some(path) =
-        resolve_whisper_cli_path_for_backend(Some(settings.local_backend_preference.as_str()))
-    {
+    let effective_backend = effective_cli_backend_preference(settings);
+    if let Some(path) = resolve_whisper_cli_path_for_backend(Some(effective_backend.as_str())) {
         push_unique_path(&mut candidates, path);
     }
     if let Some(path) = resolve_whisper_cli_path_for_backend(Some("auto")) {
@@ -2331,6 +2449,7 @@ fn transcribe_local(
     wav_bytes: &[u8],
 ) -> Result<String, String> {
     let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
+    reset_transcription_timing(settings);
     let t0 = std::time::Instant::now();
     let temp_dir = std::env::temp_dir();
     let _ = fs::create_dir_all(&temp_dir);
@@ -2362,6 +2481,7 @@ fn transcribe_local(
     let model_path = resolve_model_path(app, &settings.model).ok_or_else(|| {
         "Model file not found. Set TRISPR_WHISPER_MODEL_DIR or TRISPR_WHISPER_MODEL.".to_string()
     })?;
+    let server_ping_ms: Option<u64>;
 
     // Try Whisper-Server first (persistent mode with pre-loaded model)
     {
@@ -2370,12 +2490,25 @@ fn transcribe_local(
             .whisper_server_port
             .load(std::sync::atomic::Ordering::Relaxed);
 
-        if crate::whisper_server::ping_whisper_server(port) {
-            let lang_str = if settings.language_pinned {
-                settings.language_mode.clone()
-            } else {
-                "auto".to_string()
-            };
+        let ping_started = std::time::Instant::now();
+        let server_reachable = crate::whisper_server::ping_whisper_server(port);
+        let ping_ms = ping_started.elapsed().as_millis() as u64;
+        server_ping_ms = Some(ping_ms);
+        if diagnostics_enabled {
+            info!(
+                "[TIMING] whisper_server_ping: {}ms reachable={}",
+                ping_ms, server_reachable
+            );
+        }
+
+        if server_reachable {
+            let lang_str = effective_language_mode(settings);
+            let effective_backend = effective_cli_backend_preference(settings);
+            let server_path = strict_backend_from_preference(settings)
+                .and_then(resolve_whisper_server_path_for_exact_backend)
+                .or_else(|| {
+                    resolve_whisper_server_path_for_backend(Some(effective_backend.as_str()))
+                });
 
             if diagnostics_enabled {
                 info!(
@@ -2387,6 +2520,7 @@ fn transcribe_local(
 
             match crate::whisper_server::transcribe_via_server(wav_bytes, port, &lang_str) {
                 Ok(text) => {
+                    let server_ms = t_server.elapsed().as_millis() as u64;
                     if diagnostics_enabled {
                         info!("[diagnostics] transcribe_via_server SUCCESS -> update(mode=server, backend=gpu, last_error=None)");
                     }
@@ -2401,11 +2535,23 @@ fn transcribe_local(
                     );
                     crate::whisper_server::touch_whisper_server_recent_use(app, state.inner());
                     if diagnostics_enabled {
-                        info!(
-                            "[TIMING] whisper_server: {:.2}s",
-                            t_server.elapsed().as_secs_f32()
-                        );
+                        info!("[TIMING] whisper_server: {:.2}s", server_ms as f32 / 1000.0);
                     }
+                    let mut summary = timing_context(settings, &model_path, server_path.as_deref());
+                    summary.whisper_path = "server_warm".to_string();
+                    summary.backend = server_path
+                        .as_deref()
+                        .map(whisper_backend_from_cli_path)
+                        .unwrap_or("unknown")
+                        .to_string();
+                    summary.accelerator = "gpu".to_string();
+                    summary.ping_ms = Some(ping_ms);
+                    summary.warm_server_inference_ms = Some(server_ms);
+                    summary.pipeline_overhead_ms = Some(saturating_overhead_ms(
+                        t0.elapsed().as_millis() as u64,
+                        server_ms,
+                    ));
+                    record_transcription_timing(summary);
                     return Ok(text);
                 }
                 Err(e) => {
@@ -2505,9 +2651,12 @@ fn transcribe_local(
     let cli_backend_preference = effective_cli_backend_preference(settings);
     let gpu_cli_paths = resolve_gpu_cli_fallback_paths(settings);
     let mut errors: Vec<String> = Vec::new();
+    let mut attempted_chain: Vec<String> = Vec::new();
 
     for cli_path in &gpu_cli_paths {
         let backend = whisper_backend_from_cli_path(cli_path.as_path());
+        attempted_chain.push(format!("{} GPU", backend));
+        let cli_started = std::time::Instant::now();
         match run_whisper_cli(
             app,
             settings,
@@ -2517,8 +2666,49 @@ fn transcribe_local(
             output_base.as_path(),
             false,
         ) {
-            Ok(text) => return Ok(text),
+            Ok(text) => {
+                let cli_ms = cli_started.elapsed().as_millis() as u64;
+                if diagnostics_enabled {
+                    info!(
+                        "[TIMING] whisper_cli_attempt: backend={} force_cpu=false elapsed={}ms success=true",
+                        backend, cli_ms
+                    );
+                }
+                let accelerator = last_transcription_accelerator().to_string();
+                let mut summary = timing_context(settings, &model_path, Some(cli_path.as_path()));
+                summary.whisper_path = if accelerator == "gpu" {
+                    "cli_gpu".to_string()
+                } else {
+                    "cli_cpu".to_string()
+                };
+                summary.backend = backend.to_string();
+                summary.accelerator = accelerator.clone();
+                summary.ping_ms = server_ping_ms;
+                summary.cli_gpu_inference_ms = if accelerator == "gpu" {
+                    Some(cli_ms)
+                } else {
+                    None
+                };
+                summary.cli_cpu_fallback_ms = if accelerator == "cpu" {
+                    Some(cli_ms)
+                } else {
+                    None
+                };
+                summary.pipeline_overhead_ms = Some(saturating_overhead_ms(
+                    t0.elapsed().as_millis() as u64,
+                    cli_ms,
+                ));
+                record_transcription_timing(summary);
+                return Ok(text);
+            }
             Err(err) => {
+                let cli_ms = cli_started.elapsed().as_millis() as u64;
+                if diagnostics_enabled {
+                    info!(
+                        "[TIMING] whisper_cli_attempt: backend={} force_cpu=false elapsed={}ms success=false",
+                        backend, cli_ms
+                    );
+                }
                 if backend == "cuda" && whisper_error_indicates_cuda_runtime_failure(&err) {
                     CUDA_BACKEND_UNSTABLE.store(true, Ordering::Relaxed);
                 }
@@ -2537,6 +2727,11 @@ fn transcribe_local(
             "All GPU attempts failed; trying CLI CPU fallback via '{}'",
             cpu_cli_path.display()
         );
+        attempted_chain.push(format!(
+            "{} CLI CPU",
+            whisper_backend_from_cli_path(cpu_cli_path.as_path())
+        ));
+        let cli_started = std::time::Instant::now();
         match run_whisper_cli(
             app,
             settings,
@@ -2546,8 +2741,38 @@ fn transcribe_local(
             output_base.as_path(),
             true,
         ) {
-            Ok(text) => return Ok(text),
+            Ok(text) => {
+                let cli_ms = cli_started.elapsed().as_millis() as u64;
+                let backend = whisper_backend_from_cli_path(cpu_cli_path.as_path());
+                if diagnostics_enabled {
+                    info!(
+                        "[TIMING] whisper_cli_attempt: backend={} force_cpu=true elapsed={}ms success=true",
+                        backend, cli_ms
+                    );
+                }
+                let mut summary =
+                    timing_context(settings, &model_path, Some(cpu_cli_path.as_path()));
+                summary.whisper_path = "cli_cpu".to_string();
+                summary.backend = backend.to_string();
+                summary.accelerator = "cpu".to_string();
+                summary.ping_ms = server_ping_ms;
+                summary.cli_cpu_fallback_ms = Some(cli_ms);
+                summary.pipeline_overhead_ms = Some(saturating_overhead_ms(
+                    t0.elapsed().as_millis() as u64,
+                    cli_ms,
+                ));
+                record_transcription_timing(summary);
+                return Ok(text);
+            }
             Err(err) => {
+                let cli_ms = cli_started.elapsed().as_millis() as u64;
+                if diagnostics_enabled {
+                    info!(
+                        "[TIMING] whisper_cli_attempt: backend={} force_cpu=true elapsed={}ms success=false",
+                        whisper_backend_from_cli_path(cpu_cli_path.as_path()),
+                        cli_ms
+                    );
+                }
                 errors.push(format!(
                     "CLI CPU fallback failed ('{}'): {}",
                     cpu_cli_path.display(),
@@ -2572,8 +2797,14 @@ fn transcribe_local(
         return Err(message);
     }
 
+    let chain_label = if attempted_chain.is_empty() {
+        "none".to_string()
+    } else {
+        attempted_chain.join(" -> ")
+    };
     Err(format!(
-        "Whisper transcription failed after fallback chain (CUDA -> Vulkan -> CLI CPU): {}",
+        "Whisper transcription failed after fallback chain ({}): {}",
+        chain_label,
         errors.join(" | ")
     ))
 }
@@ -2790,12 +3021,25 @@ fn run_whisper_cli(
         return Err(message);
     }
     if !output.status.success() {
-        let details = if stderr.trim().is_empty() {
-            stdout.trim()
-        } else {
-            stderr.trim()
+        let exit_status = output
+            .status
+            .code()
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| output.status.to_string());
+        let stdout_detail = truncate_cli_stream(&stdout, 2000);
+        let stderr_detail = truncate_cli_stream(&stderr, 4000);
+        let details = match (stdout_detail.is_empty(), stderr_detail.is_empty()) {
+            (true, true) => "no stdout/stderr".to_string(),
+            (false, true) => format!("stdout: {}", stdout_detail),
+            (true, false) => format!("stderr: {}", stderr_detail),
+            (false, false) => format!("stderr: {} | stdout: {}", stderr_detail, stdout_detail),
         };
-        let message = format!("whisper-cli failed ('{}'): {}", cli_path.display(), details);
+        let message = format!(
+            "whisper-cli failed ('{}', exit={}): {}",
+            cli_path.display(),
+            exit_status,
+            details
+        );
         update_whisper_runtime_diagnostics(
             app,
             settings,

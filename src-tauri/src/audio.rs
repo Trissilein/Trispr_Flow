@@ -13,7 +13,7 @@ use crate::state::{
     record_refinement_timeout, save_settings_file, AppState, Settings,
 };
 use crate::transcription::{
-    rms_i16, should_drop_transcript, transcribe_audio, TranscriptionResult,
+    rms_i16, should_drop_transcript, transcribe_audio, RefinementGateDecision, TranscriptionResult,
 };
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
@@ -1329,29 +1329,44 @@ fn handle_transcription_ok(
     );
     // Just-in-time refinement gate. Rather than trust cached warm/warmup flags
     // (which drift whenever OLLAMA loads or unloads the model on its own), ask
-    // OLLAMA right now whether the refinement model is actually resident in VRAM.
-    // /api/ps is the single source of truth, queried at the only instant that
-    // matters: the moment we decide whether to wait for refinement or paste raw.
+    // OLLAMA right now whether the refinement model is loaded. /api/ps is the
+    // source of truth at the only instant that matters: the moment we decide
+    // whether to wait for refinement or paste raw.
     //
-    //   model resident     -> refine inline: defer paste, show the refining pulse
-    //   not resident / cold -> bypass: paste raw now, no refinement, no pulse.
+    //   model loaded       -> refine inline: defer paste, show the refining pulse
+    //   not loaded / cold  -> bypass: paste raw now, no refinement, no pulse.
+    //
+    // A CPU-loaded Ollama model is still loaded and available even when
+    // /api/ps reports size_vram=0. VRAM remains GPU/offload telemetry only.
     //
     // On bypass the PTT eager-warmup (handle_ptt_press) is already loading the
     // model in the background, so the *next* dictation will refine.
     let refinement_enabled = ai_refinement_capability_enabled(settings);
     let provider_is_ollama = settings.ai_fallback.provider == "ollama";
-    let model_resident = if provider_is_ollama {
-        crate::ai_fallback::provider::fetch_ollama_running_vram(&settings.providers.ollama.endpoint)
-            .map(|bytes| bytes > 0)
-            .unwrap_or(false)
+    let (model_loaded, ollama_vram_bytes) = if provider_is_ollama {
+        crate::ai_fallback::provider::fetch_ollama_model_load_status(
+            &settings.providers.ollama.endpoint,
+            &settings.ai_fallback.model,
+        )
+        .map(|status| (status.loaded, status.size_vram))
+        .unwrap_or((false, 0))
     } else {
         // lm_studio / oobabooga expose no /api/ps probe — keep prior behaviour.
-        true
+        (true, 0)
     };
-    let should_refine = refinement_enabled && model_resident;
-    let ollama_cold = provider_is_ollama && refinement_enabled && !model_resident;
+    let should_refine = refinement_enabled && model_loaded;
+    let ollama_cold = provider_is_ollama && refinement_enabled && !model_loaded;
 
     let paste_deferred = should_refine && should_defer_paste_for_refinement(&app_handle, settings);
+    let skipped_reason = if should_refine {
+        None
+    } else if !refinement_enabled {
+        Some("disabled".to_string())
+    } else if provider_is_ollama && !model_loaded {
+        Some("ollama_model_not_loaded".to_string())
+    } else {
+        Some("provider_not_ready".to_string())
+    };
     let _ = app_handle.emit(
         "transcription:result",
         TranscriptionResult {
@@ -1367,24 +1382,36 @@ fn handle_transcription_ok(
             entry_id: entry_id.clone(),
             audio_duration_ms: duration_ms,
             word_count,
+            refinement_gate: RefinementGateDecision {
+                enabled: refinement_enabled,
+                provider: settings.ai_fallback.provider.clone(),
+                model: settings.ai_fallback.model.clone(),
+                should_refine,
+                paste_deferred,
+                skipped_reason,
+                ollama_model_loaded: provider_is_ollama.then_some(model_loaded),
+                ollama_vram_bytes: provider_is_ollama.then_some(ollama_vram_bytes),
+            },
         },
     );
     if crate::state::diagnostic_logging_enabled() {
         let startup_status = crate::startup_status_snapshot(state.inner());
         info!(
-            "[refinement:{}] paste policy source={} deferred={} timeout_ms={} cold_start={} ollama_cold={} ollama_ready={} ollama_starting={} active_count={}",
+            "[refinement:{}] paste policy source={} deferred={} timeout_ms={} cold_start={} ollama_cold={} ollama_model_loaded={} ollama_vram_bytes={} ollama_ready={} ollama_starting={} active_count={}",
             job_id,
             source,
             paste_deferred,
             if paste_deferred { paste_timeout_ms } else { 0 },
             paste_timeout_cold,
             ollama_cold,
+            model_loaded,
+            ollama_vram_bytes,
             startup_status.ollama_ready,
             startup_status.ollama_starting,
             state.refinement_active_count.load(Ordering::SeqCst)
         );
     }
-    // Only spawn refinement when the model is actually resident. On bypass we
+    // Only spawn refinement when the model is loaded. On bypass we
     // skip it entirely: the user already has the raw paste, and spawning now
     // would fire the refining pulse and a cold-load GPU spike for a result no
     // one is waiting on. The eager-warmup keeps loading the model for next time.

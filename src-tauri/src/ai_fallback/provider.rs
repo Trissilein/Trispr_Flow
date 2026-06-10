@@ -280,8 +280,86 @@ pub fn list_ollama_models_with_size(endpoint: &str) -> Vec<(String, u64)> {
     vec![]
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OllamaModelLoadStatus {
+    pub loaded: bool,
+    pub size_vram: u64,
+}
+
+fn ollama_model_name_matches(candidate: &str, target: &str) -> bool {
+    !target.trim().is_empty() && candidate.trim().eq_ignore_ascii_case(target.trim())
+}
+
+fn parse_ollama_model_load_status(
+    json: &serde_json::Value,
+    model: &str,
+) -> Option<OllamaModelLoadStatus> {
+    let models = json["models"].as_array()?;
+    let mut loaded = false;
+    let mut size_vram = 0u64;
+
+    for entry in models {
+        let name_matches = entry["name"]
+            .as_str()
+            .map(|name| ollama_model_name_matches(name, model))
+            .unwrap_or(false);
+        let model_matches = entry["model"]
+            .as_str()
+            .map(|name| ollama_model_name_matches(name, model))
+            .unwrap_or(false);
+
+        if name_matches || model_matches {
+            loaded = true;
+            size_vram = size_vram.saturating_add(entry["size_vram"].as_u64().unwrap_or(0));
+        }
+    }
+
+    Some(OllamaModelLoadStatus { loaded, size_vram })
+}
+
+#[allow(dead_code)]
+fn parse_ollama_running_vram(json: &serde_json::Value) -> Option<u64> {
+    let models = json["models"].as_array()?;
+    if models.is_empty() {
+        return Some(0);
+    }
+
+    Some(
+        models
+            .iter()
+            .map(|entry| entry["size_vram"].as_u64().unwrap_or(0))
+            .sum(),
+    )
+}
+
+/// Return whether the configured Ollama model is currently loaded via /api/ps.
+/// `size_vram` is GPU/offload telemetry only; CPU-loaded models report 0.
+pub fn fetch_ollama_model_load_status(
+    endpoint: &str,
+    model: &str,
+) -> Option<OllamaModelLoadStatus> {
+    let agent = ureq::builder()
+        .timeout_connect(Duration::from_millis(500))
+        .timeout_read(Duration::from_millis(750))
+        .build();
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/ps", candidate);
+        let Ok(resp) = agent.get(&url).call() else {
+            continue;
+        };
+        let Ok(json) = resp.into_json::<serde_json::Value>() else {
+            continue;
+        };
+        if let Some(status) = parse_ollama_model_load_status(&json, model) {
+            return Some(status);
+        }
+    }
+    None
+}
+
 /// Sum the VRAM (bytes) of all currently loaded Ollama models via /api/ps.
-/// Returns None if Ollama is unreachable or no model is loaded.
+/// Returns None if Ollama is unreachable or the response cannot be parsed.
+#[allow(dead_code)]
 pub fn fetch_ollama_running_vram(endpoint: &str) -> Option<u64> {
     let agent = ureq::builder()
         .timeout_connect(Duration::from_millis(500))
@@ -295,19 +373,9 @@ pub fn fetch_ollama_running_vram(endpoint: &str) -> Option<u64> {
         let Ok(json) = resp.into_json::<serde_json::Value>() else {
             continue;
         };
-        let Some(models) = json["models"].as_array() else {
-            continue;
-        };
-        if models.is_empty() {
-            // OLLAMA is reachable but no model is loaded.
-            // Return Some(0) so callers can distinguish "no model" from "OLLAMA down" (None).
-            return Some(0);
+        if let Some(size_vram) = parse_ollama_running_vram(&json) {
+            return Some(size_vram);
         }
-        let total: u64 = models
-            .iter()
-            .map(|m| m["size_vram"].as_u64().unwrap_or(0))
-            .sum();
-        return Some(total);
     }
     None
 }
@@ -2151,6 +2219,84 @@ mod tests {
         let candidates = ollama_endpoint_candidates("http://127.0.0.1:11434");
         assert_eq!(candidates[0], "http://127.0.0.1:11434");
         assert!(candidates.iter().any(|c| c == "http://localhost:11434"));
+    }
+
+    #[test]
+    fn ollama_ps_model_with_zero_vram_is_loaded() {
+        let json = serde_json::json!({
+            "models": [
+                {
+                    "name": "qwen3.5:4b",
+                    "model": "qwen3.5:4b",
+                    "size_vram": 0,
+                    "context_length": 2048
+                }
+            ]
+        });
+
+        let status = parse_ollama_model_load_status(&json, "qwen3.5:4b").unwrap();
+
+        assert!(status.loaded);
+        assert_eq!(status.size_vram, 0);
+    }
+
+    #[test]
+    fn ollama_ps_model_with_vram_is_loaded_with_telemetry() {
+        let json = serde_json::json!({
+            "models": [
+                {
+                    "name": "qwen3.5:4b",
+                    "model": "qwen3.5:4b",
+                    "size_vram": 1_234_567_u64
+                }
+            ]
+        });
+
+        let status = parse_ollama_model_load_status(&json, "QWEN3.5:4B").unwrap();
+
+        assert!(status.loaded);
+        assert_eq!(status.size_vram, 1_234_567);
+    }
+
+    #[test]
+    fn ollama_ps_missing_active_model_is_not_loaded() {
+        let json = serde_json::json!({
+            "models": [
+                {
+                    "name": "other:latest",
+                    "model": "other:latest",
+                    "size_vram": 9_999_u64
+                }
+            ]
+        });
+
+        let status = parse_ollama_model_load_status(&json, "qwen3.5:4b").unwrap();
+
+        assert!(!status.loaded);
+        assert_eq!(status.size_vram, 0);
+    }
+
+    #[test]
+    fn ollama_ps_empty_models_is_known_cold_state() {
+        let json = serde_json::json!({ "models": [] });
+
+        let status = parse_ollama_model_load_status(&json, "qwen3.5:4b").unwrap();
+
+        assert!(!status.loaded);
+        assert_eq!(status.size_vram, 0);
+    }
+
+    #[test]
+    fn ollama_ps_running_vram_sums_all_loaded_models() {
+        let json = serde_json::json!({
+            "models": [
+                { "name": "qwen3.5:4b", "size_vram": 1_000_u64 },
+                { "name": "other:latest", "size_vram": 2_500_u64 },
+                { "name": "cpu:latest" }
+            ]
+        });
+
+        assert_eq!(parse_ollama_running_vram(&json), Some(3_500));
     }
 
     #[test]

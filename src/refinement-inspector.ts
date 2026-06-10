@@ -7,6 +7,7 @@ import type {
   TranscriptionRefinementFailedEvent,
   TranscriptionRefinementStartedEvent,
   TranscriptionResultEvent,
+  RefinementGateDecision,
 } from "./types";
 
 export type InspectorStatus = "idle" | "refining" | "refined" | "error";
@@ -20,6 +21,7 @@ export type InspectorSnapshot = {
   model?: string;
   executionTimeMs?: number;
   error?: string;
+  gate?: RefinementGateDecision;
   status: InspectorStatus;
 };
 
@@ -352,7 +354,11 @@ function renderLatestInspector(): void {
   const modelPart = snapshot.model ? ` • ${snapshot.model}` : "";
   const timePart =
     typeof snapshot.executionTimeMs === "number" ? ` • ${snapshot.executionTimeMs} ms` : "";
-  dom.refinementInspectorMeta.textContent = `${sourceLabel}${modelPart}${timePart}`;
+  const gate = snapshot.gate;
+  const gatePart = gate
+    ? ` • gate: ${gate.should_refine ? "refine" : gate.skipped_reason || "skip"}${gate.paste_deferred ? ", deferred" : ""}${typeof gate.ollama_model_loaded === "boolean" ? `, loaded=${gate.ollama_model_loaded}` : ""}${typeof gate.ollama_vram_bytes === "number" ? `, vram=${gate.ollama_vram_bytes}` : ""}`
+    : "";
+  dom.refinementInspectorMeta.textContent = `${sourceLabel}${modelPart}${timePart}${gatePart}`;
 
   dom.refinementInspectorRaw.textContent = snapshot.raw || "—";
   dom.refinementInspectorRefined.textContent = snapshot.refined || "—";
@@ -461,6 +467,7 @@ export function handleTranscriptionResultForInspector(event: TranscriptionResult
     entryId: event.entry_id,
     source: event.source,
     raw: event.text,
+    gate: event.refinement_gate,
     status: "idle",
   });
   renderLatestInspector();
@@ -478,6 +485,7 @@ export function handleRefinementStartedForInspector(
     refined: existing?.refined,
     model: existing?.model,
     executionTimeMs: existing?.executionTimeMs,
+    gate: existing?.gate,
     status: "refining",
   };
   storeSnapshot(snapshot);
@@ -496,6 +504,7 @@ export function handleRefinementSuccessForInspector(
     refined: event.refined,
     model: event.model,
     executionTimeMs: event.execution_time_ms,
+    gate: existing?.gate,
     status: "refined",
   };
   storeSnapshot(snapshot);
@@ -515,6 +524,7 @@ export function handleRefinementFailureForInspector(
     model: existing?.model,
     executionTimeMs: existing?.executionTimeMs,
     error: event.error,
+    gate: existing?.gate,
     status: "error",
   };
   storeSnapshot(snapshot);

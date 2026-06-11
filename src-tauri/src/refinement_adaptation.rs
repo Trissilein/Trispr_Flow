@@ -1,13 +1,15 @@
 use crate::paths::resolve_config_path;
+use crate::state::{AppState, Settings};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::sync::{Mutex, OnceLock};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tracing::warn;
 
 const PROFILE_FILENAME: &str = "refinement_latency_profile.json";
 const PROFILE_VERSION: u32 = 1;
+const COLD_START_MAX_AGE_MS: u64 = 12 * 60_000;
 const FAST_SUCCESS_MS: u64 = 2_000;
 const SLOW_SUCCESS_MS: u64 = 4_000;
 const FAST_SUCCESS_STREAK_TO_RELAX: u32 = 3;
@@ -104,6 +106,12 @@ pub(crate) enum RefinementObservation {
     Success { execution_ms: u64 },
     Timeout,
     Failure,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LowLatencyDecision {
+    pub(crate) enabled: bool,
+    pub(crate) reason: String,
 }
 
 fn profile_path(app: &AppHandle) -> std::path::PathBuf {
@@ -215,6 +223,96 @@ pub(crate) fn record_refinement_observation(
 
     if let Err(err) = save_profile_locked(app, &profile) {
         warn!("Failed to persist refinement latency profile: {}", err);
+    }
+}
+
+fn model_stats_for<'a>(
+    profile: &'a RefinementLatencyProfile,
+    model: &str,
+) -> Option<&'a RefinementModelStats> {
+    model_key(model).and_then(|key| profile.models.get(&key))
+}
+
+pub(crate) fn resolve_adaptive_low_latency(
+    app: &AppHandle,
+    settings: &Settings,
+    model: &str,
+) -> LowLatencyDecision {
+    if settings.ai_fallback.provider.as_str() != "ollama"
+        || settings.ai_fallback.execution_mode.as_str() != "local_primary"
+    {
+        return LowLatencyDecision {
+            enabled: false,
+            reason: "provider_not_ollama".to_string(),
+        };
+    }
+
+    let state = app.state::<AppState>();
+    let now_ms = crate::util::now_ms();
+    let last_success_ms = state
+        .refinement_last_success_ms
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let last_success_model = state
+        .refinement_last_success_model
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let model_matches = model_key(model)
+        .as_deref()
+        .map(|current| {
+            last_success_model
+                .as_deref()
+                .map(|previous| previous.trim().eq_ignore_ascii_case(current))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    let last_success_age_ms = if last_success_ms == 0 {
+        u64::MAX
+    } else {
+        now_ms.saturating_sub(last_success_ms)
+    };
+    let cold_start =
+        !model_matches || last_success_ms == 0 || last_success_age_ms >= COLD_START_MAX_AGE_MS;
+    if cold_start {
+        return LowLatencyDecision {
+            enabled: true,
+            reason: "cold_start".to_string(),
+        };
+    }
+
+    let lock = profile_io_lock().lock();
+    let _guard = match lock {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let profile = load_profile_locked(app);
+    let stats = model_stats_for(&profile, model);
+    if let Some(stats) = stats {
+        if stats.prefer_low_latency {
+            return LowLatencyDecision {
+                enabled: true,
+                reason: "profile_preferred".to_string(),
+            };
+        }
+        if stats.timeout_runs > 0 {
+            return LowLatencyDecision {
+                enabled: true,
+                reason: "timeout_history".to_string(),
+            };
+        }
+        if stats.ewma_success_ms.unwrap_or(0.0) >= 2_500.0
+            || stats.last_execution_ms.unwrap_or(0) >= SLOW_SUCCESS_MS
+        {
+            return LowLatencyDecision {
+                enabled: true,
+                reason: "slow_history".to_string(),
+            };
+        }
+    }
+
+    LowLatencyDecision {
+        enabled: false,
+        reason: "standard".to_string(),
     }
 }
 

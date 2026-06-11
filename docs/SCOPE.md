@@ -1,4 +1,7 @@
-# Project Scope Evolution
+# Project Scope Evolution (Archived)
+
+> Archive note: this file moved out of repo root during docs housekeeping on 2026-02-20.
+> Use `ROADMAP.md` for current priorities and `docs/DECISIONS.md` for active decision rationale.
 
 **Last updated**: 2026-02-16
 

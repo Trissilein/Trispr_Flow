@@ -1,5 +1,5 @@
 param(
-  [int]$Warmup = 3,
+  [int]$Warmup = 5,
   [int]$Runs = 30,
   [switch]$Live,
   [switch]$NoRefinement,

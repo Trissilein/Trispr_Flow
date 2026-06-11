@@ -1588,6 +1588,10 @@ pub(crate) fn maybe_spawn_ai_refinement(
                     job_id, trigger, source, provider_id, settings_snapshot.ai_fallback.model
                 );
             }
+            // Brief GPU cooldown: Whisper just released the GPU. Without this pause
+            // both Whisper's driver teardown and OLLAMA's kernel queue compete for the
+            // same device, which can extend inference time significantly on AMD.
+            std::thread::sleep(std::time::Duration::from_millis(300));
             if let Err(error) = crate::ai_fallback::ensure_ollama_runtime_ready_for_refinement(
                 &app_handle,
                 &settings_snapshot,

@@ -77,6 +77,7 @@ import { onChangePersist, scheduleSettingsRender } from "./wire-helpers";
 // ── Module-level constants ──────────────────────────────────────────────────
 
 const LOCAL_BACKENDS = ["ollama", "lm_studio", "oobabooga"] as const;
+const DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION = "0.20.2";
 const AI_REFINEMENT_MODULE_ID = "ai_refinement";
 const AI_REFINEMENT_MIGRATION_FLAG_KEY = "ai_refinement.migrated_legacy";
 
@@ -452,7 +453,7 @@ function ensureAIFallbackSettingsDefaults() {
         runtime_source: "manual",
         runtime_path: "",
         runtime_version: "",
-        runtime_target_version: "0.20.2",
+        runtime_target_version: DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION,
         last_health_check: null,
       },
     };
@@ -465,7 +466,7 @@ function ensureAIFallbackSettingsDefaults() {
       runtime_source: "manual",
       runtime_path: "",
       runtime_version: "",
-      runtime_target_version: "0.20.2",
+      runtime_target_version: DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION,
       last_health_check: null,
     };
   }
@@ -535,7 +536,13 @@ function ensureAIFallbackSettingsDefaults() {
   settings.providers.ollama.runtime_source ??= "manual";
   settings.providers.ollama.runtime_path ??= "";
   settings.providers.ollama.runtime_version ??= "";
-  settings.providers.ollama.runtime_target_version ??= "0.20.2";
+  settings.providers.ollama.runtime_target_version ??= DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION;
+  if (
+    settings.providers.ollama.runtime_version.trim()
+    && settings.providers.ollama.runtime_target_version === DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION
+  ) {
+    settings.providers.ollama.runtime_target_version = settings.providers.ollama.runtime_version.trim();
+  }
   settings.providers.ollama.last_health_check ??= null;
   CLOUD_PROVIDER_IDS.forEach((provider) => {
     const providerSettings = getAIFallbackProviderSettings(provider);

@@ -916,6 +916,18 @@ export interface TranscriptionResultEvent {
   paste_deferred?: boolean;
   paste_timeout_ms?: number;
   entry_id?: string;
+  refinement_gate?: RefinementGateDecision;
+}
+
+export interface RefinementGateDecision {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  should_refine: boolean;
+  paste_deferred: boolean;
+  skipped_reason?: string | null;
+  ollama_model_loaded?: boolean;
+  ollama_vram_bytes?: number;
 }
 
 export interface TranscriptionRawResultEvent {

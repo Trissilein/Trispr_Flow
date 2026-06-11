@@ -500,6 +500,22 @@ function renderPromptPresetCards(
 
 let aiRuntimeStateDriftLogged = false;
 
+const DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION = "0.20.2";
+
+function syncOllamaRuntimeTargetWithInstalledRuntime(): void {
+  if (!settings?.providers?.ollama) return;
+  const ollama = settings.providers.ollama;
+  const installedVersion = ollama.runtime_version?.trim() || "";
+  if (!installedVersion) {
+    ollama.runtime_target_version ||= DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION;
+    return;
+  }
+  const targetVersion = ollama.runtime_target_version?.trim() || "";
+  if (!targetVersion || targetVersion === DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION) {
+    ollama.runtime_target_version = installedVersion;
+  }
+}
+
 export function __resetForTesting(): void {
   _expanderStateCache = null;
   aiRuntimeStateDriftLogged = false;
@@ -517,7 +533,7 @@ export function renderAIFallbackSettingsUi() {
     );
   });
   const ai = settings.ai_fallback;
-  settings.providers.ollama.runtime_target_version ??= "0.20.2";
+  syncOllamaRuntimeTargetWithInstalledRuntime();
   ai.prompt_profile = normalizeRefinementPromptPreset(ai.prompt_profile);
   ai.prompt_presets = normalizeUserRefinementPromptPresets(ai.prompt_presets);
   ai.active_prompt_preset_id = normalizeActiveRefinementPromptPresetId(
@@ -739,7 +755,9 @@ export function renderAIFallbackSettingsUi() {
   }
   if (dom.aiFallbackLocalRuntimeVersion) {
     const selectedVersion =
-      settings.providers.ollama.runtime_target_version?.trim() || runtimeCardState.version || "0.20.2";
+      settings.providers.ollama.runtime_target_version?.trim()
+      || runtimeCardState.version
+      || DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION;
     const optionPool = [...runtimeVersionOptions];
     const appendIfMissing = (version: string) => {
       if (!version) return;
@@ -749,7 +767,7 @@ export function renderAIFallbackSettingsUi() {
         source: "online",
         selected: version === selectedVersion,
         installed: version === runtimeCardState.version,
-        recommended: version === "0.20.2",
+        recommended: version === DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION,
         prerelease: /(?:-rc|-alpha|-beta)/i.test(version),
         installable: false,
         installable_reason:
@@ -788,7 +806,7 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackLocalRuntimeVersion.disabled = runtimeCardState.busy;
   }
   if (dom.aiFallbackLocalRuntimeVersionNote) {
-    const selected = settings.providers.ollama.runtime_target_version || "0.20.2";
+    const selected = settings.providers.ollama.runtime_target_version || DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION;
     dom.aiFallbackLocalRuntimeVersionNote.textContent = "";
     const lead = document.createElement("span");
     lead.textContent = `Selected target ${selected}. `;

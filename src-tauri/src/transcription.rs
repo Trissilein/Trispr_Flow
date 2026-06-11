@@ -260,6 +260,20 @@ fn system_segmenter_config(settings: &Settings) -> AdaptiveSegmenterConfig {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub(crate) struct RefinementGateDecision {
+    pub(crate) enabled: bool,
+    pub(crate) provider: String,
+    pub(crate) model: String,
+    pub(crate) should_refine: bool,
+    pub(crate) paste_deferred: bool,
+    pub(crate) skipped_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) ollama_model_loaded: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) ollama_vram_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct TranscriptionResult {
     pub(crate) text: String,
     pub(crate) source: String,
@@ -271,6 +285,7 @@ pub(crate) struct TranscriptionResult {
     pub(crate) entry_id: Option<String>,
     pub(crate) audio_duration_ms: u64,
     pub(crate) word_count: u32,
+    pub(crate) refinement_gate: RefinementGateDecision,
 }
 
 #[derive(Debug, Clone, Serialize)]

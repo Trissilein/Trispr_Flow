@@ -18,12 +18,21 @@ on:
         required: false
         default: true
         type: boolean
+      runtime_seed_tag:
+        description: "Override runtime-seed release tag (leave empty to use the default fallback)"
+        required: false
+        default: ""
 
 jobs:
   build:
     runs-on: windows-latest
     env:
       VARIANTS: ${{ github.event_name == 'workflow_dispatch' && inputs.variants || 'vulkan cuda-lite cuda-complete' }}
+      # Runtime-seed release used to bootstrap the FIRST build of a new runtime
+      # version, when no published installer carries the matching DLLs yet. The
+      # hydration script only falls back to this when the normal installer
+      # hydration cannot supply the required runtime (e.g. CUDA 12 -> CUDA 13).
+      RUNTIME_SEED_TAG: ${{ (github.event_name == 'workflow_dispatch' && inputs.runtime_seed_tag) || 'runtime-seed-cuda13' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

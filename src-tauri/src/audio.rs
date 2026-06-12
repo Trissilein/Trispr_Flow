@@ -1344,10 +1344,8 @@ fn handle_transcription_ok(
     let refinement_enabled = ai_refinement_capability_enabled(settings);
     let provider_is_ollama = settings.ai_fallback.provider == "ollama";
     let jit_state = app_handle.state::<AppState>();
-    let warmup_active = provider_is_ollama
-        && jit_state
-            .ollama_warmup_in_progress
-            .load(Ordering::Relaxed);
+    let warmup_active =
+        provider_is_ollama && jit_state.ollama_warmup_in_progress.load(Ordering::Relaxed);
     let gpu_settling = provider_is_ollama
         && jit_state
             .ollama_post_warmup_settle_until_ms

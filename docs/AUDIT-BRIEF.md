@@ -23,6 +23,64 @@ This is an **analysis-only** audit. **Do not change code.** Produce a findings r
 
 ---
 
+## 1b. Target Architecture (maintainer direction — READ WITH §1)
+
+This audit is **not pure discovery.** The maintainer has a concrete target architecture. The audit
+must measure the gap between today's code and this target, and every finding in §3 should be judged
+against it — not only "is this wrong" but "does this move us toward the target."
+
+**Guiding principle: lean core, everything else a module.** A fresh clone/download of Trispr Flow
+should be the *minimal core*. Optional capabilities are modules pulled in on demand — not carried in
+`main` forever.
+
+Three concrete directives:
+
+1. **Interface de-bloat → sane defaults.** The settings UI exposes many options that are never used
+   and far too granular. For each such option, the target is to *remove the UI control* and replace it
+   with a sensible auto-decision (auto-accept or auto-reject the behavior). Audit task: inventory every
+   settings field and its UI control; classify each as **keep (user genuinely needs it)** /
+   **demote to default (auto-decide, remove control)** / **dead (never read)**. Cross-reference with
+   D1 (dead state) — many of these will overlap.
+
+2. **Modularize optional features out of core.** Concrete example named by the maintainer: the
+   **"store everything in Opus for later analysis"** capability (see `src-tauri/src/opus.rs` and
+   related archive paths) should become a **module**, not core code carried in `main`. Audit task:
+   identify every feature that is *optional to the core transcribe→refine→paste flow* and is a
+   candidate to be extracted into a module. Name them explicitly.
+
+3. **Git-delivered modules with in-app discovery & download.** The delivery model: modules are hosted
+   in Git; the Trispr Flow interface can **discover available modules and download/install them at
+   runtime**. A default download = lean core only; modules are opt-in from inside the app
+   (plugin-marketplace pattern).
+
+### The pivotal technical tension the audit MUST assess
+
+Today's module system is **compile-time**: `Cargo.toml` gates modules with cargo features
+(`default = ["module-gdd", "module-confluence"]`). The target requires **runtime** discovery and
+download — which compile-time features cannot provide without a recompile.
+
+The audit must evaluate how far the **existing** module infrastructure already goes toward runtime
+delivery, and what the gap is. Relevant existing code to assess:
+- `src-tauri/src/modules/registry.rs` — module registration/descriptors
+- `src-tauri/src/modules/package.rs` — does a packaging concept already exist? How complete?
+- `src-tauri/src/modules/permissions.rs` — per-module permission model?
+- `src-tauri/src/modules/lifecycle.rs` + `lifecycle_coordinator.rs` — runtime enable/disable already?
+- `src-tauri/src/modules/health.rs` — health/dependency reporting per module
+
+Produce a **feasibility finding**: can the target (runtime Git-delivered modules) be reached by
+evolving the existing `modules/` infra, or does it require a fundamentally different mechanism
+(dynamic libraries / WASM plugins / sidecar processes / config-only modules)? State the options with
+trade-offs. This is the single most important architectural question — flag it as `critical`.
+
+### Extra classification required for D4 findings
+
+For **every** module and major optional feature, tag it exactly one of:
+- `core-essential` — must stay compiled into the lean core
+- `extract-to-module` — works today but should leave core per directive 2/3
+- `dead` — no active consumer, remove entirely
+
+---
+
 ## 2. Ground-truth inputs (read these first)
 
 These documents describe the *intended* architecture. Compare them against the *actual* code:

@@ -2541,6 +2541,48 @@ fn hardware_gpu_stats() -> GpuStats {
     }
 }
 
+/// Hysteresis thresholds for GPU-load refinement gate.
+/// Frontend polls get_gpu_stats every ~2 s, so BUSY_HOLD=2 → ~4 s sustained high,
+/// FREE_HOLD=3 → ~6 s sustained low before the gate clears.
+const GPU_BUSY_THRESHOLD_PCT: f64 = 80.0;
+const GPU_BUSY_HOLD: u32 = 2;
+const GPU_FREE_HOLD: u32 = 3;
+
+fn update_gpu_busy_gate(state: &crate::state::AppState, util_pct: Option<f64>) {
+    match util_pct {
+        None => {
+            // DXGI fallback — no compute utilization; treat as idle so non-NVIDIA
+            // systems are never penalized.
+            state.gpu_util_high_streak.store(0, Ordering::Relaxed);
+            state.gpu_util_low_streak.store(0, Ordering::Relaxed);
+        }
+        Some(pct) if pct >= GPU_BUSY_THRESHOLD_PCT => {
+            let high = state.gpu_util_high_streak.fetch_add(1, Ordering::Relaxed) + 1;
+            state.gpu_util_low_streak.store(0, Ordering::Relaxed);
+            if high >= GPU_BUSY_HOLD && !state.gpu_busy.load(Ordering::Relaxed) {
+                state.gpu_busy.store(true, Ordering::Relaxed);
+                tracing::info!(
+                    "[gpu_load_gate] GPU busy — util={:.0}% streak={} → refinement bypassed",
+                    pct,
+                    high
+                );
+            }
+        }
+        Some(pct) => {
+            let low = state.gpu_util_low_streak.fetch_add(1, Ordering::Relaxed) + 1;
+            state.gpu_util_high_streak.store(0, Ordering::Relaxed);
+            if low >= GPU_FREE_HOLD && state.gpu_busy.load(Ordering::Relaxed) {
+                state.gpu_busy.store(false, Ordering::Relaxed);
+                tracing::info!(
+                    "[gpu_load_gate] GPU free — util={:.0}% streak={} → refinement re-enabled",
+                    pct,
+                    low
+                );
+            }
+        }
+    }
+}
+
 #[tauri::command]
 fn get_gpu_stats(state: State<'_, AppState>) -> GpuStats {
     let ollama_endpoint: Option<String> = {
@@ -2553,6 +2595,7 @@ fn get_gpu_stats(state: State<'_, AppState>) -> GpuStats {
     };
 
     let mut stats = hardware_gpu_stats();
+    update_gpu_busy_gate(state.inner(), stats.util_pct);
 
     if let Some(endpoint) = ollama_endpoint {
         let refine_bytes = crate::ai_fallback::provider::fetch_ollama_running_vram(&endpoint);
@@ -3778,6 +3821,9 @@ pub fn run() {
                 whisper_server_warmup_started: AtomicBool::new(false),
                 ollama_model_warm: AtomicBool::new(false),
                 ollama_warmup_in_progress: AtomicBool::new(false),
+                gpu_busy: AtomicBool::new(false),
+                gpu_util_high_streak: AtomicU32::new(0),
+                gpu_util_low_streak: AtomicU32::new(0),
                 whisper_server_warm_until_ms: AtomicU64::new(0),
                 whisper_server_retire_generation: AtomicU64::new(0),
                 vision_stream_running: AtomicBool::new(false),

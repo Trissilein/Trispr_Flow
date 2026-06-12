@@ -23,7 +23,7 @@ use crate::transcription::TranscribeRecorder;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
@@ -930,6 +930,12 @@ pub(crate) struct AppState {
     /// True while the PTT warmup thread is running (between spawn and completion).
     /// Combined with ollama_model_warm, gives Cold/Loading/Warm tri-state for the overlay.
     pub(crate) ollama_warmup_in_progress: AtomicBool,
+    /// True when sustained high GPU compute load (≥80% for BUSY_HOLD polls) blocks
+    /// OLLAMA refinement to avoid multi-second OLLAMA dispatch delays under contention.
+    /// Cleared when util drops below threshold for FREE_HOLD consecutive polls.
+    pub(crate) gpu_busy: AtomicBool,
+    pub(crate) gpu_util_high_streak: AtomicU32,
+    pub(crate) gpu_util_low_streak: AtomicU32,
     pub(crate) whisper_server_warm_until_ms: AtomicU64,
     pub(crate) whisper_server_retire_generation: AtomicU64,
     pub(crate) vision_stream_running: AtomicBool,

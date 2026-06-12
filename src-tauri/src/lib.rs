@@ -2524,7 +2524,7 @@ fn gpu_stats_dxgi() -> Option<GpuStats> {
     }
 }
 
-fn hardware_gpu_stats() -> GpuStats {
+pub(crate) fn hardware_gpu_stats() -> GpuStats {
     if let Some(s) = gpu_stats_nvidia() {
         return s;
     }
@@ -3778,6 +3778,7 @@ pub fn run() {
                 whisper_server_warmup_started: AtomicBool::new(false),
                 ollama_model_warm: AtomicBool::new(false),
                 ollama_warmup_in_progress: AtomicBool::new(false),
+                ollama_post_warmup_settle_until_ms: AtomicU64::new(0),
                 whisper_server_warm_until_ms: AtomicU64::new(0),
                 whisper_server_retire_generation: AtomicU64::new(0),
                 vision_stream_running: AtomicBool::new(false),

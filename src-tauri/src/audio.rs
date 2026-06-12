@@ -1343,13 +1343,27 @@ fn handle_transcription_ok(
     // model in the background, so the *next* dictation will refine.
     let refinement_enabled = ai_refinement_capability_enabled(settings);
     let provider_is_ollama = settings.ai_fallback.provider == "ollama";
-    let (model_loaded, ollama_vram_bytes) = if provider_is_ollama {
+    let jit_state = app_handle.state::<AppState>();
+    let warmup_active = provider_is_ollama
+        && jit_state
+            .ollama_warmup_in_progress
+            .load(Ordering::Relaxed);
+    let gpu_settling = provider_is_ollama
+        && jit_state
+            .ollama_post_warmup_settle_until_ms
+            .load(Ordering::Relaxed)
+            > crate::util::now_ms();
+    let (model_loaded, ollama_vram_bytes) = if provider_is_ollama && !warmup_active && !gpu_settling
+    {
         crate::ai_fallback::provider::fetch_ollama_model_load_status(
             &settings.providers.ollama.endpoint,
             &settings.ai_fallback.model,
         )
         .map(|status| (status.loaded, status.size_vram))
         .unwrap_or((false, 0))
+    } else if provider_is_ollama {
+        // Bypass: warmup running or GPU still settling after model load.
+        (false, 0)
     } else {
         // lm_studio / oobabooga expose no /api/ps probe — keep prior behaviour.
         (true, 0)
@@ -1362,6 +1376,10 @@ fn handle_transcription_ok(
         None
     } else if !refinement_enabled {
         Some("disabled".to_string())
+    } else if warmup_active {
+        Some("warmup_in_progress".to_string())
+    } else if gpu_settling {
+        Some("gpu_settling".to_string())
     } else if provider_is_ollama && !model_loaded {
         Some("ollama_model_not_loaded".to_string())
     } else {
@@ -3257,6 +3275,49 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
                     let s = app_for_warmup.state::<AppState>();
                     s.ollama_warmup_in_progress.store(false, Ordering::SeqCst);
                     s.ollama_model_warm.store(true, Ordering::SeqCst);
+
+                    // Open GPU-settle window. The model just finished loading, but GPU
+                    // util stays near 100% for a few seconds. Refinement requests during
+                    // this window would hang. The settle monitor clears the deadline once
+                    // util drops below threshold for 3 consecutive 1s polls, or after
+                    // the hard ceiling (15 s).
+                    const POST_WARMUP_MAX_SETTLE_MS: u64 = 15_000;
+                    const POST_WARMUP_SETTLE_THRESHOLD_PCT: f64 = 80.0;
+                    const POST_WARMUP_SETTLE_STABLE_COUNT: u32 = 3;
+                    let settle_until = crate::util::now_ms() + POST_WARMUP_MAX_SETTLE_MS;
+                    s.ollama_post_warmup_settle_until_ms
+                        .store(settle_until, Ordering::SeqCst);
+                    let app_for_settle = app_for_warmup.clone();
+                    crate::util::spawn_guarded("ollama_post_warmup_settle", move || {
+                        let mut below_count = 0u32;
+                        loop {
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                            if crate::util::now_ms() >= settle_until {
+                                break;
+                            }
+                            let util = crate::hardware_gpu_stats().util_pct;
+                            if util
+                                .map(|u| u < POST_WARMUP_SETTLE_THRESHOLD_PCT)
+                                .unwrap_or(false)
+                            {
+                                below_count += 1;
+                                if below_count >= POST_WARMUP_SETTLE_STABLE_COUNT {
+                                    tracing::info!(
+                                        "[ollama.warmup] GPU settled after {} polls",
+                                        below_count
+                                    );
+                                    break;
+                                }
+                            } else {
+                                below_count = 0;
+                            }
+                        }
+                        app_for_settle
+                            .state::<AppState>()
+                            .ollama_post_warmup_settle_until_ms
+                            .store(0, Ordering::SeqCst);
+                    });
+
                     crate::overlay::update_overlay_ollama_state(
                         &app_for_warmup,
                         crate::overlay::OllamaModelState::Warm,

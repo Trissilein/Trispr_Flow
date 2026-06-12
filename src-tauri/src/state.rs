@@ -930,6 +930,9 @@ pub(crate) struct AppState {
     /// True while the PTT warmup thread is running (between spawn and completion).
     /// Combined with ollama_model_warm, gives Cold/Loading/Warm tri-state for the overlay.
     pub(crate) ollama_warmup_in_progress: AtomicBool,
+    /// Non-zero while GPU is settling after warmup. Stores the deadline in ms (epoch).
+    /// JIT gate bypasses refinement until this timestamp passes or GPU util drops.
+    pub(crate) ollama_post_warmup_settle_until_ms: AtomicU64,
     pub(crate) whisper_server_warm_until_ms: AtomicU64,
     pub(crate) whisper_server_retire_generation: AtomicU64,
     pub(crate) vision_stream_running: AtomicBool,

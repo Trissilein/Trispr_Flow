@@ -271,6 +271,8 @@ pub(crate) struct RefinementGateDecision {
     pub(crate) ollama_model_loaded: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) ollama_vram_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) ollama_gpu_busy: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]

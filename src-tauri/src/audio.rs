@@ -1354,7 +1354,8 @@ fn handle_transcription_ok(
         // lm_studio / oobabooga expose no /api/ps probe — keep prior behaviour.
         (true, 0)
     };
-    let should_refine = refinement_enabled && model_loaded;
+    let gpu_busy = provider_is_ollama && state.gpu_busy.load(std::sync::atomic::Ordering::Relaxed);
+    let should_refine = refinement_enabled && model_loaded && !gpu_busy;
     let ollama_cold = provider_is_ollama && refinement_enabled && !model_loaded;
 
     let paste_deferred = should_refine && should_defer_paste_for_refinement(&app_handle, settings);
@@ -1362,6 +1363,8 @@ fn handle_transcription_ok(
         None
     } else if !refinement_enabled {
         Some("disabled".to_string())
+    } else if provider_is_ollama && gpu_busy {
+        Some("gpu_busy".to_string())
     } else if provider_is_ollama && !model_loaded {
         Some("ollama_model_not_loaded".to_string())
     } else {
@@ -1391,13 +1394,14 @@ fn handle_transcription_ok(
                 skipped_reason,
                 ollama_model_loaded: provider_is_ollama.then_some(model_loaded),
                 ollama_vram_bytes: provider_is_ollama.then_some(ollama_vram_bytes),
+                ollama_gpu_busy: provider_is_ollama.then_some(gpu_busy),
             },
         },
     );
     if crate::state::diagnostic_logging_enabled() {
         let startup_status = crate::startup_status_snapshot(state.inner());
         info!(
-            "[refinement:{}] paste policy source={} deferred={} timeout_ms={} cold_start={} ollama_cold={} ollama_model_loaded={} ollama_vram_bytes={} ollama_ready={} ollama_starting={} active_count={}",
+            "[refinement:{}] paste policy source={} deferred={} timeout_ms={} cold_start={} ollama_cold={} ollama_model_loaded={} ollama_vram_bytes={} gpu_busy={} ollama_ready={} ollama_starting={} active_count={}",
             job_id,
             source,
             paste_deferred,
@@ -1406,6 +1410,7 @@ fn handle_transcription_ok(
             ollama_cold,
             model_loaded,
             ollama_vram_bytes,
+            gpu_busy,
             startup_status.ollama_ready,
             startup_status.ollama_starting,
             state.refinement_active_count.load(Ordering::SeqCst)

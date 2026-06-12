@@ -650,6 +650,7 @@ pub fn schedule_whisper_server_warmup(
     if !crate::transcription::whisper_runtime_required(settings) {
         return;
     }
+    ensure_whisper_server_keepalive(app.clone());
     touch_whisper_server_recent_use(app, state);
     let port = state.whisper_server_port.load(Ordering::Relaxed);
     if ping_whisper_server(port) {

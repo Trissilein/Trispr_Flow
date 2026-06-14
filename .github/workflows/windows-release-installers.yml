@@ -12,7 +12,15 @@ on:
       variants:
         description: "Space-separated variant list (vulkan cuda-lite cuda-complete)"
         required: false
-        default: "vulkan cuda-lite cuda-complete"
+        default: "vulkan"
+      vulkan_runtime_zip_url:
+        description: "Trusted Vulkan runtime ZIP URL (required when building vulkan)"
+        required: false
+        default: ""
+      vulkan_runtime_zip_sha256:
+        description: "SHA256 for trusted Vulkan runtime ZIP (required when building vulkan)"
+        required: false
+        default: ""
       upload_to_release:
         description: "Upload installers to GitHub Release (requires tag ref)"
         required: false
@@ -27,7 +35,9 @@ jobs:
   build:
     runs-on: windows-latest
     env:
-      VARIANTS: ${{ github.event_name == 'workflow_dispatch' && inputs.variants || 'vulkan cuda-lite cuda-complete' }}
+      VARIANTS: ${{ github.event_name == 'workflow_dispatch' && inputs.variants || 'vulkan' }}
+      VULKAN_RUNTIME_ZIP_URL: ${{ inputs.vulkan_runtime_zip_url }}
+      VULKAN_RUNTIME_ZIP_SHA256: ${{ inputs.vulkan_runtime_zip_sha256 }}
       # Runtime-seed release used to bootstrap the FIRST build of a new runtime
       # version, when no published installer carries the matching DLLs yet. The
       # hydration script only falls back to this when the normal installer
@@ -49,18 +59,51 @@ jobs:
       - name: Install NPM dependencies
         run: npm ci
 
-      - name: Hydrate Whisper runtime from published release
+      - name: Hydrate trusted runtime payloads
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: .\scripts\hydrate-whisper-runtime-from-release.ps1 -SkipTag '${{ github.ref_name }}'
+        run: |
+          $variants = @($env:VARIANTS -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+          $needsVulkan = $variants | Where-Object { $_ -in @('vulkan', 'vulkan-only') }
+          $needsCuda = $variants | Where-Object { $_ -in @('cuda-lite', 'cuda-complete') }
+          if ($needsVulkan) {
+            if ([string]::IsNullOrWhiteSpace($env:VULKAN_RUNTIME_ZIP_URL) -or [string]::IsNullOrWhiteSpace($env:VULKAN_RUNTIME_ZIP_SHA256)) {
+              throw 'Vulkan release builds require explicit vulkan_runtime_zip_url and vulkan_runtime_zip_sha256. Refusing to hydrate Vulkan from a previous published installer.'
+            }
+            .\scripts\windows\hydrate-vulkan-runtime-from-archive.ps1 -ArchiveUrl $env:VULKAN_RUNTIME_ZIP_URL -ExpectedArchiveSha256 $env:VULKAN_RUNTIME_ZIP_SHA256
+          }
+          if ($needsCuda) {
+            .\scripts\hydrate-whisper-runtime-from-release.ps1 -SkipTag '${{ github.ref_name }}'
+          }
 
       - name: Validate hydrated runtime
-        run: node scripts/validate-whisper-runtime.mjs --variant cuda-complete
+        shell: pwsh
+        run: |
+          $variants = @($env:VARIANTS -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+          foreach ($variant in $variants) {
+            node scripts/validate-whisper-runtime.mjs --variant $variant
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if ($variant -in @('vulkan', 'vulkan-only')) {
+              node scripts/validate-runtime-manifest.mjs --manifest src-tauri/runtime-manifests/vulkan-v0.8.4-hotfix.json --root src-tauri/bin/vulkan --label repo-vulkan
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+          }
 
       - name: Build installer variants
         shell: cmd
         run: scripts\windows\build-installers.bat %VARIANTS%
+
+      - name: Validate built Vulkan installers
+        shell: pwsh
+        run: |
+          $vulkanInstallers = @(Get-ChildItem -Path installers -Filter '*vulkan-only*.exe' -File -ErrorAction SilentlyContinue)
+          if ($env:VARIANTS -match '(^|\s)(vulkan|vulkan-only)(\s|$)' -and $vulkanInstallers.Count -eq 0) {
+            throw 'Expected at least one Vulkan installer, but none were produced.'
+          }
+          foreach ($installer in $vulkanInstallers) {
+            .\scripts\windows\validate-installed-installer.ps1 -InstallerPath $installer.FullName -ManifestPath src-tauri/runtime-manifests/vulkan-v0.8.4-hotfix.json
+          }
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4

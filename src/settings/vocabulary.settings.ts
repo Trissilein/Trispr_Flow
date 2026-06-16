@@ -190,6 +190,18 @@ export function addVocabRow(original: string, replacement: string) {
 export function renderVocabulary() {
     if (!settings || !dom.postprocVocabRows) return;
 
+    // Don't rebuild while the user is editing inside the rows container.
+    // Every input "change" persists settings, which triggers a backend
+    // settings-changed event and a full settings re-render — without this
+    // guard that roundtrip wipes a half-filled row the moment focus moves
+    // from the first input to the second.
+    if (
+        document.activeElement instanceof HTMLElement &&
+        dom.postprocVocabRows.contains(document.activeElement)
+    ) {
+        return;
+    }
+
     // Clear existing rows
     dom.postprocVocabRows.innerHTML = "";
 

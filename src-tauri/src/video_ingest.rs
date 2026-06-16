@@ -109,9 +109,18 @@ fn read_text_utf8_lossy(path: &Path, max_bytes: usize) -> Result<String, String>
 }
 
 fn strip_html_tags(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
+    use std::sync::LazyLock;
+    static RE_STYLE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap());
+    static RE_SCRIPT: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap());
+
+    let s = RE_STYLE.replace_all(input, " ");
+    let s = RE_SCRIPT.replace_all(s.as_ref(), " ");
+
+    let mut out = String::with_capacity(s.len());
     let mut in_tag = false;
-    for ch in input.chars() {
+    for ch in s.chars() {
         match ch {
             '<' => in_tag = true,
             '>' => in_tag = false,
@@ -441,6 +450,24 @@ mod tests {
         assert!(text.contains("Hello"));
         assert!(text.contains("World"));
         assert!(!text.contains('<'));
+    }
+
+    #[test]
+    fn html_strips_style_and_script_content() {
+        let (workdir, _tmp) = make_workdir();
+        let src = workdir.root.join("styled.html");
+        let html = b"<html><head>\
+            <style>body { color: red; font-size: 12px; }</style>\
+            <script>console.log('hello');</script>\
+            </head><body><p>Real content here.</p></body></html>";
+        fs::write(&src, html).unwrap();
+
+        let item = ingest_path(&src, &workdir, 0, 500).unwrap();
+        let text = item.extracted_text.unwrap();
+        assert!(text.contains("Real content here"), "got: {text}");
+        assert!(!text.contains("color:") && !text.contains("color: red"), "CSS leaked: {text}");
+        assert!(!text.contains("console.log"), "JS leaked: {text}");
+        assert!(!text.contains("font-size"), "CSS leaked: {text}");
     }
 
     #[test]

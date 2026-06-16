@@ -85,7 +85,21 @@ pub fn render_video(app: &AppHandle, mut req: VideoJobRequest) -> Result<VideoJo
     video_ingest::materialize_assets(&mut req.source_items, &workdir)?;
 
     emit_progress(app, &workdir.job_id, "composing", 0.1, None);
-    compose_hyperframes_project(&req, &workdir)?;
+    if settings.narrative_mode {
+        match crate::narrative_composer::generate_scene_script(app, &req.source_items, req.brief.as_deref().unwrap_or("")) {
+            Ok(scenes) => {
+                emit_progress(app, &workdir.job_id, "composing", 0.15, Some("Scene script generated — composing narrative layout"));
+                crate::narrative_composer::compose_narrative_project(&scenes, &req.resolution, &workdir)?;
+            }
+            Err(e) => {
+                warn!("[video-gen] Narrative scene script failed ({}), falling back to Phase 1 template.", e);
+                emit_progress(app, &workdir.job_id, "composing", 0.15, Some("Narrative AI unavailable — using static template"));
+                compose_hyperframes_project(&req, &workdir)?;
+            }
+        }
+    } else {
+        compose_hyperframes_project(&req, &workdir)?;
+    }
 
     emit_progress(app, &workdir.job_id, "rendering", 0.2, None);
     let output_path = resolve_output_path(app, &settings, &workdir);
@@ -337,20 +351,37 @@ fn run_hyperframes_render(
     output_path: &Path,
     fps: u32,
 ) -> Result<(), String> {
-    // First attempt honors the user's GPU preference. If GPU-encoding fails
-    // (FFmpeg exits with an encoder-related error — common when the driver/
-    // hardware for NVENC/AMF/QSV isn't actually present), retry once with GPU
-    // disabled so the user still gets a working MP4.
-    let result = run_hyperframes_render_inner(
-        app,
-        settings,
-        workdir,
-        output_path,
-        fps,
-        settings.gpu_encoding,
-    );
+    // Resolve effective GPU flag: honor user preference but suppress it upfront
+    // if the NVENC probe (cached, one spawn per process) already determined that
+    // h264_nvenc is non-functional on this hardware. This avoids wasting time on
+    // a doomed first attempt for Blackwell GPUs (RTX 5070 Ti, RTX PRO 2000)
+    // where FFmpeg 8.x returns EINVAL / NVENC_ERR_INVALID_VERSION.
+    let effective_gpu = if settings.gpu_encoding {
+        let probe_ok = crate::opus::probe_nvenc_available();
+        if !probe_ok {
+            warn!(
+                "[video-gen] NVENC probe failed — disabling GPU encoding for this render. \
+                 Check NVIDIA driver / NVENC SDK compatibility (known issue: Blackwell + FFmpeg 8.x)."
+            );
+            emit_progress(
+                app,
+                &workdir.job_id,
+                "rendering",
+                0.05,
+                Some("NVENC unavailable on this GPU — using CPU encoding instead."),
+            );
+        }
+        probe_ok
+    } else {
+        false
+    };
+
+    // First attempt with effective GPU flag. If it still fails (e.g. AMF/QSV
+    // path, or probe false-positive), retry once with CPU.
+    let result =
+        run_hyperframes_render_inner(app, settings, workdir, output_path, fps, effective_gpu);
     if let Err(e) = &result {
-        if settings.gpu_encoding && looks_like_gpu_encode_failure(e) {
+        if effective_gpu && looks_like_gpu_encode_failure(e) {
             warn!(
                 "[video-gen] GPU encoding failed ({}). Retrying with CPU encoding.",
                 e.lines().next().unwrap_or("").trim()
@@ -374,8 +405,21 @@ fn looks_like_gpu_encode_failure(err: &str) -> bool {
     // message alone, we treat any encoding-phase failure as a candidate for
     // the CPU-fallback retry — safe because the retry ALSO disables GPU, so
     // a genuine CPU-encode bug still bubbles up after the second attempt.
+    //
+    // Extended patterns for Blackwell GPU (RTX 5070 Ti, RTX PRO 2000 Blackwell):
+    // - EINVAL (-22): NVENC SDK version mismatch with FFmpeg 8.x on Blackwell arch
+    // - NVENC_ERR_INVALID_VERSION: SDK too old for the new encoder interface
+    // - "no capable devices found": driver sees the GPU but NVENC reports no caps
+    // - "error initializing": generic NVENC init failure path in FFmpeg
     let lower = err.to_ascii_lowercase();
-    lower.contains("encoding failed") || lower.contains("ffmpeg exited with code")
+    lower.contains("encoding failed")
+        || lower.contains("ffmpeg exited with code")
+        || lower.contains("einval")
+        || lower.contains("invalid argument")
+        || lower.contains("nvenc_err_invalid")
+        || lower.contains("no capable devices found")
+        || lower.contains("error initializing output stream")
+        || lower.contains("cannot load nvcuvid")
 }
 
 fn run_hyperframes_render_inner(

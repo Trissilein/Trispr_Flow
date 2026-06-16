@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Modules Hub redesigned as grouped rows**: The flat grid of fixed-height module cards is replaced with compact list rows grouped into sections — Active / Installed · inactive / Available to add / Core · always on — each with a count. Module description/usage moved to a name tooltip; the per-card "Ready" filler is gone, feedback now shows only when there is something actionable. Behavior (install/enable/disable/configure/health) is unchanged. Dead `.module-card*` styles removed.
+
 ## [0.8.4] - 2026-06-14
 
 ### Added

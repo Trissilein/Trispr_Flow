@@ -86,14 +86,34 @@ pub fn render_video(app: &AppHandle, mut req: VideoJobRequest) -> Result<VideoJo
 
     emit_progress(app, &workdir.job_id, "composing", 0.1, None);
     if settings.narrative_mode {
-        match crate::narrative_composer::generate_scene_script(app, &req.source_items, req.brief.as_deref().unwrap_or("")) {
+        match crate::narrative_composer::generate_scene_script(
+            app,
+            &req.source_items,
+            req.brief.as_deref().unwrap_or(""),
+        ) {
             Ok(scenes) => {
-                emit_progress(app, &workdir.job_id, "composing", 0.15, Some("Scene script generated — composing narrative layout"));
-                crate::narrative_composer::compose_narrative_project(&scenes, &req.resolution, &workdir)?;
+                emit_progress(
+                    app,
+                    &workdir.job_id,
+                    "composing",
+                    0.15,
+                    Some("Scene script generated — composing narrative layout"),
+                );
+                crate::narrative_composer::compose_narrative_project(
+                    &scenes,
+                    &req.resolution,
+                    &workdir,
+                )?;
             }
             Err(e) => {
                 warn!("[video-gen] Narrative scene script failed ({}), falling back to Phase 1 template.", e);
-                emit_progress(app, &workdir.job_id, "composing", 0.15, Some("Narrative AI unavailable — using static template"));
+                emit_progress(
+                    app,
+                    &workdir.job_id,
+                    "composing",
+                    0.15,
+                    Some("Narrative AI unavailable — using static template"),
+                );
                 compose_hyperframes_project(&req, &workdir)?;
             }
         }

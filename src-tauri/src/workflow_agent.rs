@@ -2562,8 +2562,7 @@ pub(crate) fn agent_execute_gdd_plan(
                 let tts_bridge_enabled =
                     capability_enabled(&settings_snapshot, RuntimeCapability::VoiceOutputTts)
                         && settings_snapshot.workflow_agent.voice_feedback_enabled;
-                let agent_tts_provider =
-                    settings_snapshot.workflow_agent.tts_provider.clone();
+                let agent_tts_provider = settings_snapshot.workflow_agent.tts_provider.clone();
                 let maybe_agent_speak = |context: &str, message: &str| {
                     if !tts_bridge_enabled || message.trim().is_empty() {
                         return;

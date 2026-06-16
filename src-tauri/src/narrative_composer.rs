@@ -41,9 +41,7 @@ pub enum Scene {
         caption: Option<String>,
     },
     /// Chapter-break / divider slide.
-    Section {
-        title: String,
-    },
+    Section { title: String },
     /// Closing slide.
     Outro {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -207,9 +205,12 @@ fn parse_scene_script(raw: &str) -> Result<Vec<Scene>, String> {
     };
 
     // Find the first `[` … last `]` span.
-    let start = stripped
-        .find('[')
-        .ok_or_else(|| format!("No JSON array found in LLM output:\n{}", &raw[..raw.len().min(200)]))?;
+    let start = stripped.find('[').ok_or_else(|| {
+        format!(
+            "No JSON array found in LLM output:\n{}",
+            &raw[..raw.len().min(200)]
+        )
+    })?;
     let end = stripped
         .rfind(']')
         .ok_or_else(|| "JSON array not closed in LLM output".to_string())?;
@@ -219,8 +220,12 @@ fn parse_scene_script(raw: &str) -> Result<Vec<Scene>, String> {
     }
 
     let json_slice = &stripped[start..=end];
-    let mut scenes: Vec<Scene> = serde_json::from_str(json_slice)
-        .map_err(|e| format!("Failed to parse scene script JSON: {e}\nJSON was:\n{}", &json_slice[..json_slice.len().min(400)]))?;
+    let mut scenes: Vec<Scene> = serde_json::from_str(json_slice).map_err(|e| {
+        format!(
+            "Failed to parse scene script JSON: {e}\nJSON was:\n{}",
+            &json_slice[..json_slice.len().min(400)]
+        )
+    })?;
 
     // Sanitize inline HTML in body fields.
     for scene in &mut scenes {
@@ -251,8 +256,8 @@ pub fn compose_narrative_project(
     let (width, height) = parse_resolution(resolution)?;
 
     let total_duration: f32 = scenes.iter().map(|s| s.slide_duration_seconds()).sum();
-    let scenes_json = serde_json::to_string(scenes)
-        .map_err(|e| format!("serialize scenes: {e}"))?;
+    let scenes_json =
+        serde_json::to_string(scenes).map_err(|e| format!("serialize scenes: {e}"))?;
 
     let template = include_str!("../assets/video_templates/narrative.html.tmpl");
     let rendered = template

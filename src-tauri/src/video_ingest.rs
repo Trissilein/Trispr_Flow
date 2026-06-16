@@ -465,7 +465,10 @@ mod tests {
         let item = ingest_path(&src, &workdir, 0, 500).unwrap();
         let text = item.extracted_text.unwrap();
         assert!(text.contains("Real content here"), "got: {text}");
-        assert!(!text.contains("color:") && !text.contains("color: red"), "CSS leaked: {text}");
+        assert!(
+            !text.contains("color:") && !text.contains("color: red"),
+            "CSS leaked: {text}"
+        );
         assert!(!text.contains("console.log"), "JS leaked: {text}");
         assert!(!text.contains("font-size"), "CSS leaked: {text}");
     }

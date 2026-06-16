@@ -26,6 +26,7 @@ import {
   dismissLearnedTerm,
   dismissPendingSubstitution,
   getAutoLearnSnapshot,
+  PROMOTION_THRESHOLD,
 } from "../vocab-auto-learn";
 import { setSettings, settings } from "../state";
 import type { Settings } from "../types";
@@ -160,39 +161,45 @@ describe("ingestEditDelta — accumulation", () => {
     expect(subs[0]).toMatchObject({ from: "Trispa", to: "Trispr", count: 1 });
   });
 
-  it("second sighting increments count to 2, not yet promoted", () => {
+  it("first sighting does not yet promote", () => {
     ingestEditDelta("Ich Trispa.", "Ich Trispr.");
-    ingestEditDelta("Der Trispa ist fertig.", "Der Trispr ist fertig.");
     const subs = settings!.edit_substitutions ?? [];
     expect(subs).toHaveLength(1);
-    expect(subs[0].count).toBe(2);
+    expect(subs[0].count).toBe(1);
     expect(settings!.vocab_terms).not.toContain("Trispr");
   });
 
-  it("third sighting promotes: removes from pending, adds to postproc_custom_vocab", () => {
+  it("second sighting promotes: removes from pending, adds to postproc_custom_vocab", () => {
     ingestEditDelta("Ich Trispa.", "Ich Trispr.");
     ingestEditDelta("Der Trispa ist.", "Der Trispr ist.");
-    ingestEditDelta("Das Trispa läuft.", "Das Trispr läuft.");
     expect(settings!.edit_substitutions ?? []).toHaveLength(0);
     expect(settings!.postproc_custom_vocab["Trispa"]).toBe("Trispr");
   });
 
+  it("casing variants of the same correction share one counter", () => {
+    ingestEditDelta("Ich gamma sage.", "Ich gemma sage.");
+    ingestEditDelta("Der Gamma ist.", "Der Gemma ist.");
+    // Two casing variants of the same pair → merged counter → promoted
+    expect(settings!.edit_substitutions ?? []).toHaveLength(0);
+    expect(settings!.postproc_custom_vocab["Gamma"]).toBe("Gemma");
+  });
+
   it("promotion adds 'to' to vocab_terms", () => {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
       ingestEditDelta("Test Trispa Ende.", "Test Trispr Ende.");
     }
     expect(settings!.vocab_terms).toContain("Trispr");
   });
 
   it("promotion refreshes the learned vocabulary chips", async () => {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
       ingestEditDelta("Test Trispa Ende.", "Test Trispr Ende.");
     }
     await vi.waitFor(() => expect(mocks.renderLearnedVocabChips).toHaveBeenCalled());
   });
 
   it("promotion with mixed-case 'from' adds both original and lowercase postproc entries", () => {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
       ingestEditDelta("Der Trispa war.", "Der Trispr war.");
     }
     expect(settings!.postproc_custom_vocab["Trispa"]).toBe("Trispr");
@@ -200,7 +207,7 @@ describe("ingestEditDelta — accumulation", () => {
   });
 
   it("all-lowercase 'from' does NOT create duplicate lowercase entry", () => {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
       ingestEditDelta("the trispa was.", "the trispr was.");
     }
     const keys = Object.keys(settings!.postproc_custom_vocab).filter((k) =>
@@ -314,7 +321,7 @@ describe("44c — casing-only correction is tracked (regression: v0.7.3 casing b
 describe("44c — promotion activates postproc_custom_vocab_enabled", () => {
   it("postproc_custom_vocab_enabled becomes true after first promotion", () => {
     setSettings(makeSettings({ postproc_custom_vocab_enabled: false }));
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
       ingestEditDelta("Ich Trispa.", "Ich Trispr.");
     }
     expect(settings!.postproc_custom_vocab_enabled).toBe(true);
@@ -322,7 +329,7 @@ describe("44c — promotion activates postproc_custom_vocab_enabled", () => {
 
   it("already-true postproc_custom_vocab_enabled stays true after promotion", () => {
     setSettings(makeSettings({ postproc_custom_vocab_enabled: true }));
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
       ingestEditDelta("Ich Trispa.", "Ich Trispr.");
     }
     expect(settings!.postproc_custom_vocab_enabled).toBe(true);
@@ -332,7 +339,7 @@ describe("44c — promotion activates postproc_custom_vocab_enabled", () => {
 describe("44c — vocab_terms deduplication on promotion", () => {
   it("does not add duplicate term if already in vocab_terms", () => {
     setSettings(makeSettings({ vocab_terms: ["Trispr"] }));
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
       ingestEditDelta("Das Trispa läuft.", "Das Trispr läuft.");
     }
     const count = (settings!.vocab_terms ?? []).filter((t) => t === "Trispr").length;
@@ -341,7 +348,7 @@ describe("44c — vocab_terms deduplication on promotion", () => {
 
   it("case-insensitive deduplication: 'trispr' already present prevents adding 'Trispr'", () => {
     setSettings(makeSettings({ vocab_terms: ["trispr"] }));
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
       ingestEditDelta("Das Trispa läuft.", "Das Trispr läuft.");
     }
     const dupes = (settings!.vocab_terms ?? []).filter(
@@ -357,7 +364,7 @@ describe("44c — postproc_custom_vocab merge on repeated promotion", () => {
       postproc_custom_vocab: { Trispa: "Trispr" },
       postproc_custom_vocab_enabled: true,
     }));
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
       ingestEditDelta("Der Code war.", "Der Codex war.");
     }
     expect(settings!.postproc_custom_vocab["Trispa"]).toBe("Trispr");
@@ -432,7 +439,7 @@ describe("44c — wordDiff with oversized submitted (Monaco / VS-Code)", () => {
     const pasted = "Heute war Trispa wieder schnell.";
     const surrounding = Array.from({ length: 25 }, (_, i) => `code_line_${i}`).join(" ");
     const submitted = `${surrounding} Heute war Trispr wieder schnell. ${surrounding}`;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
       ingestEditDelta(pasted, submitted);
     }
     expect(settings!.postproc_custom_vocab["Trispa"]).toBe("Trispr");

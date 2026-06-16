@@ -542,7 +542,7 @@ impl Default for Settings {
       mic_input_gain_db: 0.0,
       history_alias_mic: default_history_alias_mic(),
       history_alias_system: default_history_alias_system(),
-      capture_enabled: false,
+      capture_enabled: true,
       model_source: "default".to_string(),
       model_custom_url: "".to_string(),
       model_storage_dir: "".to_string(),

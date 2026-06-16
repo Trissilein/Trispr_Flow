@@ -2,7 +2,7 @@
 
 > Offline-first dictation and system-audio transcription with local AI refinement.
 
-[![Version](https://img.shields.io/badge/version-0.8.2--dev-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.8.3-blue.svg)](CHANGELOG.md)
 [![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
 [![macOS](https://img.shields.io/badge/macOS-planned-lightgrey?style=flat&logo=apple)](ROADMAP.md)
 [![Notices](https://img.shields.io/badge/license-notices-blue.svg)](THIRD_PARTY_NOTICES.md)
@@ -20,13 +20,12 @@ It is designed for local-first transcription and editing workflows:
 
 ## Current Release
 
-- Current app line: `v0.8.2-dev`
+- Current app line: `v0.8.3`
 - Packaging: unified Windows installer flow (vulkan-only / cuda-lite / cuda-complete)
-- Delivery focus: Block A release-gate closure before UX/UI consistency (Block B)
+- Next architectural focus: **lean core + on-demand modules** (see [docs/AUDIT-BRIEF.md](docs/AUDIT-BRIEF.md) §1b)
 
 Release details:
 - [CHANGELOG.md](CHANGELOG.md)
-- [STATUS.md](STATUS.md)
 - [ROADMAP.md](ROADMAP.md)
 
 ## Capabilities
@@ -87,11 +86,14 @@ Installer build/upload shortcuts:
 | `v0.7.3` | Released    | UI redesigns, vocabulary learning, casing bug fix          |
 | `v0.7.4` | Released    | Release runtime hydration and installer path normalization |
 | `v0.7.5` | Released    | Release-pipeline hardening for clean GitHub runners        |
-| `v0.8.2` | In progress | Block A release-gate closure                               |
+| `v0.8.0` | Released    | Block A release-gate closure (assistant phase)             |
+| `v0.8.1` | Released    | CUDA multi-arch fat-binary, whisper-server build target    |
+| `v0.8.2` | Released    | CUDA runtime DLL bundling, ASR language controls           |
+| `v0.8.3` | Released    | CUDA 13 migration, GDD module package, runtime seed asset  |
+| `v0.8.4` | In progress | GPU-load gate, Vulkan installer validation, lean-core prep |
 
 Canonical planning docs:
 - [ROADMAP.md](ROADMAP.md)
-- [STATUS.md](STATUS.md)
 - [docs/TASK_SCHEDULE.md](docs/TASK_SCHEDULE.md)
 
 ## Dependencies

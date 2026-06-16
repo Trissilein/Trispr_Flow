@@ -2885,15 +2885,6 @@ fn run_whisper_cli(
     #[cfg(target_os = "windows")]
     command.creation_flags(0x08000000 | 0x00004000); // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
 
-    // For Vulkan backend on hybrid GPU systems: prefer NVIDIA device (typically device 1)
-    // This is a heuristic since we don't know the exact enumeration, but Intel Arc typically
-    // enumerates as device 0 and NVIDIA as device 1
-    let backend = whisper_backend_from_cli_path(cli_path);
-    if backend == "vulkan" && !force_cpu {
-        // Set GGML_VK_VISIBLE_DEVICES to use device 1 (assume NVIDIA is secondary device on Optimus systems)
-        command.env("GGML_VK_VISIBLE_DEVICES", "1");
-    }
-
     command
         .arg("-m")
         .arg(model_path)

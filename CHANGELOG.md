@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-06-14
+
 ### Added
 
 - **Architecture audit brief** (`docs/AUDIT-BRIEF.md`) (#25, #26): Self-contained, four-dimension audit brief plus a Target Architecture section (§1b) defining the lean-core / on-demand-module direction. Deferred execution.
@@ -14,9 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **GPU-load hysteresis gate** (#24): `gpu_busy` atomic populated by `update_gpu_busy_gate()` inside `get_gpu_stats`. Refinement is bypassed when GPU compute is under contention (≥80% for ~4s) and re-enabled after ~6s below threshold. No extra polling thread — rides the existing 2s `get_gpu_stats` poll.
+- **Windows release workflow fail-closed behavior**: Vulkan release builds no longer hydrate Vulkan from a previous published installer by default. CI requires an explicit trusted Vulkan runtime archive URL and SHA256 when building Vulkan installers, then runs installed-installer validation before upload.
 
 ### Fixed
 
+- **Vulkan-only installer payload trust**: v0.8.4 replaces the broken v0.8.3 Vulkan-only release asset path. The release build now validates the intended Vulkan runtime payload against a tracked SHA256 manifest before packaging and validates the installed Vulkan payload from the built installer before the artifact can be treated as releasable.
+- **AMD Vulkan hotfix packaging**: The Vulkan-only installer path now requires `whisper-cli.exe`, `whisper-server.exe`, and the Vulkan GGML DLL set that match the verified hotfix payload. This prevents stale release-hydrated binaries from silently replacing the known-good AMD Vulkan runtime.
 - **Vocabulary auto-learn promotion** (#28): Lowered `PROMOTION_THRESHOLD` from 3 to 2 (six weeks of real usage showed nothing ever promoted at 3), made the substitution counter case-insensitive so casing variants share one counter, and guarded `renderVocabulary()` against the settings-roundtrip that wiped a half-filled row on blur.
 
 ## [0.8.3] - 2026-06-12

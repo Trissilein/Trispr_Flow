@@ -1,0 +1,44 @@
+{
+  "name": "vulkan-v0.8.4-hotfix",
+  "variant": "vulkan",
+  "source_dir": "src-tauri/bin/vulkan",
+  "created_at": "2026-06-14T00:00:00.0000000Z",
+  "source_evidence": "bench/results/trispr-flow-v0.8.3-vulkan-runtime-20260610.manifest.json",
+  "files": [
+    {
+      "name": "whisper-cli.exe",
+      "length": 489472,
+      "sha256": "52920492410370d90b24498ec0cae760074635c05dbbdc8cb6b5b646bf90dcc6"
+    },
+    {
+      "name": "whisper-server.exe",
+      "length": 728576,
+      "sha256": "1e162ab46661a7711f294e4666a8872bdd31c8b8f7a2e157cb5ad938a02b1eb0"
+    },
+    {
+      "name": "whisper.dll",
+      "length": 484864,
+      "sha256": "40ba3a77e5bae0d94dc80774fd2bcb08cd7b7898dd840fed203d8821c550cdfa"
+    },
+    {
+      "name": "ggml.dll",
+      "length": 67072,
+      "sha256": "5d718c9431126e76fe02c82d1a66b0087c8a33677ee36ac178b3e5c009094ed0"
+    },
+    {
+      "name": "ggml-base.dll",
+      "length": 638464,
+      "sha256": "2eb79ad70a28e4fc6faf4ba3af2273b8d85a917a785f25e823f6deaec5995564"
+    },
+    {
+      "name": "ggml-cpu.dll",
+      "length": 782848,
+      "sha256": "78509586d19521e1d62c6591dd0201cd2209daa65ca843a972ad598e09b1b2ca"
+    },
+    {
+      "name": "ggml-vulkan.dll",
+      "length": 58025472,
+      "sha256": "9d980a02cc9d418664b7202bc0d750f645518446aa9536ddad9886bf14ffdae1"
+    }
+  ]
+}

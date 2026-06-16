@@ -95,6 +95,7 @@ if /i not "%VARIANT%"=="vulkan" if /i not "%VARIANT%"=="cuda-lite" if /i not "%V
 )
 
 set "CFG=src-tauri\tauri.conf.variant.%VARIANT%.json"
+set "VULKAN_MANIFEST=src-tauri\runtime-manifests\vulkan-v0.8.4-hotfix.json"
 echo   - variant=%VARIANT%
 
 node scripts\generate-tauri-variant-config.mjs --variant %VARIANT% --out %CFG%
@@ -108,6 +109,15 @@ if not "!ERRORLEVEL!"=="0" (
     echo ERROR: Whisper runtime validation failed for variant %VARIANT%.
     del /q "%CFG%" >nul 2>&1
     exit /b 1
+)
+
+if /i "%VARIANT%"=="vulkan" (
+    node scripts\validate-runtime-manifest.mjs --manifest "!VULKAN_MANIFEST!" --root "src-tauri\bin\vulkan" --label "repo-vulkan"
+    if not "!ERRORLEVEL!"=="0" (
+        echo ERROR: Vulkan runtime manifest validation failed for variant %VARIANT%.
+        del /q "%CFG%" >nul 2>&1
+        exit /b 1
+    )
 )
 
 REM --- FFmpeg + Piper only bundled in cuda-complete (offline installer) ---
@@ -184,6 +194,14 @@ move "%SOURCE%" "installers\!TARGET_NAME!" >nul
 if not "!ERRORLEVEL!"=="0" (
     echo ERROR: Failed to move variant installer: !TARGET_NAME!
     exit /b 1
+)
+
+if /i "%VARIANT%"=="vulkan" (
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "scripts\windows\validate-installed-installer.ps1" -InstallerPath "installers\!TARGET_NAME!" -ManifestPath "!VULKAN_MANIFEST!"
+    if not "!ERRORLEVEL!"=="0" (
+        echo ERROR: Installed installer validation failed for !TARGET_NAME!.
+        exit /b 1
+    )
 )
 
 echo     OK -^> installers\!TARGET_NAME!

@@ -3,7 +3,7 @@
  *
  * Learns from what the user explicitly corrects: the diff between `pasted`
  * (refinement output pasted into the input field) and `submitted` (what the
- * user actually sends with Enter). Substitutions that repeat 3× are promoted
+ * user actually sends with Enter). Substitutions that repeat 2× are promoted
  * to `postproc_custom_vocab` (find-replace before the next Whisper/LLM pass)
  * and to `vocab_terms` (Whisper hint + LLM refinement context).
  *
@@ -15,7 +15,10 @@ import type { EditSubstitution } from "./types";
 import { settings } from "./state";
 import { persistSettings } from "./settings-persist";
 
-export const PROMOTION_THRESHOLD = 3;
+// 2, not 3: real-world data (6 weeks of usage) showed that requiring the
+// exact same correction three times means practically nothing ever promotes —
+// 40+ pending pairs, none past count 2.
+export const PROMOTION_THRESHOLD = 2;
 
 // ---------------------------------------------------------------------------
 // Word-level diff
@@ -240,11 +243,21 @@ export function ingestEditDelta(pasted: string, submitted: string): void {
   const promoted: Array<[string, string]> = [];
 
   for (const { from, to } of pairs) {
-    const existing = list.find((s) => s.from === from && s.to === to);
+    // Case-insensitive match so casing variants of the same correction
+    // ("Gamma→Gemma" vs "gamma→gemma") share one counter instead of each
+    // stalling at count 1 forever.
+    const fromLower = from.toLowerCase();
+    const toLower = to.toLowerCase();
+    const existing = list.find(
+      (s) => s.from.toLowerCase() === fromLower && s.to.toLowerCase() === toLower,
+    );
     if (existing) {
       existing.count += 1;
       existing.last_seen_ms = now;
       if (existing.count >= PROMOTION_THRESHOLD) {
+        // Promote with the freshest casing (the pair just observed), but
+        // remember the stored entry's casing too so the pending-list filter
+        // below can find and remove it.
         promoted.push([from, to]);
       }
     } else {
@@ -253,7 +266,12 @@ export function ingestEditDelta(pasted: string, submitted: string): void {
   }
 
   settings.edit_substitutions = list.filter(
-    (s) => !promoted.some(([f, t]) => s.from === f && s.to === t),
+    (s) =>
+      !promoted.some(
+        ([f, t]) =>
+          s.from.toLowerCase() === f.toLowerCase() &&
+          s.to.toLowerCase() === t.toLowerCase(),
+      ),
   );
 
   if (promoted.length > 0) {

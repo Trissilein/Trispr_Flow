@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-06-14
+
+### Added
+
+- **Architecture audit brief** (`docs/AUDIT-BRIEF.md`) (#25, #26): Self-contained, four-dimension audit brief plus a Target Architecture section (§1b) defining the lean-core / on-demand-module direction. Deferred execution.
+
+### Changed
+
+- **GPU-load hysteresis gate** (#24): `gpu_busy` atomic populated by `update_gpu_busy_gate()` inside `get_gpu_stats`. Refinement is bypassed when GPU compute is under contention (≥80% for ~4s) and re-enabled after ~6s below threshold. No extra polling thread — rides the existing 2s `get_gpu_stats` poll.
+- **Windows release workflow fail-closed behavior**: Vulkan release builds no longer hydrate Vulkan from a previous published installer by default. CI requires an explicit trusted Vulkan runtime archive URL and SHA256 when building Vulkan installers, then runs installed-installer validation before upload.
+
+### Fixed
+
+- **Vulkan-only installer payload trust**: v0.8.4 replaces the broken v0.8.3 Vulkan-only release asset path. The release build now validates the intended Vulkan runtime payload against a tracked SHA256 manifest before packaging and validates the installed Vulkan payload from the built installer before the artifact can be treated as releasable.
+- **AMD Vulkan hotfix packaging**: The Vulkan-only installer path now requires `whisper-cli.exe`, `whisper-server.exe`, and the Vulkan GGML DLL set that match the verified hotfix payload. This prevents stale release-hydrated binaries from silently replacing the known-good AMD Vulkan runtime.
+- **Vocabulary auto-learn promotion** (#28): Lowered `PROMOTION_THRESHOLD` from 3 to 2 (six weeks of real usage showed nothing ever promoted at 3), made the substitution counter case-insensitive so casing variants share one counter, and guarded `renderVocabulary()` against the settings-roundtrip that wiped a half-filled row on blur.
+
+## [0.8.3] - 2026-06-12
+
 ### Added
 
 - **Installable GDD module package foundation**: Added the first bundled GDD module package path with manifest validation, required asset checks, registry install-state derivation, runtime command gating, installer resource entries, and a Modules Hub install action.
@@ -26,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Release-gate evidence refreshed**: The Block A local gate evidence now reflects the current state: build/tests, Rust lib tests, TTS baseline gating, and strict benchmark linkage are green. `local_custom` Piper and `qwen3_tts` remain warning-only provider follow-ups.
 - **`cargo test --lib` loader crash resolved**: `src-tauri/build.rs` now emits `/DELAYLOAD:comctl32.dll` and links `delayimp` for MSVC targets. Moves `comctl32.dll` from hard PE imports to delay imports, preventing `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139) at process startup. Root cause: `comctl32` v5.82 (`System32`) does not export `TaskDialogIndirect`; the test binary has no application manifest to activate the SxS v6 context that the production binary gets from `tauri-winres`. Since tests never call `TaskDialogIndirect`, delay-loading avoids the resolution entirely. `--no-run` workaround removed from `test:smoke` (both `package.json` and `scripts/release-qa.mjs`). Current local verification passes `cargo test --manifest-path src-tauri/Cargo.toml --lib`.
 - **Vite dynamic-import chunk warnings**: `vocab-auto-learn.ts` was dynamically importing `settings.ts` (which it already statically imported), and `settings.ts` was dynamically importing `vocab-auto-learn.ts`. Both modules are always in the same chunk via `main.ts`; the dynamic imports achieved no code-splitting and triggered Vite `(!) dynamic import will not move module into another chunk` warnings. Converted to static imports on both sides.
+- **Release runtime bootstrap via seed asset** (#23): On version migration the runtime is bootstrapped from a seed release asset, resolving the CUDA 12→13 transition for fresh installs.
+- **Ollama readiness correctness** (#20): Corrected the AI-refinement readiness check so refinement only fires once the model is genuinely loaded.
+- **GPU stats command**: Added `get_gpu_stats` with NVIDIA + AMD/DXGI fallback and whisper/refine VRAM split reporting.
+- **OllamaModelResolution port**: Ported model resolution + stale-model repair with tests.
+- **Module setup health**: Finished and classified the optional module setup-health UI.
+
+## [0.8.2] - 2026-05-14
+
+### Fixed
+
+- **CUDA runtime DLLs bundled**: Bundle the CUDA 12 runtime DLLs that `ggml-cuda.dll` actually requires, fixing silent CUDA failures on clean machines.
+- **Whisper CUDA runtime + ASR language controls**: Repaired the Whisper CUDA runtime path and the ASR language hint/pinning controls.
 
 ## [0.8.1] - 2026-05-05
 

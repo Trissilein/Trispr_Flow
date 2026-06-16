@@ -1,3 +1,4 @@
+pub mod delivery;
 pub mod health;
 pub mod lifecycle;
 pub mod lifecycle_coordinator;

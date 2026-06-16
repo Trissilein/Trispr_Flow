@@ -6,6 +6,23 @@ use std::path::{Component, Path, PathBuf};
 pub const MODULE_MANIFEST_FILE: &str = "trispr-module.json";
 const SUPPORTED_SCHEMA_VERSION: u16 = 1;
 
+/// Module package kind.
+///
+/// - `assets` (default): metadata + asset package for a host-known capability
+///   (the original install-by-unpack model, e.g. GDD). `host_capability` must
+///   match `id` and be a known host capability.
+/// - `runtime`: external binaries/assets the host resolves and calls (e.g. a
+///   downloaded FFmpeg or whisper runtime). Requires `entrypoint`.
+/// - `sidecar`: a self-contained executable that owns capability logic and is
+///   spawned as a managed child process. Requires `entrypoint`.
+pub const KIND_ASSETS: &str = "assets";
+pub const KIND_RUNTIME: &str = "runtime";
+pub const KIND_SIDECAR: &str = "sidecar";
+
+fn default_kind() -> String {
+    KIND_ASSETS.to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ModulePackageManifest {
@@ -13,7 +30,15 @@ pub struct ModulePackageManifest {
     pub id: String,
     pub name: String,
     pub version: String,
+    /// Package kind: "assets" | "runtime" | "sidecar". Defaults to "assets" so
+    /// existing host-capability packages (GDD) parse unchanged.
+    pub kind: String,
+    /// Only meaningful for "assets" packages — the host capability this package
+    /// backs. For runtime/sidecar packages this may be empty.
     pub host_capability: String,
+    /// Relative path (inside the package) to the runtime binary or sidecar
+    /// executable. Required for "runtime"/"sidecar" kinds, ignored for "assets".
+    pub entrypoint: Option<String>,
     pub required_assets: Vec<ModulePackageAsset>,
     pub sub_capabilities: Vec<ModulePackageSubCapability>,
     pub executable_hooks: Vec<ModulePackageExecutableHook>,
@@ -26,7 +51,9 @@ impl Default for ModulePackageManifest {
             id: String::new(),
             name: String::new(),
             version: String::new(),
+            kind: default_kind(),
             host_capability: String::new(),
+            entrypoint: None,
             required_assets: Vec::new(),
             sub_capabilities: Vec::new(),
             executable_hooks: Vec::new(),
@@ -308,7 +335,6 @@ fn validate_manifest(package_dir: &Path, manifest: &ModulePackageManifest) -> Re
     require_non_empty("module id", &manifest.id)?;
     require_non_empty("module name", &manifest.name)?;
     require_non_empty("module version", &manifest.version)?;
-    require_non_empty("host capability", &manifest.host_capability)?;
 
     if manifest.schema_version != SUPPORTED_SCHEMA_VERSION {
         return Err(format!(
@@ -321,25 +347,58 @@ fn validate_manifest(package_dir: &Path, manifest: &ModulePackageManifest) -> Re
         return Err(format!("Unknown module id '{}'.", manifest.id));
     }
 
-    if !known_host_capability(&manifest.host_capability) {
-        return Err(format!(
-            "Unknown host capability '{}'.",
-            manifest.host_capability
-        ));
-    }
-
-    if manifest.id != manifest.host_capability {
-        return Err(format!(
-            "Module id '{}' must match host capability '{}' for the first package model.",
-            manifest.id, manifest.host_capability
-        ));
-    }
-
+    // Arbitrary executable hooks are never allowed — capability code travels as a
+    // declared `entrypoint` (validated below for runtime/sidecar), not as a hook.
     if !manifest.executable_hooks.is_empty() {
         return Err(format!(
-            "Module '{}' declares executable hooks, which are not supported by the first package model.",
+            "Module '{}' declares executable hooks, which are not supported.",
             manifest.id
         ));
+    }
+
+    match manifest.kind.as_str() {
+        KIND_ASSETS => {
+            require_non_empty("host capability", &manifest.host_capability)?;
+            if !known_host_capability(&manifest.host_capability) {
+                return Err(format!(
+                    "Unknown host capability '{}'.",
+                    manifest.host_capability
+                ));
+            }
+            if manifest.id != manifest.host_capability {
+                return Err(format!(
+                    "Module id '{}' must match host capability '{}' for an assets package.",
+                    manifest.id, manifest.host_capability
+                ));
+            }
+        }
+        KIND_RUNTIME | KIND_SIDECAR => {
+            let entrypoint = manifest.entrypoint.as_deref().unwrap_or("").trim();
+            if entrypoint.is_empty() {
+                return Err(format!(
+                    "Module '{}' is kind '{}' but declares no entrypoint.",
+                    manifest.id, manifest.kind
+                ));
+            }
+            if !is_safe_relative_path(entrypoint) {
+                return Err(format!(
+                    "Module '{}' entrypoint must be a safe relative path inside the package.",
+                    manifest.id
+                ));
+            }
+            if !package_dir.join(entrypoint).is_file() {
+                return Err(format!(
+                    "Module '{}' entrypoint '{}' is missing.",
+                    manifest.id, entrypoint
+                ));
+            }
+        }
+        other => {
+            return Err(format!(
+                "Module '{}' uses unsupported kind '{}'.",
+                manifest.id, other
+            ));
+        }
     }
 
     for asset in &manifest.required_assets {
@@ -536,6 +595,51 @@ mod tests {
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].error.contains("missing file"));
         let _ = fs::remove_dir_all(modules_dir);
+    }
+
+    fn write_runtime_package(test_name: &str, with_entrypoint: bool) -> PathBuf {
+        // "analysis" is a known registry id, so known_module_id passes and we
+        // exercise the runtime-kind branch rather than the assets branch.
+        let package_dir = unique_package_dir(test_name);
+        fs::create_dir_all(package_dir.join("bin")).expect("create bin dir");
+        fs::write(package_dir.join("bin/tool.exe"), b"MZ").expect("write entrypoint");
+        let entrypoint_line = if with_entrypoint {
+            "\n  \"entrypoint\": \"bin/tool.exe\","
+        } else {
+            ""
+        };
+        fs::write(
+            package_dir.join(MODULE_MANIFEST_FILE),
+            format!(
+                r#"{{
+  "schema_version": 1,
+  "id": "analysis",
+  "name": "Analysis Runtime",
+  "version": "0.1.0",
+  "kind": "runtime",{entrypoint_line}
+  "host_capability": ""
+}}"#
+            ),
+        )
+        .expect("write manifest");
+        package_dir
+    }
+
+    #[test]
+    fn accepts_runtime_package_with_entrypoint() {
+        let package_dir = write_runtime_package("runtime-ok", true);
+        let package = scan_package_dir(&package_dir).expect("valid runtime package");
+        assert_eq!(package.manifest.kind, "runtime");
+        assert_eq!(package.manifest.entrypoint.as_deref(), Some("bin/tool.exe"));
+        let _ = fs::remove_dir_all(package_dir);
+    }
+
+    #[test]
+    fn rejects_runtime_package_without_entrypoint() {
+        let package_dir = write_runtime_package("runtime-no-entry", false);
+        let error = scan_package_dir(&package_dir).expect_err("missing entrypoint should fail");
+        assert!(error.contains("no entrypoint"));
+        let _ = fs::remove_dir_all(package_dir);
     }
 
     #[test]

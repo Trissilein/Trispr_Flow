@@ -1689,6 +1689,39 @@ fn install_bundled_module_package(
     module_package::install_package_from_dir(&source_dir, &modules_dir)
 }
 
+/// List modules published in the on-demand module index, annotated with local
+/// install state. Network call → run off the main thread.
+#[tauri::command]
+async fn list_available_modules(
+    app: AppHandle,
+) -> Result<Vec<crate::modules::delivery::AvailableModule>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::modules::delivery::list_available(&app))
+        .await
+        .map_err(|error| format!("list_available_modules task failed: {error}"))?
+}
+
+/// Download, verify, unpack and install (or update) a module by id from the
+/// module index. Streams progress via the `module:download-progress` event.
+#[tauri::command]
+async fn download_module(
+    app: AppHandle,
+    module_id: String,
+) -> Result<module_package::ModulePackageInstallResult, String> {
+    let module_id = canonicalize_module_id(&module_id).to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::modules::delivery::download_and_install(&app, &module_id)
+    })
+    .await
+    .map_err(|error| format!("download_module task failed: {error}"))?
+}
+
+/// Remove an installed on-demand module from disk. Idempotent.
+#[tauri::command]
+async fn uninstall_module(app: AppHandle, module_id: String) -> Result<(), String> {
+    let module_id = canonicalize_module_id(&module_id).to_string();
+    crate::modules::delivery::uninstall(&app, &module_id)
+}
+
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
     capability_enabled(settings, RuntimeCapability::AiRefinement)
         && settings.ai_fallback.provider == "ollama"
@@ -4593,6 +4626,9 @@ pub fn run() {
             disable_module,
             get_module_health,
             check_module_updates,
+            list_available_modules,
+            download_module,
+            uninstall_module,
             agent_list_supported_actions,
             agent_parse_command,
             agent_compose_unknown_reply,

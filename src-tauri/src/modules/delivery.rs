@@ -231,7 +231,14 @@ pub fn download_and_install(
     let _ = fs::remove_dir_all(&unpack_dir);
 
     // --- download ---
-    emit_progress(app, module_id, "downloading", "Starting download…", Some(0), entry.size_opt());
+    emit_progress(
+        app,
+        module_id,
+        "downloading",
+        "Starting download…",
+        Some(0),
+        entry.size_opt(),
+    );
     let response = http_agent()
         .get(&entry.asset_url)
         .set("User-Agent", USER_AGENT)
@@ -260,7 +267,14 @@ pub fn download_and_install(
         downloaded += read as u64;
         if downloaded - last_emit >= 1_048_576 {
             last_emit = downloaded;
-            emit_progress(app, module_id, "downloading", "Downloading…", Some(downloaded), total);
+            emit_progress(
+                app,
+                module_id,
+                "downloading",
+                "Downloading…",
+                Some(downloaded),
+                total,
+            );
         }
     }
     drop(out);

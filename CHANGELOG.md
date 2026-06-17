@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Module delivery backbone** (lean-core groundwork): new `modules/delivery.rs` discovers on-demand modules from a stable `modules-index.json` published in the repo's GitHub Releases, downloads + SHA256-verifies the package zip, unpacks it (path-traversal-safe), and installs it via the existing staged/atomic `install_package_from_dir`. New Tauri commands `list_available_modules`, `download_module`, `uninstall_module`; download streams a `module:download-progress` event; updates work via the same download path (version compared with a tolerant `major.minor.patch` parser). The package manifest gained a `kind` field (`assets` default, plus `runtime`/`sidecar`) and an `entrypoint`, validated per kind — existing GDD `assets` packages are unaffected.
+- **Generic module sidecar launcher** (`modules/runtime.rs`): `spawn_module_sidecar` / `terminate_module_sidecar` / `terminate_all_module_sidecars` wrap the existing `spawn_managed_child` pattern for dynamically-installed sidecar modules. `AppState` gains a `module_sidecars` map (keyed by module id) so handles survive across commands. An optional `SidecarHttpHealth` config drives the same readiness-poll as `ping_whisper_server`. All running sidecars are cleaned up on app exit via `cleanup_managed_processes`.
 
 ## [0.8.4] - 2026-06-14
 

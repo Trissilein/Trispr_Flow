@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "opus",
+  "name": "Opus Export",
+  "version": "0.1.0",
+  "kind": "sidecar",
+  "host_capability": "",
+  "entrypoint": "bin/trispr-opus.exe",
+  "required_assets": [
+    { "id": "ffmpeg", "path": "bin/ffmpeg/ffmpeg.exe", "kind": "file" }
+  ],
+  "sub_capabilities": [],
+  "executable_hooks": []
+}

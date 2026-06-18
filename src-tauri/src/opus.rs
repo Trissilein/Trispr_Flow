@@ -1,15 +1,22 @@
-// OPUS audio encoding via FFmpeg
-// Converts WAV/PCM audio to OPUS format for efficient storage and transmission
+// OPUS audio export — thin client over the `trispr-opus` module sidecar.
+//
+// All FFmpeg/libopus invocation now lives in the `trispr-opus` sidecar shipped
+// inside the on-demand `opus` module package (see `module-sidecars/opus/`). The
+// core no longer knows how to find or drive FFmpeg; it resolves the installed
+// sidecar binary, hands it file paths, and parses its JSON result. When the
+// module is not installed, callers treat opus export as a no-op.
 
-use serde::Serialize;
-use std::fs;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tauri::AppHandle;
-use tracing::{error, info, warn};
+use tracing::warn;
 
-/// Result of OPUS encoding operation
-#[derive(Serialize, Clone)]
+/// Module id of the opus export sidecar package (`modules/opus/`).
+pub const OPUS_MODULE_ID: &str = "opus";
+
+/// Result of an OPUS encoding operation (returned by the sidecar as JSON).
+#[derive(Serialize, Deserialize, Clone)]
 pub struct OpusEncodeResult {
     pub output_path: String,
     pub input_size_bytes: u64,
@@ -18,7 +25,14 @@ pub struct OpusEncodeResult {
     pub duration_ms: u64,
 }
 
-/// OPUS encoder configuration
+/// Result of probing the sidecar for FFmpeg/libopus availability.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OpusProbeResult {
+    pub available: bool,
+    pub version: String,
+}
+
+/// OPUS encoder configuration handed to the sidecar.
 #[derive(Clone)]
 pub struct OpusEncoderConfig {
     pub bitrate_kbps: u32,
@@ -29,7 +43,7 @@ pub struct OpusEncoderConfig {
     pub application: OpusApplication,
 }
 
-/// OPUS application mode
+/// OPUS application mode.
 #[derive(Clone)]
 pub enum OpusApplication {
     Voip,
@@ -56,260 +70,123 @@ impl OpusApplication {
     }
 }
 
-fn ffmpeg_name() -> &'static str {
+/// Relative path of the sidecar binary inside the installed module package.
+fn entrypoint_rel() -> &'static str {
     if cfg!(windows) {
-        "ffmpeg.exe"
+        "bin/trispr-opus.exe"
     } else {
-        "ffmpeg"
+        "bin/trispr-opus"
     }
 }
 
-fn ffmpeg_supports_libopus(ffmpeg_path: &Path) -> bool {
-    let mut probe = Command::new(ffmpeg_path);
-    probe
-        .arg("-hide_banner")
-        .arg("-h")
-        .arg("encoder=libopus")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        probe.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-
-    let output = match probe.output() {
-        Ok(output) => output,
-        Err(err) => {
-            warn!(
-                "Failed to probe FFmpeg encoder support at {}: {}",
-                ffmpeg_path.display(),
-                err
-            );
-            return false;
-        }
-    };
-
-    if !output.status.success() {
-        return false;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    stdout.contains("Encoder libopus") || stderr.contains("Encoder libopus")
+/// Resolve the installed opus sidecar binary via an `AppHandle`, or `None` if
+/// the `opus` module is not installed.
+pub fn resolve_sidecar(app: &AppHandle) -> Option<PathBuf> {
+    let bin = crate::modules::runtime::resolve_module_binary(app, OPUS_MODULE_ID, entrypoint_rel());
+    bin.exists().then_some(bin)
 }
 
-fn find_local_ffmpeg() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    let ffmpeg = ffmpeg_name();
-
-    #[cfg(target_os = "windows")]
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            candidates.push(exe_dir.join("resources").join("ffmpeg").join(ffmpeg));
-        }
-    }
-
-    // Cargo builds resolve this to <repo>/src-tauri, useful for local dev.
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("bin")
-            .join("ffmpeg")
-            .join(ffmpeg),
-    );
-
-    // Also support invoking from repo root or src-tauri working directories.
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(
-            cwd.join("src-tauri")
-                .join("bin")
-                .join("ffmpeg")
-                .join(ffmpeg),
-        );
-        candidates.push(cwd.join("bin").join("ffmpeg").join(ffmpeg));
-    }
-
-    for candidate in candidates {
-        if candidate.exists() {
-            return Some(candidate.canonicalize().unwrap_or(candidate));
-        }
-    }
-
-    None
+/// Resolve the installed opus sidecar binary from a known modules directory.
+/// For callers without an `AppHandle` (e.g. the session manager singleton).
+pub fn resolve_sidecar_in(modules_dir: &Path) -> Option<PathBuf> {
+    let bin = modules_dir.join(OPUS_MODULE_ID).join(entrypoint_rel());
+    bin.exists().then_some(bin)
 }
 
-/// Find FFmpeg executable
-pub fn find_ffmpeg() -> Result<PathBuf, String> {
-    if let Some(local_ffmpeg) = find_local_ffmpeg() {
-        info!("Using local/bundled FFmpeg: {:?}", local_ffmpeg);
-        return Ok(local_ffmpeg);
-    }
-
-    // Try system FFmpeg
-    let ffmpeg_name = ffmpeg_name();
-
-    which::which(ffmpeg_name).map_err(|_| {
-        format!(
-            "FFmpeg not found. Install FFmpeg (with libopus) or place {} in resources/ffmpeg/ or src-tauri/bin/ffmpeg/.",
-            ffmpeg_name
-        )
-    })
-}
-
-/// Find FFmpeg and ensure libopus encoder support is available.
-pub fn find_ffmpeg_for_opus() -> Result<PathBuf, String> {
-    let ffmpeg_path = find_ffmpeg()?;
-    if ffmpeg_supports_libopus(&ffmpeg_path) {
-        Ok(ffmpeg_path)
-    } else {
-        Err(format!(
-            "FFmpeg found at '{}' but encoder 'libopus' is unavailable.",
-            ffmpeg_path.display()
-        ))
-    }
-}
-
-/// Encode WAV file to OPUS format
-pub fn encode_wav_to_opus(
-    input_path: &Path,
-    output_path: &Path,
-    config: &OpusEncoderConfig,
-) -> Result<OpusEncodeResult, String> {
-    let start_time = std::time::Instant::now();
-
-    // Validate input file exists
-    if !input_path.exists() {
-        return Err(format!("Input file does not exist: {:?}", input_path));
-    }
-
-    let input_size = fs::metadata(input_path)
-        .map_err(|e| format!("Failed to get input file size: {}", e))?
-        .len();
-
-    info!(
-        "Encoding {} ({} bytes) to OPUS...",
-        input_path.display(),
-        input_size
-    );
-
-    // Find FFmpeg
-    let ffmpeg_path = find_ffmpeg_for_opus()?;
-
-    // Build FFmpeg command
-    let mut cmd = Command::new(&ffmpeg_path);
-
-    // Hide console window on Windows (prevents focus steal during paste)
+fn no_window(cmd: &mut Command) {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
+    let _ = cmd;
+}
 
-    cmd.arg("-i")
-        .arg(input_path)
-        .arg("-y")
-        .arg("-c:a")
-        .arg("libopus")
-        .arg("-b:a")
-        .arg(format!("{}k", config.bitrate_kbps))
-        .arg("-vbr")
-        .arg(if config.vbr_enabled { "on" } else { "off" })
-        .arg("-compression_level")
-        .arg(config.compression_level.to_string())
-        .arg("-application")
-        .arg(config.application.as_str())
-        .arg("-ar")
+/// Encode a WAV file to OPUS by invoking the sidecar `encode` subcommand.
+pub fn encode_with_sidecar(
+    sidecar: &Path,
+    input: &Path,
+    output: &Path,
+    config: &OpusEncoderConfig,
+) -> Result<OpusEncodeResult, String> {
+    let mut cmd = Command::new(sidecar);
+    no_window(&mut cmd);
+    cmd.arg("encode")
+        .arg("--input")
+        .arg(input)
+        .arg("--output")
+        .arg(output)
+        .arg("--bitrate")
+        .arg(config.bitrate_kbps.to_string())
+        .arg("--sample-rate")
         .arg(config.sample_rate.to_string())
-        .arg("-ac")
+        .arg("--channels")
         .arg(config.channels.to_string())
-        .arg("-frame_duration")
-        .arg("20")
-        .arg(output_path)
-        .arg("-loglevel")
-        .arg("error")
+        .arg("--compression")
+        .arg(config.compression_level.to_string())
+        .arg("--vbr")
+        .arg(if config.vbr_enabled { "on" } else { "off" })
+        .arg("--application")
+        .arg(config.application.as_str())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    // Execute FFmpeg
-    let output = cmd
+    let out = cmd
         .output()
-        .map_err(|e| format!("Failed to execute FFmpeg: {}", e))?;
-
-    // Check exit code
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        error!("FFmpeg failed: {}", stderr);
-        return Err(format!("FFmpeg encoding failed: {}", stderr));
+        .map_err(|e| format!("Failed to run opus sidecar: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("opus sidecar encode failed: {stderr}"));
     }
-
-    // Validate output file exists
-    if !output_path.exists() {
-        return Err(format!("Output file was not created: {:?}", output_path));
-    }
-
-    let output_size = fs::metadata(output_path)
-        .map_err(|e| format!("Failed to get output file size: {}", e))?
-        .len();
-
-    let compression_ratio = output_size as f32 / input_size as f32;
-    let duration_ms = start_time.elapsed().as_millis() as u64;
-
-    info!(
-        "OPUS encoding complete: {} bytes → {} bytes ({:.1}% reduction) in {} ms",
-        input_size,
-        output_size,
-        (1.0 - compression_ratio) * 100.0,
-        duration_ms
-    );
-
-    Ok(OpusEncodeResult {
-        output_path: output_path.to_string_lossy().to_string(),
-        input_size_bytes: input_size,
-        output_size_bytes: output_size,
-        compression_ratio,
-        duration_ms,
-    })
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str::<OpusEncodeResult>(stdout.trim())
+        .map_err(|e| format!("Failed to parse opus sidecar output: {e}; raw: {stdout}"))
 }
 
-/// Encode WAV file to OPUS with default settings
-pub fn encode_wav_to_opus_default(
-    input_path: &Path,
-    output_path: &Path,
-) -> Result<OpusEncodeResult, String> {
-    encode_wav_to_opus(input_path, output_path, &OpusEncoderConfig::default())
-}
-
-/// Check if FFmpeg is available
-pub fn check_ffmpeg_available() -> bool {
-    find_ffmpeg_for_opus().is_ok()
-}
-
-/// Get FFmpeg version string
-pub fn get_ffmpeg_version() -> Result<String, String> {
-    let ffmpeg_path = find_ffmpeg()?;
-
-    let mut version_cmd = Command::new(&ffmpeg_path);
-    version_cmd.arg("-version");
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        version_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+/// Merge a list of OPUS files into one via the sidecar `concat` subcommand.
+/// `list` is the concat manifest path; `cwd` (if set) is the working directory
+/// FFmpeg resolves relative entries against.
+pub fn concat_with_sidecar(
+    sidecar: &Path,
+    list: &Path,
+    output: &Path,
+    cwd: Option<&Path>,
+) -> Result<(), String> {
+    let mut cmd = Command::new(sidecar);
+    no_window(&mut cmd);
+    cmd.arg("concat")
+        .arg("--list")
+        .arg(list)
+        .arg("--output")
+        .arg(output);
+    if let Some(dir) = cwd {
+        cmd.arg("--cwd").arg(dir);
     }
+    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
 
-    let output = version_cmd
+    let out = cmd
         .output()
-        .map_err(|e| format!("Failed to run FFmpeg: {}", e))?;
+        .map_err(|e| format!("Failed to run opus sidecar: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("opus sidecar concat failed: {stderr}"));
+    }
+    Ok(())
+}
 
-    let version_output = String::from_utf8_lossy(&output.stdout);
-    let first_line = version_output
-        .lines()
-        .next()
-        .unwrap_or("Unknown version")
-        .to_string();
-
-    Ok(first_line)
+/// Probe the sidecar for FFmpeg/libopus availability + version.
+pub fn probe_with_sidecar(sidecar: &Path) -> Result<OpusProbeResult, String> {
+    let mut cmd = Command::new(sidecar);
+    no_window(&mut cmd);
+    cmd.arg("probe")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let out = cmd
+        .output()
+        .map_err(|e| format!("Failed to run opus sidecar: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str::<OpusProbeResult>(stdout.trim())
+        .map_err(|e| format!("Failed to parse opus sidecar probe: {e}; raw: {stdout}"))
 }
 
 #[tauri::command]
@@ -319,26 +196,81 @@ pub(crate) fn encode_to_opus(
     output_path: String,
     bitrate_kbps: Option<u32>,
 ) -> Result<OpusEncodeResult, String> {
-    let allowed_root = crate::paths::resolve_base_dir(&app);
+    let sidecar =
+        resolve_sidecar(&app).ok_or_else(|| "The opus module is not installed.".to_string())?;
 
+    let allowed_root = crate::paths::resolve_base_dir(&app);
     let input = crate::paths::validate_path_within(&input_path, &allowed_root)?;
     let output = crate::paths::validate_path_within(&output_path, &allowed_root)?;
 
+    let mut config = OpusEncoderConfig::default();
     if let Some(bitrate) = bitrate_kbps {
-        let mut config = OpusEncoderConfig::default();
         config.bitrate_kbps = bitrate;
-        encode_wav_to_opus(&input, &output, &config)
-    } else {
-        encode_wav_to_opus_default(&input, &output)
+    }
+    encode_with_sidecar(&sidecar, &input, &output, &config)
+}
+
+#[tauri::command]
+pub(crate) fn check_ffmpeg(app: AppHandle) -> Result<bool, String> {
+    match resolve_sidecar(&app) {
+        Some(sidecar) => Ok(probe_with_sidecar(&sidecar)
+            .map(|p| p.available)
+            .unwrap_or(false)),
+        None => Ok(false),
     }
 }
 
 #[tauri::command]
-pub(crate) fn check_ffmpeg() -> Result<bool, String> {
-    Ok(check_ffmpeg_available())
+pub(crate) fn get_ffmpeg_version_info(app: AppHandle) -> Result<String, String> {
+    let sidecar =
+        resolve_sidecar(&app).ok_or_else(|| "The opus module is not installed.".to_string())?;
+    let probe = probe_with_sidecar(&sidecar)?;
+    if probe.version.is_empty() {
+        warn!("opus sidecar reported an empty FFmpeg version string");
+    }
+    Ok(probe.version)
 }
 
-#[tauri::command]
-pub(crate) fn get_ffmpeg_version_info() -> Result<String, String> {
-    get_ffmpeg_version()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn parses_sidecar_encode_json() {
+        // Contract with `module-sidecars/opus` `encode` output.
+        let raw = r#"{"output_path":"C:\\rec\\a.opus","input_size_bytes":64078,"output_size_bytes":18223,"compression_ratio":0.284388,"duration_ms":37}"#;
+        let result: OpusEncodeResult = serde_json::from_str(raw).expect("encode json parses");
+        assert_eq!(result.output_path, "C:\\rec\\a.opus");
+        assert_eq!(result.input_size_bytes, 64078);
+        assert_eq!(result.output_size_bytes, 18223);
+        assert!((result.compression_ratio - 0.284388).abs() < 1e-5);
+        assert_eq!(result.duration_ms, 37);
+    }
+
+    #[test]
+    fn parses_sidecar_probe_json() {
+        let raw = r#"{"available":true,"version":"ffmpeg version 7.1"}"#;
+        let probe: OpusProbeResult = serde_json::from_str(raw).expect("probe json parses");
+        assert!(probe.available);
+        assert_eq!(probe.version, "ffmpeg version 7.1");
+    }
+
+    #[test]
+    fn resolve_sidecar_in_returns_none_when_absent() {
+        let dir = std::env::temp_dir().join("trispr_opus_resolve_absent");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(resolve_sidecar_in(&dir).is_none());
+    }
+
+    #[test]
+    fn resolve_sidecar_in_finds_installed_binary() {
+        let dir = std::env::temp_dir().join("trispr_opus_resolve_present");
+        let bin = dir.join(OPUS_MODULE_ID).join(entrypoint_rel());
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        fs::write(&bin, b"stub").unwrap();
+        assert_eq!(resolve_sidecar_in(&dir), Some(bin));
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

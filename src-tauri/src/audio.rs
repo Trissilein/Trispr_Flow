@@ -2354,7 +2354,8 @@ fn run_toggle_processor(
 
     if auto_save {
         let recordings_dir = crate::paths::resolve_recordings_dir(&app_handle);
-        crate::session_manager::init(recordings_dir);
+        let modules_dir = crate::paths::resolve_modules_dir(&app_handle);
+        crate::session_manager::init(recordings_dir, modules_dir);
     }
 
     loop {
@@ -3087,7 +3088,9 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         // Save recording as OPUS for optional later processing/export.
         // Only save if duration > 10 seconds (avoid short dictations)
         if duration_ms >= 10_000 {
-            if let Ok(opus_path) = crate::save_recording_opus(&app_handle, &samples, "mic", None) {
+            if let Ok(Some(opus_path)) =
+                crate::save_recording_opus(&app_handle, &samples, "mic", None)
+            {
                 let state_ref = app_handle.state::<crate::state::AppState>();
                 *state_ref
                     .last_mic_recording_path

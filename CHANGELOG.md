@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Opus export is now a thin client over the `trispr-opus` sidecar** (`opus.rs`): the core no longer finds or drives FFmpeg directly. `save_recording_opus` (mic PTT) and `session_manager` (continuous chunk dump + merge) resolve the installed `opus` module's sidecar and call it; FFmpeg invocation has left the core's `.rs` code entirely. When the module is **not installed**, opus export is a silent no-op — `save_recording_opus` returns `Ok(None)`, chunk flush/merge skip, and `check_ffmpeg` reports `false` — matching the existing opt-in (default-off) export semantics. The `opus` module's sidecar is resolved per flush/finalize, so installing it mid-session takes effect without an app restart. `hound` stays in core (still used for WAV writing here and for playback in `multimodal_io`/`tts_benchmark`).
+- **Modules Hub redesigned as grouped rows**: The flat grid of fixed-height module cards is replaced with compact list rows grouped into sections — Active / Installed · inactive / Available to add / Core · always on — each with a count. Module description/usage moved to a name tooltip; the per-card "Ready" filler is gone, feedback now shows only when there is something actionable. Behavior (install/enable/disable/configure/health) is unchanged. Dead `.module-card*` styles removed.
 
 ## [0.8.4] - 2026-06-14
 

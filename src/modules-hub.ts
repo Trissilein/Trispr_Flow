@@ -362,6 +362,83 @@ function cardActions(moduleInfo: ModuleDescriptor): string {
     <button class="hotkey-record-btn" data-module-action="updates" data-module-id="${moduleInfo.id}">Check updates</button>`;
 }
 
+type ModuleGroupKey = "active" | "installed" | "available" | "core";
+
+const MODULE_GROUP_ORDER: ModuleGroupKey[] = ["active", "installed", "available", "core"];
+
+const MODULE_GROUP_LABEL: Record<ModuleGroupKey, string> = {
+  active: "Active",
+  installed: "Installed · inactive",
+  available: "Available to add",
+  core: "Core · always on",
+};
+
+function moduleGroupKey(moduleInfo: ModuleDescriptor): ModuleGroupKey {
+  if (moduleInfo.core) return "core";
+  if (moduleInfo.state === "active") return "active";
+  if (moduleInfo.state === "not_installed") return "available";
+  return "installed"; // installed, enabled, or error — present but not running
+}
+
+function renderModuleRow(moduleInfo: ModuleDescriptor): string {
+  const summary = `Deps ${moduleInfo.dependencies.length} · Perms ${moduleInfo.permissions.length}`;
+  const summaryTitle = escapeHtml(`Dependencies: ${moduleInfo.dependencies.join(", ") || "none"}\nPermissions: ${moduleInfo.permissions.join(", ") || "none"}`);
+  const guide = moduleGuide(moduleInfo.id);
+  const scopeHint = moduleScopeHint(moduleInfo.id);
+  const descText = scopeHint ? `${guide.description} ${guide.usage} ${scopeHint}` : `${guide.description} ${guide.usage}`;
+  const health = moduleCardHealth(moduleInfo);
+  const healthIsSetupWarning = health
+    ? ["needs_setup", "fallback_active", "local_warning", "degraded"].includes(health.state)
+    : false;
+  const missing = missingConsents(moduleInfo);
+  const consentMessage = consentFeedback(moduleInfo, missing);
+  const feedbackParts: string[] = [];
+  if (consentMessage) {
+    feedbackParts.push(consentMessage);
+  }
+  if (moduleInfo.last_error) {
+    feedbackParts.push(moduleInfo.last_error);
+  }
+  // Only surface feedback when there is something actionable; "Ready" was noise.
+  const feedbackText = feedbackParts.join(" · ");
+  const consentDetails = missing
+    .map((permission) => {
+      const copy = permissionCopy(permission);
+      return `${copy.label}: ${copy.detail}`;
+    })
+    .join("\n");
+  const feedbackTitle = escapeHtml([feedbackParts.join("\n"), consentDetails].filter(Boolean).join("\n"));
+  const feedbackClass = moduleInfo.last_error && !healthIsSetupWarning
+    ? "module-row-feedback is-error"
+    : consentMessage
+      ? "module-row-feedback is-warning"
+      : "module-row-feedback is-ok";
+  const feedback = feedbackText
+    ? `<span class="${feedbackClass}" title="${feedbackTitle}">${escapeHtml(feedbackText)}</span>`
+    : "";
+  const launch = moduleInfo.id === "gdd"
+    ? `<button class="ghost-btn" data-module-action="launch-gdd" data-module-id="gdd">Open GDD Flow</button>`
+    : moduleInfo.id === "analysis"
+      ? `<button class="ghost-btn" data-module-action="launch-analysis" data-module-id="analysis">Open Analysis Flow</button>`
+      : moduleInfo.core
+        ? ""
+        : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}">Configure</button>`;
+
+  return `<div class="module-row" data-module-card="${moduleInfo.id}" data-module-state="${moduleStateKey(moduleInfo)}">
+        <div class="module-row-main">
+          <div class="module-row-title">
+            <span class="model-name" title="${escapeHtml(descText)}">${escapeHtml(moduleInfo.name)}</span>
+            <span class="${moduleStatusClass(moduleInfo)}">${moduleStatusLabel(moduleInfo)}</span>
+          </div>
+          <div class="module-row-meta">
+            <span class="model-meta" title="${summaryTitle}">ID: <code>${escapeHtml(moduleInfo.id)}</code> · v${escapeHtml(moduleInfo.version)} · ${summary}</span>
+            ${feedback}
+          </div>
+        </div>
+        <div class="module-row-actions">${cardActions(moduleInfo)} ${launch}</div>
+      </div>`;
+}
+
 function renderModulesList(modules: ModuleDescriptor[]): void {
   if (!dom.modulesList) return;
   if (modules.length === 0) {
@@ -369,67 +446,31 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
     return;
   }
 
-  dom.modulesList.innerHTML = modules
-    .map((moduleInfo) => {
-      const summary = `Deps ${moduleInfo.dependencies.length} · Perms ${moduleInfo.permissions.length}`;
-      const summaryTitle = escapeHtml(`Dependencies: ${moduleInfo.dependencies.join(", ") || "none"}\nPermissions: ${moduleInfo.permissions.join(", ") || "none"}`);
-      const guide = moduleGuide(moduleInfo.id);
-      const health = moduleCardHealth(moduleInfo);
-      const healthIsSetupWarning = health
-        ? ["needs_setup", "fallback_active", "local_warning", "degraded"].includes(health.state)
-        : false;
-      const missing = missingConsents(moduleInfo);
-      const scopeHint = moduleScopeHint(moduleInfo.id);
-      const consentMessage = consentFeedback(moduleInfo, missing);
-      const feedbackParts: string[] = [];
-      if (consentMessage) {
-        feedbackParts.push(consentMessage);
-      }
-      if (moduleInfo.last_error) {
-        feedbackParts.push(moduleInfo.last_error);
-      }
-      const feedbackText = feedbackParts.length ? feedbackParts.join(" · ") : "Ready";
-      const consentDetails = missing
-        .map((permission) => {
-          const copy = permissionCopy(permission);
-          return `${copy.label}: ${copy.detail}`;
-        })
-        .join("\n");
-      const feedbackTitle = escapeHtml([feedbackParts.join("\n"), consentDetails].filter(Boolean).join("\n"));
-      const feedbackClass = moduleInfo.last_error && !healthIsSetupWarning
-        ? "module-card-feedback is-error"
-        : consentMessage
-          ? "module-card-feedback is-warning"
-          : "module-card-feedback is-ok";
-      const launch = moduleInfo.id === "gdd"
-        ? `<button class="ghost-btn" data-module-action="launch-gdd" data-module-id="gdd">Open GDD Flow</button>`
-        : moduleInfo.id === "analysis"
-          ? `<button class="ghost-btn" data-module-action="launch-analysis" data-module-id="analysis">Open Analysis Flow</button>`
-          : moduleInfo.core
-            ? ""
-            : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}">Configure</button>`;
+  const grouped = new Map<ModuleGroupKey, ModuleDescriptor[]>();
+  for (const moduleInfo of modules) {
+    const key = moduleGroupKey(moduleInfo);
+    const bucket = grouped.get(key);
+    if (bucket) {
+      bucket.push(moduleInfo);
+    } else {
+      grouped.set(key, [moduleInfo]);
+    }
+  }
 
-      return `<article class="module-card model-item" data-module-card="${moduleInfo.id}" data-module-state="${moduleStateKey(moduleInfo)}">
-        <div class="module-card-header model-header">
-          <div>
-            <div class="model-name">${moduleInfo.name}</div>
-            <div class="model-meta">ID: <code>${moduleInfo.id}</code> · v${moduleInfo.version}</div>
-          </div>
-          <span class="${moduleStatusClass(moduleInfo)}">${moduleStatusLabel(moduleInfo)}</span>
-        </div>
-        <div class="model-meta" title="${summaryTitle}">${summary}</div>
-        <div class="module-card-desc">${escapeHtml(guide.description)}</div>
-        <div class="module-card-usage">${escapeHtml(scopeHint ? `${guide.usage} ${scopeHint}` : guide.usage)}</div>
-        <div class="${feedbackClass}" title="${feedbackTitle}">${feedbackText}</div>
-        <div class="module-card-actions model-actions">${cardActions(moduleInfo)} ${launch}</div>
-      </article>`;
-    })
+  dom.modulesList.innerHTML = MODULE_GROUP_ORDER.map((key) => {
+    const bucket = grouped.get(key);
+    if (!bucket || bucket.length === 0) return "";
+    const rows = [...bucket]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(renderModuleRow)
+      .join("\n");
+    return `<section class="modules-group" data-module-group="${key}">
+        <h3 class="modules-group-label">${MODULE_GROUP_LABEL[key]} <span class="modules-group-count">${bucket.length}</span></h3>
+        <div class="modules-group-body">${rows}</div>
+      </section>`;
+  })
+    .filter(Boolean)
     .join("\n");
-}
-
-function sortModules(modules: ModuleDescriptor[]): ModuleDescriptor[] {
-  const order: Record<string, number> = { core: 0, active: 1, inactive: 2, unavailable: 3 };
-  return [...modules].sort((a, b) => (order[moduleStateKey(a)] ?? 3) - (order[moduleStateKey(b)] ?? 3));
 }
 
 async function refreshModuleState(): Promise<void> {
@@ -443,7 +484,7 @@ async function refreshModuleState(): Promise<void> {
     moduleHealthSnapshot = new Map();
   }
   moduleSnapshot = modules;
-  renderModulesList(sortModules(modules));
+  renderModulesList(modules);
   syncWorkflowAgentConsoleState();
   syncVoiceOutputConsoleState();
   if (dom.modulesStatus) {

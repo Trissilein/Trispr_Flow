@@ -212,15 +212,14 @@ pub fn manifests() -> Vec<ModuleManifest> {
             assistant_actions: &[],
         },
         ModuleManifest {
-            // Phase 1a: installed_by_default=true because hyperframes+Node are
-            // present in the dev environment. Phase 1b will flip this to false
-            // and introduce an explicit install flow via video_install_sidecar.
+            // Phase 1b: installed_by_default=false — hyperframes is now a
+            // downloadable runtime module (module-sidecars/video_gen/).
             id: "output_video_generation",
             name: "Video Generation",
             version: "0.1.0",
             bundled: false,
             core_always_on: false,
-            installed_by_default: true,
+            installed_by_default: false,
             restart_required_on_enable: false,
             dependencies: &[],
             permissions: &["filesystem_exports"],

@@ -1,0 +1,21 @@
+[package]
+name = "trispr-opus"
+version = "0.1.0"
+description = "Trispr Flow opus export sidecar — wraps FFmpeg/libopus. Shipped as an on-demand module, not part of the core binary."
+authors = ["trist"]
+edition = "2021"
+
+# Intentionally dependency-free: this is a tiny one-shot CLI that wraps the
+# bundled FFmpeg binary. Keeping it on std-only makes the shipped exe small,
+# which is the whole point of moving opus export out of the core binary.
+
+[[bin]]
+name = "trispr-opus"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Module delivery backbone** (lean-core groundwork): new `modules/delivery.rs` discovers on-demand modules from a stable `modules-index.json` published in the repo's GitHub Releases, downloads + SHA256-verifies the package zip, unpacks it (path-traversal-safe), and installs it via the existing staged/atomic `install_package_from_dir`. New Tauri commands `list_available_modules`, `download_module`, `uninstall_module`; download streams a `module:download-progress` event; updates work via the same download path (version compared with a tolerant `major.minor.patch` parser). The package manifest gained a `kind` field (`assets` default, plus `runtime`/`sidecar`) and an `entrypoint`, validated per kind — existing GDD `assets` packages are unaffected.
+- **`trispr-opus` export sidecar** (`module-sidecars/opus/`): the first code-out module — a standalone ~250 KB CLI that wraps FFmpeg/libopus (`encode`, `concat`, `probe` subcommands), dependency-free (std only). It ships FFmpeg inside its module package so the ~84 MB FFmpeg payload can leave the lean core. Not part of the core build (no workspace membership); built and published separately as a module asset. FFmpeg arg set mirrors the core's previous inline invocation exactly. Core wiring to call it follows in a separate change.
 
 ## [0.8.4] - 2026-06-14
 

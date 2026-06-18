@@ -2642,12 +2642,21 @@ fn get_gpu_stats(state: State<'_, AppState>) -> GpuStats {
     stats
 }
 
+/// Save raw mic/system samples as an `.opus` file via the opus module sidecar.
+/// Returns `Ok(None)` when the opus module is not installed — export is an
+/// opt-in capability, so its absence is a silent no-op, not an error.
 pub(crate) fn save_recording_opus(
     app: &AppHandle,
     samples: &[i16],
     source: &str,
     session_name: Option<&str>,
-) -> Result<String, String> {
+) -> Result<Option<String>, String> {
+    // Opus export lives in an on-demand module. If it isn't installed, skip
+    // entirely — don't even write the intermediate WAV.
+    let Some(sidecar) = opus::resolve_sidecar(app) else {
+        return Ok(None);
+    };
+
     // Generate human-readable filename
     let now = chrono::Local::now();
     let duration_s = samples.len() as f64 / 16000.0; // 16kHz sample rate
@@ -2716,17 +2725,22 @@ pub(crate) fn save_recording_opus(
         .finalize()
         .map_err(|e| format!("Failed to finalize WAV: {}", e))?;
 
-    // Convert WAV to OPUS
+    // Convert WAV to OPUS via the sidecar
     let opus_filename = format!("{}.opus", base_filename);
     let opus_path = recordings_dir.join(&opus_filename);
 
-    opus::encode_wav_to_opus_default(&wav_path, &opus_path)
-        .map_err(|e| format!("Failed to encode OPUS: {}", e))?;
+    let encode_result = opus::encode_with_sidecar(
+        &sidecar,
+        &wav_path,
+        &opus_path,
+        &opus::OpusEncoderConfig::default(),
+    );
 
-    // Delete WAV file (we only need OPUS)
+    // Delete WAV file (we only need OPUS), regardless of encode outcome.
     let _ = std::fs::remove_file(&wav_path);
 
-    Ok(opus_path.to_string_lossy().to_string())
+    encode_result.map_err(|e| format!("Failed to encode OPUS: {}", e))?;
+    Ok(Some(opus_path.to_string_lossy().to_string()))
 }
 
 fn sanitize_session_name(name: &str) -> String {
@@ -4036,7 +4050,8 @@ pub fn run() {
             // Initialise session manager with the recordings directory
             {
                 let recordings_dir = paths::resolve_recordings_dir(app.handle());
-                session_manager::init(recordings_dir.clone());
+                let modules_dir = paths::resolve_modules_dir(app.handle());
+                session_manager::init(recordings_dir.clone(), modules_dir);
 
                 // Surface any incomplete sessions from a previous crash as a warning
                 let incomplete = session_manager::scan_incomplete(&recordings_dir);

@@ -21,7 +21,7 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tauri::AppHandle;
 use tracing::{error, info, warn};
@@ -95,8 +95,8 @@ impl ActiveSession {
     }
 
     /// Flush a batch of i16 samples as a new OPUS chunk.
-    /// Writes temp WAV → FFmpeg encode → deletes WAV, appends ChunkMeta.
-    pub fn flush_chunk(&mut self, samples: &[i16]) -> Result<ChunkMeta, String> {
+    /// Writes temp WAV → sidecar encode → deletes WAV, appends ChunkMeta.
+    pub fn flush_chunk(&mut self, samples: &[i16], sidecar: &Path) -> Result<ChunkMeta, String> {
         let duration_s = samples.len() as u64 / 16_000;
         let offset_s = self.total_duration_s();
         let index = self.chunks.len() + 1;
@@ -108,36 +108,17 @@ impl ActiveSession {
         // Write WAV
         write_wav_i16(&wav_path, samples)?;
 
-        // Encode WAV → OPUS
-        let ffmpeg = crate::opus::find_ffmpeg_for_opus()
-            .map_err(|e| format!("FFmpeg unavailable for chunk encoding: {}", e))?;
-
-        let encode_ok = std::process::Command::new(&ffmpeg)
-            .args(&[
-                "-y",
-                "-i",
-                wav_path.to_str().unwrap_or(""),
-                "-c:a",
-                "libopus",
-                "-b:a",
-                "64k",
-                "-ar",
-                "16000",
-                "-ac",
-                "1",
-                opus_path.to_str().unwrap_or(""),
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        // Encode WAV → OPUS via the opus module sidecar (64 kbps, 16 kHz, mono).
+        let encode_result = crate::opus::encode_with_sidecar(
+            sidecar,
+            &wav_path,
+            &opus_path,
+            &crate::opus::OpusEncoderConfig::default(),
+        );
 
         let _ = fs::remove_file(&wav_path);
 
-        if !encode_ok {
-            return Err(format!("FFmpeg failed encoding chunk {}", index));
-        }
+        encode_result.map_err(|e| format!("Failed encoding chunk {}: {}", index, e))?;
 
         let meta = ChunkMeta {
             index,
@@ -157,7 +138,7 @@ impl ActiveSession {
     /// Merge all chunks into a single session.opus via FFmpeg concat.
     /// On success: renames temp dir → final dir, cleans up chunks.
     /// On failure: leaves temp dir intact for crash recovery.
-    pub fn finalize(self, recordings_dir: &PathBuf) -> Result<PathBuf, String> {
+    pub fn finalize(self, recordings_dir: &PathBuf, sidecar: &Path) -> Result<PathBuf, String> {
         if self.chunks.is_empty() {
             warn!(
                 "Session {} has no chunks, discarding temp dir",
@@ -189,37 +170,24 @@ impl ActiveSession {
             .map_err(|e| format!("Failed to create final session dir: {}", e))?;
         let final_opus = final_dir.join("session.opus");
 
-        let ffmpeg =
-            crate::opus::find_ffmpeg().map_err(|e| format!("FFmpeg not found for merge: {}", e))?;
-
         let ended_at = Local::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-        let merge_ok = std::process::Command::new(&ffmpeg)
-            .current_dir(&self.session_dir)
-            .args(&[
-                "-y",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                concat_path.to_str().unwrap_or("concat.txt"),
-                "-c",
-                "copy",
-                final_opus.to_str().unwrap_or("session.opus"),
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        // Merge chunks via the opus module sidecar (stream copy, FFmpeg concat).
+        // `concat.txt` holds entries relative to the session dir, so we run with
+        // that as the working directory.
+        let merge_result = crate::opus::concat_with_sidecar(
+            sidecar,
+            &concat_path,
+            &final_opus,
+            Some(&self.session_dir),
+        );
 
-        if !merge_ok {
+        if let Err(e) = merge_result {
             // Leave temp dir intact — user can retry or recover manually
             self.write_manifest("merge_failed", None, Some(&ended_at));
             return Err(format!(
-                "FFmpeg concat failed for session {}",
-                self.session_id
+                "Concat failed for session {}: {}",
+                self.session_id, e
             ));
         }
 
@@ -260,6 +228,7 @@ impl ActiveSession {
 pub struct SessionManager {
     active: HashMap<String, ActiveSession>,
     recordings_dir: Option<PathBuf>,
+    modules_dir: Option<PathBuf>,
 }
 
 impl SessionManager {
@@ -267,11 +236,24 @@ impl SessionManager {
         Self {
             active: HashMap::new(),
             recordings_dir: None,
+            modules_dir: None,
         }
     }
 
     pub fn set_recordings_dir(&mut self, dir: PathBuf) {
         self.recordings_dir = Some(dir);
+    }
+
+    pub fn set_modules_dir(&mut self, dir: PathBuf) {
+        self.modules_dir = Some(dir);
+    }
+
+    /// Resolve the installed opus sidecar, if any. Recomputed per call so a
+    /// module installed mid-session takes effect without an app restart.
+    fn opus_sidecar(&self) -> Option<PathBuf> {
+        self.modules_dir
+            .as_deref()
+            .and_then(crate::opus::resolve_sidecar_in)
     }
 
     /// Start a new session for the given audio source.
@@ -316,12 +298,17 @@ impl SessionManager {
     }
 
     /// Flush samples as a new chunk (auto-starts session if needed).
+    /// No-op when the opus module is not installed — continuous dump is an
+    /// opt-in capability that depends on the opus sidecar for encoding.
     pub fn flush_chunk(&mut self, samples: &[i16], source: &str) -> Result<(), String> {
+        let Some(sidecar) = self.opus_sidecar() else {
+            return Ok(());
+        };
         if !self.active.contains_key(source) {
             self.start_session(source, None)?;
         }
         if let Some(session) = self.active.get_mut(source) {
-            session.flush_chunk(samples)?;
+            session.flush_chunk(samples, &sidecar)?;
         }
         Ok(())
     }
@@ -329,7 +316,18 @@ impl SessionManager {
     /// Finalize one source-specific active session: merge → session.opus, cleanup temp dir.
     /// Returns the path to the merged file, or None if no session for this source was active.
     pub fn finalize_session_for(&mut self, source: &str) -> Result<Option<PathBuf>, String> {
+        let sidecar = self.opus_sidecar();
         let Some(session) = self.active.remove(source) else {
+            return Ok(None);
+        };
+
+        let Some(sidecar) = sidecar else {
+            // Opus module went away mid-session; leave the temp dir for manual
+            // recovery rather than erroring on shutdown.
+            warn!(
+                "Opus module not installed at finalize; leaving session {} chunks unmerged",
+                session.session_id
+            );
             return Ok(None);
         };
 
@@ -337,7 +335,7 @@ impl SessionManager {
             .recordings_dir
             .clone()
             .ok_or_else(|| "Recordings directory not configured".to_string())?;
-        match session.finalize(&recordings_dir) {
+        match session.finalize(&recordings_dir, &sidecar) {
             Ok(path) => Ok(Some(path)),
             Err(e) => Err(e),
         }
@@ -355,9 +353,12 @@ fn get() -> &'static Mutex<SessionManager> {
 }
 
 /// Call once at app startup (or when transcription mode is activated).
-pub fn init(recordings_dir: PathBuf) {
+/// `modules_dir` is where installed module packages live; it is used to resolve
+/// the opus export sidecar at flush/finalize time.
+pub fn init(recordings_dir: PathBuf, modules_dir: PathBuf) {
     if let Ok(mut mgr) = get().lock() {
         mgr.set_recordings_dir(recordings_dir);
+        mgr.set_modules_dir(modules_dir);
     }
 }
 

@@ -749,6 +749,7 @@ pub(crate) fn cleanup_managed_processes(app: &AppHandle, state: &AppState) {
         "managed Whisper-Server runtime",
         &state.managed_whisper_server_child,
     );
+    crate::modules::runtime::terminate_all_module_sidecars(state);
     crate::uiautomation_capture::shutdown(&state.enter_capture);
 }
 
@@ -3850,6 +3851,7 @@ pub fn run() {
                 last_system_recording_path: Mutex::new(None),
                 managed_ollama_child: Mutex::new(None),
                 managed_whisper_server_child: Mutex::new(None),
+                module_sidecars: crate::modules::runtime::default_sidecar_map(),
                 whisper_server_port: AtomicU16::new(crate::whisper_server::WHISPER_SERVER_PORT),
                 whisper_server_warmup_started: AtomicBool::new(false),
                 ollama_model_warm: AtomicBool::new(false),

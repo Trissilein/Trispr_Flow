@@ -164,6 +164,9 @@ pub struct WorkflowAgentSettings {
     pub activation_mode: String,
     pub trusted_action_allowlist: Vec<String>,
     pub expert_yolo_enabled: bool,
+    /// TTS provider used for agent replies. Empty string = inherit global VoiceOutputSettings.
+    /// Valid values: "local_custom" (Piper), "windows_native", "windows_natural", "qwen3_tts", ""
+    pub tts_provider: String,
 }
 
 impl Default for WorkflowAgentSettings {
@@ -224,6 +227,7 @@ impl Default for WorkflowAgentSettings {
             activation_mode: "hotkey_first".to_string(),
             trusted_action_allowlist: Vec::new(),
             expert_yolo_enabled: false,
+            tts_provider: "local_custom".to_string(),
         }
     }
 }
@@ -491,6 +495,12 @@ pub fn normalize_workflow_agent_settings(settings: &mut WorkflowAgentSettings) {
     for (intent, words) in defaults {
         settings.intent_keywords.entry(intent).or_insert(words);
     }
+    settings.tts_provider = match settings.tts_provider.trim() {
+        "local_custom" | "windows_native" | "windows_natural" | "qwen3_tts" => {
+            settings.tts_provider.trim().to_string()
+        }
+        _ => String::new(),
+    };
 }
 
 pub fn normalize_vision_input_settings(settings: &mut VisionInputSettings) {
@@ -605,6 +615,11 @@ pub struct VideoGenerationSettings {
     /// ("auto" = ~50% of CPU cores). Lowering this cuts CPU + RAM at the
     /// cost of slower renders. Each worker is roughly 250 MB RAM.
     pub render_workers: u32,
+    /// When true, call the configured AI provider to generate a typed scene
+    /// script (cover/body/image_focus/section/outro) before composing the
+    /// hyperframes project. Requires AI Refinement to be configured and enabled.
+    /// Falls back to Phase 1 static template if AI is unavailable.
+    pub narrative_mode: bool,
 }
 
 impl Default for VideoGenerationSettings {
@@ -622,6 +637,7 @@ impl Default for VideoGenerationSettings {
             gpu_encoding: false,
             render_quality: "standard".to_string(),
             render_workers: 0,
+            narrative_mode: false,
         }
     }
 }

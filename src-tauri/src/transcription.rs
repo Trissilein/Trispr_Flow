@@ -50,6 +50,7 @@ const TRANSCRIPTION_ACCEL_GPU: u8 = 2;
 static LAST_TRANSCRIPTION_ACCELERATOR: AtomicU8 = AtomicU8::new(TRANSCRIPTION_ACCEL_UNKNOWN);
 static LAST_TRANSCRIPTION_TIMING: OnceLock<Mutex<TranscriptionTimingSummary>> = OnceLock::new();
 static CUDA_BACKEND_UNSTABLE: AtomicBool = AtomicBool::new(false);
+static VULKAN_BACKEND_UNSTABLE: AtomicBool = AtomicBool::new(false);
 const CUDA_RUNTIME_REQUIRED_FILES: &[&str] = &[
     "whisper-cli.exe",
     "whisper.dll",
@@ -2182,6 +2183,10 @@ fn whisper_error_indicates_cuda_runtime_failure(message: &str) -> bool {
         || lowered.contains("cudart")
 }
 
+fn exit_indicates_illegal_instruction(message: &str) -> bool {
+    message.contains("exit=-1073741795")
+}
+
 fn effective_cli_backend_preference(settings: &Settings) -> String {
     if let Ok(value) = std::env::var("TRISPR_LOCAL_BACKEND") {
         let normalized = value.trim().to_ascii_lowercase();
@@ -2227,18 +2232,20 @@ fn resolve_whisper_server_path_for_exact_backend(backend: &str) -> Option<PathBu
 }
 
 fn gpu_backend_attempt_order(settings: &Settings) -> Vec<&'static str> {
+    let cuda_unstable = CUDA_BACKEND_UNSTABLE.load(Ordering::Relaxed);
+    let vulkan_unstable = VULKAN_BACKEND_UNSTABLE.load(Ordering::Relaxed);
     match effective_cli_backend_preference(settings).as_str() {
-        // Explicit Vulkan means "no hidden switch back to CUDA".
+        // Explicit Vulkan: if unstable, fall back to CUDA
+        "vulkan" if vulkan_unstable => vec!["cuda"],
         "vulkan" => vec!["vulkan"],
         "cuda" => vec!["cuda", "vulkan"],
-        // Auto/default: stable chain CUDA -> Vulkan.
-        _ => {
-            if CUDA_BACKEND_UNSTABLE.load(Ordering::Relaxed) {
-                vec!["vulkan", "cuda"]
-            } else {
-                vec!["cuda", "vulkan"]
-            }
-        }
+        // Auto/default: consider both unstable flags
+        _ => match (cuda_unstable, vulkan_unstable) {
+            (false, false) => vec!["cuda", "vulkan"],
+            (true, false) => vec!["vulkan", "cuda"],
+            (false, true) => vec!["cuda"],
+            (true, true) => vec!["cuda", "vulkan"], // both unstable: start fresh with CUDA
+        },
     }
 }
 
@@ -2728,6 +2735,10 @@ fn transcribe_local(
                 }
                 if backend == "cuda" && whisper_error_indicates_cuda_runtime_failure(&err) {
                     CUDA_BACKEND_UNSTABLE.store(true, Ordering::Relaxed);
+                }
+                if backend == "vulkan" && exit_indicates_illegal_instruction(&err) {
+                    VULKAN_BACKEND_UNSTABLE.store(true, Ordering::Relaxed);
+                    warn!("Vulkan backend crashed with STATUS_ILLEGAL_INSTRUCTION — marking as unstable");
                 }
                 errors.push(format!(
                     "GPU backend '{}' failed ('{}'): {}",

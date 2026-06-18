@@ -285,6 +285,63 @@ pub fn check_ffmpeg_available() -> bool {
     find_ffmpeg_for_opus().is_ok()
 }
 
+/// Probe whether NVENC hardware encoding is functional on this machine.
+///
+/// Runs a 1-frame synthetic encode via h264_nvenc. Fails fast (<1s) if the
+/// driver/hardware isn't present or if the NVENC SDK version is incompatible
+/// (e.g. Blackwell GPUs with older SDK returning EINVAL or INVALID_VERSION).
+/// Result is cached via OnceLock — only one FFmpeg spawn per process lifetime.
+pub fn probe_nvenc_available() -> bool {
+    use std::sync::OnceLock;
+    static RESULT: OnceLock<bool> = OnceLock::new();
+    *RESULT.get_or_init(|| {
+        let Ok(ffmpeg) = find_ffmpeg() else {
+            return false;
+        };
+        let mut cmd = Command::new(&ffmpeg);
+        cmd.args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=size=128x128:rate=1:duration=0.1",
+            "-c:v",
+            "h264_nvenc",
+            "-frames:v",
+            "1",
+            "-f",
+            "null",
+            "-",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+
+        match cmd.output() {
+            Ok(out) => {
+                if out.status.success() {
+                    true
+                } else {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    tracing::warn!("[nvenc-probe] h264_nvenc unavailable: {}", stderr.trim());
+                    false
+                }
+            }
+            Err(e) => {
+                tracing::warn!("[nvenc-probe] FFmpeg spawn failed: {}", e);
+                false
+            }
+        }
+    })
+}
+
 /// Get FFmpeg version string
 pub fn get_ffmpeg_version() -> Result<String, String> {
     let ffmpeg_path = find_ffmpeg()?;

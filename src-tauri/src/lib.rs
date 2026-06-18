@@ -15,6 +15,7 @@ mod hotkeys;
 mod models;
 mod modules;
 mod multimodal_io;
+mod narrative_composer;
 mod ollama_runtime;
 mod opus;
 mod overlay;
@@ -2304,6 +2305,10 @@ pub struct HardwareInfo {
     pub cuda_available: bool,
     pub driver_version: String,
     pub update_url: Option<String>,
+    /// Whether h264_nvenc is functional on this GPU. None = probe not run yet
+    /// (non-NVIDIA path). False = probe ran and failed (Blackwell SDK mismatch,
+    /// missing driver, etc.). True = NVENC encode succeeded.
+    pub nvenc_probe_ok: Option<bool>,
 }
 
 #[tauri::command]
@@ -2413,6 +2418,13 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
             "cpu".to_string()
         };
 
+        // NVENC probe only makes sense on NVIDIA hardware.
+        let nvenc_probe_ok = if gpu_name.to_lowercase().contains("nvidia") {
+            Some(crate::opus::probe_nvenc_available())
+        } else {
+            None
+        };
+
         Ok(HardwareInfo {
             gpu_name,
             gpu_vram,
@@ -2420,6 +2432,7 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
             cuda_available,
             driver_version,
             update_url,
+            nvenc_probe_ok,
         })
     }
 
@@ -2432,6 +2445,7 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
             cuda_available: false,
             driver_version: "N/A".to_string(),
             update_url: None,
+            nvenc_probe_ok: None,
         })
     }
 }

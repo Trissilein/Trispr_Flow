@@ -721,7 +721,7 @@ async function bootstrap() {
   initModulesHub();
   initGddFlow();
   initWorkflowAgentConsole();
-  initOnboardingWizard();
+  void initOnboardingWizard();
   initPipelineStatus();
   syncVoiceOutputConsoleState();
   void initVideoGenerationPanel();

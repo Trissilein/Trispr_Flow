@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "piper_tts",
+  "name": "Piper Local TTS",
+  "version": "2023.11.14-2",
+  "kind": "runtime",
+  "host_capability": "output_voice_tts",
+  "entrypoint": "bin/piper/piper.exe",
+  "required_assets": [
+    { "id": "onnxruntime",       "path": "bin/piper/onnxruntime.dll",                       "kind": "file" },
+    { "id": "onnxruntime_shared","path": "bin/piper/onnxruntime_providers_shared.dll",      "kind": "file" },
+    { "id": "piper_phonemize",   "path": "bin/piper/piper_phonemize.dll",                   "kind": "file" },
+    { "id": "espeak_ng",         "path": "bin/piper/espeak-ng.dll",                         "kind": "file" },
+    { "id": "ort_model",         "path": "bin/piper/libtashkeel_model.ort",                 "kind": "file" },
+    { "id": "espeak_data",       "path": "bin/piper/espeak-ng-data/",                       "kind": "directory" }
+  ],
+  "sub_capabilities": [],
+  "executable_hooks": []
+}

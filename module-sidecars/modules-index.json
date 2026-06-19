@@ -1,0 +1,35 @@
+{
+    "schema_version": 1,
+    "modules": [
+        {
+            "id": "opus",
+            "kind": "sidecar",
+            "name": "Opus Export",
+            "version": "0.1.0",
+            "asset_url": "https://github.com/Trissilein/Trispr_Flow/releases/download/modules-index/opus-0.1.0.zip",
+            "sha256": "e6d8d6b84d4acdb920551c1018cc9b0b4c15bcf777752cf647b04354a968ffd0",
+            "size": 31400576,
+            "min_app_version": "0.8.5"
+        },
+        {
+            "id": "piper_tts",
+            "kind": "runtime",
+            "name": "Piper Local TTS",
+            "version": "2023.11.14-2",
+            "asset_url": "https://github.com/Trissilein/Trispr_Flow/releases/download/modules-index/piper_tts-2023.11.14-2.zip",
+            "sha256": "210d19a3cc7499b851a9207aeccfb01f405a75214e480c44a1e46f69a4fcc94d",
+            "size": 139253198,
+            "min_app_version": "0.8.5"
+        },
+        {
+            "id": "output_video_generation",
+            "kind": "runtime",
+            "name": "Video Generation",
+            "version": "0.1.0",
+            "asset_url": "https://github.com/Trissilein/Trispr_Flow/releases/download/modules-index/output_video_generation-0.1.0.zip",
+            "sha256": "14b2e32fa5a21dcc579f1c0dcca8011d5bc4bd212b564edad207e927436059ab",
+            "size": 24438009,
+            "min_app_version": "0.8.5"
+        }
+    ]
+}

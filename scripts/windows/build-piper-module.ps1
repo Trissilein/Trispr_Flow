@@ -81,7 +81,7 @@ if ((Test-Path $voicesSrc) -and ((Get-ChildItem $voicesSrc -File).Count -gt 0)) 
     Write-Host "Bundling voices from $voicesSrc..." -ForegroundColor Cyan
     Copy-Item -Recurse $voicesSrc (Join-Path $binPiperDir "voices")
 } else {
-    Write-Host "No voices found in $voicesSrc — voices must be downloaded via the app." -ForegroundColor Yellow
+    Write-Host "No voices found in $voicesSrc - voices must be downloaded via the app." -ForegroundColor Yellow
     New-Item -ItemType Directory -Force -Path (Join-Path $binPiperDir "voices") | Out-Null
 }
 
@@ -127,4 +127,4 @@ Write-Host "  sha256  : $sha"
 Write-Host "  index   : $indexPath"
 Write-Host "  asset   : $assetUrl"
 Write-Host ""
-Write-Host "Publishing is manual — see docs/MODULE-PUBLISHING.md" -ForegroundColor Yellow
+Write-Host "Publishing is manual - see docs/MODULE-PUBLISHING.md" -ForegroundColor Yellow

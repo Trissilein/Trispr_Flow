@@ -104,4 +104,4 @@ Write-Host "  asset   : $assetUrl"
 Write-Host ""
 Write-Host "Note: Node.js is NOT bundled. Users need Node 22+ installed or must set" -ForegroundColor Yellow
 Write-Host "      settings.video_generation.node_binary_path." -ForegroundColor Yellow
-Write-Host "Publishing is manual — see docs/MODULE-PUBLISHING.md" -ForegroundColor Yellow
+Write-Host "Publishing is manual - see docs/MODULE-PUBLISHING.md" -ForegroundColor Yellow

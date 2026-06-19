@@ -104,4 +104,4 @@ Write-Host "  sha256  : $sha"
 Write-Host "  index   : $indexPath"
 Write-Host "  asset   : $assetUrl"
 Write-Host ""
-Write-Host "Publishing is manual — see docs/MODULE-PUBLISHING.md" -ForegroundColor Yellow
+Write-Host "Publishing is manual - see docs/MODULE-PUBLISHING.md" -ForegroundColor Yellow

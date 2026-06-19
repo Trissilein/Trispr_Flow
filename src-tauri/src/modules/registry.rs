@@ -245,6 +245,23 @@ pub fn manifests() -> Vec<ModuleManifest> {
             assistant_capable: false,
             assistant_actions: &[],
         },
+        ModuleManifest {
+            // Runtime module: piper.exe + DLLs + espeak data downloaded on demand.
+            // Core resolves the binary from the module install dir; graceful no-op
+            // when absent (speak_tts returns an error pointing to the Modules tab).
+            id: "piper_tts",
+            name: "Piper Local TTS",
+            version: "2023.11.14-2",
+            bundled: false,
+            core_always_on: false,
+            installed_by_default: false,
+            restart_required_on_enable: false,
+            dependencies: &[],
+            permissions: &["audio_output"],
+            surface: "shared",
+            assistant_capable: false,
+            assistant_actions: &[],
+        },
     ]
 }
 
@@ -549,5 +566,31 @@ mod tests {
             &HashSet::new(),
         )
         .is_empty());
+    }
+
+    #[test]
+    fn piper_tts_is_known_on_demand_module() {
+        // piper_tts must be in the registry so downloaded packages with id
+        // "piper_tts" pass `known_module_id` validation. On-demand: not
+        // bundled, not installed by default.
+        let manifest = find_manifest("piper_tts").expect("piper_tts manifest should exist");
+        assert!(!manifest.bundled);
+        assert!(!manifest.core_always_on);
+        assert!(!manifest.installed_by_default);
+
+        let settings = ModuleSettings::default();
+        let descriptor = modules_as_descriptors(&settings)
+            .into_iter()
+            .find(|module| module.id == "piper_tts")
+            .expect("piper_tts descriptor should exist");
+        assert_eq!(descriptor.state, "not_installed");
+        assert!(descriptor.toggleable);
+
+        let installed = HashSet::from(["piper_tts".to_string()]);
+        let descriptor = modules_as_descriptors_with_packages(&settings, &installed)
+            .into_iter()
+            .find(|module| module.id == "piper_tts")
+            .expect("piper_tts descriptor should exist");
+        assert_eq!(descriptor.state, "installed");
     }
 }

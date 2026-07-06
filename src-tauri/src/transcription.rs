@@ -2233,7 +2233,7 @@ fn resolve_whisper_server_path_for_exact_backend(backend: &str) -> Option<PathBu
 }
 
 fn gpu_backend_attempt_order(settings: &Settings) -> Vec<&'static str> {
-    let cuda_unstable   = CUDA_BACKEND_UNSTABLE.load(Ordering::Relaxed);
+    let cuda_unstable = CUDA_BACKEND_UNSTABLE.load(Ordering::Relaxed);
     let vulkan_unstable = VULKAN_BACKEND_UNSTABLE.load(Ordering::Relaxed);
     match effective_cli_backend_preference(settings).as_str() {
         // Explicit Vulkan: if unstable, fall back to CUDA
@@ -2243,10 +2243,10 @@ fn gpu_backend_attempt_order(settings: &Settings) -> Vec<&'static str> {
         // Auto/default: consider both unstable flags
         _ => match (cuda_unstable, vulkan_unstable) {
             (false, false) => vec!["cuda", "vulkan"],
-            (true,  false) => vec!["vulkan", "cuda"],
-            (false, true)  => vec!["cuda"],
-            (true,  true)  => vec!["cuda", "vulkan"], // both unstable: start fresh with CUDA
-        }
+            (true, false) => vec!["vulkan", "cuda"],
+            (false, true) => vec!["cuda"],
+            (true, true) => vec!["cuda", "vulkan"], // both unstable: start fresh with CUDA
+        },
     }
 }
 

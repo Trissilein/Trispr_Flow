@@ -79,10 +79,12 @@ function bindEvents(): void {
     }
   });
 
-  window.addEventListener("model:download-complete", (evt: any) => {
+  window.addEventListener("model:download-complete", () => {
     const progressDiv = document.getElementById("wizard-download-progress");
     const statusText = document.getElementById("wizard-download-status");
-    const downloadBtn = document.getElementById("wizard-download-model-btn");
+    const downloadBtn = document.getElementById(
+      "wizard-download-model-btn",
+    ) as HTMLButtonElement | null;
     if (progressDiv) progressDiv.style.display = "none";
     if (statusText) statusText.textContent = "Modell erfolgreich heruntergeladen!";
     if (downloadBtn) {

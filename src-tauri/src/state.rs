@@ -921,6 +921,7 @@ pub(crate) struct AppState {
     pub(crate) managed_ollama_child: Mutex<Option<std::process::Child>>,
     /// Handle to the managed Whisper-Server child process for cleanup on app exit.
     pub(crate) managed_whisper_server_child: Mutex<Option<std::process::Child>>,
+    pub(crate) module_sidecars: crate::modules::runtime::ModuleSidecarMap,
     /// Port for Whisper-Server HTTP API (default 8178).
     pub(crate) whisper_server_port: AtomicU16,
     pub(crate) whisper_server_warmup_started: AtomicBool,

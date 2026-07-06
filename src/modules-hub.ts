@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import * as dom from "./dom-refs";
 import { ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID, isAssistantCoreAvailable, setSettings, settings } from "./state";
 import { renderSettings } from "./settings";
@@ -14,6 +15,41 @@ import type { ModuleDescriptor, ModuleHealthStatus, ModuleUpdateInfo } from "./t
 let initialized = false;
 let moduleSnapshot: ModuleDescriptor[] = [];
 let moduleHealthSnapshot = new Map<string, ModuleHealthStatus>();
+
+/// An on-demand module discovered in the remote modules-index.json.
+interface AvailableModule {
+  id: string;
+  kind: string;
+  name: string;
+  version: string;
+  size: number;
+  installed: boolean;
+  installed_version: string | null;
+  update_available: boolean;
+}
+
+interface ModuleDownloadProgress {
+  module_id: string;
+  stage: string; // "downloading" | "verifying" | "installing" | "complete" | "error"
+  message: string;
+  downloaded: number | null;
+  total: number | null;
+  percent: number | null;
+}
+
+// Modules offered by the remote index, keyed by id. Empty when offline or the
+// index is unreachable — the Hub still renders the registry view.
+let availableSnapshot = new Map<string, AvailableModule>();
+// Modules with an in-flight download, keyed by id.
+let downloadProgress = new Map<string, ModuleDownloadProgress>();
+
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return "";
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+  if (mb >= 1) return `${Math.round(mb)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -349,17 +385,133 @@ function cardActions(moduleInfo: ModuleDescriptor): string {
   const canDisable = moduleInfo.toggleable && (moduleInfo.state === "active" || moduleInfo.state === "enabled");
   const canInstall = moduleInfo.toggleable && moduleInfo.bundled && moduleInfo.state === "not_installed";
 
-  const primary = canEnable
-    ? `<button class="hotkey-record-btn" data-module-action="enable" data-module-id="${moduleInfo.id}">Enable</button>`
-    : canDisable
-      ? `<button class="hotkey-record-btn" data-module-action="disable" data-module-id="${moduleInfo.id}">Disable</button>`
-      : canInstall
-        ? `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${moduleInfo.id}">Install</button>`
-        : `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${moduleInfo.id}" disabled>Install</button>`;
+  // On-demand module: present in the remote index, not bundled into the binary.
+  const available = availableSnapshot.get(moduleInfo.id);
+  const downloadable = !!available;
+  const progress = downloadProgress.get(moduleInfo.id);
+
+  const id = moduleInfo.id;
+  let primary: string;
+  if (progress) {
+    primary = `<button class="hotkey-record-btn" disabled>${escapeHtml(downloadStageLabel(progress))}</button>`;
+  } else if (canEnable) {
+    primary = `<button class="hotkey-record-btn" data-module-action="enable" data-module-id="${id}">Enable</button>`;
+  } else if (canDisable) {
+    primary = `<button class="hotkey-record-btn" data-module-action="disable" data-module-id="${id}">Disable</button>`;
+  } else if (moduleInfo.state === "not_installed" && downloadable) {
+    const sizeLabel = formatBytes(available!.size);
+    primary = `<button class="hotkey-record-btn" data-module-action="download" data-module-id="${id}">Download${sizeLabel ? ` (${sizeLabel})` : ""}</button>`;
+  } else if (canInstall) {
+    primary = `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${id}">Install</button>`;
+  } else {
+    primary = `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${id}" disabled>Install</button>`;
+  }
+
+  // Secondary affordances for installed on-demand modules.
+  const update = downloadable && available!.update_available && moduleInfo.state !== "not_installed" && !progress
+    ? `<button class="hotkey-record-btn" data-module-action="download" data-module-id="${id}">Update to v${escapeHtml(available!.version)}</button>`
+    : "";
+  const uninstall = downloadable && moduleInfo.state !== "not_installed" && !progress
+    ? `<button class="ghost-btn" data-module-action="uninstall" data-module-id="${id}">Uninstall</button>`
+    : "";
 
   return `${primary}
-    <button class="hotkey-record-btn" data-module-action="health" data-module-id="${moduleInfo.id}">Health</button>
-    <button class="hotkey-record-btn" data-module-action="updates" data-module-id="${moduleInfo.id}">Check updates</button>`;
+    ${update}
+    ${uninstall}
+    <button class="hotkey-record-btn" data-module-action="health" data-module-id="${id}">Health</button>
+    <button class="hotkey-record-btn" data-module-action="updates" data-module-id="${id}">Check updates</button>`;
+}
+
+function downloadStageLabel(progress: ModuleDownloadProgress): string {
+  switch (progress.stage) {
+    case "verifying":
+      return "Verifying…";
+    case "installing":
+      return "Installing…";
+    case "complete":
+      return "Done";
+    case "error":
+      return "Failed";
+    default:
+      return progress.percent != null ? `Downloading ${progress.percent}%` : "Downloading…";
+  }
+}
+
+type ModuleGroupKey = "active" | "installed" | "available" | "core";
+
+const MODULE_GROUP_ORDER: ModuleGroupKey[] = ["active", "installed", "available", "core"];
+
+const MODULE_GROUP_LABEL: Record<ModuleGroupKey, string> = {
+  active: "Active",
+  installed: "Installed · inactive",
+  available: "Available to add",
+  core: "Core · always on",
+};
+
+function moduleGroupKey(moduleInfo: ModuleDescriptor): ModuleGroupKey {
+  if (moduleInfo.core) return "core";
+  if (moduleInfo.state === "active") return "active";
+  if (moduleInfo.state === "not_installed") return "available";
+  return "installed"; // installed, enabled, or error — present but not running
+}
+
+function renderModuleRow(moduleInfo: ModuleDescriptor): string {
+  const summary = `Deps ${moduleInfo.dependencies.length} · Perms ${moduleInfo.permissions.length}`;
+  const summaryTitle = escapeHtml(`Dependencies: ${moduleInfo.dependencies.join(", ") || "none"}\nPermissions: ${moduleInfo.permissions.join(", ") || "none"}`);
+  const guide = moduleGuide(moduleInfo.id);
+  const scopeHint = moduleScopeHint(moduleInfo.id);
+  const descText = scopeHint ? `${guide.description} ${guide.usage} ${scopeHint}` : `${guide.description} ${guide.usage}`;
+  const health = moduleCardHealth(moduleInfo);
+  const healthIsSetupWarning = health
+    ? ["needs_setup", "fallback_active", "local_warning", "degraded"].includes(health.state)
+    : false;
+  const missing = missingConsents(moduleInfo);
+  const consentMessage = consentFeedback(moduleInfo, missing);
+  const feedbackParts: string[] = [];
+  if (consentMessage) {
+    feedbackParts.push(consentMessage);
+  }
+  if (moduleInfo.last_error) {
+    feedbackParts.push(moduleInfo.last_error);
+  }
+  // Only surface feedback when there is something actionable; "Ready" was noise.
+  const feedbackText = feedbackParts.join(" · ");
+  const consentDetails = missing
+    .map((permission) => {
+      const copy = permissionCopy(permission);
+      return `${copy.label}: ${copy.detail}`;
+    })
+    .join("\n");
+  const feedbackTitle = escapeHtml([feedbackParts.join("\n"), consentDetails].filter(Boolean).join("\n"));
+  const feedbackClass = moduleInfo.last_error && !healthIsSetupWarning
+    ? "module-row-feedback is-error"
+    : consentMessage
+      ? "module-row-feedback is-warning"
+      : "module-row-feedback is-ok";
+  const feedback = feedbackText
+    ? `<span class="${feedbackClass}" title="${feedbackTitle}">${escapeHtml(feedbackText)}</span>`
+    : "";
+  const launch = moduleInfo.id === "gdd"
+    ? `<button class="ghost-btn" data-module-action="launch-gdd" data-module-id="gdd">Open GDD Flow</button>`
+    : moduleInfo.id === "analysis"
+      ? `<button class="ghost-btn" data-module-action="launch-analysis" data-module-id="analysis">Open Analysis Flow</button>`
+      : moduleInfo.core
+        ? ""
+        : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}">Configure</button>`;
+
+  return `<div class="module-row" data-module-card="${moduleInfo.id}" data-module-state="${moduleStateKey(moduleInfo)}">
+        <div class="module-row-main">
+          <div class="module-row-title">
+            <span class="model-name" title="${escapeHtml(descText)}">${escapeHtml(moduleInfo.name)}</span>
+            <span class="${moduleStatusClass(moduleInfo)}">${moduleStatusLabel(moduleInfo)}</span>
+          </div>
+          <div class="module-row-meta">
+            <span class="model-meta" title="${summaryTitle}">ID: <code>${escapeHtml(moduleInfo.id)}</code> · v${escapeHtml(moduleInfo.version)} · ${summary}</span>
+            ${feedback}
+          </div>
+        </div>
+        <div class="module-row-actions">${cardActions(moduleInfo)} ${launch}</div>
+      </div>`;
 }
 
 function renderModulesList(modules: ModuleDescriptor[]): void {
@@ -369,67 +521,31 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
     return;
   }
 
-  dom.modulesList.innerHTML = modules
-    .map((moduleInfo) => {
-      const summary = `Deps ${moduleInfo.dependencies.length} · Perms ${moduleInfo.permissions.length}`;
-      const summaryTitle = escapeHtml(`Dependencies: ${moduleInfo.dependencies.join(", ") || "none"}\nPermissions: ${moduleInfo.permissions.join(", ") || "none"}`);
-      const guide = moduleGuide(moduleInfo.id);
-      const health = moduleCardHealth(moduleInfo);
-      const healthIsSetupWarning = health
-        ? ["needs_setup", "fallback_active", "local_warning", "degraded"].includes(health.state)
-        : false;
-      const missing = missingConsents(moduleInfo);
-      const scopeHint = moduleScopeHint(moduleInfo.id);
-      const consentMessage = consentFeedback(moduleInfo, missing);
-      const feedbackParts: string[] = [];
-      if (consentMessage) {
-        feedbackParts.push(consentMessage);
-      }
-      if (moduleInfo.last_error) {
-        feedbackParts.push(moduleInfo.last_error);
-      }
-      const feedbackText = feedbackParts.length ? feedbackParts.join(" · ") : "Ready";
-      const consentDetails = missing
-        .map((permission) => {
-          const copy = permissionCopy(permission);
-          return `${copy.label}: ${copy.detail}`;
-        })
-        .join("\n");
-      const feedbackTitle = escapeHtml([feedbackParts.join("\n"), consentDetails].filter(Boolean).join("\n"));
-      const feedbackClass = moduleInfo.last_error && !healthIsSetupWarning
-        ? "module-card-feedback is-error"
-        : consentMessage
-          ? "module-card-feedback is-warning"
-          : "module-card-feedback is-ok";
-      const launch = moduleInfo.id === "gdd"
-        ? `<button class="ghost-btn" data-module-action="launch-gdd" data-module-id="gdd">Open GDD Flow</button>`
-        : moduleInfo.id === "analysis"
-          ? `<button class="ghost-btn" data-module-action="launch-analysis" data-module-id="analysis">Open Analysis Flow</button>`
-          : moduleInfo.core
-            ? ""
-            : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}">Configure</button>`;
+  const grouped = new Map<ModuleGroupKey, ModuleDescriptor[]>();
+  for (const moduleInfo of modules) {
+    const key = moduleGroupKey(moduleInfo);
+    const bucket = grouped.get(key);
+    if (bucket) {
+      bucket.push(moduleInfo);
+    } else {
+      grouped.set(key, [moduleInfo]);
+    }
+  }
 
-      return `<article class="module-card model-item" data-module-card="${moduleInfo.id}" data-module-state="${moduleStateKey(moduleInfo)}">
-        <div class="module-card-header model-header">
-          <div>
-            <div class="model-name">${moduleInfo.name}</div>
-            <div class="model-meta">ID: <code>${moduleInfo.id}</code> · v${moduleInfo.version}</div>
-          </div>
-          <span class="${moduleStatusClass(moduleInfo)}">${moduleStatusLabel(moduleInfo)}</span>
-        </div>
-        <div class="model-meta" title="${summaryTitle}">${summary}</div>
-        <div class="module-card-desc">${escapeHtml(guide.description)}</div>
-        <div class="module-card-usage">${escapeHtml(scopeHint ? `${guide.usage} ${scopeHint}` : guide.usage)}</div>
-        <div class="${feedbackClass}" title="${feedbackTitle}">${feedbackText}</div>
-        <div class="module-card-actions model-actions">${cardActions(moduleInfo)} ${launch}</div>
-      </article>`;
-    })
+  dom.modulesList.innerHTML = MODULE_GROUP_ORDER.map((key) => {
+    const bucket = grouped.get(key);
+    if (!bucket || bucket.length === 0) return "";
+    const rows = [...bucket]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(renderModuleRow)
+      .join("\n");
+    return `<section class="modules-group" data-module-group="${key}">
+        <h3 class="modules-group-label">${MODULE_GROUP_LABEL[key]} <span class="modules-group-count">${bucket.length}</span></h3>
+        <div class="modules-group-body">${rows}</div>
+      </section>`;
+  })
+    .filter(Boolean)
     .join("\n");
-}
-
-function sortModules(modules: ModuleDescriptor[]): ModuleDescriptor[] {
-  const order: Record<string, number> = { core: 0, active: 1, inactive: 2, unavailable: 3 };
-  return [...modules].sort((a, b) => (order[moduleStateKey(a)] ?? 3) - (order[moduleStateKey(b)] ?? 3));
 }
 
 async function refreshModuleState(): Promise<void> {
@@ -443,7 +559,7 @@ async function refreshModuleState(): Promise<void> {
     moduleHealthSnapshot = new Map();
   }
   moduleSnapshot = modules;
-  renderModulesList(sortModules(modules));
+  renderModulesList(modules);
   syncWorkflowAgentConsoleState();
   syncVoiceOutputConsoleState();
   if (dom.modulesStatus) {
@@ -453,6 +569,25 @@ async function refreshModuleState(): Promise<void> {
     dom.modulesStatus.textContent = pendingConsents > 0
       ? `${active}/${modules.length} active · ${pendingConsents} consent pending`
       : `${active}/${modules.length} active`;
+  }
+
+  // Annotate with remote index data (download size, updates) in the background
+  // so an unreachable index never blocks the registry view.
+  void refreshAvailableModules();
+}
+
+/// Fetch the remote module index and re-render so downloadable modules gain a
+/// Download/Update/Uninstall affordance. Best-effort: failures (offline,
+/// unreachable index) leave the registry view intact.
+async function refreshAvailableModules(): Promise<void> {
+  try {
+    const available = await invoke<AvailableModule[]>("list_available_modules");
+    availableSnapshot = new Map(
+      Array.isArray(available) ? available.map((entry) => [entry.id, entry]) : []
+    );
+    renderModulesList(moduleSnapshot);
+  } catch {
+    // Index unreachable — keep whatever we had; the registry view still works.
   }
 }
 
@@ -623,6 +758,68 @@ async function handleUpdates(moduleId: string): Promise<void> {
   }
 }
 
+async function handleDownload(moduleId: string): Promise<void> {
+  const moduleInfo = moduleSnapshot.find((candidate) => candidate.id === moduleId);
+  const name = moduleInfo?.name || moduleId;
+  // Seed an in-progress state so the row immediately shows feedback even before
+  // the first progress event arrives.
+  downloadProgress.set(moduleId, {
+    module_id: moduleId,
+    stage: "downloading",
+    message: "Starting…",
+    downloaded: 0,
+    total: null,
+    percent: 0,
+  });
+  renderModulesList(moduleSnapshot);
+  try {
+    await invoke("download_module", { moduleId });
+    downloadProgress.delete(moduleId);
+    await refreshModuleState();
+    showToast({
+      type: "success",
+      title: "Module installed",
+      message: `${name} downloaded and installed.`,
+      duration: 3600,
+    });
+  } catch (error) {
+    downloadProgress.delete(moduleId);
+    await refreshModuleState();
+    showToast({
+      type: "error",
+      title: "Download failed",
+      message: String(error),
+      duration: 5200,
+    });
+  }
+}
+
+async function handleUninstall(moduleId: string): Promise<void> {
+  const moduleInfo = moduleSnapshot.find((candidate) => candidate.id === moduleId);
+  const name = moduleInfo?.name || moduleId;
+  if (!window.confirm(`Uninstall ${name}? Its files will be removed; you can download it again later.`)) {
+    return;
+  }
+  try {
+    await invoke("uninstall_module", { moduleId });
+    await refreshModuleState();
+    showToast({
+      type: "success",
+      title: "Module uninstalled",
+      message: `${name} was removed.`,
+      duration: 3200,
+    });
+  } catch (error) {
+    showToast({
+      type: "error",
+      title: "Uninstall failed",
+      message: String(error),
+      duration: 5000,
+    });
+    await refreshModuleState();
+  }
+}
+
 function bindModulesEvents(): void {
   if (!dom.modulesList) return;
   dom.modulesList.addEventListener("click", (event) => {
@@ -639,6 +836,14 @@ function bindModulesEvents(): void {
     }
     if (action === "install") {
       void handleInstall(moduleId);
+      return;
+    }
+    if (action === "download") {
+      void handleDownload(moduleId);
+      return;
+    }
+    if (action === "uninstall") {
+      void handleUninstall(moduleId);
       return;
     }
     if (action === "disable") {
@@ -693,6 +898,23 @@ export function initModulesHub(): void {
   if (initialized) return;
   initialized = true;
   bindModulesEvents();
+  void listen<ModuleDownloadProgress>("module:download-progress", (event) => {
+    const p = event.payload;
+    if (!p || !p.module_id) return;
+    // Terminal stages are handled by the awaited invoke in handleDownload
+    // (toast + refresh); ignore them here to avoid a double refresh.
+    if (p.stage === "complete" || p.stage === "error") return;
+    downloadProgress.set(p.module_id, p);
+    // Targeted button update to avoid re-rendering the whole list each tick.
+    const row = dom.modulesList?.querySelector<HTMLElement>(`[data-module-card="${p.module_id}"]`);
+    const btn = row?.querySelector<HTMLButtonElement>(".module-row-actions button");
+    if (btn) {
+      btn.textContent = downloadStageLabel(p);
+      btn.disabled = true;
+    } else {
+      renderModulesList(moduleSnapshot);
+    }
+  });
   void refreshModuleState();
 }
 

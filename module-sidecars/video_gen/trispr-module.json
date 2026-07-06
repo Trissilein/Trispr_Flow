@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "output_video_generation",
+  "name": "Video Generation",
+  "version": "0.1.0",
+  "kind": "runtime",
+  "host_capability": "output_video_generation",
+  "entrypoint": "bin/hyperframes",
+  "required_assets": [
+    { "id": "hyperframes_pkg",   "path": "bin/hyperframes/package.json",                      "kind": "file" },
+    { "id": "hyperframes_lock",  "path": "bin/hyperframes/package-lock.json",                  "kind": "file" },
+    { "id": "hyperframes_mods",  "path": "bin/hyperframes/node_modules/",                      "kind": "directory" }
+  ],
+  "sub_capabilities": [],
+  "executable_hooks": []
+}

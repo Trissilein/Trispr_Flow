@@ -212,18 +212,51 @@ pub fn manifests() -> Vec<ModuleManifest> {
             assistant_actions: &[],
         },
         ModuleManifest {
-            // Phase 1a: installed_by_default=true because hyperframes+Node are
-            // present in the dev environment. Phase 1b will flip this to false
-            // and introduce an explicit install flow via video_install_sidecar.
+            // Phase 1b: installed_by_default=false — hyperframes is now a
+            // downloadable runtime module (module-sidecars/video_gen/).
             id: "output_video_generation",
             name: "Video Generation",
             version: "0.1.0",
             bundled: false,
             core_always_on: false,
-            installed_by_default: true,
+            installed_by_default: false,
             restart_required_on_enable: false,
             dependencies: &[],
             permissions: &["filesystem_exports"],
+            surface: "shared",
+            assistant_capable: false,
+            assistant_actions: &[],
+        },
+        ModuleManifest {
+            // Code-out module: the `trispr-opus` sidecar + bundled FFmpeg are
+            // downloaded on demand (not in the lean core). No restart needed —
+            // the session manager resolves the sidecar per flush/finalize.
+            id: "opus",
+            name: "Opus Export",
+            version: "0.1.0",
+            bundled: false,
+            core_always_on: false,
+            installed_by_default: false,
+            restart_required_on_enable: false,
+            dependencies: &[],
+            permissions: &[],
+            surface: "shared",
+            assistant_capable: false,
+            assistant_actions: &[],
+        },
+        ModuleManifest {
+            // Runtime module: piper.exe + DLLs + espeak data downloaded on demand.
+            // Core resolves the binary from the module install dir; graceful no-op
+            // when absent (speak_tts returns an error pointing to the Modules tab).
+            id: "piper_tts",
+            name: "Piper Local TTS",
+            version: "2023.11.14-2",
+            bundled: false,
+            core_always_on: false,
+            installed_by_default: false,
+            restart_required_on_enable: false,
+            dependencies: &[],
+            permissions: &["audio_output"],
             surface: "shared",
             assistant_capable: false,
             assistant_actions: &[],
@@ -403,6 +436,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn opus_is_known_on_demand_module() {
+        // The opus module must be in the registry so downloaded packages with
+        // id "opus" pass `known_module_id` validation. It is on-demand: not
+        // bundled, not installed by default.
+        let manifest = find_manifest("opus").expect("opus manifest should exist");
+        assert!(!manifest.bundled);
+        assert!(!manifest.core_always_on);
+        assert!(!manifest.installed_by_default);
+
+        let settings = ModuleSettings::default();
+        let descriptor = modules_as_descriptors(&settings)
+            .into_iter()
+            .find(|module| module.id == "opus")
+            .expect("opus descriptor should exist");
+        assert_eq!(descriptor.state, "not_installed");
+        assert!(descriptor.toggleable);
+
+        // Present once a validated package is installed.
+        let installed = HashSet::from(["opus".to_string()]);
+        let descriptor = modules_as_descriptors_with_packages(&settings, &installed)
+            .into_iter()
+            .find(|module| module.id == "opus")
+            .expect("opus descriptor should exist");
+        assert_eq!(descriptor.state, "installed");
+    }
+
+    #[test]
     #[cfg(feature = "module-gdd")]
     fn gdd_is_bundled_but_not_installed_without_package_when_feature_enabled() {
         let settings = ModuleSettings::default();
@@ -505,5 +565,31 @@ mod tests {
             &HashSet::new(),
         )
         .is_empty());
+    }
+
+    #[test]
+    fn piper_tts_is_known_on_demand_module() {
+        // piper_tts must be in the registry so downloaded packages with id
+        // "piper_tts" pass `known_module_id` validation. On-demand: not
+        // bundled, not installed by default.
+        let manifest = find_manifest("piper_tts").expect("piper_tts manifest should exist");
+        assert!(!manifest.bundled);
+        assert!(!manifest.core_always_on);
+        assert!(!manifest.installed_by_default);
+
+        let settings = ModuleSettings::default();
+        let descriptor = modules_as_descriptors(&settings)
+            .into_iter()
+            .find(|module| module.id == "piper_tts")
+            .expect("piper_tts descriptor should exist");
+        assert_eq!(descriptor.state, "not_installed");
+        assert!(descriptor.toggleable);
+
+        let installed = HashSet::from(["piper_tts".to_string()]);
+        let descriptor = modules_as_descriptors_with_packages(&settings, &installed)
+            .into_iter()
+            .find(|module| module.id == "piper_tts")
+            .expect("piper_tts descriptor should exist");
+        assert_eq!(descriptor.state, "installed");
     }
 }

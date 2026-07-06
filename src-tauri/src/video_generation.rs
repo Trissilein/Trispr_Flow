@@ -387,7 +387,7 @@ fn run_hyperframes_render_inner(
     use_gpu: bool,
 ) -> Result<(), String> {
     let node_binary = if settings.node_binary_path.is_empty() {
-        paths::resolve_node_binary_path()
+        paths::resolve_node_binary_path(app)
             .ok_or_else(|| "Node binary not found: bundle missing at bin/node/ and no system Node on PATH. Install Node 22+ or configure settings.video_generation.node_binary_path.".to_string())?
     } else {
         let p = PathBuf::from(&settings.node_binary_path);
@@ -401,8 +401,8 @@ fn run_hyperframes_render_inner(
     };
 
     let hyperframes_cwd = if settings.hyperframes_cwd.is_empty() {
-        paths::resolve_hyperframes_cwd()
-            .ok_or_else(|| "hyperframes install not found: bundle missing at bin/hyperframes/. Run the Node sidecar bundling step.".to_string())?
+        paths::resolve_hyperframes_cwd(app)
+            .ok_or_else(|| "hyperframes install not found: bundle missing at bin/hyperframes/ or video_gen module not installed. Install the Video Generation module via the Modules Hub.".to_string())?
     } else {
         let p = PathBuf::from(&settings.hyperframes_cwd);
         if !p.join("package.json").exists() {

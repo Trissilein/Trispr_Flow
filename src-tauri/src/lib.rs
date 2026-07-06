@@ -749,6 +749,7 @@ pub(crate) fn cleanup_managed_processes(app: &AppHandle, state: &AppState) {
         "managed Whisper-Server runtime",
         &state.managed_whisper_server_child,
     );
+    crate::modules::runtime::terminate_all_module_sidecars(state);
     crate::uiautomation_capture::shutdown(&state.enter_capture);
 }
 
@@ -1689,6 +1690,39 @@ fn install_bundled_module_package(
     module_package::install_package_from_dir(&source_dir, &modules_dir)
 }
 
+/// List modules published in the on-demand module index, annotated with local
+/// install state. Network call → run off the main thread.
+#[tauri::command]
+async fn list_available_modules(
+    app: AppHandle,
+) -> Result<Vec<crate::modules::delivery::AvailableModule>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::modules::delivery::list_available(&app))
+        .await
+        .map_err(|error| format!("list_available_modules task failed: {error}"))?
+}
+
+/// Download, verify, unpack and install (or update) a module by id from the
+/// module index. Streams progress via the `module:download-progress` event.
+#[tauri::command]
+async fn download_module(
+    app: AppHandle,
+    module_id: String,
+) -> Result<module_package::ModulePackageInstallResult, String> {
+    let module_id = canonicalize_module_id(&module_id).to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::modules::delivery::download_and_install(&app, &module_id)
+    })
+    .await
+    .map_err(|error| format!("download_module task failed: {error}"))?
+}
+
+/// Remove an installed on-demand module from disk. Idempotent.
+#[tauri::command]
+async fn uninstall_module(app: AppHandle, module_id: String) -> Result<(), String> {
+    let module_id = canonicalize_module_id(&module_id).to_string();
+    crate::modules::delivery::uninstall(&app, &module_id)
+}
+
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
     capability_enabled(settings, RuntimeCapability::AiRefinement)
         && settings.ai_fallback.provider == "ollama"
@@ -2608,12 +2642,21 @@ fn get_gpu_stats(state: State<'_, AppState>) -> GpuStats {
     stats
 }
 
+/// Save raw mic/system samples as an `.opus` file via the opus module sidecar.
+/// Returns `Ok(None)` when the opus module is not installed — export is an
+/// opt-in capability, so its absence is a silent no-op, not an error.
 pub(crate) fn save_recording_opus(
     app: &AppHandle,
     samples: &[i16],
     source: &str,
     session_name: Option<&str>,
-) -> Result<String, String> {
+) -> Result<Option<String>, String> {
+    // Opus export lives in an on-demand module. If it isn't installed, skip
+    // entirely — don't even write the intermediate WAV.
+    let Some(sidecar) = opus::resolve_sidecar(app) else {
+        return Ok(None);
+    };
+
     // Generate human-readable filename
     let now = chrono::Local::now();
     let duration_s = samples.len() as f64 / 16000.0; // 16kHz sample rate
@@ -2682,17 +2725,22 @@ pub(crate) fn save_recording_opus(
         .finalize()
         .map_err(|e| format!("Failed to finalize WAV: {}", e))?;
 
-    // Convert WAV to OPUS
+    // Convert WAV to OPUS via the sidecar
     let opus_filename = format!("{}.opus", base_filename);
     let opus_path = recordings_dir.join(&opus_filename);
 
-    opus::encode_wav_to_opus_default(&wav_path, &opus_path)
-        .map_err(|e| format!("Failed to encode OPUS: {}", e))?;
+    let encode_result = opus::encode_with_sidecar(
+        &sidecar,
+        &wav_path,
+        &opus_path,
+        &opus::OpusEncoderConfig::default(),
+    );
 
-    // Delete WAV file (we only need OPUS)
+    // Delete WAV file (we only need OPUS), regardless of encode outcome.
     let _ = std::fs::remove_file(&wav_path);
 
-    Ok(opus_path.to_string_lossy().to_string())
+    encode_result.map_err(|e| format!("Failed to encode OPUS: {}", e))?;
+    Ok(Some(opus_path.to_string_lossy().to_string()))
 }
 
 fn sanitize_session_name(name: &str) -> String {
@@ -3817,6 +3865,7 @@ pub fn run() {
                 last_system_recording_path: Mutex::new(None),
                 managed_ollama_child: Mutex::new(None),
                 managed_whisper_server_child: Mutex::new(None),
+                module_sidecars: crate::modules::runtime::default_sidecar_map(),
                 whisper_server_port: AtomicU16::new(crate::whisper_server::WHISPER_SERVER_PORT),
                 whisper_server_warmup_started: AtomicBool::new(false),
                 ollama_model_warm: AtomicBool::new(false),
@@ -4001,7 +4050,8 @@ pub fn run() {
             // Initialise session manager with the recordings directory
             {
                 let recordings_dir = paths::resolve_recordings_dir(app.handle());
-                session_manager::init(recordings_dir.clone());
+                let modules_dir = paths::resolve_modules_dir(app.handle());
+                session_manager::init(recordings_dir.clone(), modules_dir);
 
                 // Surface any incomplete sessions from a previous crash as a warning
                 let incomplete = session_manager::scan_incomplete(&recordings_dir);
@@ -4593,6 +4643,9 @@ pub fn run() {
             disable_module,
             get_module_health,
             check_module_updates,
+            list_available_modules,
+            download_module,
+            uninstall_module,
             agent_list_supported_actions,
             agent_parse_command,
             agent_compose_unknown_reply,

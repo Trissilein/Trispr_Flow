@@ -18,6 +18,7 @@ mod multimodal_io;
 mod ollama_runtime;
 mod opus;
 mod overlay;
+mod paste_arbiter;
 mod paths;
 mod postprocessing;
 mod refinement_adaptation;
@@ -3861,6 +3862,7 @@ pub fn run() {
                 refinement_timeouts: AtomicU64::new(0),
                 refinement_fallback_failed: AtomicU64::new(0),
                 refinement_fallback_timed_out: AtomicU64::new(0),
+                paste_arbiter: crate::paste_arbiter::PasteArbiter::default(),
                 last_mic_recording_path: Mutex::new(None),
                 last_system_recording_path: Mutex::new(None),
                 managed_ollama_child: Mutex::new(None),

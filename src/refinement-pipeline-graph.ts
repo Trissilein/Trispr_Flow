@@ -20,6 +20,7 @@ type PipelineJobState = {
   deferred: boolean;
   model: string;
   error: string;
+  skippedReason: string;
 };
 
 const PIPELINE_TERMINAL_RESET_MS = 2200;
@@ -31,6 +32,7 @@ const pipelineJobState: PipelineJobState = {
   deferred: false,
   model: "",
   error: "",
+  skippedReason: "",
 };
 
 let pipelineTerminalResetTimer: number | null = null;
@@ -49,6 +51,7 @@ function resetPipelineJobState(): void {
   pipelineJobState.deferred = false;
   pipelineJobState.model = "";
   pipelineJobState.error = "";
+  pipelineJobState.skippedReason = "";
 }
 
 function schedulePipelineTerminalReset(jobId: string): void {
@@ -188,7 +191,9 @@ function updateLiveSummary(
     case "raw_emitted":
       dom.refinementPipelineLive.textContent = localAiPath && pipelineJobState.deferred
         ? `Job ${jobToken}: raw transcript ready, waiting for AI refinement${pipelineJobState.model ? ` (${pipelineJobState.model})` : ""}.`
-        : `Job ${jobToken}: raw/rule output path selected.`;
+        : pipelineJobState.skippedReason === "ollama_model_not_loaded"
+          ? `Job ${jobToken}: model loading in background — raw pasted. Refinement activates on next dictation.`
+          : `Job ${jobToken}: raw/rule output path selected.`;
       break;
     case "refining":
       dom.refinementPipelineLive.textContent =
@@ -247,10 +252,14 @@ export function renderRefinementPipelineGraph(): void {
         ? "active"
         : "success";
 
+  const modelNotLoaded = hasJob
+    && pipelineJobState.skippedReason === "ollama_model_not_loaded"
+    && pipelineJobState.phase === "raw_emitted";
+
   let aiState: NodeState = "idle";
   if (!localAiPath && !isCompatLocal) {
     aiState = "bypassed";
-  } else if (aiWarming) {
+  } else if (aiWarming || modelNotLoaded) {
     aiState = "warming";
   } else if (aiBlocked) {
     aiState = "blocked";
@@ -383,6 +392,7 @@ export function handlePipelineTranscriptionResult(payload: TranscriptionResultEv
   pipelineJobState.deferred = Boolean(payload.paste_deferred);
   pipelineJobState.model = "";
   pipelineJobState.error = "";
+  pipelineJobState.skippedReason = payload.refinement_gate?.skipped_reason ?? "";
   renderRefinementPipelineGraph();
   if (!pipelineJobState.deferred) {
     schedulePipelineTerminalReset(jobId);

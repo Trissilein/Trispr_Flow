@@ -2452,11 +2452,40 @@
       <div class="auth-modal-card onboarding-card" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
         <div class="auth-modal-header">
           <h3 id="wizard-title" class="ai-refine-section-title">Willkommen bei Trispr Flow</h3>
-          <div class="wizard-progress">Schritt <span id="wizard-step-current">1</span> von 2</div>
+          <div class="wizard-progress">Schritt <span id="wizard-step-current">1</span> von 3</div>
         </div>
 
-        <!-- Step 1: Recording Mode -->
+        <!-- Step 1: Model Setup -->
         <div id="wizard-step-1" class="wizard-step">
+          <h4>Sprachmodell einrichten</h4>
+          <p class="wizard-text">Trispr Flow nutzt ein lokales KI-Modell für die Transkription. Es wird einmalig heruntergeladen und danach vollständig offline genutzt.</p>
+
+          <div class="wizard-model-options">
+            <label class="wizard-card">
+              <input type="radio" name="wizard-model" value="whisper-large-v3-turbo-q8_0" checked />
+              <strong>Q8 Quantized (empfohlen)</strong>
+              <span class="field-hint">~870 MB — beste Balance zwischen Größe und Qualität. Für fast alle GPUs geeignet.</span>
+            </label>
+            <label class="wizard-card">
+              <input type="radio" name="wizard-model" value="whisper-large-v3-turbo" />
+              <strong>Full Precision (FP16)</strong>
+              <span class="field-hint">~1.5 GB — höchste Qualität. Benötigt mehr GPU-Speicher.</span>
+            </label>
+          </div>
+
+          <div class="wizard-model-download" style="margin-top: 20px;">
+            <button id="wizard-download-model-btn" type="button" class="btn btn-primary">Modell herunterladen</button>
+            <div id="wizard-download-progress" style="margin-top: 10px; display: none;">
+              <div class="progress-bar" style="height: 8px; background: #eee; border-radius: 4px; overflow: hidden;">
+                <div id="wizard-download-progress-bar" style="height: 100%; background: #4be0d4; width: 0%; transition: width 0.3s;"></div>
+              </div>
+              <span id="wizard-download-status" class="field-hint" style="margin-top: 8px; display: block;">Wird heruntergeladen...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: Recording Mode (formerly Step 1) -->
+        <div id="wizard-step-2" class="wizard-step" hidden>
           <p class="wizard-text">Offline-Diktiertool — alles bleibt auf deinem Rechner.</p>
           <h4>Wie willst du aufnehmen?</h4>
           <div class="wizard-mode-selector">
@@ -2473,8 +2502,8 @@
           </div>
         </div>
 
-        <!-- Step 2: Hotkey + Done -->
-        <div id="wizard-step-2" class="wizard-step" hidden>
+        <!-- Step 3: Hotkey + Done (formerly Step 2) -->
+        <div id="wizard-step-3" class="wizard-step" hidden>
           <h4>Dein Aufnahme-Hotkey</h4>
           <p class="wizard-text">Halte diese Tastenkombination, um aufzunehmen:</p>
           <div class="hotkey-setup-box">

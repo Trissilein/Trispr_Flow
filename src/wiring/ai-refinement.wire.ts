@@ -378,15 +378,35 @@ function applyPendingUserPresetEditsFromEditor(): boolean {
   return true;
 }
 
-/** Returns true if the user confirmed (or no confirmation was needed), false if cancelled. */
-function confirmDiscardBuiltInEdits(): boolean {
-  if (!dom.aiFallbackCustomPrompt) return true;
-  // `.has-unsaved-edits` is the authoritative dirty flag: the `input` listener
-  // adds it on keystroke, the renderer removes it when the textarea is re-sourced
-  // from the effective prompt. No flag → no unsaved edits → no confirmation.
-  if (!dom.aiFallbackCustomPrompt.classList.contains("has-unsaved-edits"))
-    return true;
-  return window.confirm("Discard unsaved changes to this preset?");
+// `.has-unsaved-edits` is the authoritative dirty flag: the `input` listener
+// adds it on keystroke, the renderer removes it when the textarea is re-sourced
+// from the effective prompt.
+function hasUnsavedPromptEditorEdits(): boolean {
+  return Boolean(
+    dom.aiFallbackCustomPrompt?.classList.contains("has-unsaved-edits"),
+  );
+}
+
+// Blank the editor after a confirmed discard so the next render re-sources it
+// from the newly selected preset. A stale non-empty value would otherwise be
+// treated as an external edit by the renderer and never be replaced — the
+// textarea would keep the old text and the dirty flag forever.
+function clearPromptEditorEdits(): void {
+  if (!dom.aiFallbackCustomPrompt) return;
+  dom.aiFallbackCustomPrompt.value = "";
+  dom.aiFallbackCustomPrompt.classList.remove("has-unsaved-edits");
+  // The renderer only re-sources an unfocused textarea — make sure it may.
+  if (document.activeElement === dom.aiFallbackCustomPrompt) {
+    dom.aiFallbackCustomPrompt.blur();
+  }
+}
+
+/** Returns true if the caller may proceed (editor clean, or user confirmed discard). */
+function confirmDiscardPromptEdits(): boolean {
+  if (!hasUnsavedPromptEditorEdits()) return true;
+  if (!window.confirm("Discard unsaved changes to this preset?")) return false;
+  clearPromptEditorEdits();
+  return true;
 }
 
 function ensureAIFallbackSettingsDefaults() {
@@ -1024,6 +1044,12 @@ export function wireAiRefinement(): void {
 
   dom.languageSelect?.addEventListener("change", async () => {
     if (!settings) return;
+    // Language changes swap the effective built-in prompt (EN/DE) — ask before
+    // clobbering unsaved editor changes, and revert the control on cancel.
+    if (!confirmDiscardPromptEdits()) {
+      dom.languageSelect!.value = settings.language_mode;
+      return;
+    }
     settings.language_mode = dom.languageSelect!
       .value as Settings["language_mode"];
     settings.postproc_language = derivePostprocLanguageFromAsr(
@@ -1038,6 +1064,10 @@ export function wireAiRefinement(): void {
 
   dom.languagePinnedToggle?.addEventListener("change", async () => {
     if (!settings) return;
+    if (!confirmDiscardPromptEdits()) {
+      dom.languagePinnedToggle!.checked = settings.language_pinned;
+      return;
+    }
     settings.language_pinned = dom.languagePinnedToggle!.checked;
     settings.postproc_language = derivePostprocLanguageFromAsr(
       settings.language_mode,
@@ -1050,6 +1080,13 @@ export function wireAiRefinement(): void {
   });
 
   dom.whisperInputLanguageSelect?.addEventListener("change", () => {
+    if (!settings) return;
+    if (!confirmDiscardPromptEdits()) {
+      dom.whisperInputLanguageSelect!.value = settings.language_pinned
+        ? settings.language_mode
+        : "auto";
+      return;
+    }
     const value = dom.whisperInputLanguageSelect!
       .value as Settings["language_mode"];
     void setWhisperInputLanguage(value);
@@ -1568,18 +1605,25 @@ export function wireAiRefinement(): void {
     ensureAIFallbackSettingsDefaults();
 
     if (action === "use-preset") {
-      if (!confirmDiscardBuiltInEdits()) return;
-      const hasPendingUserChanges = applyPendingUserPresetEditsFromEditor();
-      if (hasPendingUserChanges) await persistSettings();
+      const hadUnsavedEdits = hasUnsavedPromptEditorEdits();
+      if (!confirmDiscardPromptEdits()) return;
+      if (!hadUnsavedEdits) {
+        // Clean editor: still pick up pending name-only changes on user presets.
+        const hasPendingUserChanges = applyPendingUserPresetEditsFromEditor();
+        if (hasPendingUserChanges) await persistSettings();
+      }
       settings.ai_fallback.active_prompt_preset_id = presetId;
       syncActivePromptPresetSelection();
       refreshResolvedRefinementPromptInSettings();
       await persistSettings();
       renderAIFallbackSettingsUi();
     } else if (action === "new-preset") {
-      if (!confirmDiscardBuiltInEdits()) return;
-      const hasPendingUserChanges = applyPendingUserPresetEditsFromEditor();
-      if (hasPendingUserChanges) await persistSettings();
+      const hadUnsavedEdits = hasUnsavedPromptEditorEdits();
+      if (!confirmDiscardPromptEdits()) return;
+      if (!hadUnsavedEdits) {
+        const hasPendingUserChanges = applyPendingUserPresetEditsFromEditor();
+        if (hasPendingUserChanges) await persistSettings();
+      }
       settings.ai_fallback.active_prompt_preset_id =
         NEW_REFINEMENT_PROMPT_OPTION_ID;
       settings.ai_fallback.prompt_profile = "custom";
@@ -1758,7 +1802,8 @@ export function wireAiRefinement(): void {
     const hasOverride =
       typeof ai.prompt_preset_overrides[builtInId] === "string" &&
       ai.prompt_preset_overrides[builtInId]!.trim().length > 0;
-    if (!hasOverride) return;
+    const editorDirty = hasUnsavedPromptEditorEdits();
+    if (!hasOverride && !editorDirty) return;
     if (
       !window.confirm(
         `Remove your customization for "${label}" and restore the factory default?`,
@@ -1767,6 +1812,7 @@ export function wireAiRefinement(): void {
       return;
     }
     removePresetOverride(ai.prompt_preset_overrides, builtInId);
+    clearPromptEditorEdits();
     refreshResolvedRefinementPromptInSettings();
     await persistSettings();
     renderAIFallbackSettingsUi();
@@ -1895,7 +1941,11 @@ export function wireAiRefinement(): void {
     settings.ai_fallback.custom_prompt_enabled = true;
     settings.ai_fallback.use_default_prompt = false;
     refreshResolvedRefinementPromptInSettings();
-    dom.aiFallbackCustomPrompt.classList.add("has-unsaved-edits");
+    if (activePresetId !== "custom") {
+      // Plain custom prompt is persisted live — nothing can be lost, so no
+      // dirty marker (it would trigger pointless discard confirmations).
+      dom.aiFallbackCustomPrompt.classList.add("has-unsaved-edits");
+    }
     renderAIFallbackSettingsUi();
   });
 
@@ -1979,6 +2029,8 @@ export function wireAiRefinement(): void {
 
     dom.engineRefinePresetMenu!.hidden = true;
     dom.engineRefinePreset?.setAttribute("aria-expanded", "false");
+
+    if (presetId !== "__off__" && !confirmDiscardPromptEdits()) return;
 
     if (presetId === "__off__") {
       settings.ai_fallback.enabled = false;

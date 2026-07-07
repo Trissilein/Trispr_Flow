@@ -506,6 +506,10 @@ Function HardwareSummaryPage
 
   StrCpy $R0 "GPU:              $DetectedGpuStr$\r$\nVariante:         ${TRISPR_VARIANT_DISPLAY}$\r$\n"
 
+  ${If} $DetectedGpuStr != "Keine NVIDIA GPU erkannt"
+    StrCpy $R0 "$R0GPU-Modus:       High Performance (NVIDIA) konfiguriert$\r$\n"
+  ${EndIf}
+
 !if "${TRISPR_VARIANT}" == "cuda-complete"
   StrCpy $R0 "$R0FFmpeg:           Enthalten (Offline)$\r$\n"
   StrCpy $R0 "$R0Piper TTS:        Enthalten (Offline)$\r$\n"
@@ -601,7 +605,7 @@ FunctionEnd
   FileWrite $0 '"vad_threshold_start":0.01,'
   FileWrite $0 '"vad_threshold_sustain":0.005,'
   FileWrite $0 '"vad_silence_ms":500,'
-  FileWrite $0 '"transcribe_enabled":false,'
+  FileWrite $0 '"transcribe_enabled":true,'
   FileWrite $0 '"transcribe_hotkey":"CommandOrControl+Shift+T",'
   FileWrite $0 '"transcribe_output_device":"default",'
   FileWrite $0 '"transcribe_vad_mode":false,'
@@ -611,7 +615,7 @@ FunctionEnd
   FileWrite $0 '"transcribe_chunk_overlap_ms":1000,'
   FileWrite $0 '"transcribe_input_gain_db":0.0,'
   FileWrite $0 '"mic_input_gain_db":0.0,'
-  FileWrite $0 '"capture_enabled":false,'
+  FileWrite $0 '"capture_enabled":true,'
   FileWrite $0 '"model_source":"default",'
   FileWrite $0 '"model_custom_url":"",'
   FileWrite $0 '"model_storage_dir":"",'
@@ -669,6 +673,17 @@ FunctionEnd
   SettingsExists:
   ; Create models directory
   CreateDirectory "$R8\models"
+
+  ; ----------------------------------------------------------------
+  ; GPU Preferences: Force NVIDIA dGPU on hybrid/Optimus systems
+  ; ----------------------------------------------------------------
+  ; Set Windows DirectX GPU preference to "High Performance" for all whisper binaries
+  ; This ensures NVIDIA dGPU is used on hybrid graphics systems instead of Intel iGPU
+  ${If} $DetectedGpuStr != "Keine NVIDIA GPU erkannt"
+    WriteRegStr HKCU "Software\Microsoft\DirectX\UserGpuPreferences" "$INSTDIR\bin\cuda\whisper-cli.exe" "GpuPreference=2;"
+    WriteRegStr HKCU "Software\Microsoft\DirectX\UserGpuPreferences" "$INSTDIR\bin\cuda\whisper-server.exe" "GpuPreference=2;"
+    WriteRegStr HKCU "Software\Microsoft\DirectX\UserGpuPreferences" "$INSTDIR\bin\vulkan\whisper-cli.exe" "GpuPreference=2;"
+  ${EndIf}
 
   ; ----------------------------------------------------------------
   ; Core runtime downloads (skipped for cuda-complete: already bundled)

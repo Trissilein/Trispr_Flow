@@ -969,7 +969,8 @@ fn apply_overlay_ollama_state_to_window(app: &AppHandle, window: &WebviewWindow)
         if matches!(
             controller.desired_state,
             OverlayState::Recording | OverlayState::Transcribing
-        ) && matches!(controller.ollama_model_state, OllamaModelState::Warm) {
+        ) && matches!(controller.ollama_model_state, OllamaModelState::Warm)
+        {
             return;
         }
     }

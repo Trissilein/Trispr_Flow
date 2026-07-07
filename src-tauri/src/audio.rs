@@ -1358,7 +1358,13 @@ fn handle_transcription_ok(
     let should_refine = refinement_enabled && model_loaded && !gpu_busy;
     let ollama_cold = provider_is_ollama && refinement_enabled && !model_loaded;
 
-    let paste_deferred = should_refine && should_defer_paste_for_refinement(&app_handle, settings);
+    // Cold start inverts the deferral: paste raw immediately and let the
+    // refinement warm the model in the background (history-only result).
+    // Waiting out a cold model maximises user-visible latency exactly when
+    // the system is least able to honour it.
+    let paste_deferred = should_refine
+        && !paste_timeout_cold
+        && should_defer_paste_for_refinement(&app_handle, settings);
     let skipped_reason = if should_refine {
         None
     } else if !refinement_enabled {
@@ -1414,6 +1420,27 @@ fn handle_transcription_ok(
             startup_status.ollama_ready,
             startup_status.ollama_starting,
             state.refinement_active_count.load(Ordering::SeqCst)
+        );
+    }
+    // The arbiter owns the paste outcome from here on. Deferred jobs get a
+    // Rust-side deadline (immune to WebView timer throttling); everything
+    // else pastes raw right away. A refinement that finishes after the
+    // deadline settles as a no-op and only updates history.
+    state
+        .paste_arbiter
+        .register(&job_id, processed_text.clone());
+    if paste_deferred {
+        crate::paste_arbiter::schedule_deadline(
+            app_handle.clone(),
+            job_id.clone(),
+            paste_timeout_ms,
+        );
+    } else {
+        state.paste_arbiter.settle(
+            app_handle,
+            &job_id,
+            crate::paste_arbiter::PasteOutcome::Raw,
+            None,
         );
     }
     // Only spawn refinement when the model is loaded. On bypass we
@@ -1567,6 +1594,12 @@ pub(crate) fn maybe_spawn_ai_refinement(
             provider,
             settings.ai_fallback.model
         );
+        app_handle.state::<AppState>().paste_arbiter.settle(
+            &app_handle,
+            &job_id,
+            crate::paste_arbiter::PasteOutcome::RawFallback,
+            None,
+        );
         let _ = app_handle.emit(
             "transcription:refinement-failed",
             serde_json::json!({
@@ -1586,6 +1619,8 @@ pub(crate) fn maybe_spawn_ai_refinement(
     let provider_id = settings.ai_fallback.provider.clone();
 
     thread::spawn(move || {
+        let app_handle_panic = app_handle.clone();
+        let job_id_panic = job_id.clone();
         let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if diagnostics_enabled {
                 info!(
@@ -1615,6 +1650,12 @@ pub(crate) fn maybe_spawn_ai_refinement(
                     "prepare_failed"
                 };
                 record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
+                app_handle.state::<AppState>().paste_arbiter.settle(
+                    &app_handle,
+                    &job_id,
+                    crate::paste_arbiter::PasteOutcome::RawFallback,
+                    None,
+                );
                 if let Some(entry_id_value) = entry_id.as_deref() {
                     let _ = mark_entry_refinement_failed(
                         &app_handle,
@@ -1657,6 +1698,12 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             "prepare_failed"
                         };
                         record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
+                        app_handle.state::<AppState>().paste_arbiter.settle(
+                            &app_handle,
+                            &job_id,
+                            crate::paste_arbiter::PasteOutcome::RawFallback,
+                            None,
+                        );
                         if let Some(entry_id_value) = entry_id.as_deref() {
                             let _ = mark_entry_refinement_failed(
                                 &app_handle,
@@ -1665,7 +1712,6 @@ pub(crate) fn maybe_spawn_ai_refinement(
                                 &text,
                                 &error,
                             );
-                            return;
                         }
                         let _ = app_handle.emit(
                             "transcription:refinement-failed",
@@ -1854,6 +1900,15 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             "model": result.model,
                         })
                     );
+                    // Claim the paste before announcing the result. `pasted:
+                    // false` means the deadline already pasted raw (or the job
+                    // was never deferred) — the refined text is history-only.
+                    let pasted = app_handle.state::<AppState>().paste_arbiter.settle(
+                        &app_handle,
+                        &job_id,
+                        crate::paste_arbiter::PasteOutcome::Refined,
+                        Some(&result.text),
+                    );
                     let _ = app_handle.emit(
                         "transcription:refined",
                         serde_json::json!({
@@ -1869,6 +1924,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             "tokens_out": result.usage.output_tokens,
                             "ollama_load_ms": result.ollama_load_ms,
                             "ollama_eval_ms": result.ollama_eval_ms,
+                            "pasted": pasted,
                         }),
                     );
                 }
@@ -1895,6 +1951,12 @@ pub(crate) fn maybe_spawn_ai_refinement(
                         },
                     );
                     record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
+                    app_handle.state::<AppState>().paste_arbiter.settle(
+                        &app_handle,
+                        &job_id,
+                        crate::paste_arbiter::PasteOutcome::RawFallback,
+                        None,
+                    );
                     if let Some(entry_id_value) = entry_id.as_deref() {
                         let _ = mark_entry_refinement_failed(
                             &app_handle,
@@ -1929,6 +1991,12 @@ pub(crate) fn maybe_spawn_ai_refinement(
                 "unknown panic in refinement thread".to_string()
             };
             error!("Refinement thread panicked: {}", msg);
+            app_handle_panic.state::<AppState>().paste_arbiter.settle(
+                &app_handle_panic,
+                &job_id_panic,
+                crate::paste_arbiter::PasteOutcome::RawFallback,
+                None,
+            );
         }
     });
 }

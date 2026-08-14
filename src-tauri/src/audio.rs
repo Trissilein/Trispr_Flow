@@ -3412,8 +3412,9 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
     {
         let endpoint = settings.providers.ollama.endpoint.clone();
         let model = settings.ai_fallback.model.clone();
-        let num_ctx =
-            crate::ai_fallback::provider::num_ctx_for_tier(settings.ai_fallback.adaptive_num_ctx_tier);
+        let num_ctx = crate::ai_fallback::provider::num_ctx_for_tier(
+            settings.ai_fallback.adaptive_num_ctx_tier,
+        );
         let app_for_warmup = app.clone();
         let app_state = app.state::<AppState>();
         app_state

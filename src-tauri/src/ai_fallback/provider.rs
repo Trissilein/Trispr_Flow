@@ -782,7 +782,11 @@ fn grow_tier(persisted_idx: usize, need_idx: usize, max_idx: usize) -> usize {
 /// Raw output-length need for a given profile, independent of any ceiling.
 /// Basing this on input size (not the system prompt) keeps tiny jobs tiny —
 /// see `local_wording_num_predict_uses_input_not_prompt_size` below.
-fn adaptive_num_predict_need(input_text: &str, prompt_profile: &str, low_latency_mode: bool) -> u32 {
+fn adaptive_num_predict_need(
+    input_text: &str,
+    prompt_profile: &str,
+    low_latency_mode: bool,
+) -> u32 {
     let input_tokens = rough_token_estimate(input_text);
     let profile = normalize_prompt_profile(prompt_profile);
     match profile {
@@ -813,7 +817,10 @@ pub fn resolve_num_predict(
     let max_idx = NUM_PREDICT_TIERS.len() - 1;
     let need_idx = tier_index_for_need_u32(&NUM_PREDICT_TIERS, need);
     let tier_idx = grow_tier(persisted_tier_idx.min(max_idx), need_idx, max_idx);
-    let num_predict = need.min(NUM_PREDICT_TIERS[tier_idx]).min(configured).max(48);
+    let num_predict = need
+        .min(NUM_PREDICT_TIERS[tier_idx])
+        .min(configured)
+        .max(48);
     (num_predict, tier_idx)
 }
 
@@ -2589,7 +2596,10 @@ mod tests {
             "long summary input should grow past the old hardcoded ceiling, got {}",
             predicted
         );
-        assert!(tier_idx > 1, "tier should have grown beyond the starting tier");
+        assert!(
+            tier_idx > 1,
+            "tier should have grown beyond the starting tier"
+        );
     }
 
     #[test]

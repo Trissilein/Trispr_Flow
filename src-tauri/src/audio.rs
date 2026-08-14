@@ -36,7 +36,9 @@ const REFINEMENT_COLD_PASTE_TIMEOUT_MS: u64 = 30_000;
 const REFINEMENT_COLD_PASTE_MAX_AGE_MS: u64 = 12 * 60_000;
 const OVERLAY_EMIT_INTERVAL_MS: u64 = 33; // ~30 FPS for smoother overlay motion
 const PTT_VAD_TAIL_MS: u64 = 150;
+const PTT_HOT_WATCHDOG_INTERVAL: Duration = Duration::from_secs(3);
 static TRANSCRIPTION_JOB_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static PTT_HOT_WATCHDOG_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct AudioDevice {
@@ -162,6 +164,11 @@ pub(crate) struct Recorder {
     ptt_hot_recording: Arc<AtomicBool>,
     ptt_hot_device_id: Option<String>,
     ptt_hot_keepalive_generation: AtomicU64,
+    // Incremented on every audio callback; the watchdog compares snapshots
+    // across polls to detect a stream that is technically alive (join handle
+    // still set) but has silently stopped delivering audio, e.g. after
+    // Windows suspends the endpoint during a long idle period.
+    ptt_hot_callback_ticks: Arc<AtomicU64>,
 }
 
 impl Recorder {
@@ -183,6 +190,7 @@ impl Recorder {
             ptt_hot_recording: Arc::new(AtomicBool::new(false)),
             ptt_hot_device_id: None,
             ptt_hot_keepalive_generation: AtomicU64::new(0),
+            ptt_hot_callback_ticks: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -738,6 +746,7 @@ macro_rules! build_ptt_hot_stream_typed {
             gain_db: Arc<AtomicI64>,
             recording_flag: Arc<AtomicBool>,
             pre_roll_samples: usize,
+            callback_ticks: Arc<AtomicU64>,
         ) -> Result<cpal::Stream, String> {
             let channels = config.channels as usize;
             let sample_rate = config.sample_rate.0;
@@ -752,6 +761,7 @@ macro_rules! build_ptt_hot_stream_typed {
                 .build_input_stream(
                     config,
                     move |data: &[$sample_ty], _| {
+                        callback_ticks.fetch_add(1, Ordering::Relaxed);
                         let ch = channels.max(1);
                         let mut mono = Vec::with_capacity(data.len() / ch);
                         let mut sum_squared = 0.0f32;
@@ -870,7 +880,7 @@ fn start_ptt_hot_standby(
     let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     let device_id = settings.input_device.clone();
 
-    let (existing_stop_tx, existing_join_handle, buffer, gain_db, recording_flag) = {
+    let (existing_stop_tx, existing_join_handle, buffer, gain_db, recording_flag, callback_ticks) = {
         let mut recorder = state
             .recorder
             .lock()
@@ -893,6 +903,7 @@ fn start_ptt_hot_standby(
 
         recorder.ptt_hot_recording.store(false, Ordering::Relaxed);
         recorder.ptt_hot_device_id = None;
+        recorder.ptt_hot_callback_ticks.store(0, Ordering::Relaxed);
 
         (
             recorder.ptt_hot_stop_tx.take(),
@@ -900,6 +911,7 @@ fn start_ptt_hot_standby(
             recorder.buffer.clone(),
             recorder.input_gain_db.clone(),
             recorder.ptt_hot_recording.clone(),
+            recorder.ptt_hot_callback_ticks.clone(),
         )
     };
 
@@ -944,6 +956,7 @@ fn start_ptt_hot_standby(
                     gain_db.clone(),
                     recording_flag.clone(),
                     pre_roll_samples,
+                    callback_ticks,
                 )?,
                 SampleFormat::I16 => build_ptt_hot_stream_i16(
                     &device,
@@ -953,6 +966,7 @@ fn start_ptt_hot_standby(
                     gain_db.clone(),
                     recording_flag.clone(),
                     pre_roll_samples,
+                    callback_ticks,
                 )?,
                 SampleFormat::U16 => build_ptt_hot_stream_u16(
                     &device,
@@ -962,6 +976,7 @@ fn start_ptt_hot_standby(
                     gain_db.clone(),
                     recording_flag.clone(),
                     pre_roll_samples,
+                    callback_ticks,
                 )?,
                 _ => return Err("Unsupported sample format".to_string()),
             };
@@ -1056,6 +1071,75 @@ pub(crate) fn sync_ptt_hot_standby(
         }
     }
     let _ = emit_capture_idle_overlay(app, settings);
+    ensure_ptt_hot_standby_watchdog(app.clone());
+}
+
+// Windows can silently suspend/reclaim an idle audio endpoint after a long
+// period without callbacks (e.g. system sleep, exclusive-mode contention, or
+// the audio service reclaiming the device). cpal's err_fn only logs in that
+// case — the join handle and device id stay set, so `start_ptt_hot_standby`'s
+// "already warm" fast path keeps trusting a dead stream and the pre-roll
+// buffer silently stops filling. This watchdog compares callback-tick
+// snapshots a few seconds apart and force-restarts the stream in the
+// background as soon as it goes stale, so the fix lands before the user's
+// next PTT press instead of on it (which would otherwise turn a stale-stream
+// press into a ~1-3 s cold-start delay the user actually feels).
+fn ensure_ptt_hot_standby_watchdog(app: AppHandle) {
+    if PTT_HOT_WATCHDOG_STARTED
+        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+
+    crate::util::spawn_guarded("ptt_hot_standby_watchdog", move || {
+        let mut last_ticks: Option<u64> = None;
+        loop {
+            std::thread::sleep(PTT_HOT_WATCHDOG_INTERVAL);
+            let state = app.state::<AppState>();
+            let settings = state
+                .settings
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+
+            let should_run =
+                settings.capture_enabled && settings.mode == "ptt" && !settings.ptt_use_vad;
+            if !should_run {
+                last_ticks = None;
+                continue;
+            }
+
+            let (is_running, current_ticks) = {
+                let recorder = state
+                    .recorder
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                (
+                    recorder.ptt_hot_join_handle.is_some(),
+                    recorder.ptt_hot_callback_ticks.load(Ordering::Relaxed),
+                )
+            };
+            if !is_running {
+                last_ticks = None;
+                continue;
+            }
+
+            if last_ticks == Some(current_ticks) {
+                warn!(
+                    "[runtime:ptt_audio_capture] standby stream stale (no callbacks in ~{:?}); restarting cold",
+                    PTT_HOT_WATCHDOG_INTERVAL
+                );
+                stop_ptt_hot_standby(&state);
+                if let Err(e) = start_ptt_hot_standby(&app, &state, &settings) {
+                    warn!("[runtime:ptt_audio_capture] watchdog restart failed: {}", e);
+                }
+                last_ticks = Some(0);
+            } else {
+                last_ticks = Some(current_ticks);
+            }
+        }
+    });
 }
 
 fn start_ptt_hot_recording(
@@ -1854,6 +1938,14 @@ pub(crate) fn maybe_spawn_ai_refinement(
                         app_handle.state::<AppState>().inner(),
                         &result.model,
                     );
+                    if let Some(tier_update) = &result.tier_update {
+                        crate::ai_fallback::persist_tier_update(
+                            &app_handle,
+                            app_handle.state::<AppState>().inner(),
+                            &setup.options.prompt_profile,
+                            tier_update,
+                        );
+                    }
                     record_refinement_observation(
                         &app_handle,
                         &result.model,
@@ -3320,6 +3412,9 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
     {
         let endpoint = settings.providers.ollama.endpoint.clone();
         let model = settings.ai_fallback.model.clone();
+        let num_ctx = crate::ai_fallback::provider::num_ctx_for_tier(
+            settings.ai_fallback.adaptive_num_ctx_tier,
+        );
         let app_for_warmup = app.clone();
         let app_state = app.state::<AppState>();
         app_state
@@ -3327,7 +3422,7 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
             .store(true, Ordering::SeqCst);
         crate::overlay::update_overlay_ollama_state(app, crate::overlay::OllamaModelState::Loading);
         crate::util::spawn_guarded("ollama_ptt_warmup", move || {
-            match crate::warmup_ollama_model_impl(&endpoint, &model) {
+            match crate::warmup_ollama_model_impl(&endpoint, &model, num_ctx) {
                 Ok(()) => {
                     tracing::info!("[ollama.warmup] ptt pre-warm done model={}", model);
                     let s = app_for_warmup.state::<AppState>();

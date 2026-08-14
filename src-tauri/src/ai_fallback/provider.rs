@@ -1,5 +1,5 @@
 use super::error::AIError;
-use super::models::{RefinementOptions, RefinementResult, TokenUsage};
+use super::models::{RefinementOptions, RefinementResult, TierUpdate, TokenUsage};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -643,6 +643,7 @@ fn passthrough_refinement(
         ollama_load_ms: None,
         ollama_prompt_eval_ms: None,
         ollama_eval_ms: None,
+        tier_update: None,
     }
 }
 
@@ -724,43 +725,130 @@ fn default_ollama_num_thread() -> usize {
     (cores / 2).max(2).clamp(2, 8)
 }
 
-fn adaptive_num_predict(
+/// Output-budget tiers for `num_predict`, shared by every prompt profile.
+/// Growing to a higher tier costs nothing extra — unlike `num_ctx`, changing
+/// `num_predict` does NOT change the Ollama runner identity, so no reload.
+/// Tier 1 (384) matches the old fixed ceiling for "summary"/"action_items",
+/// kept as the starting point so behavior is unchanged until a longer input
+/// actually demonstrates the need for more.
+pub const NUM_PREDICT_TIERS: [u32; 6] = [160, 384, 768, 1536, 3072, 6144];
+
+/// Context-window tiers for `num_ctx`. Unlike NUM_PREDICT_TIERS, stepping up
+/// here forces a full model reload (~4-5 s) because Ollama keys the loaded
+/// runner on (model, num_ctx). Tier 0 (2048) is the long-standing default,
+/// sized for typical dictation transcripts; higher tiers are only requested
+/// when a transcript genuinely threatens to overflow the current window.
+pub const NUM_CTX_TIERS: [usize; 4] = [2048, 4096, 8192, 16384];
+
+/// Fraction of the current `num_ctx` tier that input+output may occupy before
+/// stepping up. Leaves headroom for chat-template overhead and the XML
+/// wrapper tags, which `rough_token_estimate` (word-based) doesn't account for.
+const NUM_CTX_SAFETY_MARGIN: f64 = 0.85;
+
+/// Resolves a persisted tier index to its `num_ctx` value. Used by the PTT
+/// warmup path, which must send the byte-identical `num_ctx` the refinement
+/// path will use next — otherwise warmup warms the wrong runner and the next
+/// real refinement pays the reload cost anyway (see `ollama_runner_defining_options`).
+pub fn num_ctx_for_tier(tier_idx: usize) -> usize {
+    NUM_CTX_TIERS[tier_idx.min(NUM_CTX_TIERS.len() - 1)]
+}
+
+/// Smallest tier index whose value covers `need`; the last tier if none do.
+fn tier_index_for_need_u32(tiers: &[u32], need: u32) -> usize {
+    tiers
+        .iter()
+        .position(|&tier| tier >= need)
+        .unwrap_or(tiers.len() - 1)
+}
+
+fn tier_index_for_need_usize(tiers: &[usize], need: usize) -> usize {
+    tiers
+        .iter()
+        .position(|&tier| tier >= need)
+        .unwrap_or(tiers.len() - 1)
+}
+
+/// Monotonic tier growth: never steps down. When `need_idx` outgrows the
+/// persisted tier, jumps one tier PAST what's needed right now, so the next
+/// slightly-longer input doesn't immediately hit the ceiling again.
+fn grow_tier(persisted_idx: usize, need_idx: usize, max_idx: usize) -> usize {
+    if need_idx <= persisted_idx {
+        persisted_idx.min(max_idx)
+    } else {
+        (need_idx + 1).min(max_idx)
+    }
+}
+
+/// Raw output-length need for a given profile, independent of any ceiling.
+/// Basing this on input size (not the system prompt) keeps tiny jobs tiny —
+/// see `local_wording_num_predict_uses_input_not_prompt_size` below.
+fn adaptive_num_predict_need(
+    input_text: &str,
+    prompt_profile: &str,
+    low_latency_mode: bool,
+) -> u32 {
+    let input_tokens = rough_token_estimate(input_text);
+    let profile = normalize_prompt_profile(prompt_profile);
+    match profile {
+        "wording" => {
+            let multiplier = if low_latency_mode { 2 } else { 3 };
+            ((input_tokens * multiplier) + 32).max(48) as u32
+        }
+        "summary" | "action_items" => ((input_tokens * 2) + 96).max(96) as u32,
+        "technical_specs" | "llm_prompt" => ((input_tokens * 3) + 160).max(160) as u32,
+        "custom" => ((input_tokens * 3) + 96).max(96) as u32,
+        _ => ((input_tokens * 3) + 32).max(64) as u32,
+    }
+}
+
+/// Resolves the `num_predict` value to send for THIS request and the tier
+/// index to persist going forward. `configured_max` (the user's own "Token
+/// Limit" setting) remains the absolute ceiling: tier growth only expands the
+/// room available below it, it never overrides an explicit user cap.
+pub fn resolve_num_predict(
     input_text: &str,
     prompt_profile: &str,
     configured_max: u32,
     low_latency_mode: bool,
-) -> u32 {
+    persisted_tier_idx: usize,
+) -> (u32, usize) {
     let configured = configured_max.clamp(128, 8192);
-    let input_tokens = rough_token_estimate(input_text);
-    let profile = normalize_prompt_profile(prompt_profile);
-    let heuristic = match profile {
-        // Transcript correction should be close to input size. Basing this on
-        // the system prompt inflated tiny 10-word jobs to 512 output tokens,
-        // which kept Ollama on GPU long after the paste fallback fired.
-        "wording" => {
-            let multiplier = if low_latency_mode { 2 } else { 3 };
-            ((input_tokens * multiplier) + 32).clamp(48, 160) as u32
-        }
-        "summary" | "action_items" => ((input_tokens * 2) + 96).clamp(96, 384) as u32,
-        "technical_specs" | "llm_prompt" => ((input_tokens * 3) + 160).clamp(160, 512) as u32,
-        // Custom prompt can legitimately transform shape, but still keep a
-        // local ceiling because deferred paste fallback is intentionally short.
-        "custom" => ((input_tokens * 3) + 96).clamp(96, 384) as u32,
-        _ => ((input_tokens * 3) + 32).clamp(64, 192) as u32,
-    };
-    configured.min(heuristic.max(48))
+    let need = adaptive_num_predict_need(input_text, prompt_profile, low_latency_mode);
+    let max_idx = NUM_PREDICT_TIERS.len() - 1;
+    let need_idx = tier_index_for_need_u32(&NUM_PREDICT_TIERS, need);
+    let tier_idx = grow_tier(persisted_tier_idx.min(max_idx), need_idx, max_idx);
+    let num_predict = need
+        .min(NUM_PREDICT_TIERS[tier_idx])
+        .min(configured)
+        .max(48);
+    (num_predict, tier_idx)
 }
 
-/// Fixed context window for ALL local Ollama refinement requests AND warmup.
-///
-/// This MUST be a single constant value, never adaptive. Ollama keys its loaded
-/// model runner on (model, num_ctx): any change in num_ctx forces a full model
-/// reload (~4-5 s for a 9B model), and with OLLAMA_MAX_LOADED_MODELS=1 the old
-/// runner is evicted. A previous adaptive scheme (1024 for short / 2048 for long
-/// inputs) caused a reload on every length change — the model never stayed warm.
-/// 2048 tokens covers virtually all dictation transcripts; qwen3.5:9b at ctx 2048
-/// fits comfortably in 16 GB VRAM.
-pub const OLLAMA_REFINEMENT_NUM_CTX: usize = 2048;
+/// Resolves the `num_ctx` value to send for THIS request and the tier index
+/// to persist. Unlike `resolve_num_predict`, stepping up here is expensive
+/// (forces a runner reload), so it only happens when input+prompt+output
+/// genuinely threatens to exceed NUM_CTX_SAFETY_MARGIN of the current tier.
+pub fn resolve_num_ctx(
+    system_prompt: &str,
+    input_text: &str,
+    num_predict: u32,
+    persisted_tier_idx: usize,
+) -> (usize, usize) {
+    let max_idx = NUM_CTX_TIERS.len() - 1;
+    let current_idx = persisted_tier_idx.min(max_idx);
+    let estimated_total = rough_token_estimate(system_prompt)
+        + rough_token_estimate(input_text)
+        + num_predict as usize;
+    let safe_budget = (NUM_CTX_TIERS[current_idx] as f64 * NUM_CTX_SAFETY_MARGIN) as usize;
+    let tier_idx = if estimated_total > safe_budget {
+        let need = (estimated_total as f64 / NUM_CTX_SAFETY_MARGIN).ceil() as usize;
+        let need_idx = tier_index_for_need_usize(&NUM_CTX_TIERS, need);
+        grow_tier(current_idx, need_idx, max_idx)
+    } else {
+        current_idx
+    };
+    (NUM_CTX_TIERS[tier_idx], tier_idx)
+}
 
 /// The subset of OLLAMA options that determine *which runner* is loaded.
 /// Changing any of these — num_ctx, num_thread, num_gpu — forces a full model
@@ -769,15 +857,16 @@ pub const OLLAMA_REFINEMENT_NUM_CTX: usize = 2048;
 /// the first real refinement pays the cold-load cost, defeating the warmup.
 /// Sampling options (temperature, num_predict) do NOT affect runner identity and
 /// are layered on top by the refinement path only.
-pub fn ollama_runner_defining_options() -> serde_json::Map<String, serde_json::Value> {
+pub fn ollama_runner_defining_options(
+    num_ctx: usize,
+) -> serde_json::Map<String, serde_json::Value> {
     let mut payload = serde_json::Map::new();
 
-    // Fixed num_ctx so the runner stays warm across requests (see
-    // OLLAMA_REFINEMENT_NUM_CTX docs). An env override must also be a single
-    // stable value — varying it per-request reintroduces reloads.
+    // An env override must also be a single stable value — varying it
+    // per-request reintroduces reloads. Takes precedence over tiering.
     let num_ctx = parse_env_usize("TRISPR_OLLAMA_NUM_CTX")
-        .map(|n| n.clamp(1024, 8192))
-        .unwrap_or(OLLAMA_REFINEMENT_NUM_CTX);
+        .map(|n| n.clamp(1024, 16384))
+        .unwrap_or(num_ctx);
     payload.insert("num_ctx".to_string(), serde_json::json!(num_ctx));
 
     let num_thread =
@@ -796,23 +885,38 @@ pub fn ollama_runner_defining_options() -> serde_json::Map<String, serde_json::V
 fn build_ollama_options_payload(
     options: &RefinementOptions,
     input_text: &str,
-) -> serde_json::Value {
-    // Start from the runner-defining options so the warmup and refinement
-    // runners are identical, then layer sampling options on top.
-    let mut payload = ollama_runner_defining_options();
-    payload.insert(
-        "temperature".to_string(),
-        serde_json::json!(options.temperature),
-    );
-    let num_predict = adaptive_num_predict(
+    system_prompt: &str,
+) -> (serde_json::Value, TierUpdate) {
+    let (num_predict, predict_tier_idx) = resolve_num_predict(
         input_text,
         &options.prompt_profile,
         options.max_tokens,
         options.low_latency_mode,
+        options.num_predict_tier_idx,
+    );
+    let (num_ctx, ctx_tier_idx) = resolve_num_ctx(
+        system_prompt,
+        input_text,
+        num_predict,
+        options.num_ctx_tier_idx,
+    );
+
+    // Start from the runner-defining options so the warmup and refinement
+    // runners are identical, then layer sampling options on top.
+    let mut payload = ollama_runner_defining_options(num_ctx);
+    payload.insert(
+        "temperature".to_string(),
+        serde_json::json!(options.temperature),
     );
     payload.insert("num_predict".to_string(), serde_json::json!(num_predict));
 
-    serde_json::Value::Object(payload)
+    (
+        serde_json::Value::Object(payload),
+        TierUpdate {
+            num_predict_tier_idx: predict_tier_idx,
+            num_ctx_tier_idx: ctx_tier_idx,
+        },
+    )
 }
 
 fn wrap_transcript_in_xml(text: &str) -> String {
@@ -1347,7 +1451,17 @@ impl AIProvider for OllamaProvider {
         // "think": false disables extended chain-of-thought mode on reasoning models
         // (e.g. qwen3, deepseek-r1). Without this, thinking models generate internal
         // reasoning tokens indefinitely before producing any output, causing apparent hangs.
-        let ollama_options = build_ollama_options_payload(options, text);
+        let (ollama_options, tier_result) =
+            build_ollama_options_payload(options, text, system_prompt);
+        // Only report growth the caller doesn't already know about — avoids a
+        // redundant settings write when the persisted tiers already cover this.
+        let tier_update = if tier_result.num_predict_tier_idx != options.num_predict_tier_idx
+            || tier_result.num_ctx_tier_idx != options.num_ctx_tier_idx
+        {
+            Some(tier_result)
+        } else {
+            None
+        };
         // Keep the model loaded indefinitely between requests by default so the
         // next hotkey press never has to wait for a cold reload. Operators can
         // override with TRISPR_OLLAMA_KEEP_ALIVE (e.g. "30m" for a shorter window).
@@ -1485,6 +1599,7 @@ impl AIProvider for OllamaProvider {
                     ollama_load_ms: usage.load_ms,
                     ollama_prompt_eval_ms: usage.prompt_eval_ms,
                     ollama_eval_ms: usage.eval_ms,
+                    tier_update,
                 });
             }
 
@@ -1571,6 +1686,7 @@ impl AIProvider for OllamaProvider {
                 ollama_load_ms: usage.load_ms,
                 ollama_prompt_eval_ms: usage.prompt_eval_ms,
                 ollama_eval_ms: usage.eval_ms,
+                tier_update,
             });
         }
 
@@ -1773,6 +1889,7 @@ impl AIProvider for OpenAICompatProvider {
             ollama_load_ms: None,
             ollama_prompt_eval_ms: None,
             ollama_eval_ms: None,
+            tier_update: None,
         })
     }
 }
@@ -2189,6 +2306,8 @@ mod tests {
             custom_prompt: None,
             enforce_language_guard,
             prompt_profile: "wording".to_string(),
+            num_predict_tier_idx: 0,
+            num_ctx_tier_idx: 0,
         }
     }
 
@@ -2453,7 +2572,8 @@ mod tests {
     #[test]
     fn local_wording_num_predict_uses_input_not_prompt_size() {
         let prompt = "long system prompt ".repeat(80);
-        let predicted = adaptive_num_predict("kurzer test text", "wording", 512, false);
+        let (predicted, _tier_idx) =
+            resolve_num_predict("kurzer test text", "wording", 512, false, 0);
         let inflated_prompt_tokens = rough_token_estimate(&prompt);
         assert!(inflated_prompt_tokens > 100);
         assert!(
@@ -2461,6 +2581,72 @@ mod tests {
             "short transcript should not receive large generation budget, got {}",
             predicted
         );
+    }
+
+    #[test]
+    fn summary_num_predict_grows_past_old_384_hardcap_for_long_input() {
+        // ~600 words ~= 810 rough tokens; the old fixed .clamp(96, 384) truncated
+        // this regardless of the user's configured max_tokens. With tiering and
+        // a high enough configured_max, the summary should get real headroom.
+        let long_transcript = "word ".repeat(600);
+        let (predicted, tier_idx) =
+            resolve_num_predict(&long_transcript, "summary", 8192, false, 0);
+        assert!(
+            predicted > 384,
+            "long summary input should grow past the old hardcoded ceiling, got {}",
+            predicted
+        );
+        assert!(
+            tier_idx > 1,
+            "tier should have grown beyond the starting tier"
+        );
+    }
+
+    #[test]
+    fn num_predict_tier_growth_is_monotonic_and_one_step_ahead() {
+        let long_transcript = "word ".repeat(600);
+        let (_predicted, grown_idx) =
+            resolve_num_predict(&long_transcript, "summary", 8192, false, 0);
+        // A subsequent short input must not shrink the persisted tier back down.
+        let (_predicted2, idx_after_short) =
+            resolve_num_predict("hi", "summary", 8192, false, grown_idx);
+        assert_eq!(
+            idx_after_short, grown_idx,
+            "tier must never shrink automatically"
+        );
+    }
+
+    #[test]
+    fn num_predict_configured_max_still_caps_output() {
+        let long_transcript = "word ".repeat(600);
+        let (predicted, _tier_idx) =
+            resolve_num_predict(&long_transcript, "summary", 200, false, 0);
+        assert!(
+            predicted <= 200,
+            "user's explicit Token Limit setting must remain the absolute ceiling, got {}",
+            predicted
+        );
+    }
+
+    #[test]
+    fn num_ctx_stays_at_baseline_for_typical_dictation() {
+        let (num_ctx, tier_idx) = resolve_num_ctx(OLLAMA_PROMPT_EN, "a short dictation", 160, 0);
+        assert_eq!(num_ctx, NUM_CTX_TIERS[0]);
+        assert_eq!(tier_idx, 0);
+    }
+
+    #[test]
+    fn num_ctx_grows_when_transcript_threatens_to_overflow_current_tier() {
+        // ~3000 words is comfortably beyond what fits in the 2048 baseline tier
+        // once the system prompt and output budget are added on top.
+        let huge_transcript = "word ".repeat(3000);
+        let (num_ctx, tier_idx) = resolve_num_ctx(OLLAMA_PROMPT_EN, &huge_transcript, 384, 0);
+        assert!(
+            num_ctx > NUM_CTX_TIERS[0],
+            "should step up from the 2048 baseline, got {}",
+            num_ctx
+        );
+        assert!(tier_idx > 0);
     }
 
     #[test]

@@ -3303,7 +3303,15 @@ fn scaled_coord(base_value: i32, size: usize) -> i32 {
 /// durchscheinen. Direktes Ueberschreiben ist bei Overlap idempotent (immer
 /// dieselbe Farbe), also seamless - Dimmen fuer den inaktiven Zustand passiert
 /// stattdessen EINMAL fuer das ganze fertige Bild, siehe create_tray_pulse_icon().
-fn fill_rect_opaque(pixels: &mut [u8], size: usize, x: i32, y: i32, w: i32, h: i32, color: [u8; 3]) {
+fn fill_rect_opaque(
+    pixels: &mut [u8],
+    size: usize,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    color: [u8; 3],
+) {
     let min_x = x.max(0);
     let max_x = (x + w).min(size as i32);
     let min_y = y.max(0);
@@ -3359,8 +3367,24 @@ fn create_tray_pulse_icon(
     // sichtbaren dritten Farbton genau an der T/F-Grenze.
     if recording_active {
         let glow_alpha = (40.0 + pulse * 50.0) as u8;
-        draw_rect_rgba(&mut pixels, size, sc(0), sc(1), sc(32), sc(62), [CYAN[0], CYAN[1], CYAN[2], glow_alpha]);
-        draw_rect_rgba(&mut pixels, size, sc(32), sc(1), sc(32), sc(62), [GOLD[0], GOLD[1], GOLD[2], glow_alpha]);
+        draw_rect_rgba(
+            &mut pixels,
+            size,
+            sc(0),
+            sc(1),
+            sc(32),
+            sc(62),
+            [CYAN[0], CYAN[1], CYAN[2], glow_alpha],
+        );
+        draw_rect_rgba(
+            &mut pixels,
+            size,
+            sc(32),
+            sc(1),
+            sc(32),
+            sc(62),
+            [GOLD[0], GOLD[1], GOLD[2], glow_alpha],
+        );
     }
 
     // Buchstaben werden IMMER voll opak gezeichnet (siehe fill_rect_opaque) -
@@ -3404,7 +3428,12 @@ fn create_tray_pulse_icon(
 fn tray_icon_target_size(app: &AppHandle) -> usize {
     let scale = app
         .get_webview_window("main")
-        .and_then(|w| w.current_monitor().ok().flatten().or_else(|| w.primary_monitor().ok().flatten()))
+        .and_then(|w| {
+            w.current_monitor()
+                .ok()
+                .flatten()
+                .or_else(|| w.primary_monitor().ok().flatten())
+        })
         .map(|m| m.scale_factor())
         .unwrap_or(1.0);
     ((16.0 * scale).round() as usize).clamp(16, 64)
@@ -3423,7 +3452,8 @@ fn refresh_tray_icon(app: &AppHandle, frame: usize) {
 
     if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
         let size = tray_icon_target_size(app);
-        let icon = create_tray_pulse_icon(size, effective_frame, recording_active, transcribe_active);
+        let icon =
+            create_tray_pulse_icon(size, effective_frame, recording_active, transcribe_active);
         let _ = tray.set_icon(Some(icon));
     }
 }

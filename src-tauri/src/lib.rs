@@ -3295,6 +3295,30 @@ fn scaled_coord(base_value: i32, size: usize) -> i32 {
     (base_value as f32 * size as f32 / 64.0).round() as i32
 }
 
+/// Schreibt ein Rechteck OPAK (direktes Ueberschreiben, kein Alpha-Blend).
+/// Wichtig fuer die TF-Buchstaben: die bestehen aus mehreren sich
+/// ueberlappenden Rects derselben Farbe (T-Balken+Steg, F-Steg+Arme) - mit
+/// draw_rect_rgba() bei reduzierter Alpha wuerden sich Ueberlappungen
+/// mehrfach uebereinander blenden und als sichtbar dunklerer/anderer Fleck
+/// durchscheinen. Direktes Ueberschreiben ist bei Overlap idempotent (immer
+/// dieselbe Farbe), also seamless - Dimmen fuer den inaktiven Zustand passiert
+/// stattdessen EINMAL fuer das ganze fertige Bild, siehe create_tray_pulse_icon().
+fn fill_rect_opaque(pixels: &mut [u8], size: usize, x: i32, y: i32, w: i32, h: i32, color: [u8; 3]) {
+    let min_x = x.max(0);
+    let max_x = (x + w).min(size as i32);
+    let min_y = y.max(0);
+    let max_y = (y + h).min(size as i32);
+    for yy in min_y..max_y {
+        for xx in min_x..max_x {
+            let idx = (yy as usize * size + xx as usize) * 4;
+            pixels[idx] = color[0];
+            pixels[idx + 1] = color[1];
+            pixels[idx + 2] = color[2];
+            pixels[idx + 3] = 255;
+        }
+    }
+}
+
 /// TF-Monogramm statt der frueheren zwei Kreise (siehe icons/icon.svg fuer
 /// dieselbe Buchstabenform/Farbwahl auf App-Icon-Ebene).
 ///
@@ -3330,24 +3354,39 @@ fn create_tray_pulse_icon(
 
     let sc = |v: i32| scaled_coord(v, size);
 
-    // Glow-Halo hinter beiden Buchstaben zusammen.
+    // Glow-Halo hinter beiden Buchstaben - links/rechts exakt an der Mitte
+    // (sc(32)) getrennt, KEIN Ueberlapp, sonst mischt sich Cyan/Gold zu einem
+    // sichtbaren dritten Farbton genau an der T/F-Grenze.
     if recording_active {
         let glow_alpha = (40.0 + pulse * 50.0) as u8;
-        draw_rect_rgba(&mut pixels, size, sc(1), sc(1), sc(32), sc(62), [CYAN[0], CYAN[1], CYAN[2], glow_alpha]);
-        draw_rect_rgba(&mut pixels, size, sc(31), sc(1), sc(32), sc(62), [GOLD[0], GOLD[1], GOLD[2], glow_alpha]);
+        draw_rect_rgba(&mut pixels, size, sc(0), sc(1), sc(32), sc(62), [CYAN[0], CYAN[1], CYAN[2], glow_alpha]);
+        draw_rect_rgba(&mut pixels, size, sc(32), sc(1), sc(32), sc(62), [GOLD[0], GOLD[1], GOLD[2], glow_alpha]);
     }
 
-    let letter_alpha = if recording_active { 255 } else { 185 };
-
-    // T (cyan): Querbalken + Steg, links, randlos bis zum oberen/unteren Rand.
-    draw_rect_rgba(&mut pixels, size, sc(4), sc(4), sc(26), sc(10), [CYAN[0], CYAN[1], CYAN[2], letter_alpha]);
-    draw_rect_rgba(&mut pixels, size, sc(12), sc(4), sc(10), sc(56), [CYAN[0], CYAN[1], CYAN[2], letter_alpha]);
+    // Buchstaben werden IMMER voll opak gezeichnet (siehe fill_rect_opaque) -
+    // Ueberlappungen zwischen T-Balken/-Steg bzw. F-Steg/-Armen sind dadurch
+    // seamless, egal wie stark der inaktive Zustand nachher gedimmt wird.
+    // T (cyan): Querbalken + Steg, links.
+    fill_rect_opaque(&mut pixels, size, sc(4), sc(4), sc(26), sc(10), CYAN);
+    fill_rect_opaque(&mut pixels, size, sc(12), sc(4), sc(10), sc(56), CYAN);
 
     // F (gold): Steg + oberer Arm + mittlerer Arm (verkleinert ggue. dem
     // ersten Entwurf, damit F nicht schwerer/groesser wirkt als T), rechts.
-    draw_rect_rgba(&mut pixels, size, sc(34), sc(4), sc(10), sc(56), [GOLD[0], GOLD[1], GOLD[2], letter_alpha]);
-    draw_rect_rgba(&mut pixels, size, sc(34), sc(4), sc(26), sc(10), [GOLD[0], GOLD[1], GOLD[2], letter_alpha]);
-    draw_rect_rgba(&mut pixels, size, sc(34), sc(26), sc(14), sc(8), [GOLD[0], GOLD[1], GOLD[2], letter_alpha]);
+    fill_rect_opaque(&mut pixels, size, sc(34), sc(4), sc(10), sc(56), GOLD);
+    fill_rect_opaque(&mut pixels, size, sc(34), sc(4), sc(26), sc(10), GOLD);
+    fill_rect_opaque(&mut pixels, size, sc(34), sc(26), sc(14), sc(8), GOLD);
+
+    // Inaktiv-Dimmen als EIN uniformer Alpha-Multiply-Pass ueber das fertige,
+    // bereits opake Bild - kompositionsseams sind so unmoeglich, weil hier
+    // nichts mehr uebereinander geblendet wird, nur noch linear skaliert.
+    if !recording_active {
+        const INACTIVE_ALPHA: f32 = 185.0 / 255.0;
+        for chunk in pixels.chunks_exact_mut(4) {
+            if chunk[3] > 0 {
+                chunk[3] = (chunk[3] as f32 * INACTIVE_ALPHA) as u8;
+            }
+        }
+    }
 
     Image::new_owned(pixels, size as u32, size as u32)
 }

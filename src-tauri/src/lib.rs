@@ -3379,8 +3379,11 @@ fn create_tray_pulse_icon(
     // Inaktiv-Dimmen als EIN uniformer Alpha-Multiply-Pass ueber das fertige,
     // bereits opake Bild - kompositionsseams sind so unmoeglich, weil hier
     // nichts mehr uebereinander geblendet wird, nur noch linear skaliert.
+    // Deutlich staerker abgedunkelt als der erste Versuch (185/255 ~= 73% -
+    // Unterschied zu aktiv kaum wahrnehmbar) - jetzt ~35%, damit "aufnimmt"
+    // klar vom Ruhezustand absticht.
     if !recording_active {
-        const INACTIVE_ALPHA: f32 = 185.0 / 255.0;
+        const INACTIVE_ALPHA: f32 = 90.0 / 255.0;
         for chunk in pixels.chunks_exact_mut(4) {
             if chunk[3] > 0 {
                 chunk[3] = (chunk[3] as f32 * INACTIVE_ALPHA) as u8;

@@ -3268,8 +3268,8 @@ fn parse_tray_state_code(payload: &str) -> u8 {
 }
 
 /// Blendet ein achsenparalleles Rechteck alpha-gewichtet in `pixels` ein -
-/// Rect-Pendant zu draw_circle_rgba(), fuer die TF-Buchstabenformen (siehe
-/// icons/icon.svg, dieselben Rect-Koordinaten-Idee nur auf 32x32 skaliert).
+/// fuer die TF-Buchstabenformen (siehe icons/icon.svg, dieselbe
+/// Rect-Koordinaten-Idee nur auf die Tray-Canvas skaliert).
 fn draw_rect_rgba(pixels: &mut [u8], size: usize, x: i32, y: i32, w: i32, h: i32, color: [u8; 4]) {
     let alpha = color[3] as f32 / 255.0;
     let inv_alpha = 1.0 - alpha;
@@ -3290,20 +3290,25 @@ fn draw_rect_rgba(pixels: &mut [u8], size: usize, x: i32, y: i32, w: i32, h: i32
 }
 
 /// TF-Monogramm statt der frueheren zwei Kreise (siehe icons/icon.svg fuer
-/// dieselbe Buchstabenform/Farbwahl auf App-Icon-Ebene) - T=Cyan=Recording,
-/// F=Gold=Transcribing, identische Zuordnung wie zuvor bei den beiden Dots.
-/// Die Buchstaben selbst bleiben formstabil (ein "atmendes" Resizing von
-/// Rechtecken Frame-fuer-Frame sieht bei Blockbuchstaben unruhig aus) -
-/// gepulst wird stattdessen ein weicher Glow dahinter, plus derselbe
-/// aktiv/inaktiv-Alpha-Unterschied (245 vs. 185) wie beim Vorgaenger-Design.
+/// dieselbe Buchstabenform/Farbwahl auf App-Icon-Ebene). 64px-Canvas statt
+/// vorher 32px UND die Buchstaben fuellen die Flaeche fast randlos (dicke
+/// Striche) - beides gegen das "sieht winzig/verwaschen aus neben den
+/// anderen Tray-Icons"-Feedback, das die erste Fassung bei echter
+/// Windows-Tray-Groesse (16-24px) hatte.
+///
+/// Nur EIN Zustand treibt die Optik: recording_active laesst BEIDE Buchstaben
+/// zusammen aufleuchten (Glow + volle Deckkraft) - kein separates
+/// "Transcribing"-Leuchten mehr, das brachte in der Praxis keinen erkennbaren
+/// Mehrwert. transcribe_active bleibt Parameter (Aufrufer/Event-Plumbing
+/// unveraendert), fliesst aber bewusst nicht mehr in die Optik ein.
 fn create_tray_pulse_icon(
     frame: usize,
     recording_active: bool,
-    transcribe_active: bool,
+    _transcribe_active: bool,
 ) -> tauri::image::Image<'static> {
     use tauri::image::Image;
 
-    let size = 32usize;
+    let size = 64usize;
     let mut pixels = vec![0u8; size * size * 4];
     let frame_mod = frame % TRAY_PULSE_FRAMES;
     let angle = (frame_mod as f32 / TRAY_PULSE_FRAMES as f32) * std::f32::consts::TAU;
@@ -3312,28 +3317,24 @@ fn create_tray_pulse_icon(
     const CYAN: [u8; 3] = [29, 166, 160];
     const GOLD: [u8; 3] = [245, 179, 66];
 
-    // Glow-Halo hinter dem jeweils aktiven Buchstaben - Bounding-Box je Buchstabe
-    // um 2px aufgeweitet, Alpha atmet zwischen 40 und 90 (dieselbe TAU/pulse-
-    // Berechnung wie zuvor, nur auf Alpha statt Radius angewandt).
-    let glow_alpha = (40.0 + pulse * 50.0) as u8;
+    // Glow-Halo hinter beiden Buchstaben zusammen - Bounding-Box je Buchstabe
+    // um 3px aufgeweitet, Alpha atmet zwischen 40 und 90.
     if recording_active {
-        draw_rect_rgba(&mut pixels, size, 1, 6, 15, 20, [CYAN[0], CYAN[1], CYAN[2], glow_alpha]);
+        let glow_alpha = (40.0 + pulse * 50.0) as u8;
+        draw_rect_rgba(&mut pixels, size, 1, 1, 32, 62, [CYAN[0], CYAN[1], CYAN[2], glow_alpha]);
+        draw_rect_rgba(&mut pixels, size, 31, 1, 32, 62, [GOLD[0], GOLD[1], GOLD[2], glow_alpha]);
     }
-    if transcribe_active {
-        draw_rect_rgba(&mut pixels, size, 16, 6, 14, 20, [GOLD[0], GOLD[1], GOLD[2], glow_alpha]);
-    }
 
-    let rec_alpha = if recording_active { 245 } else { 185 };
-    let trans_alpha = if transcribe_active { 245 } else { 185 };
+    let letter_alpha = if recording_active { 255 } else { 185 };
 
-    // T (cyan): Querbalken + Steg.
-    draw_rect_rgba(&mut pixels, size, 3, 8, 11, 4, [CYAN[0], CYAN[1], CYAN[2], rec_alpha]);
-    draw_rect_rgba(&mut pixels, size, 7, 8, 4, 16, [CYAN[0], CYAN[1], CYAN[2], rec_alpha]);
+    // T (cyan): Querbalken + Steg, links, randlos bis zum oberen/unteren Rand.
+    draw_rect_rgba(&mut pixels, size, 4, 4, 26, 10, [CYAN[0], CYAN[1], CYAN[2], letter_alpha]);
+    draw_rect_rgba(&mut pixels, size, 12, 4, 10, 56, [CYAN[0], CYAN[1], CYAN[2], letter_alpha]);
 
-    // F (gold): Steg + oberer Arm + mittlerer Arm.
-    draw_rect_rgba(&mut pixels, size, 18, 8, 4, 16, [GOLD[0], GOLD[1], GOLD[2], trans_alpha]);
-    draw_rect_rgba(&mut pixels, size, 18, 8, 10, 4, [GOLD[0], GOLD[1], GOLD[2], trans_alpha]);
-    draw_rect_rgba(&mut pixels, size, 18, 14, 8, 3, [GOLD[0], GOLD[1], GOLD[2], trans_alpha]);
+    // F (gold): Steg + oberer Arm + mittlerer Arm, rechts.
+    draw_rect_rgba(&mut pixels, size, 34, 4, 10, 56, [GOLD[0], GOLD[1], GOLD[2], letter_alpha]);
+    draw_rect_rgba(&mut pixels, size, 34, 4, 26, 10, [GOLD[0], GOLD[1], GOLD[2], letter_alpha]);
+    draw_rect_rgba(&mut pixels, size, 34, 26, 20, 9, [GOLD[0], GOLD[1], GOLD[2], letter_alpha]);
 
     Image::new_owned(pixels, size as u32, size as u32)
 }

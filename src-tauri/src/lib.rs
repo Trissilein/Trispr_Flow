@@ -3267,30 +3267,19 @@ fn parse_tray_state_code(payload: &str) -> u8 {
     }
 }
 
-fn draw_circle_rgba(
-    pixels: &mut [u8],
-    size: usize,
-    center_x: f32,
-    center_y: f32,
-    radius: f32,
-    color: [u8; 4],
-) {
-    let radius_sq = radius * radius;
-    let min_x = (center_x - radius).floor().max(0.0) as i32;
-    let max_x = (center_x + radius).ceil().min((size - 1) as f32) as i32;
-    let min_y = (center_y - radius).floor().max(0.0) as i32;
-    let max_y = (center_y + radius).ceil().min((size - 1) as f32) as i32;
-
+/// Blendet ein achsenparalleles Rechteck alpha-gewichtet in `pixels` ein -
+/// fuer die TF-Buchstabenformen (siehe icons/icon.svg, dieselbe
+/// Rect-Koordinaten-Idee nur auf die Tray-Canvas skaliert).
+fn draw_rect_rgba(pixels: &mut [u8], size: usize, x: i32, y: i32, w: i32, h: i32, color: [u8; 4]) {
     let alpha = color[3] as f32 / 255.0;
     let inv_alpha = 1.0 - alpha;
-    for y in min_y..=max_y {
-        for x in min_x..=max_x {
-            let dx = (x as f32 + 0.5) - center_x;
-            let dy = (y as f32 + 0.5) - center_y;
-            if dx * dx + dy * dy > radius_sq {
-                continue;
-            }
-            let idx = (y as usize * size + x as usize) * 4;
+    let min_x = x.max(0);
+    let max_x = (x + w).min(size as i32);
+    let min_y = y.max(0);
+    let max_y = (y + h).min(size as i32);
+    for yy in min_y..max_y {
+        for xx in min_x..max_x {
+            let idx = (yy as usize * size + xx as usize) * 4;
             pixels[idx] = (pixels[idx] as f32 * inv_alpha + color[0] as f32 * alpha) as u8;
             pixels[idx + 1] = (pixels[idx + 1] as f32 * inv_alpha + color[1] as f32 * alpha) as u8;
             pixels[idx + 2] = (pixels[idx + 2] as f32 * inv_alpha + color[2] as f32 * alpha) as u8;
@@ -3300,87 +3289,154 @@ fn draw_circle_rgba(
     }
 }
 
+/// Skaliert eine bei BASE_SIZE=64 entworfene Koordinate/Laenge proportional
+/// auf die tatsaechliche Ziel-Canvas - siehe create_tray_pulse_icon().
+fn scaled_coord(base_value: i32, size: usize) -> i32 {
+    (base_value as f32 * size as f32 / 64.0).round() as i32
+}
+
+/// Schreibt ein Rechteck OPAK (direktes Ueberschreiben, kein Alpha-Blend).
+/// Wichtig fuer die TF-Buchstaben: die bestehen aus mehreren sich
+/// ueberlappenden Rects derselben Farbe (T-Balken+Steg, F-Steg+Arme) - mit
+/// draw_rect_rgba() bei reduzierter Alpha wuerden sich Ueberlappungen
+/// mehrfach uebereinander blenden und als sichtbar dunklerer/anderer Fleck
+/// durchscheinen. Direktes Ueberschreiben ist bei Overlap idempotent (immer
+/// dieselbe Farbe), also seamless - Dimmen fuer den inaktiven Zustand passiert
+/// stattdessen EINMAL fuer das ganze fertige Bild, siehe create_tray_pulse_icon().
+fn fill_rect_opaque(
+    pixels: &mut [u8],
+    size: usize,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    color: [u8; 3],
+) {
+    let min_x = x.max(0);
+    let max_x = (x + w).min(size as i32);
+    let min_y = y.max(0);
+    let max_y = (y + h).min(size as i32);
+    for yy in min_y..max_y {
+        for xx in min_x..max_x {
+            let idx = (yy as usize * size + xx as usize) * 4;
+            pixels[idx] = color[0];
+            pixels[idx + 1] = color[1];
+            pixels[idx + 2] = color[2];
+            pixels[idx + 3] = 255;
+        }
+    }
+}
+
+/// TF-Monogramm statt der frueheren zwei Kreise (siehe icons/icon.svg fuer
+/// dieselbe Buchstabenform/Farbwahl auf App-Icon-Ebene).
+///
+/// `size` wird vom Aufrufer auf die ECHTE Windows-Tray-Icon-Groesse gesetzt
+/// (siehe tray_icon_target_size()) - die Buchstaben werden DIREKT in dieser
+/// Aufloesung gezeichnet, kein Downscale von einer groesseren Canvas mehr.
+/// Ein 64px-Entwurf, der auf 16px herunterskaliert wird, sah neben den
+/// anderen Tray-Icons verwaschen aus (Feedback); nativ bei 16px gezeichnete
+/// Rechtecke bleiben hart/scharf, weil kein Resample-Filter mehr dazwischen
+/// sitzt. Alle Koordinaten unten sind bei BASE_SIZE=64 entworfen und werden
+/// per scaled_coord() proportional auf `size` uebertragen.
+///
+/// Nur EIN Zustand treibt die Optik: recording_active laesst BEIDE Buchstaben
+/// zusammen aufleuchten (Glow + volle Deckkraft) - kein separates
+/// "Transcribing"-Leuchten mehr, das brachte in der Praxis keinen erkennbaren
+/// Mehrwert. transcribe_active bleibt Parameter (Aufrufer/Event-Plumbing
+/// unveraendert), fliesst aber bewusst nicht mehr in die Optik ein.
 fn create_tray_pulse_icon(
+    size: usize,
     frame: usize,
     recording_active: bool,
-    transcribe_active: bool,
+    _transcribe_active: bool,
 ) -> tauri::image::Image<'static> {
     use tauri::image::Image;
 
-    let size = 32usize;
     let mut pixels = vec![0u8; size * size * 4];
     let frame_mod = frame % TRAY_PULSE_FRAMES;
     let angle = (frame_mod as f32 / TRAY_PULSE_FRAMES as f32) * std::f32::consts::TAU;
     let pulse = 0.5 + 0.5 * angle.sin();
-    // Keep the brand-like two-circle silhouette: slight diagonal offset, low overlap.
-    let rec_center_x = 10.0f32;
-    let rec_center_y = 22.0f32;
-    let trans_center_x = 22.0f32;
-    let trans_center_y = 10.0f32;
 
-    // +30% compared to the previous 7.6 radius.
-    let rec_base = 9.9f32;
-    let trans_base = 9.9f32;
-    let rec_radius = if recording_active {
-        rec_base + (pulse * 0.35)
-    } else {
-        rec_base
-    };
-    let trans_radius = if transcribe_active {
-        trans_base + (pulse * 0.35)
-    } else {
-        trans_base
-    };
+    const CYAN: [u8; 3] = [29, 166, 160];
+    const GOLD: [u8; 3] = [245, 179, 66];
 
+    let sc = |v: i32| scaled_coord(v, size);
+
+    // Glow-Halo hinter beiden Buchstaben - links/rechts exakt an der Mitte
+    // (sc(32)) getrennt, KEIN Ueberlapp, sonst mischt sich Cyan/Gold zu einem
+    // sichtbaren dritten Farbton genau an der T/F-Grenze.
     if recording_active {
-        draw_circle_rgba(
+        let glow_alpha = (40.0 + pulse * 50.0) as u8;
+        draw_rect_rgba(
             &mut pixels,
             size,
-            rec_center_x,
-            rec_center_y,
-            rec_radius + 0.45,
-            [29, 166, 160, 72],
+            sc(0),
+            sc(1),
+            sc(32),
+            sc(62),
+            [CYAN[0], CYAN[1], CYAN[2], glow_alpha],
         );
-    }
-    if transcribe_active {
-        draw_circle_rgba(
+        draw_rect_rgba(
             &mut pixels,
             size,
-            trans_center_x,
-            trans_center_y,
-            trans_radius + 0.45,
-            [245, 179, 66, 72],
+            sc(32),
+            sc(1),
+            sc(32),
+            sc(62),
+            [GOLD[0], GOLD[1], GOLD[2], glow_alpha],
         );
     }
 
-    let rec_color = if recording_active {
-        [29, 166, 160, 245]
-    } else {
-        [29, 166, 160, 185]
-    };
-    let trans_color = if transcribe_active {
-        [245, 179, 66, 245]
-    } else {
-        [245, 179, 66, 185]
-    };
-    draw_circle_rgba(
-        &mut pixels,
-        size,
-        rec_center_x,
-        rec_center_y,
-        rec_radius,
-        rec_color,
-    );
-    draw_circle_rgba(
-        &mut pixels,
-        size,
-        trans_center_x,
-        trans_center_y,
-        trans_radius,
-        trans_color,
-    );
+    // Buchstaben werden IMMER voll opak gezeichnet (siehe fill_rect_opaque) -
+    // Ueberlappungen zwischen T-Balken/-Steg bzw. F-Steg/-Armen sind dadurch
+    // seamless, egal wie stark der inaktive Zustand nachher gedimmt wird.
+    // T (cyan): Querbalken + Steg, links.
+    fill_rect_opaque(&mut pixels, size, sc(4), sc(4), sc(26), sc(10), CYAN);
+    fill_rect_opaque(&mut pixels, size, sc(12), sc(4), sc(10), sc(56), CYAN);
+
+    // F (gold): Steg + oberer Arm + mittlerer Arm (verkleinert ggue. dem
+    // ersten Entwurf, damit F nicht schwerer/groesser wirkt als T), rechts.
+    fill_rect_opaque(&mut pixels, size, sc(34), sc(4), sc(10), sc(56), GOLD);
+    fill_rect_opaque(&mut pixels, size, sc(34), sc(4), sc(26), sc(10), GOLD);
+    fill_rect_opaque(&mut pixels, size, sc(34), sc(26), sc(14), sc(8), GOLD);
+
+    // Inaktiv-Dimmen als EIN uniformer Alpha-Multiply-Pass ueber das fertige,
+    // bereits opake Bild - kompositionsseams sind so unmoeglich, weil hier
+    // nichts mehr uebereinander geblendet wird, nur noch linear skaliert.
+    // Deutlich staerker abgedunkelt als der erste Versuch (185/255 ~= 73% -
+    // Unterschied zu aktiv kaum wahrnehmbar) - jetzt ~35%, damit "aufnimmt"
+    // klar vom Ruhezustand absticht.
+    if !recording_active {
+        const INACTIVE_ALPHA: f32 = 90.0 / 255.0;
+        for chunk in pixels.chunks_exact_mut(4) {
+            if chunk[3] > 0 {
+                chunk[3] = (chunk[3] as f32 * INACTIVE_ALPHA) as u8;
+            }
+        }
+    }
 
     Image::new_owned(pixels, size as u32, size as u32)
+}
+
+/// Ziel-Canvasgroesse fuer create_tray_pulse_icon() - die tatsaechliche
+/// Windows-Tray-Icon-Groesse (SM_CXSMICON, 16px bei 100% DPI, entsprechend
+/// mehr bei Skalierung), damit NICHTS mehr nachtraeglich von Windows/GDI
+/// gestreckt/gestaucht werden muss. `main`-Fenster kann beim Start schon
+/// existieren, aber (noch) unsichtbar sein - current_monitor() funktioniert
+/// trotzdem, primary_monitor() als Fallback falls kein Fenster/Monitor
+/// ermittelbar ist.
+fn tray_icon_target_size(app: &AppHandle) -> usize {
+    let scale = app
+        .get_webview_window("main")
+        .and_then(|w| {
+            w.current_monitor()
+                .ok()
+                .flatten()
+                .or_else(|| w.primary_monitor().ok().flatten())
+        })
+        .map(|m| m.scale_factor())
+        .unwrap_or(1.0);
+    ((16.0 * scale).round() as usize).clamp(16, 64)
 }
 
 fn refresh_tray_icon(app: &AppHandle, frame: usize) {
@@ -3395,7 +3451,9 @@ fn refresh_tray_icon(app: &AppHandle, frame: usize) {
     };
 
     if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
-        let icon = create_tray_pulse_icon(effective_frame, recording_active, transcribe_active);
+        let size = tray_icon_target_size(app);
+        let icon =
+            create_tray_pulse_icon(size, effective_frame, recording_active, transcribe_active);
         let _ = tray.set_icon(Some(icon));
     }
 }

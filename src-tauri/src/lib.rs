@@ -3267,30 +3267,19 @@ fn parse_tray_state_code(payload: &str) -> u8 {
     }
 }
 
-fn draw_circle_rgba(
-    pixels: &mut [u8],
-    size: usize,
-    center_x: f32,
-    center_y: f32,
-    radius: f32,
-    color: [u8; 4],
-) {
-    let radius_sq = radius * radius;
-    let min_x = (center_x - radius).floor().max(0.0) as i32;
-    let max_x = (center_x + radius).ceil().min((size - 1) as f32) as i32;
-    let min_y = (center_y - radius).floor().max(0.0) as i32;
-    let max_y = (center_y + radius).ceil().min((size - 1) as f32) as i32;
-
+/// Blendet ein achsenparalleles Rechteck alpha-gewichtet in `pixels` ein -
+/// Rect-Pendant zu draw_circle_rgba(), fuer die TF-Buchstabenformen (siehe
+/// icons/icon.svg, dieselben Rect-Koordinaten-Idee nur auf 32x32 skaliert).
+fn draw_rect_rgba(pixels: &mut [u8], size: usize, x: i32, y: i32, w: i32, h: i32, color: [u8; 4]) {
     let alpha = color[3] as f32 / 255.0;
     let inv_alpha = 1.0 - alpha;
-    for y in min_y..=max_y {
-        for x in min_x..=max_x {
-            let dx = (x as f32 + 0.5) - center_x;
-            let dy = (y as f32 + 0.5) - center_y;
-            if dx * dx + dy * dy > radius_sq {
-                continue;
-            }
-            let idx = (y as usize * size + x as usize) * 4;
+    let min_x = x.max(0);
+    let max_x = (x + w).min(size as i32);
+    let min_y = y.max(0);
+    let max_y = (y + h).min(size as i32);
+    for yy in min_y..max_y {
+        for xx in min_x..max_x {
+            let idx = (yy as usize * size + xx as usize) * 4;
             pixels[idx] = (pixels[idx] as f32 * inv_alpha + color[0] as f32 * alpha) as u8;
             pixels[idx + 1] = (pixels[idx + 1] as f32 * inv_alpha + color[1] as f32 * alpha) as u8;
             pixels[idx + 2] = (pixels[idx + 2] as f32 * inv_alpha + color[2] as f32 * alpha) as u8;
@@ -3300,6 +3289,13 @@ fn draw_circle_rgba(
     }
 }
 
+/// TF-Monogramm statt der frueheren zwei Kreise (siehe icons/icon.svg fuer
+/// dieselbe Buchstabenform/Farbwahl auf App-Icon-Ebene) - T=Cyan=Recording,
+/// F=Gold=Transcribing, identische Zuordnung wie zuvor bei den beiden Dots.
+/// Die Buchstaben selbst bleiben formstabil (ein "atmendes" Resizing von
+/// Rechtecken Frame-fuer-Frame sieht bei Blockbuchstaben unruhig aus) -
+/// gepulst wird stattdessen ein weicher Glow dahinter, plus derselbe
+/// aktiv/inaktiv-Alpha-Unterschied (245 vs. 185) wie beim Vorgaenger-Design.
 fn create_tray_pulse_icon(
     frame: usize,
     recording_active: bool,
@@ -3312,73 +3308,32 @@ fn create_tray_pulse_icon(
     let frame_mod = frame % TRAY_PULSE_FRAMES;
     let angle = (frame_mod as f32 / TRAY_PULSE_FRAMES as f32) * std::f32::consts::TAU;
     let pulse = 0.5 + 0.5 * angle.sin();
-    // Keep the brand-like two-circle silhouette: slight diagonal offset, low overlap.
-    let rec_center_x = 10.0f32;
-    let rec_center_y = 22.0f32;
-    let trans_center_x = 22.0f32;
-    let trans_center_y = 10.0f32;
 
-    // +30% compared to the previous 7.6 radius.
-    let rec_base = 9.9f32;
-    let trans_base = 9.9f32;
-    let rec_radius = if recording_active {
-        rec_base + (pulse * 0.35)
-    } else {
-        rec_base
-    };
-    let trans_radius = if transcribe_active {
-        trans_base + (pulse * 0.35)
-    } else {
-        trans_base
-    };
+    const CYAN: [u8; 3] = [29, 166, 160];
+    const GOLD: [u8; 3] = [245, 179, 66];
 
+    // Glow-Halo hinter dem jeweils aktiven Buchstaben - Bounding-Box je Buchstabe
+    // um 2px aufgeweitet, Alpha atmet zwischen 40 und 90 (dieselbe TAU/pulse-
+    // Berechnung wie zuvor, nur auf Alpha statt Radius angewandt).
+    let glow_alpha = (40.0 + pulse * 50.0) as u8;
     if recording_active {
-        draw_circle_rgba(
-            &mut pixels,
-            size,
-            rec_center_x,
-            rec_center_y,
-            rec_radius + 0.45,
-            [29, 166, 160, 72],
-        );
+        draw_rect_rgba(&mut pixels, size, 1, 6, 15, 20, [CYAN[0], CYAN[1], CYAN[2], glow_alpha]);
     }
     if transcribe_active {
-        draw_circle_rgba(
-            &mut pixels,
-            size,
-            trans_center_x,
-            trans_center_y,
-            trans_radius + 0.45,
-            [245, 179, 66, 72],
-        );
+        draw_rect_rgba(&mut pixels, size, 16, 6, 14, 20, [GOLD[0], GOLD[1], GOLD[2], glow_alpha]);
     }
 
-    let rec_color = if recording_active {
-        [29, 166, 160, 245]
-    } else {
-        [29, 166, 160, 185]
-    };
-    let trans_color = if transcribe_active {
-        [245, 179, 66, 245]
-    } else {
-        [245, 179, 66, 185]
-    };
-    draw_circle_rgba(
-        &mut pixels,
-        size,
-        rec_center_x,
-        rec_center_y,
-        rec_radius,
-        rec_color,
-    );
-    draw_circle_rgba(
-        &mut pixels,
-        size,
-        trans_center_x,
-        trans_center_y,
-        trans_radius,
-        trans_color,
-    );
+    let rec_alpha = if recording_active { 245 } else { 185 };
+    let trans_alpha = if transcribe_active { 245 } else { 185 };
+
+    // T (cyan): Querbalken + Steg.
+    draw_rect_rgba(&mut pixels, size, 3, 8, 11, 4, [CYAN[0], CYAN[1], CYAN[2], rec_alpha]);
+    draw_rect_rgba(&mut pixels, size, 7, 8, 4, 16, [CYAN[0], CYAN[1], CYAN[2], rec_alpha]);
+
+    // F (gold): Steg + oberer Arm + mittlerer Arm.
+    draw_rect_rgba(&mut pixels, size, 18, 8, 4, 16, [GOLD[0], GOLD[1], GOLD[2], trans_alpha]);
+    draw_rect_rgba(&mut pixels, size, 18, 8, 10, 4, [GOLD[0], GOLD[1], GOLD[2], trans_alpha]);
+    draw_rect_rgba(&mut pixels, size, 18, 14, 8, 3, [GOLD[0], GOLD[1], GOLD[2], trans_alpha]);
 
     Image::new_owned(pixels, size as u32, size as u32)
 }

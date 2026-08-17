@@ -3289,12 +3289,23 @@ fn draw_rect_rgba(pixels: &mut [u8], size: usize, x: i32, y: i32, w: i32, h: i32
     }
 }
 
+/// Skaliert eine bei BASE_SIZE=64 entworfene Koordinate/Laenge proportional
+/// auf die tatsaechliche Ziel-Canvas - siehe create_tray_pulse_icon().
+fn scaled_coord(base_value: i32, size: usize) -> i32 {
+    (base_value as f32 * size as f32 / 64.0).round() as i32
+}
+
 /// TF-Monogramm statt der frueheren zwei Kreise (siehe icons/icon.svg fuer
-/// dieselbe Buchstabenform/Farbwahl auf App-Icon-Ebene). 64px-Canvas statt
-/// vorher 32px UND die Buchstaben fuellen die Flaeche fast randlos (dicke
-/// Striche) - beides gegen das "sieht winzig/verwaschen aus neben den
-/// anderen Tray-Icons"-Feedback, das die erste Fassung bei echter
-/// Windows-Tray-Groesse (16-24px) hatte.
+/// dieselbe Buchstabenform/Farbwahl auf App-Icon-Ebene).
+///
+/// `size` wird vom Aufrufer auf die ECHTE Windows-Tray-Icon-Groesse gesetzt
+/// (siehe tray_icon_target_size()) - die Buchstaben werden DIREKT in dieser
+/// Aufloesung gezeichnet, kein Downscale von einer groesseren Canvas mehr.
+/// Ein 64px-Entwurf, der auf 16px herunterskaliert wird, sah neben den
+/// anderen Tray-Icons verwaschen aus (Feedback); nativ bei 16px gezeichnete
+/// Rechtecke bleiben hart/scharf, weil kein Resample-Filter mehr dazwischen
+/// sitzt. Alle Koordinaten unten sind bei BASE_SIZE=64 entworfen und werden
+/// per scaled_coord() proportional auf `size` uebertragen.
 ///
 /// Nur EIN Zustand treibt die Optik: recording_active laesst BEIDE Buchstaben
 /// zusammen aufleuchten (Glow + volle Deckkraft) - kein separates
@@ -3302,13 +3313,13 @@ fn draw_rect_rgba(pixels: &mut [u8], size: usize, x: i32, y: i32, w: i32, h: i32
 /// Mehrwert. transcribe_active bleibt Parameter (Aufrufer/Event-Plumbing
 /// unveraendert), fliesst aber bewusst nicht mehr in die Optik ein.
 fn create_tray_pulse_icon(
+    size: usize,
     frame: usize,
     recording_active: bool,
     _transcribe_active: bool,
 ) -> tauri::image::Image<'static> {
     use tauri::image::Image;
 
-    let size = 64usize;
     let mut pixels = vec![0u8; size * size * 4];
     let frame_mod = frame % TRAY_PULSE_FRAMES;
     let angle = (frame_mod as f32 / TRAY_PULSE_FRAMES as f32) * std::f32::consts::TAU;
@@ -3317,26 +3328,44 @@ fn create_tray_pulse_icon(
     const CYAN: [u8; 3] = [29, 166, 160];
     const GOLD: [u8; 3] = [245, 179, 66];
 
-    // Glow-Halo hinter beiden Buchstaben zusammen - Bounding-Box je Buchstabe
-    // um 3px aufgeweitet, Alpha atmet zwischen 40 und 90.
+    let sc = |v: i32| scaled_coord(v, size);
+
+    // Glow-Halo hinter beiden Buchstaben zusammen.
     if recording_active {
         let glow_alpha = (40.0 + pulse * 50.0) as u8;
-        draw_rect_rgba(&mut pixels, size, 1, 1, 32, 62, [CYAN[0], CYAN[1], CYAN[2], glow_alpha]);
-        draw_rect_rgba(&mut pixels, size, 31, 1, 32, 62, [GOLD[0], GOLD[1], GOLD[2], glow_alpha]);
+        draw_rect_rgba(&mut pixels, size, sc(1), sc(1), sc(32), sc(62), [CYAN[0], CYAN[1], CYAN[2], glow_alpha]);
+        draw_rect_rgba(&mut pixels, size, sc(31), sc(1), sc(32), sc(62), [GOLD[0], GOLD[1], GOLD[2], glow_alpha]);
     }
 
     let letter_alpha = if recording_active { 255 } else { 185 };
 
     // T (cyan): Querbalken + Steg, links, randlos bis zum oberen/unteren Rand.
-    draw_rect_rgba(&mut pixels, size, 4, 4, 26, 10, [CYAN[0], CYAN[1], CYAN[2], letter_alpha]);
-    draw_rect_rgba(&mut pixels, size, 12, 4, 10, 56, [CYAN[0], CYAN[1], CYAN[2], letter_alpha]);
+    draw_rect_rgba(&mut pixels, size, sc(4), sc(4), sc(26), sc(10), [CYAN[0], CYAN[1], CYAN[2], letter_alpha]);
+    draw_rect_rgba(&mut pixels, size, sc(12), sc(4), sc(10), sc(56), [CYAN[0], CYAN[1], CYAN[2], letter_alpha]);
 
-    // F (gold): Steg + oberer Arm + mittlerer Arm, rechts.
-    draw_rect_rgba(&mut pixels, size, 34, 4, 10, 56, [GOLD[0], GOLD[1], GOLD[2], letter_alpha]);
-    draw_rect_rgba(&mut pixels, size, 34, 4, 26, 10, [GOLD[0], GOLD[1], GOLD[2], letter_alpha]);
-    draw_rect_rgba(&mut pixels, size, 34, 26, 20, 9, [GOLD[0], GOLD[1], GOLD[2], letter_alpha]);
+    // F (gold): Steg + oberer Arm + mittlerer Arm (verkleinert ggue. dem
+    // ersten Entwurf, damit F nicht schwerer/groesser wirkt als T), rechts.
+    draw_rect_rgba(&mut pixels, size, sc(34), sc(4), sc(10), sc(56), [GOLD[0], GOLD[1], GOLD[2], letter_alpha]);
+    draw_rect_rgba(&mut pixels, size, sc(34), sc(4), sc(26), sc(10), [GOLD[0], GOLD[1], GOLD[2], letter_alpha]);
+    draw_rect_rgba(&mut pixels, size, sc(34), sc(26), sc(14), sc(8), [GOLD[0], GOLD[1], GOLD[2], letter_alpha]);
 
     Image::new_owned(pixels, size as u32, size as u32)
+}
+
+/// Ziel-Canvasgroesse fuer create_tray_pulse_icon() - die tatsaechliche
+/// Windows-Tray-Icon-Groesse (SM_CXSMICON, 16px bei 100% DPI, entsprechend
+/// mehr bei Skalierung), damit NICHTS mehr nachtraeglich von Windows/GDI
+/// gestreckt/gestaucht werden muss. `main`-Fenster kann beim Start schon
+/// existieren, aber (noch) unsichtbar sein - current_monitor() funktioniert
+/// trotzdem, primary_monitor() als Fallback falls kein Fenster/Monitor
+/// ermittelbar ist.
+fn tray_icon_target_size(app: &AppHandle) -> usize {
+    let scale = app
+        .get_webview_window("main")
+        .and_then(|w| w.current_monitor().ok().flatten().or_else(|| w.primary_monitor().ok().flatten()))
+        .map(|m| m.scale_factor())
+        .unwrap_or(1.0);
+    ((16.0 * scale).round() as usize).clamp(16, 64)
 }
 
 fn refresh_tray_icon(app: &AppHandle, frame: usize) {
@@ -3351,7 +3380,8 @@ fn refresh_tray_icon(app: &AppHandle, frame: usize) {
     };
 
     if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
-        let icon = create_tray_pulse_icon(effective_frame, recording_active, transcribe_active);
+        let size = tray_icon_target_size(app);
+        let icon = create_tray_pulse_icon(size, effective_frame, recording_active, transcribe_active);
         let _ = tray.set_icon(Some(icon));
     }
 }

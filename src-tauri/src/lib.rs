@@ -188,6 +188,7 @@ static BACKLOG_PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
 static MAIN_WINDOW_RESTORED: AtomicBool = AtomicBool::new(false);
 static CLIPBOARD_PASTE_GENERATION: AtomicU64 = AtomicU64::new(0);
+static LAST_PASTE_TEXT: Mutex<String> = Mutex::new(String::new());
 static LAST_GEOMETRY_SAVE_MS: AtomicU64 = AtomicU64::new(0);
 static PTT_KEY_HELD: AtomicBool = AtomicBool::new(false);
 static PTT_PRESS_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
@@ -3168,7 +3169,48 @@ fn restore_snapshot_with_retry(snapshot: ClipboardSnapshot) -> Result<(), String
     }
 }
 
+/// Tray icon clicks are owned by explorer.exe's taskbar process, which steals
+/// the foreground before our click handler runs. Without this, the paste
+/// keystroke lands wherever focus ended up (often nowhere useful) instead of
+/// the app the user was actually dictating into. `last_paste_target` is the
+/// window/process identity `record_paste` captured during the previous real
+/// paste, so restoring it here targets the same app.
+#[cfg(target_os = "windows")]
+fn restore_paste_target_focus(app_handle: &AppHandle) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
+    };
+
+    let state = app_handle.state::<crate::state::AppState>();
+    let target = state
+        .enter_capture
+        .last_paste_target
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+    let Some(target) = target else {
+        return false;
+    };
+
+    unsafe {
+        let hwnd = HWND(target.hwnd as *mut _);
+        if !IsWindow(Some(hwnd)).as_bool() {
+            return false;
+        }
+        let mut pid: u32 = 0;
+        let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid != target.pid {
+            return false;
+        }
+        SetForegroundWindow(hwnd).as_bool()
+    }
+}
+
 pub(crate) fn paste_text(app_handle: &AppHandle, text: &str) -> Result<(), String> {
+    *LAST_PASTE_TEXT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = text.to_string();
     let snapshot = capture_clipboard_snapshot_with_retry();
     set_clipboard_text_with_retry(text)?;
     {
@@ -4464,6 +4506,31 @@ pub fn run() {
                             if should_handle_tray_click() {
                                 toggle_main_window(tray.app_handle());
                             }
+                        }
+                        TrayIconEvent::Click {
+                            button: MouseButton::Middle,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } => {
+                            let app_handle = tray.app_handle().clone();
+                            crate::util::spawn_guarded("tray_middle_click_repaste", move || {
+                                let text = LAST_PASTE_TEXT
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                    .clone();
+                                if text.trim().is_empty() {
+                                    return;
+                                }
+                                #[cfg(target_os = "windows")]
+                                if restore_paste_target_focus(&app_handle) {
+                                    // Give Windows a moment to actually switch input
+                                    // focus before the Ctrl+V keystroke goes out.
+                                    thread::sleep(Duration::from_millis(80));
+                                }
+                                if let Err(err) = paste_text(&app_handle, &text) {
+                                    warn!("Middle-click repaste failed: {}", err);
+                                }
+                            });
                         }
                         _ => {}
                     }

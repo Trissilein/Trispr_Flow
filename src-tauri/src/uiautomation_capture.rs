@@ -1,7 +1,7 @@
-//! Windows UIAutomation Enter-Capture.
+//! Windows UIAutomation Enter-Capture and re-paste gesture.
 //! Two-thread architecture:
-//!   - Hook-thread: WH_KEYBOARD_LL + message loop, signals worker on Enter
-//!   - Worker-thread: UIAutomation COM calls, event emission
+//!   - Hook-thread: WH_KEYBOARD_LL / WH_MOUSE_LL + message loop
+//!   - Worker-thread: UIAutomation COM calls, event emission, re-paste
 
 use std::cell::RefCell;
 use std::sync::atomic::Ordering;
@@ -20,6 +20,23 @@ pub use crate::state::EnterCaptureState;
 use crate::state::TargetIdentity;
 
 const VK_RETURN_CODE: u32 = 0x0D;
+const VK_CONTROL_CODE: u32 = 0x11;
+const VK_MENU_CODE: u32 = 0x12;
+const VK_LCONTROL_CODE: u32 = 0xA2;
+const VK_RCONTROL_CODE: u32 = 0xA3;
+const VK_LMENU_CODE: u32 = 0xA4;
+const VK_RMENU_CODE: u32 = 0xA5;
+const WM_KEYDOWN_CODE: u32 = 0x0100;
+const WM_KEYUP_CODE: u32 = 0x0101;
+const WM_SYSKEYDOWN_CODE: u32 = 0x0104;
+const WM_SYSKEYUP_CODE: u32 = 0x0105;
+const WM_MBUTTONUP_CODE: u32 = 0x0208;
+
+#[derive(Clone, Copy)]
+enum HookSignal {
+    Enter,
+    Repaste,
+}
 
 /// Called from paste_text() in lib.rs. Captures both the pasted text and the
 /// foreground window/process identity, so the Enter-handler can validate the
@@ -60,12 +77,14 @@ pub fn record_paste(state: &EnterCaptureState, text: &str) {
 }
 
 thread_local! {
-    static HOOK_TX: RefCell<Option<mpsc::SyncSender<()>>> = const { RefCell::new(None) };
+    static HOOK_TX: RefCell<Option<mpsc::SyncSender<HookSignal>>> = const { RefCell::new(None) };
+    static CTRL_HELD: RefCell<bool> = const { RefCell::new(false) };
+    static ALT_HELD: RefCell<bool> = const { RefCell::new(false) };
 }
 
 /// Start both threads. Call once from app setup.
 pub fn start_hook_thread(app: tauri::AppHandle) {
-    let (signal_tx, signal_rx) = mpsc::sync_channel::<()>(1);
+    let (signal_tx, signal_rx) = mpsc::sync_channel::<HookSignal>(1);
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
 
     let state = app.state::<crate::state::AppState>();
@@ -87,7 +106,7 @@ pub fn start_hook_thread(app: tauri::AppHandle) {
 }
 
 #[cfg(target_os = "windows")]
-fn run_hook_loop(app: tauri::AppHandle, signal_tx: mpsc::SyncSender<()>) {
+fn run_hook_loop(app: tauri::AppHandle, signal_tx: mpsc::SyncSender<HookSignal>) {
     unsafe {
         let tid = windows_sys::Win32::System::Threading::GetCurrentThreadId();
         app.state::<crate::state::AppState>()
@@ -99,11 +118,19 @@ fn run_hook_loop(app: tauri::AppHandle, signal_tx: mpsc::SyncSender<()>) {
             *cell.borrow_mut() = Some(signal_tx);
         });
 
-        let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(ll_keyboard_proc), None, 0) {
+        let keyboard_hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(ll_keyboard_proc), None, 0)
+        {
             Ok(h) => h,
             Err(e) => {
                 error!("[enter-capture] SetWindowsHookExW failed: {e} - Enter-Capture is disabled");
                 return;
+            }
+        };
+        let mouse_hook = match SetWindowsHookExW(WH_MOUSE_LL, Some(ll_mouse_proc), None, 0) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                error!("[repaste] SetWindowsHookExW failed: {e} - re-paste is disabled");
+                None
             }
         };
 
@@ -113,18 +140,35 @@ fn run_hook_loop(app: tauri::AppHandle, signal_tx: mpsc::SyncSender<()>) {
             DispatchMessageW(&msg);
         }
 
-        let _ = UnhookWindowsHookEx(hook);
+        if let Some(mouse_hook) = mouse_hook {
+            let _ = UnhookWindowsHookEx(mouse_hook);
+        }
+        let _ = UnhookWindowsHookEx(keyboard_hook);
     }
 }
 
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn ll_keyboard_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if ncode >= 0 && wparam.0 as u32 == WM_KEYDOWN {
+    if ncode >= 0 {
         let kbd = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-        if kbd.vkCode == VK_RETURN_CODE {
+        let message = wparam.0 as u32;
+        let is_down = matches!(message, WM_KEYDOWN_CODE | WM_SYSKEYDOWN_CODE);
+        let is_up = matches!(message, WM_KEYUP_CODE | WM_SYSKEYUP_CODE);
+        if is_down || is_up {
+            match kbd.vkCode {
+                VK_CONTROL_CODE | VK_LCONTROL_CODE | VK_RCONTROL_CODE => {
+                    CTRL_HELD.with(|held| *held.borrow_mut() = is_down);
+                }
+                VK_MENU_CODE | VK_LMENU_CODE | VK_RMENU_CODE => {
+                    ALT_HELD.with(|held| *held.borrow_mut() = is_down);
+                }
+                _ => {}
+            }
+        }
+        if message == WM_KEYDOWN_CODE && kbd.vkCode == VK_RETURN_CODE {
             HOOK_TX.with(|cell| {
                 if let Some(tx) = cell.borrow().as_ref() {
-                    let _ = tx.try_send(());
+                    let _ = tx.try_send(HookSignal::Enter);
                 }
             });
         }
@@ -133,9 +177,31 @@ unsafe extern "system" fn ll_keyboard_proc(ncode: i32, wparam: WPARAM, lparam: L
 }
 
 #[cfg(target_os = "windows")]
+unsafe extern "system" fn ll_mouse_proc(ncode: i32, wparam: WPARAM, _lparam: LPARAM) -> LRESULT {
+    if ncode >= 0
+        && is_repaste_gesture(
+            wparam.0 as u32,
+            CTRL_HELD.with(|held| *held.borrow()),
+            ALT_HELD.with(|held| *held.borrow()),
+        )
+    {
+        HOOK_TX.with(|cell| {
+            if let Some(tx) = cell.borrow().as_ref() {
+                let _ = tx.try_send(HookSignal::Repaste);
+            }
+        });
+    }
+    CallNextHookEx(None, ncode, wparam, _lparam)
+}
+
+fn is_repaste_gesture(message: u32, ctrl_held: bool, alt_held: bool) -> bool {
+    message == WM_MBUTTONUP_CODE && ctrl_held && alt_held
+}
+
+#[cfg(target_os = "windows")]
 fn run_worker_loop(
     app: tauri::AppHandle,
-    signal_rx: mpsc::Receiver<()>,
+    signal_rx: mpsc::Receiver<HookSignal>,
     shutdown_rx: mpsc::Receiver<()>,
 ) {
     unsafe {
@@ -162,7 +228,8 @@ fn run_worker_loop(
             }
 
             match signal_rx.recv_timeout(std::time::Duration::from_millis(100)) {
-                Ok(()) => handle_enter_signal(&app, &automation),
+                Ok(HookSignal::Enter) => handle_enter_signal(&app, &automation),
+                Ok(HookSignal::Repaste) => crate::repaste_last_text(&app),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
@@ -330,5 +397,19 @@ pub fn shutdown(state: &EnterCaptureState) {
                 let _ = PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repaste_requires_ctrl_alt_middle_button_release() {
+        assert!(is_repaste_gesture(WM_MBUTTONUP_CODE, true, true));
+        assert!(!is_repaste_gesture(WM_MBUTTONUP_CODE, true, false));
+        assert!(!is_repaste_gesture(WM_MBUTTONUP_CODE, false, true));
+        assert!(!is_repaste_gesture(WM_MBUTTONUP_CODE, false, false));
+        assert!(!is_repaste_gesture(WM_KEYUP_CODE, true, true));
     }
 }

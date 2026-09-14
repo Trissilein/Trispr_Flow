@@ -51,6 +51,8 @@ let renderInFlight = false;
 let progressUnlisten: UnlistenFn | null = null;
 let completeUnlisten: UnlistenFn | null = null;
 let tauriDragDropUnlisten: UnlistenFn | null = null;
+let domListeners: AbortController | null = null;
+let lifecycleGeneration = 0;
 
 // ---------------------------------------------------------------------------
 // DOM lookup helpers — keep each lookup local so an init-ordering issue in one
@@ -122,7 +124,7 @@ function renderQueue(): void {
         queue.forEach((item, i) => (item.order = i));
         renderQueue();
       }
-    });
+    }, { signal: domListeners?.signal });
   });
 }
 
@@ -195,29 +197,29 @@ async function ingestHistoryEntry(entryId: string): Promise<void> {
 // for full-window drops from the OS.
 // ---------------------------------------------------------------------------
 
-function wireDropZone(): void {
+function wireDropZone(signal: AbortSignal): void {
   const zone = $("video-drop-zone");
   if (!zone) return;
 
   zone.addEventListener("dragover", (e) => {
     e.preventDefault();
     zone.classList.add("is-dragover");
-  });
+  }, { signal });
   zone.addEventListener("dragleave", () => {
     zone.classList.remove("is-dragover");
-  });
+  }, { signal });
   zone.addEventListener("drop", (e) => {
     e.preventDefault();
     zone.classList.remove("is-dragover");
     // HTML5 `drop` gives File objects without path on Tauri; Tauri's
     // window-level drag-drop event below is the reliable path.
-  });
+  }, { signal });
 }
 
-async function wireTauriDragDrop(): Promise<void> {
+async function wireTauriDragDrop(generation: number): Promise<void> {
   try {
     const win = getCurrentWindow();
-    tauriDragDropUnlisten = await win.onDragDropEvent(async (event) => {
+    const unlisten = await win.onDragDropEvent(async (event) => {
       if (event.payload.type === "drop") {
         const paths = (event.payload.paths ?? []) as string[];
         if (paths.length > 0) {
@@ -225,6 +227,11 @@ async function wireTauriDragDrop(): Promise<void> {
         }
       }
     });
+    if (generation !== lifecycleGeneration) {
+      unlisten();
+      return;
+    }
+    tauriDragDropUnlisten = unlisten;
   } catch (err) {
     console.warn("[video-gen] tauri drag-drop unavailable:", err);
   }
@@ -284,16 +291,26 @@ async function generateVideo(): Promise<void> {
 // Event-listener wiring (tauri backend events + button clicks)
 // ---------------------------------------------------------------------------
 
-async function wireBackendEvents(): Promise<void> {
-  progressUnlisten = await listen<ProgressPayload>("video:progress", (e) => {
+async function wireBackendEvents(generation: number): Promise<void> {
+  const progress = await listen<ProgressPayload>("video:progress", (e) => {
     renderProgress(e.payload.phase, e.payload.progress, e.payload.message ?? null);
   });
-  completeUnlisten = await listen<VideoJobResult>("video:complete", (e) => {
+  if (generation !== lifecycleGeneration) {
+    progress();
+    return;
+  }
+  progressUnlisten = progress;
+  const complete = await listen<VideoJobResult>("video:complete", (e) => {
     renderResult(e.payload);
   });
+  if (generation !== lifecycleGeneration) {
+    complete();
+    return;
+  }
+  completeUnlisten = complete;
 }
 
-function wireButtons(): void {
+function wireButtons(signal: AbortSignal): void {
   $("video-pick-files-btn")?.addEventListener("click", async () => {
     try {
       const selected = await openDialog({
@@ -316,23 +333,23 @@ function wireButtons(): void {
     } catch (err) {
       console.error("[video-gen] pick files failed:", err);
     }
-  });
+  }, { signal });
 
   $("video-add-history-btn")?.addEventListener("click", async () => {
     const entryId = window.prompt("Transcript entry id (Phase 1a stub — UI picker comes later):");
     if (entryId && entryId.trim().length > 0) {
       await ingestHistoryEntry(entryId.trim());
     }
-  });
+  }, { signal });
 
   $("video-queue-clear-btn")?.addEventListener("click", () => {
     queue.splice(0, queue.length);
     renderQueue();
-  });
+  }, { signal });
 
   $("video-generate-btn")?.addEventListener("click", () => {
     void generateVideo();
-  });
+  }, { signal });
 
   $("video-open-folder-btn")?.addEventListener("click", async () => {
     try {
@@ -340,7 +357,7 @@ function wireButtons(): void {
     } catch (err) {
       console.error("[video-gen] open folder failed:", err);
     }
-  });
+  }, { signal });
 }
 
 // ---------------------------------------------------------------------------
@@ -352,14 +369,20 @@ let initialized = false;
 export async function initVideoGenerationPanel(): Promise<void> {
   if (initialized) return;
   initialized = true;
-  wireDropZone();
-  wireButtons();
-  await wireTauriDragDrop();
-  await wireBackendEvents();
+  const generation = ++lifecycleGeneration;
+  domListeners = new AbortController();
+  wireDropZone(domListeners.signal);
+  wireButtons(domListeners.signal);
+  await wireTauriDragDrop(generation);
+  await wireBackendEvents(generation);
+  if (generation !== lifecycleGeneration) return;
   renderQueue();
 }
 
 export function teardownVideoGenerationPanel(): void {
+  lifecycleGeneration += 1;
+  domListeners?.abort();
+  domListeners = null;
   if (progressUnlisten) {
     progressUnlisten();
     progressUnlisten = null;
@@ -372,5 +395,8 @@ export function teardownVideoGenerationPanel(): void {
     tauriDragDropUnlisten();
     tauriDragDropUnlisten = null;
   }
+  queue.splice(0, queue.length);
+  renderInFlight = false;
+  renderQueue();
   initialized = false;
 }

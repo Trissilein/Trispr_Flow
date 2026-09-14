@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   renderOllamaModelManager: vi.fn(),
   applyAccentColor: vi.fn(),
   syncWorkflowAgentConsoleState: vi.fn(),
+  initVideoGenerationPanel: vi.fn(),
+  teardownVideoGenerationPanel: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -68,6 +70,11 @@ vi.mock("../utils", () => ({
 
 vi.mock("../workflow-agent-console", () => ({
   syncWorkflowAgentConsoleState: mocks.syncWorkflowAgentConsoleState,
+}));
+
+vi.mock("../video-generation", () => ({
+  initVideoGenerationPanel: mocks.initVideoGenerationPanel,
+  teardownVideoGenerationPanel: mocks.teardownVideoGenerationPanel,
 }));
 
 function mountDom(): void {
@@ -259,6 +266,15 @@ describe("wireAppChrome - main tabs", () => {
     state.setSettings(makeSettings({ video: false }));
     appChrome.reconcileMainTabVisibility();
     expect(activeTabId()).toBe("tab-btn-transcription");
+  });
+
+  it("starts video wiring only while the module is enabled", async () => {
+    const { appChrome, state } = await setup({ video: false });
+    appChrome.reconcileMainTabVisibility();
+    expect(mocks.teardownVideoGenerationPanel).toHaveBeenCalled();
+    state.setSettings(makeSettings({ video: true }));
+    appChrome.reconcileMainTabVisibility();
+    expect(mocks.initVideoGenerationPanel).toHaveBeenCalled();
   });
 
   it("shows Agent tab only when assistant core is available", async () => {

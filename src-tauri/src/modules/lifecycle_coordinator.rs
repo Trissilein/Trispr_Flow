@@ -118,6 +118,10 @@ pub(crate) fn enable_module_actions(
         );
     }
 
+    if result.is_ok() && module_id == "opus" {
+        crate::session_manager::set_opus_module_enabled(true);
+    }
+
     if result.is_ok() {
         if snapshot.transcribe_enabled && !prev_transcribe_enabled {
             let _ = start_transcribe_monitor(app, state, &snapshot);
@@ -231,6 +235,14 @@ pub(crate) fn disable_module_actions(
     // PHASE C: Reconcile (Reconcile Side-Effects)
     // ==========================================
     if result.is_ok() {
+        if module_id == TASK_CAPTURE_MODULE_ID || module_id == ASSISTANT_CORE_MODULE_ID {
+            state
+                .task_capture_generation
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        if module_id == "opus" {
+            crate::session_manager::set_opus_module_enabled(false);
+        }
         match module_id.as_str() {
             ASSISTANT_CORE_MODULE_ID | ASSISTANT_PRESENCE_MODULE_ID => {
                 crate::assistant_presence::destroy_assistant_presence_window(app);

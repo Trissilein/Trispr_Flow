@@ -27,6 +27,30 @@ struct PendingAssistantConfirmation {
 static ASSISTANT_PENDING_CONFIRMATION: Mutex<Option<PendingAssistantConfirmation>> =
     Mutex::new(None);
 
+fn task_capture_post_allowed(
+    queued_generation: u64,
+    current_generation: u64,
+    task_capture_enabled: bool,
+    assistant_core_enabled: bool,
+) -> bool {
+    queued_generation == current_generation && task_capture_enabled && assistant_core_enabled
+}
+
+fn task_capture_post_is_current(app: &AppHandle, queued_generation: u64) -> bool {
+    let state = app.state::<AppState>();
+    let current_generation = state.task_capture_generation.load(Ordering::SeqCst);
+    let settings = state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    task_capture_post_allowed(
+        queued_generation,
+        current_generation,
+        crate::modules::task_capture::task_capture_enabled(&settings),
+        crate::state::assistant_core_module_enabled(&settings),
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentParseCommandRequest {
     pub command_text: String,
@@ -1331,7 +1355,9 @@ fn emit_assistant_action_result(
 
 #[cfg(test)]
 mod assistant_orchestrator_tests {
-    use super::{assistant_baseline_state, assistant_capability_snapshot};
+    use super::{
+        assistant_baseline_state, assistant_capability_snapshot, task_capture_post_allowed,
+    };
     use crate::state::{AssistantOrchestratorState, Settings};
     use crate::RuntimeCapability;
 
@@ -1407,6 +1433,14 @@ mod assistant_orchestrator_tests {
         let (state, reason) = assistant_baseline_state(&capability);
         assert_eq!(state, AssistantOrchestratorState::Idle);
         assert_eq!(reason, "assistant_core_unavailable");
+    }
+
+    #[test]
+    fn task_capture_post_requires_current_generation_and_both_modules() {
+        assert!(task_capture_post_allowed(4, 4, true, true));
+        assert!(!task_capture_post_allowed(4, 5, true, true));
+        assert!(!task_capture_post_allowed(4, 4, false, true));
+        assert!(!task_capture_post_allowed(4, 4, true, false));
     }
 }
 
@@ -1649,6 +1683,8 @@ pub(crate) fn assistant_execute_direct_action(
                         );
 
                         let app_clone = app.clone();
+                        let task_capture_generation =
+                            state.task_capture_generation.load(Ordering::SeqCst);
                         let settings_clone = settings_snapshot.clone();
                         let queued_task = raw_task.clone();
                         let route_clone = route.clone();
@@ -1708,6 +1744,20 @@ pub(crate) fn assistant_execute_direct_action(
                                 );
                                 queued_task.clone()
                             };
+
+                            if !task_capture_post_is_current(&app_clone, task_capture_generation) {
+                                let _ = update_overlay_refining_indicator(&app_clone, false);
+                                let _ = app_clone.emit(
+                                    "agent:execution-progress",
+                                    serde_json::json!({
+                                        "intent": "reminder_capture",
+                                        "stage": "cancelled",
+                                        "status": "cancelled",
+                                        "message": "Task Capture was disabled before posting.",
+                                    }),
+                                );
+                                return;
+                            }
 
                             let _ = app_clone.emit(
                                 "agent:execution-progress",

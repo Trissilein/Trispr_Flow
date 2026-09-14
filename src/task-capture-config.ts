@@ -42,6 +42,14 @@ function ensureAtLeastOneRoute(settings: TaskCaptureSettings): TaskCaptureSettin
   };
 }
 
+function setVisibilityMetadata(element: HTMLElement, key: string, label: string): void {
+  element.dataset.settingsVisibilityManaged = "true";
+  element.dataset.settingsVisibilityKey = key;
+  element.dataset.settingsVisibilityLabel = label;
+  element.dataset.settingsVisibilityDefault = "expert";
+  element.dataset.settingsVisibilityGroup = "Task Capture";
+}
+
 export async function renderTaskCaptureTab(): Promise<void> {
   const container = document.getElementById("task-capture-panel-body");
   if (!container) return;
@@ -114,8 +122,9 @@ export async function renderTaskCaptureTab(): Promise<void> {
     routesList.style.marginTop = "10px";
 
     working.routes.forEach((route, index) => {
+      const routeKey = "task.routes";
       const routeCard = document.createElement("div");
-      routeCard.dataset.taskCaptureRoute = String(index);
+      routeCard.dataset.taskCaptureRoute = "route";
       routeCard.style.border = "1px solid var(--border-soft, rgba(255,255,255,0.12))";
       routeCard.style.borderRadius = "14px";
       routeCard.style.padding = "14px";
@@ -126,6 +135,7 @@ export async function renderTaskCaptureTab(): Promise<void> {
 
       const labelField = document.createElement("label");
       labelField.className = "field";
+      setVisibilityMetadata(labelField, `${routeKey}.label`, "Route label");
       const labelText = document.createElement("span");
       labelText.className = "field-label";
       labelText.textContent = "Label";
@@ -138,6 +148,7 @@ export async function renderTaskCaptureTab(): Promise<void> {
 
       const pageField = document.createElement("label");
       pageField.className = "field";
+      setVisibilityMetadata(pageField, `${routeKey}.confluence_page_id`, "Confluence Page ID");
       const pageText = document.createElement("span");
       pageText.className = "field-label";
       pageText.textContent = "Confluence Page ID";
@@ -153,6 +164,7 @@ export async function renderTaskCaptureTab(): Promise<void> {
 
       const endpointField = document.createElement("label");
       endpointField.className = "field span-2";
+      setVisibilityMetadata(endpointField, `${routeKey}.endpoint`, "Endpoint URL");
       const endpointText = document.createElement("span");
       endpointText.className = "field-label";
       endpointText.textContent = "Endpoint URL";
@@ -168,6 +180,7 @@ export async function renderTaskCaptureTab(): Promise<void> {
 
       const keywordsField = document.createElement("label");
       keywordsField.className = "field span-2";
+      setVisibilityMetadata(keywordsField, `${routeKey}.keywords`, "Route keywords");
       const keywordsText = document.createElement("span");
       keywordsText.className = "field-label";
       keywordsText.textContent = "Keywords";
@@ -191,6 +204,7 @@ export async function renderTaskCaptureTab(): Promise<void> {
       testBtn.type = "button";
       testBtn.className = "hotkey-record-btn";
       testBtn.textContent = "Test Connection";
+      setVisibilityMetadata(testBtn, `${routeKey}.test`, "Test route connection");
       testBtn.addEventListener("click", async () => {
         testBtn.disabled = true;
         testBtn.textContent = "Testing...";
@@ -221,6 +235,7 @@ export async function renderTaskCaptureTab(): Promise<void> {
       removeBtn.type = "button";
       removeBtn.className = "hotkey-record-btn";
       removeBtn.textContent = "Remove Route";
+      setVisibilityMetadata(removeBtn, `${routeKey}.remove`, "Remove route");
       removeBtn.disabled = working.routes.length <= 1;
       removeBtn.addEventListener("click", () => {
         working = collectCurrentSettings();
@@ -245,6 +260,7 @@ export async function renderTaskCaptureTab(): Promise<void> {
     addRouteBtn.type = "button";
     addRouteBtn.className = "hotkey-record-btn";
     addRouteBtn.textContent = "Add Route";
+    setVisibilityMetadata(addRouteBtn, "task.add_route", "Add route");
     addRouteBtn.style.marginTop = "12px";
     addRouteBtn.addEventListener("click", () => {
       working = collectCurrentSettings();
@@ -256,6 +272,7 @@ export async function renderTaskCaptureTab(): Promise<void> {
 
     const matchModeField = document.createElement("label");
     matchModeField.className = "field";
+    setVisibilityMetadata(matchModeField, "task.match_mode", "Match mode");
     const matchModeText = document.createElement("span");
     matchModeText.className = "field-label";
     matchModeText.textContent = "Match Mode";
@@ -272,6 +289,7 @@ export async function renderTaskCaptureTab(): Promise<void> {
 
     const aiField = document.createElement("div");
     aiField.className = "field toggle-with-hint";
+    setVisibilityMetadata(aiField, "task.ai_refinement", "AI refinement");
     const aiLabel = document.createElement("label");
     aiLabel.className = "toggle-row";
     const aiText = document.createElement("span");
@@ -293,6 +311,7 @@ export async function renderTaskCaptureTab(): Promise<void> {
 
     refinementPromptField = document.createElement("label");
     refinementPromptField.className = "field span-2";
+    setVisibilityMetadata(refinementPromptField, "task.refinement_prompt", "Refinement prompt");
     const promptText = document.createElement("span");
     promptText.className = "field-label";
     promptText.textContent = "Refinement Prompt";
@@ -310,6 +329,7 @@ export async function renderTaskCaptureTab(): Promise<void> {
 
     const actionsFooter = document.createElement("div");
     actionsFooter.className = "field span-2";
+    setVisibilityMetadata(actionsFooter, "task.save", "Save task capture settings");
     actionsFooter.style.display = "flex";
     actionsFooter.style.justifyContent = "flex-end";
 
@@ -356,6 +376,7 @@ export async function renderTaskCaptureTab(): Promise<void> {
     );
     container.appendChild(root);
     syncPromptVisibility();
+    window.dispatchEvent(new Event("settings-visibility:dynamic-rendered"));
   };
 
   render();

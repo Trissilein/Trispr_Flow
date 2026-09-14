@@ -310,7 +310,8 @@ pub(crate) fn prepare_refinement(
     } else {
         "auto".to_string()
     };
-    let enforce_language_guard = ai.preserve_source_language && ai.prompt_profile != "llm_prompt";
+    let enforce_language_guard =
+        should_enforce_language_guard(ai.preserve_source_language, &ai.prompt_profile);
 
     let low_latency_decision =
         crate::refinement_adaptation::resolve_adaptive_low_latency(app, settings, &model);
@@ -353,6 +354,17 @@ pub(crate) fn prepare_refinement(
         repaired,
         options,
     })
+}
+
+/// Returns whether refinement output must stay in the source language.
+///
+/// The LLM Prompt profile deliberately emits English prompts, so it is exempt
+/// even when the source-language preference is enabled.
+pub(crate) fn should_enforce_language_guard(
+    preserve_source_language: bool,
+    prompt_profile: &str,
+) -> bool {
+    preserve_source_language && prompt_profile != "llm_prompt"
 }
 
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
@@ -492,5 +504,24 @@ mod ollama_model_resolution_tests {
         let res = resolve_ollama_refinement_model(&s, "qwen2.5-coder:14b", &installed).unwrap();
         assert_eq!(res.model, "Qwen2.5-Coder:14b");
         assert!(!res.repaired);
+    }
+}
+
+#[cfg(test)]
+mod language_guard_tests {
+    use super::should_enforce_language_guard;
+
+    #[test]
+    fn language_guard_follows_preserve_flag_for_builtin_and_custom_profiles() {
+        assert!(should_enforce_language_guard(true, "wording"));
+        assert!(should_enforce_language_guard(true, "custom"));
+        assert!(!should_enforce_language_guard(false, "wording"));
+        assert!(!should_enforce_language_guard(false, "custom"));
+    }
+
+    #[test]
+    fn llm_prompt_profile_is_exempt_with_either_preserve_setting() {
+        assert!(!should_enforce_language_guard(true, "llm_prompt"));
+        assert!(!should_enforce_language_guard(false, "llm_prompt"));
     }
 }

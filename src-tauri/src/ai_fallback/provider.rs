@@ -2298,6 +2298,13 @@ mod tests {
     use super::*;
 
     fn test_options(enforce_language_guard: bool) -> RefinementOptions {
+        test_options_for_profile(enforce_language_guard, "wording")
+    }
+
+    fn test_options_for_profile(
+        enforce_language_guard: bool,
+        prompt_profile: &str,
+    ) -> RefinementOptions {
         RefinementOptions {
             temperature: 0.3,
             max_tokens: 512,
@@ -2305,7 +2312,7 @@ mod tests {
             language: Some("en".to_string()),
             custom_prompt: None,
             enforce_language_guard,
-            prompt_profile: "wording".to_string(),
+            prompt_profile: prompt_profile.to_string(),
             num_predict_tier_idx: 0,
             num_ctx_tier_idx: 0,
         }
@@ -2502,9 +2509,45 @@ mod tests {
 
     #[test]
     fn custom_profile_prompt_is_not_modified_by_language_lock() {
-        let prompt =
-            prompt_for_profile("custom", "en", Some("Custom prompt stays unchanged."), true);
-        assert_eq!(prompt.as_deref(), Some("Custom prompt stays unchanged."));
+        for preserve_source_language in [false, true] {
+            let prompt = prompt_for_profile(
+                "custom",
+                "en",
+                Some("Custom prompt stays unchanged."),
+                preserve_source_language,
+            );
+            assert_eq!(prompt.as_deref(), Some("Custom prompt stays unchanged."));
+        }
+    }
+
+    #[test]
+    fn built_in_prompt_language_lock_tracks_preserve_flag() {
+        let locked = prompt_for_profile("wording", "de", None, true).unwrap_or_default();
+        let unlocked = prompt_for_profile("wording", "de", None, false).unwrap_or_default();
+
+        assert!(locked.starts_with("Behalte die Ausgabe in derselben Sprache"));
+        assert!(locked.ends_with(OLLAMA_PROMPT_DE));
+        assert_eq!(unlocked, OLLAMA_PROMPT_DE);
+    }
+
+    #[test]
+    fn empty_custom_prompt_falls_back_to_localized_default_with_optional_lock() {
+        let locked = prompt_for_profile("custom", "de", Some("  \n\t "), true).unwrap();
+        let unlocked = prompt_for_profile("custom", "de", Some("  \n\t "), false).unwrap();
+
+        assert!(locked.starts_with("Behalte die Ausgabe in derselben Sprache"));
+        assert!(locked.ends_with(OLLAMA_PROMPT_DE));
+        assert_eq!(unlocked, OLLAMA_PROMPT_DE);
+    }
+
+    #[test]
+    fn llm_prompt_profile_skips_language_lock_with_either_preserve_setting() {
+        let locked = prompt_for_profile("llm_prompt", "de", None, true).unwrap();
+        let unlocked = prompt_for_profile("llm_prompt", "de", None, false).unwrap();
+
+        assert_eq!(locked, unlocked);
+        assert_eq!(locked, super::OLLAMA_PROMPT_LLM_PROMPT_DE);
+        assert!(!locked.contains("Behalte die Ausgabe in derselben Sprache"));
     }
 
     #[test]
@@ -2828,6 +2871,60 @@ mod tests {
         let original = "das ist ein test und wir sind im meeting und die aufgabe ist nicht offen";
         let refined = "this is a test and we are in the meeting and the task is not open";
         let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(false));
+        assert_eq!(sanitized, refined);
+    }
+
+    #[test]
+    fn language_guard_rejects_high_confidence_de_to_en_drift_for_custom_profile() {
+        let original = "das ist ein test und wir sind im meeting und die aufgabe ist nicht offen";
+        let refined = "this is a test and we are in the meeting and the task is not open";
+        let options = test_options_for_profile(true, "custom");
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &options);
+        assert_eq!(sanitized, original);
+    }
+
+    #[test]
+    fn language_guard_allows_custom_profile_drift_when_disabled() {
+        let original = "das ist ein test und wir sind im meeting und die aufgabe ist nicht offen";
+        let refined = "this is a test and we are in the meeting and the task is not open";
+        let options = test_options_for_profile(false, "custom");
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &options);
+        assert_eq!(sanitized, refined);
+    }
+
+    #[test]
+    fn language_guard_output_boundary_matrix_uses_profile_predicate() {
+        let original = "das ist ein test und wir sind im meeting und die aufgabe ist nicht offen";
+        let refined = "this is a test and we are in the meeting and the task is not open";
+        let cases = [
+            ("wording", true),
+            ("wording", false),
+            ("custom", true),
+            ("custom", false),
+            ("llm_prompt", true),
+            ("llm_prompt", false),
+        ];
+
+        for (profile, preserve_source_language) in cases {
+            let expected_guard =
+                super::super::should_enforce_language_guard(preserve_source_language, profile);
+            let mut options = test_options_for_profile(expected_guard, profile);
+            options.enforce_language_guard = expected_guard;
+            let sanitized = sanitize_ollama_refinement_output(original, refined, &options);
+            let expected = if expected_guard { original } else { refined };
+            assert_eq!(
+                sanitized, expected,
+                "profile={profile} preserve={preserve_source_language}"
+            );
+        }
+    }
+
+    #[test]
+    fn llm_prompt_output_boundary_accepts_english_refinement() {
+        let original = "erstelle einen prompt fuer das meeting";
+        let refined = "Create a concise prompt for the meeting.";
+        let options = test_options_for_profile(false, "llm_prompt");
+        let sanitized = sanitize_ollama_refinement_output(original, refined, &options);
         assert_eq!(sanitized, refined);
     }
 

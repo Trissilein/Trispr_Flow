@@ -966,8 +966,8 @@ export function renderAIFallbackSettingsUi() {
   }
   if (dom.aiFallbackPreserveLanguageNote) {
     dom.aiFallbackPreserveLanguageNote.textContent = ai?.preserve_source_language
-      ? "Language lock is active for built-in presets. Custom prompts are sent unchanged."
-      : "Language lock is off for built-in presets. Refinement may switch language when model confidence drifts.";
+      ? "Keeps refined output in the source language for built-in and custom presets. Custom prompt text is not changed. LLM Prompt is exempt and requests English output."
+      : "Language guard is off for built-in and custom presets; the model may change language. Custom prompt text is not changed. LLM Prompt is exempt and requests English output.";
   }
   if (dom.aiFallbackLowLatencyMode) {
     dom.aiFallbackLowLatencyMode.checked = Boolean(ai?.low_latency_mode);

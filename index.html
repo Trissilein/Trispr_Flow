@@ -75,12 +75,12 @@
               <span class="status-dot" id="gpu-dot" data-state="idle"
                     aria-label="GPU status: idle"></span>
               <span class="engine-mid" role="group" aria-label="Whisper backend preference">
-                <button id="gpu-backend-cuda" type="button" class="gpu-backend-btn" aria-pressed="false">CUDA</button>
-                <button id="gpu-backend-vulkan" type="button" class="gpu-backend-btn" aria-pressed="false">Vulkan</button>
+                <button id="gpu-backend-cuda" type="button" class="gpu-backend-btn" aria-pressed="false" data-settings-visibility-excluded="header-operation">CUDA</button>
+                <button id="gpu-backend-vulkan" type="button" class="gpu-backend-btn" aria-pressed="false" data-settings-visibility-excluded="header-operation">Vulkan</button>
               </span>
               <span id="engine-whisper-model" class="engine-detail">—</span>
               <span id="engine-whisper-vram" class="engine-vram">—</span>
-              <button id="gpu-purge-btn" type="button" class="gpu-purge-btn" title="Purge GPU VRAM cache">Purge</button>
+              <button id="gpu-purge-btn" type="button" class="gpu-purge-btn" title="Purge GPU VRAM cache" data-settings-visibility-excluded="header-operation">Purge</button>
             </div>
             <!-- Refinement engine (only when refinement enabled)
                  Grid cols: tag | dot | mid | model+preset | vram | action-slot -->
@@ -93,7 +93,7 @@
                 <span id="engine-refine-model" class="engine-detail">—</span>
                 <button id="engine-refine-preset" type="button" class="engine-preset-btn"
                         aria-haspopup="listbox" aria-expanded="false"
-                        title="Change refinement style">—</button>
+                        title="Change refinement style" data-settings-visibility-excluded="header-operation">—</button>
                 <ul id="engine-refine-preset-menu" class="preset-quick-menu" hidden role="listbox"
                     aria-label="Refinement style"></ul>
               </span>
@@ -117,7 +117,7 @@
                 type="button"
                 data-mode="transcribe"
                 title="Transcribe mode: Voice capture and transcript-first workflow"
-                aria-pressed="true">
+                aria-pressed="true" data-settings-visibility-excluded="global-or-navigation">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 5.25h10.5M3.75 10.5h16.5M3.75 15.75h16.5M3.75 21h10.5" />
                 </svg>
@@ -129,7 +129,7 @@
                 type="button"
                 data-mode="assistant"
                 title="Assistant mode: Wakeword-driven assistant with actions and confirmations"
-                aria-pressed="false">
+                aria-pressed="false" data-settings-visibility-excluded="global-or-navigation">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6.75a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.5 20.25a7.5 7.5 0 0 1 15 0" />
                 </svg>
@@ -146,7 +146,7 @@
                 type="button"
                 data-online-mode="offline"
                 title="Offline mode: Agent stays local-only"
-                aria-pressed="true">
+                aria-pressed="true" data-settings-visibility-excluded="global-or-navigation">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 18 0A9 9 0 0 0 3 12Zm9-9v18M2 12h20" />
                   <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 4.5 19.5 19.5" />
@@ -159,7 +159,7 @@
                 type="button"
                 data-online-mode="online"
                 title="Online mode: Enables real-time lookups like weather, news, or live data — not related to AI model selection"
-                aria-pressed="false">
+                aria-pressed="false" data-settings-visibility-excluded="global-or-navigation">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 18 0A9 9 0 0 0 3 12Zm9-9v18M2 12h20M5.7 6.8A11.8 11.8 0 0 0 12 8.8c2.2 0 4.4-.8 6.3-2M5.7 17.2A11.8 11.8 0 0 1 12 15.2c2.2 0 4.4.8 6.3 2" />
                 </svg>
@@ -170,37 +170,38 @@
         </div>
         <label class="expert-toggle-label" for="expert-mode-toggle">
           <span>Expert</span>
-          <input id="expert-mode-toggle" type="checkbox" title="Show advanced settings and modules" />
+          <input id="expert-mode-toggle" type="checkbox" title="Show advanced settings and modules" data-settings-visibility-excluded="global-or-navigation" />
           <span class="toggle-track">
             <span class="toggle-thumb"></span>
           </span>
         </label>
+        <div id="settings-visibility-editor-host" class="settings-visibility-editor-host" aria-live="polite"></div>
       </div>
 
       <!-- Main navigation tabs -->
       <div class="main-tabs" role="tablist" aria-label="Main navigation">
-        <button id="tab-btn-transcription" class="main-tab-btn active" role="tab" aria-selected="true" aria-controls="tab-transcription">
+        <button id="tab-btn-transcription" class="main-tab-btn active" role="tab" aria-selected="true" aria-controls="tab-transcription" data-settings-visibility-excluded="global-or-navigation">
           Transcription
         </button>
-        <button id="tab-btn-settings" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-settings">
+        <button id="tab-btn-settings" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-settings" data-settings-visibility-excluded="global-or-navigation">
           Settings
         </button>
-        <button id="tab-btn-ai-refinement" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-ai-refinement">
+        <button id="tab-btn-ai-refinement" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-ai-refinement" data-settings-visibility-excluded="global-or-navigation">
           AI Refinement
         </button>
-        <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output" data-expert-only="true">
+        <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output" data-settings-visibility-tab="voice-output" data-settings-visibility-excluded="global-or-navigation">
           Voice Output
         </button>
-        <button id="tab-btn-task-capture" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-task-capture" data-expert-only="true">
+        <button id="tab-btn-task-capture" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-task-capture" data-settings-visibility-tab="task-capture" data-settings-visibility-excluded="global-or-navigation">
           Task Capture
         </button>
-        <button id="tab-btn-video" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-video" data-expert-only="true">
+        <button id="tab-btn-video" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-video" data-settings-visibility-tab="video" data-settings-visibility-excluded="global-or-navigation">
           Video
         </button>
-        <button id="tab-btn-agent" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-agent" data-expert-only="true">
+        <button id="tab-btn-agent" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-agent" data-settings-visibility-tab="agent" data-settings-visibility-excluded="global-or-navigation">
           Assistant Debug
         </button>
-        <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules" data-expert-only="true">
+        <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules" data-settings-visibility-tab="modules" data-settings-visibility-excluded="global-or-navigation">
           Modules
         </button>
       </div>
@@ -233,7 +234,7 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="transcription-panel-body"
-                      aria-label="Collapse transcription panel">
+                      aria-label="Collapse transcription panel" data-settings-visibility-excluded="global-or-navigation">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                 </svg>
@@ -243,13 +244,13 @@
           <div class="panel-body" id="transcription-panel-body">
             <div class="history-toolbar">
               <div class="history-tabs">
-                <button id="history-tab-mic" class="history-tab active" title="Show microphone input transcripts">Input</button>
-                <button id="history-tab-system" class="history-tab" title="Show system audio transcripts">System Audio</button>
-                <button id="history-tab-conversation" class="history-tab" title="Show combined conversation view (mic + system audio)">Conv</button>
+                <button id="history-tab-mic" class="history-tab active" title="Show microphone input transcripts" data-settings-visibility-excluded="global-or-navigation">Input</button>
+                <button id="history-tab-system" class="history-tab" title="Show system audio transcripts" data-settings-visibility-excluded="global-or-navigation">System Audio</button>
+                <button id="history-tab-conversation" class="history-tab" title="Show combined conversation view (mic + system audio)" data-settings-visibility-excluded="global-or-navigation">Conv</button>
               </div>
               <div class="history-toolbar-actions">
                 <div id="history-alias-controls" class="history-alias-controls">
-                  <label class="history-alias-field" for="history-alias-mic-input">
+                  <label class="history-alias-field" for="history-alias-mic-input" data-settings-visibility-managed="true" data-settings-visibility-key="history-alias-mic-input" data-settings-visibility-label="Input history name" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">
                     <span class="history-alias-label">Input</span>
                     <input
                       id="history-alias-mic-input"
@@ -261,7 +262,7 @@
                       aria-label="Conversation name for input source"
                     />
                   </label>
-                  <label class="history-alias-field" for="history-alias-system-input">
+                  <label class="history-alias-field" for="history-alias-system-input" data-settings-visibility-managed="true" data-settings-visibility-key="history-alias-system-input" data-settings-visibility-label="System history name" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">
                     <span class="history-alias-label">System</span>
                     <input
                       id="history-alias-system-input"
@@ -274,24 +275,29 @@
                     />
                   </label>
                 </div>
-                <button id="history-copy-conversation" class="ghost-btn" title="Copy the full conversation to clipboard">Copy</button>
+                <button id="history-copy-conversation" class="ghost-btn" title="Copy the full conversation to clipboard" data-settings-visibility-managed="true" data-settings-visibility-key="action.history-copy-conversation" data-settings-visibility-label="Copy conversation" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">Copy</button>
                 <button
                   id="history-delete-conversation"
                   class="ghost-btn history-delete-btn"
                   title="Delete the full transcript from history"
                   aria-label="Delete full transcript from history"
+                  data-settings-visibility-managed="true"
+                  data-settings-visibility-key="action.history-delete-conversation"
+                  data-settings-visibility-label="Delete transcript"
+                  data-settings-visibility-default="basic"
+                  data-settings-visibility-group="Text Output"
                 >
                   &#128465;
                 </button>
-                <button id="analyse-button" class="ghost-btn" title="Analyse module coming soon">
+                <button id="analyse-button" class="ghost-btn" title="Analyse module coming soon" data-settings-visibility-excluded="global-or-navigation">
                   Analyse
                 </button>
                 <div class="export-controls">
-                  <button id="open-recordings-btn" class="ghost-btn" title="Open recordings folder">Recordings</button>
-                  <button id="archive-browse-btn" class="ghost-btn" title="Browse archived months">Archive</button>
-                  <button id="history-export" class="ghost-btn" title="Export transcript">Export</button>
+                  <button id="open-recordings-btn" class="ghost-btn" title="Open recordings folder" data-settings-visibility-managed="true" data-settings-visibility-key="action.open-recordings-btn" data-settings-visibility-label="Open recordings" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">Recordings</button>
+                  <button id="archive-browse-btn" class="ghost-btn" title="Browse archived months" data-settings-visibility-managed="true" data-settings-visibility-key="action.archive-browse-btn" data-settings-visibility-label="Browse archive" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">Archive</button>
+                  <button id="history-export" class="ghost-btn" title="Export transcript" data-settings-visibility-managed="true" data-settings-visibility-key="action.history-export" data-settings-visibility-label="Export transcript" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">Export</button>
                 </div>
-                <div id="conversation-font-controls" class="font-controls" title="Adjust transcript font size for the active tab">
+                <div id="conversation-font-controls" class="font-controls" title="Adjust transcript font size for the active tab" data-settings-visibility-managed="true" data-settings-visibility-key="conversation-font-size" data-settings-visibility-label="Transcript font size" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">
                   <span class="font-label">Font</span>
                   <input id="conversation-font-size" type="range" min="12" max="24" step="1"
                          title="Font size for transcript text"
@@ -306,8 +312,8 @@
             </div>
             <div class="history-search-container">
               <input id="history-search" type="text" class="history-search-input" placeholder="Search transcripts..."
-                     title="Filter transcripts by keyword" />
-              <button id="history-search-clear" class="history-search-clear" title="Clear search">×</button>
+                     title="Filter transcripts by keyword" data-settings-visibility-excluded="global-or-navigation" />
+              <button id="history-search-clear" class="history-search-clear" title="Clear search" data-settings-visibility-excluded="global-or-navigation">×</button>
             </div>
             <div id="history-list" class="history-list"></div>
             <details id="refinement-inspector" class="expander refinement-inspector" open>
@@ -358,16 +364,16 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="capture-panel-body"
-                      aria-label="Collapse microphone capture panel">
+                      aria-label="Collapse microphone capture panel" data-settings-visibility-excluded="global-or-navigation">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                 </svg>
               </button>
             </div>
           </div>
-          <div class="panel-body" id="capture-panel-body">
+          <div class="panel-body" id="capture-panel-body" data-settings-visibility-group-container>
             <div class="panel-grid">
-            <div class="field toggle-with-hint span-2">
+            <div class="field toggle-with-hint span-2" data-settings-visibility-managed="true" data-settings-visibility-key="capture-enabled-toggle" data-settings-visibility-label="Enable input capture" data-settings-visibility-default="basic" data-settings-visibility-group="Capture">
               <label class="toggle-row">
                 <span class="field-label">Enable input capture</span>
                 <input id="capture-enabled-toggle" type="checkbox" title="Enable voice capture and hotkeys" />
@@ -377,11 +383,11 @@
               </label>
               <span class="toggle-hint">When disabled, input capture and hotkeys are inactive</span>
             </div>
-            <label class="field">
+            <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="device-select" data-settings-visibility-label="Input device" data-settings-visibility-default="basic" data-settings-visibility-group="Capture">
               <span class="field-label">Input device</span>
               <select id="device-select" title="Microphone or audio input device to use for recording"></select>
             </label>
-            <label class="field">
+            <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="mode-select" data-settings-visibility-label="Capture mode" data-settings-visibility-default="basic" data-settings-visibility-group="Capture">
               <span class="field-label">Capture mode</span>
               <select id="mode-select" title="Capture mode: Push-to-Talk (hold key) or Voice-Activated">
                 <option value="ptt">Push-to-talk (PTT)</option>
@@ -389,7 +395,7 @@
               </select>
             </label>
             <div id="hotkeys-block" class="field-group">
-              <div class="field hotkey-field">
+              <div class="field hotkey-field" data-settings-visibility-managed="true" data-settings-visibility-key="ptt-hotkey" data-settings-visibility-label="PTT hotkey" data-settings-visibility-default="basic" data-settings-visibility-group="Capture">
                 <span class="field-label">PTT hotkey (hold)</span>
                 <div class="hotkey-input-group">
                   <input id="ptt-hotkey" type="text" placeholder="CommandOrControl+Shift+Space" readonly title="Current PTT hotkey — click Record to change" />
@@ -404,7 +410,7 @@
                       role="status"
                       aria-live="polite"></span>
               </div>
-              <div class="field hotkey-field" data-expert-only="true">
+              <div class="field hotkey-field" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="toggle.hotkey" data-settings-visibility-label="Toggle hotkey (click)" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                 <span class="field-label">Toggle hotkey (click)</span>
                 <div class="hotkey-input-group">
                   <input id="toggle-hotkey" type="text" placeholder="CommandOrControl+Shift+M" readonly title="Current toggle hotkey — click Record to change" />
@@ -419,7 +425,7 @@
                       role="status"
                       aria-live="polite"></span>
               </div>
-              <div class="field toggle-with-hint" data-expert-only="true">
+              <div class="field toggle-with-hint" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="ptt.use.vad.toggle" data-settings-visibility-label="Use Voice Activation in PTT" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                 <label class="toggle-row" for="ptt-use-vad-toggle">
                   <span class="field-label">Use Voice Activation in PTT</span>
                   <input id="ptt-use-vad-toggle" type="checkbox" title="Detect speech automatically while holding the PTT key" />
@@ -427,7 +433,7 @@
                 </label>
                 <span class="toggle-hint">Only record when audio exceeds threshold, even while holding PTT key</span>
               </div>
-              <label class="field range span-2" data-expert-only="true">
+              <label class="field range span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="ptt.hot.keepalive" data-settings-visibility-label="PTT audio standby window" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                 <span class="field-label">PTT audio standby window</span>
                 <div class="range-row">
                   <input id="ptt-hot-keepalive" type="range" min="5000" max="600000" step="5000"
@@ -443,7 +449,7 @@
               </label>
             </div>
             <div id="vad-block" class="field-group hidden" data-expert-only="true">
-              <label class="field range">
+              <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="vad.threshold" data-settings-visibility-label="Voice Activation threshold" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                 <span class="field-label">Voice Activation threshold</span>
                 <div class="range-row">
                   <input id="vad-threshold" type="range" min="-60" max="0" step="1"
@@ -456,7 +462,7 @@
                   <span id="vad-threshold-value" class="range-value" aria-live="polite">-34 dB</span>
                 </div>
               </label>
-              <label class="field range" data-expert-only="true">
+              <label class="field range" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="vad.silence" data-settings-visibility-label="Silence grace" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                 <span class="field-label">Silence grace</span>
                 <div class="range-row">
                   <input id="vad-silence" type="range" min="200" max="4000" step="50"
@@ -486,7 +492,7 @@
                 </div>
               </div>
             </div>
-            <label class="field range span-2" data-expert-only="true">
+            <label class="field range span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="mic.gain" data-settings-visibility-label="Mic input gain" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
               <span class="field-label">Mic input gain</span>
               <div class="range-row">
                 <input id="mic-gain" type="range" min="-30" max="30" step="1"
@@ -499,7 +505,7 @@
                 <span id="mic-gain-value" class="range-value" aria-live="polite">+0 dB</span>
               </div>
             </label>
-            <div class="field toggle span-2" data-expert-only="true">
+            <div class="field toggle span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="opus.archive.toggle" data-settings-visibility-label="Aufnahmen archivieren (OPUS)" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
               <label class="toggle-row">
                 <span class="field-label">Aufnahmen archivieren (OPUS)</span>
                 <input id="opus-archive-toggle" type="checkbox" checked title="Aufnahmen als OPUS-Dateien archivieren" />
@@ -513,7 +519,7 @@
                 <span class="expert-pill" aria-hidden="true">Expert</span>
               </summary>
               <div class="expander-content">
-                <div class="field toggle">
+                <div class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="auto.save.mic.audio.toggle" data-settings-visibility-label="Auto-save mic continuous audio" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                   <label class="toggle-row">
                     <span class="field-label">Auto-save mic continuous audio</span>
                     <input id="auto-save-mic-audio-toggle" type="checkbox" title="Save Toggle/VAD mic recordings as OPUS files for later analysis" />
@@ -521,7 +527,7 @@
                   </label>
                   <span class="toggle-hint">Save mic Toggle/VAD sessions as OPUS.</span>
                 </div>
-                <div class="field toggle span-2" data-expert-only="true">
+                <div class="field toggle span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.mic.override.toggle" data-settings-visibility-label="Mic continuous override" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                   <label class="toggle-row">
                     <span class="field-label">Mic continuous override</span>
                     <input id="continuous-mic-override-toggle" type="checkbox" title="Use custom timing settings for mic instead of global defaults" />
@@ -529,7 +535,7 @@
                   </label>
                   <span class="toggle-hint">Use source-specific dump timings for mic Toggle/VAD.</span>
                 </div>
-                <label class="field range span-2" data-expert-only="true">
+                <label class="field range span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.mic.soft.flush" data-settings-visibility-label="Mic soft flush" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                   <span class="field-label">Mic soft flush</span>
                   <div class="range-row">
                     <input id="continuous-mic-soft-flush" type="range" min="4000" max="30000" step="500"
@@ -542,7 +548,7 @@
                     <span id="continuous-mic-soft-flush-value" class="range-value" aria-live="polite">10s</span>
                   </div>
                 </label>
-                <label class="field range span-2" data-expert-only="true">
+                <label class="field range span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.mic.silence.flush" data-settings-visibility-label="Mic silence flush" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                   <span class="field-label">Mic silence flush</span>
                   <div class="range-row">
                     <input id="continuous-mic-silence-flush" type="range" min="300" max="5000" step="100"
@@ -555,7 +561,7 @@
                     <span id="continuous-mic-silence-flush-value" class="range-value" aria-live="polite">1.2s</span>
                   </div>
                 </label>
-                <label class="field range span-2" data-expert-only="true">
+                <label class="field range span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.mic.hard.cut" data-settings-visibility-label="Mic hard cut" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                   <span class="field-label">Mic hard cut</span>
                   <div class="range-row">
                     <input id="continuous-mic-hard-cut" type="range" min="15000" max="120000" step="1000"
@@ -576,7 +582,7 @@
                 <span class="expert-pill" aria-hidden="true">Expert</span>
               </summary>
               <div class="expander-content">
-                <div class="field toggle span-2">
+                <div class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="diagnostic.logging.toggle" data-settings-visibility-label="Diagnose-Logging" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                   <label class="toggle-row">
                     <span class="field-label">Diagnose-Logging</span>
                     <input id="diagnostic-logging-toggle" type="checkbox" title="Enable verbose diagnostic logs, process attribution, and runtime snapshots" />
@@ -586,7 +592,7 @@
                   </label>
                   <span class="toggle-hint">Turn off for quieter idle runtime. Errors and toasts stay visible.</span>
                 </div>
-                <div class="field toggle span-2">
+                <div class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="hallucination.filter.toggle" data-settings-visibility-label="Hallucination filter" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                   <div class="toggle-row">
                     <span class="field-label">Hallucination filter</span>
                     <input id="hallucination-filter-toggle" type="checkbox" title="Drop low-confidence short transcripts caused by background noise" />
@@ -596,7 +602,7 @@
                   </div>
                   <span class="toggle-hint">Filter out low-energy noise and common hallucinations</span>
                 </div>
-                <div class="field toggle span-2">
+                <div class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="activation.words.toggle" data-settings-visibility-label="Activation words" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                   <div class="toggle-row">
                     <span class="field-label">Activation words</span>
                     <input id="activation-words-toggle" type="checkbox" title="Only keep transcripts that contain one of the trigger words" />
@@ -606,7 +612,7 @@
                   </div>
                   <span class="toggle-hint">Only process transcripts containing trigger words</span>
                 </div>
-                <div id="activation-words-config" class="field span-2 hidden">
+                <div id="activation-words-config" class="field span-2 hidden" data-settings-visibility-managed="true" data-settings-visibility-key="activation.words.list" data-settings-visibility-label="Word list (one per line)" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                   <label class="field-label">Word list (one per line)</label>
                   <textarea id="activation-words-list" rows="4"
                     placeholder="computer&#10;hey assistant"
@@ -614,14 +620,14 @@
                     class="activation-words-textarea"></textarea>
                   <span class="field-hint">Case-insensitive word matching</span>
                 </div>
-                <label class="field toggle span-2">
+                <label class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="audio.cues.toggle" data-settings-visibility-label="Audio cues" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                   <span class="field-label">Audio cues</span>
                   <input id="audio-cues-toggle" type="checkbox" title="Play a sound when recording starts or stops" />
                   <span class="toggle-track">
                     <span class="toggle-thumb"></span>
                   </span>
                 </label>
-                <label class="field range span-2">
+                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="audio.cues.volume" data-settings-visibility-label="Audio cue volume" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                   <span class="field-label">Audio cue volume</span>
                   <div class="range-row">
                     <input id="audio-cues-volume" type="range" min="0" max="100" step="1"
@@ -652,16 +658,16 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="system-panel-body"
-                      aria-label="Collapse system audio capture panel">
+                      aria-label="Collapse system audio capture panel" data-settings-visibility-excluded="global-or-navigation">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                 </svg>
               </button>
             </div>
           </div>
-          <div class="panel-body" id="system-panel-body">
+          <div class="panel-body" id="system-panel-body" data-settings-visibility-group-container>
           <div class="panel-grid">
-            <div class="field toggle-with-hint span-2">
+            <div class="field toggle-with-hint span-2" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.enabled.toggle" data-settings-visibility-label="Enable system audio transcription" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
               <label class="toggle-row">
                 <span class="field-label">Enable system audio transcription</span>
                 <input id="transcribe-enabled-toggle" type="checkbox" title="Capture and transcribe system audio (speakers/loopback)" />
@@ -671,11 +677,11 @@
               </label>
               <span class="toggle-hint">When disabled, system audio monitoring and transcription are inactive</span>
             </div>
-            <label class="field">
+            <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.device.select" data-settings-visibility-label="Capture device" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
               <span class="field-label">Capture device</span>
               <select id="transcribe-device-select" title="System audio output device to capture (loopback)"></select>
             </label>
-            <div class="field hotkey-field span-2">
+            <div class="field hotkey-field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.hotkey" data-settings-visibility-label="Transcribe hotkey" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
               <span class="field-label">Transcribe hotkey</span>
               <div class="hotkey-input-group">
                 <input id="transcribe-hotkey" type="text" placeholder="CommandOrControl+Shift+T" readonly title="Current system audio transcription hotkey — click Record to change" />
@@ -690,21 +696,21 @@
                     role="status"
                     aria-live="polite"></span>
             </div>
-            <label class="field toggle">
+            <label class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.vad.toggle" data-settings-visibility-label="Voice activation mode" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
               <span class="field-label">Voice activation mode</span>
               <input id="transcribe-vad-toggle" type="checkbox" title="Only transcribe when speech is detected (voice-activated)" />
               <span class="toggle-track">
                 <span class="toggle-thumb"></span>
               </span>
             </label>
-            <label class="field toggle" data-expert-only="true">
+            <label class="field toggle" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.dump.enabled.toggle" data-settings-visibility-label="Intelligent auto-dumping" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
               <span class="field-label">Intelligent auto-dumping</span>
               <input id="continuous-dump-enabled-toggle" type="checkbox" title="Automatically split and flush long system audio recordings" />
               <span class="toggle-track">
                 <span class="toggle-thumb"></span>
               </span>
             </label>
-            <label class="field span-2" data-expert-only="true">
+            <label class="field span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.dump.profile" data-settings-visibility-label="Auto-dump profile" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
               <span class="field-label">Auto-dump profile</span>
               <select id="continuous-dump-profile" title="Pre-set timing profile for continuous audio splitting">
                 <option value="balanced">Balanced (recommended)</option>
@@ -713,7 +719,7 @@
               </select>
               <span class="field-hint">Hybrid rules: silence + soft interval + hard cut.</span>
             </label>
-            <label class="field range" id="transcribe-vad-threshold-field">
+            <label class="field range" id="transcribe-vad-threshold-field" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.vad.threshold" data-settings-visibility-label="Voice Activation threshold" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
               <span class="field-label">Voice Activation threshold</span>
               <div class="range-row">
                 <input id="transcribe-vad-threshold" type="range" min="-60" max="0" step="1"
@@ -726,7 +732,7 @@
                 <span id="transcribe-vad-threshold-value" class="range-value" aria-live="polite">-28 dB</span>
               </div>
             </label>
-            <label class="field range" id="transcribe-vad-silence-field" data-expert-only="true">
+            <label class="field range" id="transcribe-vad-silence-field" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.vad.silence" data-settings-visibility-label="Silence grace" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
               <span class="field-label">Silence grace</span>
               <div class="range-row">
                 <input id="transcribe-vad-silence" type="range" min="200" max="5000" step="100"
@@ -760,7 +766,7 @@
                 </div>
               </div>
             </div>
-            <label class="field range span-2" id="transcribe-gain-field">
+            <label class="field range span-2" id="transcribe-gain-field" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.gain" data-settings-visibility-label="Input gain" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
               <span class="field-label">Input gain</span>
               <div class="range-row">
                 <input id="transcribe-gain" type="range" min="-30" max="30" step="1"
@@ -773,7 +779,7 @@
                 <span id="transcribe-gain-value" class="range-value" aria-live="polite">+0 dB</span>
               </div>
             </label>
-            <label class="field range" id="transcribe-batch-field" data-expert-only="true">
+            <label class="field range" id="transcribe-batch-field" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.batch.interval" data-settings-visibility-label="Soft flush target" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
               <span class="field-label">Soft flush target</span>
               <span class="field-hint">Preferred interval for adaptive flush when no clear silence cut appears.</span>
               <div class="range-row">
@@ -787,7 +793,7 @@
                 <span id="transcribe-batch-value" class="range-value" aria-live="polite">8s</span>
               </div>
             </label>
-            <label class="field range" id="transcribe-overlap-field" data-expert-only="true">
+            <label class="field range" id="transcribe-overlap-field" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.chunk.overlap" data-settings-visibility-label="Context pre-roll" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
               <span class="field-label">Context pre-roll</span>
               <span class="field-hint">Leading context kept for adaptive segment starts.</span>
               <div class="range-row">
@@ -807,7 +813,7 @@
                 <span class="expert-pill" aria-hidden="true">Expert</span>
               </summary>
               <div class="expander-content">
-                <div class="field toggle">
+                <div class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="opus.enabled.toggle" data-settings-visibility-label="Save recordings as OPUS" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
                   <label class="toggle-row">
                     <span class="field-label">Save recordings as OPUS</span>
                     <input id="opus-enabled-toggle" type="checkbox" title="Auto-save system audio recordings longer than 10 s as OPUS" />
@@ -815,7 +821,7 @@
                   </label>
                   <span class="toggle-hint">Auto-save recordings longer than 10s.</span>
                 </div>
-                <label class="field">
+                <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="opus.bitrate.select" data-settings-visibility-label="OPUS bitrate" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
                   <span class="field-label">OPUS bitrate</span>
                   <select id="opus-bitrate-select" title="Audio quality for saved OPUS recordings">
                     <option value="32">32 kbps (smallest)</option>
@@ -825,7 +831,7 @@
                   </select>
                   <span class="field-hint">Higher bitrate = better audio quality but larger files</span>
                 </label>
-                <div class="field toggle">
+                <div class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="auto.save.system.audio.toggle" data-settings-visibility-label="Auto-save system audio" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
                   <label class="toggle-row">
                     <span class="field-label">Auto-save system audio</span>
                     <input id="auto-save-system-audio-toggle" type="checkbox" title="Save system audio chunks as OPUS files for later analysis" />
@@ -833,7 +839,7 @@
                   </label>
                   <span class="toggle-hint">Save system audio chunks as OPUS.</span>
                 </div>
-                <label class="field range span-2">
+                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.hard.cut" data-settings-visibility-label="Hard cut limit" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
                   <span class="field-label">Hard cut limit</span>
                   <div class="range-row">
                     <input id="continuous-hard-cut" type="range" min="15000" max="120000" step="1000"
@@ -846,7 +852,7 @@
                     <span id="continuous-hard-cut-value" class="range-value" aria-live="polite">45s</span>
                   </div>
                 </label>
-                <label class="field range span-2">
+                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.min.chunk" data-settings-visibility-label="Minimum chunk duration" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
                   <span class="field-label">Minimum chunk duration</span>
                   <div class="range-row">
                     <input id="continuous-min-chunk" type="range" min="250" max="5000" step="50"
@@ -859,7 +865,7 @@
                     <span id="continuous-min-chunk-value" class="range-value" aria-live="polite">1.0s</span>
                   </div>
                 </label>
-                <label class="field range span-2">
+                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.pre.roll" data-settings-visibility-label="Pre-roll context" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
                   <span class="field-label">Pre-roll context</span>
                   <div class="range-row">
                     <input id="continuous-pre-roll" type="range" min="0" max="1500" step="50"
@@ -872,7 +878,7 @@
                     <span id="continuous-pre-roll-value" class="range-value" aria-live="polite">0.30s</span>
                   </div>
                 </label>
-                <label class="field range span-2">
+                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.post.roll" data-settings-visibility-label="Post-roll context" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
                   <span class="field-label">Post-roll context</span>
                   <div class="range-row">
                     <input id="continuous-post-roll" type="range" min="0" max="1500" step="50"
@@ -885,7 +891,7 @@
                     <span id="continuous-post-roll-value" class="range-value" aria-live="polite">0.20s</span>
                   </div>
                 </label>
-                <label class="field range span-2">
+                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.keepalive" data-settings-visibility-label="Idle keepalive flush" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
                   <span class="field-label">Idle keepalive flush</span>
                   <div class="range-row">
                     <input id="continuous-keepalive" type="range" min="10000" max="120000" step="5000"
@@ -898,7 +904,7 @@
                     <span id="continuous-keepalive-value" class="range-value" aria-live="polite">60s</span>
                   </div>
                 </label>
-                <div class="field toggle span-2">
+                <div class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.system.override.toggle" data-settings-visibility-label="System Audio override" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
                   <label class="toggle-row">
                     <span class="field-label">System Audio override</span>
                     <input id="continuous-system-override-toggle" type="checkbox" title="Use custom timing settings for system audio instead of global defaults" />
@@ -906,7 +912,7 @@
                   </label>
                   <span class="toggle-hint">Use source-specific dump timings for system audio.</span>
                 </div>
-                <label class="field range span-2">
+                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.system.soft.flush" data-settings-visibility-label="System soft flush" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
                   <span class="field-label">System soft flush</span>
                   <div class="range-row">
                     <input id="continuous-system-soft-flush" type="range" min="4000" max="30000" step="500"
@@ -919,7 +925,7 @@
                     <span id="continuous-system-soft-flush-value" class="range-value" aria-live="polite">10s</span>
                   </div>
                 </label>
-                <label class="field range span-2">
+                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.system.silence.flush" data-settings-visibility-label="System silence flush" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
                   <span class="field-label">System silence flush</span>
                   <div class="range-row">
                     <input id="continuous-system-silence-flush" type="range" min="300" max="5000" step="100"
@@ -932,7 +938,7 @@
                     <span id="continuous-system-silence-flush-value" class="range-value" aria-live="polite">1.2s</span>
                   </div>
                 </label>
-                <label class="field range span-2">
+                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.system.hard.cut" data-settings-visibility-label="System hard cut" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
                   <span class="field-label">System hard cut</span>
                   <div class="range-row">
                     <input id="continuous-system-hard-cut" type="range" min="15000" max="120000" step="1000"
@@ -963,21 +969,21 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="model-panel-body"
-                      aria-label="Collapse model manager panel">
+                      aria-label="Collapse model manager panel" data-settings-visibility-excluded="global-or-navigation">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                 </svg>
               </button>
             </div>
           </div>
-          <div class="panel-body" id="model-panel-body">
+          <div class="panel-body" id="model-panel-body" data-settings-visibility-group-container>
           <div class="model-manager">
             <div class="model-language-control" aria-label="Whisper input language">
               <div>
                 <h3>Input Language</h3>
                 <p id="whisper-input-language-note">Multi uses Whisper auto-detect. Pin a language for lower latency on short clips.</p>
               </div>
-              <label class="model-language-select-wrap">
+              <label class="model-language-select-wrap" data-settings-visibility-managed="true" data-settings-visibility-key="whisper-input-language-select" data-settings-visibility-label="Input language" data-settings-visibility-default="basic" data-settings-visibility-group="Whisper Runtime">
                 <span class="sr-only">Whisper input language</span>
                 <select id="whisper-input-language-select" title="Language hint passed to Whisper ASR">
                   <option value="auto">Multi (Auto)</option>
@@ -1009,7 +1015,7 @@
                 <span class="expert-pill" aria-hidden="true">Expert</span>
               </summary>
               <div class="expander-content model-settings-compact">
-                <label class="field">
+                <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="model.source.select" data-settings-visibility-label="Source" data-settings-visibility-default="expert" data-settings-visibility-group="Whisper Runtime">
                   <span class="field-label">Source</span>
                   <select id="model-source-select" title="Where to load the Whisper model from">
                     <option value="default">Default (whisper.cpp)</option>
@@ -1019,16 +1025,16 @@
                 <label class="field" id="model-custom-url-field">
                   <span class="field-label">Custom URL</span>
                   <div class="hotkey-input-group">
-                    <input id="model-custom-url" type="text" placeholder="https://..." title="URL to a Whisper model file or JSON model index" />
-                    <button id="model-refresh" class="hotkey-record-btn" title="Refresh">Refresh</button>
+                    <input id="model-custom-url" type="text" placeholder="https://..." title="URL to a Whisper model file or JSON model index" data-settings-visibility-managed="true" data-settings-visibility-key="model.custom.url" data-settings-visibility-label="Custom URL" data-settings-visibility-default="expert" data-settings-visibility-group="Whisper Runtime" />
+                    <button id="model-refresh" class="hotkey-record-btn" title="Refresh" data-settings-visibility-managed="true" data-settings-visibility-key="model.refresh" data-settings-visibility-label="Custom URL" data-settings-visibility-default="expert" data-settings-visibility-group="Whisper Runtime">Refresh</button>
                   </div>
                 </label>
                 <label class="field">
                   <span class="field-label">Storage</span>
                   <div class="hotkey-input-group">
-                    <input id="model-storage-path" type="text" placeholder="Default" title="Model storage folder" />
-                    <button id="model-storage-browse" class="hotkey-record-btn" title="Browse">Browse</button>
-                    <button id="model-storage-reset" class="hotkey-record-btn" title="Reset">Reset</button>
+                    <input id="model-storage-path" type="text" placeholder="Default" title="Model storage folder" data-settings-visibility-managed="true" data-settings-visibility-key="model.storage.path" data-settings-visibility-label="Storage" data-settings-visibility-default="expert" data-settings-visibility-group="Whisper Runtime" />
+                    <button id="model-storage-browse" class="hotkey-record-btn" title="Browse" data-settings-visibility-managed="true" data-settings-visibility-key="model.storage.browse" data-settings-visibility-label="Storage" data-settings-visibility-default="expert" data-settings-visibility-group="Whisper Runtime">Browse</button>
+                    <button id="model-storage-reset" class="hotkey-record-btn" title="Reset" data-settings-visibility-managed="true" data-settings-visibility-key="model.storage.reset" data-settings-visibility-label="Storage" data-settings-visibility-default="expert" data-settings-visibility-group="Whisper Runtime">Reset</button>
                   </div>
                 </label>
               </div>
@@ -1049,25 +1055,25 @@
                       title="Collapse"
                       aria-expanded="true"
                       aria-controls="interface-panel-body"
-                      aria-label="Collapse UI adjustments panel">
+                      aria-label="Collapse UI adjustments panel" data-settings-visibility-excluded="global-or-navigation">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                 </svg>
               </button>
             </div>
           </div>
-          <div class="panel-body" id="interface-panel-body">
+          <div class="panel-body" id="interface-panel-body" data-settings-visibility-group-container>
           <div class="panel-grid">
             <label class="field">
               <span class="field-label">Accent color</span>
               <div style="display: flex; align-items: center; gap: 8px;">
-                <input id="accent-color" type="color" title="UI accent color (applies immediately)" />
-                <button id="accent-color-reset" class="hotkey-record-btn" type="button" title="Reset accent color to default teal (#4be0d4)">
+                <input id="accent-color" type="color" title="UI accent color (applies immediately)" data-settings-visibility-managed="true" data-settings-visibility-key="accent.color" data-settings-visibility-label="Accent color" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys" />
+                <button id="accent-color-reset" class="hotkey-record-btn" type="button" title="Reset accent color to default teal (#4be0d4)" data-settings-visibility-managed="true" data-settings-visibility-key="accent.color.reset" data-settings-visibility-label="Accent color" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                   Reset
                 </button>
               </div>
             </label>
-            <div class="field hotkey-field span-2">
+            <div class="field hotkey-field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="toggle.activation.words.hotkey" data-settings-visibility-label="Toggle activation words" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
               <span class="field-label">Toggle activation words</span>
               <div class="hotkey-input-group">
                 <input id="toggle-activation-words-hotkey" type="text" readonly title="Current hotkey for toggling activation words — click Record to change" />
@@ -1082,7 +1088,7 @@
                     role="status"
                     aria-live="polite"></span>
             </div>
-            <div class="field hotkey-field span-2">
+            <div class="field hotkey-field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="product.mode.hotkey" data-settings-visibility-label="Toggle product mode" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
               <span class="field-label">Toggle product mode</span>
               <div class="hotkey-input-group">
                 <input id="product-mode-hotkey" type="text" readonly title="Current hotkey for toggling Product mode — click Record to change" />
@@ -1097,7 +1103,7 @@
                     role="status"
                     aria-live="polite"></span>
             </div>
-            <div class="field hotkey-field span-2">
+            <div class="field hotkey-field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="tts.stop.hotkey" data-settings-visibility-label="TTS Stop hotkey" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
               <span class="field-label">TTS Stop hotkey</span>
               <div class="hotkey-input-group">
                 <input id="tts-stop-hotkey" type="text" placeholder="CommandOrControl+Shift+Escape" readonly title="Emergency stop for speech output — click Record to change" />
@@ -1116,40 +1122,40 @@
           <details class="expander">
             <summary>Overlay</summary>
             <div class="expander-body">
-              <label class="field">
+              <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.style" data-settings-visibility-label="Style" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                 <span class="field-label">Style</span>
                 <select id="overlay-style" title="Visual style for the recording overlay">
                   <option value="dot">HAL 9000 by Space:2001®</option>
                   <option value="kitt">KITT by Dox®</option>
                 </select>
               </label>
-              <label class="field">
+              <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.color" data-settings-visibility-label="Color" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                 <span class="field-label">Color</span>
                 <input id="overlay-color" type="color" title="Accent color for the recording overlay" />
               </label>
               <div class="settings-grid-2col">
-                <label class="field toggle">
+                <label class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.tts.stop.enabled" data-settings-visibility-label="TTS stop overlay" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                   <span class="field-label">TTS stop overlay</span>
                   <input id="overlay-tts-stop-enabled" type="checkbox" title="Show a clickable stop overlay while speech is playing" />
                   <span class="toggle-track">
                     <span class="toggle-thumb"></span>
                   </span>
                 </label>
-                <label class="field">
+                <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.tts.stop.shape" data-settings-visibility-label="TTS stop shape" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                   <span class="field-label">TTS stop shape</span>
                   <select id="overlay-tts-stop-shape" title="Shape of the emergency stop overlay">
                     <option value="compact">Compact</option>
                     <option value="round">Round</option>
                   </select>
                 </label>
-                <label class="field">
+                <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.tts.stop.color" data-settings-visibility-label="TTS stop color" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                   <span class="field-label">TTS stop color</span>
                   <input id="overlay-tts-stop-color" type="color" title="Emergency stop accent color" />
                 </label>
               </div>
               <!-- Dot mode settings -->
               <div id="overlay-dot-settings" class="settings-grid-2col">
-              <label class="field range">
+              <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.min.radius" data-settings-visibility-label="Min radius (px)" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                 <span class="field-label">Min radius (px)</span>
                 <div class="range-row">
                   <input id="overlay-min-radius" type="range" min="4" max="32" step="1"
@@ -1162,7 +1168,7 @@
                   <span id="overlay-min-radius-value" class="range-value" aria-live="polite">8</span>
                 </div>
               </label>
-              <label class="field range">
+              <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.max.radius" data-settings-visibility-label="Max radius (px)" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                 <span class="field-label">Max radius (px)</span>
                 <div class="range-row">
                   <input id="overlay-max-radius" type="range" min="8" max="1080" step="1"
@@ -1178,7 +1184,7 @@
               </div>
               <!-- KITT mode settings -->
               <div id="overlay-kitt-settings" class="settings-grid-2col" style="display: none;">
-              <label class="field range">
+              <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.kitt.min.width" data-settings-visibility-label="Min width (px)" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                 <span class="field-label">Min width (px)</span>
                 <div class="range-row">
                   <input id="overlay-kitt-min-width" type="range" min="4" max="40" step="1"
@@ -1191,7 +1197,7 @@
                   <span id="overlay-kitt-min-width-value" class="range-value" aria-live="polite">20</span>
                 </div>
               </label>
-              <label class="field range">
+              <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.kitt.max.width" data-settings-visibility-label="Max width (px)" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                 <span class="field-label">Max width (px)</span>
                 <div class="range-row">
                   <input id="overlay-kitt-max-width" type="range" min="50" max="3840" step="10"
@@ -1204,7 +1210,7 @@
                   <span id="overlay-kitt-max-width-value" class="range-value" aria-live="polite">200</span>
                 </div>
               </label>
-              <label class="field range span-2">
+              <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.kitt.height" data-settings-visibility-label="Height (px)" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                 <span class="field-label">Height (px)</span>
                 <div class="range-row">
                   <input id="overlay-kitt-height" type="range" min="8" max="40" step="1"
@@ -1220,7 +1226,7 @@
               </div>
               <!-- Shared settings -->
               <div class="settings-grid-2col">
-              <label class="field range">
+              <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.rise" data-settings-visibility-label="Rise smoothing (ms)" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                 <span class="field-label">Rise smoothing (ms)</span>
                 <div class="range-row">
                   <input id="overlay-rise" type="range" min="20" max="200" step="10"
@@ -1233,7 +1239,7 @@
                   <span id="overlay-rise-value" class="range-value" aria-live="polite">80</span>
                 </div>
               </label>
-              <label class="field range">
+              <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.fall" data-settings-visibility-label="Fall smoothing (ms)" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                 <span class="field-label">Fall smoothing (ms)</span>
                 <div class="range-row">
                   <input id="overlay-fall" type="range" min="20" max="200" step="10"
@@ -1246,7 +1252,7 @@
                   <span id="overlay-fall-value" class="range-value" aria-live="polite">160</span>
                 </div>
               </label>
-              <label class="field range">
+              <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.opacity.inactive" data-settings-visibility-label="Inactive opacity" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                 <span class="field-label">Inactive opacity</span>
                 <div class="range-row">
                   <input id="overlay-opacity-inactive" type="range" min="5" max="100" step="1"
@@ -1259,7 +1265,7 @@
                   <span id="overlay-opacity-inactive-value" class="range-value" aria-live="polite">20%</span>
                 </div>
               </label>
-              <label class="field range">
+              <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.opacity.active" data-settings-visibility-label="Active opacity" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                 <span class="field-label">Active opacity</span>
                 <div class="range-row">
                   <input id="overlay-opacity-active" type="range" min="5" max="100" step="1"
@@ -1274,12 +1280,12 @@
               </label>
               </div>
               <div class="panel-grid">
-                <label class="field">
+                <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.pos.x" data-settings-visibility-label="Position X (%)" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                   <span class="field-label">Position X (%)</span>
                   <input id="overlay-pos-x" type="number" min="0" max="100" step="1"
                          title="Horizontal overlay position (0 = left, 100 = right)" />
                 </label>
-                <label class="field">
+                <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.pos.y" data-settings-visibility-label="Position Y (%)" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                   <span class="field-label">Position Y (%)</span>
                   <input id="overlay-pos-y" type="number" min="0" max="100" step="1"
                          title="Vertical overlay position (0 = top, 100 = bottom)" />
@@ -1291,14 +1297,14 @@
                   <span class="field-hint">Separate settings for refinement animation only</span>
                 </div>
                 <div class="settings-grid-2col">
-                  <label class="field toggle span-2">
+                  <label class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.refining.indicator.enabled" data-settings-visibility-label="Show refining indicator" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                     <span class="field-label">Show refining indicator</span>
                     <input id="overlay-refining-indicator-enabled" type="checkbox" title="Show an extra overlay effect while AI refinement is running" />
                     <span class="toggle-track">
                       <span class="toggle-thumb"></span>
                     </span>
                   </label>
-                  <label class="field">
+                  <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.refining.indicator.preset" data-settings-visibility-label="Refining effect intensity" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                     <span class="field-label">Refining effect intensity</span>
                     <select id="overlay-refining-indicator-preset" title="Visual intensity of the overlay effect during AI refinement">
                       <option value="subtle">Subtle</option>
@@ -1306,11 +1312,11 @@
                       <option value="intense">Intense</option>
                     </select>
                   </label>
-                  <label class="field">
+                  <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.refining.indicator.color" data-settings-visibility-label="Refining effect color" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                     <span class="field-label">Refining effect color</span>
                     <input id="overlay-refining-indicator-color" type="color" title="Accent color for the AI refinement overlay animation" />
                   </label>
-                  <label class="field range">
+                  <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.refining.indicator.speed" data-settings-visibility-label="Refining speed (ms)" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                     <span class="field-label">Refining speed (ms)</span>
                     <div class="range-row">
                       <input id="overlay-refining-indicator-speed" type="range" min="450" max="3000" step="50"
@@ -1323,7 +1329,7 @@
                       <span id="overlay-refining-indicator-speed-value" class="range-value" aria-live="polite">1150 ms</span>
                     </div>
                   </label>
-                  <label class="field range">
+                  <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.refining.indicator.range" data-settings-visibility-label="Refining range (%)" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
                     <span class="field-label">Refining range (%)</span>
                     <div class="range-row">
                       <input id="overlay-refining-indicator-range" type="range" min="60" max="180" step="5"
@@ -1341,7 +1347,7 @@
               <span id="overlay-health-note" class="field-hint overlay-health-note" hidden>
                 Overlay runtime is recovering.
               </span>
-              <button id="apply-overlay-btn" class="button primary" title="Apply overlay position and style settings" style="margin-top: 12px; width: 100%;">Apply Overlay Settings</button>
+              <button id="apply-overlay-btn" class="button primary" title="Apply overlay position and style settings" style="margin-top: 12px; width: 100%;" data-settings-visibility-managed="true" data-settings-visibility-key="apply.overlay.btn" data-settings-visibility-label="apply-overlay-btn" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">Apply Overlay Settings</button>
             </div>
           </details>
           </div>
@@ -1357,7 +1363,7 @@
                 <p>AI-powered transcript improvement, topic detection, and adaptive vocabulary</p>
               </div>
             </div>
-            <div class="panel-body" id="ai-refinement-panel-body">
+            <div class="panel-body" id="ai-refinement-panel-body" data-settings-visibility-group-container>
 
               <!-- Prompt Style — daily control -->
               <div class="ai-refine-section ai-refine-section--prompt-style">
@@ -1366,8 +1372,8 @@
                   <span class="field-hint">Defines what the AI does with your transcript</span>
                 </div>
                 <div class="panel-grid">
-                  <div class="field span-2">
-                    <div id="prompt-preset-list" class="prompt-preset-list">
+                  <div class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.prompt_preset" data-settings-visibility-label="Prompt style" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement">
+                    <div id="prompt-preset-list" class="prompt-preset-list" data-settings-visibility-excluded="dynamic-preset-actions">
                       <!-- Populated by renderPromptPresetCards() -->
                     </div>
                   </div>
@@ -1379,31 +1385,31 @@
                     <div class="preset-name-row">
                       <input id="ai-fallback-prompt-preset-name" type="text"
                              placeholder="Enter a name for this preset"
-                             title="Name for the user preset" hidden />
+                             title="Name for the user preset" hidden data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.prompt.preset.name" data-settings-visibility-label="Preset name" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement" />
                       <button id="ai-fallback-prompt-preset-save" type="button" class="primary"
-                              title="Save this preset">
+                              title="Save this preset" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.prompt.preset.save" data-settings-visibility-label="Save preset" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement">
                         Save
                       </button>
                       <button id="ai-fallback-prompt-preset-reset" type="button" class="secondary"
-                              title="Restore factory default for this preset" hidden>
+                              title="Restore factory default for this preset" hidden data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.prompt.preset.reset" data-settings-visibility-label="Reset preset" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement">
                         Reset to default
                       </button>
                       <button id="ai-fallback-prompt-preset-revert" type="button" class="secondary"
-                              title="Restore previous saved version" hidden>
+                              title="Restore previous saved version" hidden data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.prompt.preset.revert" data-settings-visibility-label="Revert preset" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement">
                         Revert to previous
                       </button>
                       <button id="ai-fallback-prompt-preset-discard" type="button" class="ghost"
-                              title="Discard unsaved changes" hidden>
+                              title="Discard unsaved changes" hidden data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.prompt.preset.discard" data-settings-visibility-label="Discard changes" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement">
                         Discard
                       </button>
                       <button id="ai-fallback-prompt-preset-delete" type="button" class="danger"
-                              title="Delete this user preset" hidden>
+                              title="Delete this user preset" hidden data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.prompt.preset.delete" data-settings-visibility-label="Delete preset" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement">
                         Delete
                       </button>
                     </div>
                   </div>
 
-                  <div id="ai-fallback-prompt-preview-field" class="field span-2">
+                  <div id="ai-fallback-prompt-preview-field" class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.custom_prompt" data-settings-visibility-label="Custom prompt" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement">
                     <span id="ai-fallback-prompt-preview-label" class="field-label">Prompt preview</span>
                     <textarea id="ai-fallback-custom-prompt" rows="6" placeholder="Define your custom refinement prompt..."
                               title="Prompt sent to the AI before each refinement"></textarea>
@@ -1450,7 +1456,7 @@
                               <p>Whisper decodes audio to raw text.</p>
                             </article>
 
-                            <article id="pipeline-node-rules" class="pipeline-node machine-node machine-node--rules" data-state="idle">
+                            <article id="pipeline-node-rules" class="pipeline-node machine-node machine-node--rules" data-state="idle" data-settings-visibility-managed="true" data-settings-visibility-key="postproc-enabled" data-settings-visibility-label="Enable rule-based refinement" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement" data-settings-visibility-editor-host="refinement-pipeline-visibility-editor">
                               <span class="pipeline-node-step">2</span>
                               <h4>Rule-Based Refiner</h4>
                               <p>Fast local cleanup before optional AI. No token/API cost.</p>
@@ -1461,7 +1467,7 @@
                               </label>
                             </article>
 
-                            <article id="pipeline-node-ai" class="pipeline-node machine-node machine-node--ai" data-state="idle">
+                            <article id="pipeline-node-ai" class="pipeline-node machine-node machine-node--ai" data-state="idle" data-settings-visibility-managed="true" data-settings-visibility-key="ai-fallback-enabled" data-settings-visibility-label="Enable AI refinement" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement" data-settings-visibility-editor-host="refinement-pipeline-visibility-editor">
                               <span class="pipeline-node-step">3</span>
                               <h4>AI Refiner</h4>
                               <p>Optional Ollama rewrite for final wording.</p>
@@ -1490,6 +1496,8 @@
                           </div>
                         </div>
 
+                        <div id="refinement-pipeline-visibility-editor" class="settings-visibility-inline-host"></div>
+
                         <div id="refinement-pipeline-live" class="field-hint refinement-pipeline-live" aria-live="polite">
                           Awaiting next transcription job.
                         </div>
@@ -1508,7 +1516,7 @@
                         </div>
 
                         <!-- Rule-based toggles -->
-                        <div class="field toggle">
+                        <div class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="postproc.punctuation" data-settings-visibility-label="Punctuation" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                           <label class="toggle-row">
                             <span class="field-label">Punctuation</span>
                             <input id="postproc-punctuation" type="checkbox" title="Automatically add punctuation (periods, commas, question marks)" />
@@ -1517,7 +1525,7 @@
                           <span class="toggle-hint">Add periods, commas, and question marks</span>
                         </div>
 
-                        <div class="field toggle">
+                        <div class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="postproc.capitalization" data-settings-visibility-label="Capitalization" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                           <label class="toggle-row">
                             <span class="field-label">Capitalization</span>
                             <input id="postproc-capitalization" type="checkbox" title="Capitalize the first letter of sentences and proper nouns" />
@@ -1526,7 +1534,7 @@
                           <span class="toggle-hint">Capitalize sentences and proper words</span>
                         </div>
 
-                        <div class="field toggle">
+                        <div class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="postproc.numbers" data-settings-visibility-label="Number normalization" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                           <label class="toggle-row">
                             <span class="field-label">Number normalization</span>
                             <input id="postproc-numbers" type="checkbox" title="Convert written-out numbers to digits (e.g. &quot;three&quot; → &quot;3&quot;)" />
@@ -1567,7 +1575,7 @@
                             <span class="badge">Offline • Private</span>
                           </div>
                           <div class="ai-provider-lane-title" id="ai-fallback-local-lane-title-text">Ollama (Local)</div>
-                          <label class="field" style="margin-top:8px;" data-expert-only="true">
+                          <label class="field" style="margin-top:8px;" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.backend.select" data-settings-visibility-label="Local backend" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                             <span class="field-label">Local backend</span>
                             <select id="ai-fallback-local-backend-select" title="Select the local AI backend to use for refinement">
                               <option value="ollama">Ollama (managed, port 11434)</option>
@@ -1579,10 +1587,10 @@
                             Checking local runtime status...
                           </span>
                           <div class="ai-provider-lane-actions">
-                            <button id="ai-fallback-local-primary-action" class="hotkey-record-btn is-recommended" type="button" title="Install or start local Ollama runtime">
+                            <button id="ai-fallback-local-primary-action" class="hotkey-record-btn is-recommended" type="button" title="Install or start local Ollama runtime" data-settings-visibility-managed="true" data-settings-visibility-key="action.ai-fallback-local-primary-action" data-settings-visibility-label="Set up local AI runtime" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement">
                               Install local runtime
                             </button>
-                            <button id="ai-fallback-local-import-action" class="hotkey-record-btn" type="button" title="Import a local GGUF or Modelfile into Ollama" data-expert-only="true">
+                            <button id="ai-fallback-local-import-action" class="hotkey-record-btn" type="button" title="Import a local GGUF or Modelfile into Ollama" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.import.action" data-settings-visibility-label="Import model" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                               Import model
                             </button>
                           </div>
@@ -1595,20 +1603,20 @@
                               <label class="field">
                                 <span class="field-label">Install version</span>
                                 <div class="field-row">
-                                  <select id="ai-fallback-local-runtime-version" title="Select Ollama runtime version to install or upgrade"></select>
-                                  <button id="ai-fallback-fetch-versions-action" class="hotkey-record-btn" type="button" title="Fetch available versions from GitHub">Get versions</button>
+                                  <select id="ai-fallback-local-runtime-version" title="Select Ollama runtime version to install or upgrade" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.runtime.version" data-settings-visibility-label="Install version" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement"></select>
+                                  <button id="ai-fallback-fetch-versions-action" class="hotkey-record-btn" type="button" title="Fetch available versions from GitHub" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.fetch.versions.action" data-settings-visibility-label="Install version" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">Get versions</button>
                                 </div>
                                 <span id="ai-fallback-local-runtime-version-note" class="field-hint">Shows pinned releases. Click &ldquo;Get versions&rdquo; to fetch from GitHub.</span>
                                 <span id="ai-fallback-fetch-versions-status" class="field-hint" hidden></span>
                               </label>
-                              <label class="field">
+                              <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.runtime.source" data-settings-visibility-label="Runtime source" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                                 <span class="field-label">Runtime source</span>
                                 <select id="ai-fallback-local-runtime-source" title="How Ollama is provided">
                                   <option value="per_user_zip">Managed (recommended)</option>
                                   <option value="system">System (PATH)</option>
                                 </select>
                               </label>
-                              <label class="field span-2">
+                              <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.fallback.endpoints" data-settings-visibility-label="Fallback endpoints" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                                 <span class="field-label">Fallback endpoints</span>
                                 <textarea
                                   id="ai-fallback-local-fallback-endpoints"
@@ -1621,10 +1629,10 @@
                                 <span class="field-hint">Tried in order when the primary endpoint is unreachable. Leave empty to use only the primary.</span>
                               </label>
                               <div class="ai-provider-advanced-actions">
-                                <button id="ai-fallback-local-verify-action" class="hotkey-record-btn" type="button" title="Verify local runtime health and models">
+                                <button id="ai-fallback-local-verify-action" class="hotkey-record-btn" type="button" title="Verify local runtime health and models" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.verify.action" data-settings-visibility-label="ai-fallback-local-verify-action" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                                   Verify
                                 </button>
-                                <button id="ai-fallback-local-refresh-action" class="hotkey-record-btn" type="button" title="Refresh runtime state, models, and version catalog">
+                                <button id="ai-fallback-local-refresh-action" class="hotkey-record-btn" type="button" title="Refresh runtime state, models, and version catalog" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.refresh.action" data-settings-visibility-label="ai-fallback-local-refresh-action" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                                   Refresh
                                 </button>
                               </div>
@@ -1633,7 +1641,7 @@
                           <!-- OpenAI-compat backend config (LM Studio / Oobabooga) -->
                           <div id="ai-fallback-compat-config" hidden data-expert-only="true">
                             <p id="ai-fallback-compat-guide" class="field-hint span-2" style="margin-bottom:0.5rem;"></p>
-                            <label class="field span-2">
+                            <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.compat.endpoint" data-settings-visibility-label="Server endpoint" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                               <span class="field-label">Server endpoint</span>
                               <input
                                 id="ai-fallback-compat-endpoint"
@@ -1645,7 +1653,7 @@
                               />
                               <span id="ai-fallback-compat-endpoint-hint" class="field-hint">Default: LM Studio port 1234, Oobabooga port 5000</span>
                             </label>
-                            <label class="field span-2">
+                            <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.compat.api.key" data-settings-visibility-label="API key (optional)" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                               <span class="field-label">API key <span class="field-label-optional">(optional)</span></span>
                               <input
                                 id="ai-fallback-compat-api-key"
@@ -1656,7 +1664,7 @@
                                 title="API key for the local server (most local servers don't require one)"
                               />
                             </label>
-                            <div class="field span-2">
+                            <div class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.compat.fetch.models" data-settings-visibility-label="Models" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                               <div class="field-row" style="margin-bottom:0.5rem;">
                                 <span class="field-label">Models</span>
                                 <button id="ai-fallback-compat-fetch-models" class="hotkey-record-btn" type="button" title="Fetch available models from the server">
@@ -1667,10 +1675,10 @@
                               <span id="ai-fallback-compat-status" class="field-hint"></span>
                             </div>
                             <div class="ai-provider-advanced-actions">
-                              <button id="ai-fallback-compat-verify-action" class="hotkey-record-btn" type="button" title="Test connection to the local server">
+                              <button id="ai-fallback-compat-verify-action" class="hotkey-record-btn" type="button" title="Test connection to the local server" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.compat.verify.action" data-settings-visibility-label="ai-fallback-compat-verify-action" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                                 Verify connection
                               </button>
-                              <button id="ai-fallback-lm-studio-install-action" class="hotkey-record-btn" type="button" title="Download and install LM Studio via the official installer script" hidden>
+                              <button id="ai-fallback-lm-studio-install-action" class="hotkey-record-btn" type="button" title="Download and install LM Studio via the official installer script" hidden data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.lm.studio.install.action" data-settings-visibility-label="ai-fallback-lm-studio-install-action" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                                 Install LM Studio
                               </button>
                             </div>
@@ -1702,7 +1710,7 @@
                         </div>
                       </div>
 
-                      <label id="ai-fallback-model-field" class="field">
+                      <label id="ai-fallback-model-field" class="field" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.model" data-settings-visibility-label="Online model" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                         <span class="field-label">Online model</span>
                         <select id="ai-fallback-model" title="Model to use for refinement (loaded from selected provider)"></select>
                       </label>
@@ -1725,7 +1733,7 @@
                   <div class="expander-body">
                     <div class="panel-grid">
 
-                      <label class="field range">
+                      <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.temperature" data-settings-visibility-label="Temperature" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                         <span class="field-label">Temperature</span>
                         <div class="range-row">
                           <input id="ai-fallback-temperature" type="range" min="0" max="1" step="0.05"
@@ -1740,7 +1748,7 @@
                         <span class="field-hint">0.1 = very literal/minimal rewrites; 1.0 = aggressive reformulation.</span>
                       </label>
 
-                      <label id="asr-language-field" class="field">
+                      <label id="asr-language-field" class="field" data-settings-visibility-managed="true" data-settings-visibility-key="language.select" data-settings-visibility-label="Transcription language hint" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                         <span class="field-label">Transcription language hint</span>
                         <select id="language-select" title="Language hint passed to ASR. Keep Auto-detect unless you need a fixed language.">
                           <option value="auto">Auto-detect</option>
@@ -1763,7 +1771,7 @@
                         <span id="asr-language-hint-note" class="field-hint">Auto-detect is active until language pinning is enabled.</span>
                       </label>
 
-                      <label class="field toggle">
+                      <label class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="language.pinned.toggle" data-settings-visibility-label="Pin ASR language" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                         <div class="toggle-row">
                           <span class="field-label">Pin ASR language</span>
                           <input id="language-pinned-toggle" type="checkbox" title="Lock ASR to the selected language instead of auto-detecting." />
@@ -1774,7 +1782,7 @@
                         <span class="toggle-hint">When off, ASR uses auto-detect and rule-based processing runs multilingual rules.</span>
                       </label>
 
-                      <div class="field toggle span-2" data-expert-only="true">
+                      <div class="field toggle span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.preserve.language" data-settings-visibility-label="Preserve source language" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                         <label class="toggle-row">
                           <span class="field-label">Preserve source language</span>
                           <input id="ai-fallback-preserve-language" type="checkbox" title="Keep refinement output in the same language as input. Default: enabled." />
@@ -1785,7 +1793,7 @@
                         </span>
                       </div>
 
-                      <div class="field toggle span-2">
+                      <div class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.low.latency.mode" data-settings-visibility-label="Speed Mode (Low Latency)" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                         <label class="toggle-row">
                           <span class="field-label">Speed Mode (Low Latency)</span>
                           <input id="ai-fallback-low-latency-mode" type="checkbox" title="Faster refinement by reducing generation/context budget. ON clamps max_tokens to &lt;= 512 and temperature to &lt;= 0.2 (currently forced to 0.15 when above)." />
@@ -1796,7 +1804,7 @@
                         </span>
                       </div>
 
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.max.tokens" data-settings-visibility-label="Max tokens" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                         <span class="field-label">Max tokens</span>
                         <select id="ai-fallback-max-tokens" title="Upper bound for refinement output. Around 2000 tokens is usually a few pages of text, not a full book.">
                           <option value="256">256</option>
@@ -1822,7 +1830,7 @@
                     <h3 id="ai-refinement-models-title" class="ai-refine-section-title">Models</h3>
                   </summary>
                   <div class="expander-body">
-                    <div id="ollama-model-manager" style="display:none">
+                    <div id="ollama-model-manager" style="display:none" data-settings-visibility-excluded="dynamic-model-actions">
                       <!-- Dynamically populated by renderOllamaModelManager() -->
                     </div>
                   </div>
@@ -1837,7 +1845,7 @@
                   </summary>
                   <div class="expander-body">
                     <div class="panel-grid span-2">
-                      <label class="field toggle span-2">
+                      <label class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="postproc.custom.vocab.enabled" data-settings-visibility-label="Enable" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                         <span class="toggle-row">
                           <span class="field-label">Enable</span>
                           <input id="postproc-custom-vocab-enabled" type="checkbox" title="Apply custom find-and-replace rules to every transcript" />
@@ -1846,9 +1854,9 @@
                       </label>
                       <div id="postproc-custom-vocab-config" style="display: none;" class="span-2">
                         <div class="custom-vocab-table">
-                          <div id="postproc-vocab-rows"></div>
+                          <div id="postproc-vocab-rows" data-settings-visibility-excluded="dynamic-vocabulary-actions"></div>
                         </div>
-                        <button id="postproc-vocab-add" class="btn-ghost btn-small vocab-add-btn">+ Add</button>
+                        <button id="postproc-vocab-add" class="btn-ghost btn-small vocab-add-btn" data-settings-visibility-managed="true" data-settings-visibility-key="postproc.vocab.add" data-settings-visibility-label="postproc-vocab-add" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">+ Add</button>
                       </div>
                       <div class="vocab-terms-block span-2">
                         <div class="vocab-terms-header">
@@ -1861,12 +1869,12 @@
 
                         <div class="vocab-subsection">
                           <span class="vocab-subsection-label">Learned</span>
-                          <div id="vocab-terms-list" class="vocab-terms-list" role="list" aria-label="Learned vocabulary terms"></div>
+                          <div id="vocab-terms-list" class="vocab-terms-list" role="list" aria-label="Learned vocabulary terms" data-settings-visibility-excluded="dynamic-vocabulary-actions"></div>
                         </div>
 
                         <div class="vocab-subsection">
                           <span class="vocab-subsection-label">Pending corrections<span class="vocab-subsection-hint"> — edits seen so far; they move up to Learned after 3 repetitions</span></span>
-                          <div id="vocab-observing-list" class="vocab-terms-list vocab-observing" role="list" aria-label="Pending correction pairs"></div>
+                          <div id="vocab-observing-list" class="vocab-terms-list vocab-observing" role="list" aria-label="Pending correction pairs" data-settings-visibility-excluded="dynamic-vocabulary-actions"></div>
                         </div>
                       </div>
                     </div>
@@ -1881,8 +1889,8 @@
                     <span id="ai-refinement-topic-title" class="ai-refine-section-title">Topic Detection</span>
                   </summary>
                   <div class="expander-body">
-                    <div id="topic-keywords-list"></div>
-                    <button id="topic-keywords-reset" class="btn-secondary" title="Reset topic keywords to built-in defaults" style="width: 100%; margin-top: 8px;">
+                    <div id="topic-keywords-list" data-settings-visibility-excluded="dynamic-topic-actions"></div>
+                    <button id="topic-keywords-reset" class="btn-secondary" title="Reset topic keywords to built-in defaults" style="width: 100%; margin-top: 8px;" data-settings-visibility-managed="true" data-settings-visibility-key="topic.keywords.reset" data-settings-visibility-label="topic-keywords-reset" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
                       Reset to Defaults
                     </button>
                     <span class="field-hint" style="display: block; margin-top: 8px;">
@@ -1898,7 +1906,7 @@
         </div>
 
         <!-- Voice Output Tab -->
-        <div id="tab-voice-output" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-voice-output" data-expert-only="true">
+        <div id="tab-voice-output" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-voice-output" data-settings-visibility-tab-content="voice-output" data-settings-visibility-group-container>
           <section class="panel" data-panel="voice-output" style="--delay: 0.12s">
             <div class="panel-header">
               <div class="panel-title">
@@ -1924,7 +1932,7 @@
                             <span class="field-label">Standard-Provider</span>
                             <span id="voice-output-default-availability" class="tts-provider-availability"></span>
                           </div>
-                          <label class="field">
+                          <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.provider.default" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Provider">
                             <span class="field-label">Provider</span>
                             <select id="voice-output-default-provider" title="Primary TTS engine">
                               <option value="windows_native">Windows Native TTS</option>
@@ -1933,7 +1941,7 @@
                               <option value="qwen3_tts">Qwen3-TTS (OpenAI-compatible)</option>
                             </select>
                           </label>
-                          <label class="field" id="voice-output-windows-voice-field">
+                          <label class="field" id="voice-output-windows-voice-field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.voice.default" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Stimme">
                             <span class="field-label">Stimme</span>
                             <select id="voice-output-windows-voice-select" title="Select a Windows speaker voice">
                               <option value="">Auto (provider default)</option>
@@ -1947,7 +1955,7 @@
                             <span class="field-label">Fallback-Provider</span>
                             <span id="voice-output-fallback-availability" class="tts-provider-availability"></span>
                           </div>
-                          <label class="field">
+                          <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.provider.fallback" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Provider">
                             <span class="field-label">Provider</span>
                             <select id="voice-output-fallback-provider" title="Used if default provider fails">
                               <option value="windows_native">Windows Native TTS</option>
@@ -1956,7 +1964,7 @@
                               <option value="qwen3_tts">Qwen3-TTS (OpenAI-compatible)</option>
                             </select>
                           </label>
-                          <label class="field" id="voice-output-fallback-voice-field">
+                          <label class="field" id="voice-output-fallback-voice-field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.voice.fallback" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Stimme">
                             <span class="field-label">Stimme</span>
                             <select id="voice-output-fallback-voice-select" title="Fallback voice">
                               <option value="">Auto (provider default)</option>
@@ -1972,7 +1980,7 @@
                         </div>
                         <span class="field-hint" id="voice-output-piper-download-text">Bereit.</span>
                       </div>
-                      <div class="field toggle span-2" id="voice-output-auto-language-voice-field">
+                      <div class="field toggle span-2" id="voice-output-auto-language-voice-field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.auto_language" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Auto voice by detected language">
                         <label class="toggle-row">
                           <span class="field-label">Auto voice by detected language</span>
                           <input id="voice-output-auto-language-voice" type="checkbox" title="Automatically switch Windows voice per detected transcript language" />
@@ -1980,7 +1988,7 @@
                         </label>
                         <span class="toggle-hint">When enabled, Trispr picks a matching Windows voice (for example de/en) per utterance. Manual voice remains fallback.</span>
                       </div>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.policy" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Output policy">
                         <span class="field-label">Output policy</span>
                         <select id="voice-output-policy" title="Controls when voice output is triggered">
                           <option value="agent_replies_only">Agent replies only</option>
@@ -1989,14 +1997,14 @@
                         </select>
                         <span class="field-hint">Agent replies only = TTS fires only for workflow-agent responses.</span>
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.device" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="TTS output device">
                         <span class="field-label">TTS output device</span>
                         <select id="voice-output-device-select" title="Audio output target for TTS playback">
                           <option value="default">Default (System)</option>
                         </select>
                         <span class="field-hint">Uses app-local routing. Windows default playback device is not changed.</span>
                       </label>
-                      <label class="field range">
+                      <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="voice.rate" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Speech rate">
                         <span class="field-label">Speech rate</span>
                         <div class="range-row">
                           <input id="voice-output-rate" type="range" min="0.5" max="2.0" step="0.05"
@@ -2007,7 +2015,7 @@
                           <span id="voice-output-rate-value" class="range-value" aria-live="polite">1.00</span>
                         </div>
                       </label>
-                      <label class="field range">
+                      <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="voice.volume" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Volume">
                         <span class="field-label">Volume</span>
                         <div class="range-row">
                           <input id="voice-output-volume" type="range" min="0" max="1" step="0.05"
@@ -2018,7 +2026,7 @@
                           <span id="voice-output-volume-value" class="range-value" aria-live="polite">1.00</span>
                         </div>
                       </label>
-                      <div class="field">
+                      <div class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.test_provider" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="voice.test_provider">
                         <button id="voice-output-test-btn" type="button" class="hotkey-record-btn">
                           Test provider
                         </button>
@@ -2031,7 +2039,7 @@
                   <summary><h4 class="ai-refine-section-title">Advanced (Piper paths)</h4></summary>
                   <div class="expander-body">
                     <div class="panel-grid">
-                      <label class="field range span-2">
+                      <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="voice.piper.gain" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Piper gain">
                         <span class="field-label">Piper gain</span>
                         <div class="range-row">
                           <input id="voice-output-piper-gain-db" type="range" min="-24" max="6" step="1"
@@ -2043,19 +2051,19 @@
                         </div>
                         <span class="field-hint">Additional gain applied only to Piper playback, after global volume.</span>
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.piper.binary" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Piper binary path">
                         <span class="field-label">Piper binary path</span>
                         <input id="voice-output-piper-binary" type="text"
                               placeholder="Auto-detected (leave empty)" title="Full path to piper.exe" />
                         <span class="field-hint">Leave empty to auto-detect from PATH or bundled resources.</span>
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.piper.model" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Piper model path">
                         <span class="field-label">Piper model path</span>
                         <input id="voice-output-piper-model" type="text"
                               placeholder="Auto-selected (leave empty)" title="Full path to .onnx voice model" />
                         <span class="field-hint">Leave empty to auto-select the first available voice model.</span>
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.piper.directory" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Voice model directory">
                         <span class="field-label">Voice model directory</span>
                         <input id="voice-output-piper-model-dir" type="text"
                               placeholder="Auto-detected (leave empty)" title="Directory containing .onnx voice models" />
@@ -2068,28 +2076,28 @@
                   <summary><h4 class="ai-refine-section-title">Advanced (Qwen3-TTS endpoint)</h4></summary>
                   <div class="expander-body">
                     <div class="panel-grid">
-                      <label class="field span-2">
+                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="voice.qwen.endpoint" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Qwen endpoint">
                         <span class="field-label">Qwen endpoint</span>
                         <input id="voice-output-qwen-endpoint" type="text"
                               placeholder="http://127.0.0.1:8000/v1/audio/speech" title="OpenAI-compatible speech endpoint" />
                         <span class="field-hint">Expected API: `POST /v1/audio/speech` returning WAV audio.</span>
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.qwen.model" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Qwen model">
                         <span class="field-label">Qwen model</span>
                         <input id="voice-output-qwen-model" type="text"
                               placeholder="Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice" title="Model id sent to endpoint" />
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.qwen.voice" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Qwen voice">
                         <span class="field-label">Qwen voice</span>
                         <input id="voice-output-qwen-voice" type="text"
                               placeholder="vivian" title="Speaker/voice id sent to endpoint" />
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.qwen.api_key" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="API key (optional)">
                         <span class="field-label">API key (optional)</span>
                         <input id="voice-output-qwen-api-key" type="password"
                               placeholder="Bearer token (optional)" title="Optional bearer token for endpoint" />
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.qwen.timeout" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Timeout (seconds)">
                         <span class="field-label">Timeout (seconds)</span>
                         <input id="voice-output-qwen-timeout-sec" type="number" min="3" max="180" step="1"
                               value="45" title="Request timeout for Qwen endpoint" />
@@ -2102,20 +2110,20 @@
           </section>
         </div>
 
-        <div id="tab-task-capture" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-task-capture" data-expert-only="true">
+        <div id="tab-task-capture" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-task-capture" data-settings-visibility-tab-content="task-capture">
           <section class="panel" data-panel="task-capture" style="--delay: 0.12s">
             <div class="panel-header">
               <h2>Task Capture</h2>
               <span class="field-hint">Configure voice-triggered task capture routes and AI refinement.</span>
             </div>
-            <div class="panel-body" id="task-capture-panel-body">
+            <div class="panel-body" id="task-capture-panel-body" data-settings-visibility-group-container>
               <!-- Dynamically rendered -->
             </div>
           </section>
         </div>
 
         <!-- Video Tab -->
-        <div id="tab-video" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-video" data-expert-only="true">
+        <div id="tab-video" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-video" data-settings-visibility-tab-content="video" data-settings-visibility-group-container>
           <section class="panel" data-panel="video" style="--delay: 0.12s">
             <div class="panel-header">
               <div class="panel-title">
@@ -2138,12 +2146,12 @@
                         <span class="field-hint">Markdown, TXT, JSON, YAML, HTML, SRT, PNG/JPG/SVG, MP3/WAV, MP4/MOV</span>
                       </div>
                       <div class="video-drop-zone-actions">
-                        <button id="video-pick-files-btn" class="btn">Pick Files...</button>
-                        <button id="video-add-history-btn" class="btn secondary">Add History Entry...</button>
+                        <button id="video-pick-files-btn" class="btn" data-settings-visibility-managed="true" data-settings-visibility-key="video.pick.files.btn" data-settings-visibility-label="video-pick-files-btn" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation">Pick Files...</button>
+                        <button id="video-add-history-btn" class="btn secondary" data-settings-visibility-managed="true" data-settings-visibility-key="video.add.history.btn" data-settings-visibility-label="video-add-history-btn" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation">Add History Entry...</button>
                       </div>
                     </div>
 
-                    <div class="video-queue-header">
+                    <div class="video-queue-header" data-settings-visibility-managed="true" data-settings-visibility-key="video.queue" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation" data-settings-visibility-label="Queue">
                       <span class="field-label">Queue</span>
                       <span id="video-queue-count" class="field-hint">0 items</span>
                       <button id="video-queue-clear-btn" class="btn ghost small">Clear</button>
@@ -2158,7 +2166,7 @@
                   <summary><h4 class="ai-refine-section-title">Brief &amp; Style</h4></summary>
                   <div class="expander-body">
                     <div class="panel-grid">
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="video.style" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation" data-settings-visibility-label="Style">
                         <span class="field-label">Style</span>
                         <select id="video-style-select" title="Composition style">
                           <option value="slideshow">Slideshow</option>
@@ -2167,7 +2175,7 @@
                           <option value="game_viz">Game Viz (Phase 4)</option>
                         </select>
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="video.resolution" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation" data-settings-visibility-label="Resolution">
                         <span class="field-label">Resolution</span>
                         <select id="video-resolution-select" title="Output resolution">
                           <option value="1920x1080">1920x1080 (16:9)</option>
@@ -2175,14 +2183,14 @@
                           <option value="1080x1080">1080x1080 (1:1)</option>
                         </select>
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="video.fps" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation" data-settings-visibility-label="Frame Rate">
                         <span class="field-label">Frame Rate</span>
                         <select id="video-fps-select" title="Frames per second">
                           <option value="30">30 fps</option>
                           <option value="60">60 fps</option>
                         </select>
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="video.tts" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation" data-settings-visibility-label="TTS Voiceover">
                         <span class="field-label">TTS Voiceover</span>
                         <select id="video-tts-select" title="Voiceover provider">
                           <option value="off">Off</option>
@@ -2190,7 +2198,7 @@
                           <option value="windows_native" disabled>Windows Native (Phase 4)</option>
                         </select>
                       </label>
-                      <label class="field span-2">
+                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="video.brief" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation" data-settings-visibility-label="Brief (optional)">
                         <span class="field-label">Brief (optional)</span>
                         <textarea id="video-brief-textarea" rows="3"
                           placeholder="Focus on the economy flow, keep runtime under 30s, use dark background."></textarea>
@@ -2200,8 +2208,8 @@
                 </details>
 
                 <div class="video-actions">
-                  <button id="video-generate-btn" class="btn primary">Generate Video</button>
-                  <button id="video-open-folder-btn" class="btn secondary">Open Output Folder</button>
+                  <button id="video-generate-btn" class="btn primary" data-settings-visibility-managed="true" data-settings-visibility-key="video.generate.btn" data-settings-visibility-label="video-generate-btn" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation">Generate Video</button>
+                  <button id="video-open-folder-btn" class="btn secondary" data-settings-visibility-managed="true" data-settings-visibility-key="video.open.folder.btn" data-settings-visibility-label="video-open-folder-btn" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation">Open Output Folder</button>
                 </div>
 
                 <div id="video-progress" class="video-progress" hidden>
@@ -2223,7 +2231,7 @@
         </div>
 
         <!-- Agent Tab -->
-        <div id="tab-agent" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-agent" data-expert-only="true">
+        <div id="tab-agent" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-agent" data-settings-visibility-tab-content="agent" data-settings-visibility-group-container>
           <section class="panel" data-panel="agent" style="--delay: 0.12s">
             <div class="panel-header">
               <div class="panel-title">
@@ -2241,7 +2249,7 @@
                   <summary><h4 class="ai-refine-section-title">Conversation</h4></summary>
                   <div class="expander-body">
                     <div class="panel-grid">
-                      <label class="field span-2">
+                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.command" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Command">
                         <span class="field-label">Command</span>
                         <textarea
                           id="workflow-agent-command-input"
@@ -2251,8 +2259,8 @@
                         <span class="field-hint">Wakeword + intent. Unbekannte Fragen bekommen eine sichere Antwort ohne Side-Effects.</span>
                       </label>
                       <div class="auth-modal-actions span-2">
-                        <button id="workflow-agent-parse-btn" type="button" class="hotkey-record-btn">Parse Command</button>
-                        <button id="workflow-agent-ptt-arm-btn" type="button" class="hotkey-record-btn">PTT (Agent)</button>
+                        <button id="workflow-agent-parse-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">Parse Command</button>
+                        <button id="workflow-agent-ptt-arm-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">PTT (Agent)</button>
                       </div>
                       <div class="field span-2">
                         <span class="field-label">Agent pipeline</span>
@@ -2308,7 +2316,7 @@
                       <div id="workflow-agent-plan-lane" class="span-2 workflow-agent-plan-lane">
                         <div class="panel-grid">
                           <div id="workflow-agent-candidates" class="module-agent-candidates span-2"></div>
-                          <label class="field">
+                          <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="workflow.agent.target.language" data-settings-visibility-label="Target language (required)" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant">
                             <span class="field-label">Target language <strong>(required)</strong></span>
                             <select id="workflow-agent-target-language">
                               <option value="" disabled selected>— select language —</option>
@@ -2321,13 +2329,13 @@
                             <span class="field-hint">Choose a language for each GDD command before building a plan.</span>
                           </label>
                           <div class="field">
-                            <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn">Build Plan</button>
+                            <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">Build Plan</button>
                           </div>
-                          <label class="field span-2">
+                          <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="workflow.agent.plan.preview" data-settings-visibility-label="Plan preview" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant">
                             <span class="field-label">Plan preview</span>
                             <textarea id="workflow-agent-plan-preview" rows="5" readonly placeholder="Execution plan appears here..."></textarea>
                           </label>
-                          <div class="field toggle span-2">
+                          <div class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="workflow.agent.review.confirm" data-settings-visibility-label="Review confirmed" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant">
                             <label class="toggle-row">
                               <span class="field-label">Review confirmed</span>
                               <input id="workflow-agent-review-confirm" type="checkbox" title="Confirm you reviewed the plan details before execution" />
@@ -2336,7 +2344,7 @@
                             <span id="workflow-agent-review-summary" class="field-hint">Build a plan first, review analysis/execution lanes, then confirm before execute.</span>
                           </div>
                           <div class="auth-modal-actions span-2">
-                            <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn">Confirm & Execute</button>
+                            <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">Confirm & Execute</button>
                           </div>
                         </div>
                       </div>
@@ -2347,7 +2355,7 @@
                   <summary><h4 class="ai-refine-section-title">Configuration</h4></summary>
                   <div class="expander-body">
                     <div class="panel-grid">
-                      <div class="field toggle span-2">
+                      <div class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.hands_free" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Hands-free mode">
                         <label class="toggle-row">
                           <span class="field-label">Hands-free mode</span>
                           <input id="workflow-agent-hands-free-enabled" type="checkbox" title="Enable wakeword-driven command parsing in assistant mode" />
@@ -2355,22 +2363,22 @@
                         </label>
                         <span class="field-hint">When enabled, wakeword commands are parsed in Assistant mode. PTT remains available for one-shot bypass.</span>
                       </div>
-                      <label class="field span-2">
+                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.wakewords" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Wakewords">
                         <span class="field-label">Wakewords</span>
                         <textarea id="workflow-agent-wakewords" rows="3" placeholder="trispr&#10;hey trispr&#10;trispr agent"></textarea>
                         <span class="field-hint">One wakeword per line (comma-separated entries also supported).</span>
                       </label>
-                      <label class="field span-2">
+                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.aliases" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Wakeword aliases (optional)">
                         <span class="field-label">Wakeword aliases (optional)</span>
                         <textarea id="workflow-agent-wakeword-aliases" rows="2" placeholder="trispa&#10;trisper"></textarea>
                         <span class="field-hint">Alternative pronunciations that should trigger the same wakeword intent.</span>
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.confirm_timeout" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Confirm timeout (seconds)">
                         <span class="field-label">Confirm timeout (seconds)</span>
                         <input id="workflow-agent-confirm-timeout-sec" type="number" min="10" max="300" step="1" value="45" />
                         <span class="field-hint">How long the confirm token remains valid before auto-cancel.</span>
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.suggestion_level" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Suggestion level">
                         <span class="field-label">Suggestion level</span>
                         <select id="workflow-agent-suggestion-level">
                           <option value="standard">Standard</option>
@@ -2379,7 +2387,7 @@
                         </select>
                         <span class="field-hint">Controls session candidate breadth.</span>
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.reply_mode" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Reply mode">
                         <span class="field-label">Reply mode</span>
                         <select id="workflow-agent-reply-mode">
                           <option value="rule_only">Rule-only</option>
@@ -2387,7 +2395,7 @@
                         </select>
                         <span class="field-hint">Hybrid only affects wording; execution remains deterministic.</span>
                       </label>
-                      <label class="field">
+                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.online_mode" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Knowledge scope">
                         <span class="field-label">Knowledge scope</span>
                         <select id="workflow-agent-online-mode">
                           <option value="local_only">Local only</option>
@@ -2395,7 +2403,7 @@
                         </select>
                         <span class="field-hint">Online enabled allows cloud-model replies. Live web lookup tools are still explicit and separate.</span>
                       </label>
-                      <div class="field toggle">
+                      <div class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.voice_feedback" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Voice feedback">
                         <label class="toggle-row">
                           <span class="field-label">Voice feedback</span>
                           <input id="workflow-agent-voice-feedback-enabled" type="checkbox" title="Allow spoken agent feedback when TTS is available" />
@@ -2411,9 +2419,9 @@
                   <div class="expander-body">
                     <div class="panel-grid">
                       <div class="auth-modal-actions span-2">
-                        <button id="workflow-agent-refresh-candidates-btn" type="button" class="hotkey-record-btn">Find Sessions</button>
+                        <button id="workflow-agent-refresh-candidates-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">Find Sessions</button>
                       </div>
-                      <label class="field span-2">
+                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="workflow.agent.execution.log" data-settings-visibility-label="Conversation log" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant">
                         <span class="field-label">Conversation log</span>
                         <textarea id="workflow-agent-execution-log" rows="6" readonly placeholder="Agent events and execution output appear here..."></textarea>
                       </label>
@@ -2426,7 +2434,7 @@
         </div>
 
         <!-- Modules Tab -->
-        <div id="tab-modules" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-modules" data-expert-only="true">
+        <div id="tab-modules" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-modules" data-settings-visibility-tab-content="modules" data-settings-visibility-group-container>
           <section class="panel modules-panel" style="--delay: 0.12s">
             <div class="panel-header">
               <div class="panel-title">
@@ -2438,7 +2446,7 @@
               </div>
             </div>
             <div class="panel-body">
-              <div id="modules-list" class="modules-list"></div>
+              <div id="modules-list" class="modules-list" data-settings-visibility-group-container></div>
               <div class="field-hint">Workflow Agent configuration moved to the Agent tab.</div>
             </div>
           </section>

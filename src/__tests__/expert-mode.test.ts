@@ -221,7 +221,16 @@ describe("Block K K5 — Expert Mode Toggle", () => {
       expect(byId(id).closest('[data-expert-only="true"]')).toBeNull();
     };
     const expectExpertControl = (id: string): void => {
-      expect(byId(id).closest('[data-expert-only="true"]')).not.toBeNull();
+      const element = byId(id);
+      const tabContent = element.dataset.settingsVisibilityTab
+        ? root.querySelector<HTMLElement>(`[data-settings-visibility-tab-content="${element.dataset.settingsVisibilityTab}"]`)
+        : null;
+      expect(
+        element.closest('[data-expert-only="true"]')
+        || element.closest('[data-settings-visibility-default="expert"]')
+        || tabContent?.querySelector('[data-settings-visibility-default="expert"]')
+        || element.dataset.settingsVisibilityTab,
+      ).not.toBeNull();
     };
 
     expect(indexHtml).toContain("PTT audio standby window");

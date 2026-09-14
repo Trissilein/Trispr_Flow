@@ -14,6 +14,8 @@ import {
 export interface SettingsVisibilityEntry extends SettingsVisibilityDefinition {
   element: HTMLElement;
   groupElement?: HTMLElement;
+  /** Optional normal-flow destination for inline controls that cannot live beside the source element. */
+  editorHost?: HTMLElement;
 }
 
 export interface MountSettingsVisibilityEditorOptions {
@@ -156,7 +158,12 @@ function stopEditorEvents(node: HTMLElement): void {
   node.addEventListener("input", stop);
 }
 
-function insertAfter(target: HTMLElement, node: HTMLElement, fallback: HTMLElement): void {
+function insertAfter(entry: SettingsVisibilityEntry, node: HTMLElement, fallback: HTMLElement): void {
+  if (entry.editorHost) {
+    entry.editorHost.append(node);
+    return;
+  }
+  const { element: target } = entry;
   const parent = target.parentElement;
   const inlineParent = parent && /^(LABEL|SPAN|A|P)$/.test(parent.tagName) ? parent : null;
   const anchor = inlineParent ?? target;
@@ -169,10 +176,14 @@ function insertAfter(target: HTMLElement, node: HTMLElement, fallback: HTMLEleme
 
 function insertGroupControl(
   groupElement: HTMLElement | undefined,
-  firstEntry: HTMLElement | undefined,
+  firstEntry: SettingsVisibilityEntry | undefined,
   node: HTMLElement,
   fallback: HTMLElement,
 ): void {
+  if (firstEntry?.editorHost) {
+    firstEntry.editorHost.append(node);
+    return;
+  }
   if (groupElement && groupElement.parentNode) {
     const isControl = /^(INPUT|SELECT|TEXTAREA|BUTTON|LABEL)$/.test(groupElement.tagName);
     if (isControl) {
@@ -182,10 +193,11 @@ function insertGroupControl(
     }
     return;
   }
-  if (firstEntry?.parentNode) {
-    const parent = firstEntry.parentElement;
+  if (firstEntry?.element.parentNode) {
+    const parent = firstEntry.element.parentElement;
     const inlineParent = parent && /^(LABEL|SPAN|A|P)$/.test(parent.tagName) ? parent : null;
-    (inlineParent ?? firstEntry).parentNode?.insertBefore(node, inlineParent ?? firstEntry);
+    const anchor = inlineParent ?? firstEntry.element;
+    anchor.parentNode?.insertBefore(node, anchor);
     return;
   }
   fallback.append(node);
@@ -395,7 +407,7 @@ export function mountSettingsVisibilityEditor(
       groupControl.append(title, groupLabel, groupSelect);
       insertGroupControl(
         groupState.groupElement,
-        groupState.entries[0]?.element,
+        groupState.entries[0],
         groupControl,
         options.host,
       );
@@ -487,7 +499,7 @@ export function mountSettingsVisibilityEditor(
 
         row.dataset.settingsVisibilityLabel = entry.label;
         row.append(visibility, reset, candidateLabel, reasonLabel, reason);
-        insertAfter(entry.element, row, options.host);
+        insertAfter(entry, row, options.host);
         ownedNodes.add(row);
       }
       groupIndex += 1;

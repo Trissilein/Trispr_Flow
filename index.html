@@ -1456,7 +1456,7 @@
                               <p>Whisper decodes audio to raw text.</p>
                             </article>
 
-                            <article id="pipeline-node-rules" class="pipeline-node machine-node machine-node--rules" data-state="idle" data-settings-visibility-managed="true" data-settings-visibility-key="postproc-enabled" data-settings-visibility-label="Enable rule-based refinement" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement">
+                            <article id="pipeline-node-rules" class="pipeline-node machine-node machine-node--rules" data-state="idle" data-settings-visibility-managed="true" data-settings-visibility-key="postproc-enabled" data-settings-visibility-label="Enable rule-based refinement" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement" data-settings-visibility-editor-host="refinement-pipeline-visibility-editor">
                               <span class="pipeline-node-step">2</span>
                               <h4>Rule-Based Refiner</h4>
                               <p>Fast local cleanup before optional AI. No token/API cost.</p>
@@ -1467,7 +1467,7 @@
                               </label>
                             </article>
 
-                            <article id="pipeline-node-ai" class="pipeline-node machine-node machine-node--ai" data-state="idle" data-settings-visibility-managed="true" data-settings-visibility-key="ai-fallback-enabled" data-settings-visibility-label="Enable AI refinement" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement">
+                            <article id="pipeline-node-ai" class="pipeline-node machine-node machine-node--ai" data-state="idle" data-settings-visibility-managed="true" data-settings-visibility-key="ai-fallback-enabled" data-settings-visibility-label="Enable AI refinement" data-settings-visibility-default="basic" data-settings-visibility-group="AI Refinement" data-settings-visibility-editor-host="refinement-pipeline-visibility-editor">
                               <span class="pipeline-node-step">3</span>
                               <h4>AI Refiner</h4>
                               <p>Optional Ollama rewrite for final wording.</p>
@@ -1495,6 +1495,8 @@
                             </article>
                           </div>
                         </div>
+
+                        <div id="refinement-pipeline-visibility-editor" class="settings-visibility-inline-host"></div>
 
                         <div id="refinement-pipeline-live" class="field-hint refinement-pipeline-live" aria-live="polite">
                           Awaiting next transcription job.

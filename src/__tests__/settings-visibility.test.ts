@@ -398,6 +398,30 @@ describe("settings visibility editor", () => {
     handle.destroy();
   });
 
+  it("places controls in a dedicated normal-flow host when a graphic owns the setting", () => {
+    const host = document.createElement("div");
+    const graphic = document.createElement("div");
+    const editorHost = document.createElement("div");
+    const visualField = document.createElement("div");
+    visualField.dataset.settingsTestKey = "capture.enabled";
+    graphic.append(visualField);
+    document.body.append(host, graphic, editorHost);
+    const handle = mountSettingsVisibilityEditor({
+      host,
+      entries: [{ ...definitions[0], element: visualField, editorHost }],
+      knownDefinitions: definitions,
+      profile: emptyVisibilityProfile(),
+      onCommit: vi.fn(),
+    });
+
+    host.querySelector<HTMLButtonElement>(".settings-visibility-customize-button")?.click();
+
+    expect(visualField.nextElementSibling).toBeNull();
+    expect(editorHost.querySelector('[data-settings-visibility-key="capture.enabled"]')).not.toBeNull();
+    expect(editorHost.querySelector(".settings-visibility-group-select")).not.toBeNull();
+    handle.destroy();
+  });
+
   it("refreshes inline rows across tabs without losing the draft", () => {
     const host = document.createElement("div");
     const transcriptionTab = document.createElement("section");

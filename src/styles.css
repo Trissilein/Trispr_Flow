@@ -973,6 +973,11 @@ html.standard-mode [data-settings-visibility-editor-owned="true"] {
   margin-top: 6px;
 }
 
+.settings-visibility-inline-host {
+  display: grid;
+  gap: 8px;
+}
+
 .settings-visibility-entry select,
 .settings-visibility-group select {
   max-width: 9rem;

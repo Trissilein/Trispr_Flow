@@ -45,10 +45,13 @@ export function getSettingsVisibilityEntries(root: ParentNode = document): Setti
         defaultVisibility: visibility(element.dataset.settingsVisibilityDefault),
       };
       const groupElement = element.closest<HTMLElement>("[data-settings-visibility-group-container]");
+      const editorHostId = element.dataset.settingsVisibilityEditorHost?.trim();
+      const editorHost = editorHostId ? document.getElementById(editorHostId) ?? undefined : undefined;
       return {
         ...definition,
         element,
         ...(groupElement ? { groupElement } : {}),
+        ...(editorHost ? { editorHost } : {}),
       };
     })
     .filter((entry): entry is SettingsVisibilityEntry => entry !== null);

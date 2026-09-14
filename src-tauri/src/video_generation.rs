@@ -9,12 +9,14 @@ use std::thread;
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::{error, info, warn};
 
-use crate::modules::{registry, VideoGenerationSettings};
+use crate::modules::{registry, ModuleSettings, VideoGenerationSettings};
 use crate::paths;
 use crate::state::AppState;
 use crate::video_ingest::{self, JobWorkdir, SourceItem, SourceKind};
 
 pub const VIDEO_MODULE_ID: &str = "output_video_generation";
+pub(crate) const VIDEO_MODULE_DISABLED_ERROR: &str =
+    "Video Generation module is not enabled. Open the Modules tab and enable it first.";
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -69,10 +71,7 @@ pub fn render_video(app: &AppHandle, mut req: VideoJobRequest) -> Result<VideoJo
 
     let (settings, module_enabled) = snapshot_settings(app)?;
     if !module_enabled {
-        return Err(
-            "Video Generation module is not enabled. Open the Modules tab and enable it first."
-                .to_string(),
-        );
+        return Err(VIDEO_MODULE_DISABLED_ERROR.to_string());
     }
     let _ = settings.enabled; // legacy field kept for forward-compat, no longer gates rendering
 
@@ -154,15 +153,30 @@ fn snapshot_settings(app: &AppHandle) -> Result<(VideoGenerationSettings, bool),
     // The module registry is the source of truth for enable state; the legacy
     // `enabled` field on VideoGenerationSettings is kept purely for forward-
     // compat with sub-feature toggles we may add later.
-    let module_enabled = settings
-        .module_settings
-        .enabled_modules
-        .iter()
-        .any(|m| m == VIDEO_MODULE_ID);
+    let module_enabled = is_video_module_enabled(&settings.module_settings);
     // touch registry import so the dep is explicit; registry metadata drives
     // the Modules tab UI, not this check.
     let _ = registry::find_manifest(VIDEO_MODULE_ID);
     Ok((settings.video_generation_settings.clone(), module_enabled))
+}
+
+pub(crate) fn is_video_module_enabled(module_settings: &ModuleSettings) -> bool {
+    module_settings
+        .enabled_modules
+        .iter()
+        .any(|module_id| module_id == VIDEO_MODULE_ID)
+}
+
+pub(crate) fn ensure_video_module_enabled(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let settings = state
+        .settings
+        .read()
+        .map_err(|e| format!("settings lock poisoned: {}", e))?;
+    if !is_video_module_enabled(&settings.module_settings) {
+        return Err(VIDEO_MODULE_DISABLED_ERROR.to_string());
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -574,12 +588,14 @@ pub(crate) async fn video_generate(
 
 #[tauri::command]
 pub(crate) fn video_get_output_dir(app: AppHandle) -> Result<String, String> {
+    ensure_video_module_enabled(&app)?;
     let dir = crate::paths::resolve_video_output_dir(&app);
     Ok(dir.to_string_lossy().to_string())
 }
 
 #[tauri::command]
 pub(crate) fn video_open_output_dir(app: AppHandle) -> Result<(), String> {
+    ensure_video_module_enabled(&app)?;
     let dir = crate::paths::resolve_video_output_dir(&app);
     #[cfg(target_os = "windows")]
     {
@@ -596,6 +612,27 @@ pub(crate) fn video_open_output_dir(app: AppHandle) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn video_module_gate_requires_enabled_module_id() {
+        let mut module_settings = ModuleSettings::default();
+        assert!(!is_video_module_enabled(&module_settings));
+
+        module_settings
+            .enabled_modules
+            .insert("video_generation".to_string());
+        assert!(!is_video_module_enabled(&module_settings));
+
+        module_settings
+            .enabled_modules
+            .insert(VIDEO_MODULE_ID.to_string());
+        assert!(is_video_module_enabled(&module_settings));
+    }
 }
 
 // ---------------------------------------------------------------------------

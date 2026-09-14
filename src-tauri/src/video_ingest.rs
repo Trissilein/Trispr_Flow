@@ -328,6 +328,7 @@ pub(crate) async fn video_ingest_sources(
     app: AppHandle,
 ) -> Result<Vec<SourceItem>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        crate::video_generation::ensure_video_module_enabled(&app)?;
         let state = app.state::<AppState>();
         let max_mb = state
             .settings
@@ -368,6 +369,7 @@ pub(crate) async fn video_ingest_history_entry(
     app: AppHandle,
 ) -> Result<SourceItem, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        crate::video_generation::ensure_video_module_enabled(&app)?;
         let state = app.state::<AppState>();
         ingest_history_entry(&entry_id, state.inner(), 0)
     })

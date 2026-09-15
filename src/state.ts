@@ -16,6 +16,8 @@ import type {
 
 export const ASSISTANT_CORE_MODULE_ID = "assistant_core";
 export const ASSISTANT_PRESENCE_MODULE_ID = "assistant_presence";
+export const GDD_MODULE_ID = "gdd";
+export const LEGACY_CONFLUENCE_MODULE_ID = "integrations_confluence";
 export const LEGACY_WORKFLOW_AGENT_MODULE_ID = "workflow_agent";
 export const REMOVED_MODULE_IDS = new Set(["analysis"]);
 
@@ -40,8 +42,12 @@ export let overlayHealth: OverlayHealthEvent | null = null;
 
 export function normalizeEnabledModuleIds(enabledModules: string[] | undefined): string[] {
   const normalized = new Set<string>();
-    for (const rawId of enabledModules ?? []) {
-      const moduleId = rawId === LEGACY_WORKFLOW_AGENT_MODULE_ID ? ASSISTANT_CORE_MODULE_ID : rawId;
+  for (const rawId of enabledModules ?? []) {
+    const moduleId = rawId === LEGACY_WORKFLOW_AGENT_MODULE_ID
+      ? ASSISTANT_CORE_MODULE_ID
+      : rawId === LEGACY_CONFLUENCE_MODULE_ID
+        ? GDD_MODULE_ID
+        : rawId;
     if (!moduleId || REMOVED_MODULE_IDS.has(moduleId)) continue;
     normalized.add(moduleId);
   }
@@ -52,10 +58,15 @@ export function normalizeAssistantSettings(newSettings: Settings | null): Settin
   if (!newSettings) return null;
   const moduleSettings = newSettings.module_settings;
   if (moduleSettings) {
+    const legacyConfluenceEnabled = moduleSettings.enabled_modules?.includes(LEGACY_CONFLUENCE_MODULE_ID);
     moduleSettings.enabled_modules = normalizeEnabledModuleIds(moduleSettings.enabled_modules);
+    if (legacyConfluenceEnabled && newSettings.gdd_module_settings) {
+      newSettings.gdd_module_settings.enabled = true;
+    }
 
     const remappedPermissions: Record<string, string[]> = {};
     for (const [moduleId, permissions] of Object.entries(moduleSettings.consented_permissions ?? {})) {
+      if (moduleId === LEGACY_CONFLUENCE_MODULE_ID) continue;
       const nextId = moduleId === LEGACY_WORKFLOW_AGENT_MODULE_ID ? ASSISTANT_CORE_MODULE_ID : moduleId;
       if (REMOVED_MODULE_IDS.has(nextId)) continue;
       const current = remappedPermissions[nextId] ?? [];
@@ -65,6 +76,7 @@ export function normalizeAssistantSettings(newSettings: Settings | null): Settin
 
     const remappedOverrides: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(moduleSettings.module_overrides ?? {})) {
+      if (key.startsWith(`${LEGACY_CONFLUENCE_MODULE_ID}.`)) continue;
       const nextKey = key.startsWith(`${LEGACY_WORKFLOW_AGENT_MODULE_ID}.`)
         ? `${ASSISTANT_CORE_MODULE_ID}.${key.slice(LEGACY_WORKFLOW_AGENT_MODULE_ID.length + 1)}`
         : key;

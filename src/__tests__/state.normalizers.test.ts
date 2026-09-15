@@ -30,6 +30,10 @@ describe("normalizeEnabledModuleIds", () => {
         expect(normalizeEnabledModuleIds(["workflow_agent"])).toEqual(["assistant_core"]);
     });
 
+    it("migrates the legacy Confluence module id to gdd", () => {
+        expect(normalizeEnabledModuleIds(["integrations_confluence"])).toEqual(["gdd"]);
+    });
+
     it("passes assistant_core through unchanged", () => {
         expect(normalizeEnabledModuleIds(["assistant_core"])).toEqual(["assistant_core"]);
     });
@@ -140,6 +144,23 @@ describe("normalizeAssistantSettings", () => {
             consented_permissions: { custom_module: ["read"] },
             module_overrides: { "custom_module.option": true },
         });
+    });
+
+    it("drops legacy Confluence permissions and overrides without forging GDD installation", () => {
+        const result = normalizeAssistantSettings(
+            makeSettings({
+                module_settings: {
+                    enabled_modules: ["integrations_confluence"],
+                    consented_permissions: { integrations_confluence: ["network_confluence"] },
+                    module_overrides: { "integrations_confluence.installed": true },
+                },
+                gdd_module_settings: { enabled: false } as Settings["gdd_module_settings"],
+            }),
+        );
+        expect(result?.module_settings?.enabled_modules).toEqual(["gdd"]);
+        expect(result?.gdd_module_settings?.enabled).toBe(true);
+        expect(result?.module_settings?.consented_permissions).toEqual({});
+        expect(result?.module_settings?.module_overrides).toEqual({});
     });
 
     it("passes non-legacy consented_permissions keys through unchanged", () => {

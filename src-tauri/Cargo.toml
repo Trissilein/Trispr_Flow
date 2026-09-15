@@ -16,9 +16,8 @@ name = "trispr_flow_lib"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["module-gdd", "module-confluence"]
+default = ["module-gdd"]
 module-gdd = []
-module-confluence = ["module-gdd"]
 
 [[bin]]
 name = "trispr-flow"

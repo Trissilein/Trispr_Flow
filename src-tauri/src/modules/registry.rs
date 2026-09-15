@@ -119,20 +119,6 @@ pub fn manifests() -> Vec<ModuleManifest> {
             }],
         },
         ModuleManifest {
-            id: "integrations_confluence",
-            name: "Confluence Integration",
-            version: "0.2.0",
-            bundled: cfg!(feature = "module-confluence"),
-            core_always_on: false,
-            installed_by_default: cfg!(feature = "module-confluence"),
-            restart_required_on_enable: false,
-            dependencies: &["gdd"],
-            permissions: &[],
-            surface: "shared",
-            assistant_capable: true,
-            assistant_actions: &[],
-        },
-        ModuleManifest {
             id: ASSISTANT_CORE_MODULE_ID,
             name: "Assistant Core",
             version: "0.1.0",
@@ -524,41 +510,16 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "module-confluence")]
-    fn confluence_is_bundled_but_not_core_when_feature_enabled() {
-        let settings = ModuleSettings::default();
-        let descriptor = modules_as_descriptors(&settings)
-            .into_iter()
-            .find(|module| module.id == "integrations_confluence")
-            .expect("Confluence manifest should exist");
-
-        assert!(descriptor.bundled);
-        assert!(!descriptor.core);
-        assert!(descriptor.toggleable);
-        assert_eq!(descriptor.state, "installed");
-        assert_eq!(descriptor.dependencies, vec!["gdd".to_string()]);
-    }
-
-    #[test]
-    #[cfg(not(feature = "module-confluence"))]
-    fn confluence_is_not_bundled_or_installed_when_feature_disabled() {
-        let settings = ModuleSettings::default();
-        let descriptor = modules_as_descriptors(&settings)
-            .into_iter()
-            .find(|module| module.id == "integrations_confluence")
-            .expect("Confluence manifest should remain discoverable");
-
-        assert!(!descriptor.bundled);
-        assert!(!descriptor.core);
-        assert!(descriptor.toggleable);
-        assert_eq!(descriptor.state, "not_installed");
-        assert!(missing_dependencies_with_packages(&settings, "gdd", &HashSet::new()).is_empty());
-        assert!(missing_dependencies_with_packages(
-            &settings,
-            ASSISTANT_CORE_MODULE_ID,
-            &HashSet::new(),
-        )
-        .is_empty());
+    fn confluence_is_not_a_standalone_module() {
+        assert_eq!(
+            find_manifest("integrations_confluence")
+                .expect("legacy Confluence id should map to GDD")
+                .id,
+            "gdd"
+        );
+        assert!(manifests()
+            .iter()
+            .all(|module| module.id != "integrations_confluence"));
     }
 
     #[test]

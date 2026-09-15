@@ -173,12 +173,6 @@ function moduleGuide(moduleId: string): { description: string; usage: string } {
       usage: "Use: Open GDD Flow, pick a session/preset, then generate and publish.",
     };
   }
-  if (moduleId === "integrations_confluence") {
-    return {
-      description: "Handles Confluence Cloud auth, routing, and page create/update calls.",
-      usage: "Use: Configure Confluence connection in GDD Flow before publishing.",
-    };
-  }
   if (moduleId === ASSISTANT_CORE_MODULE_ID || moduleId === "workflow_agent") {
     return {
       description: "Desktop assistant runtime for conversation, direct actions, and confirmable GDD plans.",

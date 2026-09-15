@@ -3,7 +3,6 @@ use crate::modules::{
     normalize_gdd_module_settings, normalize_module_settings, normalize_vision_input_settings,
     normalize_voice_output_settings, normalize_workflow_agent_settings,
     registry as module_registry, ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID,
-    TASK_CAPTURE_MODULE_ID,
 };
 use crate::state::{
     normalize_ai_refinement_module_binding, normalize_assistant_core_binding,
@@ -74,7 +73,6 @@ pub(crate) fn enable_module_actions(
                 settings.ai_fallback.enabled = true;
                 settings.postproc_llm_enabled = true;
             }
-            if module_id == TASK_CAPTURE_MODULE_ID {}
         }
 
         normalize_module_settings(&mut settings.module_settings);
@@ -194,7 +192,6 @@ pub(crate) fn disable_module_actions(
                 settings.ai_fallback.enabled = false;
                 settings.postproc_llm_enabled = false;
             }
-            if module_id == TASK_CAPTURE_MODULE_ID {}
         }
 
         normalize_module_settings(&mut settings.module_settings);

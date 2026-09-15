@@ -105,10 +105,6 @@ async function setWhisperBackendPreference(backend: "cuda" | "vulkan"): Promise<
     settings.local_backend_preference = backend;
     renderHero();
     await persistSettings();
-    // Fire-and-forget: kill the running server so it restarts with the new
-    // binary on the next recording.  Not awaited so the UI feedback (toast)
-    // is not delayed by the server shutdown round-trip.
-    void invoke("kill_whisper_server").catch(() => {});
     renderHero();
     showToast({
       type: "info",

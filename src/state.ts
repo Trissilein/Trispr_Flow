@@ -17,6 +17,7 @@ import type {
 export const ASSISTANT_CORE_MODULE_ID = "assistant_core";
 export const ASSISTANT_PRESENCE_MODULE_ID = "assistant_presence";
 export const LEGACY_WORKFLOW_AGENT_MODULE_ID = "workflow_agent";
+export const REMOVED_MODULE_IDS = new Set(["analysis"]);
 
 export let settings: Settings | null = null;
 export let history: HistoryEntry[] = [];
@@ -39,9 +40,9 @@ export let overlayHealth: OverlayHealthEvent | null = null;
 
 export function normalizeEnabledModuleIds(enabledModules: string[] | undefined): string[] {
   const normalized = new Set<string>();
-  for (const rawId of enabledModules ?? []) {
-    const moduleId = rawId === LEGACY_WORKFLOW_AGENT_MODULE_ID ? ASSISTANT_CORE_MODULE_ID : rawId;
-    if (!moduleId) continue;
+    for (const rawId of enabledModules ?? []) {
+      const moduleId = rawId === LEGACY_WORKFLOW_AGENT_MODULE_ID ? ASSISTANT_CORE_MODULE_ID : rawId;
+    if (!moduleId || REMOVED_MODULE_IDS.has(moduleId)) continue;
     normalized.add(moduleId);
   }
   return Array.from(normalized);
@@ -56,6 +57,7 @@ export function normalizeAssistantSettings(newSettings: Settings | null): Settin
     const remappedPermissions: Record<string, string[]> = {};
     for (const [moduleId, permissions] of Object.entries(moduleSettings.consented_permissions ?? {})) {
       const nextId = moduleId === LEGACY_WORKFLOW_AGENT_MODULE_ID ? ASSISTANT_CORE_MODULE_ID : moduleId;
+      if (REMOVED_MODULE_IDS.has(nextId)) continue;
       const current = remappedPermissions[nextId] ?? [];
       remappedPermissions[nextId] = Array.from(new Set([...current, ...(permissions ?? [])]));
     }
@@ -66,6 +68,7 @@ export function normalizeAssistantSettings(newSettings: Settings | null): Settin
       const nextKey = key.startsWith(`${LEGACY_WORKFLOW_AGENT_MODULE_ID}.`)
         ? `${ASSISTANT_CORE_MODULE_ID}.${key.slice(LEGACY_WORKFLOW_AGENT_MODULE_ID.length + 1)}`
         : key;
+      if (nextKey === "analysis" || nextKey.startsWith("analysis.")) continue;
       remappedOverrides[nextKey] = value;
     }
     moduleSettings.module_overrides = remappedOverrides;

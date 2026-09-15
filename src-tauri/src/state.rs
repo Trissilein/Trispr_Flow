@@ -445,7 +445,7 @@ pub(crate) struct Settings {
     pub(crate) postproc_llm_api_key: String,
     pub(crate) postproc_llm_model: String,
     pub(crate) postproc_llm_prompt: String,
-    // Analysis launcher settings (external tool)
+    // OPUS archive settings
     pub(crate) opus_enabled: bool,
     pub(crate) opus_bitrate_kbps: u32,
     pub(crate) auto_save_system_audio: bool, // Auto-save system audio as OPUS

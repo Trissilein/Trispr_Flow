@@ -85,20 +85,6 @@ pub fn manifests() -> Vec<ModuleManifest> {
             assistant_actions: GDD_ACTIONS,
         },
         ModuleManifest {
-            id: "analysis",
-            name: "Analysis",
-            version: "0.1.0",
-            bundled: true,
-            core_always_on: false,
-            installed_by_default: false,
-            restart_required_on_enable: true,
-            dependencies: &[],
-            permissions: &["filesystem_history", "filesystem_exports"],
-            surface: "shared",
-            assistant_capable: false,
-            assistant_actions: &[],
-        },
-        ModuleManifest {
             id: "ai_refinement",
             name: "AI Refinement",
             version: "0.1.0",
@@ -460,6 +446,14 @@ mod tests {
             .find(|module| module.id == "opus")
             .expect("opus descriptor should exist");
         assert_eq!(descriptor.state, "installed");
+    }
+
+    #[test]
+    fn analysis_is_no_longer_registered() {
+        assert!(find_manifest("analysis").is_none());
+        assert!(!modules_as_descriptors(&ModuleSettings::default())
+            .iter()
+            .any(|module| module.id == "analysis"));
     }
 
     #[test]

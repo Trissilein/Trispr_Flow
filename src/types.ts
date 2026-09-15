@@ -12,7 +12,6 @@ export type ModuleSurface = "assistant" | "transcription" | "shared" | "ui";
 export type AssistantActionRisk = "low" | "medium" | "high";
 export type ModuleId =
   | "gdd"
-  | "analysis"
   | "ai_refinement"
   | "integrations_confluence"
   | "assistant_core"

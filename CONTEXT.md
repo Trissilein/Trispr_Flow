@@ -198,9 +198,6 @@ Video Generation owns its own sidecar/runtime concerns, jobs, work directories, 
 
 → `src-tauri/src/video_generation.rs`, `src-tauri/src/video_ingest.rs`
 
-### Analysis (`analysis`)
-Optional Feature Module for inspecting, comparing, or deriving insights from transcript/history data. Analysis is not part of Trispr Core: Core provides transcript and history data, while Analysis consumes it through optional views, exports, or insight surfaces.
-
 → `src/modules-hub.ts`, `src/types.ts:ModuleId`
 
 ### Export

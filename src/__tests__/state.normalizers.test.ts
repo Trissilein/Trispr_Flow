@@ -44,6 +44,10 @@ describe("normalizeEnabledModuleIds", () => {
         expect(normalizeEnabledModuleIds(["", "assistant_core"])).toEqual(["assistant_core"]);
     });
 
+    it("drops the removed analysis id", () => {
+        expect(normalizeEnabledModuleIds(["analysis", "assistant_core"])).toEqual(["assistant_core"]);
+    });
+
     it("passes unknown module ids through unchanged", () => {
         expect(normalizeEnabledModuleIds(["custom_module"])).toEqual(["custom_module"]);
     });
@@ -118,6 +122,23 @@ describe("normalizeAssistantSettings", () => {
         );
         expect(result?.module_settings?.module_overrides).toEqual({
             "assistant_core.some_key": 42,
+        });
+    });
+
+    it("drops removed analysis settings while preserving unknown module data", () => {
+        const result = normalizeAssistantSettings(
+            makeSettings({
+                module_settings: {
+                    enabled_modules: ["analysis", "custom_module"],
+                    consented_permissions: { analysis: ["filesystem_history"], custom_module: ["read"] },
+                    module_overrides: { "analysis.last_error": "stale", "custom_module.option": true },
+                },
+            }),
+        );
+        expect(result?.module_settings).toEqual({
+            enabled_modules: ["custom_module"],
+            consented_permissions: { custom_module: ["read"] },
+            module_overrides: { "custom_module.option": true },
         });
     });
 

@@ -120,8 +120,3 @@ For the v0.8.3 build, hydrate or copy `src-tauri/bin/vulkan` from that package, 
 Field verification on 2026-06-14 showed the published `TrsprFlw.v0.8.3.vulkan-only-12.06.-12.09.exe` asset did not contain this payload. The installed `bin/vulkan` folder had stale February 2026 binaries, did not include `whisper-server.exe`, and reproduced the AMD Vulkan crash. The local manifest-matching payload passed direct CLI and server smoke after being copied manually into the installed app. Treat the current published `v0.8.3` Vulkan-only installer as not fixed until the release asset is rebuilt or replaced and its installed payload is hash-validated.
 
 Once a fixed installer is published and validated, the normal published-installer hydration chain becomes valid again for later releases.
-
-## Notes
-
-- The former CUDA+Analysis variant was removed from Trispr Flow mainline.
-- Analysis packaging now lives in the dedicated `analysis-module-branch`.

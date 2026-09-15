@@ -102,7 +102,6 @@ function mountDom(): void {
     </div>
     <button class="panel-collapse-btn" data-panel-collapse="invalid-panel"></button>
 
-    <button id="analyse-button"></button>
     <button id="open-recordings-btn"></button>
     <button id="open-modules-btn"></button>
 
@@ -374,17 +373,6 @@ describe("wireAppChrome - panels and shortcuts", () => {
     click("panel-action-btn");
     click("panel-header-input");
     expect(mocks.togglePanel).not.toHaveBeenCalled();
-  });
-
-  it("analyse button opens modules and dispatches focus event", async () => {
-    const { appChrome } = await setup();
-    const focusListener = vi.fn();
-    window.addEventListener("modules:focus", focusListener);
-    appChrome.wireAppChrome();
-    click("analyse-button");
-    expect(activeTabId()).toBe("tab-btn-modules");
-    expect(focusListener).toHaveBeenCalledWith(expect.objectContaining({ detail: "analysis" }));
-    window.removeEventListener("modules:focus", focusListener);
   });
 
   it("open modules button opens modules", async () => {

@@ -426,10 +426,6 @@ export function wireAppChrome(): void {
     });
   });
 
-  dom.analyseButton?.addEventListener("click", () => {
-    switchMainTab("modules");
-    window.dispatchEvent(new CustomEvent("modules:focus", { detail: "analysis" }));
-  });
   dom.openModulesBtn?.addEventListener("click", () => {
     switchMainTab("modules");
   });

@@ -191,12 +191,6 @@ function moduleGuide(moduleId: string): { description: string; usage: string } {
       usage: "Use: Keep Assistant mode active to auto-show the Presence window as the primary assistant surface.",
     };
   }
-  if (moduleId === "analysis") {
-    return {
-      description: "Runs analysis workflows on transcript history and exportable data.",
-      usage: "Use: Enable module, then launch Analysis Flow from this page.",
-    };
-  }
   if (moduleId === "ai_refinement") {
     return {
       description: "Adds optional local AI transcript refinement and prompt/runtime controls.",
@@ -493,11 +487,9 @@ function renderModuleRow(moduleInfo: ModuleDescriptor): string {
     : "";
   const launch = moduleInfo.id === "gdd"
     ? `<button class="ghost-btn" data-module-action="launch-gdd" data-module-id="gdd">Open GDD Flow</button>`
-    : moduleInfo.id === "analysis"
-      ? `<button class="ghost-btn" data-module-action="launch-analysis" data-module-id="analysis">Open Analysis Flow</button>`
-      : moduleInfo.core
-        ? ""
-        : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}">Configure</button>`;
+    : moduleInfo.core
+      ? ""
+      : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}">Configure</button>`;
 
   return `<div class="module-row" data-module-card="${moduleInfo.id}" data-module-state="${moduleStateKey(moduleInfo)}">
         <div class="module-row-main">
@@ -860,15 +852,6 @@ function bindModulesEvents(): void {
     }
     if (action === "launch-gdd") {
       void openGddFlow();
-      return;
-    }
-    if (action === "launch-analysis") {
-      showToast({
-        type: "info",
-        title: "Analysis module",
-        message: "Analysis module launcher will be wired when analysis module is installed.",
-        duration: 3200,
-      });
       return;
     }
     if (action === "open-config") {

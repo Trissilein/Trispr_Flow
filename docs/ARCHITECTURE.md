@@ -117,4 +117,3 @@ Mainline installer packaging:
 - Bundled runtime folders: `bin/cuda/*` and `bin/vulkan/*` (+ `bin/quantize.exe`)
 
 Backend selection is resolved at runtime (`local_backend_preference`: `auto|cuda|vulkan`).
-The previous CUDA+Analysis variant is no longer part of mainline.

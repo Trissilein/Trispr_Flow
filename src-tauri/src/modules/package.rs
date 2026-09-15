@@ -532,6 +532,21 @@ mod tests {
     }
 
     #[test]
+    fn rejects_removed_analysis_module_id() {
+        let package_dir = write_valid_package("removed-analysis");
+        let manifest_path = package_dir.join(MODULE_MANIFEST_FILE);
+        let manifest = fs::read_to_string(&manifest_path)
+            .expect("read manifest")
+            .replace("\"id\": \"gdd\"", "\"id\": \"analysis\"");
+        fs::write(&manifest_path, manifest).expect("write manifest");
+
+        let error = scan_package_dir(&package_dir).expect_err("removed id should fail");
+
+        assert!(error.contains("Unknown module id 'analysis'"));
+        let _ = fs::remove_dir_all(package_dir);
+    }
+
+    #[test]
     fn rejects_missing_required_asset() {
         let package_dir = write_valid_package("missing-asset");
         fs::remove_file(package_dir.join("templates/universal-strict.md")).expect("remove asset");
@@ -598,7 +613,7 @@ mod tests {
     }
 
     fn write_runtime_package(test_name: &str, with_entrypoint: bool) -> PathBuf {
-        // "analysis" is a known registry id, so known_module_id passes and we
+        // "piper_tts" is a known registry id, so known_module_id passes and we
         // exercise the runtime-kind branch rather than the assets branch.
         let package_dir = unique_package_dir(test_name);
         fs::create_dir_all(package_dir.join("bin")).expect("create bin dir");
@@ -613,8 +628,8 @@ mod tests {
             format!(
                 r#"{{
   "schema_version": 1,
-  "id": "analysis",
-  "name": "Analysis Runtime",
+  "id": "piper_tts",
+  "name": "Piper Runtime",
   "version": "0.1.0",
   "kind": "runtime",{entrypoint_line}
   "host_capability": ""

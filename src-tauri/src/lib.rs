@@ -188,6 +188,7 @@ static BACKLOG_PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
 static MAIN_WINDOW_RESTORED: AtomicBool = AtomicBool::new(false);
 static CLIPBOARD_PASTE_GENERATION: AtomicU64 = AtomicU64::new(0);
+static LAST_PASTE_TEXT: Mutex<String> = Mutex::new(String::new());
 static LAST_GEOMETRY_SAVE_MS: AtomicU64 = AtomicU64::new(0);
 static PTT_KEY_HELD: AtomicBool = AtomicBool::new(false);
 static PTT_PRESS_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
@@ -3172,6 +3173,9 @@ fn restore_snapshot_with_retry(snapshot: ClipboardSnapshot) -> Result<(), String
 }
 
 pub(crate) fn paste_text(app_handle: &AppHandle, text: &str) -> Result<(), String> {
+    *LAST_PASTE_TEXT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = text.to_string();
     let snapshot = capture_clipboard_snapshot_with_retry();
     set_clipboard_text_with_retry(text)?;
     {
@@ -3210,6 +3214,19 @@ pub(crate) fn paste_text(app_handle: &AppHandle, text: &str) -> Result<(), Strin
     });
 
     Ok(())
+}
+
+pub(crate) fn repaste_last_text(app_handle: &AppHandle) {
+    let text = LAST_PASTE_TEXT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    if text.trim().is_empty() {
+        return;
+    }
+    if let Err(err) = paste_text(app_handle, &text) {
+        warn!("Ctrl+Alt+middle-click re-paste failed: {}", err);
+    }
 }
 
 fn send_paste_keystroke() -> Result<(), String> {

@@ -19,6 +19,7 @@ import {
 import { DEFAULT_ACCENT_COLOR, applyAccentColor } from "../utils";
 import { syncWorkflowAgentConsoleState } from "../workflow-agent-console";
 import { renderTaskCaptureTab } from "../task-capture-config";
+import { initVideoGenerationPanel, teardownVideoGenerationPanel } from "../video-generation";
 
 type MainTab =
   | "transcription"
@@ -58,6 +59,11 @@ function syncMainTabAvailability(): void {
   const videoAvailable = videoTabAvailable();
   const agentAvailable = agentTabAvailable();
   const taskCaptureAvailable = taskCaptureTabAvailable();
+  if (videoAvailable) {
+    void initVideoGenerationPanel();
+  } else {
+    teardownVideoGenerationPanel();
+  }
   if (dom.tabBtnAiRefinement) {
     dom.tabBtnAiRefinement.hidden = !aiAvailable;
     dom.tabBtnAiRefinement.setAttribute("aria-hidden", (!aiAvailable).toString());

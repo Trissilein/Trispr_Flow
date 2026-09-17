@@ -684,7 +684,7 @@ async function handleDisable(moduleId: string): Promise<void> {
     showToast({
       type: "success",
       title: "Module disabled",
-      message: "Execution stopped. Module data was kept.",
+      message: "Execution stopped and runtime resources released. Module data was kept.",
       duration: 3200,
     });
   } catch (error) {

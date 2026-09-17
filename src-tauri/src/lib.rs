@@ -3923,6 +3923,7 @@ pub fn run() {
                 refinement_timeouts: AtomicU64::new(0),
                 refinement_fallback_failed: AtomicU64::new(0),
                 refinement_fallback_timed_out: AtomicU64::new(0),
+                task_capture_generation: AtomicU64::new(0),
                 paste_arbiter: crate::paste_arbiter::PasteArbiter::default(),
                 last_mic_recording_path: Mutex::new(None),
                 last_system_recording_path: Mutex::new(None),
@@ -4114,6 +4115,9 @@ pub fn run() {
                 let recordings_dir = paths::resolve_recordings_dir(app.handle());
                 let modules_dir = paths::resolve_modules_dir(app.handle());
                 session_manager::init(recordings_dir.clone(), modules_dir);
+                session_manager::set_opus_module_enabled(
+                    settings.module_settings.enabled_modules.contains("opus"),
+                );
 
                 // Surface any incomplete sessions from a previous crash as a warning
                 let incomplete = session_manager::scan_incomplete(&recordings_dir);

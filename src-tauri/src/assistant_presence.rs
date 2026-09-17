@@ -226,6 +226,15 @@ pub fn hide_assistant_presence_window(app: &AppHandle) {
     }
 }
 
+/// Permanently release the Assistant Presence webview when its module is disabled.
+/// Hiding remains the right behavior for ordinary visibility changes, but a disabled
+/// module must not retain a live webview and its renderer memory.
+pub fn destroy_assistant_presence_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(ASSISTANT_PRESENCE_LABEL) {
+        let _ = window.destroy();
+    }
+}
+
 pub fn reconcile_assistant_presence_window(app: &AppHandle, settings: &Settings) {
     if !presence_should_be_visible(settings) {
         hide_assistant_presence_window(app);

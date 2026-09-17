@@ -229,6 +229,7 @@ pub struct SessionManager {
     active: HashMap<String, ActiveSession>,
     recordings_dir: Option<PathBuf>,
     modules_dir: Option<PathBuf>,
+    opus_module_enabled: bool,
 }
 
 impl SessionManager {
@@ -237,6 +238,7 @@ impl SessionManager {
             active: HashMap::new(),
             recordings_dir: None,
             modules_dir: None,
+            opus_module_enabled: false,
         }
     }
 
@@ -248,9 +250,22 @@ impl SessionManager {
         self.modules_dir = Some(dir);
     }
 
+    pub fn set_opus_module_enabled(&mut self, enabled: bool) {
+        self.opus_module_enabled = enabled;
+        if !enabled {
+            // Active sessions only retain bookkeeping. Drop it immediately so
+            // disabling Opus also releases their in-process state. Existing
+            // temp directories remain recoverable durable data.
+            self.active.clear();
+        }
+    }
+
     /// Resolve the installed opus sidecar, if any. Recomputed per call so a
     /// module installed mid-session takes effect without an app restart.
     fn opus_sidecar(&self) -> Option<PathBuf> {
+        if !self.opus_module_enabled {
+            return None;
+        }
         self.modules_dir
             .as_deref()
             .and_then(crate::opus::resolve_sidecar_in)
@@ -359,6 +374,14 @@ pub fn init(recordings_dir: PathBuf, modules_dir: PathBuf) {
     if let Ok(mut mgr) = get().lock() {
         mgr.set_recordings_dir(recordings_dir);
         mgr.set_modules_dir(modules_dir);
+    }
+}
+
+/// Enable or disable continuous OPUS work independently of whether the
+/// sidecar files remain installed on disk.
+pub fn set_opus_module_enabled(enabled: bool) {
+    if let Ok(mut mgr) = get().lock() {
+        mgr.set_opus_module_enabled(enabled);
     }
 }
 

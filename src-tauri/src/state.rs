@@ -913,6 +913,8 @@ pub(crate) struct AppState {
     pub(crate) refinement_timeouts: AtomicU64,
     pub(crate) refinement_fallback_failed: AtomicU64,
     pub(crate) refinement_fallback_timed_out: AtomicU64,
+    /// Invalidates queued Task Capture work when its module or Assistant Core is disabled.
+    pub(crate) task_capture_generation: AtomicU64,
     /// Single owner of every job's paste outcome (see `paste_arbiter.rs`).
     pub(crate) paste_arbiter: crate::paste_arbiter::PasteArbiter,
     /// Last recorded OPUS file path for mic input.

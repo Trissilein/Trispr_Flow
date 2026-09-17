@@ -11,6 +11,7 @@ use crate::state::{
 };
 use crate::transcription::{start_transcribe_monitor, stop_transcribe_monitor_and_release_whisper};
 use tauri::{AppHandle, Emitter};
+use tracing::warn;
 
 fn scan_installed_module_ids(app: &AppHandle) -> Result<std::collections::HashSet<String>, String> {
     let modules_dir = crate::paths::resolve_modules_dir(app);
@@ -113,6 +114,10 @@ pub(crate) fn enable_module_actions(
             snapshot.voice_output_settings.clone(),
             "enable_module",
         );
+    }
+
+    if result.is_ok() && module_id == "opus" {
+        crate::session_manager::set_opus_module_enabled(true);
     }
 
     if result.is_ok() {
@@ -227,7 +232,18 @@ pub(crate) fn disable_module_actions(
     // PHASE C: Reconcile (Reconcile Side-Effects)
     // ==========================================
     if result.is_ok() {
+        if module_id == TASK_CAPTURE_MODULE_ID || module_id == ASSISTANT_CORE_MODULE_ID {
+            state
+                .task_capture_generation
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        if module_id == "opus" {
+            crate::session_manager::set_opus_module_enabled(false);
+        }
         match module_id.as_str() {
+            ASSISTANT_CORE_MODULE_ID | ASSISTANT_PRESENCE_MODULE_ID => {
+                crate::assistant_presence::destroy_assistant_presence_window(app);
+            }
             "input_vision" => {
                 let _ = crate::multimodal_io::stop_vision_stream_internal(app, state);
             }
@@ -241,7 +257,24 @@ pub(crate) fn disable_module_actions(
                 let provider = snapshot.ai_fallback.provider.clone();
                 if provider == "ollama" {
                     let app_clone = app.clone();
+                    let endpoint = snapshot.providers.ollama.endpoint.clone();
+                    let model = snapshot.ai_fallback.model.clone();
                     tauri::async_runtime::spawn(async move {
+                        match tauri::async_runtime::spawn_blocking(move || {
+                            crate::ai_fallback::commands::unload_ollama_model_impl(
+                                &endpoint, &model,
+                            )
+                        })
+                        .await
+                        {
+                            Ok(Ok(())) => crate::audio::mark_ollama_model_cold(&app_clone),
+                            Ok(Err(error)) => {
+                                warn!("[module:disable] Ollama unload failed: {}", error)
+                            }
+                            Err(error) => {
+                                warn!("[module:disable] Ollama unload task failed: {}", error)
+                            }
+                        }
                         let _ = crate::ai_fallback::commands::stop_ollama_runtime(app_clone).await;
                     });
                 } else if provider == "lm_studio" {

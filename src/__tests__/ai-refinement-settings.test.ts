@@ -283,10 +283,17 @@ describe("ai-refinement settings", () => {
         expect(byId<HTMLElement>("ai-fallback-low-latency-note").textContent).toContain(expected as string);
     });
 
-    it.each([[true, "Language lock is active"], [false, "Language lock is off"]])("preserve language notes %#", (enabled, expected) => {
+    it.each([
+        [true, "Keeps refined output in the source language for built-in and custom presets"],
+        [false, "Language guard is off for built-in and custom presets"],
+    ])("preserve language notes %#", (enabled, expected) => {
         setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, preserve_source_language: enabled as boolean } }));
         renderAIFallbackSettingsUi();
-        expect(byId<HTMLElement>("ai-fallback-preserve-language-note").textContent).toContain(expected as string);
+        const note = byId<HTMLElement>("ai-fallback-preserve-language-note").textContent;
+        expect(note).toContain(expected as string);
+        expect(note).toContain("Custom prompt text is not changed");
+        expect(note).toContain("LLM Prompt is exempt");
+        expect(note).toContain("requests English output");
     });
 
     it("renders preset chips", () => { renderAIFallbackSettingsUi(); expect(byId<HTMLElement>("prompt-preset-list").querySelectorAll(".preset-chip").length).toBeGreaterThan(0); });

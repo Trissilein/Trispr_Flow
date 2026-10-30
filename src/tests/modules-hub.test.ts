@@ -245,6 +245,8 @@ describe("modules-hub consent messaging", () => {
       "[data-module-action='enable'][data-module-id='output_voice_tts']"
     );
     expect(enableBtn).not.toBeNull();
+    expect(enableBtn?.dataset.settingsVisibilityKey).toBe("module.output_voice_tts.state");
+    expect(enableBtn?.dataset.settingsVisibilityDefault).toBe("expert");
 
     enableBtn?.click();
     await flushAsync();

@@ -897,6 +897,104 @@ html.standard-mode [data-expert-only="true"] {
   display: none !important;
 }
 
+html.standard-mode [data-settings-visibility-hidden="true"],
+html.standard-mode [data-settings-visibility-group-container][data-settings-visibility-no-basic="true"],
+html.standard-mode [data-settings-visibility-tab][data-settings-visibility-no-basic="true"],
+html.standard-mode [data-settings-visibility-tab-content][data-settings-visibility-no-basic="true"],
+html.standard-mode [data-settings-visibility-editor-owned="true"] {
+  display: none !important;
+}
+
+.settings-visibility-editor-host {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-visibility-editor {
+  display: grid;
+  gap: 10px;
+  min-width: min(420px, calc(100vw - 32px));
+}
+
+.settings-visibility-toolbar,
+.settings-visibility-entry,
+.settings-visibility-editor-group,
+.settings-visibility-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-visibility-panel {
+  display: grid;
+  gap: 8px;
+  max-height: min(56vh, 480px);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-visibility-entry {
+  width: fit-content;
+  max-width: 100%;
+  align-self: start;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 0.82rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings-visibility-entry:last-child {
+  border-bottom: 0;
+}
+
+.settings-visibility-group {
+  width: fit-content;
+  max-width: 100%;
+  align-self: start;
+  gap: 6px;
+  padding: 4px 0;
+  border: 0;
+}
+
+.settings-visibility-group-title,
+.settings-visibility-inline-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-visibility-inline-controls {
+  margin-top: 6px;
+}
+
+.settings-visibility-inline-host {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-visibility-entry select,
+.settings-visibility-group select {
+  max-width: 9rem;
+}
+
+.settings-visibility-entry button {
+  padding: 3px 7px;
+}
+
+.settings-visibility-candidate {
+  white-space: nowrap;
+}
+
+.settings-visibility-reason {
+  width: min(100%, 22rem);
+}
+
 html.standard-mode .pipeline-machine-wires,
 html.standard-mode .pipeline-machine-board::after,
 html.standard-mode #pipeline-node-rules .pipeline-node-toggle {

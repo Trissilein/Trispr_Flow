@@ -20,6 +20,12 @@ import { DEFAULT_ACCENT_COLOR, applyAccentColor } from "../utils";
 import { syncWorkflowAgentConsoleState } from "../workflow-agent-console";
 import { renderTaskCaptureTab } from "../task-capture-config";
 
+function profileTabAvailable(tab: MainTab): boolean {
+  if (!document.documentElement.classList.contains("standard-mode")) return true;
+  return document.querySelector<HTMLElement>(`[data-settings-visibility-tab="${tab}"]`)
+    ?.dataset.settingsVisibilityNoBasic !== "true";
+}
+
 type MainTab =
   | "transcription"
   | "settings"
@@ -167,6 +173,10 @@ export function reconcileMainTabVisibility(): void {
   }
   if (!taskCaptureTabAvailable() && activeTab === "task-capture") {
     switchMainTab("transcription");
+    return;
+  }
+  if (!profileTabAvailable(activeTab)) {
+    switchMainTab("transcription");
   }
 }
 
@@ -224,6 +234,9 @@ function switchMainTab(tab: MainTab) {
     resolvedTab = "transcription";
   }
   if (resolvedTab === "task-capture" && !taskCaptureTabAvailable()) {
+    resolvedTab = "transcription";
+  }
+  if (!profileTabAvailable(resolvedTab)) {
     resolvedTab = "transcription";
   }
 
@@ -287,6 +300,10 @@ function switchMainTab(tab: MainTab) {
     dom.tabTaskCapture.style.removeProperty("display");
     dom.tabTaskCapture.classList.toggle("active", isTaskCapture);
   }
+
+  window.dispatchEvent(new CustomEvent("settings-visibility:tab-switched", {
+    detail: { tab: resolvedTab },
+  }));
 
   // Persist to localStorage
   try {

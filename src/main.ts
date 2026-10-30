@@ -113,6 +113,11 @@ import { dumpHistoryToFile, initLiveDump } from "./live-dump";
 import { initExportDialog } from "./export-dialog";
 import { initArchiveBrowser } from "./archive-browser";
 import { initExpertMode } from "./expert-mode";
+import {
+  applySettingsVisibility,
+  initSettingsVisibility,
+  refreshSettingsVisibilityEditor,
+} from "./settings-visibility";
 import { initModulesHub, refreshModulesHub } from "./modules-hub";
 import { initGddFlow, openGddFlow } from "./gdd-flow";
 import { initOnboardingWizard } from "./onboarding-wizard";
@@ -624,7 +629,19 @@ async function bootstrap() {
   initHistoryDelegation();
   initExportDialog();
   initArchiveBrowser();
+  const reconcileSettingsVisibility = () => reconcileMainTabVisibility();
+  const applySettingsVisibilityMode = () => applySettingsVisibility();
+  const refreshDynamicSettingsVisibility = () => refreshSettingsVisibilityEditor();
+  window.addEventListener("settings-visibility:applied", reconcileSettingsVisibility);
+  window.addEventListener("settings-visibility:mode-changed", applySettingsVisibilityMode);
+  window.addEventListener("settings-visibility:dynamic-rendered", refreshDynamicSettingsVisibility);
+  window.addEventListener("settings-visibility:tab-switched", refreshDynamicSettingsVisibility);
+  eventUnlisteners.push(() => window.removeEventListener("settings-visibility:applied", reconcileSettingsVisibility));
+  eventUnlisteners.push(() => window.removeEventListener("settings-visibility:mode-changed", applySettingsVisibilityMode));
+  eventUnlisteners.push(() => window.removeEventListener("settings-visibility:dynamic-rendered", refreshDynamicSettingsVisibility));
+  eventUnlisteners.push(() => window.removeEventListener("settings-visibility:tab-switched", refreshDynamicSettingsVisibility));
   initExpertMode();
+  initSettingsVisibility();
   initModulesHub();
   initGddFlow();
   initWorkflowAgentConsole();

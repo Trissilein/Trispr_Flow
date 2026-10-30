@@ -1,0 +1,32 @@
+#!/bin/sh
+# Blocks commits that add secrets. Public repo: anything committed is world-readable forever.
+# Enabled by `npm install` (prepare script sets core.hooksPath). Bypass only with git commit --no-verify,
+# and only for a false positive; real secrets must be rotated, deleting the commit is not enough.
+
+fail=0
+
+# 1) Forbidden file names (local env files, keys, certificates, credentials, editor temp copies)
+bad_names=$(git diff --cached --name-only --diff-filter=ACMR | grep -E -i \
+  '(^|/)\.env($|\.)|(^|/)\.npmrc$|(^|/)\.netrc$|\.(pem|key|p12|pfx|keystore|jks)$|(^|/)id_(rsa|ed25519|ecdsa)|(^|/)(credentials|secrets?)(\.[a-z]+)?$|service-account.*\.json$|\.tmp\.[0-9]+\.[0-9]+$' \
+  | grep -v -E '(^|/)\.env\.example$')
+if [ -n "$bad_names" ]; then
+  echo "pre-commit: blocked file name(s):" >&2
+  echo "$bad_names" | sed 's/^/  /' >&2
+  fail=1
+fi
+
+# 2) Secret patterns in added lines
+patterns='AIza[0-9A-Za-z_-]{35}|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{32,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN ([A-Z ]+ )?PRIVATE KEY-----|eyJ[A-Za-z0-9_-]{15,}\.eyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{10,}|(api[_-]?key|apikey|secret|token|passw(or)?d|client[_-]?secret)["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9/+_.=-]{20,}["'"'"']'
+hits=$(git diff --cached -U0 --no-color --diff-filter=ACMR -- . ':(exclude)package-lock.json' ':(exclude)*.lock' \
+  | grep -a -E '^\+[^+]' | grep -a -E "$patterns" | grep -a -v -E 'secret-scan:allow')
+if [ -n "$hits" ]; then
+  echo "pre-commit: possible secret in added lines (append 'secret-scan:allow' to a line only for a verified false positive):" >&2
+  echo "$hits" | cut -c1-160 | sed -E 's/(AIza|sk-|gh[pousr]_|github_pat_|AKIA)[A-Za-z0-9_-]{4}[A-Za-z0-9_-]*/\1[masked]/g; s/(["'"'"'])[A-Za-z0-9\/+_.=-]{20,}(["'"'"'])/\1[masked]\2/g; s/^/  /' >&2
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "pre-commit: commit aborted." >&2
+  exit 1
+fi
+exit 0

@@ -436,6 +436,7 @@ pub(crate) async fn refine_transcript(
     }
 
     let app_clone = app.clone();
+    let prompt_profile = setup.options.prompt_profile.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         setup
             .provider
@@ -449,6 +450,9 @@ pub(crate) async fn refine_transcript(
     }
 
     let result = result.map_err(|e| e.to_string())?;
+    if let Some(tier_update) = &result.tier_update {
+        super::persist_tier_update(&app, state.inner(), &prompt_profile, tier_update);
+    }
     serde_json::to_value(&result).map_err(|e| e.to_string())
 }
 
@@ -736,7 +740,11 @@ pub(crate) fn unload_ollama_model_impl(endpoint: &str, model: &str) -> Result<()
     Ok(())
 }
 
-pub(crate) fn warmup_ollama_model_impl(endpoint: &str, model: &str) -> Result<(), String> {
+pub(crate) fn warmup_ollama_model_impl(
+    endpoint: &str,
+    model: &str,
+    num_ctx: usize,
+) -> Result<(), String> {
     let model = model.trim();
     if model.is_empty() {
         return Ok(());
@@ -745,7 +753,7 @@ pub(crate) fn warmup_ollama_model_impl(endpoint: &str, model: &str) -> Result<()
         return Err("Ollama endpoint is not allowed for warmup.".to_string());
     }
 
-    let mut warmup_options = super::provider::ollama_runner_defining_options();
+    let mut warmup_options = super::provider::ollama_runner_defining_options(num_ctx);
     warmup_options.insert("num_predict".to_string(), serde_json::json!(1));
     let warmup_body = serde_json::json!({
         "model": model,

@@ -42,6 +42,7 @@ import type {
   TranscriptionGpuActivityEvent,
   TranscriptionResultEvent,
   TranscriptionRawResultEvent,
+  PasteSettledEvent,
   DependencyPreflightReport,
   StabilityDegradedEvent,
   StartupStatus,
@@ -177,7 +178,6 @@ let overlayHealthToastId: string | null = null;
 let ollamaRuntimeLoadingToastId: string | null = null;
 const whisperFatalLastShown = new Map<string, number>();
 const WHISPER_FATAL_COOLDOWN_MS = 60_000;
-let pasteQueue: Promise<void> = Promise.resolve();
 let frontendHeartbeatTimer: number | null = null;
 let frontendHeartbeatFailureCount = 0;
 let frontendHeartbeatReloadIssued = false;
@@ -236,53 +236,11 @@ function tryAutoReloadWithBudget(context: string): boolean {
   return true;
 }
 
-type PendingDeferredPasteJob = {
-  rawText: string;
-  timeoutHandle: number;
-};
-
-type DeferredPasteOutcome = "refined" | "failed" | "timed_out";
-
-const pendingDeferredPasteJobs = new Map<string, PendingDeferredPasteJob>();
-const deferredPasteOutcomes = new Map<string, DeferredPasteOutcome>();
-const deferredRefinedTextByJobId = new Map<string, string>();
+// Paste arbitration lives entirely in Rust (paste_arbiter.rs). The frontend
+// only renders outcomes it receives via "paste:settled" and the refinement
+// lifecycle events — it never pastes transcription results itself.
 const trackedRefinementJobs = new Set<string>();
-const MAX_DEFERRED_PASTE_OUTCOMES = 500;
 let backendRefinementActiveCount = 0;
-
-function clearPendingDeferredPasteJobs() {
-  for (const pending of pendingDeferredPasteJobs.values()) {
-    window.clearTimeout(pending.timeoutHandle);
-  }
-  pendingDeferredPasteJobs.clear();
-}
-
-function rememberDeferredPasteOutcome(
-  jobId: string,
-  outcome: DeferredPasteOutcome,
-  refinedText?: string
-): void {
-  deferredPasteOutcomes.set(jobId, outcome);
-  if (outcome === "refined" && typeof refinedText === "string") {
-    deferredRefinedTextByJobId.set(jobId, refinedText);
-  } else {
-    deferredRefinedTextByJobId.delete(jobId);
-  }
-  if (deferredPasteOutcomes.size <= MAX_DEFERRED_PASTE_OUTCOMES) {
-    return;
-  }
-  const first = deferredPasteOutcomes.keys().next();
-  if (!first.done) {
-    deferredRefinedTextByJobId.delete(first.value);
-    deferredPasteOutcomes.delete(first.value);
-  }
-}
-
-function reportRuntimeMetric(metric: string): void {
-  void invoke("record_runtime_metric", { metric }).catch((error) => {
-    console.warn("record_runtime_metric failed", metric, error);
-  });
-}
 
 function syncRefiningIndicator(preferTrackedState = false): void {
   const trackedActive = trackedRefinementJobs.size > 0;
@@ -408,54 +366,6 @@ async function refreshStartupStatusFromBackend(): Promise<void> {
   }
 }
 
-function queueTranscriptPaste(text: string, context: string): void {
-  const trimmed = text.trim();
-  if (!trimmed) return;
-
-  pasteQueue = pasteQueue
-    .catch(() => { })
-    .then(async () => {
-      await invoke("paste_transcript_text", { text });
-    })
-    .catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`paste_transcript_text failed (${context})`, message);
-      if (dom.statusMessage) {
-        dom.statusMessage.textContent = message;
-      }
-      showToast({
-        type: "error",
-        title: "Paste Failed",
-        message,
-        duration: 7000,
-      });
-    });
-}
-
-function settleDeferredPasteJob(jobId: string): PendingDeferredPasteJob | null {
-  const pending = pendingDeferredPasteJobs.get(jobId);
-  if (!pending) {
-    return null;
-  }
-  window.clearTimeout(pending.timeoutHandle);
-  pendingDeferredPasteJobs.delete(jobId);
-  return pending;
-}
-
-function handleDeferredPasteTimeout(jobId: string): void {
-  const pending = pendingDeferredPasteJobs.get(jobId);
-  if (!pending) {
-    return;
-  }
-
-  pendingDeferredPasteJobs.delete(jobId);
-  markRefinementJobFinished(jobId);
-  rememberDeferredPasteOutcome(jobId, "timed_out");
-  handlePipelineRefinementTimeout(jobId);
-  reportRuntimeMetric("refinement_timeout");
-  queueTranscriptPaste(pending.rawText, `timeout:${jobId}`);
-}
-
 async function sendFrontendHeartbeat(source: "startup" | "interval"): Promise<void> {
   try {
     await new Promise<void>((resolve, reject) => {
@@ -518,7 +428,6 @@ function startFrontendHeartbeatWatchdog(): void {
 
 function cleanupEventListeners() {
   stopFrontendHeartbeatWatchdog();
-  clearPendingDeferredPasteJobs();
   resetTrackedRefinementJobs();
   cancelPendingRenderFrames();
   cleanupUnifiedTooltips();
@@ -645,8 +554,6 @@ async function bootstrap() {
   // Clean up old listeners if re-bootstrapping to prevent memory leaks
   cleanupEventListeners();
   startFrontendHeartbeatWatchdog();
-  // Reset the paste queue to prevent accumulation across re-bootstrap cycles
-  pasteQueue = Promise.resolve();
 
   if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Loading configuration…";
   traceFrontendInfo("bootstrap", "loading initial configuration");
@@ -1005,36 +912,24 @@ async function bootstrap() {
       scheduleHistoryRender();
       if (dom.statusMessage) dom.statusMessage.textContent = "";
 
-      const jobId = typeof payload?.job_id === "string" ? payload.job_id.trim() : "";
-      const pasteDeferred = Boolean(payload?.paste_deferred && jobId);
-      if (!pasteDeferred) {
-        queueTranscriptPaste(payload.text, `raw:${jobId || "unknown"}`);
-        return;
+      // Pasting is owned by the Rust paste arbiter — nothing to do here.
+    }),
+    listen<PasteSettledEvent>("paste:settled", (event) => {
+      const payload = event.payload;
+      if (!payload) return;
+      if (payload.outcome === "raw_timeout") {
+        markRefinementJobFinished(payload.job_id);
+        handlePipelineRefinementTimeout(payload.job_id);
       }
-
-      const completedOutcome = deferredPasteOutcomes.get(jobId);
-      if (completedOutcome === "refined") {
-        const refinedText = deferredRefinedTextByJobId.get(jobId);
-        queueTranscriptPaste(refinedText && refinedText.trim() ? refinedText : payload.text, `late_result_refined:${jobId}`);
-        return;
+      if (payload.paste_error) {
+        if (dom.statusMessage) dom.statusMessage.textContent = payload.paste_error;
+        showToast({
+          type: "error",
+          title: "Paste Failed",
+          message: payload.paste_error,
+          duration: 7000,
+        });
       }
-      if (completedOutcome === "failed" || completedOutcome === "timed_out") {
-        queueTranscriptPaste(payload.text, `late_result_fallback:${jobId}`);
-        return;
-      }
-
-      const timeoutMs = Math.max(1, Number(payload.paste_timeout_ms ?? 10_000));
-      const existing = pendingDeferredPasteJobs.get(jobId);
-      if (existing) {
-        window.clearTimeout(existing.timeoutHandle);
-      }
-      const timeoutHandle = window.setTimeout(() => {
-        handleDeferredPasteTimeout(jobId);
-      }, timeoutMs);
-      pendingDeferredPasteJobs.set(jobId, {
-        rawText: payload.text,
-        timeoutHandle,
-      });
     }),
     listen<TranscriptionRawResultEvent>("transcription:raw-result", (event) => {
       void handleWorkflowAgentRawResult(event.payload);
@@ -1129,47 +1024,28 @@ async function bootstrap() {
       handleRefinementStartedForInspector(event.payload);
       scheduleHistoryRender();
     }),
-    // AI Fallback: refined transcript available — log silently (original already shown).
-    listen<TranscriptionRefinedEvent>("transcription:refined", async (event) => {
+    // AI Fallback: refined transcript available. The Rust arbiter already
+    // decided whether it was pasted (payload.pasted) — render only.
+    listen<TranscriptionRefinedEvent>("transcription:refined", (event) => {
       handleRefinementSuccessForInspector(event.payload);
       scheduleHistoryRender();
-      const { refined, model, execution_time_ms, job_id: jobId } = event.payload;
+      const { refined, model, execution_time_ms, job_id: jobId, pasted } = event.payload;
       markRefinementJobFinished(jobId);
-      const priorOutcome = deferredPasteOutcomes.get(jobId);
-      const pending = settleDeferredPasteJob(jobId);
-      if (pending) {
-        rememberDeferredPasteOutcome(jobId, "refined", refined);
-        handlePipelineRefined(event.payload);
-        queueTranscriptPaste(refined, `refined:${jobId}`);
-      } else if (priorOutcome === "timed_out") {
-        rememberDeferredPasteOutcome(jobId, "refined", refined);
+      if (pasted === false) {
         handlePipelineRefinementTimeout(jobId);
-        console.debug(`[AI] Late refinement received after timeout (${jobId}); history updated only.`);
+        console.debug(`[AI] Late refinement (${jobId}); raw already pasted — history updated only.`);
       } else {
-        rememberDeferredPasteOutcome(jobId, "refined", refined);
         handlePipelineRefined(event.payload);
       }
       console.debug(`[AI] Refinement done (${model}, ${execution_time_ms}ms):`, refined);
     }),
-    // AI Fallback: refinement failed — log, no disruption to user workflow.
+    // AI Fallback: refinement failed — the arbiter pasted raw, render only.
     listen<TranscriptionRefinementFailedEvent>("transcription:refinement-failed", (event) => {
       const payload = event.payload;
       markRefinementJobFinished(payload.job_id);
-      const priorOutcome = deferredPasteOutcomes.get(payload.job_id);
-      if (priorOutcome === "timed_out") {
-        handlePipelineRefinementTimeout(payload.job_id);
-      } else {
-        handlePipelineRefinementFailed(payload);
-      }
+      handlePipelineRefinementFailed(payload);
       handleRefinementFailureForInspector(payload);
       scheduleHistoryRender();
-      const pending = settleDeferredPasteJob(payload.job_id);
-      if (pending) {
-        rememberDeferredPasteOutcome(payload.job_id, "failed");
-        queueTranscriptPaste(pending.rawText, `fallback_failed:${payload.job_id}`);
-      } else {
-        rememberDeferredPasteOutcome(payload.job_id, "failed");
-      }
       console.warn(
         `[AI] Refinement failed (${payload.source}, ${payload.reason || "unknown"}):`,
         payload.error

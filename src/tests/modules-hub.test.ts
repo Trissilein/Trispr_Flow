@@ -165,7 +165,7 @@ describe("modules-hub consent messaging", () => {
     expect(status?.textContent).toBe("1/2 active · 1 consent pending");
 
     const feedback = document.querySelector(
-      "[data-module-card='input_vision'] .module-card-feedback"
+      "[data-module-card='input_vision'] .module-row-feedback"
     ) as HTMLElement | null;
     expect(feedback?.textContent).toContain("Screen capture consent missing");
   });
@@ -206,7 +206,7 @@ describe("modules-hub consent messaging", () => {
     expect(badge?.className).not.toContain("is-error");
 
     const feedback = document.querySelector(
-      "[data-module-card='assistant_core'] .module-card-feedback"
+      "[data-module-card='assistant_core'] .module-row-feedback"
     ) as HTMLElement | null;
     expect(feedback?.className).toContain("is-warning");
     expect(feedback?.className).not.toContain("is-error");

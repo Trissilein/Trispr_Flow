@@ -1029,6 +1029,12 @@ export function renderAIFallbackSettingsUi() {
   const shownPrompt = isBuiltInPrompt
     ? promptPreview
     : ai?.custom_prompt || selectedUserPromptPreset?.prompt || "";
+  // Dirty comparisons must run against the SAVED prompt. For user presets
+  // `custom_prompt` mirrors the live editor value, so comparing against
+  // `shownPrompt` would never detect an edit.
+  const dirtyBaseline = selectedUserPromptPreset
+    ? selectedUserPromptPreset.prompt
+    : shownPrompt;
   if (dom.aiFallbackPromptPreviewLabel) {
     dom.aiFallbackPromptPreviewLabel.textContent = isBuiltInPrompt
       ? builtInHasOverride
@@ -1057,11 +1063,17 @@ export function renderAIFallbackSettingsUi() {
     const textarea = dom.aiFallbackCustomPrompt;
     const isFocused = document.activeElement === textarea;
     const currentValue = textarea.value;
+    // Preserve the value only when the input listener flagged a real user edit
+    // (`has-unsaved-edits`). A bare value diff cannot distinguish an unsaved
+    // edit from the stale text of a previously selected preset — keying on the
+    // diff alone kept re-flagging clean editors as dirty and blocked newly
+    // selected presets from ever loading.
     const externalDirty =
       !isFocused
       && (isBuiltInPrompt || isUserPrompt)
+      && textarea.classList.contains("has-unsaved-edits")
       && currentValue.trim().length > 0
-      && currentValue.trim() !== (shownPrompt || "").trim();
+      && currentValue.trim() !== (dirtyBaseline || "").trim();
     if (!isFocused && !externalDirty) {
       textarea.value = shownPrompt;
       textarea.classList.remove("has-unsaved-edits");
@@ -1088,7 +1100,7 @@ export function renderAIFallbackSettingsUi() {
       }
     }
   }
-  const textareaDirty = isTextareaDirtyAgainstEffective(shownPrompt);
+  const textareaDirty = isTextareaDirtyAgainstEffective(dirtyBaseline);
   if (dom.aiFallbackPromptPresetSave) {
     if (isNewPresetMode) {
       dom.aiFallbackPromptPresetSave.textContent = "Save new preset";
@@ -1110,9 +1122,11 @@ export function renderAIFallbackSettingsUi() {
     }
   }
   if (dom.aiFallbackPromptPresetReset) {
-    const show = isBuiltInPrompt && builtInHasOverride;
-    dom.aiFallbackPromptPresetReset.hidden = !show;
-    dom.aiFallbackPromptPresetReset.disabled = !show;
+    // Always visible for built-in presets so the factory reset is discoverable;
+    // enabled once there is anything to reset (saved override or unsaved edits).
+    dom.aiFallbackPromptPresetReset.hidden = !isBuiltInPrompt;
+    dom.aiFallbackPromptPresetReset.disabled =
+      !isBuiltInPrompt || !(builtInHasOverride || textareaDirty);
   }
   if (dom.aiFallbackPromptPresetRevert) {
     const show = isUserPrompt && userHasPrevious;
@@ -1130,10 +1144,12 @@ export function renderAIFallbackSettingsUi() {
   }
 }
 
+// No focus requirement: an unsaved edit stays dirty after the textarea blurs
+// (e.g. before clicking Save). When the editor is clean the render loop above
+// re-sources the value from the effective prompt, so the comparison holds.
 function isTextareaDirtyAgainstEffective(effective: string): boolean {
   const textarea = dom.aiFallbackCustomPrompt;
   if (!textarea) return false;
-  if (document.activeElement !== textarea) return false;
   return textarea.value.trim() !== (effective || "").trim();
 }
 

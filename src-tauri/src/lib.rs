@@ -19,6 +19,7 @@ mod narrative_composer;
 mod ollama_runtime;
 mod opus;
 mod overlay;
+mod paste_arbiter;
 mod paths;
 mod postprocessing;
 mod refinement_adaptation;
@@ -66,7 +67,7 @@ use tracing::{error, info, warn};
 pub(crate) use audio::{
     get_last_recording_path, get_recordings_directory, open_recordings_directory,
 };
-#[cfg(feature = "module-confluence")]
+#[cfg(feature = "module-gdd")]
 pub(crate) use gdd::confluence::{
     clear_confluence_secret, confluence_list_spaces, confluence_oauth_exchange,
     confluence_oauth_start, delete_pending_gdd_publish, list_pending_gdd_publishes,
@@ -188,6 +189,7 @@ static BACKLOG_PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
 static MAIN_WINDOW_RESTORED: AtomicBool = AtomicBool::new(false);
 static CLIPBOARD_PASTE_GENERATION: AtomicU64 = AtomicU64::new(0);
+static LAST_PASTE_TEXT: Mutex<String> = Mutex::new(String::new());
 static LAST_GEOMETRY_SAVE_MS: AtomicU64 = AtomicU64::new(0);
 static PTT_KEY_HELD: AtomicBool = AtomicBool::new(false);
 static PTT_PRESS_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
@@ -1396,6 +1398,10 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
     normalize_ai_fallback_fields(settings);
     normalize_continuous_dump_fields(settings);
     normalize_history_alias_fields(settings);
+    crate::modules::migrate_legacy_confluence_module_binding(
+        &settings.module_settings,
+        &mut settings.gdd_module_settings,
+    );
     normalize_module_settings(&mut settings.module_settings);
     normalize_assistant_core_binding(settings);
     normalize_product_mode_field(settings);
@@ -1688,6 +1694,39 @@ fn install_bundled_module_package(
     })?;
     let modules_dir = crate::paths::resolve_modules_dir(&app);
     module_package::install_package_from_dir(&source_dir, &modules_dir)
+}
+
+/// List modules published in the on-demand module index, annotated with local
+/// install state. Network call → run off the main thread.
+#[tauri::command]
+async fn list_available_modules(
+    app: AppHandle,
+) -> Result<Vec<crate::modules::delivery::AvailableModule>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::modules::delivery::list_available(&app))
+        .await
+        .map_err(|error| format!("list_available_modules task failed: {error}"))?
+}
+
+/// Download, verify, unpack and install (or update) a module by id from the
+/// module index. Streams progress via the `module:download-progress` event.
+#[tauri::command]
+async fn download_module(
+    app: AppHandle,
+    module_id: String,
+) -> Result<module_package::ModulePackageInstallResult, String> {
+    let module_id = canonicalize_module_id(&module_id).to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::modules::delivery::download_and_install(&app, &module_id)
+    })
+    .await
+    .map_err(|error| format!("download_module task failed: {error}"))?
+}
+
+/// Remove an installed on-demand module from disk. Idempotent.
+#[tauri::command]
+async fn uninstall_module(app: AppHandle, module_id: String) -> Result<(), String> {
+    let module_id = canonicalize_module_id(&module_id).to_string();
+    crate::modules::delivery::uninstall(&app, &module_id)
 }
 
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
@@ -2622,12 +2661,21 @@ fn get_gpu_stats(state: State<'_, AppState>) -> GpuStats {
     stats
 }
 
+/// Save raw mic/system samples as an `.opus` file via the opus module sidecar.
+/// Returns `Ok(None)` when the opus module is not installed — export is an
+/// opt-in capability, so its absence is a silent no-op, not an error.
 pub(crate) fn save_recording_opus(
     app: &AppHandle,
     samples: &[i16],
     source: &str,
     session_name: Option<&str>,
-) -> Result<String, String> {
+) -> Result<Option<String>, String> {
+    // Opus export lives in an on-demand module. If it isn't installed, skip
+    // entirely — don't even write the intermediate WAV.
+    let Some(sidecar) = opus::resolve_sidecar(app) else {
+        return Ok(None);
+    };
+
     // Generate human-readable filename
     let now = chrono::Local::now();
     let duration_s = samples.len() as f64 / 16000.0; // 16kHz sample rate
@@ -2696,17 +2744,22 @@ pub(crate) fn save_recording_opus(
         .finalize()
         .map_err(|e| format!("Failed to finalize WAV: {}", e))?;
 
-    // Convert WAV to OPUS
+    // Convert WAV to OPUS via the sidecar
     let opus_filename = format!("{}.opus", base_filename);
     let opus_path = recordings_dir.join(&opus_filename);
 
-    opus::encode_wav_to_opus_default(&wav_path, &opus_path)
-        .map_err(|e| format!("Failed to encode OPUS: {}", e))?;
+    let encode_result = opus::encode_with_sidecar(
+        &sidecar,
+        &wav_path,
+        &opus_path,
+        &opus::OpusEncoderConfig::default(),
+    );
 
-    // Delete WAV file (we only need OPUS)
+    // Delete WAV file (we only need OPUS), regardless of encode outcome.
     let _ = std::fs::remove_file(&wav_path);
 
-    Ok(opus_path.to_string_lossy().to_string())
+    encode_result.map_err(|e| format!("Failed to encode OPUS: {}", e))?;
+    Ok(Some(opus_path.to_string_lossy().to_string()))
 }
 
 fn sanitize_session_name(name: &str) -> String {
@@ -3134,6 +3187,9 @@ fn restore_snapshot_with_retry(snapshot: ClipboardSnapshot) -> Result<(), String
 }
 
 pub(crate) fn paste_text(app_handle: &AppHandle, text: &str) -> Result<(), String> {
+    *LAST_PASTE_TEXT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = text.to_string();
     let snapshot = capture_clipboard_snapshot_with_retry();
     set_clipboard_text_with_retry(text)?;
     {
@@ -3172,6 +3228,19 @@ pub(crate) fn paste_text(app_handle: &AppHandle, text: &str) -> Result<(), Strin
     });
 
     Ok(())
+}
+
+pub(crate) fn repaste_last_text(app_handle: &AppHandle) {
+    let text = LAST_PASTE_TEXT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    if text.trim().is_empty() {
+        return;
+    }
+    if let Err(err) = paste_text(app_handle, &text) {
+        warn!("Ctrl+Alt+middle-click re-paste failed: {}", err);
+    }
 }
 
 fn send_paste_keystroke() -> Result<(), String> {
@@ -3232,30 +3301,19 @@ fn parse_tray_state_code(payload: &str) -> u8 {
     }
 }
 
-fn draw_circle_rgba(
-    pixels: &mut [u8],
-    size: usize,
-    center_x: f32,
-    center_y: f32,
-    radius: f32,
-    color: [u8; 4],
-) {
-    let radius_sq = radius * radius;
-    let min_x = (center_x - radius).floor().max(0.0) as i32;
-    let max_x = (center_x + radius).ceil().min((size - 1) as f32) as i32;
-    let min_y = (center_y - radius).floor().max(0.0) as i32;
-    let max_y = (center_y + radius).ceil().min((size - 1) as f32) as i32;
-
+/// Blendet ein achsenparalleles Rechteck alpha-gewichtet in `pixels` ein -
+/// fuer die TF-Buchstabenformen (siehe icons/icon.svg, dieselbe
+/// Rect-Koordinaten-Idee nur auf die Tray-Canvas skaliert).
+fn draw_rect_rgba(pixels: &mut [u8], size: usize, x: i32, y: i32, w: i32, h: i32, color: [u8; 4]) {
     let alpha = color[3] as f32 / 255.0;
     let inv_alpha = 1.0 - alpha;
-    for y in min_y..=max_y {
-        for x in min_x..=max_x {
-            let dx = (x as f32 + 0.5) - center_x;
-            let dy = (y as f32 + 0.5) - center_y;
-            if dx * dx + dy * dy > radius_sq {
-                continue;
-            }
-            let idx = (y as usize * size + x as usize) * 4;
+    let min_x = x.max(0);
+    let max_x = (x + w).min(size as i32);
+    let min_y = y.max(0);
+    let max_y = (y + h).min(size as i32);
+    for yy in min_y..max_y {
+        for xx in min_x..max_x {
+            let idx = (yy as usize * size + xx as usize) * 4;
             pixels[idx] = (pixels[idx] as f32 * inv_alpha + color[0] as f32 * alpha) as u8;
             pixels[idx + 1] = (pixels[idx + 1] as f32 * inv_alpha + color[1] as f32 * alpha) as u8;
             pixels[idx + 2] = (pixels[idx + 2] as f32 * inv_alpha + color[2] as f32 * alpha) as u8;
@@ -3265,87 +3323,154 @@ fn draw_circle_rgba(
     }
 }
 
+/// Skaliert eine bei BASE_SIZE=64 entworfene Koordinate/Laenge proportional
+/// auf die tatsaechliche Ziel-Canvas - siehe create_tray_pulse_icon().
+fn scaled_coord(base_value: i32, size: usize) -> i32 {
+    (base_value as f32 * size as f32 / 64.0).round() as i32
+}
+
+/// Schreibt ein Rechteck OPAK (direktes Ueberschreiben, kein Alpha-Blend).
+/// Wichtig fuer die TF-Buchstaben: die bestehen aus mehreren sich
+/// ueberlappenden Rects derselben Farbe (T-Balken+Steg, F-Steg+Arme) - mit
+/// draw_rect_rgba() bei reduzierter Alpha wuerden sich Ueberlappungen
+/// mehrfach uebereinander blenden und als sichtbar dunklerer/anderer Fleck
+/// durchscheinen. Direktes Ueberschreiben ist bei Overlap idempotent (immer
+/// dieselbe Farbe), also seamless - Dimmen fuer den inaktiven Zustand passiert
+/// stattdessen EINMAL fuer das ganze fertige Bild, siehe create_tray_pulse_icon().
+fn fill_rect_opaque(
+    pixels: &mut [u8],
+    size: usize,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    color: [u8; 3],
+) {
+    let min_x = x.max(0);
+    let max_x = (x + w).min(size as i32);
+    let min_y = y.max(0);
+    let max_y = (y + h).min(size as i32);
+    for yy in min_y..max_y {
+        for xx in min_x..max_x {
+            let idx = (yy as usize * size + xx as usize) * 4;
+            pixels[idx] = color[0];
+            pixels[idx + 1] = color[1];
+            pixels[idx + 2] = color[2];
+            pixels[idx + 3] = 255;
+        }
+    }
+}
+
+/// TF-Monogramm statt der frueheren zwei Kreise (siehe icons/icon.svg fuer
+/// dieselbe Buchstabenform/Farbwahl auf App-Icon-Ebene).
+///
+/// `size` wird vom Aufrufer auf die ECHTE Windows-Tray-Icon-Groesse gesetzt
+/// (siehe tray_icon_target_size()) - die Buchstaben werden DIREKT in dieser
+/// Aufloesung gezeichnet, kein Downscale von einer groesseren Canvas mehr.
+/// Ein 64px-Entwurf, der auf 16px herunterskaliert wird, sah neben den
+/// anderen Tray-Icons verwaschen aus (Feedback); nativ bei 16px gezeichnete
+/// Rechtecke bleiben hart/scharf, weil kein Resample-Filter mehr dazwischen
+/// sitzt. Alle Koordinaten unten sind bei BASE_SIZE=64 entworfen und werden
+/// per scaled_coord() proportional auf `size` uebertragen.
+///
+/// Nur EIN Zustand treibt die Optik: recording_active laesst BEIDE Buchstaben
+/// zusammen aufleuchten (Glow + volle Deckkraft) - kein separates
+/// "Transcribing"-Leuchten mehr, das brachte in der Praxis keinen erkennbaren
+/// Mehrwert. transcribe_active bleibt Parameter (Aufrufer/Event-Plumbing
+/// unveraendert), fliesst aber bewusst nicht mehr in die Optik ein.
 fn create_tray_pulse_icon(
+    size: usize,
     frame: usize,
     recording_active: bool,
-    transcribe_active: bool,
+    _transcribe_active: bool,
 ) -> tauri::image::Image<'static> {
     use tauri::image::Image;
 
-    let size = 32usize;
     let mut pixels = vec![0u8; size * size * 4];
     let frame_mod = frame % TRAY_PULSE_FRAMES;
     let angle = (frame_mod as f32 / TRAY_PULSE_FRAMES as f32) * std::f32::consts::TAU;
     let pulse = 0.5 + 0.5 * angle.sin();
-    // Keep the brand-like two-circle silhouette: slight diagonal offset, low overlap.
-    let rec_center_x = 10.0f32;
-    let rec_center_y = 22.0f32;
-    let trans_center_x = 22.0f32;
-    let trans_center_y = 10.0f32;
 
-    // +30% compared to the previous 7.6 radius.
-    let rec_base = 9.9f32;
-    let trans_base = 9.9f32;
-    let rec_radius = if recording_active {
-        rec_base + (pulse * 0.35)
-    } else {
-        rec_base
-    };
-    let trans_radius = if transcribe_active {
-        trans_base + (pulse * 0.35)
-    } else {
-        trans_base
-    };
+    const CYAN: [u8; 3] = [29, 166, 160];
+    const GOLD: [u8; 3] = [245, 179, 66];
 
+    let sc = |v: i32| scaled_coord(v, size);
+
+    // Glow-Halo hinter beiden Buchstaben - links/rechts exakt an der Mitte
+    // (sc(32)) getrennt, KEIN Ueberlapp, sonst mischt sich Cyan/Gold zu einem
+    // sichtbaren dritten Farbton genau an der T/F-Grenze.
     if recording_active {
-        draw_circle_rgba(
+        let glow_alpha = (40.0 + pulse * 50.0) as u8;
+        draw_rect_rgba(
             &mut pixels,
             size,
-            rec_center_x,
-            rec_center_y,
-            rec_radius + 0.45,
-            [29, 166, 160, 72],
+            sc(0),
+            sc(1),
+            sc(32),
+            sc(62),
+            [CYAN[0], CYAN[1], CYAN[2], glow_alpha],
         );
-    }
-    if transcribe_active {
-        draw_circle_rgba(
+        draw_rect_rgba(
             &mut pixels,
             size,
-            trans_center_x,
-            trans_center_y,
-            trans_radius + 0.45,
-            [245, 179, 66, 72],
+            sc(32),
+            sc(1),
+            sc(32),
+            sc(62),
+            [GOLD[0], GOLD[1], GOLD[2], glow_alpha],
         );
     }
 
-    let rec_color = if recording_active {
-        [29, 166, 160, 245]
-    } else {
-        [29, 166, 160, 185]
-    };
-    let trans_color = if transcribe_active {
-        [245, 179, 66, 245]
-    } else {
-        [245, 179, 66, 185]
-    };
-    draw_circle_rgba(
-        &mut pixels,
-        size,
-        rec_center_x,
-        rec_center_y,
-        rec_radius,
-        rec_color,
-    );
-    draw_circle_rgba(
-        &mut pixels,
-        size,
-        trans_center_x,
-        trans_center_y,
-        trans_radius,
-        trans_color,
-    );
+    // Buchstaben werden IMMER voll opak gezeichnet (siehe fill_rect_opaque) -
+    // Ueberlappungen zwischen T-Balken/-Steg bzw. F-Steg/-Armen sind dadurch
+    // seamless, egal wie stark der inaktive Zustand nachher gedimmt wird.
+    // T (cyan): Querbalken + Steg, links.
+    fill_rect_opaque(&mut pixels, size, sc(4), sc(4), sc(26), sc(10), CYAN);
+    fill_rect_opaque(&mut pixels, size, sc(12), sc(4), sc(10), sc(56), CYAN);
+
+    // F (gold): Steg + oberer Arm + mittlerer Arm (verkleinert ggue. dem
+    // ersten Entwurf, damit F nicht schwerer/groesser wirkt als T), rechts.
+    fill_rect_opaque(&mut pixels, size, sc(34), sc(4), sc(10), sc(56), GOLD);
+    fill_rect_opaque(&mut pixels, size, sc(34), sc(4), sc(26), sc(10), GOLD);
+    fill_rect_opaque(&mut pixels, size, sc(34), sc(26), sc(14), sc(8), GOLD);
+
+    // Inaktiv-Dimmen als EIN uniformer Alpha-Multiply-Pass ueber das fertige,
+    // bereits opake Bild - kompositionsseams sind so unmoeglich, weil hier
+    // nichts mehr uebereinander geblendet wird, nur noch linear skaliert.
+    // Deutlich staerker abgedunkelt als der erste Versuch (185/255 ~= 73% -
+    // Unterschied zu aktiv kaum wahrnehmbar) - jetzt ~35%, damit "aufnimmt"
+    // klar vom Ruhezustand absticht.
+    if !recording_active {
+        const INACTIVE_ALPHA: f32 = 90.0 / 255.0;
+        for chunk in pixels.chunks_exact_mut(4) {
+            if chunk[3] > 0 {
+                chunk[3] = (chunk[3] as f32 * INACTIVE_ALPHA) as u8;
+            }
+        }
+    }
 
     Image::new_owned(pixels, size as u32, size as u32)
+}
+
+/// Ziel-Canvasgroesse fuer create_tray_pulse_icon() - die tatsaechliche
+/// Windows-Tray-Icon-Groesse (SM_CXSMICON, 16px bei 100% DPI, entsprechend
+/// mehr bei Skalierung), damit NICHTS mehr nachtraeglich von Windows/GDI
+/// gestreckt/gestaucht werden muss. `main`-Fenster kann beim Start schon
+/// existieren, aber (noch) unsichtbar sein - current_monitor() funktioniert
+/// trotzdem, primary_monitor() als Fallback falls kein Fenster/Monitor
+/// ermittelbar ist.
+fn tray_icon_target_size(app: &AppHandle) -> usize {
+    let scale = app
+        .get_webview_window("main")
+        .and_then(|w| {
+            w.current_monitor()
+                .ok()
+                .flatten()
+                .or_else(|| w.primary_monitor().ok().flatten())
+        })
+        .map(|m| m.scale_factor())
+        .unwrap_or(1.0);
+    ((16.0 * scale).round() as usize).clamp(16, 64)
 }
 
 fn refresh_tray_icon(app: &AppHandle, frame: usize) {
@@ -3360,7 +3485,9 @@ fn refresh_tray_icon(app: &AppHandle, frame: usize) {
     };
 
     if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
-        let icon = create_tray_pulse_icon(effective_frame, recording_active, transcribe_active);
+        let size = tray_icon_target_size(app);
+        let icon =
+            create_tray_pulse_icon(size, effective_frame, recording_active, transcribe_active);
         let _ = tray.set_icon(Some(icon));
     }
 }
@@ -3827,6 +3954,7 @@ pub fn run() {
                 refinement_timeouts: AtomicU64::new(0),
                 refinement_fallback_failed: AtomicU64::new(0),
                 refinement_fallback_timed_out: AtomicU64::new(0),
+                paste_arbiter: crate::paste_arbiter::PasteArbiter::default(),
                 last_mic_recording_path: Mutex::new(None),
                 last_system_recording_path: Mutex::new(None),
                 managed_ollama_child: Mutex::new(None),
@@ -4015,7 +4143,8 @@ pub fn run() {
             // Initialise session manager with the recordings directory
             {
                 let recordings_dir = paths::resolve_recordings_dir(app.handle());
-                session_manager::init(recordings_dir.clone());
+                let modules_dir = paths::resolve_modules_dir(app.handle());
+                session_manager::init(recordings_dir.clone(), modules_dir);
 
                 // Surface any incomplete sessions from a previous crash as a warning
                 let incomplete = session_manager::scan_incomplete(&recordings_dir);
@@ -4353,7 +4482,7 @@ pub fn run() {
 
             let _tray_icon = tauri::tray::TrayIconBuilder::with_id(TRAY_ICON_ID)
                 .icon(icon)
-                .tooltip("Trispr Flow")
+                .tooltip("Trispr Flow\nCtrl+Alt+Middle-click: re-paste last text")
                 .on_tray_icon_event(|tray, event| {
                     use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
                     match event {
@@ -4607,6 +4736,9 @@ pub fn run() {
             disable_module,
             get_module_health,
             check_module_updates,
+            list_available_modules,
+            download_module,
+            uninstall_module,
             agent_list_supported_actions,
             agent_parse_command,
             agent_compose_unknown_reply,
@@ -4641,33 +4773,33 @@ pub fn run() {
             render_gdd_for_confluence,
             #[cfg(feature = "module-gdd")]
             render_gdd_markdown,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             test_confluence_connection,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             confluence_oauth_start,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             confluence_oauth_exchange,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             confluence_list_spaces,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             load_gdd_template_from_file,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             load_gdd_template_from_confluence,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             suggest_confluence_target,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             publish_gdd_to_confluence,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             publish_or_queue_gdd_to_confluence,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             list_pending_gdd_publishes,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             retry_pending_gdd_publish,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             delete_pending_gdd_publish,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             save_confluence_secret,
-            #[cfg(feature = "module-confluence")]
+            #[cfg(feature = "module-gdd")]
             clear_confluence_secret,
             save_transcript,
             list_audio_devices,

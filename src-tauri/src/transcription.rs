@@ -1153,7 +1153,8 @@ fn transcribe_worker(
     // Initialise SessionManager with the recordings directory for this session
     if auto_save {
         let recordings_dir = resolve_recordings_dir(&app);
-        crate::session_manager::init(recordings_dir);
+        let modules_dir = crate::paths::resolve_modules_dir(&app);
+        crate::session_manager::init(recordings_dir, modules_dir);
     }
 
     while let Some(chunk) = queue.pop() {

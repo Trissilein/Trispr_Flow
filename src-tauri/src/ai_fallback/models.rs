@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
-use super::provider::default_models_for_provider;
+use super::provider::{default_models_for_provider, NUM_CTX_TIERS, NUM_PREDICT_TIERS};
 
 const DEFAULT_PROVIDER: &str = "ollama";
 const DEFAULT_TEMPERATURE: f32 = 0.3;
@@ -60,6 +60,17 @@ pub struct AIFallbackSettings {
     /// When present, replaces the factory default prompt for both EN and DE.
     #[serde(default)]
     pub prompt_preset_overrides: BTreeMap<String, String>,
+    /// Index into `provider::NUM_CTX_TIERS`. Grows automatically (never shrinks)
+    /// when a transcript threatens to overflow the current context window.
+    /// Persisted so the app doesn't relearn the user's habitual transcript
+    /// length after every restart.
+    #[serde(default)]
+    pub adaptive_num_ctx_tier: usize,
+    /// Index into `provider::NUM_PREDICT_TIERS`, keyed by normalized prompt
+    /// profile id (e.g. "summary"). Each profile grows independently since
+    /// "wording" and "summary" have very different natural output lengths.
+    #[serde(default)]
+    pub adaptive_num_predict_tiers: BTreeMap<String, usize>,
 }
 
 impl Default for AIFallbackSettings {
@@ -88,6 +99,8 @@ impl Default for AIFallbackSettings {
             prompt_presets: Vec::new(),
             active_prompt_preset_id: DEFAULT_PROMPT_PROFILE.to_string(),
             prompt_preset_overrides: BTreeMap::new(),
+            adaptive_num_ctx_tier: 0,
+            adaptive_num_predict_tiers: BTreeMap::new(),
         }
     }
 }
@@ -126,6 +139,16 @@ impl AIFallbackSettings {
         }
         if self.max_tokens > 8192 {
             self.max_tokens = 8192;
+        }
+        let max_ctx_tier_idx = NUM_CTX_TIERS.len() - 1;
+        if self.adaptive_num_ctx_tier > max_ctx_tier_idx {
+            self.adaptive_num_ctx_tier = max_ctx_tier_idx;
+        }
+        let max_predict_tier_idx = NUM_PREDICT_TIERS.len() - 1;
+        for tier_idx in self.adaptive_num_predict_tiers.values_mut() {
+            if *tier_idx > max_predict_tier_idx {
+                *tier_idx = max_predict_tier_idx;
+            }
         }
         let normalized_profile = normalize_prompt_profile_id(&self.prompt_profile);
         if normalized_profile.is_empty() {
@@ -470,6 +493,14 @@ pub struct RefinementOptions {
     pub custom_prompt: Option<String>,
     pub enforce_language_guard: bool,
     pub prompt_profile: String,
+    /// Persisted `provider::NUM_PREDICT_TIERS` index for this profile, read
+    /// from `AIFallbackSettings::adaptive_num_predict_tiers`. Ollama-only.
+    #[serde(default)]
+    pub num_predict_tier_idx: usize,
+    /// Persisted `provider::NUM_CTX_TIERS` index, read from
+    /// `AIFallbackSettings::adaptive_num_ctx_tier`. Ollama-only.
+    #[serde(default)]
+    pub num_ctx_tier_idx: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -477,6 +508,16 @@ pub struct TokenUsage {
     pub input_tokens: usize,
     pub output_tokens: usize,
     pub total_cost_usd: f64,
+}
+
+/// Reports that an Ollama refinement request needed a bigger tier than what
+/// was persisted in settings. The caller (which owns `AppState`/settings I/O)
+/// persists this so future requests start with headroom already in place —
+/// see `provider::grow_tier`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct TierUpdate {
+    pub num_predict_tier_idx: usize,
+    pub num_ctx_tier_idx: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -494,6 +535,11 @@ pub struct RefinementResult {
     pub ollama_prompt_eval_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ollama_eval_ms: Option<u64>,
+    /// Set only when this request grew a tier beyond what was passed in via
+    /// `RefinementOptions`. `None` for non-Ollama providers and for requests
+    /// that fit comfortably within the already-persisted tiers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier_update: Option<TierUpdate>,
 }
 
 pub fn normalize_provider_id(provider: &str) -> &'static str {

@@ -175,6 +175,8 @@ pub fn generate_scene_script(
         custom_prompt: Some(SCENE_SCRIPT_SYSTEM_PROMPT.to_string()),
         enforce_language_guard: false,
         prompt_profile: "custom".to_string(),
+        num_predict_tier_idx: 0,
+        num_ctx_tier_idx: 0,
     };
 
     info!(

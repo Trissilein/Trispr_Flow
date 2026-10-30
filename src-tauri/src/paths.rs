@@ -137,12 +137,22 @@ pub(crate) fn resolve_modules_dir(app: &AppHandle) -> PathBuf {
     dir
 }
 
-pub(crate) fn resolve_node_binary_path() -> Option<PathBuf> {
+pub(crate) fn resolve_node_binary_path(app: &AppHandle) -> Option<PathBuf> {
     if let Ok(path) = std::env::var("TRISPR_NODE_BINARY") {
         let candidate = PathBuf::from(path);
         if candidate.exists() {
             return Some(candidate);
         }
+    }
+
+    // Installed video_gen module package
+    let module_node = resolve_modules_dir(app)
+        .join("output_video_generation")
+        .join("bin")
+        .join("node")
+        .join("node.exe");
+    if module_node.exists() {
+        return Some(module_node);
     }
 
     let mut candidates = Vec::new();
@@ -171,12 +181,21 @@ pub(crate) fn resolve_node_binary_path() -> Option<PathBuf> {
     which::which("node").ok()
 }
 
-pub(crate) fn resolve_hyperframes_cwd() -> Option<PathBuf> {
+pub(crate) fn resolve_hyperframes_cwd(app: &AppHandle) -> Option<PathBuf> {
     if let Ok(path) = std::env::var("TRISPR_HYPERFRAMES_CWD") {
         let candidate = PathBuf::from(path);
         if candidate.join("package.json").exists() {
             return Some(candidate);
         }
+    }
+
+    // Installed video_gen module package
+    let module_hf = resolve_modules_dir(app)
+        .join("output_video_generation")
+        .join("bin")
+        .join("hyperframes");
+    if module_hf.join("package.json").exists() {
+        return Some(module_hf);
     }
 
     let mut candidates = Vec::new();

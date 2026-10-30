@@ -957,9 +957,10 @@ fn apply_overlay_ollama_state_to_window(app: &AppHandle, window: &WebviewWindow)
         return;
     }
 
-    // During active recording or transcribing the overlay must stay visible
-    // with the user's preset color.  Overriding it with the cold/loading color
-    // (e.g. grey #c8c8c8) makes the overlay nearly invisible while dictating.
+    // During active recording or transcribing: skip the color override only when
+    // the model is already warm — the overlay can show the user's preset color.
+    // When cold or loading we still apply grey/amber so the user can see that
+    // refinement won't run for this dictation.
     {
         let controller = app_state
             .overlay_controller
@@ -968,7 +969,8 @@ fn apply_overlay_ollama_state_to_window(app: &AppHandle, window: &WebviewWindow)
         if matches!(
             controller.desired_state,
             OverlayState::Recording | OverlayState::Transcribing
-        ) {
+        ) && matches!(controller.ollama_model_state, OllamaModelState::Warm)
+        {
             return;
         }
     }

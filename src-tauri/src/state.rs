@@ -445,7 +445,7 @@ pub(crate) struct Settings {
     pub(crate) postproc_llm_api_key: String,
     pub(crate) postproc_llm_model: String,
     pub(crate) postproc_llm_prompt: String,
-    // Analysis launcher settings (external tool)
+    // OPUS archive settings
     pub(crate) opus_enabled: bool,
     pub(crate) opus_bitrate_kbps: u32,
     pub(crate) auto_save_system_audio: bool, // Auto-save system audio as OPUS
@@ -913,6 +913,8 @@ pub(crate) struct AppState {
     pub(crate) refinement_timeouts: AtomicU64,
     pub(crate) refinement_fallback_failed: AtomicU64,
     pub(crate) refinement_fallback_timed_out: AtomicU64,
+    /// Single owner of every job's paste outcome (see `paste_arbiter.rs`).
+    pub(crate) paste_arbiter: crate::paste_arbiter::PasteArbiter,
     /// Last recorded OPUS file path for mic input.
     pub(crate) last_mic_recording_path: Mutex<Option<String>>,
     /// Last recorded OPUS file path for system audio.
@@ -1341,6 +1343,10 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             normalize_topic_keywords_fields(&mut settings);
             // Normalize v0.7 AI fallback settings and legacy compatibility fields.
             normalize_ai_fallback_fields(&mut settings);
+            crate::modules::migrate_legacy_confluence_module_binding(
+                &settings.module_settings,
+                &mut settings.gdd_module_settings,
+            );
             normalize_module_settings(&mut settings.module_settings);
             normalize_ai_refinement_module_binding(&mut settings);
             normalize_gdd_module_settings(&mut settings.gdd_module_settings);
@@ -1823,6 +1829,10 @@ pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result
     let mut persisted = settings.clone();
     // Do not persist session-only transcribe enablement.
     persisted.transcribe_enabled = false;
+    crate::modules::migrate_legacy_confluence_module_binding(
+        &persisted.module_settings,
+        &mut persisted.gdd_module_settings,
+    );
     normalize_module_settings(&mut persisted.module_settings);
     normalize_history_alias_fields(&mut persisted);
     normalize_ai_refinement_module_binding(&mut persisted);
@@ -2164,6 +2174,50 @@ mod tests {
             .module_settings
             .enabled_modules
             .contains(AI_REFINEMENT_MODULE_ID));
+    }
+
+    #[test]
+    fn legacy_confluence_module_migrates_to_enabled_gdd_without_install_override() {
+        let mut settings = Settings::default();
+        settings
+            .module_settings
+            .enabled_modules
+            .insert("integrations_confluence".to_string());
+        settings.module_settings.consented_permissions.insert(
+            "integrations_confluence".to_string(),
+            HashSet::from(["network_confluence".to_string()]),
+        );
+        settings.module_settings.module_overrides.insert(
+            "integrations_confluence.installed".to_string(),
+            serde_json::Value::Bool(true),
+        );
+
+        crate::modules::migrate_legacy_confluence_module_binding(
+            &settings.module_settings,
+            &mut settings.gdd_module_settings,
+        );
+        normalize_module_settings(&mut settings.module_settings);
+
+        assert!(settings.gdd_module_settings.enabled);
+        assert!(settings.module_settings.enabled_modules.contains("gdd"));
+        assert!(!settings
+            .module_settings
+            .enabled_modules
+            .contains("integrations_confluence"));
+        assert!(settings.module_settings.consented_permissions.is_empty());
+        assert!(!settings
+            .module_settings
+            .module_overrides
+            .contains_key("gdd.installed"));
+        assert_eq!(
+            crate::gdd::require_gdd_module_active_from_ids(&settings, &HashSet::new()).unwrap_err(),
+            "GDD module assets are not installed. Install module package 'gdd' first."
+        );
+        assert!(crate::gdd::require_gdd_module_active_from_ids(
+            &settings,
+            &HashSet::from(["gdd".to_string()]),
+        )
+        .is_ok());
     }
 
     #[test]

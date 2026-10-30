@@ -12,9 +12,7 @@ export type ModuleSurface = "assistant" | "transcription" | "shared" | "ui";
 export type AssistantActionRisk = "low" | "medium" | "high";
 export type ModuleId =
   | "gdd"
-  | "analysis"
   | "ai_refinement"
-  | "integrations_confluence"
   | "assistant_core"
   | "assistant_presence"
   | "workflow_agent"
@@ -952,6 +950,17 @@ export interface TranscriptionRefinedEvent {
   source: string;
   model: string;
   execution_time_ms: number;
+  /** True if the refined text won the paste race; false = history-only (deadline pasted raw first). */
+  pasted?: boolean;
+}
+
+export type PasteSettledOutcome = "raw" | "refined" | "raw_fallback" | "raw_timeout";
+
+export interface PasteSettledEvent {
+  job_id: string;
+  outcome: PasteSettledOutcome;
+  text: string;
+  paste_error?: string | null;
 }
 
 export type RefinementFailureReason =

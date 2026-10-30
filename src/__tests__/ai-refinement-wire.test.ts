@@ -4,7 +4,7 @@
  * local backend switching, temperature slider, auth modal keydown, topic keywords reset.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 
 vi.hoisted(() => {
@@ -101,6 +101,8 @@ vi.hoisted(() => {
 });
 
 import { wireAiRefinement } from "../wiring/ai-refinement.wire";
+import { renderAIFallbackSettingsUi } from "../settings/ai-refinement.settings";
+import { getFactoryPresetPrompt } from "../refinement-prompts";
 import * as dom from "../dom-refs";
 import { settings, setSettings } from "../state";
 import { autoStartLocalRuntimeIfNeeded } from "../ollama-models";
@@ -736,5 +738,107 @@ describe("topic keywords reset", () => {
         expect.anything(),
       ),
     );
+  });
+});
+
+// ── Prompt preset switching with unsaved edits ───────────────────────────────
+// Regression tests for the discard deadlock: after confirming the discard
+// dialog, the newly selected preset must actually load into the editor and the
+// dirty flag must clear (previously the stale textarea value was treated as an
+// external edit and blocked re-sourcing forever).
+
+describe("prompt preset switching with unsaved edits", () => {
+  let confirmSpy: ReturnType<typeof vi.spyOn>;
+
+  function textarea(): HTMLTextAreaElement {
+    return dom.aiFallbackCustomPrompt!;
+  }
+
+  function chip(presetId: string): HTMLButtonElement {
+    const el = document.querySelector(
+      `#prompt-preset-list [data-preset-id="${presetId}"]`,
+    ) as HTMLButtonElement | null;
+    expect(el).not.toBeNull();
+    return el!;
+  }
+
+  function renderUiWithDirtyBuiltInEditor(): void {
+    renderAIFallbackSettingsUi();
+    const t = textarea();
+    t.focus();
+    t.value = "my edited prompt";
+    t.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(t.classList.contains("has-unsaved-edits")).toBe(true);
+    t.blur();
+  }
+
+  beforeEach(() => {
+    wireOnce();
+    confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const t = textarea();
+    t.value = "";
+    t.classList.remove("has-unsaved-edits");
+    t.blur();
+  });
+
+  afterEach(() => {
+    confirmSpy.mockRestore();
+  });
+
+  it("confirmed discard loads the newly selected preset and clears the dirty flag", async () => {
+    renderUiWithDirtyBuiltInEditor();
+
+    chip("summary").click();
+    await vi.waitFor(() =>
+      expect(textarea().value).toContain(
+        getFactoryPresetPrompt("summary", "en"),
+      ),
+    );
+    expect(settings!.ai_fallback.active_prompt_preset_id).toBe("summary");
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(textarea().classList.contains("has-unsaved-edits")).toBe(false);
+
+    // Editor is clean again — the next switch must NOT ask.
+    chip("wording").click();
+    await vi.waitFor(() =>
+      expect(textarea().value).toContain(
+        getFactoryPresetPrompt("wording", "en"),
+      ),
+    );
+    expect(settings!.ai_fallback.active_prompt_preset_id).toBe("wording");
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancelled discard keeps the current preset and the edits", async () => {
+    renderUiWithDirtyBuiltInEditor();
+    confirmSpy.mockReturnValue(false);
+
+    chip("summary").click();
+    await Promise.resolve();
+    expect(settings!.ai_fallback.active_prompt_preset_id).toBe("wording");
+    expect(textarea().value).toBe("my edited prompt");
+    expect(textarea().classList.contains("has-unsaved-edits")).toBe(true);
+  });
+
+  it("language switch with unsaved edits reverts on cancel", async () => {
+    renderUiWithDirtyBuiltInEditor();
+    confirmSpy.mockReturnValue(false);
+
+    dom.languageSelect!.value = "de";
+    dom.languageSelect!.dispatchEvent(new Event("change"));
+    await Promise.resolve();
+    expect(settings!.language_mode).toBe("auto");
+    expect(dom.languageSelect!.value).toBe("auto");
+    expect(textarea().value).toBe("my edited prompt");
+  });
+
+  it("language switch with unsaved edits proceeds and clears editor on confirm", async () => {
+    renderUiWithDirtyBuiltInEditor();
+
+    dom.languageSelect!.value = "de";
+    dom.languageSelect!.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(settings!.language_mode).toBe("de"));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(textarea().classList.contains("has-unsaved-edits")).toBe(false);
   });
 });

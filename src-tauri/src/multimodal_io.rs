@@ -2491,14 +2491,28 @@ pub fn benchmark_windows_natural_synthesis(
 /// Resolve the piper binary path.
 /// Search order:
 ///   1. Configured path (settings.piper_binary_path)
-///   2. PATH
-///   3. Tauri resource dir: <exe_dir>/resources/bin/piper/piper.exe  (bundled with installer)
-///   4. %LOCALAPPDATA%\trispr-flow\piper\piper.exe                   (manual install)
+///   2. Installed piper_tts module: %LOCALAPPDATA%\Trispr Flow\modules\piper_tts\bin\piper\piper.exe
+///   3. PATH
+///   4. Tauri resource dir: <exe_dir>/resources/bin/piper/piper.exe  (bundled with installer)
+///   5. %LOCALAPPDATA%\trispr-flow\piper\piper.exe                   (manual install)
 fn resolve_piper_binary(configured: &str) -> Option<std::path::PathBuf> {
     if !configured.is_empty() {
         let p = std::path::PathBuf::from(configured);
         if file_is_non_empty(&p) {
             return Some(p);
+        }
+    }
+    // Installed piper_tts module package
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let candidate = std::path::PathBuf::from(local_app_data)
+            .join("Trispr Flow")
+            .join("modules")
+            .join("piper_tts")
+            .join("bin")
+            .join("piper")
+            .join("piper.exe");
+        if file_is_non_empty(&candidate) {
+            return Some(candidate);
         }
     }
     if let Ok(p) = which::which("piper") {
@@ -2570,13 +2584,27 @@ fn resolve_piper_binary(configured: &str) -> Option<std::path::PathBuf> {
 /// Resolve the piper voice model directory.
 /// Search order:
 ///   1. Configured path (settings.piper_model_dir)
-///   2. Tauri resource dir: <exe_dir>/resources/bin/piper/voices/  (bundled with installer)
-///   3. %LOCALAPPDATA%\trispr-flow\piper\voices\                    (manual install)
+///   2. Installed piper_tts module: %LOCALAPPDATA%\Trispr Flow\modules\piper_tts\bin\piper\voices
+///   3. Tauri resource dir: <exe_dir>/resources/bin/piper/voices/  (bundled with installer)
+///   4. %LOCALAPPDATA%\trispr-flow\piper\voices\                    (manual install)
 fn resolve_piper_model_dir(configured: &str) -> Option<std::path::PathBuf> {
     if !configured.is_empty() {
         let p = std::path::PathBuf::from(configured);
         if p.is_dir() {
             return Some(p);
+        }
+    }
+    // Installed piper_tts module package voices directory
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let candidate = std::path::PathBuf::from(local_app_data)
+            .join("Trispr Flow")
+            .join("modules")
+            .join("piper_tts")
+            .join("bin")
+            .join("piper")
+            .join("voices");
+        if candidate.is_dir() {
+            return Some(candidate);
         }
     }
     if let Ok(cwd) = std::env::current_dir() {

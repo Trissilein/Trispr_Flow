@@ -8,7 +8,7 @@ use crate::state::{save_settings_file, AppState, Settings};
 use crate::{
     capability_enabled, require_capability_enabled, startup_status_snapshot, RuntimeCapability,
 };
-use models::RefinementOptions;
+use models::{RefinementOptions, TierUpdate};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
@@ -33,6 +33,43 @@ where
     save_settings_file(app, &snapshot)?;
     let _ = app.emit("settings-changed", snapshot);
     Ok(())
+}
+
+/// Persists adaptive tier growth reported by a completed Ollama refinement
+/// (see `models::TierUpdate`). Called only from the production dictation
+/// paths (PTT flow, manual re-refine command) — not from narrow-purpose
+/// internal prompts (task capture, workflow agent replies) which deliberately
+/// clamp `max_tokens` low and share the "custom" profile key, so growing
+/// tiers there would pollute the tier the user's own custom prompt relies on.
+pub(crate) fn persist_tier_update(
+    app: &AppHandle,
+    state: &AppState,
+    prompt_profile: &str,
+    tier_update: &TierUpdate,
+) {
+    let profile_key = models::normalize_prompt_profile_id(prompt_profile).to_string();
+    let predict_idx = tier_update.num_predict_tier_idx;
+    let ctx_idx = tier_update.num_ctx_tier_idx;
+    // max(), not insert/assign: two refinements can race on the write lock
+    // (e.g. PTT + a manual re-refine), each computed against a snapshot
+    // that's slightly stale by the time it writes. Tiers must never appear
+    // to shrink just because the smaller of two concurrent updates lands last.
+    if let Err(error) = update_and_persist_settings(app, state, |settings| {
+        let entry = settings
+            .ai_fallback
+            .adaptive_num_predict_tiers
+            .entry(profile_key.clone())
+            .or_insert(0);
+        *entry = (*entry).max(predict_idx);
+        settings.ai_fallback.adaptive_num_ctx_tier =
+            settings.ai_fallback.adaptive_num_ctx_tier.max(ctx_idx);
+        Ok(())
+    }) {
+        tracing::warn!(
+            "[refinement] failed to persist adaptive tier growth: {}",
+            error
+        );
+    }
 }
 
 /// Guard that rejects requests when strict-local-mode is active and the
@@ -301,6 +338,12 @@ pub(crate) fn prepare_refinement(
         ),
         enforce_language_guard,
         prompt_profile: ai.prompt_profile.clone(),
+        num_predict_tier_idx: ai
+            .adaptive_num_predict_tiers
+            .get(models::normalize_prompt_profile_id(&ai.prompt_profile))
+            .copied()
+            .unwrap_or(0),
+        num_ctx_tier_idx: ai.adaptive_num_ctx_tier,
     };
 
     Ok(RefinementSetup {

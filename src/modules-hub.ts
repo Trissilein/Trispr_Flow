@@ -173,12 +173,6 @@ function moduleGuide(moduleId: string): { description: string; usage: string } {
       usage: "Use: Open GDD Flow, pick a session/preset, then generate and publish.",
     };
   }
-  if (moduleId === "integrations_confluence") {
-    return {
-      description: "Handles Confluence Cloud auth, routing, and page create/update calls.",
-      usage: "Use: Configure Confluence connection in GDD Flow before publishing.",
-    };
-  }
   if (moduleId === ASSISTANT_CORE_MODULE_ID || moduleId === "workflow_agent") {
     return {
       description: "Desktop assistant runtime for conversation, direct actions, and confirmable GDD plans.",
@@ -189,12 +183,6 @@ function moduleGuide(moduleId: string): { description: string; usage: string } {
     return {
       description: "Floating assistant presence window with live transcript, state, and action feedback.",
       usage: "Use: Keep Assistant mode active to auto-show the Presence window as the primary assistant surface.",
-    };
-  }
-  if (moduleId === "analysis") {
-    return {
-      description: "Runs analysis workflows on transcript history and exportable data.",
-      usage: "Use: Enable module, then launch Analysis Flow from this page.",
     };
   }
   if (moduleId === "ai_refinement") {
@@ -374,11 +362,15 @@ function closeModuleConfig(): void {
   dom.moduleConfigModal?.setAttribute("hidden", "");
 }
 
+function moduleVisibilityAttributes(moduleId: string, action: string, label: string): string {
+  return `data-settings-visibility-managed="true" data-settings-visibility-key="module.${escapeHtml(moduleId)}.${action}" data-settings-visibility-label="${escapeHtml(label)}" data-settings-visibility-default="expert" data-settings-visibility-group="Modules"`;
+}
+
 function cardActions(moduleInfo: ModuleDescriptor): string {
   if (moduleInfo.core) {
-    return `<button class="hotkey-record-btn" disabled>Core (always on)</button>
-    <button class="hotkey-record-btn" data-module-action="health" data-module-id="${moduleInfo.id}">Health</button>
-    <button class="hotkey-record-btn" data-module-action="updates" data-module-id="${moduleInfo.id}">Check updates</button>`;
+    return `<button class="hotkey-record-btn" disabled data-settings-visibility-excluded="module-status">Core (always on)</button>
+    <button class="hotkey-record-btn" data-module-action="health" data-module-id="${moduleInfo.id}" ${moduleVisibilityAttributes(moduleInfo.id, "health", `${moduleInfo.name} health`)}>Health</button>
+    <button class="hotkey-record-btn" data-module-action="updates" data-module-id="${moduleInfo.id}" ${moduleVisibilityAttributes(moduleInfo.id, "updates", `${moduleInfo.name} updates`)}>Check updates</button>`;
   }
 
   const canEnable = moduleInfo.toggleable && (moduleInfo.state === "installed" || moduleInfo.state === "error");
@@ -393,33 +385,33 @@ function cardActions(moduleInfo: ModuleDescriptor): string {
   const id = moduleInfo.id;
   let primary: string;
   if (progress) {
-    primary = `<button class="hotkey-record-btn" disabled>${escapeHtml(downloadStageLabel(progress))}</button>`;
+    primary = `<button class="hotkey-record-btn" disabled data-settings-visibility-excluded="module-status">${escapeHtml(downloadStageLabel(progress))}</button>`;
   } else if (canEnable) {
-    primary = `<button class="hotkey-record-btn" data-module-action="enable" data-module-id="${id}">Enable</button>`;
+    primary = `<button class="hotkey-record-btn" data-module-action="enable" data-module-id="${id}" ${moduleVisibilityAttributes(id, "state", `${moduleInfo.name} state`)}>Enable</button>`;
   } else if (canDisable) {
-    primary = `<button class="hotkey-record-btn" data-module-action="disable" data-module-id="${id}">Disable</button>`;
+    primary = `<button class="hotkey-record-btn" data-module-action="disable" data-module-id="${id}" ${moduleVisibilityAttributes(id, "state", `${moduleInfo.name} state`)}>Disable</button>`;
   } else if (moduleInfo.state === "not_installed" && downloadable) {
     const sizeLabel = formatBytes(available!.size);
-    primary = `<button class="hotkey-record-btn" data-module-action="download" data-module-id="${id}">Download${sizeLabel ? ` (${sizeLabel})` : ""}</button>`;
+    primary = `<button class="hotkey-record-btn" data-module-action="download" data-module-id="${id}" ${moduleVisibilityAttributes(id, "download", `${moduleInfo.name} download`)}>Download${sizeLabel ? ` (${sizeLabel})` : ""}</button>`;
   } else if (canInstall) {
-    primary = `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${id}">Install</button>`;
+    primary = `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${id}" ${moduleVisibilityAttributes(id, "install", `${moduleInfo.name} install`)}>Install</button>`;
   } else {
-    primary = `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${id}" disabled>Install</button>`;
+    primary = `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${id}" disabled ${moduleVisibilityAttributes(id, "install", `${moduleInfo.name} install`)}>Install</button>`;
   }
 
   // Secondary affordances for installed on-demand modules.
   const update = downloadable && available!.update_available && moduleInfo.state !== "not_installed" && !progress
-    ? `<button class="hotkey-record-btn" data-module-action="download" data-module-id="${id}">Update to v${escapeHtml(available!.version)}</button>`
+    ? `<button class="hotkey-record-btn" data-module-action="download" data-module-id="${id}" ${moduleVisibilityAttributes(id, "download", `${moduleInfo.name} download`)}>Update to v${escapeHtml(available!.version)}</button>`
     : "";
   const uninstall = downloadable && moduleInfo.state !== "not_installed" && !progress
-    ? `<button class="ghost-btn" data-module-action="uninstall" data-module-id="${id}">Uninstall</button>`
+    ? `<button class="ghost-btn" data-module-action="uninstall" data-module-id="${id}" ${moduleVisibilityAttributes(id, "uninstall", `${moduleInfo.name} uninstall`)}>Uninstall</button>`
     : "";
 
   return `${primary}
     ${update}
     ${uninstall}
-    <button class="hotkey-record-btn" data-module-action="health" data-module-id="${id}">Health</button>
-    <button class="hotkey-record-btn" data-module-action="updates" data-module-id="${id}">Check updates</button>`;
+    <button class="hotkey-record-btn" data-module-action="health" data-module-id="${id}" ${moduleVisibilityAttributes(id, "health", `${moduleInfo.name} health`)}>Health</button>
+    <button class="hotkey-record-btn" data-module-action="updates" data-module-id="${id}" ${moduleVisibilityAttributes(id, "updates", `${moduleInfo.name} updates`)}>Check updates</button>`;
 }
 
 function downloadStageLabel(progress: ModuleDownloadProgress): string {
@@ -492,12 +484,10 @@ function renderModuleRow(moduleInfo: ModuleDescriptor): string {
     ? `<span class="${feedbackClass}" title="${feedbackTitle}">${escapeHtml(feedbackText)}</span>`
     : "";
   const launch = moduleInfo.id === "gdd"
-    ? `<button class="ghost-btn" data-module-action="launch-gdd" data-module-id="gdd">Open GDD Flow</button>`
-    : moduleInfo.id === "analysis"
-      ? `<button class="ghost-btn" data-module-action="launch-analysis" data-module-id="analysis">Open Analysis Flow</button>`
-      : moduleInfo.core
-        ? ""
-        : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}">Configure</button>`;
+    ? `<button class="ghost-btn" data-module-action="launch-gdd" data-module-id="gdd" ${moduleVisibilityAttributes(moduleInfo.id, "launch", "Open GDD Flow")}>Open GDD Flow</button>`
+    : moduleInfo.core
+      ? ""
+      : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}" ${moduleVisibilityAttributes(moduleInfo.id, "configure", `${moduleInfo.name} configuration`)}>Configure</button>`;
 
   return `<div class="module-row" data-module-card="${moduleInfo.id}" data-module-state="${moduleStateKey(moduleInfo)}">
         <div class="module-row-main">
@@ -546,6 +536,7 @@ function renderModulesList(modules: ModuleDescriptor[]): void {
   })
     .filter(Boolean)
     .join("\n");
+  window.dispatchEvent(new Event("settings-visibility:dynamic-rendered"));
 }
 
 async function refreshModuleState(): Promise<void> {
@@ -860,15 +851,6 @@ function bindModulesEvents(): void {
     }
     if (action === "launch-gdd") {
       void openGddFlow();
-      return;
-    }
-    if (action === "launch-analysis") {
-      showToast({
-        type: "info",
-        title: "Analysis module",
-        message: "Analysis module launcher will be wired when analysis module is installed.",
-        duration: 3200,
-      });
       return;
     }
     if (action === "open-config") {

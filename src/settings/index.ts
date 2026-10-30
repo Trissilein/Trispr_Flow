@@ -20,6 +20,7 @@ import {
   renderAIRefinementTab,
   renderOverlayHealthNote,
 } from "./ai-refinement.settings";
+import { applySettingsVisibility } from "../settings-visibility";
 
 export { persistSettings };
 export { ensureContinuousDumpDefaults };
@@ -92,5 +93,5 @@ export function renderSettings() {
   renderOverlayHealthNote();
   renderPostProcessingSettings();
   renderAIRefinementTab();
+  applySettingsVisibility();
 }
-

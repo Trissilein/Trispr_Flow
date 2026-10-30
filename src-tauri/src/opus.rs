@@ -231,6 +231,83 @@ pub(crate) fn get_ffmpeg_version_info(app: AppHandle) -> Result<String, String> 
     Ok(probe.version)
 }
 
+/// FFmpeg for the NVENC probe only (OPUS encoding goes through the sidecar):
+/// bundled copy first, then PATH.
+fn find_ffmpeg_for_probe() -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+    {
+        candidates.push(exe_dir.join("resources").join("ffmpeg").join(name));
+    }
+    // Cargo builds resolve this to <repo>/src-tauri, useful for local dev.
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("bin")
+            .join("ffmpeg")
+            .join(name),
+    );
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.exists())
+        .or_else(|| which::which(name).ok())
+}
+
+/// Probe whether NVENC hardware encoding is functional on this machine.
+///
+/// Runs a 1-frame synthetic encode via h264_nvenc. Fails fast (<1s) if the
+/// driver/hardware isn't present or if the NVENC SDK version is incompatible
+/// (e.g. Blackwell GPUs with older SDK returning EINVAL or INVALID_VERSION).
+/// Result is cached via OnceLock — only one FFmpeg spawn per process lifetime.
+pub fn probe_nvenc_available() -> bool {
+    use std::sync::OnceLock;
+    static RESULT: OnceLock<bool> = OnceLock::new();
+    *RESULT.get_or_init(|| {
+        let Some(ffmpeg) = find_ffmpeg_for_probe() else {
+            return false;
+        };
+        let mut cmd = Command::new(&ffmpeg);
+        cmd.args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=size=128x128:rate=1:duration=0.1",
+            "-c:v",
+            "h264_nvenc",
+            "-frames:v",
+            "1",
+            "-f",
+            "null",
+            "-",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+        no_window(&mut cmd);
+
+        match cmd.output() {
+            Ok(out) if out.status.success() => true,
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                warn!("[nvenc-probe] h264_nvenc unavailable: {}", stderr.trim());
+                false
+            }
+            Err(e) => {
+                warn!("[nvenc-probe] FFmpeg spawn failed: {}", e);
+                false
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

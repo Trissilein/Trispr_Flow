@@ -4,6 +4,7 @@
   "version": "0.8.4",
   "type": "module",
   "scripts": {
+    "prepare": "git config core.hooksPath scripts/hooks || echo skipped",
     "dev": "tauri dev --release",
     "dev:web": "vite",
     "dev:tauri": "node scripts/tauri-before-dev.mjs",

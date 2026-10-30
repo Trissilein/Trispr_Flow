@@ -21,6 +21,12 @@ import { syncWorkflowAgentConsoleState } from "../workflow-agent-console";
 import { renderTaskCaptureTab } from "../task-capture-config";
 import { initVideoGenerationPanel, teardownVideoGenerationPanel } from "../video-generation";
 
+function profileTabAvailable(tab: MainTab): boolean {
+  if (!document.documentElement.classList.contains("standard-mode")) return true;
+  return document.querySelector<HTMLElement>(`[data-settings-visibility-tab="${tab}"]`)
+    ?.dataset.settingsVisibilityNoBasic !== "true";
+}
+
 type MainTab =
   | "transcription"
   | "settings"
@@ -173,6 +179,10 @@ export function reconcileMainTabVisibility(): void {
   }
   if (!taskCaptureTabAvailable() && activeTab === "task-capture") {
     switchMainTab("transcription");
+    return;
+  }
+  if (!profileTabAvailable(activeTab)) {
+    switchMainTab("transcription");
   }
 }
 
@@ -230,6 +240,9 @@ function switchMainTab(tab: MainTab) {
     resolvedTab = "transcription";
   }
   if (resolvedTab === "task-capture" && !taskCaptureTabAvailable()) {
+    resolvedTab = "transcription";
+  }
+  if (!profileTabAvailable(resolvedTab)) {
     resolvedTab = "transcription";
   }
 
@@ -293,6 +306,10 @@ function switchMainTab(tab: MainTab) {
     dom.tabTaskCapture.style.removeProperty("display");
     dom.tabTaskCapture.classList.toggle("active", isTaskCapture);
   }
+
+  window.dispatchEvent(new CustomEvent("settings-visibility:tab-switched", {
+    detail: { tab: resolvedTab },
+  }));
 
   // Persist to localStorage
   try {
@@ -432,10 +449,6 @@ export function wireAppChrome(): void {
     });
   });
 
-  dom.analyseButton?.addEventListener("click", () => {
-    switchMainTab("modules");
-    window.dispatchEvent(new CustomEvent("modules:focus", { detail: "analysis" }));
-  });
   dom.openModulesBtn?.addEventListener("click", () => {
     switchMainTab("modules");
   });

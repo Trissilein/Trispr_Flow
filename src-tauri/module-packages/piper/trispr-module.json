@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "piper_tts",
+  "name": "Piper TTS",
+  "version": "0.1.0",
+  "host_capability": "local_custom_tts",
+  "attached_to": "assistant_core",
+  "install_target": "%LOCALAPPDATA%\\trispr-flow\\piper\\",
+  "runtime_assets": [
+    {
+      "id": "piper_binary",
+      "path": "piper.exe",
+      "kind": "executable",
+      "required": true
+    },
+    {
+      "id": "piper_phonemize",
+      "path": "piper_phonemize.dll",
+      "kind": "library",
+      "required": true
+    },
+    {
+      "id": "espeak_ng",
+      "path": "espeak-ng.dll",
+      "kind": "library",
+      "required": true
+    },
+    {
+      "id": "onnxruntime",
+      "path": "onnxruntime.dll",
+      "kind": "library",
+      "required": true
+    }
+  ],
+  "sub_capabilities": [
+    {
+      "id": "voice_feedback",
+      "label": "Voice Feedback (Agent Replies)",
+      "description": "Speaks agent replies via local Piper TTS engine."
+    },
+    {
+      "id": "voice_model_selection",
+      "label": "Voice Model Selection",
+      "description": "Choose from installed .onnx voice models.",
+      "requires_setup": true
+    }
+  ],
+  "notes": "Piper binaries are NOT bundled in the core installer. Place piper.exe + DLLs + voices/*.onnx under %LOCALAPPDATA%\\trispr-flow\\piper\\ or configure piper_binary_path in VoiceOutputSettings."
+}

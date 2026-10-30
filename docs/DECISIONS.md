@@ -336,9 +336,9 @@ Last updated: 2026-03-28
 ### DEC-051 TTS natural voice engine selection (2026-03-08)
 
 - Status: `accepted`
-- Decision: Use **Piper TTS** as the `local_custom` provider for the mainline app. Reserve **Kokoro TTS** for the separate `analysis-module-branch` / VibeVoice integration path.
+- Decision: Use **Piper TTS** as the `local_custom` provider for the mainline app. Keep Kokoro TTS outside current product scope.
 - Context: Evaluated four local neural TTS options (Piper, Kokoro, Coqui XTTS-v2, Edge TTS). The `local_custom` lane needs an offline, natural-sounding, low-latency engine. Kokoro has better audio quality but requires a Python sidecar and GPU. Piper is a standalone binary (~25 MB), supports German voices out of the box, achieves < 200 ms latency on CPU, and integrates as a Tauri sidecar/PATH binary with zero new runtime dependencies.
-- Why: Piper aligns with offline-first principle; no Python sidecar needed; ~1.5 days of integration work. Kokoro's quality advantage is better suited to the VibeVoice analysis workflow where Python is already present and GPU time is available.
+- Why: Piper aligns with offline-first principle; no Python sidecar needed; ~1.5 days of integration work. Kokoro's quality advantage requires a Python sidecar and GPU time outside current product scope.
 - Implementation notes:
   - Piper binary resolved via `piper_binary_path` setting → PATH → `%LOCALAPPDATA%\trispr-flow\piper\piper.exe`
   - Active model path stored in `piper_model_path` (`VoiceOutputSettings`)

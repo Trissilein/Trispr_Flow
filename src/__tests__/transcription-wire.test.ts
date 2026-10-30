@@ -556,6 +556,7 @@ describe("wireTranscription - whisper backend gpu controls", () => {
     await flush();
     expect(settings!.local_backend_preference).toBe("cuda");
     expect(document.querySelector("#toast-container")?.textContent).toContain("Backend switched");
+    expect(mockedInvoke).not.toHaveBeenCalledWith("kill_whisper_server");
   });
 
   it("vulkan backend button updates preference", async () => {

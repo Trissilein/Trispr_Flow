@@ -109,7 +109,6 @@ function mountDom(): void {
     </div>
     <button class="panel-collapse-btn" data-panel-collapse="invalid-panel"></button>
 
-    <button id="analyse-button"></button>
     <button id="open-recordings-btn"></button>
     <button id="open-modules-btn"></button>
 
@@ -230,6 +229,18 @@ describe("wireAppChrome - main tabs", () => {
     expect(activeTabId()).toBe("tab-btn-settings");
   });
 
+  it("announces the resolved tab after switching for the inline visibility editor", async () => {
+    const { appChrome } = await setup({ voice: true });
+    const switched = vi.fn();
+    window.addEventListener("settings-visibility:tab-switched", switched, { once: true });
+
+    appChrome.openMainTab("voice-output");
+
+    expect(switched).toHaveBeenCalledWith(expect.objectContaining({
+      detail: { tab: "voice-output" },
+    }));
+  });
+
   it("hides unavailable AI tab", async () => {
     const { appChrome } = await setup({ ai: false });
     appChrome.initMainTab();
@@ -251,6 +262,42 @@ describe("wireAppChrome - main tabs", () => {
   it("falls back when opening disabled Voice Output", async () => {
     const { appChrome } = await setup({ voice: false });
     appChrome.openMainTab("voice-output");
+    expect(activeTabId()).toBe("tab-btn-transcription");
+  });
+
+  it("falls back when an available Voice Output tab has no Basic settings", async () => {
+    document.documentElement.classList.add("standard-mode");
+    document.getElementById("tab-btn-voice-output")?.setAttribute(
+      "data-settings-visibility-tab",
+      "voice-output",
+    );
+    document.getElementById("tab-btn-voice-output")?.setAttribute(
+      "data-settings-visibility-no-basic",
+      "true",
+    );
+    const { appChrome } = await setup({ voice: true });
+    document.documentElement.classList.add("standard-mode");
+    document.getElementById("tab-btn-voice-output")?.setAttribute(
+      "data-settings-visibility-tab",
+      "voice-output",
+    );
+    document.getElementById("tab-btn-voice-output")?.setAttribute(
+      "data-settings-visibility-no-basic",
+      "true",
+    );
+    appChrome.openMainTab("voice-output");
+    expect(activeTabId()).toBe("tab-btn-transcription");
+  });
+
+  it("does not restore a saved tab that has no Basic settings", async () => {
+    const { appChrome } = await setup({ voice: true });
+    document.documentElement.classList.add("standard-mode");
+    const voiceTab = document.getElementById("tab-btn-voice-output");
+    voiceTab?.setAttribute("data-settings-visibility-tab", "voice-output");
+    voiceTab?.setAttribute("data-settings-visibility-no-basic", "true");
+    localStorage.setItem("trispr-active-tab", "voice-output");
+
+    appChrome.initMainTab();
     expect(activeTabId()).toBe("tab-btn-transcription");
   });
 
@@ -390,17 +437,6 @@ describe("wireAppChrome - panels and shortcuts", () => {
     click("panel-action-btn");
     click("panel-header-input");
     expect(mocks.togglePanel).not.toHaveBeenCalled();
-  });
-
-  it("analyse button opens modules and dispatches focus event", async () => {
-    const { appChrome } = await setup();
-    const focusListener = vi.fn();
-    window.addEventListener("modules:focus", focusListener);
-    appChrome.wireAppChrome();
-    click("analyse-button");
-    expect(activeTabId()).toBe("tab-btn-modules");
-    expect(focusListener).toHaveBeenCalledWith(expect.objectContaining({ detail: "analysis" }));
-    window.removeEventListener("modules:focus", focusListener);
   });
 
   it("open modules button opens modules", async () => {

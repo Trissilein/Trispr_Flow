@@ -16,12 +16,13 @@ use crate::gdd::GddPresetClone;
 pub const ASSISTANT_CORE_MODULE_ID: &str = "assistant_core";
 pub const ASSISTANT_PRESENCE_MODULE_ID: &str = "assistant_presence";
 pub const GDD_MODULE_ID: &str = "gdd";
+pub const LEGACY_CONFLUENCE_MODULE_ID: &str = "integrations_confluence";
 pub const LEGACY_WORKFLOW_AGENT_MODULE_ID: &str = "workflow_agent";
-pub const TASK_CAPTURE_MODULE_ID: &str = "task_capture";
 
 pub fn canonicalize_module_id(module_id: &str) -> &str {
     match module_id.trim() {
         LEGACY_WORKFLOW_AGENT_MODULE_ID => ASSISTANT_CORE_MODULE_ID,
+        LEGACY_CONFLUENCE_MODULE_ID => GDD_MODULE_ID,
         other => other,
     }
 }
@@ -349,6 +350,9 @@ pub fn normalize_module_settings(settings: &mut ModuleSettings) {
 
     let mut normalized_permissions: HashMap<String, HashSet<String>> = HashMap::new();
     for (module_id, permissions) in &settings.consented_permissions {
+        if module_id == LEGACY_CONFLUENCE_MODULE_ID {
+            continue;
+        }
         let normalized_module_id = canonicalize_module_id(module_id).to_string();
         if let Some(manifest) = registry::find_manifest(&normalized_module_id) {
             let allowed = manifest
@@ -372,15 +376,68 @@ pub fn normalize_module_settings(settings: &mut ModuleSettings) {
     let normalized_overrides = settings
         .module_overrides
         .iter()
-        .map(|(key, value)| {
+        .filter_map(|(key, value)| {
+            if key.starts_with(&format!("{LEGACY_CONFLUENCE_MODULE_ID}.")) {
+                return None;
+            }
             if let Some(rest) = key.strip_prefix(&format!("{LEGACY_WORKFLOW_AGENT_MODULE_ID}.")) {
-                (format!("{ASSISTANT_CORE_MODULE_ID}.{rest}"), value.clone())
+                Some((format!("{ASSISTANT_CORE_MODULE_ID}.{rest}"), value.clone()))
+            } else if key == "analysis" || key.starts_with("analysis.") {
+                None
             } else {
-                (key.clone(), value.clone())
+                Some((key.clone(), value.clone()))
             }
         })
         .collect::<HashMap<_, _>>();
     settings.module_overrides = normalized_overrides;
+}
+
+pub fn migrate_legacy_confluence_module_binding(
+    module_settings: &ModuleSettings,
+    gdd_settings: &mut GddModuleSettings,
+) {
+    if module_settings
+        .enabled_modules
+        .iter()
+        .any(|module_id| module_id == LEGACY_CONFLUENCE_MODULE_ID)
+    {
+        gdd_settings.enabled = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drops_removed_analysis_settings() {
+        let mut settings = ModuleSettings::default();
+        settings.enabled_modules.insert("analysis".to_string());
+        settings.consented_permissions.insert(
+            "analysis".to_string(),
+            HashSet::from(["filesystem_history".to_string()]),
+        );
+        settings.module_overrides.insert(
+            "analysis.last_error".to_string(),
+            serde_json::Value::String("stale".to_string()),
+        );
+        settings.module_overrides.insert(
+            "custom_module.option".to_string(),
+            serde_json::Value::Bool(true),
+        );
+
+        normalize_module_settings(&mut settings);
+
+        assert!(!settings.enabled_modules.contains("analysis"));
+        assert!(!settings.consented_permissions.contains_key("analysis"));
+        assert!(!settings
+            .module_overrides
+            .contains_key("analysis.last_error"));
+        assert_eq!(
+            settings.module_overrides.get("custom_module.option"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
 }
 
 pub fn normalize_gdd_module_settings(settings: &mut GddModuleSettings) {

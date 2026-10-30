@@ -173,12 +173,6 @@ function moduleGuide(moduleId: string): { description: string; usage: string } {
       usage: "Use: Open GDD Flow, pick a session/preset, then generate and publish.",
     };
   }
-  if (moduleId === "integrations_confluence") {
-    return {
-      description: "Handles Confluence Cloud auth, routing, and page create/update calls.",
-      usage: "Use: Configure Confluence connection in GDD Flow before publishing.",
-    };
-  }
   if (moduleId === ASSISTANT_CORE_MODULE_ID || moduleId === "workflow_agent") {
     return {
       description: "Desktop assistant runtime for conversation, direct actions, and confirmable GDD plans.",
@@ -189,12 +183,6 @@ function moduleGuide(moduleId: string): { description: string; usage: string } {
     return {
       description: "Floating assistant presence window with live transcript, state, and action feedback.",
       usage: "Use: Keep Assistant mode active to auto-show the Presence window as the primary assistant surface.",
-    };
-  }
-  if (moduleId === "analysis") {
-    return {
-      description: "Runs analysis workflows on transcript history and exportable data.",
-      usage: "Use: Enable module, then launch Analysis Flow from this page.",
     };
   }
   if (moduleId === "ai_refinement") {
@@ -497,11 +485,9 @@ function renderModuleRow(moduleInfo: ModuleDescriptor): string {
     : "";
   const launch = moduleInfo.id === "gdd"
     ? `<button class="ghost-btn" data-module-action="launch-gdd" data-module-id="gdd" ${moduleVisibilityAttributes(moduleInfo.id, "launch", "Open GDD Flow")}>Open GDD Flow</button>`
-    : moduleInfo.id === "analysis"
-      ? `<button class="ghost-btn" data-module-action="launch-analysis" data-module-id="analysis" ${moduleVisibilityAttributes(moduleInfo.id, "launch", "Open Analysis Flow")}>Open Analysis Flow</button>`
-      : moduleInfo.core
-        ? ""
-        : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}" ${moduleVisibilityAttributes(moduleInfo.id, "configure", `${moduleInfo.name} configuration`)}>Configure</button>`;
+    : moduleInfo.core
+      ? ""
+      : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}" ${moduleVisibilityAttributes(moduleInfo.id, "configure", `${moduleInfo.name} configuration`)}>Configure</button>`;
 
   return `<div class="module-row" data-module-card="${moduleInfo.id}" data-module-state="${moduleStateKey(moduleInfo)}">
         <div class="module-row-main">
@@ -865,15 +851,6 @@ function bindModulesEvents(): void {
     }
     if (action === "launch-gdd") {
       void openGddFlow();
-      return;
-    }
-    if (action === "launch-analysis") {
-      showToast({
-        type: "info",
-        title: "Analysis module",
-        message: "Analysis module launcher will be wired when analysis module is installed.",
-        duration: 3200,
-      });
       return;
     }
     if (action === "open-config") {

@@ -4468,7 +4468,7 @@ pub fn run() {
 
             let _tray_icon = tauri::tray::TrayIconBuilder::with_id(TRAY_ICON_ID)
                 .icon(icon)
-                .tooltip("Trispr Flow")
+                .tooltip("Trispr Flow\nCtrl+Alt+Middle-click: re-paste last text")
                 .on_tray_icon_event(|tray, event| {
                     use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
                     match event {

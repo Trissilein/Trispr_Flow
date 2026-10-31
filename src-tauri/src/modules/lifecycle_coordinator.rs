@@ -232,7 +232,7 @@ pub(crate) fn disable_module_actions(
     // PHASE C: Reconcile (Reconcile Side-Effects)
     // ==========================================
     if result.is_ok() {
-        if module_id == TASK_CAPTURE_MODULE_ID || module_id == ASSISTANT_CORE_MODULE_ID {
+        if module_id == "task_capture" || module_id == ASSISTANT_CORE_MODULE_ID {
             state
                 .task_capture_generation
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);

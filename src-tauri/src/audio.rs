@@ -2245,6 +2245,15 @@ pub(crate) fn force_reset_refinement_activity(app_handle: &AppHandle, reason: &s
     emit_refinement_activity(app_handle, 0, reason);
 }
 
+pub(crate) fn mark_ollama_model_cold(app_handle: &AppHandle) {
+    let state = app_handle.state::<AppState>();
+    state.ollama_model_warm.store(false, Ordering::SeqCst);
+    state
+        .ollama_warmup_in_progress
+        .store(false, Ordering::SeqCst);
+    crate::overlay::update_overlay_ollama_state(app_handle, crate::overlay::OllamaModelState::Cold);
+}
+
 const OLLAMA_IDLE_RELEASE_MS: u64 = 14_400_000; // 4 hours — model stays warm for a full work session
 
 fn schedule_ollama_idle_release(app_handle: AppHandle, generation: u64, model: String) {
@@ -2279,14 +2288,7 @@ fn schedule_ollama_idle_release(app_handle: AppHandle, generation: u64, model: S
         {
             warn!("[ollama.idle] release failed model={}: {}", model, err);
         } else {
-            state.ollama_model_warm.store(false, Ordering::SeqCst);
-            state
-                .ollama_warmup_in_progress
-                .store(false, Ordering::SeqCst);
-            crate::overlay::update_overlay_ollama_state(
-                &app_handle,
-                crate::overlay::OllamaModelState::Cold,
-            );
+            mark_ollama_model_cold(&app_handle);
         }
     });
 }

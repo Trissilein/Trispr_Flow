@@ -725,19 +725,23 @@ pub(crate) fn unload_ollama_model_impl(endpoint: &str, model: &str) -> Result<()
         .timeout_read(std::time::Duration::from_secs(5))
         .build();
 
+    let mut last_error: Option<String> = None;
     for candidate in ollama_endpoint_candidates(endpoint) {
         let url = format!("{}/api/generate", candidate);
-        if agent
+        match agent
             .post(&url)
             .set("Content-Type", "application/json")
             .send_json(&unload_body)
-            .is_ok()
         {
-            return Ok(());
+            Ok(_) => return Ok(()),
+            Err(error) => last_error = Some(error.to_string()),
         }
     }
 
-    Ok(())
+    Err(format!(
+        "Failed to unload Ollama model: {}",
+        last_error.unwrap_or_else(|| "unable to reach Ollama endpoint".to_string())
+    ))
 }
 
 pub(crate) fn warmup_ollama_model_impl(
@@ -878,5 +882,17 @@ pub(crate) fn install_lm_studio() -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     {
         Err("LM Studio installer helper is only supported on Windows.".to_string())
+    }
+}
+
+#[cfg(test)]
+mod unload_tests {
+    use super::unload_ollama_model_impl;
+
+    #[test]
+    fn unload_reports_when_no_ollama_endpoint_accepts_the_release_request() {
+        let error = unload_ollama_model_impl("http://127.0.0.1:1", "test-model")
+            .expect_err("an unreachable endpoint must not be reported as unloaded");
+        assert!(error.contains("Failed to unload Ollama model"));
     }
 }

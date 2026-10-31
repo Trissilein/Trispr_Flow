@@ -138,7 +138,6 @@ import {
   syncWorkflowAgentConsoleState,
 } from "./workflow-agent-console";
 import { syncVoiceOutputConsoleState } from "./voice-output-console";
-import { initVideoGenerationPanel } from "./video-generation";
 import { ingestEditDelta } from "./vocab-auto-learn";
 import { scheduleVocabCleanupIfNeeded } from "./vocab-cleanup";
 import {
@@ -648,7 +647,6 @@ async function bootstrap() {
   void initOnboardingWizard();
   initPipelineStatus();
   syncVoiceOutputConsoleState();
-  void initVideoGenerationPanel();
 
   if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Rendering interface…";
   traceFrontendInfo("bootstrap", "rendering primary interface");

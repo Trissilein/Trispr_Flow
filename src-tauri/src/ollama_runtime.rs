@@ -1801,11 +1801,14 @@ fn install_ollama_runtime_impl(
 
         let enclosed = entry
             .enclosed_name()
-            .ok_or_else(|| format!("Unsafe ZIP entry path rejected: {}", entry.name()))?
+            .ok_or_else(|| {
+                let name = entry.name().map(|n| n.into_owned()).unwrap_or_default();
+                format!("Unsafe ZIP entry path rejected: {}", name)
+            })?
             .to_owned();
         let out_path = staging_dir.join(enclosed);
 
-        if entry.name().ends_with('/') {
+        if entry.is_dir() {
             fs::create_dir_all(&out_path).map_err(|e| {
                 format!("Failed to create directory '{}': {}", out_path.display(), e)
             })?;

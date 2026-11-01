@@ -50,8 +50,8 @@ which = "6.0"
 hound = "3.5"
 chrono = "0.4"
 keyring = "2.3"
-zip = { version = "0.6", default-features = false, features = ["deflate"] }
-lopdf = "0.32"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+lopdf = "0.42"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-global-shortcut = "2"

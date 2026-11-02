@@ -32,19 +32,15 @@ import {
 import type {
   AIProviderSettings,
   AIFallbackProvider,
-  CloudAIFallbackProvider,
   AIExecutionMode,
-  AIProviderAuthMethodPreference,
   OpenAICompatSettings,
   UserRefinementPromptPreset,
 } from "../types";
 import {
   CLOUD_PROVIDER_IDS,
-  CLOUD_PROVIDER_LABELS,
   normalizeCloudProvider,
   normalizeExecutionMode,
   normalizeAuthMethodPreference,
-  isVerifiedAuthStatus,
 } from "../ai-provider-utils";
 import {
   ensureSetupDefaults,
@@ -61,16 +57,6 @@ import { resolveEffectiveAsrLanguageHint } from "../language-utils";
 //               renderTopicKeywords()         called by ai-refinement.wire.ts
 //               renderOverlayHealthNote()     called by renderSettings() in index.ts
 //               __resetForTesting()           test-only state reset helper
-function authStatusLabel(status?: string | null): string {
-  if (status === "verified_api_key") return "Verified";
-  if (status === "verified_oauth") return "Verified (OAuth)";
-  return "Locked";
-}
-
-function authMethodLabel(method?: AIProviderAuthMethodPreference | null): string {
-  return method === "oauth" ? "OAuth (coming soon)" : "API key";
-}
-
 function getProviderSettings(provider: AIFallbackProvider): AIProviderSettings | null {
   if (!settings?.providers) return null;
   if (provider === "claude") return settings.providers.claude;
@@ -292,65 +278,6 @@ function applyProviderLaneVisibility(isOnlineMode: boolean) {
   }
 }
 
-function renderCloudProviderList(fallbackProvider: CloudAIFallbackProvider | null) {
-  if (!dom.aiFallbackCloudProviderList) return;
-
-  dom.aiFallbackCloudProviderList.innerHTML = "";
-
-  CLOUD_PROVIDER_IDS.forEach((providerId) => {
-    const providerConfig = getProviderSettings(providerId);
-    const verified = isVerifiedAuthStatus(providerConfig?.auth_status);
-    const selectedFallback = fallbackProvider === providerId;
-    const row = document.createElement("div");
-    row.className = `cloud-provider-row is-disabled${selectedFallback ? " is-selected" : ""}`;
-    row.setAttribute("aria-disabled", "true");
-
-    const left = document.createElement("div");
-    left.className = "cloud-provider-main";
-
-    const label = document.createElement("div");
-    label.className = "cloud-provider-title";
-    label.textContent = CLOUD_PROVIDER_LABELS[providerId];
-    left.appendChild(label);
-
-    const meta = document.createElement("div");
-    meta.className = "cloud-provider-meta";
-    const authStatus = authStatusLabel(providerConfig?.auth_status);
-    const method = authMethodLabel(providerConfig?.auth_method_preference);
-    meta.textContent = `${authStatus} • ${method}`;
-    left.appendChild(meta);
-
-    const actions = document.createElement("div");
-    actions.className = "cloud-provider-actions";
-
-    const selectBtn = document.createElement("button");
-    selectBtn.className = "hotkey-record-btn";
-    selectBtn.type = "button";
-    selectBtn.dataset.aiProviderAction = "select-fallback";
-    selectBtn.dataset.provider = providerId;
-    if (selectedFallback) {
-      selectBtn.textContent = verified ? "Saved fallback" : "Saved (locked)";
-    } else {
-      selectBtn.textContent = "Roadmap";
-    }
-    selectBtn.disabled = true;
-    actions.appendChild(selectBtn);
-
-    const authBtn = document.createElement("button");
-    authBtn.className = "hotkey-record-btn";
-    authBtn.type = "button";
-    authBtn.dataset.aiProviderAction = "authenticate";
-    authBtn.dataset.provider = providerId;
-    authBtn.textContent = "Read-only";
-    authBtn.disabled = true;
-    actions.appendChild(authBtn);
-
-    row.appendChild(left);
-    row.appendChild(actions);
-    dom.aiFallbackCloudProviderList?.appendChild(row);
-  });
-}
-
 function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedModel: string) {
   if (!dom.aiFallbackModel) return;
 
@@ -568,8 +495,6 @@ export function renderAIFallbackSettingsUi() {
     ai.provider = "ollama";
   }
 
-  const fallbackProvider = normalizeCloudProvider(ai?.fallback_provider ?? null);
-  const fallbackConfig = fallbackProvider ? getProviderSettings(fallbackProvider) : null;
   const executionMode: AIExecutionMode = "local_primary";
   const provider = ai.provider as AIFallbackProvider;
   ai.execution_mode = executionMode;
@@ -626,33 +551,10 @@ export function renderAIFallbackSettingsUi() {
         ? detail
         : "Preparing Ollama in the background.";
   }
-  renderCloudProviderList(fallbackProvider);
-
-  if (dom.aiFallbackFallbackStatus) {
-    const providerStatus = fallbackProvider
-      ? `${CLOUD_PROVIDER_LABELS[fallbackProvider]} stored (${authStatusLabel(fallbackConfig?.auth_status)})`
-      : "No provider selected.";
-    dom.aiFallbackFallbackStatus.textContent =
-      `${providerStatus} Online fallback is roadmap-only and not active in production.`;
-  }
-
   if (dom.aiFallbackLocalLane) {
     dom.aiFallbackLocalLane.classList.toggle("is-active", true);
     dom.aiFallbackLocalLane.classList.toggle("is-runtime-busy", runtimeCardState.busy);
     dom.aiFallbackLocalLane.setAttribute("aria-pressed", "true");
-  }
-  if (dom.aiFallbackOnlineLane) {
-    dom.aiFallbackOnlineLane.classList.remove("is-active");
-    dom.aiFallbackOnlineLane.classList.add("is-roadmap-disabled");
-    dom.aiFallbackOnlineLane.setAttribute("aria-pressed", "false");
-    dom.aiFallbackOnlineLane.setAttribute("aria-disabled", "true");
-  }
-
-  if (dom.aiFallbackOnlineStatusBadge) {
-    dom.aiFallbackOnlineStatusBadge.textContent = "Roadmap • Not active";
-    dom.aiFallbackOnlineStatusBadge.classList.add("is-locked");
-    dom.aiFallbackOnlineStatusBadge.classList.remove("is-verified");
-    dom.aiFallbackOnlineStatusBadge.classList.remove("is-active");
   }
   // The provider and runtime-source dropdowns are gone: a saved non-default setup is kept
   // untouched and only named here.

@@ -23,11 +23,7 @@ vi.hoisted(() => {
     <div id="ai-fallback-loading-scrim" hidden></div>
     <div id="ai-fallback-loading-title"></div>
     <div id="ai-fallback-loading-detail"></div>
-    <div id="ai-fallback-cloud-provider-list"></div>
-    <div id="ai-fallback-fallback-status"></div>
     <button id="ai-fallback-local-lane"></button>
-    <button id="ai-fallback-online-lane"></button>
-    <div id="ai-fallback-online-status-badge"></div>
     <div id="ai-fallback-local-primary-status"></div>
     <div id="ai-fallback-local-runtime-note"></div>
     <div id="ai-fallback-runtime-progress" hidden>
@@ -193,8 +189,6 @@ beforeEach(() => {
 
 describe("ai-refinement settings", () => {
     it("no-op on null settings", () => { setSettings(null); expect(() => renderAIFallbackSettingsUi()).not.toThrow(); });
-    it("renders 3 cloud rows", () => { renderAIFallbackSettingsUi(); expect(byId<HTMLElement>("ai-fallback-cloud-provider-list").querySelectorAll(".cloud-provider-row").length).toBe(3); });
-    it("roadmap badge text", () => { renderAIFallbackSettingsUi(); expect(byId<HTMLElement>("ai-fallback-online-status-badge").textContent).toContain("Roadmap"); });
     it("local lane active", () => { renderAIFallbackSettingsUi(); expect(byId<HTMLElement>("ai-fallback-local-lane").classList.contains("is-active")).toBe(true); });
     it("execution mode pinned", () => { setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, execution_mode: "online_fallback" as never } })); renderAIFallbackSettingsUi(); expect(settings?.ai_fallback.execution_mode).toBe("local_primary"); });
     it("cloud provider migration", () => { setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, provider: "openai" as never, fallback_provider: null } })); renderAIFallbackSettingsUi(); expect(settings?.ai_fallback.provider).toBe("ollama"); expect(settings?.ai_fallback.fallback_provider).toBe("openai"); });

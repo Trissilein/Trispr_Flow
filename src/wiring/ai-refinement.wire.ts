@@ -934,20 +934,6 @@ async function activateLocalLane(notify = false) {
   }
 }
 
-async function activateOnlineLane() {
-  applyExecutionModeInSettings("local_primary");
-  renderAIFallbackSettingsUi();
-  renderOllamaModelManager();
-  renderHero();
-  showToast({
-    type: "info",
-    title: "Roadmap-only",
-    message:
-      "Online fallback is currently read-only and not active in production.",
-    duration: 3600,
-  });
-}
-
 async function handleSaveCredentialsClick() {
   if (!settings) return;
   ensureAIFallbackSettingsDefaults();
@@ -1205,22 +1191,6 @@ export function wireAiRefinement(): void {
     }
   });
 
-  dom.aiFallbackCloudProviderList?.addEventListener("click", (event) => {
-    const target = event.target as HTMLElement | null;
-    const actionBtn = target?.closest<HTMLButtonElement>(
-      "[data-ai-provider-action]",
-    );
-    if (!actionBtn) return;
-    event.preventDefault();
-    showToast({
-      type: "info",
-      title: "Roadmap-only",
-      message:
-        "Online fallback controls are visible for roadmap transparency and are currently read-only.",
-      duration: 3200,
-    });
-  });
-
   dom.aiAuthModalClose?.addEventListener("click", () => {
     closeAuthModal();
   });
@@ -1268,17 +1238,6 @@ export function wireAiRefinement(): void {
     if (isLaneControlTarget(event.target)) return;
     event.preventDefault();
     void activateLocalLane(false);
-  });
-
-  dom.aiFallbackOnlineLane?.addEventListener("click", (event) => {
-    if (isLaneControlTarget(event.target)) return;
-    void activateOnlineLane();
-  });
-  dom.aiFallbackOnlineLane?.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    if (isLaneControlTarget(event.target)) return;
-    event.preventDefault();
-    void activateOnlineLane();
   });
 
   dom.aiFallbackModel?.addEventListener("change", async () => {

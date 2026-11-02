@@ -35,7 +35,6 @@ vi.hoisted(() => {
 
     <!-- AI fallback -->
     <input id="ai-fallback-enabled" type="checkbox" />
-    <div id="ai-fallback-cloud-provider-list"></div>
     <input id="ai-fallback-temperature" type="range" min="0" max="1" step="0.01" value="0.3" />
     <span id="ai-fallback-temperature-value"></span>
     <input id="ai-fallback-preserve-language" type="checkbox" />
@@ -43,7 +42,6 @@ vi.hoisted(() => {
     <input id="ai-fallback-max-tokens" type="number" value="4000" />
     <select id="ai-fallback-model"><option value="">-</option></select>
     <div id="ai-fallback-local-lane"></div>
-    <div id="ai-fallback-online-lane"></div>
     <button id="ai-fallback-local-primary-action" data-runtime-action="install"></button>
     <button id="ai-fallback-local-import-action"></button>
     <button id="ai-fallback-local-verify-action"></button>

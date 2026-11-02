@@ -8,7 +8,6 @@ export type HelpKey =
   | "ai_refinement_provider_model_section"
   | "ai_refinement_topic_section"
   | "ai_refinement_local_primary"
-  | "ai_refinement_online_fallback"
   | "ai_refinement_execution_mode"
   | "ai_refinement_enable"
   | "ai_refinement_asr_language_hint"
@@ -64,11 +63,6 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
     title: "Local Primary Runtime",
     description: "Ollama runs refinement locally so transcripts stay on this device by default.",
     consequence: "Choose this for privacy-first and offline-capable workflows.",
-  },
-  ai_refinement_online_fallback: {
-    title: "Online Fallback",
-    description: "Visible for roadmap transparency only. Online fallback is currently read-only and not active in production.",
-    consequence: "Clicks are blocked; behavior may change in a future release.",
   },
   ai_refinement_execution_mode: {
     title: "Execution Mode",
@@ -300,13 +294,11 @@ export function renderAIRefinementStaticHelp(): void {
     "ai_refinement_provider_model_section"
   );
   applyHelpTooltip(document.getElementById("ai-fallback-local-lane-title"), "ai_refinement_local_primary");
-  applyHelpTooltip(document.getElementById("ai-fallback-online-lane-title"), "ai_refinement_online_fallback");
   applyHelpTooltip(document.getElementById("ai-fallback-local-primary-action"), "ollama_action_install");
   applyHelpTooltip(document.getElementById("ai-fallback-local-import-action"), "ollama_action_import");
   applyHelpTooltip(document.getElementById("ai-fallback-local-verify-action"), "ollama_action_verify");
   applyHelpTooltip(document.getElementById("ai-fallback-local-refresh-action"), "ollama_action_refresh");
   applyHelpTooltip(document.getElementById("ai-refinement-models-title"), "ollama_models_section");
-  applyHelpTooltip(document.getElementById("ai-fallback-cloud-provider-list"), "ai_refinement_auth_method");
   applyHelpTooltip(document.getElementById("ai-auth-method"), "ai_refinement_auth_method");
   applyHelpTooltip(document.getElementById("language-select"), "ai_refinement_asr_language_hint");
   applyHelpTooltip(document.getElementById("language-pinned-toggle"), "ai_refinement_asr_language_hint");

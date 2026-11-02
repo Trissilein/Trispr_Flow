@@ -1,27 +1,58 @@
 :root {
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-  color: #e8e8ea;
-  background-color: #1a1f24;
-  --ink: #e8e8ea;
-  --ink-soft: #d1d5db;
-  --muted: #9ca3af;
+  color: var(--ink);
+  background-color: var(--app-bg);
+  --ink: #e8ebee;
+  --ink-soft: #a0a7ae;
+  --muted: #7d858d;
   --accent: #ff6b3d;
   --accent-2: #1da6a0;
   --accent-2-rgb: 29, 166, 160;
   --accent-2-bright: #4be0d4;
   --accent-2-bright-rgb: 76, 224, 212;
   --accent-3: #f5b342;
-  --card: rgba(30, 35, 42, 0.95);
-  --card-hover: rgba(35, 40, 47, 1);
-  --panel: rgba(40, 46, 55, 0.96);
-  --stroke: rgba(255, 255, 255, 0.1);
-  --stroke-strong: rgba(255, 255, 255, 0.15);
+  --card: #1c1f22;
+  --card-hover: #23272b;
+  --panel: #101214;
+  --stroke: #2a2e32;
+  --stroke-strong: #3a4046;
   --shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   --chevron-size: 1rem;
   --radius: 10px;
   --radius-sm: 6px;
   --history-active-font-size: 14px;
   --history-refinement-original-font-size: 12px;
+  /* OLED palette additions (values from SchedOpti themes.css :root) */
+  --app-bg: #08090b;
+  --app-raised: #151719;
+  --app-input: #0c0e10;
+  --status-success: #72d59e;
+  --status-success-bg: #13271d;
+  --status-success-line: #2a513b;
+  --status-warning: #f0c36a;
+  --status-warning-bg: #2b2417;
+  --status-warning-line: #6b5124;
+  --status-error: #ff9c9c;
+  --status-error-bg: #2b1d20;
+  --status-error-line: #654147;
+  --status-info: #9bcdf7;
+  --status-info-bg: #182838;
+  --status-info-line: #355a79;
+  /* Aliases for names used in rules but never defined before */
+  --text: var(--ink);
+  --text-bright: var(--ink);
+  --text-muted: var(--muted);
+  --ink-muted: var(--muted);
+  --ink-softer: var(--muted);
+  --bg-base: var(--app-bg);
+  --bg-surface: var(--panel);
+  --panel-soft: var(--card);
+  --surface-hover: var(--card-hover);
+  --accent-1: var(--accent-2-bright);
+  --accent-rgb: var(--accent-2-rgb);
+  --color-warning: var(--status-warning);
+  --radius-md: var(--radius);
+  --font-mono: "Consolas", "Menlo", monospace;
 }
 
 * {
@@ -32,17 +63,14 @@ body {
   margin: 0;
   min-height: 100vh;
   min-width: 980px;
-  background: #1a1f24;
+  background: var(--app-bg);
   color: var(--ink);
   line-height: 1.5;
 }
 
+/* Grain overlay removed: it washes out OLED black. Empty div stays in index.html. */
 .bg-noise {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='1' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E");
-  opacity: 0.3;
+  display: none;
 }
 
 .app {
@@ -4860,7 +4888,7 @@ input[type="range"]:focus-visible {
 .ai-provider-lanes {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .tts-provider-cards {
@@ -4952,35 +4980,16 @@ input[type="range"]:focus-visible {
   border-color: rgba(var(--accent-2-bright-rgb), 0.62);
 }
 
-.ai-provider-lane--online.is-active {
-  border-color: rgba(245, 179, 66, 0.62);
-}
-
 .ai-provider-lane--local {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  padding: 20px;
   border-color: rgba(var(--accent-2-bright-rgb), 0.35);
   background: linear-gradient(
     135deg,
     rgba(24, 53, 58, 0.45),
     rgba(22, 32, 42, 0.5)
   );
-}
-
-.ai-provider-lane--online {
-  border-color: rgba(245, 179, 66, 0.35);
-  background: linear-gradient(
-    135deg,
-    rgba(74, 53, 26, 0.38),
-    rgba(33, 30, 25, 0.48)
-  );
-}
-
-.ai-provider-lane.is-roadmap-disabled {
-  border-style: dashed;
-  opacity: 0.56;
-  filter: saturate(0.35);
-  cursor: not-allowed;
-  transform: none !important;
-  box-shadow: none !important;
 }
 
 .ai-provider-lane-header {
@@ -4996,25 +5005,6 @@ input[type="range"]:focus-visible {
   color: var(--ink);
 }
 
-.badge.badge--online.is-locked {
-  opacity: 0.75;
-  background: rgba(156, 163, 175, 0.22);
-  border-color: rgba(156, 163, 175, 0.38);
-  color: #d1d5db;
-}
-
-.badge.badge--online.is-verified {
-  background: rgba(245, 179, 66, 0.2);
-  border-color: rgba(245, 179, 66, 0.45);
-  color: #f5c463;
-}
-
-.badge.badge--online.is-active {
-  background: rgba(245, 179, 66, 0.28);
-  border-color: rgba(245, 179, 66, 0.65);
-  color: #ffce72;
-}
-
 .ai-provider-lane-actions {
   display: flex;
   flex-wrap: wrap;
@@ -5023,59 +5013,7 @@ input[type="range"]:focus-visible {
 
 .ai-provider-lane-actions .hotkey-record-btn {
   min-width: 0;
-  flex: 1;
-}
-
-.cloud-provider-list {
-  display: grid;
-  gap: 8px;
-}
-
-.cloud-provider-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.cloud-provider-row.is-selected {
-  border-color: rgba(245, 179, 66, 0.45);
-  background: rgba(245, 179, 66, 0.08);
-}
-
-.cloud-provider-row.is-disabled {
-  opacity: 0.62;
-}
-
-.cloud-provider-title {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.cloud-provider-meta {
-  font-size: 0.72rem;
-  color: var(--muted);
-}
-
-.cloud-provider-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.cloud-provider-actions .hotkey-record-btn {
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.cloud-provider-row.is-disabled .hotkey-record-btn {
-  cursor: not-allowed;
-  opacity: 0.6;
+  flex: 0 0 auto;
 }
 
 .ai-provider-advanced {
@@ -5139,7 +5077,7 @@ input[type="range"]:focus-visible {
 
 .ai-provider-advanced-actions .hotkey-record-btn {
   min-width: 0;
-  flex: 1;
+  flex: 0 0 auto;
 }
 
 #ai-fallback-local-runtime-version {
@@ -6586,10 +6524,6 @@ input[type="range"]:focus-visible {
 }
 
 @media (max-width: 820px) {
-  .ai-provider-lanes {
-    grid-template-columns: 1fr;
-  }
-
   .ollama-service-grid {
     grid-template-columns: 1fr;
   }
@@ -6600,14 +6534,6 @@ input[type="range"]:focus-visible {
 
   .ollama-runtime-actions .hotkey-record-btn {
     min-width: 0;
-    width: 100%;
-  }
-
-  .cloud-provider-row {
-    grid-template-columns: 1fr;
-  }
-
-  .cloud-provider-actions .hotkey-record-btn {
     width: 100%;
   }
 
@@ -7284,7 +7210,7 @@ input[type="range"]:focus-visible {
 .ai-runtime-versions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
   margin-top: 10px;
 }
 
@@ -7310,7 +7236,11 @@ input[type="range"]:focus-visible {
 }
 
 .ollama-zebra-col-actions {
-  width: 12.5rem;
+  width: 14rem;
+}
+
+.ai-runtime-versions .ollama-zebra-table col:not([style]):not(.ollama-zebra-col-actions) {
+  width: 16rem;
 }
 
 .ollama-zebra-th {
@@ -7422,6 +7352,7 @@ input[type="range"]:focus-visible {
 }
 
 .ollama-zebra-btn {
+  width: 5.5rem;
   min-width: 0;
   margin-left: 6px;
   padding: 3px 10px;

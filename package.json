@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "prepare": "git config core.hooksPath scripts/hooks || echo skipped",
-    "dev": "tauri dev --release",
+    "dev": "tauri dev",
     "dev:web": "vite",
     "dev:tauri": "node scripts/tauri-before-dev.mjs",
     "build": "tsc && vite build",

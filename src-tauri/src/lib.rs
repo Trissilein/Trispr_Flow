@@ -2121,7 +2121,7 @@ mod runtime_capability_gate_tests {
 
 #[tauri::command]
 fn save_window_visibility_state(app: AppHandle, visibility: String) {
-    // "normal" or "minimized" from frontend; "tray" is set by hide_main_window
+    // "normal" or "minimized" from frontend; closing to the tray is not persisted
     if ["normal", "minimized"].contains(&visibility.as_str()) {
         save_window_visibility(&app, &visibility);
     }
@@ -3694,11 +3694,36 @@ fn hide_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
         let _ = window.set_skip_taskbar(true);
-        save_window_visibility(app, "tray");
+        // Deliberately not persisted: closing to the tray must not hide the next manual start.
     }
 }
 
-/// Persist the window visibility state ("normal", "minimized", "tray") to settings
+/// Only a session that ended minimized restarts minimized; everything else shows the window.
+/// "tray" is never persisted anymore, so a stored "tray" is stale (older versions) or the
+/// fresh-install default and must not hide a manual start.
+fn start_window_minimized(persisted_start_state: &str) -> bool {
+    persisted_start_state == "minimized"
+}
+
+#[cfg(test)]
+mod start_window_tests {
+    use super::start_window_minimized;
+
+    #[test]
+    fn only_minimized_restarts_minimized() {
+        assert!(start_window_minimized("minimized"));
+        assert!(!start_window_minimized("normal"));
+    }
+
+    #[test]
+    fn stale_or_default_tray_still_shows_window() {
+        assert!(!start_window_minimized("tray"));
+        assert!(!start_window_minimized(""));
+    }
+}
+
+/// Persist the window visibility state ("normal", "minimized") to settings.
+/// Callers never pass "tray": see `hide_main_window`.
 fn save_window_visibility(app: &AppHandle, visibility: &str) {
     let state = app.state::<AppState>();
     let mut settings = state
@@ -4651,26 +4676,16 @@ pub fn run() {
                 restore_window_geometry(&window, &window_settings);
                 MAIN_WINDOW_RESTORED.store(true, Ordering::Release);
 
-                // Restore window visibility state from last session
-                match window_settings.main_window_start_state.as_str() {
-                    "tray" => {
-                        // Start hidden in system tray
-                        info!("Restoring window state: hidden in system tray");
-                        let _ = window.hide();
-                        let _ = window.set_skip_taskbar(true);
-                    }
-                    "minimized" => {
-                        // Start minimized
-                        info!("Restoring window state: minimized");
-                        let _ = window.show();
-                        let _ = window.set_skip_taskbar(false);
-                        let _ = window.minimize();
-                    }
-                    _ => {
-                        // "normal" — explicitly show from hidden startup config.
-                        let _ = window.show();
-                        let _ = window.set_skip_taskbar(false);
-                    }
+                // Restore window visibility state from last session (never hidden in the tray)
+                if start_window_minimized(&window_settings.main_window_start_state) {
+                    info!("Restoring window state: minimized");
+                    let _ = window.show();
+                    let _ = window.set_skip_taskbar(false);
+                    let _ = window.minimize();
+                } else {
+                    // Explicitly show from hidden startup config.
+                    let _ = window.show();
+                    let _ = window.set_skip_taskbar(false);
                 }
             }
 

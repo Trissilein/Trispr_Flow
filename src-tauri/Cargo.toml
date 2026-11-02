@@ -13,7 +13,7 @@ default-run = "trispr-flow"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "trispr_flow_lib"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [features]
 default = ["module-gdd"]
@@ -65,3 +65,10 @@ windows = { version = "0.59", features = ["Win32_Graphics_Dxgi", "Win32_System_L
 
 [patch.crates-io]
 global-hotkey = { path = "../vendor/global-hotkey-0.7.0" }
+
+# Dev builds: own crate lightly optimized, dependencies fully optimized (they rarely rebuild).
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

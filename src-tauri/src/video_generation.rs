@@ -569,24 +569,18 @@ fn run_hyperframes_render_inner(
     let app_stdout = app.clone();
     let job_id_stdout = workdir.job_id.clone();
     let stdout_thread = thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines().flatten() {
+        for_each_line(BufReader::new(stdout), |line| {
             info!("[hyperframes:out] {}", line);
             emit_progress(&app_stdout, &job_id_stdout, "rendering", 0.5, Some(&line));
-        }
+        });
     });
 
     let app_stderr = app.clone();
     let job_id_stderr = workdir.job_id.clone();
     let stderr_thread = thread::spawn(move || {
-        let reader = BufReader::new(stderr);
         let mut tail: Vec<String> = Vec::new();
-        for line in reader.lines().flatten() {
+        for_each_line(BufReader::new(stderr), |line| {
             warn!("[hyperframes:err] {}", line);
-            tail.push(line.clone());
-            if tail.len() > 40 {
-                tail.remove(0);
-            }
             emit_progress(
                 &app_stderr,
                 &job_id_stderr,
@@ -594,7 +588,11 @@ fn run_hyperframes_render_inner(
                 0.5,
                 Some(&format!("stderr: {}", line)),
             );
-        }
+            tail.push(line);
+            if tail.len() > 40 {
+                tail.remove(0);
+            }
+        });
         tail
     });
 
@@ -614,6 +612,14 @@ fn run_hyperframes_render_inner(
     }
 
     Ok(())
+}
+
+/// Feed each line of `reader` to `on_line`. Stops at the first read error:
+/// once a pipe is broken, `lines()` yields an `Err` on every further call.
+fn for_each_line<R: BufRead>(reader: R, mut on_line: impl FnMut(String)) {
+    for line in reader.lines().map_while(Result::ok) {
+        on_line(line);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -696,6 +702,47 @@ mod tests {
             .enabled_modules
             .insert(VIDEO_MODULE_ID.to_string());
         assert!(is_video_module_enabled(&module_settings));
+    }
+
+    /// Serves `data`, then fails every read with `BrokenPipe`. After 1000 failed
+    /// reads it reports EOF so a runaway loop ends instead of hanging the test.
+    struct BrokenPipeReader {
+        data: &'static [u8],
+        pos: usize,
+        errors: usize,
+    }
+
+    impl std::io::Read for BrokenPipeReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.pos < self.data.len() {
+                let n = buf.len().min(self.data.len() - self.pos);
+                buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+                self.pos += n;
+                return Ok(n);
+            }
+            self.errors += 1;
+            if self.errors > 1000 {
+                return Ok(0);
+            }
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "pipe broken",
+            ))
+        }
+    }
+
+    #[test]
+    fn for_each_line_stops_at_first_read_error() {
+        let mut source = BrokenPipeReader {
+            data: b"one\ntwo\n",
+            pos: 0,
+            errors: 0,
+        };
+        let mut lines = Vec::new();
+        for_each_line(BufReader::new(&mut source), |line| lines.push(line));
+
+        assert_eq!(lines, vec!["one", "two"]);
+        assert_eq!(source.errors, 1, "reader polled again after the first error");
     }
 }
 

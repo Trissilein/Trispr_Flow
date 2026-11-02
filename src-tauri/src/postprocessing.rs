@@ -371,8 +371,9 @@ fn apply_custom_vocabulary(text: &str, vocab: &HashMap<String, String>) -> Strin
                                 "Failed to compile regex for custom vocabulary '{}': {}",
                                 original, e
                             );
-                            // Fallback: a regex that never matches
-                            regex::Regex::new(r"(?!x)x").unwrap()
+                            // Fallback: a regex that never matches (the regex crate has
+                            // no look-around, so `(?!x)x` would fail to compile)
+                            regex::Regex::new(r"[^\s\S]").unwrap()
                         }
                     })
                     .clone(),
@@ -689,5 +690,30 @@ mod tests {
         assert!(result.contains('3'));
         assert!(result.contains('5'));
         assert!(result.ends_with('.'));
+    }
+
+    // ========== Custom Vocabulary Tests ==========
+
+    #[test]
+    fn test_custom_vocabulary_uncompilable_entry_is_skipped() {
+        // An entry whose escaped pattern exceeds the regex size limit cannot be compiled.
+        let huge = "a".repeat(1 << 20);
+        assert!(
+            regex::Regex::new(&format!(r"\b{}\b", regex::escape(&huge))).is_err(),
+            "test entry must be uncompilable"
+        );
+
+        let mut vocab = HashMap::new();
+        vocab.insert(huge, "X".to_string());
+        let text = "aaa bbb";
+        assert_eq!(apply_custom_vocabulary(text, &vocab), text);
+
+        // The regex cache must stay usable (lock not poisoned) for later entries.
+        let mut vocab = HashMap::new();
+        vocab.insert("vocabprobe".to_string(), "VOCABPROBE".to_string());
+        assert_eq!(
+            apply_custom_vocabulary("say vocabprobe now", &vocab),
+            "say VOCABPROBE now"
+        );
     }
 }

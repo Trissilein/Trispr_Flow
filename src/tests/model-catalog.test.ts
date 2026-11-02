@@ -40,28 +40,18 @@ describe("model-catalog.json (shipped data)", () => {
     }
   });
 
-  it("separates Ollama library refs from hf.co refs by source", () => {
-    const hf = MODEL_CATALOG.filter((entry) => entry.source === "huggingface");
-    const ollama = MODEL_CATALOG.filter((entry) => entry.source === "ollama");
-    expect(ollama.length).toBeGreaterThanOrEqual(8);
-    expect(hf.length).toBeGreaterThanOrEqual(6);
-    for (const entry of hf) expect(entry.name).toMatch(/^hf\.co\/[^/:]+\/[^/:]+:[^/:]+$/);
-    for (const entry of ollama) expect(entry.name.startsWith("hf.co/")).toBe(false);
+  it("ships only Ollama library refs: no hf.co entry in the lean list", () => {
+    expect(MODEL_CATALOG.every((entry) => entry.source === "ollama")).toBe(true);
+    for (const entry of MODEL_CATALOG) expect(entry.name.startsWith("hf.co/")).toBe(false);
   });
 
-  it("contains the verified Hugging Face refs and not the unresolvable ggml-org one", () => {
-    const names = MODEL_CATALOG.map((entry) => entry.name);
-    for (const ref of [
-      "hf.co/google/gemma-4-E4B-it-qat-q4_0-gguf:latest",
-      "hf.co/unsloth/gemma-4-E4B-it-GGUF:Q4_K_M",
-      "hf.co/lmstudio-community/gemma-4-E4B-it-GGUF:Q4_K_M",
-      "hf.co/unsloth/gemma-4-E2B-it-GGUF:Q4_K_M",
-      "hf.co/unsloth/Qwen3.5-4B-GGUF:Q4_K_M",
-      "hf.co/unsloth/Qwen3.5-9B-GGUF:Q4_K_M",
-    ]) {
-      expect(names).toContain(ref);
-    }
-    expect(names.some((name) => name.toLowerCase().includes("ggml-org"))).toBe(false);
+  it("ships the lean list: Gemma 4 E4B (recommended), Qwen 3.5 4B and Gemma 4 E2B, nothing else", () => {
+    expect(MODEL_CATALOG.map((entry) => entry.name)).toEqual(["gemma4:e4b", "qwen3.5:4b", "gemma4:e2b"]);
+    expect(MODEL_CATALOG.filter((entry) => entry.status === "recommended").map((entry) => entry.name)).toEqual([
+      "gemma4:e4b",
+    ]);
+    // No higher-precision builds (Q8/BF16), no ggml-org ref.
+    expect(MODEL_CATALOG.some((entry) => /q8|bf16|ggml-org/i.test(entry.name))).toBe(false);
   });
 
   it("keeps the Bonsai-2 27B fork model (needs a patched llama.cpp, not Ollama) out of the list", () => {

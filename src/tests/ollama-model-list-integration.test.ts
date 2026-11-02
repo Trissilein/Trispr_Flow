@@ -10,6 +10,7 @@ import {
   OLD,
   OLD_DIGEST,
   load,
+  modelBox,
   runtime,
   runtimeHandlers,
   settle,
@@ -58,9 +59,9 @@ function handlers(extra: Record<string, (args?: Record<string, unknown>) => unkn
     check_ollama_model_requirements: (args?: Record<string, unknown>) =>
       ((args?.models as string[]) ?? []).map((name) => ({
         name,
-        requires: name === "qwen3.5:9b" ? "0.99.0" : null,
+        requires: name === "gemma4:e2b" ? "0.99.0" : null,
         runtime_version: "0.40.13",
-        compatible: name === "qwen3.5:9b" ? false : null,
+        compatible: name === "gemma4:e2b" ? false : null,
         detail: null,
       })),
     get_ollama_model_details: () => DETAILS,
@@ -97,8 +98,9 @@ describe("one list", () => {
     expect(states.slice(firstAvailable).every((state) => state === "available")).toBe(true);
     // Installed group: all four installed models, none of them twice.
     expect(order.slice(1, firstAvailable).sort()).toEqual([HF, OLD, "my-private:latest"].sort());
-    // Downloadable group: the recommended qwen3.5:4b leads; the rest is alphabetical by title.
-    expect(order[firstAvailable]).toBe("qwen3.5:4b");
+    // Downloadable group: the lean catalog without the installed gemma4:e4b, alphabetical by title
+    // (neither is recommended).
+    expect(order.slice(firstAvailable)).toEqual(["gemma4:e2b", "qwen3.5:4b"]);
     const titles = Array.from(ctx.container().querySelectorAll<HTMLElement>(".ollama-model-row"))
       .slice(firstAvailable + 1)
       .map((row) => row.querySelector(".qwen-card-name")!.textContent!);
@@ -107,16 +109,22 @@ describe("one list", () => {
     expect(new Set(order.map((n) => n.toLowerCase())).size).toBe(order.length);
   });
 
-  it("offers Activate and Delete for installed, Download for the rest and nothing but chips for the active model", async () => {
+  it("offers Activate and Delete for installed, a tick box for the rest and nothing but chips for the active model", async () => {
     const ctx = await load(handlers());
     await ctx.boot();
     expect(actionsOf(ctx, CURRENT)).toEqual([]);
     expect(ctx.cardOf(CURRENT)!.querySelector(".qwen-card-badge--active")!.textContent).toBe("Active");
     expect(actionsOf(ctx, HF)).toEqual(["activate", "delete"]);
     expect(actionsOf(ctx, "my-private:latest")).toEqual(["activate", "delete"]);
-    expect(actionsOf(ctx, "qwen3.5:4b")).toEqual(["download"]);
+    // Not installed: no per-row button, a native checkbox instead; installed rows have none.
+    expect(actionsOf(ctx, "qwen3.5:4b")).toEqual([]);
+    const box = modelBox(ctx.cardOf("qwen3.5:4b"))!;
+    expect(box.type).toBe("checkbox");
+    expect(box.getAttribute("aria-label")).toBe("Select Qwen 3.5 4B — Standard for download");
+    expect(modelBox(ctx.cardOf(CURRENT))).toBeNull();
+    expect(modelBox(ctx.cardOf(HF))).toBeNull();
+    expect(modelBox(ctx.cardOf("my-private:latest"))).toBeNull();
     expect(ctx.cardOf(HF)!.querySelector('button[data-action="delete"]')!.textContent).toBe("Delete");
-    expect(ctx.cardOf("qwen3.5:4b")!.querySelector('button[data-action="download"]')!.textContent).toBe("Download");
   });
 
   it("keeps Update/Replace, the Outdated chip and its hint on the compact row", async () => {
@@ -131,14 +139,17 @@ describe("one list", () => {
     expect(old.dataset.expanded).toBe("false");
   });
 
-  it("shows the runtime requirement as a chip, blocks the download and says why", async () => {
+  it("shows the runtime requirement as a chip only for a real conflict, blocks the tick box and says why", async () => {
     const ctx = await load(handlers());
     await ctx.boot();
-    const card = ctx.cardOf("qwen3.5:9b")!;
+    const card = ctx.cardOf("gemma4:e2b")!;
     expect(card.querySelector(".qwen-card-badge--needs-runtime")!.textContent).toBe("Needs Ollama ≥ 0.99.0");
-    expect(card.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(true);
+    expect(modelBox(card)!.disabled).toBe(true);
+    expect(modelBox(card)!.title).toContain("update the runtime first");
     expect(card.querySelector(".qwen-card-hint--runtime")!.textContent).toBeTruthy();
     expect(card.querySelector<HTMLButtonElement>(".ollama-model-toggle")).not.toBeNull();
+    // A model without a conflict carries no runtime chip at all.
+    expect(ctx.cardOf("qwen3.5:4b")!.querySelector(".qwen-card-badge--runtime-ok, .qwen-card-badge--needs-runtime")).toBeNull();
   });
 
   it("marks the stable build as Recommended and the proven one as Verified working", async () => {

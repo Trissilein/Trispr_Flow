@@ -8,6 +8,10 @@
  * (`actions`, `chips`, `hints`): this module only draws, keeps the open/closed state across
  * re-renders and keeps keyboard focus where it was.
  *
+ * A row that is not installed and not downloading can be ticked (`select`); the bar under the list
+ * shows what is ticked (count, summed size) and hands the ticked rows to `onDownloadSelected`.
+ * The ticks live in this module, like the open rows, and survive re-renders.
+ *
  * Every text is set with `textContent`: model names, descriptions and licenses come from the
  * network or from other people's model files.
  */
@@ -61,6 +65,16 @@ export type ModelListInfo = {
   detailSignature: string;
 };
 
+/** Present on rows that can be ticked for the bulk download (not installed, not downloading). */
+export type ModelListSelect = {
+  /** Download size in decimal GB, summed in the bar. */
+  sizeGb: number;
+  /** The runtime is too old for this model: the box is disabled and the row never counts as ticked. */
+  blocked: boolean;
+  /** Why the box is disabled. */
+  title?: string;
+};
+
 export type ModelListRow = {
   /** Normalised name, unique in the list. */
   key: string;
@@ -75,11 +89,16 @@ export type ModelListRow = {
   actions: ModelListAction[];
   hints: ModelListHint[];
   progress?: { percent: number | null; text: string };
+  select?: ModelListSelect;
   info: ModelListInfo;
 };
 
 export type ModelListHooks = {
   onAction: (action: string, row: ModelListRow, data: DOMStringMap) => void;
+  /** "Download selected": the ticked rows that are not blocked, in list order. The ticks are cleared. */
+  onDownloadSelected?: (rows: ModelListRow[]) => void;
+  /** Why "Download selected" may not start right now (a runtime action runs); null when it may. */
+  downloadBlockedReason?: () => string | null;
   /** Asked for on the first expansion of a row. Without it the panel shows the known facts only. */
   loadDetails?: (name: string) => Promise<unknown>;
   /** Opens one of `info.links` outside the app. */
@@ -239,6 +258,8 @@ function isoDateOnly(date: string): string {
 // ───────────────────────────── state that outlives a render ─────────────────────────────
 
 const expandedKeys = new Set<string>();
+/** Rows ticked for the bulk download. */
+const selectedKeys = new Set<string>();
 type DetailsEntry = {
   signature: string;
   state: "loading" | "ready" | "error";
@@ -253,17 +274,30 @@ const DETAILS_RETRY_MS = 30_000;
 const DETAILS_FRESH_MS = 10 * 60_000;
 const MAX_CACHED_DETAILS = 64;
 
-let current: { list: HTMLElement; rows: ModelListRow[]; hooks: ModelListHooks } | null = null;
+type CurrentList = {
+  list: HTMLElement;
+  rows: ModelListRow[];
+  hooks: ModelListHooks;
+  bar: HTMLElement;
+  summary: HTMLElement;
+  button: HTMLButtonElement;
+};
+let current: CurrentList | null = null;
 
-/** Forgets which rows are open and every loaded detail (tests, and a clean start). */
+/** Forgets which rows are open or ticked and every loaded detail (tests, and a clean start). */
 export function resetModelListState(): void {
   expandedKeys.clear();
+  selectedKeys.clear();
   detailsCache.clear();
   current = null;
 }
 
 export function isModelRowExpanded(key: string): boolean {
   return expandedKeys.has(key);
+}
+
+export function isModelRowSelected(key: string): boolean {
+  return selectedKeys.has(key);
 }
 
 export function getCachedModelDetails(key: string): DetailsEntry | undefined {
@@ -295,10 +329,12 @@ export type ModelListFocusToken = { key: string; target: string } | null;
 export function captureModelListFocus(host: ParentNode | null): ModelListFocusToken {
   const active = typeof document !== "undefined" ? document.activeElement : null;
   if (!host || !(active instanceof HTMLElement) || !host.contains(active)) return null;
+  if (active.closest(".ollama-model-bulk")) return { key: "", target: "bulk" };
   const row = active.closest<HTMLElement>(".ollama-model-row");
   const key = row?.dataset.key;
   if (!row || !key) return null;
   if (active.dataset.role === "toggle") return { key, target: "toggle" };
+  if (active.dataset.role === "select") return { key, target: "select" };
   const action = active.closest<HTMLElement>("[data-action]")?.dataset.action;
   if (action) return { key, target: `action:${action}` };
   const link = active.closest<HTMLElement>("[data-open-url]")?.dataset.openUrl;
@@ -308,11 +344,21 @@ export function captureModelListFocus(host: ParentNode | null): ModelListFocusTo
 
 export function restoreModelListFocus(host: ParentNode | null, token: ModelListFocusToken): void {
   if (!host || !token) return;
+  if (token.target === "bulk") {
+    // The button is disabled once its job started: the first row's toggle is the next best place.
+    const next =
+      host.querySelector<HTMLElement>(".ollama-model-bulk-btn:not(:disabled)") ??
+      host.querySelector<HTMLElement>('[data-role="toggle"]');
+    next?.focus({ preventScroll: true });
+    return;
+  }
   const rows = Array.from(host.querySelectorAll<HTMLElement>(".ollama-model-row"));
   const row = rows.find((candidate) => candidate.dataset.key === token.key);
   if (!row) return;
   let target: HTMLElement | null = null;
-  if (token.target.startsWith("action:")) {
+  if (token.target === "select") {
+    target = row.querySelector<HTMLElement>('input[data-role="select"]:not(:disabled)');
+  } else if (token.target.startsWith("action:")) {
     const action = token.target.slice("action:".length);
     target = Array.from(row.querySelectorAll<HTMLElement>("button[data-action]")).find(
       (button) => button.dataset.action === action && !(button as HTMLButtonElement).disabled
@@ -508,7 +554,24 @@ function panelNode(row: ModelListRow, entry: DetailsEntry | undefined, hooks: Mo
   return panel;
 }
 
-function rowNode(row: ModelListRow, hooks: ModelListHooks, index: number): HTMLElement {
+/** The tick box of a row: a native checkbox, so Space toggles it and screen readers announce it. */
+function selectNode(row: ModelListRow, select: ModelListSelect): HTMLElement {
+  const label = el("label", "ollama-model-select");
+  const input = el("input");
+  input.type = "checkbox";
+  input.dataset.role = "select";
+  input.checked = !select.blocked && selectedKeys.has(row.key);
+  input.disabled = select.blocked;
+  input.setAttribute("aria-label", `Select ${row.title} for download`);
+  if (select.title) {
+    label.title = select.title;
+    input.title = select.title;
+  }
+  label.appendChild(input);
+  return label;
+}
+
+function rowNode(row: ModelListRow, hooks: ModelListHooks, index: number, selectable: boolean): HTMLElement {
   const open = expandedKeys.has(row.key);
   const entry = open ? detailsCache.get(row.key) : undefined;
 
@@ -534,6 +597,9 @@ function rowNode(row: ModelListRow, hooks: ModelListHooks, index: number): HTMLE
   for (const chip of row.chips) chips.appendChild(chipNode(chip));
   if (chips.childElementCount > 0) sub.appendChild(chips);
   main.append(toggle, sub);
+  // The column exists for every row of a list that has tick boxes, so the names stay aligned.
+  if (row.select) head.appendChild(selectNode(row, row.select));
+  else if (selectable) head.appendChild(el("span", "ollama-model-select ollama-model-select--empty"));
   head.append(
     main,
     el("span", "ollama-model-source", row.sourceLabel),
@@ -592,17 +658,57 @@ function startDetailsLoad(row: ModelListRow, hooks: ModelListHooks): void {
   );
 }
 
+function formatGb(gb: number): string {
+  return `${gb.toFixed(1)} GB`;
+}
+
+/** Ticked rows that can really be downloaded, in list order. */
+function chosenRows(rows: ModelListRow[]): ModelListRow[] {
+  return rows.filter((row) => row.select && !row.select.blocked && selectedKeys.has(row.key));
+}
+
+/** Count, size and state of the bulk bar; the bar exists only while a row can still be ticked. */
+function updateBulkBar(): void {
+  if (!current) return;
+  const { list, rows, hooks, bar, summary, button } = current;
+  if (!rows.some((row) => row.select)) {
+    bar.remove();
+    return;
+  }
+  if (!bar.isConnected) list.after(bar);
+  const chosen = chosenRows(rows);
+  const totalGb = chosen.reduce((sum, row) => sum + (row.select?.sizeGb ?? 0), 0);
+  summary.textContent = `${chosen.length} selected · ${formatGb(totalGb)}`;
+  const reason = chosen.length === 0 ? "Select at least one model to download." : (hooks.downloadBlockedReason?.() ?? null);
+  button.disabled = reason !== null;
+  button.title = reason ?? `Downloads the ${chosen.length} selected model${chosen.length === 1 ? "" : "s"} one after another.`;
+}
+
+function downloadSelected(): void {
+  if (!current || current.button.disabled) return;
+  const chosen = chosenRows(current.rows);
+  if (chosen.length === 0) return;
+  const { hooks } = current;
+  // The ticks are spent: the rows leave the "available" state (queued or downloading) right after.
+  selectedKeys.clear();
+  hooks.onDownloadSelected?.(chosen);
+  rebuild();
+}
+
 function rebuild(): void {
   if (!current) return;
   const { list, rows, hooks } = current;
+  const selectable = rows.some((row) => row.select);
+  list.classList.toggle("ollama-model-rows--selectable", selectable);
   // Open rows ask for their details first (first expansion only loads), so the frame drawn next
   // already says "Loading details…".
   for (const row of rows) {
     if (expandedKeys.has(row.key)) startDetailsLoad(row, hooks);
   }
   const focus = captureModelListFocus(list);
-  list.replaceChildren(...rows.map((row, index) => rowNode(row, hooks, index)));
+  list.replaceChildren(...rows.map((row, index) => rowNode(row, hooks, index, selectable)));
   restoreModelListFocus(list, focus);
+  updateBulkBar();
 }
 
 function toggleRow(key: string): void {
@@ -626,6 +732,12 @@ export function renderModelList(container: HTMLElement, rows: ModelListRow[], ho
     if (!keys.has(key)) expandedKeys.delete(key);
   }
 
+  // Rows that cannot be ticked any more (installed, downloading, blocked) lose their tick.
+  const tickable = new Set(rows.filter((row) => row.select && !row.select.blocked).map((row) => row.key));
+  for (const key of Array.from(selectedKeys)) {
+    if (!tickable.has(key)) selectedKeys.delete(key);
+  }
+
   list.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -633,6 +745,16 @@ export function renderModelList(container: HTMLElement, rows: ModelListRow[], ho
     const rowElement = target.closest<HTMLElement>(".ollama-model-row");
     const key = rowElement?.dataset.key;
     const row = key ? current?.rows.find((candidate) => candidate.key === key) : undefined;
+    // The tick box never opens or closes the row. The box itself changes the selection; a click on
+    // its label only forwards a second click to the box.
+    if (target.closest(".ollama-model-select")) {
+      if (target instanceof HTMLInputElement && !target.disabled && row?.select && !row.select.blocked) {
+        if (target.checked) selectedKeys.add(row.key);
+        else selectedKeys.delete(row.key);
+        updateBulkBar();
+      }
+      return;
+    }
     if (actionButton) {
       if (actionButton.disabled || !row || !current) return;
       current.hooks.onAction(actionButton.dataset.action ?? "", row, actionButton.dataset);
@@ -649,7 +771,17 @@ export function renderModelList(container: HTMLElement, rows: ModelListRow[], ho
     if (key && target.closest(".ollama-model-row-head")) toggleRow(key);
   });
 
-  current = { list, rows, hooks };
+  const bar = el("div", "ollama-model-bulk");
+  bar.setAttribute("role", "group");
+  bar.setAttribute("aria-label", "Download selected models");
+  const summary = el("span", "ollama-model-bulk-summary");
+  summary.setAttribute("aria-live", "polite");
+  const button = el("button", "qwen-card-btn qwen-card-btn--download ollama-model-bulk-btn", "Download selected");
+  button.type = "button";
+  button.addEventListener("click", downloadSelected);
+  bar.append(summary, button);
+
+  current = { list, rows, hooks, bar, summary, button };
   container.appendChild(list);
   rebuild();
   return list;

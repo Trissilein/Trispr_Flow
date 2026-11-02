@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NEW_DIGEST,
   OLD_DIGEST,
+  downloadSelected,
   load,
+  modelBox,
   runtime,
   runtimeHandlers,
   settle,
@@ -82,9 +84,13 @@ describe("catalog cards", () => {
     const card = ctx.cardOf(hostile)!;
     expect(card.querySelector(".qwen-card-desc")!.textContent).toContain(SCRIPT);
     expectInert(ctx.container());
-    // The pull reference survives the attribute round trip untouched.
-    expect(card.querySelector<HTMLButtonElement>('button[data-action="download"]')!.dataset.model).toBe(hostile);
-    expect(ctx.cardOf(hf)!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.dataset.model).toBe(hf);
+    // The pull reference survives the round trip untouched: ticked rows are pulled by their exact name.
+    expect(card.dataset.model).toBe(hostile);
+    expect(ctx.cardOf(hf)!.dataset.model).toBe(hf);
+    expect(modelBox(card)!.getAttribute("aria-label")).toBe(`Select ${IMG} for download`);
+    expect(modelBox(ctx.cardOf(hf))!.getAttribute("aria-label")).toBe(`Select HF ${IMG} for download`);
+    downloadSelected(ctx.cardOf(hostile));
+    await vi.waitFor(() => expect(ctx.callsOf("pull_ollama_model").map((call) => call.args)).toEqual([{ model: hostile }]));
   });
 
   it("renders hostile pull status lines as text and keeps the bar a plain width", async () => {
@@ -181,7 +187,7 @@ describe("installed models", () => {
       { catalogJson: [{ name: "ok:1b", label: "Ok", source: "ollama", family: "f", status: "supported", profile: "p", size_gb: 1, description: "Fine." }] }
     );
     await ctx.boot();
-    ctx.cardOf("ok:1b")!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.click();
+    downloadSelected(ctx.cardOf("ok:1b"));
     await vi.waitFor(() => expect(document.querySelector("#toast-container .toast")).not.toBeNull());
     const toast = document.querySelector<HTMLElement>("#toast-container")!;
     expect(toast.querySelector(".toast-message")!.textContent).toContain(IMG);

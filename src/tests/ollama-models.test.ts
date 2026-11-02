@@ -25,7 +25,6 @@ import {
 
 const OLD_DIGEST = "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb";
 const NEW_DIGEST = "dc35e8d9c6061baa6f0fa870975ab6932e2542b579b13ea0f199fa4bb7300c9c";
-const GOOGLE_QAT = "hf.co/google/gemma-4-E4B-it-qat-q4_0-gguf:latest";
 const UNSLOTH_E4B = "hf.co/unsloth/gemma-4-E4B-it-GGUF:Q4_K_M";
 
 describe("ollama-models helpers", () => {
@@ -48,7 +47,7 @@ describe("ollama-models helpers", () => {
       const inventory = buildInstalledOllamaInventory(
         [
           { name: "custom-import:latest", size_bytes: 3 * 1024 * 1024 * 1024 },
-          { name: "qwen3.5:2b", size_bytes: 2 * 1024 * 1024 * 1024 },
+          { name: "qwen3.5:4b", size_bytes: 2 * 1024 * 1024 * 1024 },
           { name: "gemma4:e4b", size_bytes: 10 * 1024 * 1024 * 1024 },
         ],
         "gemma4:e4b"
@@ -56,7 +55,7 @@ describe("ollama-models helpers", () => {
 
       expect(inventory.map((item) => item.name)).toEqual([
         "gemma4:e4b",
-        "qwen3.5:2b",
+        "qwen3.5:4b",
         "custom-import:latest",
       ]);
       expect(inventory[0].is_active).toBe(true);
@@ -173,8 +172,10 @@ describe("ollama-models helpers", () => {
       expect(formatCatalogModelMeta({ ...e4b, verified_at: "2026-11-02" })).toBe(
         "Ollama library · recommended · size checked 2 Nov 2026"
       );
-      const hf = OLLAMA_RECOMMENDED_MODELS.find((spec) => spec.name === UNSLOTH_E4B)!;
-      expect(formatCatalogModelMeta({ ...hf, verified_at: undefined })).toBe("Hugging Face");
+      // The lean catalog has no Hugging Face entry; the formatter still knows the source.
+      expect(formatCatalogModelMeta({ ...e4b, source: "huggingface", status: "supported", verified_at: undefined })).toBe(
+        "Hugging Face"
+      );
     });
   });
 
@@ -201,7 +202,7 @@ describe("ollama-models helpers", () => {
   });
 
   describe("OLLAMA_RECOMMENDED_MODELS (fed from model-catalog.json)", () => {
-    it("keeps the previous shape and all previous Ollama entries", () => {
+    it("keeps the previous shape, with the lean list of three entries", () => {
       for (const spec of OLLAMA_RECOMMENDED_MODELS) {
         expect(typeof spec.name).toBe("string");
         expect(typeof spec.label).toBe("string");
@@ -209,19 +210,7 @@ describe("ollama-models helpers", () => {
         expect(typeof spec.description).toBe("string");
         expect(spec.size_gb).toBeGreaterThan(0);
       }
-      const names = OLLAMA_RECOMMENDED_MODELS.map((spec) => spec.name);
-      for (const legacy of [
-        "qwen3.5:2b",
-        "qwen3.5:4b",
-        "qwen3.5:9b",
-        "gemma4:e2b",
-        "gemma4:e2b-it-q8_0",
-        "gemma4:e4b",
-        "gemma4:e4b-it-q8_0",
-        "gemma4:e4b-it-bf16",
-      ]) {
-        expect(names).toContain(legacy);
-      }
+      expect(OLLAMA_RECOMMENDED_MODELS.map((spec) => spec.name)).toEqual(["gemma4:e4b", "qwen3.5:4b", "gemma4:e2b"]);
     });
 
     it("no longer carries the stale pre-verification sizes", () => {
@@ -248,7 +237,7 @@ describe("ollama-models helpers", () => {
       expect(findInstalledModel(exact, "")).toBeUndefined();
     });
 
-    it("treats an installed hf.co model as curated and uses the catalog label", () => {
+    it("lists an installed hf.co model that is not in the catalog as a plain model, matched whatever the case", () => {
       const inventory = buildInstalledOllamaInventory(
         [
           { name: "hf.co/google/gemma-4-e4b-it-qat-q4_0-gguf:latest", size_bytes: 6_150_000_000 },
@@ -256,11 +245,12 @@ describe("ollama-models helpers", () => {
         ],
         UNSLOTH_E4B.toLowerCase()
       );
-      expect(inventory.every((item) => item.is_curated)).toBe(true);
+      // The lean catalog has no hf.co entry: both are installed foreign models, still manageable.
+      expect(inventory.some((item) => item.is_curated)).toBe(false);
       expect(inventory[0].name).toBe(UNSLOTH_E4B);
       expect(inventory[0].is_active).toBe(true);
-      expect(inventory[1].curated_spec?.name).toBe(GOOGLE_QAT);
-      expect(inventory[1].curated_spec?.source).toBe("huggingface");
+      expect(inventory[1].curated_spec).toBeUndefined();
+      expect(inventory[1].can_uninstall).toBe(true);
     });
   });
 });
@@ -407,7 +397,7 @@ describe("model manager with registry status (fresh module per test)", () => {
     expect(ctx.checkCalls).toHaveLength(0);
   });
 
-  it("renders meta line, chip and hint in 'Your Models' and pulls hf.co refs verbatim from the catalog", async () => {
+  it("renders meta line, chip and hint in 'Your Models' and pulls the ticked catalog ref verbatim", async () => {
     const ctx = await load({
       models: oldAndNew,
       check: status({ "gemma4:e4b-it-q4_K_M": "outdated", "gemma4:e4b": "current", "my-private:latest": "local" }),
@@ -440,11 +430,11 @@ describe("model manager with registry status (fresh module per test)", () => {
     expect(opened).toContain("c6eb396dbd59");
     expect(opened).toMatch(/Downloaded\s*23 Jul 2026/);
 
-    const selector = `button[data-action="download"][data-model="${GOOGLE_QAT}"]`;
-    const pullButton = container.querySelector<HTMLButtonElement>(selector);
-    expect(pullButton).not.toBeNull();
-    pullButton!.click();
+    const box = container.querySelector<HTMLInputElement>('.ollama-model-row[data-model="gemma4:e2b"] input[data-role="select"]');
+    expect(box).not.toBeNull();
+    box!.click();
+    container.querySelector<HTMLButtonElement>(".ollama-model-bulk-btn")!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(ctx.invoke).toHaveBeenCalledWith("pull_ollama_model", { model: GOOGLE_QAT });
+    expect(ctx.invoke).toHaveBeenCalledWith("pull_ollama_model", { model: "gemma4:e2b" });
   });
 });

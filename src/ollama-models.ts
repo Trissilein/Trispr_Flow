@@ -1590,6 +1590,67 @@ function waitForPull(model: string): Promise<PullResult> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// "Download selected": one pull after the other
+// ---------------------------------------------------------------------------
+
+/** Models of "Download selected" that wait for their turn (the one being downloaded is not in here). */
+const pullQueue: string[] = [];
+let pullQueueRunning = false;
+
+function isModelQueued(model: string): boolean {
+  const key = normalizeModelTag(model);
+  return pullQueue.some((name) => normalizeModelTag(name) === key);
+}
+
+/**
+ * `handleOllamaPull` only STARTS a pull (the command returns at once), so awaiting it alone would
+ * start all downloads together. Settled once the pull is over; also when it never started (the
+ * command failed and said so itself).
+ */
+async function pullModelAndWait(model: string): Promise<void> {
+  await handleOllamaPull(model);
+  // No pull running now: it failed to start, or its end event already came in. Otherwise this runs
+  // in the same tick as the check, so the end event cannot slip in between.
+  if (!isModelPulling(model)) return;
+  await waitForPull(model);
+}
+
+async function runPullQueue(): Promise<void> {
+  if (pullQueueRunning) return;
+  pullQueueRunning = true;
+  try {
+    while (pullQueue.length > 0) {
+      if (runtimeActionRunning()) {
+        // One note for the rest of the queue; the models can be ticked again afterwards.
+        pullQueue.length = 0;
+        showBusyToast("Downloads not started", "The local runtime is being changed. Select the models again when that is done.");
+        break;
+      }
+      const model = pullQueue.shift() as string;
+      try {
+        await pullModelAndWait(model);
+      } catch (error) {
+        // A failed model must not stop the others.
+        traceFrontendWarn("ollama.pull", "queued pull failed", { model, error: errorText(error) });
+      }
+    }
+  } finally {
+    pullQueueRunning = false;
+    renderOllamaModelManager();
+  }
+}
+
+/** Adds models to the download queue (those already downloading or queued are skipped) and starts it. */
+export function queueModelPulls(models: readonly string[]): void {
+  for (const model of models) {
+    if (!normalizeModelTag(model) || isModelPulling(model) || isModelQueued(model)) continue;
+    pullQueue.push(model);
+  }
+  renderOllamaModelManager();
+  void runPullQueue();
+}
+
 function getCuratedModelSpec(name: string): OllamaRecommendedModelSpec | undefined {
   const target = normalizeModelTag(name);
   return OLLAMA_RECOMMENDED_MODELS.find((spec) => isExactModelTagMatch(spec.name, target));
@@ -2612,11 +2673,22 @@ function catalogRowFor(spec: OllamaRecommendedModelSpec, state: CuratedModelStat
   const sizeLabel = `${spec.size_gb?.toFixed(1) ?? "?"} GB`;
   const isPulling = state === "downloading";
 
+  const queued = !isPulling && isModelQueued(spec.name);
+
+  // One status chip per row (what the row is doing, or why it cannot): the runtime chip shows up
+  // only for a real conflict, never as a permanent label.
   const chips: ModelListChip[] = [];
-  if (state === "missing") chips.push(chip("Missing", "qwen-card-badge--missing", "This is the selected model, but it is not installed."));
   if (isPulling) chips.push(chip("Downloading…", "qwen-card-badge--loading"));
+  else if (queued) chips.push(chip("Queued", "qwen-card-badge--loading", "Waits for the downloads before it."));
+  else if (blocked) {
+    const conflict = runtimeGateChip(gate, true);
+    if (conflict) chips.push(conflict);
+  } else if (state === "missing") {
+    chips.push(chip("Missing", "qwen-card-badge--missing", "This is the selected model, but it is not installed."));
+  }
   if (spec.status === "recommended") chips.push(chip("Recommended", "qwen-card-badge--curated", RECOMMENDED_CHIP_TITLE));
-  for (const extra of [functionalChip(functionalProofChip(spec.functional)), runtimeGateChip(gate, false)]) if (extra) chips.push(extra);
+  const proof = functionalChip(functionalProofChip(spec.functional));
+  if (proof) chips.push(proof);
 
   const actions: ModelListAction[] = [];
   if (isPulling) {
@@ -2627,22 +2699,20 @@ function catalogRowFor(spec: OllamaRecommendedModelSpec, state: CuratedModelStat
       className: "qwen-card-btn qwen-card-btn--loading",
       disabled: true,
     });
-  } else {
-    // The pull ref is passed verbatim (case preserved, incl. hf.co/... refs): the backend keys
-    // its progress events by this exact string.
-    const title = blocked
-      ? `${gate?.chipLabel ?? "Runtime too old"}: update the runtime first.`
-      : runtimeActionRunning()
-        ? "The runtime is being changed. Wait until that is done."
-        : `Download ${sizeLabel}.`;
-    actions.push({
-      action: "download",
-      label: "Download",
-      className: "qwen-card-btn qwen-card-btn--download",
-      title,
-      disabled: blocked || runtimeActionRunning(),
-    });
+  } else if (queued) {
+    actions.push({ action: "busy", label: "Queued", className: "qwen-card-btn qwen-card-btn--loading", disabled: true });
   }
+  // No per-row download button: rows are ticked and fetched with "Download selected". The pull ref
+  // handed to the backend is the row's `name` verbatim (case preserved, incl. hf.co/... refs): the
+  // backend keys its progress events by this exact string.
+  const select =
+    isPulling || queued
+      ? undefined
+      : {
+          sizeGb: spec.size_gb,
+          blocked,
+          title: blocked ? `${gate?.chipLabel ?? "Runtime too old"}: update the runtime first.` : undefined,
+        };
   const runtimeAction = runtimeGateAction(gate);
   if (runtimeAction) actions.push(runtimeAction);
 
@@ -2673,6 +2743,7 @@ function catalogRowFor(spec: OllamaRecommendedModelSpec, state: CuratedModelStat
     actions,
     hints,
     progress: isPulling && (progress || getOllamaPullOverall(spec.name)) ? pullProgress(spec.name, progress) : undefined,
+    select,
     info,
   };
 }
@@ -2721,9 +2792,6 @@ function handleModelListAction(action: string, row: ModelListRow, data: DOMStrin
     case "activate":
       void activateOllamaModel(model);
       break;
-    case "download":
-      void handleOllamaPull(model);
-      break;
     case "delete":
       void handleOllamaDelete(model);
       break;
@@ -2758,6 +2826,8 @@ function openModelPage(url: string): void {
 
 const MODEL_LIST_HOOKS: ModelListHooks = {
   onAction: handleModelListAction,
+  onDownloadSelected: (rows) => queueModelPulls(rows.map((row) => row.name)),
+  downloadBlockedReason: () => (runtimeActionRunning() ? "The runtime is being changed. Wait until that is done." : null),
   loadDetails: (name) => invokeWithTimeout("get_ollama_model_details", { model: name }, DETAILS_TIMEOUT_MS),
   openLink: openModelPage,
 };

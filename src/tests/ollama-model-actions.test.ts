@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { OllamaRuntimeVersionInfo } from "../types";
+import { downloadSelected, modelBox } from "./ollama-test-harness";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(async () => null),
@@ -13,9 +14,9 @@ const OLD_DIGEST = "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf9
 const NEW_DIGEST = "dc35e8d9c6061baa6f0fa870975ab6932e2542b579b13ea0f199fa4bb7300c9c";
 const OLD = "gemma4:e4b-it-q4_K_M";
 const CURRENT = "gemma4:e4b";
-const NEEDY = "qwen3.5:9b"; // stands in for a model that needs a newer runtime
+const NEEDY = "gemma4:e2b"; // stands in for a model that needs a newer runtime
 const NEEDY_REFUSAL =
-  "Model 'qwen3.5:9b' needs Ollama >= 0.40.13 (running 0.40.7). Update the runtime first.";
+  "Model 'gemma4:e2b' needs Ollama >= 0.40.13 (running 0.40.7). Update the runtime first.";
 const STREAMED_412 =
   "pull model manifest: 412: The model you are attempting to pull requires a newer version of Ollama.";
 
@@ -197,22 +198,19 @@ describe("runtime requirement chip, gated pull and one-click runtime update", ()
 
     const needy = ctx.cardOf(NEEDY)!;
     expect(needy.textContent).toContain("Needs Ollama ≥ 0.40.13");
-    expect(needy.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(true);
+    expect(modelBox(needy)!.disabled).toBe(true);
     const update = needy.querySelector<HTMLButtonElement>('button[data-action="update-runtime"]')!;
     expect(update.textContent).toBe("Update runtime to 0.40.13");
     expect(update.dataset.version).toBe("0.40.13");
     expect(needy.textContent).toContain("too old");
 
-    // Compatible model: chip for information, pull stays on, no runtime button.
+    // Compatible model: no chip (the chip is for a real conflict only), tick box stays on, no runtime button.
     const fine = ctx.cardOf("qwen3.5:4b")!;
-    expect(fine.textContent).toContain("Needs Ollama ≥ 0.17.0");
-    expect(fine.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(false);
+    expect(fine.textContent).not.toContain("Needs Ollama");
+    expect(modelBox(fine)!.disabled).toBe(false);
     expect(fine.querySelector('button[data-action="update-runtime"]')).toBeNull();
-
-    // No requirement known (HF refs, failed check): no chip, nothing gated.
-    const hf = ctx.cardOf("hf.co/unsloth/gemma-4-E4B-it-GGUF:Q4_K_M")!;
-    expect(hf.textContent).not.toContain("Needs Ollama ≥");
-    expect(hf.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(false);
+    // The blocked box says why.
+    expect(modelBox(needy)!.title).toContain("update the runtime first");
   });
 
   it("asks the backend once for all candidate library models (never Hugging Face refs)", async () => {
@@ -237,7 +235,7 @@ describe("runtime requirement chip, gated pull and one-click runtime update", ()
     );
     await ctx.boot();
     expect(ctx.cardOf(NEEDY)!.textContent).not.toContain("Needs Ollama");
-    expect(ctx.cardOf(NEEDY)!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(false);
+    expect(ctx.cardOf(NEEDY)!.querySelector<HTMLInputElement>('input[data-role="select"]')!.disabled).toBe(false);
     expect(ctx.showToast).not.toHaveBeenCalled();
   });
 
@@ -260,9 +258,9 @@ describe("runtime requirement chip, gated pull and one-click runtime update", ()
 
     await ctx.render();
     const needy = ctx.cardOf(NEEDY)!;
-    expect(needy.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(false);
+    expect(modelBox(needy)!.disabled).toBe(false);
     expect(needy.querySelector('button[data-action="update-runtime"]')).toBeNull();
-    expect(needy.textContent).toContain("Needs Ollama ≥ 0.40.13"); // information stays
+    expect(needy.textContent).not.toContain("Needs Ollama"); // no conflict any more: no chip
   });
 
   it("says 'Switch runtime to X' and does not download when that runtime is already on disk", async () => {
@@ -295,14 +293,14 @@ describe("runtime requirement chip, gated pull and one-click runtime update", ()
     await ctx.boot();
     const needy = ctx.cardOf(NEEDY)!;
     expect(needy.querySelector('button[data-action="update-runtime"]')).toBeNull();
-    expect(needy.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(true);
+    expect(modelBox(needy)!.disabled).toBe(true);
     expect(needy.textContent).toContain("No verified runtime ≥ 0.40.13");
   });
 
   it("refuses to restart Ollama while a download or model update runs", async () => {
     const ctx = await load(handlers());
     await ctx.boot();
-    ctx.state.ollamaPullProgress.set("qwen3.5:2b", { model: "qwen3.5:2b", status: "pulling x" });
+    ctx.state.ollamaPullProgress.set("qwen3.5:4b", { model: "qwen3.5:4b", status: "pulling x" });
     await ctx.mod.updateOllamaRuntimeTo("0.40.13");
     expect(toastTitles(ctx.showToast)).toContain("Runtime change postponed");
     expect(ctx.callsOf("download_ollama_runtime")).toHaveLength(0);
@@ -325,13 +323,13 @@ describe("pull error 412 maps to the same hint", () => {
   it("a streamed 412 error turns the card into 'Needs a newer Ollama' + update button", async () => {
     const ctx = await load(base());
     await ctx.boot();
-    expect(ctx.cardOf(NEEDY)!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(false);
+    expect(ctx.cardOf(NEEDY)!.querySelector<HTMLInputElement>('input[data-role="select"]')!.disabled).toBe(false);
 
     ctx.emit("ollama:pull-error", { model: NEEDY, error: STREAMED_412 });
     await flush();
     const card = ctx.cardOf(NEEDY)!;
     expect(card.textContent).toContain("Needs a newer Ollama");
-    expect(card.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(true);
+    expect(card.querySelector<HTMLInputElement>('input[data-role="select"]')!.disabled).toBe(true);
     expect(card.querySelector<HTMLButtonElement>('button[data-action="update-runtime"]')!.textContent).toBe(
       "Update runtime to 0.40.13"
     );
@@ -350,7 +348,7 @@ describe("pull error 412 maps to the same hint", () => {
     const card = ctx.cardOf(NEEDY)!;
     expect(card.textContent).toContain("Needs Ollama ≥ 0.40.13");
     expect(card.textContent).not.toContain("Needs a newer Ollama");
-    expect(card.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(true);
+    expect(card.querySelector<HTMLInputElement>('input[data-role="select"]')!.disabled).toBe(true);
     expect(card.querySelector<HTMLButtonElement>('button[data-action="update-runtime"]')!.textContent).toBe(
       "Update runtime to 0.40.13"
     );
@@ -391,7 +389,7 @@ describe("pull error 412 maps to the same hint", () => {
       })
     );
     await ctx.boot();
-    ctx.cardOf(NEEDY)!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.click();
+    downloadSelected(ctx.cardOf(NEEDY));
     await vi.waitFor(() => expect(toastTitles(ctx.showToast)).toContain("Runtime too old for this model"));
 
     const toast = toastNamed(ctx.showToast, "Runtime too old for this model");
@@ -412,7 +410,7 @@ describe("pull error 412 maps to the same hint", () => {
       })
     );
     await ctx.boot();
-    ctx.cardOf(NEEDY)!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.click();
+    downloadSelected(ctx.cardOf(NEEDY));
     await vi.waitFor(() => expect(toastTitles(ctx.showToast)).toContain("Download failed"));
     await flush();
     expect(ctx.cardOf(NEEDY)!.textContent).not.toMatch(/Needs (Ollama|a newer)/);
@@ -429,7 +427,7 @@ describe("pull error 412 maps to the same hint", () => {
     await ctx.mod.refreshOllamaRuntimeState({ force: true });
     await ctx.render();
     expect(ctx.cardOf(NEEDY)!.textContent).not.toMatch(/Needs (Ollama|a newer)/);
-    expect(ctx.cardOf(NEEDY)!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(false);
+    expect(ctx.cardOf(NEEDY)!.querySelector<HTMLInputElement>('input[data-role="select"]')!.disabled).toBe(false);
     version.current = "0.40.7";
   });
 });

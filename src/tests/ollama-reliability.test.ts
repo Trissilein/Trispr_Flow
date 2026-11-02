@@ -9,9 +9,12 @@ import {
   NEW_DIGEST,
   OLD,
   OLD_DIGEST,
+  bulkButton,
+  downloadSelected,
   flush,
   hang,
   load,
+  modelBox,
   runtime,
   runtimeHandlers,
   settle,
@@ -36,7 +39,7 @@ vi.mock("../toast", () => ({
 const MINUTE = 60_000;
 
 const version = { current: "0.40.7" };
-const NEEDY = "qwen3.5:9b";
+const NEEDY = "gemma4:e2b";
 
 beforeEach(() => {
   version.current = "0.40.7";
@@ -214,7 +217,7 @@ describe("double clicks", () => {
     expect(toastTitles(ctx.showToast)).toContain("Update not started");
   });
 
-  it("two quick clicks on a catalog download start one pull and the card keeps saying 'downloading' until the first event", async () => {
+  it("two quick clicks on 'Download selected' start one pull and the card keeps saying 'downloading' until the first event", async () => {
     const ctx = await load({
       ...runtimeHandlers(version, () => [runtime("0.40.7", { installed: true, recommended: true })]),
       fetch_ollama_models_with_size: () => [] as InstalledRow[],
@@ -222,16 +225,16 @@ describe("double clicks", () => {
     });
     await ctx.boot();
     const model = "qwen3.5:4b";
-    const button = () => ctx.cardOf(model)!.querySelector<HTMLButtonElement>('button[data-action="download"]');
-    const first = button()!;
-    first.click();
-    first.click();
+    modelBox(ctx.cardOf(model))!.click();
+    const bar = bulkButton()!;
+    bar.click();
+    bar.click();
     await settle();
     expect(ctx.callsOf("pull_ollama_model")).toHaveLength(1);
 
     // Command returned, first progress line not here yet: still a running download, not a free button.
     expect(ctx.cardOf(model)!.dataset.state).toBe("downloading");
-    expect(button()).toBeNull();
+    expect(modelBox(ctx.cardOf(model))).toBeNull();
 
     ctx.state.ollamaPullProgress.set(model, { model, status: "pulling manifest" });
     ctx.emit("ollama:pull-progress", { model, status: "pulling manifest" });
@@ -253,7 +256,7 @@ describe("double clicks", () => {
     });
     await ctx.boot();
     const model = "qwen3.5:4b";
-    ctx.cardOf(model)!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.click();
+    downloadSelected(ctx.cardOf(model));
     await tick(500);
     expect(ctx.cardOf(model)!.dataset.state).toBe("downloading");
 
@@ -366,7 +369,7 @@ describe("a runtime change never runs under a model operation", () => {
     expect(toastTitles(ctx.showToast)).toContain("Runtime change postponed");
   });
 
-  it("a catalog download is refused while the runtime is being changed", async () => {
+  it("'Download selected' is disabled while the runtime is being changed and starts nothing", async () => {
     const catalog = [runtime("0.40.7", { installed: true, recommended: true }), runtime("0.40.13")];
     const ctx = await load(
       {
@@ -380,8 +383,12 @@ describe("a runtime change never runs under a model operation", () => {
     void ctx.mod.ensureLocalRuntimeReady();
     await settle();
     await ctx.render();
-    const button = ctx.cardOf("qwen3.5:4b")!.querySelector<HTMLButtonElement>('button[data-action="download"]');
-    button?.click();
+    // The box can still be ticked (the choice is not lost), the button waits for the runtime.
+    modelBox(ctx.cardOf("qwen3.5:4b"))!.click();
+    const bar = bulkButton()!;
+    expect(bar.disabled).toBe(true);
+    expect(bar.title).toContain("runtime");
+    bar.click();
     await settle();
     expect(ctx.callsOf("pull_ollama_model")).toHaveLength(0);
   });
@@ -689,7 +696,7 @@ describe("caches stay bounded", () => {
         ((args?.models as string[]) ?? []).map((name) => ({ name, requires: "0.30.0", runtime_version: "0.40.7", compatible: true })),
     });
     await ctx.boot();
-    expect(ctx.mod.getOllamaCacheStats().requirements).toBeGreaterThan(5);
+    expect(ctx.mod.getOllamaCacheStats().requirements).toBe(3); // the three catalog models
 
     // Every catalog model gets installed: nothing is a candidate any more, and the old answers expire.
     installed = ctx.mod.OLLAMA_RECOMMENDED_MODELS.map((spec) => ({ name: spec.name, size_bytes: 1, digest: "a".repeat(64) }));
@@ -818,7 +825,7 @@ describe("degraded backends through the real renderer", () => {
     await ctx.boot();
     expect(ctx.cardOf("fine:1b")).toBeDefined();
     expect(ctx.cardOf("odd:1b")).toBeDefined();
-    expect(ctx.cardOf(NEEDY)!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(false);
+    expect(modelBox(ctx.cardOf(NEEDY))!.disabled).toBe(false);
     expect(ctx.cardOf(NEEDY)!.querySelector(".qwen-card-badge--needs-runtime, .qwen-card-badge--runtime-ok")).toBeNull();
     expect(ctx.showToast).not.toHaveBeenCalled();
   });
@@ -1063,11 +1070,11 @@ describe("runtime state after a change", () => {
     );
     version.current = "0.40.7";
     await ctx.boot();
-    expect(ctx.cardOf(NEEDY)!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(true);
+    expect(modelBox(ctx.cardOf(NEEDY))!.disabled).toBe(true);
 
     await ctx.mod.ensureLocalRuntimeReady();
     await ctx.render();
-    expect(ctx.cardOf(NEEDY)!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(false);
+    expect(modelBox(ctx.cardOf(NEEDY))!.disabled).toBe(false);
     version.current = "0.40.7";
   });
 
@@ -1094,12 +1101,12 @@ describe("runtime state after a change", () => {
     );
     version.current = "0.40.7";
     await ctx.boot();
-    expect(ctx.cardOf(NEEDY)!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(true);
+    expect(modelBox(ctx.cardOf(NEEDY))!.disabled).toBe(true);
 
     await ctx.mod.ensureLocalRuntimeReady();
     await ctx.render();
     expect(ctx.mod.getOllamaRuntimeCardState().detected).toBe(false);
-    expect(ctx.cardOf(NEEDY)!.querySelector<HTMLButtonElement>('button[data-action="download"]')!.disabled).toBe(false);
+    expect(modelBox(ctx.cardOf(NEEDY))!.disabled).toBe(false);
     version.current = "0.40.7";
   });
 });

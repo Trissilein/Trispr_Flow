@@ -164,6 +164,20 @@ export async function load(handlers: Record<string, Handler> = {}, options: Load
 
 export type Ctx = Awaited<ReturnType<typeof load>>;
 
+/** The tick box of a catalog row (null on installed, downloading or queued rows). */
+export const modelBox = (card: ParentNode | null | undefined) =>
+  card?.querySelector<HTMLInputElement>('input[data-role="select"]') ?? null;
+
+/** The "Download selected" button under the list (null while no row can be ticked). */
+export const bulkButton = (root: ParentNode = document) =>
+  root.querySelector<HTMLButtonElement>(".ollama-model-bulk-btn");
+
+/** Ticks the given rows and presses "Download selected": the way a model is downloaded now. */
+export function downloadSelected(...cards: Array<HTMLElement | undefined>): void {
+  for (const card of cards) modelBox(card)!.click();
+  bulkButton()!.click();
+}
+
 export function runtimeHandlers(
   version: { current: string },
   catalog: () => OllamaRuntimeVersionInfo[]

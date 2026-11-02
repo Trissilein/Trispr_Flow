@@ -126,22 +126,11 @@ pub fn check_updates_with_packages(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::{registry, ASSISTANT_CORE_MODULE_ID};
+    use crate::modules::registry;
     use std::collections::HashSet;
 
     fn health_for(module_id: &str, settings: &ModuleSettings) -> ModuleHealthStatus {
         get_health_with_packages(settings, Some(module_id), &HashSet::new())
-            .into_iter()
-            .next()
-            .expect("module health should exist")
-    }
-
-    fn health_for_with_packages(
-        module_id: &str,
-        settings: &ModuleSettings,
-        installed_package_ids: HashSet<String>,
-    ) -> ModuleHealthStatus {
-        get_health_with_packages(settings, Some(module_id), &installed_package_ids)
             .into_iter()
             .next()
             .expect("module health should exist")
@@ -161,39 +150,22 @@ mod tests {
         let mut settings = ModuleSettings::default();
         registry::set_last_error(
             &mut settings,
-            ASSISTANT_CORE_MODULE_ID,
-            "Missing consent for assistant_core: filesystem_history",
+            "ai_refinement",
+            "Missing dependency.",
         );
 
-        let health = health_for(ASSISTANT_CORE_MODULE_ID, &settings);
+        let health = health_for("ai_refinement", &settings);
 
         assert_eq!(health.state, "ok");
         assert!(health.detail.contains("previous setup issue is not active"));
     }
 
     #[test]
-    fn enabled_module_without_required_consent_needs_setup() {
-        let mut settings = ModuleSettings::default();
-        settings
-            .enabled_modules
-            .insert(ASSISTANT_CORE_MODULE_ID.to_string());
-
-        let health = health_for_with_packages(
-            ASSISTANT_CORE_MODULE_ID,
-            &settings,
-            HashSet::from(["gdd".to_string()]),
-        );
-
-        assert_eq!(health.state, "needs_setup");
-        assert!(health.detail.contains("filesystem_history"));
-    }
-
-    #[test]
     fn enabled_not_installed_optional_module_needs_setup() {
         let mut settings = ModuleSettings::default();
-        settings.enabled_modules.insert("gdd".to_string());
+        settings.enabled_modules.insert("opus".to_string());
 
-        let health = health_for("gdd", &settings);
+        let health = health_for("opus", &settings);
 
         assert_eq!(health.state, "needs_setup");
         assert!(health.detail.contains("assets"));
@@ -214,9 +186,6 @@ mod tests {
             bundled: true,
             core: true,
             toggleable: false,
-            surface: "core".to_string(),
-            assistant_capable: false,
-            assistant_actions: Vec::new(),
         };
 
         let health = classify_module_health(&settings, descriptor);

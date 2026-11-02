@@ -120,7 +120,7 @@ if /i "%VARIANT%"=="vulkan" (
     )
 )
 
-REM --- FFmpeg + Piper only bundled in cuda-complete (offline installer) ---
+REM --- FFmpeg only bundled in cuda-complete (offline installer) ---
 if /i "%VARIANT%"=="cuda-complete" (
     echo   [setup] Ensuring FFmpeg runtime for cuda-complete...
     pwsh -NoProfile -ExecutionPolicy Bypass -File "scripts\setup-ffmpeg.ps1"
@@ -129,15 +129,8 @@ if /i "%VARIANT%"=="cuda-complete" (
         del /q "%CFG%" >nul 2>&1
         exit /b 1
     )
-    echo   [setup] Ensuring Piper runtime for cuda-complete...
-    pwsh -NoProfile -ExecutionPolicy Bypass -File "scripts\setup-piper.ps1"
-    if not "!ERRORLEVEL!"=="0" (
-        echo ERROR: Piper setup failed for cuda-complete.
-        del /q "%CFG%" >nul 2>&1
-        exit /b 1
-    )
 ) else (
-    echo   [skip] FFmpeg/Piper bundling skipped for %VARIANT% ^(on-demand download^)
+    echo   [skip] FFmpeg bundling skipped for %VARIANT% ^(on-demand download^)
 )
 
 REM --- Inject compile-time variant define for hooks.nsh ---

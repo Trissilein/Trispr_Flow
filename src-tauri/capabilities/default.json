@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for primary and assistant presence windows",
-  "windows": ["main", "assistant_presence"],
+  "description": "Capability for the primary window",
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "dialog:default"

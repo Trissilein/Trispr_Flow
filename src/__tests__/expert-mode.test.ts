@@ -275,7 +275,7 @@ describe("Block K K5 — Expert Mode Toggle", () => {
       "overlay-style",
       "diagnostic-logging-toggle",
       "postproc-punctuation",
-      "ai-fallback-local-backend-select",
+      "ai-fallback-local-advanced",
       "tab-btn-modules",
     ].forEach(expectExpertControl);
   });

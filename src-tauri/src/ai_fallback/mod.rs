@@ -1,8 +1,12 @@
 pub mod commands;
 pub mod error;
-pub mod keyring;
+pub mod model_info;
+pub mod model_registry;
+pub mod model_verify;
 pub mod models;
 pub mod provider;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 use crate::state::{save_settings_file, AppState, Settings};
 use crate::{
@@ -26,7 +30,13 @@ where
     F: FnOnce(&mut Settings) -> Result<(), String>,
 {
     let snapshot = {
-        let mut settings = state.settings.write().map_err(|error| error.to_string())?;
+        // A poisoned lock is recovered like at every other settings access; failing here would
+        // make every later settings change (model switch, update, rollback) fail for the rest
+        // of the session.
+        let mut settings = state
+            .settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         f(&mut settings)?;
         settings.clone()
     };
@@ -70,20 +80,6 @@ pub(crate) fn persist_tier_update(
             error
         );
     }
-}
-
-/// Guard that rejects requests when strict-local-mode is active and the
-/// configured Ollama endpoint is not a local address.
-pub(crate) fn check_strict_local_mode(settings: &Settings) -> Result<(), String> {
-    if settings.ai_fallback.strict_local_mode
-        && !provider::is_local_ollama_endpoint(&settings.providers.ollama.endpoint)
-    {
-        return Err(
-            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                .to_string(),
-        );
-    }
-    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,12 +126,11 @@ pub(crate) fn resolve_ollama_refinement_model(
     })
 }
 
-/// Common result of preparing a refinement call: provider client, API key,
+/// Common result of preparing a refinement call: provider client,
 /// resolved model name, whether the model resolution repaired a stale setting,
 /// and the `RefinementOptions` to pass to the provider.
 pub(crate) struct RefinementSetup {
-    pub provider: Box<dyn provider::AIProvider>,
-    pub api_key: String,
+    pub provider: provider::OllamaProvider,
     pub model: String,
     pub repaired: bool,
     pub options: RefinementOptions,
@@ -198,111 +193,41 @@ pub(crate) fn prepare_refinement(
 
     let ai = &settings.ai_fallback;
 
-    let is_ollama = ai.provider == "ollama";
-    let is_lm_studio = ai.provider == "lm_studio";
-    let is_oobabooga = ai.provider == "oobabooga";
-    let is_local_compat = is_lm_studio || is_oobabooga;
-
-    if is_ollama {
-        let state = app.state::<AppState>();
-        let startup_status = startup_status_snapshot(state.inner());
-        if !startup_status.ollama_ready {
-            return Err(
-                "Ollama refinement is not ready yet. Raw or rule-based fallback remains active."
-                    .to_string(),
-            );
-        }
+    let state = app.state::<AppState>();
+    let startup_status = startup_status_snapshot(state.inner());
+    if !startup_status.ollama_ready {
+        return Err(
+            "Ollama refinement is not ready yet. Raw or rule-based fallback remains active."
+                .to_string(),
+        );
     }
 
-    let provider: Box<dyn provider::AIProvider> = if is_ollama {
-        check_strict_local_mode(settings)?;
-        provider::ProviderFactory::create_ollama(settings.providers.ollama.endpoint.clone())
-    } else if is_lm_studio {
-        if let Err(error) = provider::ping_lm_studio_quick(&settings.providers.lm_studio.endpoint) {
-            return Err(format!("LM Studio not ready: {}", error));
-        }
-        provider::ProviderFactory::create_lm_studio(
-            settings.providers.lm_studio.endpoint.clone(),
-            settings.providers.lm_studio.api_key.clone(),
-        )
-    } else if is_oobabooga {
-        provider::ProviderFactory::create_oobabooga(
-            settings.providers.oobabooga.endpoint.clone(),
-            settings.providers.oobabooga.api_key.clone(),
-        )
-    } else {
-        provider::ProviderFactory::create(&ai.provider).map_err(|error| error.to_string())?
-    };
+    let endpoint = settings.providers.ollama.endpoint.clone();
+    let provider = provider::OllamaProvider::new(endpoint.clone());
 
-    let api_key = if is_ollama || is_local_compat {
-        String::new()
-    } else {
-        keyring::read_api_key(app, &ai.provider)?
-            .ok_or_else(|| format!("No API key stored for provider '{}'.", ai.provider))?
-    };
+    provider::ping_ollama_quick(&endpoint).map_err(|error| error.to_string())?;
 
-    if !is_ollama && !is_local_compat {
-        provider
-            .validate_api_key(&api_key)
-            .map_err(|error| error.to_string())?;
+    let requested_model = ai.model.trim().to_string();
+    let installed_models = provider::list_ollama_models(&endpoint);
+    let resolution = resolve_ollama_refinement_model(settings, &requested_model, &installed_models)
+        .ok_or_else(|| {
+            "No installed Ollama models found. Download a model and set it active first."
+                .to_string()
+        })?;
+    if crate::state::diagnostic_logging_enabled() {
+        tracing::info!(
+            "[refinement:prepare] ollama model resolution requested={} selected={} repaired={} installed={}",
+            requested_model, resolution.model, resolution.repaired, installed_models.len()
+        );
     }
-
-    let mut model = ai.model.trim().to_string();
-    let mut repaired = false;
-    if is_ollama {
-        let endpoint = settings.providers.ollama.endpoint.clone();
-        provider::ping_ollama_quick(&endpoint).map_err(|error| error.to_string())?;
-
-        let installed_models = provider::list_ollama_models(&endpoint);
-        let resolution = resolve_ollama_refinement_model(settings, &model, &installed_models)
-            .ok_or_else(|| {
-                "No installed Ollama models found. Download a model and set it active first."
-                    .to_string()
-            })?;
-        if crate::state::diagnostic_logging_enabled() {
-            tracing::info!(
-                "[refinement:prepare] ollama model resolution requested={} selected={} repaired={} installed={}",
-                model, resolution.model, resolution.repaired, installed_models.len()
-            );
-        }
-        model = resolution.model;
-        repaired = resolution.repaired;
-    } else if is_lm_studio && model.is_empty() {
-        model = settings
-            .providers
-            .lm_studio
-            .preferred_model
-            .trim()
-            .to_string();
-    } else if is_oobabooga && model.is_empty() {
-        model = settings
-            .providers
-            .oobabooga
-            .preferred_model
-            .trim()
-            .to_string();
-    } else if model.is_empty() {
-        model = match ai.provider.as_str() {
-            "claude" => settings.providers.claude.preferred_model.trim().to_string(),
-            "openai" => settings.providers.openai.preferred_model.trim().to_string(),
-            "gemini" => settings.providers.gemini.preferred_model.trim().to_string(),
-            _ => String::new(),
-        };
-    }
+    let model = resolution.model;
+    let repaired = resolution.repaired;
 
     if model.is_empty() {
-        return Err(if is_ollama {
+        return Err(
             "No local Ollama model configured. Download a model and set it active first."
-                .to_string()
-        } else if is_lm_studio {
-            "No model selected for LM Studio. Load a model in LM Studio and set it active."
-                .to_string()
-        } else if is_oobabooga {
-            "No model selected for Oobabooga. Load a model and set it active in settings."
-                .to_string()
-        } else {
-            "No cloud model configured for the selected provider.".to_string()
-        });
+                .to_string(),
+        );
     }
 
     let effective_language = if settings.language_pinned {
@@ -349,7 +274,6 @@ pub(crate) fn prepare_refinement(
 
     Ok(RefinementSetup {
         provider,
-        api_key,
         model,
         repaired,
         options,
@@ -370,7 +294,6 @@ pub(crate) fn should_enforce_language_guard(
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
     capability_enabled(settings, RuntimeCapability::AiRefinement)
         && settings.ai_fallback.provider == "ollama"
-        && settings.ai_fallback.execution_mode == "local_primary"
 }
 
 pub(crate) fn ensure_ollama_runtime_ready_for_refinement(

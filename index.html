@@ -5,10 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="stylesheet" href="/src/styles.css" />
     <link rel="stylesheet" href="/src/styles-modern.css" />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
-    />
     <title>Trispr Flow</title>
     <script type="module" src="/src/main.ts" defer></script>
   </head>
@@ -107,67 +103,6 @@
 
       <!-- Expert Mode global toggle -->
       <div id="expert-mode-global-bar" class="expert-mode-global-bar">
-        <div class="global-control-group">
-          <div id="product-mode-control" class="global-mode-control" hidden>
-            <span class="global-mode-label">Product mode</span>
-            <div class="global-mode-toggle" role="group" aria-label="Product mode toggle">
-              <button
-                id="product-mode-transcribe-btn"
-                class="global-mode-btn"
-                type="button"
-                data-mode="transcribe"
-                title="Transcribe mode: Voice capture and transcript-first workflow"
-                aria-pressed="true" data-settings-visibility-excluded="global-or-navigation">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 5.25h10.5M3.75 10.5h16.5M3.75 15.75h16.5M3.75 21h10.5" />
-                </svg>
-                <span>Transcribe</span>
-              </button>
-              <button
-                id="product-mode-assistant-btn"
-                class="global-mode-btn"
-                type="button"
-                data-mode="assistant"
-                title="Assistant mode: Wakeword-driven assistant with actions and confirmations"
-                aria-pressed="false" data-settings-visibility-excluded="global-or-navigation">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6.75a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.5 20.25a7.5 7.5 0 0 1 15 0" />
-                </svg>
-                <span>Assistant</span>
-              </button>
-            </div>
-          </div>
-
-          <div id="global-online-control" class="global-mode-control global-mode-control--compact" hidden>
-            <div class="global-mode-toggle global-mode-toggle--compact" role="group" aria-label="Online scope toggle">
-              <button
-                id="global-online-offline-btn"
-                class="global-mode-btn"
-                type="button"
-                data-online-mode="offline"
-                title="Offline mode: Agent stays local-only"
-                aria-pressed="true" data-settings-visibility-excluded="global-or-navigation">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 18 0A9 9 0 0 0 3 12Zm9-9v18M2 12h20" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 4.5 19.5 19.5" />
-                </svg>
-                <span>Offline</span>
-              </button>
-              <button
-                id="global-online-enabled-btn"
-                class="global-mode-btn"
-                type="button"
-                data-online-mode="online"
-                title="Online mode: Enables real-time lookups like weather, news, or live data — not related to AI model selection"
-                aria-pressed="false" data-settings-visibility-excluded="global-or-navigation">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 18 0A9 9 0 0 0 3 12Zm9-9v18M2 12h20M5.7 6.8A11.8 11.8 0 0 0 12 8.8c2.2 0 4.4-.8 6.3-2M5.7 17.2A11.8 11.8 0 0 1 12 15.2c2.2 0 4.4.8 6.3 2" />
-                </svg>
-                <span>Online</span>
-              </button>
-            </div>
-          </div>
-        </div>
         <label class="expert-toggle-label" for="expert-mode-toggle">
           <span>Expert</span>
           <input id="expert-mode-toggle" type="checkbox" title="Show advanced settings and modules" data-settings-visibility-excluded="global-or-navigation" />
@@ -189,18 +124,6 @@
         <button id="tab-btn-ai-refinement" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-ai-refinement" data-settings-visibility-excluded="global-or-navigation">
           AI Refinement
         </button>
-        <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output" data-settings-visibility-tab="voice-output" data-settings-visibility-excluded="global-or-navigation">
-          Voice Output
-        </button>
-        <button id="tab-btn-task-capture" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-task-capture" data-settings-visibility-tab="task-capture" data-settings-visibility-excluded="global-or-navigation">
-          Task Capture
-        </button>
-        <button id="tab-btn-video" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-video" data-settings-visibility-tab="video" data-settings-visibility-excluded="global-or-navigation">
-          Video
-        </button>
-        <button id="tab-btn-agent" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-agent" data-settings-visibility-tab="agent" data-settings-visibility-excluded="global-or-navigation">
-          Assistant Debug
-        </button>
         <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules" data-settings-visibility-tab="modules" data-settings-visibility-excluded="global-or-navigation">
           Modules
         </button>
@@ -213,8 +136,6 @@
         <span class="pipeline-stage" data-stage="whisper">Whisper</span>
         <span class="pipeline-arrow">&rarr;</span>
         <span class="pipeline-stage" data-stage="postproc">Postproc</span>
-        <span class="pipeline-arrow">&rarr;</span>
-        <span class="pipeline-stage" data-stage="agent">Agent</span>
         <span class="pipeline-arrow">&rarr;</span>
         <span class="pipeline-stage" data-stage="paste">Paste</span>
       </div>
@@ -1085,36 +1006,6 @@
                     role="status"
                     aria-live="polite"></span>
             </div>
-            <div class="field hotkey-field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="product.mode.hotkey" data-settings-visibility-label="Toggle product mode" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
-              <span class="field-label">Toggle product mode</span>
-              <div class="hotkey-input-group">
-                <input id="product-mode-hotkey" type="text" readonly title="Current hotkey for toggling Product mode — click Record to change" />
-                <button id="product-mode-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
-                  </svg>
-                  Record
-                </button>
-              </div>
-              <span id="product-mode-hotkey-status" class="hotkey-status"
-                    role="status"
-                    aria-live="polite"></span>
-            </div>
-            <div class="field hotkey-field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="tts.stop.hotkey" data-settings-visibility-label="TTS Stop hotkey" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
-              <span class="field-label">TTS Stop hotkey</span>
-              <div class="hotkey-input-group">
-                <input id="tts-stop-hotkey" type="text" placeholder="CommandOrControl+Shift+Escape" readonly title="Emergency stop for speech output — click Record to change" />
-                <button id="tts-stop-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
-                  </svg>
-                  Record
-                </button>
-              </div>
-              <span id="tts-stop-hotkey-status" class="hotkey-status"
-                    role="status"
-                    aria-live="polite"></span>
-            </div>
           </div>
           <details class="expander">
             <summary>Overlay</summary>
@@ -1130,26 +1021,6 @@
                 <span class="field-label">Color</span>
                 <input id="overlay-color" type="color" title="Accent color for the recording overlay" />
               </label>
-              <div class="settings-grid-2col">
-                <label class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.tts.stop.enabled" data-settings-visibility-label="TTS stop overlay" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
-                  <span class="field-label">TTS stop overlay</span>
-                  <input id="overlay-tts-stop-enabled" type="checkbox" title="Show a clickable stop overlay while speech is playing" />
-                  <span class="toggle-track">
-                    <span class="toggle-thumb"></span>
-                  </span>
-                </label>
-                <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.tts.stop.shape" data-settings-visibility-label="TTS stop shape" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
-                  <span class="field-label">TTS stop shape</span>
-                  <select id="overlay-tts-stop-shape" title="Shape of the emergency stop overlay">
-                    <option value="compact">Compact</option>
-                    <option value="round">Round</option>
-                  </select>
-                </label>
-                <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.tts.stop.color" data-settings-visibility-label="TTS stop color" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
-                  <span class="field-label">TTS stop color</span>
-                  <input id="overlay-tts-stop-color" type="color" title="Emergency stop accent color" />
-                </label>
-              </div>
               <!-- Dot mode settings -->
               <div id="overlay-dot-settings" class="settings-grid-2col">
               <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="overlay.min.radius" data-settings-visibility-label="Min radius (px)" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
@@ -1572,14 +1443,6 @@
                             <span class="badge">Offline • Private</span>
                           </div>
                           <div class="ai-provider-lane-title" id="ai-fallback-local-lane-title-text">Ollama (Local)</div>
-                          <label class="field" style="margin-top:8px;" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.backend.select" data-settings-visibility-label="Local backend" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                            <span class="field-label">Local backend</span>
-                            <select id="ai-fallback-local-backend-select" title="Select the local AI backend to use for refinement">
-                              <option value="ollama">Ollama (managed, port 11434)</option>
-                              <option value="lm_studio">LM Studio (port 1234)</option>
-                              <option value="oobabooga">Oobabooga / text-generation-webui (port 5000)</option>
-                            </select>
-                          </label>
                           <span id="ai-fallback-local-primary-status" class="field-hint">
                             Checking local runtime status...
                           </span>
@@ -1591,96 +1454,22 @@
                               Import model
                             </button>
                           </div>
-                          <details id="ai-fallback-local-advanced" class="ai-provider-advanced" data-expert-only="true">
-                            <summary>
-                              <span>Advanced runtime tools</span>
-                              <span class="expert-pill" aria-hidden="true">Expert</span>
-                            </summary>
-                            <div class="ai-provider-advanced-body">
-                              <label class="field">
-                                <span class="field-label">Install version</span>
-                                <div class="field-row">
-                                  <select id="ai-fallback-local-runtime-version" title="Select Ollama runtime version to install or upgrade" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.runtime.version" data-settings-visibility-label="Install version" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement"></select>
-                                  <button id="ai-fallback-fetch-versions-action" class="hotkey-record-btn" type="button" title="Fetch available versions from GitHub" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.fetch.versions.action" data-settings-visibility-label="Install version" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">Get versions</button>
-                                </div>
-                                <span id="ai-fallback-local-runtime-version-note" class="field-hint">Shows pinned releases. Click &ldquo;Get versions&rdquo; to fetch from GitHub.</span>
-                                <span id="ai-fallback-fetch-versions-status" class="field-hint" hidden></span>
-                              </label>
-                              <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.runtime.source" data-settings-visibility-label="Runtime source" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                                <span class="field-label">Runtime source</span>
-                                <select id="ai-fallback-local-runtime-source" title="How Ollama is provided">
-                                  <option value="per_user_zip">Managed (recommended)</option>
-                                  <option value="system">System (PATH)</option>
-                                </select>
-                              </label>
-                              <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.fallback.endpoints" data-settings-visibility-label="Fallback endpoints" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                                <span class="field-label">Fallback endpoints</span>
-                                <textarea
-                                  id="ai-fallback-local-fallback-endpoints"
-                                  class="field-textarea"
-                                  rows="3"
-                                  placeholder="One URL per line, e.g.:&#10;http://127.0.0.1:11435&#10;http://localhost:1234"
-                                  title="Additional endpoints tried in order when the primary endpoint is unreachable"
-                                  spellcheck="false"
-                                ></textarea>
-                                <span class="field-hint">Tried in order when the primary endpoint is unreachable. Leave empty to use only the primary.</span>
-                              </label>
-                              <div class="ai-provider-advanced-actions">
-                                <button id="ai-fallback-local-verify-action" class="hotkey-record-btn" type="button" title="Verify local runtime health and models" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.verify.action" data-settings-visibility-label="ai-fallback-local-verify-action" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                                  Verify
-                                </button>
-                                <button id="ai-fallback-local-refresh-action" class="hotkey-record-btn" type="button" title="Refresh runtime state, models, and version catalog" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.refresh.action" data-settings-visibility-label="ai-fallback-local-refresh-action" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                                  Refresh
-                                </button>
-                              </div>
+                          <div id="ai-fallback-local-advanced" class="ai-runtime-versions" data-expert-only="true">
+                            <div class="ai-runtime-versions-head">
+                              <span class="field-label">Runtime versions</span>
+                              <button id="ai-fallback-fetch-versions-action" class="hotkey-record-btn" type="button" title="Fetch available versions from GitHub" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.fetch.versions.action" data-settings-visibility-label="Runtime versions" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">Get versions</button>
                             </div>
-                          </details>
-                          <!-- OpenAI-compat backend config (LM Studio / Oobabooga) -->
-                          <div id="ai-fallback-compat-config" hidden data-expert-only="true">
-                            <p id="ai-fallback-compat-guide" class="field-hint span-2" style="margin-bottom:0.5rem;"></p>
-                            <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.compat.endpoint" data-settings-visibility-label="Server endpoint" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                              <span class="field-label">Server endpoint</span>
-                              <input
-                                id="ai-fallback-compat-endpoint"
-                                type="url"
-                                class="field-input"
-                                spellcheck="false"
-                                placeholder="http://127.0.0.1:1234"
-                                title="Base URL of the local AI server"
-                              />
-                              <span id="ai-fallback-compat-endpoint-hint" class="field-hint">Default: LM Studio port 1234, Oobabooga port 5000</span>
-                            </label>
-                            <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.compat.api.key" data-settings-visibility-label="API key (optional)" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                              <span class="field-label">API key <span class="field-label-optional">(optional)</span></span>
-                              <input
-                                id="ai-fallback-compat-api-key"
-                                type="password"
-                                class="field-input"
-                                spellcheck="false"
-                                placeholder="Leave empty if not required"
-                                title="API key for the local server (most local servers don't require one)"
-                              />
-                            </label>
-                            <div class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.compat.fetch.models" data-settings-visibility-label="Models" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                              <div class="field-row" style="margin-bottom:0.5rem;">
-                                <span class="field-label">Models</span>
-                                <button id="ai-fallback-compat-fetch-models" class="hotkey-record-btn" type="button" title="Fetch available models from the server">
-                                  Fetch models
-                                </button>
-                              </div>
-                              <div id="ai-fallback-compat-model-list" class="model-list card-list"></div>
-                              <span id="ai-fallback-compat-status" class="field-hint"></span>
-                            </div>
+                            <div id="ai-fallback-runtime-version-list" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.runtime.version" data-settings-visibility-label="Runtime versions" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement"></div>
+                            <span id="ai-fallback-fetch-versions-status" class="field-hint" hidden></span>
                             <div class="ai-provider-advanced-actions">
-                              <button id="ai-fallback-compat-verify-action" class="hotkey-record-btn" type="button" title="Test connection to the local server" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.compat.verify.action" data-settings-visibility-label="ai-fallback-compat-verify-action" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                                Verify connection
+                              <button id="ai-fallback-local-verify-action" class="hotkey-record-btn" type="button" title="Verify local runtime health and models" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.verify.action" data-settings-visibility-label="ai-fallback-local-verify-action" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
+                                Verify
                               </button>
-                              <button id="ai-fallback-lm-studio-install-action" class="hotkey-record-btn" type="button" title="Download and install LM Studio via the official installer script" hidden data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.lm.studio.install.action" data-settings-visibility-label="ai-fallback-lm-studio-install-action" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                                Install LM Studio
+                              <button id="ai-fallback-local-refresh-action" class="hotkey-record-btn" type="button" title="Refresh runtime state, models, and version catalog" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.local.refresh.action" data-settings-visibility-label="ai-fallback-local-refresh-action" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
+                                Refresh
                               </button>
                             </div>
                           </div>
-
                           <span id="ai-fallback-local-runtime-note" class="field-hint">
                             Local mode keeps transcript data on this device.
                           </span>
@@ -1691,28 +1480,9 @@
                             <span id="ai-fallback-runtime-progress-text" class="ollama-progress-text"></span>
                           </div>
                         </div>
-
-                        <div id="ai-fallback-online-lane" data-lane="online" class="ai-provider-lane ai-provider-lane--online is-roadmap-disabled" role="button" tabindex="0" aria-pressed="false" aria-disabled="true" data-expert-only="true">
-                          <div class="ai-provider-lane-header">
-                            <span id="ai-fallback-online-lane-title" class="field-label">Online Fallback (Roadmap)</span>
-                            <span id="ai-fallback-online-status-badge" class="badge badge--online is-locked">Roadmap • Not active</span>
-                          </div>
-                          <div class="field">
-                            <span class="field-label">Cloud providers</span>
-                            <div id="ai-fallback-cloud-provider-list" class="cloud-provider-list"></div>
-                          </div>
-                          <span id="ai-fallback-fallback-status" class="field-hint">
-                            Not active in production. Planned roadmap item and may change.
-                          </span>
-                        </div>
                       </div>
 
-                      <label id="ai-fallback-model-field" class="field" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.model" data-settings-visibility-label="Online model" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                        <span class="field-label">Online model</span>
-                        <select id="ai-fallback-model" title="Model to use for refinement (loaded from selected provider)"></select>
-                      </label>
-
-                      <div id="ai-fallback-ollama-managed-note" class="field-hint span-2" style="display:none;">
+                      <div class="field-hint span-2">
                         Ollama model selection is managed in the model cards below.
                       </div>
 
@@ -1902,534 +1672,6 @@
 
         </div>
 
-        <!-- Voice Output Tab -->
-        <div id="tab-voice-output" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-voice-output" data-settings-visibility-tab-content="voice-output" data-settings-visibility-group-container>
-          <section class="panel" data-panel="voice-output" style="--delay: 0.12s">
-            <div class="panel-header">
-              <div class="panel-title">
-                <h2>Voice Output</h2>
-                <p>Provider configuration and test controls for TTS output.</p>
-              </div>
-            </div>
-            <div class="panel-body">
-              <section id="voice-output-console" class="module-agent-console" hidden>
-                <div class="module-agent-console-header">
-                  <h3>Voice Output Settings</h3>
-                  <span id="voice-output-console-status" class="field-hint">Module disabled.</span>
-                </div>
-                <details class="expander" open>
-                  <summary><h4 class="ai-refine-section-title">Provider &amp; Policy</h4></summary>
-                  <div class="expander-body">
-                    <div class="panel-grid">
-                      <!-- TTS Provider Cards (span-2) -->
-                      <div class="tts-provider-cards span-2">
-                        <!-- Standard-Provider Card -->
-                        <div class="tts-provider-card ai-provider-lane" id="voice-output-default-card">
-                          <div class="tts-provider-card-header">
-                            <span class="field-label">Standard-Provider</span>
-                            <span id="voice-output-default-availability" class="tts-provider-availability"></span>
-                          </div>
-                          <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.provider.default" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Provider">
-                            <span class="field-label">Provider</span>
-                            <select id="voice-output-default-provider" title="Primary TTS engine">
-                              <option value="windows_native">Windows Native TTS</option>
-                              <option value="windows_natural">Windows Natural Language (SAPI Adapter)</option>
-                              <option value="local_custom">Piper (lokal)</option>
-                              <option value="qwen3_tts">Qwen3-TTS (OpenAI-compatible)</option>
-                            </select>
-                          </label>
-                          <label class="field" id="voice-output-windows-voice-field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.voice.default" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Stimme">
-                            <span class="field-label">Stimme</span>
-                            <select id="voice-output-windows-voice-select" title="Select a Windows speaker voice">
-                              <option value="">Auto (provider default)</option>
-                            </select>
-                            <span class="field-hint" id="voice-output-windows-voice-hint">Wähle eine installierte Windows-Stimme.</span>
-                          </label>
-                        </div>
-                        <!-- Fallback-Provider Card -->
-                        <div class="tts-provider-card ai-provider-lane" id="voice-output-fallback-card">
-                          <div class="tts-provider-card-header">
-                            <span class="field-label">Fallback-Provider</span>
-                            <span id="voice-output-fallback-availability" class="tts-provider-availability"></span>
-                          </div>
-                          <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.provider.fallback" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Provider">
-                            <span class="field-label">Provider</span>
-                            <select id="voice-output-fallback-provider" title="Used if default provider fails">
-                              <option value="windows_native">Windows Native TTS</option>
-                              <option value="windows_natural">Windows Natural Language (SAPI Adapter)</option>
-                              <option value="local_custom">Piper (lokal)</option>
-                              <option value="qwen3_tts">Qwen3-TTS (OpenAI-compatible)</option>
-                            </select>
-                          </label>
-                          <label class="field" id="voice-output-fallback-voice-field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.voice.fallback" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Stimme">
-                            <span class="field-label">Stimme</span>
-                            <select id="voice-output-fallback-voice-select" title="Fallback voice">
-                              <option value="">Auto (provider default)</option>
-                            </select>
-                            <span class="field-hint" id="voice-output-fallback-voice-hint">Wähle eine Stimme für den Fallback-Provider.</span>
-                          </label>
-                        </div>
-                      </div>
-                      <div class="field span-2 voice-download-status" id="voice-output-piper-download-status" hidden>
-                        <span class="field-label">Piper Download</span>
-                        <div class="voice-download-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-                          <div class="voice-download-progress-fill" id="voice-output-piper-download-fill"></div>
-                        </div>
-                        <span class="field-hint" id="voice-output-piper-download-text">Bereit.</span>
-                      </div>
-                      <div class="field toggle span-2" id="voice-output-auto-language-voice-field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.auto_language" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Auto voice by detected language">
-                        <label class="toggle-row">
-                          <span class="field-label">Auto voice by detected language</span>
-                          <input id="voice-output-auto-language-voice" type="checkbox" title="Automatically switch Windows voice per detected transcript language" />
-                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                        </label>
-                        <span class="toggle-hint">When enabled, Trispr picks a matching Windows voice (for example de/en) per utterance. Manual voice remains fallback.</span>
-                      </div>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.policy" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Output policy">
-                        <span class="field-label">Output policy</span>
-                        <select id="voice-output-policy" title="Controls when voice output is triggered">
-                          <option value="agent_replies_only">Agent replies only</option>
-                          <option value="replies_and_events">Replies and system events</option>
-                          <option value="explicit_only">Explicit calls only</option>
-                        </select>
-                        <span class="field-hint">Agent replies only = TTS fires only for workflow-agent responses.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.device" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="TTS output device">
-                        <span class="field-label">TTS output device</span>
-                        <select id="voice-output-device-select" title="Audio output target for TTS playback">
-                          <option value="default">Default (System)</option>
-                        </select>
-                        <span class="field-hint">Uses app-local routing. Windows default playback device is not changed.</span>
-                      </label>
-                      <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="voice.rate" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Speech rate">
-                        <span class="field-label">Speech rate</span>
-                        <div class="range-row">
-                          <input id="voice-output-rate" type="range" min="0.5" max="2.0" step="0.05"
-                                title="0.5 = half speed · 2.0 = double speed"
-                                aria-valuemin="0.5" aria-valuemax="2.0" aria-valuenow="1.0"
-                                aria-label="Voice output speech rate"
-                                aria-describedby="voice-output-rate-value" />
-                          <span id="voice-output-rate-value" class="range-value" aria-live="polite">1.00</span>
-                        </div>
-                      </label>
-                      <label class="field range" data-settings-visibility-managed="true" data-settings-visibility-key="voice.volume" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Volume">
-                        <span class="field-label">Volume</span>
-                        <div class="range-row">
-                          <input id="voice-output-volume" type="range" min="0" max="1" step="0.05"
-                                title="0 = muted · 1 = full"
-                                aria-valuemin="0" aria-valuemax="1" aria-valuenow="1.0"
-                                aria-label="Voice output volume"
-                                aria-describedby="voice-output-volume-value" />
-                          <span id="voice-output-volume-value" class="range-value" aria-live="polite">1.00</span>
-                        </div>
-                      </label>
-                      <div class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.test_provider" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="voice.test_provider">
-                        <button id="voice-output-test-btn" type="button" class="hotkey-record-btn">
-                          Test provider
-                        </button>
-                        <span class="field-hint" id="voice-output-test-status"></span>
-                      </div>
-                    </div>
-                  </div>
-                </details>
-                <details class="expander">
-                  <summary><h4 class="ai-refine-section-title">Advanced (Piper paths)</h4></summary>
-                  <div class="expander-body">
-                    <div class="panel-grid">
-                      <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="voice.piper.gain" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Piper gain">
-                        <span class="field-label">Piper gain</span>
-                        <div class="range-row">
-                          <input id="voice-output-piper-gain-db" type="range" min="-24" max="6" step="1"
-                                title="-24 dB = much quieter · +6 dB = louder"
-                                aria-valuemin="-24" aria-valuemax="6" aria-valuenow="-12"
-                                aria-label="Piper gain in decibel"
-                                aria-describedby="voice-output-piper-gain-db-value" />
-                          <span id="voice-output-piper-gain-db-value" class="range-value" aria-live="polite">-12 dB</span>
-                        </div>
-                        <span class="field-hint">Additional gain applied only to Piper playback, after global volume.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.piper.binary" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Piper binary path">
-                        <span class="field-label">Piper binary path</span>
-                        <input id="voice-output-piper-binary" type="text"
-                              placeholder="Auto-detected (leave empty)" title="Full path to piper.exe" />
-                        <span class="field-hint">Leave empty to auto-detect from PATH or bundled resources.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.piper.model" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Piper model path">
-                        <span class="field-label">Piper model path</span>
-                        <input id="voice-output-piper-model" type="text"
-                              placeholder="Auto-selected (leave empty)" title="Full path to .onnx voice model" />
-                        <span class="field-hint">Leave empty to auto-select the first available voice model.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.piper.directory" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Voice model directory">
-                        <span class="field-label">Voice model directory</span>
-                        <input id="voice-output-piper-model-dir" type="text"
-                              placeholder="Auto-detected (leave empty)" title="Directory containing .onnx voice models" />
-                        <span class="field-hint">Directory scanned for available Piper voice models.</span>
-                      </label>
-                    </div>
-                  </div>
-                </details>
-                <details class="expander" id="voice-output-qwen3-section">
-                  <summary><h4 class="ai-refine-section-title">Advanced (Qwen3-TTS endpoint)</h4></summary>
-                  <div class="expander-body">
-                    <div class="panel-grid">
-                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="voice.qwen.endpoint" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Qwen endpoint">
-                        <span class="field-label">Qwen endpoint</span>
-                        <input id="voice-output-qwen-endpoint" type="text"
-                              placeholder="http://127.0.0.1:8000/v1/audio/speech" title="OpenAI-compatible speech endpoint" />
-                        <span class="field-hint">Expected API: `POST /v1/audio/speech` returning WAV audio.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.qwen.model" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Qwen model">
-                        <span class="field-label">Qwen model</span>
-                        <input id="voice-output-qwen-model" type="text"
-                              placeholder="Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice" title="Model id sent to endpoint" />
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.qwen.voice" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Qwen voice">
-                        <span class="field-label">Qwen voice</span>
-                        <input id="voice-output-qwen-voice" type="text"
-                              placeholder="vivian" title="Speaker/voice id sent to endpoint" />
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.qwen.api_key" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="API key (optional)">
-                        <span class="field-label">API key (optional)</span>
-                        <input id="voice-output-qwen-api-key" type="password"
-                              placeholder="Bearer token (optional)" title="Optional bearer token for endpoint" />
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="voice.qwen.timeout" data-settings-visibility-default="expert" data-settings-visibility-group="Voice Output" data-settings-visibility-label="Timeout (seconds)">
-                        <span class="field-label">Timeout (seconds)</span>
-                        <input id="voice-output-qwen-timeout-sec" type="number" min="3" max="180" step="1"
-                              value="45" title="Request timeout for Qwen endpoint" />
-                      </label>
-                    </div>
-                  </div>
-                </details>
-              </section>
-            </div>
-          </section>
-        </div>
-
-        <div id="tab-task-capture" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-task-capture" data-settings-visibility-tab-content="task-capture">
-          <section class="panel" data-panel="task-capture" style="--delay: 0.12s">
-            <div class="panel-header">
-              <h2>Task Capture</h2>
-              <span class="field-hint">Configure voice-triggered task capture routes and AI refinement.</span>
-            </div>
-            <div class="panel-body" id="task-capture-panel-body" data-settings-visibility-group-container>
-              <!-- Dynamically rendered -->
-            </div>
-          </section>
-        </div>
-
-        <!-- Video Tab -->
-        <div id="tab-video" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-video" data-settings-visibility-tab-content="video" data-settings-visibility-group-container>
-          <section class="panel" data-panel="video" style="--delay: 0.12s">
-            <div class="panel-header">
-              <div class="panel-title">
-                <h2>Video Generation</h2>
-                <p>Drop concept sources — transcripts, docs, images, audio — and render a composed MP4.</p>
-              </div>
-            </div>
-            <div class="panel-body">
-              <section id="video-panel-root" class="module-agent-console">
-                <div id="video-install-banner" class="video-banner" hidden>
-                  <span id="video-install-banner-text">Node runtime not detected. Phase 1a requires Node 22+ on PATH.</span>
-                </div>
-
-                <details class="expander" open>
-                  <summary><h4 class="ai-refine-section-title">Sources</h4></summary>
-                  <div class="expander-body">
-                    <div id="video-drop-zone" class="video-drop-zone">
-                      <div class="video-drop-zone-hint">
-                        Drop files here
-                        <span class="field-hint">Markdown, TXT, JSON, YAML, HTML, SRT, PNG/JPG/SVG, MP3/WAV, MP4/MOV</span>
-                      </div>
-                      <div class="video-drop-zone-actions">
-                        <button id="video-pick-files-btn" class="btn" data-settings-visibility-managed="true" data-settings-visibility-key="video.pick.files.btn" data-settings-visibility-label="video-pick-files-btn" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation">Pick Files...</button>
-                        <button id="video-add-history-btn" class="btn secondary" data-settings-visibility-managed="true" data-settings-visibility-key="video.add.history.btn" data-settings-visibility-label="video-add-history-btn" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation">Add History Entry...</button>
-                      </div>
-                    </div>
-
-                    <div class="video-queue-header" data-settings-visibility-managed="true" data-settings-visibility-key="video.queue" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation" data-settings-visibility-label="Queue">
-                      <span class="field-label">Queue</span>
-                      <span id="video-queue-count" class="field-hint">0 items</span>
-                      <button id="video-queue-clear-btn" class="btn ghost small">Clear</button>
-                    </div>
-                    <ol id="video-queue-list" class="video-queue-list">
-                      <li class="video-queue-empty field-hint">Queue is empty. Drop files above or pick from history.</li>
-                    </ol>
-                  </div>
-                </details>
-
-                <details class="expander" open>
-                  <summary><h4 class="ai-refine-section-title">Brief &amp; Style</h4></summary>
-                  <div class="expander-body">
-                    <div class="panel-grid">
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="video.style" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation" data-settings-visibility-label="Style">
-                        <span class="field-label">Style</span>
-                        <select id="video-style-select" title="Composition style">
-                          <option value="slideshow">Slideshow</option>
-                          <option value="caption">Caption (karaoke)</option>
-                          <option value="diagram">Diagram (Phase 4)</option>
-                          <option value="game_viz">Game Viz (Phase 4)</option>
-                        </select>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="video.resolution" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation" data-settings-visibility-label="Resolution">
-                        <span class="field-label">Resolution</span>
-                        <select id="video-resolution-select" title="Output resolution">
-                          <option value="1920x1080">1920x1080 (16:9)</option>
-                          <option value="1080x1920">1080x1920 (9:16)</option>
-                          <option value="1080x1080">1080x1080 (1:1)</option>
-                        </select>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="video.fps" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation" data-settings-visibility-label="Frame Rate">
-                        <span class="field-label">Frame Rate</span>
-                        <select id="video-fps-select" title="Frames per second">
-                          <option value="30">30 fps</option>
-                          <option value="60">60 fps</option>
-                        </select>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="video.tts" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation" data-settings-visibility-label="TTS Voiceover">
-                        <span class="field-label">TTS Voiceover</span>
-                        <select id="video-tts-select" title="Voiceover provider">
-                          <option value="off">Off</option>
-                          <option value="piper" disabled>Piper (Phase 4)</option>
-                          <option value="windows_native" disabled>Windows Native (Phase 4)</option>
-                        </select>
-                      </label>
-                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="video.brief" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation" data-settings-visibility-label="Brief (optional)">
-                        <span class="field-label">Brief (optional)</span>
-                        <textarea id="video-brief-textarea" rows="3"
-                          placeholder="Focus on the economy flow, keep runtime under 30s, use dark background."></textarea>
-                      </label>
-                    </div>
-                  </div>
-                </details>
-
-                <div class="video-actions">
-                  <button id="video-generate-btn" class="btn primary" data-settings-visibility-managed="true" data-settings-visibility-key="video.generate.btn" data-settings-visibility-label="video-generate-btn" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation">Generate Video</button>
-                  <button id="video-open-folder-btn" class="btn secondary" data-settings-visibility-managed="true" data-settings-visibility-key="video.open.folder.btn" data-settings-visibility-label="video-open-folder-btn" data-settings-visibility-default="expert" data-settings-visibility-group="Video Generation">Open Output Folder</button>
-                </div>
-
-                <div id="video-progress" class="video-progress" hidden>
-                  <div class="video-progress-phase" id="video-progress-phase">idle</div>
-                  <div class="video-progress-bar"><div id="video-progress-fill" class="video-progress-fill"></div></div>
-                  <pre id="video-progress-log" class="video-progress-log"></pre>
-                </div>
-
-                <div id="video-result" class="video-result" hidden>
-                  <div class="video-result-header">
-                    <span class="field-label">Last render</span>
-                    <span id="video-result-path" class="field-hint"></span>
-                  </div>
-                  <video id="video-result-player" controls preload="metadata"></video>
-                </div>
-              </section>
-            </div>
-          </section>
-        </div>
-
-        <!-- Agent Tab -->
-        <div id="tab-agent" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-agent" data-settings-visibility-tab-content="agent" data-settings-visibility-group-container>
-          <section class="panel" data-panel="agent" style="--delay: 0.12s">
-            <div class="panel-header">
-              <div class="panel-title">
-                <h2>Assistant Debug</h2>
-                <p>Expert console for the desktop assistant core, pipeline state, and confirm lanes.</p>
-              </div>
-            </div>
-            <div class="panel-body">
-              <section id="workflow-agent-console" class="module-agent-console" hidden>
-                <div class="module-agent-console-header">
-                  <h3>Assistant Core</h3>
-                  <span id="workflow-agent-status" class="field-hint">Assistant Core disabled. Enable module + Assistant mode.</span>
-                </div>
-                <details class="expander" open>
-                  <summary><h4 class="ai-refine-section-title">Conversation</h4></summary>
-                  <div class="expander-body">
-                    <div class="panel-grid">
-                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.command" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Command">
-                        <span class="field-label">Command</span>
-                        <textarea
-                          id="workflow-agent-command-input"
-                          rows="3"
-                          placeholder="Hey Trispr, build a GDD draft from yesterday's combat discussion."
-                        ></textarea>
-                        <span class="field-hint">Wakeword + intent. Unbekannte Fragen bekommen eine sichere Antwort ohne Side-Effects.</span>
-                      </label>
-                      <div class="auth-modal-actions span-2">
-                        <button id="workflow-agent-parse-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">Parse Command</button>
-                        <button id="workflow-agent-ptt-arm-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">PTT (Agent)</button>
-                      </div>
-                      <div class="field span-2">
-                        <span class="field-label">Agent pipeline</span>
-                        <div id="workflow-agent-state-pipeline" class="workflow-agent-state-pipeline" role="group" aria-label="Agent orchestration state">
-                          <span class="workflow-agent-stage-chip" data-agent-stage="idle">Idle</span>
-                          <span class="workflow-agent-stage-chip" data-agent-stage="listening">Listening</span>
-                          <span class="workflow-agent-stage-chip" data-agent-stage="parsing">Parsing</span>
-                          <span class="workflow-agent-stage-chip" data-agent-stage="planning">Planning</span>
-                          <span class="workflow-agent-stage-chip" data-agent-stage="awaiting_confirm">Await Confirm</span>
-                          <span class="workflow-agent-stage-chip" data-agent-stage="executing">Executing</span>
-                          <span class="workflow-agent-stage-chip" data-agent-stage="recovering">Recovering</span>
-                        </div>
-                        <div id="workflow-agent-state-note" class="field-hint">Idle: waiting for wakeword or PTT command.</div>
-                      </div>
-                      <div class="field span-2">
-                        <span class="field-label">Live status</span>
-                        <div class="workflow-agent-live-grid">
-                          <div>
-                            <span class="field-hint">Last heard</span>
-                            <div id="workflow-agent-last-heard" class="workflow-agent-live-line">No utterance captured yet.</div>
-                          </div>
-                          <div>
-                            <span class="field-hint">Last intent</span>
-                            <div id="workflow-agent-last-intent" class="workflow-agent-live-line">No intent detected yet.</div>
-                          </div>
-                          <div>
-                            <span class="field-hint">Latest reply</span>
-                            <div id="workflow-agent-last-reply" class="workflow-agent-live-line">No replies yet.</div>
-                          </div>
-                          <div>
-                            <span class="field-hint">Last gate reason</span>
-                            <div id="workflow-agent-last-gate" class="workflow-agent-live-line">No gate decisions yet.</div>
-                          </div>
-                          <div>
-                            <span class="field-hint">Confirmation</span>
-                            <div id="workflow-agent-awaiting-confirmation" class="workflow-agent-live-line">No pending confirmation.</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </details>
-                <details class="expander" open>
-                  <summary><h4 class="ai-refine-section-title">Actions</h4></summary>
-                  <div class="expander-body">
-                    <div class="panel-grid">
-                      <div class="field span-2">
-                        <span class="field-label">Action lane</span>
-                        <div id="workflow-agent-action-hint" class="workflow-agent-live-line">
-                          Non-side-effect intents reply immediately. GDD intents open a confirmable plan lane.
-                        </div>
-                      </div>
-                      <div id="workflow-agent-plan-lane" class="span-2 workflow-agent-plan-lane">
-                        <div class="panel-grid">
-                          <div id="workflow-agent-candidates" class="module-agent-candidates span-2"></div>
-                          <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="workflow.agent.target.language" data-settings-visibility-label="Target language (required)" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant">
-                            <span class="field-label">Target language <strong>(required)</strong></span>
-                            <select id="workflow-agent-target-language">
-                              <option value="" disabled selected>— select language —</option>
-                              <option value="source">Source language (keep original)</option>
-                              <option value="en">English</option>
-                              <option value="de">Deutsch</option>
-                              <option value="fr">Français</option>
-                              <option value="es">Español</option>
-                            </select>
-                            <span class="field-hint">Choose a language for each GDD command before building a plan.</span>
-                          </label>
-                          <div class="field">
-                            <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">Build Plan</button>
-                          </div>
-                          <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="workflow.agent.plan.preview" data-settings-visibility-label="Plan preview" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant">
-                            <span class="field-label">Plan preview</span>
-                            <textarea id="workflow-agent-plan-preview" rows="5" readonly placeholder="Execution plan appears here..."></textarea>
-                          </label>
-                          <div class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="workflow.agent.review.confirm" data-settings-visibility-label="Review confirmed" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant">
-                            <label class="toggle-row">
-                              <span class="field-label">Review confirmed</span>
-                              <input id="workflow-agent-review-confirm" type="checkbox" title="Confirm you reviewed the plan details before execution" />
-                              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                            </label>
-                            <span id="workflow-agent-review-summary" class="field-hint">Build a plan first, review analysis/execution lanes, then confirm before execute.</span>
-                          </div>
-                          <div class="auth-modal-actions span-2">
-                            <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">Confirm & Execute</button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </details>
-                <details class="expander">
-                  <summary><h4 class="ai-refine-section-title">Configuration</h4></summary>
-                  <div class="expander-body">
-                    <div class="panel-grid">
-                      <div class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.hands_free" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Hands-free mode">
-                        <label class="toggle-row">
-                          <span class="field-label">Hands-free mode</span>
-                          <input id="workflow-agent-hands-free-enabled" type="checkbox" title="Enable wakeword-driven command parsing in assistant mode" />
-                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                        </label>
-                        <span class="field-hint">When enabled, wakeword commands are parsed in Assistant mode. PTT remains available for one-shot bypass.</span>
-                      </div>
-                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.wakewords" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Wakewords">
-                        <span class="field-label">Wakewords</span>
-                        <textarea id="workflow-agent-wakewords" rows="3" placeholder="trispr&#10;hey trispr&#10;trispr agent"></textarea>
-                        <span class="field-hint">One wakeword per line (comma-separated entries also supported).</span>
-                      </label>
-                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.aliases" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Wakeword aliases (optional)">
-                        <span class="field-label">Wakeword aliases (optional)</span>
-                        <textarea id="workflow-agent-wakeword-aliases" rows="2" placeholder="trispa&#10;trisper"></textarea>
-                        <span class="field-hint">Alternative pronunciations that should trigger the same wakeword intent.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.confirm_timeout" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Confirm timeout (seconds)">
-                        <span class="field-label">Confirm timeout (seconds)</span>
-                        <input id="workflow-agent-confirm-timeout-sec" type="number" min="10" max="300" step="1" value="45" />
-                        <span class="field-hint">How long the confirm token remains valid before auto-cancel.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.suggestion_level" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Suggestion level">
-                        <span class="field-label">Suggestion level</span>
-                        <select id="workflow-agent-suggestion-level">
-                          <option value="standard">Standard</option>
-                          <option value="low">Low</option>
-                          <option value="high">High</option>
-                        </select>
-                        <span class="field-hint">Controls session candidate breadth.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.reply_mode" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Reply mode">
-                        <span class="field-label">Reply mode</span>
-                        <select id="workflow-agent-reply-mode">
-                          <option value="rule_only">Rule-only</option>
-                          <option value="hybrid_local_llm">Hybrid local LLM</option>
-                        </select>
-                        <span class="field-hint">Hybrid only affects wording; execution remains deterministic.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.online_mode" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Knowledge scope">
-                        <span class="field-label">Knowledge scope</span>
-                        <select id="workflow-agent-online-mode">
-                          <option value="local_only">Local only</option>
-                          <option value="online_enabled">Online enabled</option>
-                        </select>
-                        <span class="field-hint">Online enabled allows cloud-model replies. Live web lookup tools are still explicit and separate.</span>
-                      </label>
-                      <div class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.voice_feedback" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Voice feedback">
-                        <label class="toggle-row">
-                          <span class="field-label">Voice feedback</span>
-                          <input id="workflow-agent-voice-feedback-enabled" type="checkbox" title="Allow spoken agent feedback when TTS is available" />
-                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                        </label>
-                        <span class="field-hint">Falls back to text responses when voice output is unavailable.</span>
-                      </div>
-                    </div>
-                  </div>
-                </details>
-                <details class="expander">
-                  <summary><h4 class="ai-refine-section-title">Expert &amp; Diagnostics</h4></summary>
-                  <div class="expander-body">
-                    <div class="panel-grid">
-                      <div class="auth-modal-actions span-2">
-                        <button id="workflow-agent-refresh-candidates-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">Find Sessions</button>
-                      </div>
-                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="workflow.agent.execution.log" data-settings-visibility-label="Conversation log" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant">
-                        <span class="field-label">Conversation log</span>
-                        <textarea id="workflow-agent-execution-log" rows="6" readonly placeholder="Agent events and execution output appear here..."></textarea>
-                      </label>
-                    </div>
-                  </div>
-                </details>
-              </section>
-            </div>
-          </section>
-        </div>
-
         <!-- Modules Tab -->
         <div id="tab-modules" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-modules" data-settings-visibility-tab-content="modules" data-settings-visibility-group-container>
           <section class="panel modules-panel" style="--delay: 0.12s">
@@ -2444,7 +1686,6 @@
             </div>
             <div class="panel-body">
               <div id="modules-list" class="modules-list" data-settings-visibility-group-container></div>
-              <div class="field-hint">Workflow Agent configuration moved to the Agent tab.</div>
             </div>
           </section>
         </div>
@@ -2526,41 +1767,13 @@
 
         <!-- Legacy wizard steps removed (hardware detection, ollama, finish) -->
         <!-- Hardware detection runs automatically in background -->
-        <!-- AI Refinement / TTS are available as modules in Expert mode -->
+        <!-- AI Refinement is available as a module in Expert mode -->
 
         <div class="auth-modal-actions wizard-actions">
           <button id="wizard-prev-btn" type="button" class="hotkey-record-btn" disabled>Zurueck</button>
           <button id="wizard-next-btn" type="button" class="btn btn-primary">Weiter</button>
           <button id="wizard-finish-btn" type="button" class="btn btn-primary" hidden>Los geht's!</button>
         </div>
-      </div>
-    </div>
-
-    <div id="ai-auth-modal" class="auth-modal" hidden>
-      <div id="ai-auth-modal-backdrop" class="auth-modal-backdrop"></div>
-      <div class="auth-modal-card" role="dialog" aria-modal="true" aria-labelledby="ai-auth-modal-title">
-        <div class="auth-modal-header">
-          <h3 id="ai-auth-modal-title" class="ai-refine-section-title">Authenticate Provider</h3>
-          <button id="ai-auth-modal-close" type="button" class="hotkey-record-btn">Close</button>
-        </div>
-        <p id="ai-auth-provider-name" class="field-hint">Provider</p>
-        <label class="field">
-          <span class="field-label">Authentication method</span>
-          <select id="ai-auth-method" title="Select cloud authentication method">
-            <option value="api_key">API key</option>
-            <option value="oauth" disabled>OAuth (coming soon)</option>
-          </select>
-        </label>
-        <label class="field">
-          <span class="field-label">API key</span>
-          <input id="ai-auth-api-key-input" type="password" placeholder="Paste provider API key" title="API key for the selected cloud provider" />
-        </label>
-        <div class="auth-modal-actions">
-          <button id="ai-auth-save-key" class="hotkey-record-btn" type="button">Save key</button>
-          <button id="ai-auth-clear-key" class="hotkey-record-btn" type="button">Clear key</button>
-          <button id="ai-auth-verify-key" class="hotkey-record-btn" type="button">Verify</button>
-        </div>
-        <span id="ai-auth-status" class="field-hint">No API key stored.</span>
       </div>
     </div>
 
@@ -2700,145 +1913,6 @@
             <div id="archive-entries" class="archive-entries"></div>
           </section>
         </div>
-      </div>
-    </div>
-
-    <div id="gdd-flow-modal" class="auth-modal" hidden>
-      <div id="gdd-flow-backdrop" class="auth-modal-backdrop"></div>
-      <div class="auth-modal-card gdd-flow-modal-card gdd-mode-standard" role="dialog" aria-modal="true" aria-labelledby="gdd-flow-title-label">
-        <div class="auth-modal-header">
-          <h3 id="gdd-flow-title-label" class="ai-refine-section-title">GDD Draft Generator</h3>
-          <button id="gdd-flow-close" type="button" class="hotkey-record-btn">Close</button>
-        </div>
-
-        <div class="gdd-mode-switch" role="group" aria-label="GDD workflow mode">
-          <button id="gdd-flow-mode-standard" type="button" class="hotkey-record-btn is-active">Standard</button>
-          <button id="gdd-flow-mode-advanced" type="button" class="hotkey-record-btn">Advanced</button>
-        </div>
-
-        <details id="gdd-flow-step-input" class="expander gdd-step" open>
-          <summary>1. Input</summary>
-          <div class="expander-body">
-            <span id="gdd-flow-runtime-summary" class="field-hint">Current runtime session is used as default input.</span>
-
-            <label class="field">
-              <span class="field-label">Draft title</span>
-              <input id="gdd-flow-title" type="text" placeholder="Game Design Document" />
-            </label>
-
-            <div class="gdd-template-box gdd-advanced-only">
-              <label class="field">
-                <span class="field-label">Template source (optional)</span>
-                <select id="gdd-flow-template-source">
-                  <option value="none">No external template</option>
-                  <option value="confluence">Confluence page URL</option>
-                  <option value="file">PDF/DOCX/TXT file</option>
-                </select>
-              </label>
-
-              <div id="gdd-flow-template-confluence-group" class="gdd-template-group" hidden>
-                <label class="field">
-                  <span class="field-label">Confluence page URL</span>
-                  <input id="gdd-flow-template-confluence-url" type="url" placeholder="https://your-site.atlassian.net/wiki/.../pages/12345/..." />
-                </label>
-                <button id="gdd-flow-template-confluence-load" type="button" class="hotkey-record-btn">Load from Confluence</button>
-              </div>
-
-              <div id="gdd-flow-template-file-group" class="gdd-template-group" hidden>
-                <label class="field">
-                  <span class="field-label">Template file</span>
-                  <input id="gdd-flow-template-file-path" type="text" placeholder="No file selected" readonly />
-                </label>
-                <div class="gdd-template-file-actions">
-                  <button id="gdd-flow-template-file-pick" type="button" class="hotkey-record-btn">Choose file</button>
-                  <button id="gdd-flow-template-file-load" type="button" class="hotkey-record-btn">Load file</button>
-                </div>
-              </div>
-
-              <span id="gdd-flow-template-meta" class="field-hint">No template loaded.</span>
-              <textarea id="gdd-flow-template-preview" class="gdd-template-preview" rows="8" placeholder="Template preview appears here..." readonly></textarea>
-            </div>
-          </div>
-        </details>
-
-        <details id="gdd-flow-step-drafting" class="expander gdd-step" open>
-          <summary>2. Drafting</summary>
-          <div class="expander-body">
-            <div class="gdd-flow-grid gdd-advanced-only">
-              <label class="field">
-                <span class="field-label">Preset</span>
-                <select id="gdd-flow-preset"></select>
-              </label>
-              <div class="field">
-                <span class="field-label">Preset recognition</span>
-                <button id="gdd-flow-detect-preset" type="button" class="hotkey-record-btn">Auto-detect Preset</button>
-              </div>
-            </div>
-
-            <label class="field gdd-advanced-only">
-              <span class="field-label">Chunk size</span>
-              <select id="gdd-flow-max-chunk">
-                <option value="2200">2200 chars</option>
-                <option value="3500" selected>3500 chars (recommended)</option>
-                <option value="5000">5000 chars</option>
-                <option value="7000">7000 chars</option>
-              </select>
-            </label>
-
-            <div class="auth-modal-actions">
-              <button id="gdd-flow-generate" type="button" class="hotkey-record-btn">Generate Draft</button>
-              <button id="gdd-flow-validate" type="button" class="hotkey-record-btn gdd-advanced-only">Validate</button>
-            </div>
-          </div>
-        </details>
-
-        <details id="gdd-flow-step-routing" class="expander gdd-step" open>
-          <summary>3. Target Routing</summary>
-          <div class="expander-body">
-            <div class="gdd-flow-grid">
-              <label class="field">
-                <span class="field-label">Confluence space key</span>
-                <input id="gdd-flow-space-key" type="text" placeholder="GAME" />
-              </label>
-              <label class="field gdd-advanced-only">
-                <span class="field-label">Parent page id (optional)</span>
-                <input id="gdd-flow-parent-page-id" type="text" placeholder="123456789" />
-              </label>
-            </div>
-            <label class="field gdd-advanced-only">
-              <span class="field-label">Target page id (optional)</span>
-              <input id="gdd-flow-target-page-id" type="text" placeholder="Leave empty to auto-create or title-match" />
-            </label>
-            <div class="auth-modal-actions gdd-advanced-only">
-              <button id="gdd-flow-suggest-target" type="button" class="hotkey-record-btn">Suggest Target</button>
-            </div>
-          </div>
-        </details>
-
-        <details id="gdd-flow-step-publish" class="expander gdd-step" open>
-          <summary>4. Publish &amp; Output</summary>
-          <div class="expander-body">
-            <span id="gdd-flow-status" class="field-hint">Uses the current runtime session as input.</span>
-            <div class="auth-modal-actions">
-              <button id="gdd-flow-one-click-publish" type="button" class="hotkey-record-btn">One-click Publish</button>
-              <button id="gdd-flow-publish" type="button" class="hotkey-record-btn gdd-advanced-only">Publish to Confluence</button>
-            </div>
-            <span class="field-hint">One-click uses route suggestion and asks for confirmation on low confidence.</span>
-            <a id="gdd-flow-publish-link" class="field-hint gdd-publish-link" href="#" target="_blank" rel="noopener" hidden>Open published page</a>
-
-            <textarea id="gdd-flow-output" class="gdd-output-preview" rows="12" placeholder="Draft output appears here..." readonly></textarea>
-
-            <div class="gdd-publish-box gdd-advanced-only">
-              <div class="gdd-queue-header">
-                <span class="field-label">Pending publish queue</span>
-                <button id="gdd-flow-queue-refresh" type="button" class="hotkey-record-btn">Refresh queue</button>
-              </div>
-              <div id="gdd-flow-queue-list" class="gdd-queue-list">
-                <div class="archive-empty">No pending publishes.</div>
-              </div>
-            </div>
-          </div>
-        </details>
       </div>
     </div>
   </body>

@@ -1,18 +1,6 @@
 use std::collections::HashSet;
 
-use super::{
-    canonicalize_module_id, AssistantActionDescriptor, ModuleDescriptor, ModuleSettings,
-    ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID,
-};
-
-#[derive(Debug, Clone, Copy)]
-pub struct AssistantActionManifest {
-    pub id: &'static str,
-    pub label: &'static str,
-    pub risk_level: &'static str,
-    pub requires_online: bool,
-    pub allowlist_eligible: bool,
-}
+use super::{canonicalize_module_id, ModuleDescriptor, ModuleSettings};
 
 #[derive(Debug, Clone)]
 pub struct ModuleManifest {
@@ -25,65 +13,10 @@ pub struct ModuleManifest {
     pub restart_required_on_enable: bool,
     pub dependencies: &'static [&'static str],
     pub permissions: &'static [&'static str],
-    pub surface: &'static str,
-    pub assistant_capable: bool,
-    pub assistant_actions: &'static [AssistantActionManifest],
 }
 
 pub fn manifests() -> Vec<ModuleManifest> {
-    const GDD_ACTIONS: &[AssistantActionManifest] = &[AssistantActionManifest {
-        id: "gdd.generate_publish",
-        label: "Generate GDD Draft",
-        risk_level: "medium",
-        requires_online: false,
-        allowlist_eligible: false,
-    }];
-    const ASSISTANT_CORE_ACTIONS: &[AssistantActionManifest] = &[
-        AssistantActionManifest {
-            id: "web.search",
-            label: "Web Search",
-            risk_level: "low",
-            requires_online: true,
-            allowlist_eligible: true,
-        },
-        AssistantActionManifest {
-            id: "app.open",
-            label: "Open App",
-            risk_level: "low",
-            requires_online: false,
-            allowlist_eligible: true,
-        },
-        AssistantActionManifest {
-            id: "module.open",
-            label: "Open Trispr Surface",
-            risk_level: "low",
-            requires_online: false,
-            allowlist_eligible: true,
-        },
-        AssistantActionManifest {
-            id: "gdd.generate_publish",
-            label: "Generate GDD Draft",
-            risk_level: "medium",
-            requires_online: false,
-            allowlist_eligible: false,
-        },
-    ];
-
     vec![
-        ModuleManifest {
-            id: "gdd",
-            name: "GDD Automation",
-            version: "0.2.0",
-            bundled: cfg!(feature = "module-gdd"),
-            core_always_on: false,
-            installed_by_default: false,
-            restart_required_on_enable: false,
-            dependencies: &[],
-            permissions: &[],
-            surface: "shared",
-            assistant_capable: true,
-            assistant_actions: GDD_ACTIONS,
-        },
         ModuleManifest {
             id: "ai_refinement",
             name: "AI Refinement",
@@ -94,110 +27,6 @@ pub fn manifests() -> Vec<ModuleManifest> {
             restart_required_on_enable: false,
             dependencies: &[],
             permissions: &[],
-            surface: "shared",
-            assistant_capable: true,
-            assistant_actions: &[],
-        },
-        ModuleManifest {
-            id: "task_capture",
-            name: "Task Capture",
-            version: "0.1.0",
-            bundled: true,
-            core_always_on: false,
-            installed_by_default: true,
-            restart_required_on_enable: false,
-            dependencies: &["ai_refinement"],
-            permissions: &["network_confluence"],
-            surface: "assistant",
-            assistant_capable: true,
-            assistant_actions: &[AssistantActionManifest {
-                id: "task.capture",
-                label: "Capture Task / Reminder",
-                risk_level: "low",
-                requires_online: false,
-                allowlist_eligible: true,
-            }],
-        },
-        ModuleManifest {
-            id: ASSISTANT_CORE_MODULE_ID,
-            name: "Assistant Core",
-            version: "0.1.0",
-            bundled: true,
-            core_always_on: false,
-            installed_by_default: true,
-            restart_required_on_enable: false,
-            dependencies: if cfg!(feature = "module-gdd") {
-                &["gdd"]
-            } else {
-                &[]
-            },
-            permissions: &[
-                "filesystem_history",
-                "filesystem_exports",
-                "network_confluence",
-                "keyring_access",
-            ],
-            surface: "assistant",
-            assistant_capable: true,
-            assistant_actions: ASSISTANT_CORE_ACTIONS,
-        },
-        ModuleManifest {
-            id: ASSISTANT_PRESENCE_MODULE_ID,
-            name: "Assistant Presence",
-            version: "0.1.0",
-            bundled: true,
-            core_always_on: false,
-            installed_by_default: true,
-            restart_required_on_enable: false,
-            dependencies: &[ASSISTANT_CORE_MODULE_ID],
-            permissions: &[],
-            surface: "ui",
-            assistant_capable: false,
-            assistant_actions: &[],
-        },
-        ModuleManifest {
-            id: "input_vision",
-            name: "Screen Vision Input",
-            version: "0.1.0",
-            bundled: true,
-            core_always_on: false,
-            installed_by_default: false,
-            restart_required_on_enable: false,
-            dependencies: &[ASSISTANT_CORE_MODULE_ID],
-            permissions: &["screen_capture"],
-            surface: "assistant",
-            assistant_capable: true,
-            assistant_actions: &[],
-        },
-        ModuleManifest {
-            id: "output_voice_tts",
-            name: "Voice Output (TTS)",
-            version: "0.1.0",
-            bundled: true,
-            core_always_on: false,
-            installed_by_default: true,
-            restart_required_on_enable: false,
-            dependencies: &[ASSISTANT_CORE_MODULE_ID],
-            permissions: &["audio_output"],
-            surface: "assistant",
-            assistant_capable: true,
-            assistant_actions: &[],
-        },
-        ModuleManifest {
-            // Phase 1b: installed_by_default=false — hyperframes is now a
-            // downloadable runtime module (module-sidecars/video_gen/).
-            id: "output_video_generation",
-            name: "Video Generation",
-            version: "0.1.0",
-            bundled: false,
-            core_always_on: false,
-            installed_by_default: false,
-            restart_required_on_enable: false,
-            dependencies: &[],
-            permissions: &["filesystem_exports"],
-            surface: "shared",
-            assistant_capable: false,
-            assistant_actions: &[],
         },
         ModuleManifest {
             // Code-out module: the `trispr-opus` sidecar + bundled FFmpeg are
@@ -212,26 +41,6 @@ pub fn manifests() -> Vec<ModuleManifest> {
             restart_required_on_enable: false,
             dependencies: &[],
             permissions: &[],
-            surface: "shared",
-            assistant_capable: false,
-            assistant_actions: &[],
-        },
-        ModuleManifest {
-            // Runtime module: piper.exe + DLLs + espeak data downloaded on demand.
-            // Core resolves the binary from the module install dir; graceful no-op
-            // when absent (speak_tts returns an error pointing to the Modules tab).
-            id: "piper_tts",
-            name: "Piper Local TTS",
-            version: "2023.11.14-2",
-            bundled: false,
-            core_always_on: false,
-            installed_by_default: false,
-            restart_required_on_enable: false,
-            dependencies: &[],
-            permissions: &["audio_output"],
-            surface: "shared",
-            assistant_capable: false,
-            assistant_actions: &[],
         },
     ]
 }
@@ -373,19 +182,6 @@ pub fn modules_as_descriptors_with_packages(
                 bundled: manifest.bundled,
                 core: manifest.core_always_on,
                 toggleable: !manifest.core_always_on,
-                surface: manifest.surface.to_string(),
-                assistant_capable: manifest.assistant_capable,
-                assistant_actions: manifest
-                    .assistant_actions
-                    .iter()
-                    .map(|action| AssistantActionDescriptor {
-                        id: action.id.to_string(),
-                        label: action.label.to_string(),
-                        risk_level: action.risk_level.to_string(),
-                        requires_online: action.requires_online,
-                        allowlist_eligible: action.allowlist_eligible,
-                    })
-                    .collect(),
             }
         })
         .collect()
@@ -443,108 +239,20 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "module-gdd")]
-    fn gdd_is_bundled_but_not_installed_without_package_when_feature_enabled() {
-        let settings = ModuleSettings::default();
-        let descriptor = modules_as_descriptors(&settings)
-            .into_iter()
-            .find(|module| module.id == "gdd")
-            .expect("GDD manifest should exist");
-
-        assert!(descriptor.bundled);
-        assert!(!descriptor.core);
-        assert!(descriptor.toggleable);
-        assert_eq!(descriptor.state, "not_installed");
-        assert!(descriptor.dependencies.is_empty());
-    }
-
-    #[test]
-    #[cfg(feature = "module-gdd")]
-    fn gdd_is_installed_when_validated_package_is_present() {
-        let settings = ModuleSettings::default();
-        let installed_packages = HashSet::from(["gdd".to_string()]);
-        let descriptor = modules_as_descriptors_with_packages(&settings, &installed_packages)
-            .into_iter()
-            .find(|module| module.id == "gdd")
-            .expect("GDD manifest should exist");
-
-        assert!(descriptor.bundled);
-        assert!(!descriptor.core);
-        assert!(descriptor.toggleable);
-        assert_eq!(descriptor.state, "installed");
-    }
-
-    #[test]
-    #[cfg(feature = "module-gdd")]
-    fn assistant_core_dependency_is_satisfied_by_validated_gdd_package() {
-        let settings = ModuleSettings::default();
-        let installed_packages = HashSet::from(["gdd".to_string()]);
-
-        assert!(missing_dependencies_with_packages(
-            &settings,
-            ASSISTANT_CORE_MODULE_ID,
-            &installed_packages,
-        )
-        .is_empty());
-    }
-
-    #[test]
-    #[cfg(not(feature = "module-gdd"))]
-    fn gdd_is_not_bundled_or_installed_when_feature_disabled() {
-        let settings = ModuleSettings::default();
-        let descriptor = modules_as_descriptors(&settings)
-            .into_iter()
-            .find(|module| module.id == "gdd")
-            .expect("GDD manifest should remain discoverable");
-
-        assert!(!descriptor.bundled);
-        assert!(!descriptor.core);
-        assert!(descriptor.toggleable);
-        assert_eq!(descriptor.state, "not_installed");
-        assert!(missing_dependencies_with_packages(
-            &settings,
-            ASSISTANT_CORE_MODULE_ID,
-            &HashSet::new(),
-        )
-        .is_empty());
-    }
-
-    #[test]
-    fn confluence_is_not_a_standalone_module() {
-        assert_eq!(
-            find_manifest("integrations_confluence")
-                .expect("legacy Confluence id should map to GDD")
-                .id,
-            "gdd"
-        );
-        assert!(manifests()
-            .iter()
-            .all(|module| module.id != "integrations_confluence"));
-    }
-
-    #[test]
-    fn piper_tts_is_known_on_demand_module() {
-        // piper_tts must be in the registry so downloaded packages with id
-        // "piper_tts" pass `known_module_id` validation. On-demand: not
-        // bundled, not installed by default.
-        let manifest = find_manifest("piper_tts").expect("piper_tts manifest should exist");
-        assert!(!manifest.bundled);
-        assert!(!manifest.core_always_on);
-        assert!(!manifest.installed_by_default);
-
-        let settings = ModuleSettings::default();
-        let descriptor = modules_as_descriptors(&settings)
-            .into_iter()
-            .find(|module| module.id == "piper_tts")
-            .expect("piper_tts descriptor should exist");
-        assert_eq!(descriptor.state, "not_installed");
-        assert!(descriptor.toggleable);
-
-        let installed = HashSet::from(["piper_tts".to_string()]);
-        let descriptor = modules_as_descriptors_with_packages(&settings, &installed)
-            .into_iter()
-            .find(|module| module.id == "piper_tts")
-            .expect("piper_tts descriptor should exist");
-        assert_eq!(descriptor.state, "installed");
+    fn removed_modules_are_no_longer_registered() {
+        for id in [
+            "gdd",
+            "integrations_confluence",
+            "task_capture",
+            "assistant_core",
+            "assistant_presence",
+            "workflow_agent",
+            "input_vision",
+            "output_voice_tts",
+            "output_video_generation",
+            "piper_tts",
+        ] {
+            assert!(find_manifest(id).is_none(), "{id} must not be registered");
+        }
     }
 }

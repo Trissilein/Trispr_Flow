@@ -1,5 +1,5 @@
 use crate::ai_fallback::models::{AIFallbackSettings, AIProvidersSettings};
-use crate::ai_fallback::provider::{is_local_ollama_endpoint, prompt_for_profile};
+use crate::ai_fallback::provider::prompt_for_profile;
 use crate::audio::Recorder;
 use crate::constants::{
     HALLUCINATION_MAX_CHARS, HALLUCINATION_MAX_DURATION_MS, HALLUCINATION_MAX_WORDS,
@@ -7,16 +7,7 @@ use crate::constants::{
     VAD_THRESHOLD_SUSTAIN_DEFAULT,
 };
 use crate::history_partition::PartitionedHistory;
-use crate::modules::{
-    canonicalize_module_id, normalize_confluence_settings, normalize_gdd_module_settings,
-    normalize_module_settings, normalize_task_capture_settings,
-    normalize_video_generation_settings, normalize_vision_input_settings,
-    normalize_voice_output_settings, normalize_workflow_agent_settings, ConfluenceSettings,
-    GddModuleSettings, ModuleSettings, TaskCaptureSettings, VideoGenerationSettings,
-    VisionInputSettings, VoiceOutputSettings, WorkflowAgentSettings, ASSISTANT_CORE_MODULE_ID,
-    ASSISTANT_PRESENCE_MODULE_ID, LEGACY_WORKFLOW_AGENT_MODULE_ID,
-};
-use crate::multimodal_io::{PiperDaemonState, VisionFrameBuffer};
+use crate::modules::{normalize_module_settings, ModuleSettings};
 use crate::overlay::OverlayController;
 use crate::paths::resolve_config_path;
 use crate::transcription::TranscribeRecorder;
@@ -30,7 +21,6 @@ use tauri::{AppHandle, Emitter, Manager};
 use tracing::warn;
 
 const HISTORY_LOCK_WARN_MS: u128 = 20;
-const ASSISTANT_CORE_MIGRATION_FLAG_KEY: &str = "assistant_core.migrated_legacy_binding";
 
 /// Debounce flags for asynchronous history persistence.  When set, a background
 /// thread is already scheduled to flush the corresponding history to disk within
@@ -87,22 +77,6 @@ fn default_overlay_refining_indicator_speed_ms() -> u64 {
 
 fn default_overlay_refining_indicator_range() -> f32 {
     100.0
-}
-
-fn default_hotkey_tts_stop() -> String {
-    "CommandOrControl+Shift+F12".to_string()
-}
-
-fn default_overlay_tts_stop_enabled() -> bool {
-    true
-}
-
-fn default_overlay_tts_stop_shape() -> String {
-    "compact".to_string()
-}
-
-fn default_overlay_tts_stop_color() -> String {
-    default_accent_color()
 }
 
 fn default_history_alias_mic() -> String {
@@ -267,22 +241,6 @@ fn default_whisper_gpu_layers() -> Option<usize> {
     Some(35)
 }
 
-fn default_product_mode() -> String {
-    "transcribe".to_string()
-}
-
-fn default_hotkey_product_mode_toggle() -> String {
-    "CommandOrControl+Shift+P".to_string()
-}
-
-fn default_assistant_presence_enabled() -> bool {
-    true
-}
-
-fn default_assistant_presence_pinned() -> bool {
-    true
-}
-
 fn default_local_backend_preference() -> String {
     "auto".to_string()
 }
@@ -290,29 +248,16 @@ fn default_local_backend_preference() -> String {
 pub(crate) const AI_REFINEMENT_MODULE_ID: &str = "ai_refinement";
 const AI_REFINEMENT_MIGRATION_FLAG_KEY: &str = "ai_refinement.migrated_legacy";
 
-fn normalize_product_mode_value(value: &str) -> String {
-    match value.trim().to_lowercase().as_str() {
-        "assistant" | "agent" | "workflow_agent" => "assistant".to_string(),
-        _ => "transcribe".to_string(),
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
     pub(crate) mode: String,
-    #[serde(default = "default_product_mode")]
-    pub(crate) product_mode: String,
     pub(crate) hotkey_ptt: String,
     pub(crate) hotkey_toggle: String,
-    #[serde(default = "default_hotkey_tts_stop")]
-    pub(crate) hotkey_tts_stop: String,
     pub(crate) input_device: String,
     pub(crate) language_mode: String,
     pub(crate) language_pinned: bool,
     pub(crate) model: String,
-    // Legacy toggle kept for backward compatibility with old cloud transcription paths.
-    pub(crate) cloud_fallback: bool,
     // v0.7.0 AI Fallback settings
     pub(crate) ai_fallback: AIFallbackSettings,
     pub(crate) providers: AIProvidersSettings,
@@ -320,24 +265,6 @@ pub(crate) struct Settings {
     pub(crate) setup: SetupSettings,
     // Managed module platform settings
     pub(crate) module_settings: ModuleSettings,
-    pub(crate) gdd_module_settings: GddModuleSettings,
-    pub(crate) confluence_settings: ConfluenceSettings,
-    pub(crate) workflow_agent: WorkflowAgentSettings,
-    pub(crate) vision_input_settings: VisionInputSettings,
-    pub(crate) voice_output_settings: VoiceOutputSettings,
-    #[serde(default)]
-    pub(crate) video_generation_settings: VideoGenerationSettings,
-    #[serde(default)]
-    pub(crate) task_capture_settings: TaskCaptureSettings,
-    #[serde(default = "default_assistant_presence_enabled")]
-    pub(crate) assistant_presence_enabled: bool,
-    #[serde(default = "default_assistant_presence_pinned")]
-    pub(crate) assistant_presence_pinned: bool,
-    pub(crate) assistant_presence_window_x: Option<i32>,
-    pub(crate) assistant_presence_window_y: Option<i32>,
-    pub(crate) assistant_presence_window_width: Option<u32>,
-    pub(crate) assistant_presence_window_height: Option<u32>,
-    pub(crate) assistant_presence_window_monitor: Option<String>,
     pub(crate) audio_cues: bool,
     pub(crate) audio_cues_volume: f32,
     #[serde(default)]
@@ -351,8 +278,6 @@ pub(crate) struct Settings {
     pub(crate) transcribe_enabled: bool,
     pub(crate) transcribe_hotkey: String,
     pub(crate) hotkey_toggle_activation_words: String,
-    #[serde(default = "default_hotkey_product_mode_toggle")]
-    pub(crate) hotkey_product_mode_toggle: String,
     pub(crate) transcribe_output_device: String,
     pub(crate) transcribe_vad_mode: bool,
     pub(crate) transcribe_vad_threshold: f32,
@@ -399,12 +324,6 @@ pub(crate) struct Settings {
     pub(crate) overlay_refining_indicator_speed_ms: u64,
     #[serde(default = "default_overlay_refining_indicator_range")]
     pub(crate) overlay_refining_indicator_range: f32,
-    #[serde(default = "default_overlay_tts_stop_enabled")]
-    pub(crate) overlay_tts_stop_enabled: bool,
-    #[serde(default = "default_overlay_tts_stop_shape")]
-    pub(crate) overlay_tts_stop_shape: String,
-    #[serde(default = "default_overlay_tts_stop_color")]
-    pub(crate) overlay_tts_stop_color: String,
     pub(crate) overlay_kitt_min_width: f32,
     pub(crate) overlay_kitt_max_width: f32,
     pub(crate) overlay_kitt_height: f32,
@@ -440,9 +359,6 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) edit_delta_migrated: bool,
     pub(crate) postproc_llm_enabled: bool,
-    pub(crate) postproc_llm_provider: String,
-    #[serde(skip_serializing)]
-    pub(crate) postproc_llm_api_key: String,
     pub(crate) postproc_llm_model: String,
     pub(crate) postproc_llm_prompt: String,
     // OPUS archive settings
@@ -481,7 +397,7 @@ pub(crate) struct Settings {
     pub(crate) main_window_width: Option<u32>,
     pub(crate) main_window_height: Option<u32>,
     pub(crate) main_window_monitor: Option<String>,
-    /// Window visibility state at shutdown: "normal", "minimized", or "tray"
+    /// Window visibility state at shutdown: "normal" or "minimized" (legacy "tray" maps to "normal")
     pub(crate) main_window_start_state: String,
     /// GPU layers for Whisper (CUDA acceleration). Default: 35
     #[serde(default = "default_whisper_gpu_layers")]
@@ -492,33 +408,16 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
       mode: "ptt".to_string(),
-      product_mode: default_product_mode(),
       hotkey_ptt: "CommandOrControl+Shift+Space".to_string(),
       hotkey_toggle: "CommandOrControl+Shift+M".to_string(),
-      hotkey_tts_stop: default_hotkey_tts_stop(),
       input_device: "default".to_string(),
       language_mode: "auto".to_string(),
       language_pinned: false,
       model: "whisper-large-v3-turbo".to_string(),
-      cloud_fallback: false,
       ai_fallback: AIFallbackSettings::default(),
       providers: AIProvidersSettings::default(),
       setup: SetupSettings::default(),
       module_settings: ModuleSettings::default(),
-      gdd_module_settings: GddModuleSettings::default(),
-      confluence_settings: ConfluenceSettings::default(),
-      workflow_agent: WorkflowAgentSettings::default(),
-      vision_input_settings: VisionInputSettings::default(),
-      voice_output_settings: VoiceOutputSettings::default(),
-      video_generation_settings: VideoGenerationSettings::default(),
-      task_capture_settings: TaskCaptureSettings::default(),
-      assistant_presence_enabled: default_assistant_presence_enabled(),
-      assistant_presence_pinned: default_assistant_presence_pinned(),
-      assistant_presence_window_x: None,
-      assistant_presence_window_y: None,
-      assistant_presence_window_width: None,
-      assistant_presence_window_height: None,
-      assistant_presence_window_monitor: None,
       audio_cues: true,
       audio_cues_volume: 0.3,
       diagnostic_logging_enabled: false,
@@ -531,7 +430,6 @@ impl Default for Settings {
       transcribe_enabled: true,
       transcribe_hotkey: "CommandOrControl+Shift+T".to_string(),
       hotkey_toggle_activation_words: "CommandOrControl+Shift+A".to_string(),
-      hotkey_product_mode_toggle: default_hotkey_product_mode_toggle(),
       transcribe_output_device: "default".to_string(),
       transcribe_vad_mode: false,
       transcribe_vad_threshold: 0.04,
@@ -570,9 +468,6 @@ impl Default for Settings {
       overlay_refining_indicator_color: "#6ec8ff".to_string(),
       overlay_refining_indicator_speed_ms: 1_150,
       overlay_refining_indicator_range: 100.0,
-      overlay_tts_stop_enabled: default_overlay_tts_stop_enabled(),
-      overlay_tts_stop_shape: default_overlay_tts_stop_shape(),
-      overlay_tts_stop_color: default_overlay_tts_stop_color(),
       overlay_kitt_min_width: 20.0,
       overlay_kitt_max_width: 700.0,
       overlay_kitt_height: 13.0,
@@ -595,8 +490,6 @@ impl Default for Settings {
       edit_substitutions: Vec::new(),
       edit_delta_migrated: false,
       postproc_llm_enabled: false,
-      postproc_llm_provider: "ollama".to_string(),
-      postproc_llm_api_key: String::new(),
       postproc_llm_model: String::new(),
       postproc_llm_prompt: "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
       opus_enabled: true,
@@ -630,7 +523,7 @@ impl Default for Settings {
       main_window_width: None,
       main_window_height: None,
       main_window_monitor: None,
-      main_window_start_state: "tray".to_string(),
+      main_window_start_state: "normal".to_string(),
       whisper_gpu_layers: default_whisper_gpu_layers(),
     }
     }
@@ -833,43 +726,6 @@ pub(crate) struct FrontendWatchdogState {
     pub(crate) last_degraded_reason: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AssistantOrchestratorState {
-    Idle,
-    Listening,
-    Parsing,
-    Planning,
-    AwaitingConfirm,
-    Executing,
-    Recovering,
-}
-
-impl Default for AssistantOrchestratorState {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct AssistantOrchestratorStatus {
-    pub(crate) state: AssistantOrchestratorState,
-    pub(crate) last_reason: String,
-    pub(crate) changed_at_ms: u64,
-    pub(crate) transition_id: u64,
-}
-
-impl Default for AssistantOrchestratorStatus {
-    fn default() -> Self {
-        Self {
-            state: AssistantOrchestratorState::Idle,
-            last_reason: "startup".to_string(),
-            changed_at_ms: 0,
-            transition_id: 0,
-        }
-    }
-}
-
 /// Window/control identity captured at paste time. Used by the Enter-handler
 /// to validate that the user has not switched to a different target before
 /// pressing Enter — without this, any focused window would feed the learner.
@@ -913,8 +769,6 @@ pub(crate) struct AppState {
     pub(crate) refinement_timeouts: AtomicU64,
     pub(crate) refinement_fallback_failed: AtomicU64,
     pub(crate) refinement_fallback_timed_out: AtomicU64,
-    /// Invalidates queued Task Capture work when its module or Assistant Core is disabled.
-    pub(crate) task_capture_generation: AtomicU64,
     /// Single owner of every job's paste outcome (see `paste_arbiter.rs`).
     pub(crate) paste_arbiter: crate::paste_arbiter::PasteArbiter,
     /// Last recorded OPUS file path for mic input.
@@ -942,10 +796,6 @@ pub(crate) struct AppState {
     pub(crate) gpu_util_low_streak: AtomicU32,
     pub(crate) whisper_server_warm_until_ms: AtomicU64,
     pub(crate) whisper_server_retire_generation: AtomicU64,
-    pub(crate) vision_stream_running: AtomicBool,
-    pub(crate) vision_stream_started_ms: AtomicU64,
-    pub(crate) vision_stream_frame_seq: AtomicU64,
-    pub(crate) vision_frame_buffer: Mutex<VisionFrameBuffer>,
     pub(crate) startup_status: Mutex<StartupStatus>,
     pub(crate) runtime_diagnostics: Mutex<RuntimeDiagnostics>,
     pub(crate) overlay_controller: Mutex<OverlayController>,
@@ -953,12 +803,6 @@ pub(crate) struct AppState {
     pub(crate) frontend_watchdog_last_reload_ms: AtomicU64,
     pub(crate) frontend_watchdog_reload_count: AtomicU64,
     pub(crate) frontend_watchdog_state: Mutex<FrontendWatchdogState>,
-    pub(crate) assistant_orchestrator: Mutex<AssistantOrchestratorStatus>,
-    pub(crate) tts_speaking: AtomicBool,
-    pub(crate) tts_session_counter: AtomicU64,
-    pub(crate) tts_playback_control:
-        Mutex<Option<std::sync::Arc<crate::multimodal_io::TtsPlaybackControl>>>,
-    pub(crate) piper_daemon: PiperDaemonState,
     pub(crate) enter_capture: EnterCaptureState,
     #[cfg(target_os = "windows")]
     pub(crate) system_cluster_buffer: Mutex<SystemClusterBuffer>,
@@ -1038,6 +882,13 @@ pub(crate) fn get_runtime_metrics_snapshot(state: &AppState) -> RuntimeMetricsSn
         refinement_fallback_timed_out: state
             .refinement_fallback_timed_out
             .load(std::sync::atomic::Ordering::Relaxed),
+    }
+}
+
+/// Only "minimized" is a real start state; unknown values and the legacy "tray" become "normal".
+fn normalize_main_window_start_state(settings: &mut Settings) {
+    if settings.main_window_start_state != "minimized" {
+        settings.main_window_start_state = "normal".to_string();
     }
 }
 
@@ -1304,24 +1155,6 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if settings.overlay_refining_indicator_range > 180.0 {
                 settings.overlay_refining_indicator_range = 180.0;
             }
-            if settings.hotkey_tts_stop.trim().is_empty() {
-                settings.hotkey_tts_stop = default_hotkey_tts_stop();
-            } else {
-                settings.hotkey_tts_stop = settings.hotkey_tts_stop.trim().to_string();
-            }
-            settings.overlay_tts_stop_shape = match settings
-                .overlay_tts_stop_shape
-                .trim()
-                .to_ascii_lowercase()
-                .as_str()
-            {
-                "round" => "round".to_string(),
-                _ => "compact".to_string(),
-            };
-            settings.overlay_tts_stop_color = settings.overlay_tts_stop_color.trim().to_string();
-            if settings.overlay_tts_stop_color.is_empty() {
-                settings.overlay_tts_stop_color = default_overlay_tts_stop_color();
-            }
             if !(0.0..=1.0).contains(&settings.overlay_kitt_opacity_inactive) {
                 settings.overlay_kitt_opacity_inactive = 0.2;
             }
@@ -1337,30 +1170,12 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if settings.overlay_kitt_opacity_active < settings.overlay_kitt_opacity_inactive {
                 settings.overlay_kitt_opacity_active = settings.overlay_kitt_opacity_inactive;
             }
-            // Validate main_window_start_state
-            if !["normal", "minimized", "tray"].contains(&settings.main_window_start_state.as_str())
-            {
-                settings.main_window_start_state = "normal".to_string();
-            }
+            normalize_main_window_start_state(&mut settings);
             normalize_topic_keywords_fields(&mut settings);
             // Normalize v0.7 AI fallback settings and legacy compatibility fields.
             normalize_ai_fallback_fields(&mut settings);
-            crate::modules::migrate_legacy_confluence_module_binding(
-                &settings.module_settings,
-                &mut settings.gdd_module_settings,
-            );
             normalize_module_settings(&mut settings.module_settings);
             normalize_ai_refinement_module_binding(&mut settings);
-            normalize_gdd_module_settings(&mut settings.gdd_module_settings);
-            normalize_confluence_settings(&mut settings.confluence_settings);
-            normalize_workflow_agent_settings(&mut settings.workflow_agent);
-            normalize_assistant_core_binding(&mut settings);
-            normalize_product_mode_field(&mut settings);
-            normalize_assistant_presence_binding(&mut settings);
-            normalize_vision_input_settings(&mut settings.vision_input_settings);
-            normalize_voice_output_settings(&mut settings.voice_output_settings);
-            normalize_video_generation_settings(&mut settings.video_generation_settings);
-            normalize_task_capture_settings(&mut settings.task_capture_settings);
             if settings.setup.local_ai_wizard_completed {
                 settings.setup.local_ai_wizard_pending = false;
             }
@@ -1414,22 +1229,9 @@ pub(crate) fn normalize_topic_keywords_fields(settings: &mut Settings) {
 }
 
 pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
-    fn normalize_cloud_provider(provider: &str) -> Option<String> {
-        crate::ai_fallback::models::normalize_cloud_provider_id(provider).map(str::to_string)
-    }
-
-    fn is_verified_auth_status(status: &str) -> bool {
-        matches!(status.trim(), "verified_api_key" | "verified_oauth")
-    }
-
     // Migrate legacy postproc_llm toggle and values if still used.
     if settings.postproc_llm_enabled && !settings.ai_fallback.enabled {
         settings.ai_fallback.enabled = true;
-    }
-    if settings.ai_fallback.provider.trim().is_empty()
-        && !settings.postproc_llm_provider.trim().is_empty()
-    {
-        settings.ai_fallback.provider = settings.postproc_llm_provider.clone();
     }
     if settings.ai_fallback.model.trim().is_empty()
         && !settings.postproc_llm_model.trim().is_empty()
@@ -1453,91 +1255,25 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
         };
     }
 
-    // Preserve legacy cloud provider selection as optional fallback candidate.
-    // Skip for local backends — they are not cloud providers.
-    let is_local = matches!(
-        settings.ai_fallback.provider.as_str(),
-        "ollama" | "lm_studio" | "oobabooga"
-    );
-    if settings.ai_fallback.fallback_provider.is_none() && !is_local {
-        settings.ai_fallback.fallback_provider =
-            normalize_cloud_provider(&settings.ai_fallback.provider);
-    }
-
+    // A model name saved for a removed provider (e.g. `claude-…`) is no Ollama model: swap it for
+    // the Ollama preference, else the catalog default. Stored `ollama` keeps its model untouched.
+    let provider = settings.ai_fallback.provider.trim();
+    let from_removed_provider = !provider.is_empty() && !provider.eq_ignore_ascii_case("ollama");
     settings.ai_fallback.normalize();
+    if from_removed_provider {
+        let preferred = settings.providers.ollama.preferred_model.trim();
+        settings.ai_fallback.model = if preferred.is_empty() {
+            AIFallbackSettings::default().model
+        } else {
+            preferred.to_string()
+        };
+    }
     settings.ai_fallback.custom_prompt_enabled = settings.ai_fallback.prompt_profile == "custom";
     settings.ai_fallback.use_default_prompt = false;
     settings.providers.normalize();
 
-    // Migration rule: cloud providers remain locked until explicit verify succeeds.
-    for provider in ["claude", "openai", "gemini"] {
-        if let Some(config) = settings.providers.get_mut(provider) {
-            if !is_verified_auth_status(&config.auth_status) {
-                config.auth_status = "locked".to_string();
-                config.auth_verified_at = None;
-            }
-            if !config.api_key_stored && config.auth_status != "verified_oauth" {
-                config.auth_status = "locked".to_string();
-                config.auth_verified_at = None;
-            }
-        }
-    }
-
-    settings.ai_fallback.execution_mode =
-        if settings.ai_fallback.execution_mode == "online_fallback" {
-            "online_fallback".to_string()
-        } else {
-            "local_primary".to_string()
-        };
-
-    settings.ai_fallback.fallback_provider = settings
-        .ai_fallback
-        .fallback_provider
-        .as_ref()
-        .and_then(|provider| normalize_cloud_provider(provider));
-
-    const LOCAL_BACKENDS: &[&str] = &["ollama", "lm_studio", "oobabooga"];
-
-    if settings.ai_fallback.execution_mode == "online_fallback" {
-        let verified = settings
-            .ai_fallback
-            .fallback_provider
-            .as_ref()
-            .map(|provider| settings.providers.is_verified(provider))
-            .unwrap_or(false);
-
-        if verified {
-            if let Some(provider) = settings.ai_fallback.fallback_provider.clone() {
-                settings.ai_fallback.provider = provider;
-            } else {
-                settings.ai_fallback.execution_mode = "local_primary".to_string();
-                settings.ai_fallback.provider = "ollama".to_string();
-            }
-        } else {
-            settings.ai_fallback.execution_mode = "local_primary".to_string();
-            settings.ai_fallback.provider = "ollama".to_string();
-        }
-    } else {
-        // Preserve the selected local backend (ollama / lm_studio / oobabooga).
-        // Only reset to "ollama" if something invalid crept in.
-        if !LOCAL_BACKENDS.contains(&settings.ai_fallback.provider.as_str()) {
-            settings.ai_fallback.provider = "ollama".to_string();
-        }
-    }
-
-    if settings.ai_fallback.provider == "ollama"
-        && settings.ai_fallback.strict_local_mode
-        && !is_local_ollama_endpoint(&settings.providers.ollama.endpoint)
-    {
-        settings.providers.ollama.endpoint = "http://127.0.0.1:11434".to_string();
-    }
-    settings
-        .providers
-        .sync_from_ai_fallback(&settings.ai_fallback);
-
     // Keep legacy post-processing fields synchronized for compatibility with older code paths.
     settings.postproc_llm_enabled = settings.ai_fallback.enabled;
-    settings.postproc_llm_provider = settings.ai_fallback.provider.clone();
     settings.postproc_llm_model = settings.ai_fallback.model.clone();
     settings.postproc_language =
         derive_postproc_language_from_asr(&settings.language_mode, settings.language_pinned);
@@ -1696,112 +1432,6 @@ fn normalize_history_alias_value(value: &str, fallback: &str) -> String {
     }
 }
 
-pub(crate) fn assistant_core_module_enabled(settings: &Settings) -> bool {
-    settings
-        .module_settings
-        .enabled_modules
-        .iter()
-        .any(|module_id| canonicalize_module_id(module_id) == ASSISTANT_CORE_MODULE_ID)
-        && settings.workflow_agent.enabled
-}
-
-fn assistant_core_binding_migrated(settings: &Settings) -> bool {
-    settings
-        .module_settings
-        .module_overrides
-        .get(ASSISTANT_CORE_MIGRATION_FLAG_KEY)
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-}
-
-fn assistant_core_binding_explicit(settings: &Settings) -> bool {
-    settings
-        .module_settings
-        .enabled_modules
-        .iter()
-        .any(|module_id| {
-            matches!(
-                canonicalize_module_id(module_id),
-                ASSISTANT_CORE_MODULE_ID | ASSISTANT_PRESENCE_MODULE_ID
-            )
-        })
-}
-
-fn assistant_core_has_legacy_usage_signals(settings: &Settings) -> bool {
-    let default_agent = WorkflowAgentSettings::default();
-    let has_legacy_permissions =
-        settings
-            .module_settings
-            .consented_permissions
-            .keys()
-            .any(|module_id| {
-                matches!(
-                    canonicalize_module_id(module_id),
-                    ASSISTANT_CORE_MODULE_ID | LEGACY_WORKFLOW_AGENT_MODULE_ID
-                )
-            });
-    let has_legacy_overrides = settings
-        .module_settings
-        .module_overrides
-        .keys()
-        .filter(|key| key.as_str() != ASSISTANT_CORE_MIGRATION_FLAG_KEY)
-        .any(|key| {
-            key.starts_with(&format!("{ASSISTANT_CORE_MODULE_ID}."))
-                || key.starts_with(&format!("{LEGACY_WORKFLOW_AGENT_MODULE_ID}."))
-        });
-    let wakewords_customized = settings.workflow_agent.wakewords != default_agent.wakewords
-        || settings.workflow_agent.wakeword_aliases != default_agent.wakeword_aliases;
-
-    settings.workflow_agent.enabled
-        || settings
-            .product_mode
-            .trim()
-            .eq_ignore_ascii_case("assistant")
-        || has_legacy_permissions
-        || has_legacy_overrides
-        || wakewords_customized
-        || settings.workflow_agent.hands_free_enabled
-        || settings.workflow_agent.online_enabled
-        || settings.workflow_agent.voice_feedback_enabled
-        || settings.workflow_agent.activation_mode != default_agent.activation_mode
-        || !settings.workflow_agent.trusted_action_allowlist.is_empty()
-        || settings.workflow_agent.expert_yolo_enabled
-}
-
-pub(crate) fn normalize_assistant_core_binding(settings: &mut Settings) {
-    let binding_explicit = assistant_core_binding_explicit(settings);
-    if !assistant_core_binding_migrated(settings) {
-        let legacy_usage = assistant_core_has_legacy_usage_signals(settings);
-        if binding_explicit || legacy_usage {
-            settings.module_settings.module_overrides.insert(
-                ASSISTANT_CORE_MIGRATION_FLAG_KEY.to_string(),
-                serde_json::Value::Bool(true),
-            );
-            if !binding_explicit && legacy_usage {
-                settings
-                    .module_settings
-                    .enabled_modules
-                    .insert(ASSISTANT_CORE_MODULE_ID.to_string());
-                settings.workflow_agent.enabled = true;
-            }
-        }
-    }
-}
-
-pub(crate) fn normalize_assistant_presence_binding(settings: &mut Settings) {
-    if assistant_core_module_enabled(settings) && settings.assistant_presence_enabled {
-        settings
-            .module_settings
-            .enabled_modules
-            .insert(ASSISTANT_PRESENCE_MODULE_ID.to_string());
-    } else {
-        settings
-            .module_settings
-            .enabled_modules
-            .retain(|module_id| canonicalize_module_id(module_id) != ASSISTANT_PRESENCE_MODULE_ID);
-    }
-}
-
 pub(crate) fn normalize_history_alias_fields(settings: &mut Settings) {
     settings.history_alias_mic =
         normalize_history_alias_value(&settings.history_alias_mic, &default_history_alias_mic());
@@ -1809,13 +1439,6 @@ pub(crate) fn normalize_history_alias_fields(settings: &mut Settings) {
         &settings.history_alias_system,
         &default_history_alias_system(),
     );
-}
-
-pub(crate) fn normalize_product_mode_field(settings: &mut Settings) {
-    settings.product_mode = normalize_product_mode_value(&settings.product_mode);
-    if settings.product_mode == "assistant" && !assistant_core_module_enabled(settings) {
-        settings.product_mode = "transcribe".to_string();
-    }
 }
 
 pub(crate) fn speaker_name_for_source(settings: &Settings, source: &str) -> String {
@@ -1831,23 +1454,9 @@ pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result
     let mut persisted = settings.clone();
     // Do not persist session-only transcribe enablement.
     persisted.transcribe_enabled = false;
-    crate::modules::migrate_legacy_confluence_module_binding(
-        &persisted.module_settings,
-        &mut persisted.gdd_module_settings,
-    );
     normalize_module_settings(&mut persisted.module_settings);
     normalize_history_alias_fields(&mut persisted);
     normalize_ai_refinement_module_binding(&mut persisted);
-    normalize_gdd_module_settings(&mut persisted.gdd_module_settings);
-    normalize_confluence_settings(&mut persisted.confluence_settings);
-    normalize_workflow_agent_settings(&mut persisted.workflow_agent);
-    normalize_assistant_core_binding(&mut persisted);
-    normalize_product_mode_field(&mut persisted);
-    normalize_assistant_presence_binding(&mut persisted);
-    normalize_vision_input_settings(&mut persisted.vision_input_settings);
-    normalize_voice_output_settings(&mut persisted.voice_output_settings);
-    normalize_video_generation_settings(&mut persisted.video_generation_settings);
-    normalize_task_capture_settings(&mut persisted.task_capture_settings);
     let raw = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
     // Atomic write: write to .tmp then rename to avoid partial/corrupted JSON on crash.
     let tmp_path = path.with_extension("json.tmp");
@@ -2151,13 +1760,19 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn product_mode_normalization_accepts_assistant_and_defaults_to_transcribe() {
-        assert_eq!(normalize_product_mode_value("assistant"), "assistant");
-        assert_eq!(normalize_product_mode_value("agent"), "assistant");
-        assert_eq!(normalize_product_mode_value("workflow_agent"), "assistant");
-        assert_eq!(normalize_product_mode_value("transcribe"), "transcribe");
-        assert_eq!(normalize_product_mode_value(""), "transcribe");
-        assert_eq!(normalize_product_mode_value("unexpected"), "transcribe");
+    fn legacy_tray_start_state_normalizes_to_normal() {
+        assert_eq!(Settings::default().main_window_start_state, "normal");
+        for (stored, expected) in [
+            ("tray", "normal"),
+            ("normal", "normal"),
+            ("minimized", "minimized"),
+            ("bogus", "normal"),
+        ] {
+            let mut settings = Settings::default();
+            settings.main_window_start_state = stored.to_string();
+            normalize_main_window_start_state(&mut settings);
+            assert_eq!(settings.main_window_start_state, expected);
+        }
     }
 
     #[test]
@@ -2176,50 +1791,6 @@ mod tests {
             .module_settings
             .enabled_modules
             .contains(AI_REFINEMENT_MODULE_ID));
-    }
-
-    #[test]
-    fn legacy_confluence_module_migrates_to_enabled_gdd_without_install_override() {
-        let mut settings = Settings::default();
-        settings
-            .module_settings
-            .enabled_modules
-            .insert("integrations_confluence".to_string());
-        settings.module_settings.consented_permissions.insert(
-            "integrations_confluence".to_string(),
-            HashSet::from(["network_confluence".to_string()]),
-        );
-        settings.module_settings.module_overrides.insert(
-            "integrations_confluence.installed".to_string(),
-            serde_json::Value::Bool(true),
-        );
-
-        crate::modules::migrate_legacy_confluence_module_binding(
-            &settings.module_settings,
-            &mut settings.gdd_module_settings,
-        );
-        normalize_module_settings(&mut settings.module_settings);
-
-        assert!(settings.gdd_module_settings.enabled);
-        assert!(settings.module_settings.enabled_modules.contains("gdd"));
-        assert!(!settings
-            .module_settings
-            .enabled_modules
-            .contains("integrations_confluence"));
-        assert!(settings.module_settings.consented_permissions.is_empty());
-        assert!(!settings
-            .module_settings
-            .module_overrides
-            .contains_key("gdd.installed"));
-        assert_eq!(
-            crate::gdd::require_gdd_module_active_from_ids(&settings, &HashSet::new()).unwrap_err(),
-            "GDD module assets are not installed. Install module package 'gdd' first."
-        );
-        assert!(crate::gdd::require_gdd_module_active_from_ids(
-            &settings,
-            &HashSet::from(["gdd".to_string()]),
-        )
-        .is_ok());
     }
 
     #[test]
@@ -2245,56 +1816,249 @@ mod tests {
     }
 
     #[test]
-    fn assistant_core_legacy_permissions_enable_migration_once() {
-        let mut settings = Settings::default();
-        settings.workflow_agent.enabled = false;
-        settings.workflow_agent.wakewords = vec!["hey trisper".to_string(), "trispr".to_string()];
-        settings
-            .module_settings
-            .consented_permissions
-            .insert(ASSISTANT_CORE_MODULE_ID.to_string(), HashSet::new());
+    fn settings_with_removed_assistant_gdd_confluence_task_capture_fields_still_load() {
+        // Shape of a settings.json written before the Assistant / GDD / Confluence /
+        // Task Capture modules were removed. Unknown fields are ignored by serde.
+        let raw = r#"{
+            "mode": "ptt",
+            "hotkey_ptt": "CommandOrControl+Shift+Space",
+            "product_mode": "assistant",
+            "hotkey_product_mode_toggle": "CommandOrControl+Shift+P",
+            "gdd_module_settings": { "enabled": true, "default_preset_id": "x", "preset_clones": [] },
+            "confluence_settings": { "enabled": true, "site_base_url": "https://example.atlassian.net" },
+            "workflow_agent": { "enabled": true, "wakewords": ["trispr"], "hands_free_enabled": true },
+            "task_capture_settings": { "routes": [], "match_mode": "contains" },
+            "assistant_presence_enabled": true,
+            "assistant_presence_window_x": 10,
+            "module_settings": {
+                "enabled_modules": ["assistant_core", "assistant_presence", "gdd", "task_capture", "ai_refinement"],
+                "consented_permissions": { "assistant_core": ["filesystem_history"], "integrations_confluence": [] },
+                "module_overrides": {
+                    "assistant_core.migrated_legacy_binding": true,
+                    "workflow_agent.last_error": "stale",
+                    "ai_refinement.migrated_legacy": true
+                }
+            }
+        }"#;
 
+        let mut settings: Settings =
+            serde_json::from_str(raw).expect("old settings.json must still deserialize");
         normalize_module_settings(&mut settings.module_settings);
-        normalize_workflow_agent_settings(&mut settings.workflow_agent);
-        normalize_assistant_core_binding(&mut settings);
 
-        assert!(settings.workflow_agent.enabled);
-        assert!(settings
-            .module_settings
-            .enabled_modules
-            .contains(ASSISTANT_CORE_MODULE_ID));
+        assert_eq!(settings.mode, "ptt");
+        assert_eq!(settings.hotkey_ptt, "CommandOrControl+Shift+Space");
+        assert_eq!(
+            settings.module_settings.enabled_modules,
+            HashSet::from(["ai_refinement".to_string()])
+        );
+        assert!(settings.module_settings.consented_permissions.is_empty());
         assert_eq!(
             settings
                 .module_settings
                 .module_overrides
-                .get(ASSISTANT_CORE_MIGRATION_FLAG_KEY)
-                .and_then(|value| value.as_bool()),
-            Some(true)
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["ai_refinement.migrated_legacy"]
         );
     }
 
     #[test]
-    fn assistant_core_migration_flag_preserves_manual_disable() {
-        let mut settings = Settings::default();
-        settings.workflow_agent.enabled = false;
-        settings
-            .module_settings
-            .consented_permissions
-            .insert(ASSISTANT_CORE_MODULE_ID.to_string(), HashSet::new());
-        settings.module_settings.module_overrides.insert(
-            ASSISTANT_CORE_MIGRATION_FLAG_KEY.to_string(),
-            serde_json::Value::Bool(true),
-        );
+    fn settings_with_removed_vision_voice_output_video_fields_still_load() {
+        // Shape of a settings.json written before the Vision / Voice Output (TTS, Piper) /
+        // Video Generation modules were removed. Unknown fields are ignored by serde.
+        let raw = r##"{
+            "mode": "ptt",
+            "hotkey_ptt": "CommandOrControl+Shift+Space",
+            "hotkey_tts_stop": "CommandOrControl+Shift+F12",
+            "overlay_tts_stop_enabled": true,
+            "overlay_tts_stop_shape": "round",
+            "overlay_tts_stop_color": "#ff0000",
+            "vision_input_settings": { "enabled": true, "fps": 4, "source_scope": "active_window" },
+            "voice_output_settings": {
+                "enabled": true,
+                "default_provider": "local_custom",
+                "output_policy": "agent_replies_only",
+                "piper_binary_path": "C:/piper/piper.exe",
+                "qwen3_tts_enabled": true
+            },
+            "video_generation_settings": { "enabled": true, "default_fps": 60, "narrative_mode": true },
+            "module_settings": {
+                "enabled_modules": ["input_vision", "output_voice_tts", "output_video_generation", "piper_tts", "ai_refinement"],
+                "consented_permissions": {
+                    "input_vision": ["screen_capture"],
+                    "output_voice_tts": ["audio_output"],
+                    "output_video_generation": ["filesystem_exports"],
+                    "piper_tts": ["audio_output"]
+                },
+                "module_overrides": {
+                    "output_voice_tts.last_error": "stale",
+                    "output_video_generation.installed": true,
+                    "piper_tts.installed": true,
+                    "ai_refinement.migrated_legacy": true
+                }
+            }
+        }"##;
 
+        let mut settings: Settings =
+            serde_json::from_str(raw).expect("old settings.json must still deserialize");
         normalize_module_settings(&mut settings.module_settings);
-        normalize_workflow_agent_settings(&mut settings.workflow_agent);
-        normalize_assistant_core_binding(&mut settings);
 
-        assert!(!settings.workflow_agent.enabled);
-        assert!(!settings
-            .module_settings
-            .enabled_modules
-            .contains(ASSISTANT_CORE_MODULE_ID));
+        assert_eq!(settings.mode, "ptt");
+        assert_eq!(settings.hotkey_ptt, "CommandOrControl+Shift+Space");
+        assert_eq!(
+            settings.module_settings.enabled_modules,
+            HashSet::from(["ai_refinement".to_string()])
+        );
+        assert!(settings.module_settings.consented_permissions.is_empty());
+        assert_eq!(
+            settings
+                .module_settings
+                .module_overrides
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["ai_refinement.migrated_legacy"]
+        );
+        // Removed fields must not be written back out.
+        let rewritten = serde_json::to_string(&settings).expect("serialize settings");
+        for removed in [
+            "hotkey_tts_stop",
+            "overlay_tts_stop",
+            "vision_input_settings",
+            "voice_output_settings",
+            "video_generation_settings",
+        ] {
+            assert!(!rewritten.contains(removed), "{removed} must not persist");
+        }
+    }
+
+    #[test]
+    fn settings_with_removed_cloud_provider_lm_studio_and_runtime_variant_fields_still_load() {
+        // Shape of a settings.json written before cloud providers, LM Studio / Oobabooga and the
+        // system / manual Ollama runtime variants were removed. Unknown fields are ignored by
+        // serde, known ones with removed values must land on Ollama + the managed runtime.
+        let raw = r#"{
+            "mode": "ptt",
+            "cloud_fallback": true,
+            "postproc_llm_provider": "claude",
+            "postproc_llm_api_key": "must-never-persist",
+            "ai_fallback": {
+                "enabled": true,
+                "provider": "claude",
+                "fallback_provider": "openai",
+                "execution_mode": "online_fallback",
+                "strict_local_mode": false,
+                "model": "gemma4:e4b"
+            },
+            "providers": {
+                "claude": { "api_key_stored": true, "auth_status": "verified_api_key", "preferred_model": "claude-3-5-haiku-20241022" },
+                "openai": { "api_key_stored": true, "auth_status": "verified_api_key" },
+                "gemini": { "api_key_stored": false, "auth_status": "locked" },
+                "lm_studio": { "endpoint": "http://127.0.0.1:1234", "api_key": "lm-key", "preferred_model": "x" },
+                "oobabooga": { "endpoint": "http://127.0.0.1:5000", "api_key": "" },
+                "ollama": {
+                    "endpoint": "http://192.168.1.20:11434",
+                    "fallback_endpoints": ["http://127.0.0.1:1234", "http://127.0.0.1:5000"],
+                    "runtime_source": "system",
+                    "runtime_path": "C:/Program Files/Ollama/ollama.exe",
+                    "runtime_version": "0.9.0",
+                    "preferred_model": "gemma4:e4b",
+                    "available_models": ["gemma4:e4b"]
+                }
+            },
+            "module_settings": { "enabled_modules": ["ai_refinement"] }
+        }"#;
+
+        let mut settings: Settings =
+            serde_json::from_str(raw).expect("old settings.json must still deserialize");
+        for stale_provider in ["claude", "openai", "gemini", "lm_studio", "oobabooga", "manual"] {
+            settings.ai_fallback.provider = stale_provider.to_string();
+            settings.providers.ollama.runtime_source = "manual".to_string();
+            normalize_ai_fallback_fields(&mut settings);
+            assert_eq!(settings.ai_fallback.provider, "ollama", "{stale_provider}");
+            assert_eq!(settings.providers.ollama.runtime_source, "per_user_zip");
+        }
+
+        let mut settings: Settings = serde_json::from_str(raw).expect("deserialize again");
+        normalize_ai_fallback_fields(&mut settings);
+        assert!(settings.ai_fallback.enabled);
+        assert_eq!(settings.ai_fallback.provider, "ollama");
+        assert_eq!(settings.providers.ollama.runtime_source, "per_user_zip");
+        assert_eq!(settings.providers.ollama.endpoint, "http://127.0.0.1:11434");
+        // The system Ollama was somebody else's binary: its path and version are forgotten.
+        assert!(settings.providers.ollama.runtime_path.is_empty());
+        assert!(settings.providers.ollama.runtime_version.is_empty());
+        assert_eq!(settings.providers.ollama.preferred_model, "gemma4:e4b");
+
+        // A managed runtime that is already recorded keeps its path.
+        let mut managed: Settings = serde_json::from_str(
+            r#"{ "providers": { "ollama": {
+                "runtime_source": "per_user_zip",
+                "runtime_path": "C:/rt/0.40.13/ollama.exe",
+                "runtime_version": "0.40.13" } } }"#,
+        )
+        .expect("managed settings");
+        normalize_ai_fallback_fields(&mut managed);
+        assert_eq!(managed.providers.ollama.runtime_path, "C:/rt/0.40.13/ollama.exe");
+        assert_eq!(managed.providers.ollama.runtime_version, "0.40.13");
+
+        // Removed fields (and any secret) must not be written back out.
+        let rewritten = serde_json::to_string(&settings).expect("serialize settings");
+        for removed in [
+            "cloud_fallback",
+            "postproc_llm_provider",
+            "postproc_llm_api_key",
+            "must-never-persist",
+            "lm-key",
+            "fallback_provider",
+            "fallback_endpoints",
+            "execution_mode",
+            "strict_local_mode",
+            "api_key_stored",
+            "lm_studio",
+            "oobabooga",
+            "claude",
+            "openai",
+            "gemini",
+        ] {
+            assert!(!rewritten.contains(removed), "{removed} must not persist");
+        }
+    }
+
+    fn settings_from(ai_fallback: &str, providers: &str) -> Settings {
+        serde_json::from_str(&format!(
+            r#"{{ "ai_fallback": {ai_fallback}, "providers": {providers} }}"#
+        ))
+        .expect("settings json")
+    }
+
+    #[test]
+    fn model_of_a_removed_provider_is_replaced_by_the_ollama_model() {
+        // (a) no Ollama preference: catalog default.
+        let mut a = settings_from(
+            r#"{ "provider": "claude", "model": "claude-3-5-sonnet" }"#,
+            "{}",
+        );
+        normalize_ai_fallback_fields(&mut a);
+        assert_eq!(a.ai_fallback.provider, "ollama");
+        assert_eq!(a.ai_fallback.model, "gemma4:e4b");
+        assert_eq!(a.postproc_llm_model, "gemma4:e4b");
+
+        // (b) Ollama preference wins.
+        let mut b = settings_from(
+            r#"{ "provider": "lm_studio", "model": "local-model" }"#,
+            r#"{ "ollama": { "preferred_model": "qwen3.5:4b" } }"#,
+        );
+        normalize_ai_fallback_fields(&mut b);
+        assert_eq!(b.ai_fallback.provider, "ollama");
+        assert_eq!(b.ai_fallback.model, "qwen3.5:4b");
+
+        // (c) A stored Ollama provider keeps its model.
+        let mut c = settings_from(
+            r#"{ "provider": "ollama", "model": "gemma4:e2b" }"#,
+            r#"{ "ollama": { "preferred_model": "qwen3.5:4b" } }"#,
+        );
+        normalize_ai_fallback_fields(&mut c);
+        assert_eq!(c.ai_fallback.model, "gemma4:e2b");
     }
 
     fn sample_history_entry(id: &str, status: &str, refined: &str, error: &str) -> HistoryEntry {

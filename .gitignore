@@ -89,5 +89,9 @@ release-build.log
 # Rust-analyzer build artifacts (flycheck builds, not production)
 target/rust-analyzer/
 
+# Own cargo target dirs: quick-start launcher build (scripts/launch.mjs), cargo check runs
+src-tauri/target-app/
+src-tauri/target-check/
+
 # Generated per-variant NSIS compile-time define (created by build-installers.bat)
 src-tauri/nsis/variant-define.nsh

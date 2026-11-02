@@ -1,0 +1,46 @@
+[
+  {
+    "name": "gemma4:e4b",
+    "label": "Gemma 4 E4B — Standard (Q4)",
+    "source": "ollama",
+    "family": "gemma4",
+    "status": "recommended",
+    "profile": "Recommended",
+    "size_gb": 6.58,
+    "vram_gb": 5,
+    "verified_at": "2026-11-02",
+    "released": "2026-03-02",
+    "released_from": "google/gemma-4-E4B-it",
+    "license": "apache-2.0",
+    "description": "Google Gemma 4 E4B, dense (not MoE), Q4_K_M. 4.5B effective parameters (8B with embeddings)."
+  },
+  {
+    "name": "qwen3.5:4b",
+    "label": "Qwen 3.5 4B — Standard",
+    "source": "ollama",
+    "family": "qwen3.5",
+    "status": "supported",
+    "profile": "Standard",
+    "size_gb": 3.32,
+    "verified_at": "2026-11-02",
+    "released": "2026-02-27",
+    "released_from": "Qwen/Qwen3.5-4B",
+    "license": "apache-2.0",
+    "description": "Qwen 3.5, 4.2B parameters, Q4_K_M."
+  },
+  {
+    "name": "gemma4:e2b",
+    "label": "Gemma 4 E2B — Compact (Q4)",
+    "source": "ollama",
+    "family": "gemma4",
+    "status": "supported",
+    "profile": "Compact",
+    "size_gb": 4.59,
+    "vram_gb": 3.2,
+    "verified_at": "2026-11-02",
+    "released": "2026-03-02",
+    "released_from": "google/gemma-4-E2B-it",
+    "license": "apache-2.0",
+    "description": "Google Gemma 4 E2B, dense (not MoE), Q4_K_M. 2.3B effective parameters (5.1B with embeddings)."
+  }
+]

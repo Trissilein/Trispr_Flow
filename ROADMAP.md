@@ -1,15 +1,15 @@
 # Roadmap — Trispr Flow
 
-Last updated: 2026-06-09, refactoring plan closed and Block A gate status refreshed.
+Last updated: 2026-11-02, after the lean-down (cloud providers, LM Studio, TTS, video, assistant, GDD/Confluence, task capture and benchmarks removed).
 
 This file is the canonical source for priorities and execution order. Block IDs (A, B, C, …) reflect **current** execution priority, not historical phase. The Legacy-ID-Mapping at the bottom maps old letter codes (U, V, W, …) used in commit history.
 
 ## Snapshot
 
-- **Released:** `v0.7.0`, `v0.7.1`, `v0.7.2`, `v0.7.3`, `v0.7.4`, `v0.7.5`
-- **Current phase:** `v0.8.x` assistant hardening; Block A gate closure is still active.
-- **Foundation complete:** Blocks D, F, G, H, L, M, N, Q, S, T, V (legacy IDs), plus the 2026-05 refactoring quality foundation.
-- **Active block:** A (release gate closure). Latest local pass: build, frontend tests, Rust lib tests, TTS baseline gating, and strict benchmark linkage pass; optional TTS provider degradation remains warning-only follow-up work.
+- **Released:** `v0.7.0` to `v0.7.5`, `v0.8.0` to `v0.8.3`; `v0.8.4` in progress.
+- **Current phase:** lean core. Dictation (whisper.cpp, PTT, overlay), Ollama refinement, history, vocabulary, settings, hotkeys, paste.
+- **Removed 2026-11-02:** cloud providers, LM Studio/Oobabooga, TTS/Piper, video generation, vision, benchmarks, assistant (incl. Presence window and agent phases), GDD/Confluence, task capture.
+- **Active block:** A (release gate), now scoped to Whisper latency and the installers.
 
 ## Complexity Buckets (used in tables below)
 
@@ -33,31 +33,28 @@ Aligned with `~/.claude/skills/codex-delegate/SKILL.md`:
 | **B** | UX/UI consistency + Picker-Unification                                               | complex                | ⚠️ mixed    | 3–5 days  | A          | 📋 next    |
 | **C** | Adaptive AI Refinement (VRAM probe + quant matrix + keep-alive + vocab-ground-truth) | complex                | ⚠️ mixed    | 5–7 days  | B          | 📋 planned |
 | **D** | Reliability Hardening + Release-QA polish                                            | complex                | ⚠️ mixed    | 5 days    | C          | 📋 planned |
-| **E** | Expert-Mode UX Toggle (standard/expert)                                              | moderate               | ✅ mostly   | 2–3 days  | B          | 📋 planned |
-| **F** | Assistant Presence Window (3D dot-cloud + TTS panel)                                 | architecturally-tricky | ❌ Claude   | 1–2 weeks | A, D       | 📋 later   |
+| **E** | Expert-Mode UX Toggle (standard/expert)                                              | moderate               | ✅ mostly   | 2–3 days  | B          | ✅ done    |
+| **F** | Assistant Presence Window (3D dot-cloud + TTS panel)                                 | —                      | —          | —         | —          | removed   |
 
 ### A — v0.8.x Release Gate Closure
 
-Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib` pass. `npm run benchmark:tts` passes by gating the baseline provider (`windows_native`) and warning on degraded supported optional providers (`local_custom`). `npm run benchmark:latency` produced `bench/results/latest.json`, and `npm run qa:assistant -- --strict-benchmark` passes with benchmark linkage. The linked latency evidence used CPU fallback and missed the latency SLO; do not tag `v0.8.2` until the Vulkan backend works on the target AMD machine or an explicit release decision supersedes this constraint.
+Gate = build, frontend tests, Rust lib tests and production-default Whisper latency evidence (`ggml-large-v3-turbo.bin`). The TTS and assistant gates were removed with those features.
 
-- **A1** Generate `bench/results/tts.latest.json` (run `npm run benchmark:tts`) — *done* — TTS baseline gating passes with `windows_native`; `local_custom` remains supported-optional follow-up.
-- **A2** Generate `bench/results/latest.json` (run `npm run benchmark:latency`) — *done* — latency evidence is linked for the strict assistant gate.
-- **A3** Run `npm run qa:assistant -- --strict-benchmark` (no `--require-soak`) — *done* — exit-criteria check generated sign-off reports in `docs/reports/`.
-- **A4** Update `STATUS.md` + `CHANGELOG.md` with v0.8.2 release notes — *done* — status docs reflect gate-output JSON.
-- **A5** Fix Vulkan latency path before tag — *complex, Claude* — diagnose bundled Vulkan `whisper-cli` on the AMD target machine, rerun production-default latency evidence, then cut and push `v0.8.2` only after the release constraint is satisfied or explicitly waived.
+- **A2** Generate `bench/results/latest.json` (`npm run benchmark:latency`) — *done*.
+- **A5** Fix Vulkan latency path before tag — *complex, Claude* — diagnose bundled Vulkan `whisper-cli` on the AMD target machine, rerun production-default latency evidence, then tag only after the constraint is satisfied or explicitly waived.
 
 ### B — UX/UI consistency + Picker-Unification
 
 - **B1** Audit settings panel IA: capture inconsistencies (spacing, label-style, expander depth) → checklist — *moderate, Claude* — needs design judgement.
-- **B2** Picker-Unification: Ollama vs LM Studio model lists → single bottom section (was R5) — *moderate, Codex* — pattern is clear after B1.
+- **B2** Picker-Unification — *done* by the lean-down: Ollama is the only provider, one model list.
 - **B3** Apply settings refactors per B1 checklist — *simple-to-moderate, Codex* — repetitive once decisions made.
-- **B4** Modernization pass: refresh icon system, animation easing, hover-states — *moderate, Claude* — design-heavy, hard to delegate cleanly.
+- **B4** Modernization pass — *partly done*: OLED theme with token-only colors (2026-11-02, see `docs/FRONTEND_GUIDELINES.md` §5). Open: icon system.
 
 ### C — Adaptive AI Refinement
 
 - **C1** Backend GPU-VRAM probe (was 43) — *complex, Claude* — Tauri-Rust + nvml/vulkan-info + Tauri-command surface. Probably needs platform-specific paths.
 - **C2** Wire VRAM probe into Fallback-UI (was 43a finish) — *moderate, Codex* — once C1 surface is stable.
-- **C3** Refinement Keep-Alive ping for Ollama / LM Studio (was R4) — *moderate, Codex* — mirror Whisper pre-warm pattern.
+- **C3** Refinement Keep-Alive ping for Ollama (was R4) — *moderate, Codex* — mirror Whisper pre-warm pattern.
 - **C4** Quantization profile matrix UI polish (was 45 finish) — *simple, Codex* — labels + tooltips on existing model picker.
 - **C5** Pre-Paste-Diff ground-truth (frontend learn from refinement diffs, complement to UIA capture) — *moderate, Claude* — touches existing vocab-auto-learn architecture, judgment on signal weighting.
 - **C6** Asymmetric vocab promotion: lower threshold for `vocab_terms` (Whisper-bias) than for `postproc_custom_vocab` (find-replace) — *moderate, Codex* — clear spec, mechanical.
@@ -75,12 +72,9 @@ Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test 
 - **E2** Hide technical settings groups when expert_mode=false — *simple, Codex* — pattern from existing module-gating.
 - **E3** UX writing for "what's in expert mode" tooltip + onboarding hint — *simple, Claude* — copy needs voice/tone judgement.
 
-### F — Assistant Presence Window
+### F — Assistant Presence Window — removed
 
-- **F1** Architecture: how does the Presence-Window relate to overlay + assistant-presence (3 windows now)? — *architecturally-tricky, Claude*
-- **F2** 3D dot-cloud renderer (WebGL inside Tauri webview) — *complex, Codex* — given clear visual spec.
-- **F3** TTS text panel (real-time word streaming) — *moderate, Codex* — once F1 plumbing is set.
-- **F4** Window-mgmt integration (always-on-top, click-through, multi-monitor) — *complex, Claude* — overlay-style edge cases.
+Removed 2026-11-02 together with the assistant.
 
 ---
 
@@ -88,9 +82,9 @@ Latest local gate run, 2026-06-09: `npm run build`, `npm test`, and `cargo test 
 
 | ID     | Title                                                        | Reason                                                     | Unblock condition                                                      |
 | ------ | ------------------------------------------------------------ | ---------------------------------------------------------- | ---------------------------------------------------------------------- |
-| **Z1** | Cloud provider rollout (OpenAI/Claude/Gemini for refinement) | Local-first is sufficient for now                          | when an explicit user need or business case appears                    |
-| **Z2** | LM Studio per-request thinking disable (was R6)              | `chat_template_kwargs` ignored by llmster backend          | when LM Studio adds API for per-request thinking control               |
-| **Z3** | Screen-Recording ground-truth path (was 44d)                 | Depends on Screen-Recording module which doesn't exist yet | when Screen-Recording module lands (separate roadmap)                  |
+| **Z1** | Cloud provider rollout (OpenAI/Claude/Gemini for refinement) | Removed 2026-11-02, local-first only                       | would need a new decision                                              |
+| **Z2** | LM Studio per-request thinking disable (was R6)              | Removed 2026-11-02 with LM Studio                          | —                                                                      |
+| **Z3** | Screen-Recording ground-truth path (was 44d)                 | Depends on a Screen-Recording module that does not exist   | only if such a module is ever planned                                  |
 | **Z4** | UIA `RuntimeId`-based identity (additional to HWND/PID)      | HWND/PID match has been sufficient in testing              | only if false-positive learning re-appears across same-window controls |
 
 ---
@@ -111,7 +105,7 @@ The `codex-delegate` skill provides automatic failure handling. Claude triggers 
 **Robustness rules for this roadmap:**
 1. Every task in the Active Zone with "Codex-able: ✅" or "⚠️" has an implicit Claude fallback. If the bridge dies mid-block, Claude finishes the block.
 2. "Codex-able: ❌" tasks are never delegated — Claude does them by hand.
-3. Architecturally-tricky decisions (B1, C1, C5, F1, F4, D4, E3) are explicitly Claude-owned even when sub-implementation is Codex-delegated.
+3. Architecturally-tricky decisions (B1, C1, C5, D4, E3) are explicitly Claude-owned even when sub-implementation is Codex-delegated.
 4. After a `quota_exhausted` event, Claude documents the unfinished sub-tasks in `docs/reports/codex-bridge-paused.md` so the user can see what's queued for the next quota window.
 
 **Quota visibility limitation:** ChatGPT-OAuth quota is server-side; the CLI does not expose remaining budget. The bridge learns of quota exhaustion only at the next call. This is acceptable because the circuit-breaker prevents repeat hits.
@@ -127,24 +121,17 @@ The `codex-delegate` skill provides automatic failure handling. Claude triggers 
 | J                                | C       | Adaptive AI refinement; absorbs 43, 43a, 45, R4                     |
 | F                                | D       | Reliability hardening                                               |
 | K                                | E       | Expert-Mode toggle                                                  |
-| W                                | F       | Assistant Presence Window                                           |
-| G                                | Z1      | Cloud provider — deferred                                           |
-| R6                               | Z2      | LM Studio thinking-disable — externally blocked                     |
+| W                                | F       | Assistant Presence Window — removed 2026-11-02                      |
+| G                                | Z1      | Cloud provider — removed 2026-11-02                                 |
+| R6                               | Z2      | LM Studio thinking-disable — removed 2026-11-02                     |
 | 44d                              | Z3      | Screen-Recording ground-truth — depends on new module               |
 | D, H, L, M, N, Q, R1-R5, S, T, V | history | Completed in earlier phases — see History below                     |
 
 ---
 
-## Phased Path to Full Agent (unchanged from prior roadmap)
+## Agent phases — removed
 
-**Phase 0 — Stabiler Unterbau (`S13.5`)** — done.
-**Phase 1 — Assistant Pivot Foundation (Block T → v0.8.0)** — done.
-**Phase 2 — GDD Copilot Loop (Block V → v0.8.x)** — done.
-**Phase 3 — Voice Confirmation Loop (Block O)** — planned post-A.
-**Phase 4 — Hands-free Actions (Block P)** — planned post-Phase 3.
-**Phase 5 — Vollwertiger Mitarbeiter-Modus** — continuous.
-
-(Phase IDs O/P remain in their original notation since they map to long-term agent evolution, not the current sprint queue.)
+The path to a full agent (voice confirmation loop, hands-free actions, employee mode) was dropped with the assistant on 2026-11-02.
 
 ---
 
@@ -195,7 +182,7 @@ The `codex-delegate` skill provides automatic failure handling. Claude triggers 
 
 ### Earlier
 - v0.7.0 GPU acceleration: CUDA detection, runtime backend preference, Q5 quantized models for VRAM-constrained GPUs
-- Block T (Assistant Pivot Foundation, v0.8.0) and Block V (GDD Copilot Loop) — see git log for details
+- Block T (Assistant Pivot Foundation, v0.8.0) and Block V (GDD Copilot Loop) — since removed, see git log
 - Block L (Module Platform), Block M (Workflow-Agent voice automation), Block Q (Onboarding refinement)
 - Crash-Proof Shell + LM Studio integration phases
 
@@ -205,8 +192,6 @@ The `codex-delegate` skill provides automatic failure handling. Claude triggers 
 
 - `~/.claude/skills/codex-delegate/SKILL.md` — Codex bridge protocol and circuit-breaker
 - `~/.claude/skills/orchestrator/SKILL.md` — multi-agent plan/task coordination
-- `docs/V0.8.x_BLOCK_U_RELEASE_GATE.md` — A-block gate procedure
-- `docs/AGENT_EVOLUTION_ROADMAP.md` — long-term Phase 3-5 detail
 - `docs/ARCHITECTURE_REVIEW_0.7.md`, `docs/V0.7.0_ARCHITECTURE.md`
-- `docs/INSTALLER_VARIANTS.md`, `docs/N11_TTS_BENCHMARK.md`
-- `docs/V0.8.0_BLOCK_L_ROLLOUT_PACKET.md`, `docs/V0.8.1_WORKFLOW_AGENT_PLAN.md`, `docs/V0.8.2_MULTIMODAL_IO_PLAN.md`
+- `docs/INSTALLER_VARIANTS.md`
+- Plans of removed features: `docs/archive/`

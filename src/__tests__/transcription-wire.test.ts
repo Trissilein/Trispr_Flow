@@ -8,9 +8,6 @@ import { invoke } from "@tauri-apps/api/core";
 vi.hoisted(() => {
   document.body.innerHTML = `
     <div id="toast-container"></div>
-    <button id="product-mode-transcribe-btn"></button>
-    <button id="product-mode-assistant-btn"></button>
-
     <input id="capture-enabled-toggle" type="checkbox" />
     <input id="transcribe-enabled-toggle" type="checkbox" />
     <select id="mode-select"><option value="ptt">ptt</option><option value="vad">vad</option></select>
@@ -183,19 +180,12 @@ function freshSettings(): Settings {
         available_models: [],
         preferred_model: "",
         endpoint: "",
-        auth_status: "locked",
-        auth_verified_at: null,
-        api_key_stored: false,
-        auth_method_preference: "api_key",
         runtime_target_version: "0.20.2",
       },
     },
     ai_fallback: {
       enabled: false,
       provider: "ollama",
-      fallback_provider: null,
-      execution_mode: "local_first",
-      strict_local_mode: false,
       preserve_source_language: true,
       low_latency_mode: false,
       model: "",

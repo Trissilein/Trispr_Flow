@@ -72,45 +72,6 @@ const OLLAMA_PROMPT_LLM_PROMPT_EN: &str = "You are an expert prompt engineer. Co
 
 const OLLAMA_PROMPT_LLM_PROMPT_DE: &str = "Du bist ein erfahrener Prompt-Engineer. Wandle das Transkript in den <transcript> Tags in einen praezisen, einsatzbereiten Prompt fuer ein grosses Sprachmodell um.\n\nEin guter Prompt enthaelt:\n1. Eine klare Rolle oder Persona (z.B. \"You are a...\")\n2. Eine eindeutige Aufgabenbeschreibung\n3. Relevanten Kontext, Hintergrund oder Einschraenkungen\n4. Das gewuenschte Ausgabeformat (falls zutreffend)\n\nRegeln:\n- Schreibe den fertigen Prompt immer auf Englisch, unabhaengig von der Eingabesprache.\n- Keine Erklaerungen, Kommentare oder Vorbemerkungen.\n- Den Sprecher nicht adressieren und nicht auf dieses Gespraech verweisen.\n- Gib nur den fertigen Prompt zurueck, nichts weiteres.";
 
-pub trait AIProvider: Send + Sync {
-    fn id(&self) -> &'static str;
-    fn validate_api_key(&self, api_key: &str) -> Result<(), AIError>;
-    fn estimate_cost_usd(&self, model: &str, input_tokens: usize, output_tokens: usize) -> f64;
-    fn refine_transcript(
-        &self,
-        text: &str,
-        model: &str,
-        options: &RefinementOptions,
-        api_key: &str,
-    ) -> Result<RefinementResult, AIError>;
-}
-
-pub struct ProviderFactory;
-
-impl ProviderFactory {
-    pub fn create(provider: &str) -> Result<Box<dyn AIProvider>, AIError> {
-        match normalize_provider(provider) {
-            "claude" => Ok(Box::new(ClaudeProvider)),
-            "openai" => Ok(Box::new(OpenAIProvider)),
-            "gemini" => Ok(Box::new(GeminiProvider)),
-            "ollama" => Ok(Box::new(OllamaProvider::new())),
-            other => Err(AIError::UnknownProvider(other.to_string())),
-        }
-    }
-
-    pub fn create_ollama(endpoint: String) -> Box<dyn AIProvider> {
-        Box::new(OllamaProvider::with_endpoint(endpoint))
-    }
-
-    pub fn create_lm_studio(endpoint: String, api_key: String) -> Box<dyn AIProvider> {
-        Box::new(OpenAICompatProvider::lm_studio(endpoint, api_key))
-    }
-
-    pub fn create_oobabooga(endpoint: String, api_key: String) -> Box<dyn AIProvider> {
-        Box::new(OpenAICompatProvider::oobabooga(endpoint, api_key))
-    }
-}
-
 fn normalize_ollama_endpoint(endpoint: &str) -> String {
     let trimmed = endpoint.trim().trim_end_matches('/');
     if trimmed.is_empty() {
@@ -118,34 +79,6 @@ fn normalize_ollama_endpoint(endpoint: &str) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-pub fn is_local_ollama_endpoint(endpoint: &str) -> bool {
-    let normalized = normalize_ollama_endpoint(endpoint);
-    let parsed = match Url::parse(&normalized) {
-        Ok(url) => url,
-        Err(_) => return false,
-    };
-    if parsed.scheme() != "http" {
-        return false;
-    }
-    let host = parsed
-        .host_str()
-        .map(|h| h.to_ascii_lowercase())
-        .unwrap_or_default();
-    if host != "localhost" && host != "127.0.0.1" {
-        return false;
-    }
-    if parsed.port_or_known_default().unwrap_or(0) != 11434 {
-        return false;
-    }
-    if parsed.path() != "/" && !parsed.path().is_empty() {
-        return false;
-    }
-    if parsed.query().is_some() || parsed.fragment().is_some() {
-        return false;
-    }
-    true
 }
 
 /// Check if an endpoint targets a known SSRF-sensitive address
@@ -186,23 +119,6 @@ pub fn is_ssrf_target(endpoint: &str) -> bool {
         }
     }
     false
-}
-
-/// Return all endpoint candidates: primary (with localhost/127.0.0.1 variants)
-/// followed by each configured fallback endpoint and its own variants.
-/// SSRF targets are silently filtered out.
-pub fn ollama_all_endpoint_candidates(primary: &str, fallbacks: &[String]) -> Vec<String> {
-    let mut all = ollama_endpoint_candidates(primary);
-    for fb in fallbacks {
-        if !is_ssrf_target(fb) {
-            for candidate in ollama_endpoint_candidates(fb) {
-                if !all.contains(&candidate) {
-                    all.push(candidate);
-                }
-            }
-        }
-    }
-    all
 }
 
 /// Return preferred endpoint plus a localhost/127.0.0.1 fallback variant.
@@ -271,6 +187,43 @@ pub fn list_ollama_models_with_size(endpoint: &str) -> Vec<(String, u64)> {
                         let name = m["name"].as_str()?.to_string();
                         let size = m["size"].as_u64().unwrap_or(0);
                         Some((name, size))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+
+    vec![]
+}
+
+/// Full inventory from `/api/tags`: name, size, digest, pull time and model details.
+/// Returns an empty Vec on any error.
+pub fn list_ollama_models_detailed(endpoint: &str) -> Vec<serde_json::Value> {
+    let agent = shared_agent();
+
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/tags", candidate);
+        let Ok(resp) = agent.get(&url).call() else {
+            continue;
+        };
+        let Ok(json) = resp.into_json::<serde_json::Value>() else {
+            continue;
+        };
+        return json["models"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| {
+                        let name = m["name"].as_str()?;
+                        Some(serde_json::json!({
+                            "name": name,
+                            "size_bytes": m["size"].as_u64().unwrap_or(0),
+                            "digest": m["digest"].as_str().unwrap_or(""),
+                            "modified_at": m["modified_at"].as_str().unwrap_or(""),
+                            "family": m["details"]["family"].as_str().unwrap_or(""),
+                            "parameter_size": m["details"]["parameter_size"].as_str().unwrap_or(""),
+                            "quantization_level": m["details"]["quantization_level"].as_str().unwrap_or(""),
+                        }))
                     })
                     .collect()
             })
@@ -412,83 +365,36 @@ pub fn ping_ollama_quick(endpoint: &str) -> Result<(), AIError> {
         };
     }
 
+    let result = ping_ollama_quick_fresh(endpoint);
+    QUICK_PING_CACHE_OK.store(result.is_ok(), Ordering::Relaxed);
+    QUICK_PING_CACHE_TS.store(now, Ordering::Relaxed);
+    result
+}
+
+/// The probe of `ping_ollama_quick` without the cache, and without touching it. Whoever starts
+/// or stops a server must ask this: the cached answer (3 s, not even per endpoint) still
+/// describes the server as it was before, so a freshly spawned server looked "ready" at once
+/// (measured: after a stop, a new process that cannot even start was reported ready after
+/// 5 microseconds) and a stopped one still looked alive.
+pub fn ping_ollama_quick_fresh(endpoint: &str) -> Result<(), AIError> {
     let agent = ureq::builder()
         .timeout_connect(Duration::from_millis(300))
         .timeout_read(Duration::from_millis(300))
         .build();
 
-    let mut success = false;
     for candidate in ollama_endpoint_candidates(endpoint) {
         let url = format!("{}/api/tags", candidate);
         if agent.get(&url).call().is_ok() {
-            success = true;
-            break;
+            return Ok(());
         }
     }
-
-    QUICK_PING_CACHE_OK.store(success, Ordering::Relaxed);
-    QUICK_PING_CACHE_TS.store(now, Ordering::Relaxed);
-
-    if success {
-        Ok(())
-    } else {
-        Err(AIError::OllamaNotRunning)
-    }
+    Err(AIError::OllamaNotRunning)
 }
 
-/// Quick reachability check for LM Studio (or any OpenAI-compatible local server).
-/// Returns Ok(()) if the server responds and has at least one model loaded.
-/// Timeout is 500 ms — suitable for pre-flight checks before refinement.
-pub fn ping_lm_studio_quick(endpoint: &str) -> Result<(), AIError> {
-    let url = format!("{}/v1/models", endpoint.trim_end_matches('/'));
-    let agent = ureq::builder()
-        .timeout_connect(Duration::from_millis(500))
-        .timeout_read(Duration::from_millis(500))
-        .build();
-    match agent.get(&url).call() {
-        Ok(resp) => {
-            if let Ok(body) = resp.into_json::<serde_json::Value>() {
-                let has_models = body["data"].as_array().map_or(false, |arr| !arr.is_empty());
-                if has_models {
-                    Ok(())
-                } else {
-                    Err(AIError::NetworkError(
-                        "LM Studio is running but no models are loaded".into(),
-                    ))
-                }
-            } else {
-                Err(AIError::NetworkError(
-                    "LM Studio returned invalid JSON".into(),
-                ))
-            }
-        }
-        Err(_) => Err(AIError::NetworkError(format!(
-            "LM Studio not reachable at {}",
-            endpoint
-        ))),
-    }
-}
-
-pub fn default_models_for_provider(provider: &str) -> Vec<String> {
-    match normalize_provider(provider) {
-        "claude" => vec![
-            "claude-3-5-sonnet-20241022".to_string(),
-            "claude-3-5-haiku-20241022".to_string(),
-            "claude-3-opus-20240229".to_string(),
-        ],
-        "openai" => vec![
-            "gpt-4o-mini".to_string(),
-            "gpt-4o".to_string(),
-            "gpt-4.1-mini".to_string(),
-        ],
-        "gemini" => vec![
-            "gemini-2.0-flash".to_string(),
-            "gemini-1.5-pro".to_string(),
-            "gemini-1.5-flash".to_string(),
-        ],
-        "ollama" => vec![], // Models discovered dynamically via /api/tags
-        _ => vec![],
-    }
+/// Forgets the cached `ping_ollama_quick` result. Called after a server was started or
+/// stopped, so the next status poll shows the server as it is now.
+pub fn reset_quick_ping_cache() {
+    QUICK_PING_CACHE_TS.store(0, Ordering::Relaxed);
 }
 
 pub fn default_prompt_for_language(language: &str) -> &'static str {
@@ -589,65 +495,12 @@ pub fn prompt_for_profile(
     }
 }
 
-fn normalize_provider(provider: &str) -> &str {
-    // Delegates to the canonical normalize_provider_id in models.rs.
-    // The only difference: unrecognized providers yield "unknown" here (not "ollama")
-    // so callers like ProviderFactory::create can surface a proper error.
-    let canonical = super::models::normalize_provider_id(provider);
-    let trimmed = provider.trim();
-    if canonical == "ollama" && !trimmed.eq_ignore_ascii_case("ollama") {
-        "unknown"
-    } else {
-        canonical
-    }
-}
-
 fn rough_token_estimate(text: &str) -> usize {
     let words = text.split_whitespace().count();
     (words as f64 * 1.35).ceil().max(1.0) as usize
 }
 
-fn validate_key_basic(api_key: &str, provider: &str) -> Result<(), AIError> {
-    let trimmed = api_key.trim();
-    if trimmed.is_empty() {
-        return Err(AIError::MissingApiKey(provider.to_string()));
-    }
-    if trimmed.len() < 12 {
-        return Err(AIError::InvalidApiKey(format!(
-            "{} key is too short",
-            provider
-        )));
-    }
-    Ok(())
-}
-
-fn passthrough_refinement(
-    provider: &dyn AIProvider,
-    text: &str,
-    model: &str,
-    options: &RefinementOptions,
-) -> RefinementResult {
-    let input_tokens = rough_token_estimate(text);
-    let output_tokens = input_tokens.min(options.max_tokens as usize);
-    let cost = provider.estimate_cost_usd(model, input_tokens, output_tokens);
-    RefinementResult {
-        text: text.to_string(),
-        usage: TokenUsage {
-            input_tokens,
-            output_tokens,
-            total_cost_usd: cost,
-        },
-        provider: provider.id().to_string(),
-        model: model.to_string(),
-        execution_time_ms: 0,
-        ollama_load_ms: None,
-        ollama_prompt_eval_ms: None,
-        ollama_eval_ms: None,
-        tier_update: None,
-    }
-}
-
-fn extract_ollama_error_message(response: ureq::Response) -> String {
+pub(super) fn extract_ollama_error_message(response: ureq::Response) -> String {
     let body = response.into_string().unwrap_or_default();
     let trimmed = body.trim();
     if trimmed.is_empty() {
@@ -919,7 +772,7 @@ fn build_ollama_options_payload(
     )
 }
 
-fn wrap_transcript_in_xml(text: &str) -> String {
+pub(super) fn wrap_transcript_in_xml(text: &str) -> String {
     // Use HTML entity escaping to prevent XML tag injection through spoken text
     let escaped = text.replace("</transcript>", "&lt;/transcript&gt;");
     format!("<transcript>\n{}\n</transcript>", escaped)
@@ -1228,7 +1081,7 @@ fn suspicious_refinement_shape(original: &str, refined: &str) -> bool {
 /// Strip `<think>…</think>` blocks that reasoning models (Qwen3, DeepSeek-R1,
 /// etc.) inject before the actual answer.  Works for both single-line and
 /// multi-line think blocks.  Returns input unchanged if no `<think>` tag found.
-fn strip_thinking_tags(text: &str) -> String {
+pub(super) fn strip_thinking_tags(text: &str) -> String {
     if !text.contains("<think>") {
         return text.to_string();
     }
@@ -1237,12 +1090,103 @@ fn strip_thinking_tags(text: &str) -> String {
     RE.replace_all(text, "").trim().to_string()
 }
 
+const TRANSCRIPT_OPEN_TAG: &str = "<transcript>";
+const TRANSCRIPT_CLOSE_TAG: &str = "</transcript>";
+
+fn strip_suffix_ignore_ascii_case<'a>(text: &'a str, suffix: &str) -> Option<&'a str> {
+    let start = text.len().checked_sub(suffix.len())?;
+    let tail = text.get(start..)?;
+    tail.eq_ignore_ascii_case(suffix).then(|| &text[..start])
+}
+
+/// Start of a closing tag cut off at the very end of `text` (`</tra`, `</transcript`).
+fn truncated_close_tag_start(text: &str) -> Option<usize> {
+    let idx = text.rfind("</")?;
+    let tail = &text[idx..];
+    let is_cut_tag = tail.len() >= 3
+        && tail.len() < TRANSCRIPT_CLOSE_TAG.len()
+        && TRANSCRIPT_CLOSE_TAG[..tail.len()].eq_ignore_ascii_case(tail);
+    is_cut_tag.then_some(idx)
+}
+
+/// The rest of `text` after an opening tag at its start, whole (`<transcript>`) or cut off
+/// (`<transcr>`, `<transcript` followed by whitespace).
+fn strip_open_tag_at_start(text: &str) -> Option<&str> {
+    let after_bracket = text.strip_prefix('<')?;
+    let word = &TRANSCRIPT_OPEN_TAG[1..TRANSCRIPT_OPEN_TAG.len() - 1];
+    let fragment_len = after_bracket
+        .bytes()
+        .take_while(|b| b.is_ascii_alphabetic())
+        .count();
+    let fragment = &after_bracket[..fragment_len];
+    if fragment.len() < 3
+        || fragment.len() > word.len()
+        || !word[..fragment.len()].eq_ignore_ascii_case(fragment)
+    {
+        return None;
+    }
+    let rest = &after_bracket[fragment_len..];
+    match rest.chars().next() {
+        Some('>') => Some(&rest[1..]),
+        Some(c) if c.is_whitespace() => Some(rest),
+        None => Some(rest),
+        Some(_) => None,
+    }
+}
+
+/// `<bitte schick …`: the first word of the text glued to the `<` of a cut-off opening tag.
+fn starts_with_mangled_open_bracket(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next() == Some('<')
+        && chars.next().is_some_and(char::is_alphabetic)
+        && !text
+            .split_whitespace()
+            .next()
+            .is_some_and(|first_token| first_token.contains('>'))
+}
+
+/// Removes the `<transcript>` wrapper a model echoed back from the prompt: a closing tag at the
+/// very end (whole or cut off), an opening tag at the very start (whole or cut off) and, only
+/// together with a closing tag, the lone `<` of an opening tag cut off to `<bitte …`.
+/// Text without such tags comes back unchanged; tags or the word "transcript" inside the text
+/// are never touched.
+pub(super) fn strip_transcript_wrapper_tags(text: &str) -> String {
+    let mut body = text.trim();
+    let mut stripped = false;
+    let mut had_close_tag = false;
+
+    if let Some(rest) = strip_suffix_ignore_ascii_case(body, TRANSCRIPT_CLOSE_TAG) {
+        body = rest.trim_end();
+        stripped = true;
+        had_close_tag = true;
+    } else if let Some(idx) = truncated_close_tag_start(body) {
+        body = body[..idx].trim_end();
+        stripped = true;
+        had_close_tag = true;
+    }
+
+    if let Some(rest) = strip_open_tag_at_start(body) {
+        body = rest.trim_start();
+        stripped = true;
+    } else if had_close_tag && starts_with_mangled_open_bracket(body) {
+        body = body[1..].trim_start();
+        stripped = true;
+    }
+
+    if stripped {
+        body.to_string()
+    } else {
+        text.to_string()
+    }
+}
+
 fn sanitize_ollama_refinement_output(
     original: &str,
     refined: &str,
     options: &RefinementOptions,
 ) -> String {
-    let normalized = refined
+    // Some models (lfm3, bonsai) echo the <transcript> wrapper of the prompt back.
+    let normalized = strip_transcript_wrapper_tags(refined)
         .replace("\r\n", "\n")
         .replace('\r', "\n")
         .replace('\t', " "); // Tabs → Space (Modell soll keine Tabs einfügen)
@@ -1303,127 +1247,25 @@ fn is_ollama_runner_command_line(process_name: &str, command_line: &str) -> bool
     })
 }
 
-struct ClaudeProvider;
-struct OpenAIProvider;
-struct GeminiProvider;
-
 #[derive(Clone)]
-struct OllamaProvider {
+pub struct OllamaProvider {
     endpoint: String,
 }
 
 impl OllamaProvider {
-    fn new() -> Self {
-        Self {
-            endpoint: "http://127.0.0.1:11434".to_string(),
-        }
-    }
-
-    fn with_endpoint(endpoint: String) -> Self {
+    pub fn new(endpoint: String) -> Self {
         Self { endpoint }
     }
-}
 
-impl AIProvider for ClaudeProvider {
-    fn id(&self) -> &'static str {
-        "claude"
-    }
-
-    fn validate_api_key(&self, api_key: &str) -> Result<(), AIError> {
-        validate_key_basic(api_key, self.id())?;
-        Ok(())
-    }
-
-    fn estimate_cost_usd(&self, _model: &str, input_tokens: usize, output_tokens: usize) -> f64 {
-        // Approximation for planning UI only.
-        (input_tokens as f64 * 0.000003) + (output_tokens as f64 * 0.000015)
-    }
-
-    fn refine_transcript(
-        &self,
-        text: &str,
-        model: &str,
-        options: &RefinementOptions,
-        api_key: &str,
-    ) -> Result<RefinementResult, AIError> {
-        self.validate_api_key(api_key)?;
-        Ok(passthrough_refinement(self, text, model, options))
-    }
-}
-
-impl AIProvider for OpenAIProvider {
-    fn id(&self) -> &'static str {
-        "openai"
-    }
-
-    fn validate_api_key(&self, api_key: &str) -> Result<(), AIError> {
-        validate_key_basic(api_key, self.id())?;
-        Ok(())
-    }
-
-    fn estimate_cost_usd(&self, _model: &str, input_tokens: usize, output_tokens: usize) -> f64 {
-        (input_tokens as f64 * 0.000005) + (output_tokens as f64 * 0.000015)
-    }
-
-    fn refine_transcript(
-        &self,
-        text: &str,
-        model: &str,
-        options: &RefinementOptions,
-        api_key: &str,
-    ) -> Result<RefinementResult, AIError> {
-        self.validate_api_key(api_key)?;
-        Ok(passthrough_refinement(self, text, model, options))
-    }
-}
-
-impl AIProvider for GeminiProvider {
-    fn id(&self) -> &'static str {
-        "gemini"
-    }
-
-    fn validate_api_key(&self, api_key: &str) -> Result<(), AIError> {
-        validate_key_basic(api_key, self.id())?;
-        Ok(())
-    }
-
-    fn estimate_cost_usd(&self, _model: &str, input_tokens: usize, output_tokens: usize) -> f64 {
-        (input_tokens as f64 * 0.0000015) + (output_tokens as f64 * 0.0000035)
-    }
-
-    fn refine_transcript(
-        &self,
-        text: &str,
-        model: &str,
-        options: &RefinementOptions,
-        api_key: &str,
-    ) -> Result<RefinementResult, AIError> {
-        self.validate_api_key(api_key)?;
-        Ok(passthrough_refinement(self, text, model, options))
-    }
-}
-
-impl AIProvider for OllamaProvider {
-    fn id(&self) -> &'static str {
+    pub fn id(&self) -> &'static str {
         "ollama"
     }
 
-    fn validate_api_key(&self, _api_key: &str) -> Result<(), AIError> {
-        // Ollama doesn't use API keys
-        Ok(())
-    }
-
-    fn estimate_cost_usd(&self, _model: &str, _input_tokens: usize, _output_tokens: usize) -> f64 {
-        // Local Ollama has no cost
-        0.0
-    }
-
-    fn refine_transcript(
+    pub fn refine_transcript(
         &self,
         text: &str,
         model: &str,
         options: &RefinementOptions,
-        _api_key: &str,
     ) -> Result<RefinementResult, AIError> {
         let start = Instant::now();
         let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
@@ -1702,10 +1544,8 @@ impl AIProvider for OllamaProvider {
     }
 }
 
-// ============================================================================
 /// Truncate input text for local inference to prevent extremely long refinement
-/// times on CPU-bound models. Cloud providers have much higher token limits and
-/// are not truncated.
+/// times on CPU-bound models.
 fn truncate_for_local_inference(text: &str, max_words: usize) -> String {
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.len() <= max_words {
@@ -1718,212 +1558,6 @@ fn truncate_for_local_inference(text: &str, max_words: usize) -> String {
     } else {
         format!("{} [truncated]", truncated)
     }
-}
-
-// OpenAI-compatible provider (LM Studio, Oobabooga, any /v1/chat/completions)
-// ============================================================================
-
-pub struct OpenAICompatProvider {
-    pub endpoint: String,
-    pub api_key: String,
-    pub provider_id: &'static str,
-    pub label: &'static str,
-}
-
-impl OpenAICompatProvider {
-    fn lm_studio(endpoint: String, api_key: String) -> Self {
-        Self {
-            endpoint,
-            api_key,
-            provider_id: "lm_studio",
-            label: "LM Studio",
-        }
-    }
-
-    fn oobabooga(endpoint: String, api_key: String) -> Self {
-        Self {
-            endpoint,
-            api_key,
-            provider_id: "oobabooga",
-            label: "Oobabooga",
-        }
-    }
-}
-
-impl AIProvider for OpenAICompatProvider {
-    fn id(&self) -> &'static str {
-        self.provider_id
-    }
-
-    fn validate_api_key(&self, _api_key: &str) -> Result<(), AIError> {
-        // Local OpenAI-compat backends (LM Studio, Oobabooga) don't require API keys.
-        Ok(())
-    }
-
-    fn estimate_cost_usd(&self, _model: &str, _input_tokens: usize, _output_tokens: usize) -> f64 {
-        0.0
-    }
-
-    fn refine_transcript(
-        &self,
-        text: &str,
-        model: &str,
-        options: &RefinementOptions,
-        _api_key: &str,
-    ) -> Result<RefinementResult, AIError> {
-        let start = Instant::now();
-        let model = model.trim();
-        if model.is_empty() {
-            return Err(AIError::NetworkError(format!(
-                "No model selected for {}. Set an active model in AI Refinement settings.",
-                self.label
-            )));
-        }
-
-        let system_prompt = options
-            .custom_prompt
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| {
-                let lang = options.language.as_deref().unwrap_or("en");
-                default_prompt_for_language(lang)
-            });
-
-        let system_prompt = with_language_lock(
-            system_prompt,
-            options.language.as_deref().unwrap_or(""),
-            options.enforce_language_guard,
-        );
-
-        // Limit input size for local inference to prevent multi-minute refinement times
-        let effective_text = truncate_for_local_inference(text, 2000);
-
-        let body = serde_json::json!({
-            "model": model,
-            "stream": false,
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user", "content": wrap_transcript_in_xml(&effective_text) }
-            ],
-            "temperature": options.temperature,
-            "max_tokens": options.max_tokens,
-            "chat_template_kwargs": {"enable_thinking": false}
-        });
-
-        let agent = refinement_agent(&effective_text, &system_prompt);
-        let endpoint = normalize_ollama_endpoint(&self.endpoint);
-        let url = format!("{}/v1/chat/completions", endpoint);
-
-        let mut request = agent.post(&url).set("Content-Type", "application/json");
-
-        if !self.api_key.is_empty() {
-            request = request.set("Authorization", &format!("Bearer {}", self.api_key));
-        }
-
-        let response = match request.send_json(body) {
-            Ok(resp) => resp,
-            Err(ureq::Error::Status(code, resp)) => {
-                let body = resp.into_string().unwrap_or_default();
-                if code == 404 {
-                    return Err(AIError::NetworkError(format!(
-                        "{} endpoint not reachable at {}. Is {} running?",
-                        self.label, url, self.label
-                    )));
-                }
-                return Err(AIError::NetworkError(format!(
-                    "{} returned HTTP {}: {}",
-                    self.label, code, body
-                )));
-            }
-            Err(ureq::Error::Transport(t)) => {
-                let msg = t.to_string().to_lowercase();
-                return Err(if msg.contains("timed out") || msg.contains("timeout") {
-                    AIError::Timeout
-                } else {
-                    AIError::NetworkError(format!(
-                        "{} not reachable at {}. Is it running?",
-                        self.label, url
-                    ))
-                });
-            }
-        };
-
-        let json: serde_json::Value = response.into_json().map_err(|e| {
-            AIError::NetworkError(format!("Failed to parse {} response: {}", self.label, e))
-        })?;
-
-        let refined_text = json
-            .pointer("/choices/0/message/content")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| {
-                AIError::NetworkError(format!(
-                    "Unexpected {} response format: missing choices[0].message.content",
-                    self.label
-                ))
-            })?;
-
-        // Strip <think>...</think> blocks from reasoning models before sanitization
-        let refined_text = strip_thinking_tags(&refined_text);
-        let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
-
-        let input_tokens = json
-            .pointer("/usage/prompt_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
-        let output_tokens = json
-            .pointer("/usage/completion_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
-
-        Ok(RefinementResult {
-            text: refined_text,
-            usage: TokenUsage {
-                input_tokens,
-                output_tokens,
-                total_cost_usd: 0.0,
-            },
-            provider: self.id().to_string(),
-            model: model.to_string(),
-            execution_time_ms: start.elapsed().as_millis() as u64,
-            ollama_load_ms: None,
-            ollama_prompt_eval_ms: None,
-            ollama_eval_ms: None,
-            tier_update: None,
-        })
-    }
-}
-
-/// List models available on an OpenAI-compatible endpoint via GET /v1/models.
-pub fn list_openai_compat_models(endpoint: &str, api_key: &str) -> Vec<String> {
-    let normalized = normalize_ollama_endpoint(endpoint);
-    let url = format!("{}/v1/models", normalized);
-    let agent = ureq::builder()
-        .timeout_connect(Duration::from_secs(3))
-        .timeout_read(Duration::from_secs(5))
-        .build();
-    let mut request = agent.get(&url).set("Content-Type", "application/json");
-    if !api_key.is_empty() {
-        request = request.set("Authorization", &format!("Bearer {}", api_key));
-    }
-    let Ok(resp) = request.call() else {
-        return Vec::new();
-    };
-    let Ok(json) = resp.into_json::<serde_json::Value>() else {
-        return Vec::new();
-    };
-    json.get("data")
-        .and_then(|d| d.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|item| {
-                    item.get("id")
-                        .and_then(|id| id.as_str())
-                        .map(str::to_string)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 // ============================================================================
@@ -2073,6 +1707,74 @@ fn format_ollama_pull_snapshot(
     parts.join(" ")
 }
 
+/// One progress line of `/api/pull`.
+pub(super) struct PullLine {
+    pub status: String,
+    pub digest: Option<String>,
+    pub total: Option<u64>,
+    pub completed: Option<u64>,
+    pub error: Option<String>,
+}
+
+/// How a pull stream ended.
+#[derive(Debug, PartialEq)]
+pub(super) enum PullStreamEnd {
+    /// The `success` status arrived.
+    Success { lines: u64 },
+    /// Ollama sent an error line.
+    Failed { error: String, lines: u64 },
+    /// The connection broke (reset, server killed, cut off) before the pull finished.
+    Broken { error: String, lines: u64 },
+    /// The stream ended cleanly without `success`.
+    EndedEarly { lines: u64 },
+}
+
+/// Reads the newline-delimited JSON of `/api/pull` to its end. `on_line(line, count)` sees every
+/// line (logging), `on_progress(line)` every line that is not the final success (progress
+/// events). A read error ends the pull: a broken connection keeps failing on every further read,
+/// so skipping it would spin forever at full speed (measured: 100,000 errors in 0.13 s) with the
+/// pull marked "in progress" until the app restarts.
+pub(super) fn consume_pull_stream<R: std::io::BufRead>(
+    reader: R,
+    on_line: &mut dyn FnMut(&PullLine, u64),
+    on_progress: &mut dyn FnMut(&PullLine),
+) -> PullStreamEnd {
+    let mut lines = 0u64;
+    for line_result in reader.lines() {
+        let line = match line_result {
+            Ok(l) if l.trim().is_empty() => continue,
+            Ok(l) => l,
+            Err(error) => {
+                return PullStreamEnd::Broken {
+                    error: error.to_string(),
+                    lines,
+                }
+            }
+        };
+        let json: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(j) => j,
+            Err(_) => continue,
+        };
+        lines += 1;
+        let pull_line = PullLine {
+            status: json["status"].as_str().unwrap_or("").to_string(),
+            digest: json["digest"].as_str().map(|s| s.to_string()),
+            total: json["total"].as_u64(),
+            completed: json["completed"].as_u64(),
+            error: json["error"].as_str().map(|s| s.to_string()),
+        };
+        on_line(&pull_line, lines);
+        if pull_line.status == "success" {
+            return PullStreamEnd::Success { lines };
+        }
+        on_progress(&pull_line);
+        if let Some(error) = pull_line.error {
+            return PullStreamEnd::Failed { error, lines };
+        }
+    }
+    PullStreamEnd::EndedEarly { lines }
+}
+
 /// Pull an Ollama model and stream progress via Tauri events.
 /// Spawned in a background thread.
 ///
@@ -2081,15 +1783,17 @@ fn format_ollama_pull_snapshot(
 /// - "ollama:pull-complete": OllamaPullComplete (on success)
 /// - "ollama:pull-error": OllamaPullError (on failure)
 pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) {
-    use std::io::BufRead;
-
     let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
     let body = serde_json::json!({ "model": model, "stream": true });
     let pull_started = Instant::now();
 
     let agent = ureq::builder()
         .timeout_connect(Duration::from_secs(5))
-        .timeout_read(Duration::from_secs(3600)) // 1 hour for large models
+        // Per read, not per pull: Ollama reports progress every few seconds, and even the
+        // checksum pass over a big blob stays far below this. A connection that went silent
+        // ends the pull after 10 minutes instead of holding the "pull in progress" entry for
+        // an hour.
+        .timeout_read(Duration::from_secs(600))
         .build();
 
     let mut last_connect_error: Option<String> = None;
@@ -2154,59 +1858,67 @@ pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) 
         let reader = response.into_reader();
         let buffered = std::io::BufReader::new(reader);
         let mut last_emit = Instant::now();
-        let mut line_count: u64 = 0;
         let mut last_status: Option<String> = None;
         let mut last_digest: Option<String> = None;
         let mut last_completed: Option<u64> = None;
         let mut last_total: Option<u64> = None;
 
-        for line_result in buffered.lines() {
-            let line = match line_result {
-                Ok(l) if !l.trim().is_empty() => l,
-                _ => continue,
-            };
+        let end = consume_pull_stream(
+            buffered,
+            &mut |line, line_count| {
+                let should_log = line_count <= 3
+                    || last_status.as_deref() != Some(line.status.as_str())
+                    || last_digest.as_deref() != line.digest.as_deref()
+                    || last_completed != line.completed
+                    || last_total != line.total
+                    || line.error.is_some();
+                if should_log && diagnostics_enabled {
+                    info!(
+                        "[ollama.pull] event model={} candidate={} line={} elapsed_ms={} {}",
+                        model,
+                        candidate,
+                        line_count,
+                        pull_started.elapsed().as_millis(),
+                        format_ollama_pull_snapshot(
+                            &line.status,
+                            line.digest.as_deref(),
+                            line.completed,
+                            line.total,
+                        ),
+                    );
+                }
+                last_status = Some(line.status.clone());
+                last_digest = line.digest.clone();
+                last_completed = line.completed;
+                last_total = line.total;
+            },
+            &mut |line| {
+                // Emit progress every 250ms
+                if last_emit.elapsed() >= Duration::from_millis(250) {
+                    let _ = app.emit(
+                        "ollama:pull-progress",
+                        OllamaPullProgress {
+                            model: model.clone(),
+                            status: line.status.clone(),
+                            digest: line.digest.clone(),
+                            total: line.total,
+                            completed: line.completed,
+                        },
+                    );
+                    last_emit = Instant::now();
+                }
+            },
+        );
 
-            let json: serde_json::Value = match serde_json::from_str(&line) {
-                Ok(j) => j,
-                Err(_) => continue,
-            };
-
-            let status = json["status"].as_str().unwrap_or("").to_string();
-            let digest = json["digest"].as_str().map(|s| s.to_string());
-            let total = json["total"].as_u64();
-            let completed = json["completed"].as_u64();
-            line_count += 1;
-
-            let should_log = line_count <= 3
-                || last_status.as_deref() != Some(status.as_str())
-                || last_digest.as_deref() != digest.as_deref()
-                || last_completed != completed
-                || last_total != total
-                || json.get("error").is_some();
-            if should_log && diagnostics_enabled {
-                info!(
-                    "[ollama.pull] event model={} candidate={} line={} elapsed_ms={} {}",
-                    model,
-                    candidate,
-                    line_count,
-                    pull_started.elapsed().as_millis(),
-                    format_ollama_pull_snapshot(&status, digest.as_deref(), completed, total,),
-                );
-            }
-            last_status = Some(status.clone());
-            last_digest = digest.clone();
-            last_completed = completed;
-            last_total = total;
-
-            // Check for success
-            if status == "success" {
+        match end {
+            PullStreamEnd::Success { lines } => {
                 if diagnostics_enabled {
                     info!(
                         "[ollama.pull] success model={} candidate={} elapsed_ms={} lines={} attempts={}",
                         model,
                         candidate,
                         pull_started.elapsed().as_millis(),
-                        line_count,
+                        lines,
                         attempted_candidates
                     );
                 }
@@ -2216,60 +1928,62 @@ pub fn pull_ollama_model_inner(app: AppHandle, model: String, endpoint: String) 
                         model: model.clone(),
                     },
                 );
-                return;
             }
-
-            // Emit progress every 250ms
-            if last_emit.elapsed() >= Duration::from_millis(250) {
-                let _ = app.emit(
-                    "ollama:pull-progress",
-                    OllamaPullProgress {
-                        model: model.clone(),
-                        status: status.clone(),
-                        digest,
-                        total,
-                        completed,
-                    },
-                );
-                last_emit = Instant::now();
-            }
-
-            // Check for error in response
-            if let Some(err) = json["error"].as_str() {
+            PullStreamEnd::Failed { error, lines } => {
                 warn!(
                     "[ollama.pull] error model={} candidate={} elapsed_ms={} lines={} error={}",
                     model,
                     candidate,
                     pull_started.elapsed().as_millis(),
-                    line_count,
-                    err
+                    lines,
+                    error
                 );
                 let _ = app.emit(
                     "ollama:pull-error",
                     OllamaPullError {
                         model: model.clone(),
-                        error: err.to_string(),
+                        error,
                     },
                 );
-                return;
+            }
+            PullStreamEnd::Broken { error, lines } => {
+                warn!(
+                    "[ollama.pull] connection lost model={} candidate={} elapsed_ms={} lines={} error={}",
+                    model,
+                    candidate,
+                    pull_started.elapsed().as_millis(),
+                    lines,
+                    error
+                );
+                let _ = app.emit(
+                    "ollama:pull-error",
+                    OllamaPullError {
+                        model: model.clone(),
+                        error: format!(
+                            "The connection to Ollama was lost during the download ({}). Partial downloads are kept: start the pull again to resume.",
+                            error
+                        ),
+                    },
+                );
+            }
+            PullStreamEnd::EndedEarly { lines } => {
+                // Stream ended without "success" status.
+                warn!(
+                    "[ollama.pull] stream ended unexpectedly model={} candidate={} elapsed_ms={} lines={}",
+                    model,
+                    candidate,
+                    pull_started.elapsed().as_millis(),
+                    lines
+                );
+                let _ = app.emit(
+                    "ollama:pull-error",
+                    OllamaPullError {
+                        model: model.clone(),
+                        error: "Stream ended unexpectedly without success status".to_string(),
+                    },
+                );
             }
         }
-
-        // Stream ended without "success" status.
-        warn!(
-            "[ollama.pull] stream ended unexpectedly model={} candidate={} elapsed_ms={} lines={}",
-            model,
-            candidate,
-            pull_started.elapsed().as_millis(),
-            line_count
-        );
-        let _ = app.emit(
-            "ollama:pull-error",
-            OllamaPullError {
-                model: model.clone(),
-                error: "Stream ended unexpectedly without success status".to_string(),
-            },
-        );
         return;
     }
 
@@ -2316,20 +2030,6 @@ mod tests {
             num_predict_tier_idx: 0,
             num_ctx_tier_idx: 0,
         }
-    }
-
-    #[test]
-    fn factory_creates_known_providers() {
-        assert!(ProviderFactory::create("claude").is_ok());
-        assert!(ProviderFactory::create("openai").is_ok());
-        assert!(ProviderFactory::create("gemini").is_ok());
-        assert!(ProviderFactory::create("ollama").is_ok());
-    }
-
-    #[test]
-    fn factory_rejects_unknown_provider() {
-        let err = ProviderFactory::create("other").err();
-        assert!(matches!(err, Some(AIError::UnknownProvider(_))));
     }
 
     #[test]
@@ -2423,21 +2123,6 @@ mod tests {
         });
 
         assert_eq!(parse_ollama_running_vram(&json), Some(3_500));
-    }
-
-    #[test]
-    fn strict_local_endpoint_accepts_localhost_and_loopback() {
-        assert!(is_local_ollama_endpoint("http://localhost:11434"));
-        assert!(is_local_ollama_endpoint("http://127.0.0.1:11434"));
-        assert!(is_local_ollama_endpoint("http://localhost:11434/"));
-    }
-
-    #[test]
-    fn strict_local_endpoint_rejects_remote_or_wrong_port() {
-        assert!(!is_local_ollama_endpoint("http://192.168.1.20:11434"));
-        assert!(!is_local_ollama_endpoint("http://localhost:8080"));
-        assert!(!is_local_ollama_endpoint("https://localhost:11434"));
-        assert!(!is_local_ollama_endpoint("http://localhost:11434/api"));
     }
 
     // --- Ollama: unreachable endpoint returns empty model list (no panic) ---
@@ -2560,44 +2245,6 @@ mod tests {
             prompt.contains("Detect the language") || prompt.contains("Detect the input language")
         );
         assert!(prompt.contains("never translate") || prompt.contains("keep it unchanged"));
-    }
-
-    // --- OllamaProvider: validate_api_key is always Ok (no key needed) ---
-    #[test]
-    fn ollama_provider_validates_any_key() {
-        let p = OllamaProvider::new();
-        assert!(p.validate_api_key("").is_ok());
-        assert!(p.validate_api_key("some-random-key").is_ok());
-    }
-
-    // --- OllamaProvider: cost is always zero ---
-    #[test]
-    fn ollama_provider_has_zero_cost() {
-        let p = OllamaProvider::new();
-        let cost = p.estimate_cost_usd("llama3.2:3b", 10_000, 10_000);
-        assert_eq!(cost, 0.0, "Ollama should never charge");
-    }
-
-    // --- default_models_for_provider returns empty for ollama (dynamic) ---
-    #[test]
-    fn ollama_default_models_are_empty() {
-        let models = default_models_for_provider("ollama");
-        assert!(models.is_empty(), "Ollama models are discovered at runtime");
-    }
-
-    // --- cloud providers have non-empty default model lists ---
-    #[test]
-    fn cloud_providers_have_default_models() {
-        assert!(!default_models_for_provider("claude").is_empty());
-        assert!(!default_models_for_provider("openai").is_empty());
-        assert!(!default_models_for_provider("gemini").is_empty());
-    }
-
-    // --- ProviderFactory::create_ollama passes custom endpoint ---
-    #[test]
-    fn create_ollama_with_custom_endpoint() {
-        let provider = ProviderFactory::create_ollama("http://my-server:11434".to_string());
-        assert_eq!(provider.id(), "ollama");
     }
 
     // --- rough_token_estimate is sensible ---
@@ -2742,9 +2389,9 @@ mod tests {
     // --- Task 32: OllamaProvider refine_transcript maps connection refused to OllamaNotRunning ---
     #[test]
     fn ollama_provider_connection_refused_returns_not_running() {
-        let provider = OllamaProvider::with_endpoint("http://127.0.0.1:19999".to_string());
+        let provider = OllamaProvider::new("http://127.0.0.1:19999".to_string());
         let options = test_options(false);
-        let result = provider.refine_transcript("hello world", "qwen3:14b", &options, "");
+        let result = provider.refine_transcript("hello world", "qwen3:14b", &options);
         // Accept both OllamaNotRunning and Timeout: some systems (filtered ports/firewall)
         // return a timeout instead of connection-refused for a closed local port. Both
         // indicate Ollama is not reachable.
@@ -2856,6 +2503,121 @@ mod tests {
         let refined = "First line\n\n\n\nSecond line\n\n\nThird line";
         let sanitized = sanitize_ollama_refinement_output(original, refined, &test_options(false));
         assert_eq!(sanitized, "First line\n\nSecond line\n\nThird line");
+    }
+
+    #[test]
+    fn echoed_transcript_wrapper_is_removed_from_the_output() {
+        assert_eq!(
+            strip_transcript_wrapper_tags("<transcript>\nText.\n</transcript>"),
+            "Text."
+        );
+        assert_eq!(
+            strip_transcript_wrapper_tags("  <transcript> Text. </transcript>\n"),
+            "Text."
+        );
+        assert_eq!(
+            strip_transcript_wrapper_tags("<Transcript>Text.</TRANSCRIPT>"),
+            "Text."
+        );
+        // inner line breaks of a multi-line answer survive
+        assert_eq!(
+            strip_transcript_wrapper_tags("<transcript>\nEins.\nZwei.\n</transcript>"),
+            "Eins.\nZwei."
+        );
+    }
+
+    #[test]
+    fn a_lone_closing_or_opening_tag_is_removed() {
+        assert_eq!(strip_transcript_wrapper_tags("Text.\n</transcript>"), "Text.");
+        assert_eq!(strip_transcript_wrapper_tags("<transcript>\nText."), "Text.");
+        assert_eq!(strip_transcript_wrapper_tags("<transcript>Text."), "Text.");
+    }
+
+    #[test]
+    fn cut_off_wrapper_tags_are_removed() {
+        // opening tag cut down to its `<`, closing tag intact
+        assert_eq!(
+            strip_transcript_wrapper_tags("<bitte schick mir die Unterlagen</transcript>"),
+            "bitte schick mir die Unterlagen"
+        );
+        assert_eq!(
+            strip_transcript_wrapper_tags("<bitte schick mir die Unterlagen\n</transcript>"),
+            "bitte schick mir die Unterlagen"
+        );
+        // shortened opening tag
+        assert_eq!(strip_transcript_wrapper_tags("<transcr>\nText."), "Text.");
+        assert_eq!(strip_transcript_wrapper_tags("<transcript\nText."), "Text.");
+        // closing tag cut off at the end of the output
+        assert_eq!(strip_transcript_wrapper_tags("Text.\n</transcr"), "Text.");
+        assert_eq!(strip_transcript_wrapper_tags("Text.</transcript"), "Text.");
+        assert_eq!(strip_transcript_wrapper_tags("<transcript>\nText.\n</trans"), "Text.");
+    }
+
+    #[test]
+    fn text_without_wrapper_tags_is_returned_unchanged() {
+        for text in [
+            "Das ist ein Satz.",
+            "  mit Rand und\nZeilenumbruch  \n",
+            "Das transcript ist fertig.",
+            "Ich lese das Transcript noch einmal vor.",
+            "Transcript: erste Zeile",
+            "Der Tag <transcript> steht mitten im Satz.",
+            "Der Tag </transcript> steht mitten im Satz.",
+            "Liste <transcripts> bleibt",
+            "<b>fett</b> und normal",
+            // a leading `<` alone is user text unless a closing tag proves the echo
+            "<bitte schick mir das",
+            "a < b und c > d",
+            "Ende mit </div>",
+            "Ende mit </",
+            "<t> kurz",
+        ] {
+            assert_eq!(strip_transcript_wrapper_tags(text), text);
+        }
+        // a closing tag proves the echo only for a dangling `<word`, never for a real tag
+        assert_eq!(
+            strip_transcript_wrapper_tags("<b>fett</b> normal</transcript>"),
+            "<b>fett</b> normal"
+        );
+    }
+
+    #[test]
+    fn sanitizer_removes_the_echoed_wrapper_before_judging_the_answer() {
+        let original = "bitte schick mir die unterlagen";
+        for refined in [
+            "<transcript>\nBitte schick mir die Unterlagen.\n</transcript>",
+            "Bitte schick mir die Unterlagen.\n</transcript>",
+            "<transcript>\nBitte schick mir die Unterlagen.",
+            "<Bitte schick mir die Unterlagen.</transcript>",
+        ] {
+            let sanitized =
+                sanitize_ollama_refinement_output(original, refined, &test_options(false));
+            assert!(!sanitized.contains("transcript>"), "{} -> {}", refined, sanitized);
+            assert!(sanitized.ends_with("Unterlagen."), "{} -> {}", refined, sanitized);
+        }
+        assert_eq!(
+            sanitize_ollama_refinement_output(
+                original,
+                "<transcript>\nBitte schick mir die Unterlagen.\n</transcript>",
+                &test_options(false)
+            ),
+            "Bitte schick mir die Unterlagen."
+        );
+        // nothing but the tags is no answer: the original text is kept
+        assert_eq!(
+            sanitize_ollama_refinement_output(
+                original,
+                "<transcript>\n</transcript>",
+                &test_options(false)
+            ),
+            original
+        );
+        // user text that merely mentions the word stays as dictated
+        let mention = "das transcript ist fertig";
+        assert_eq!(
+            sanitize_ollama_refinement_output(mention, "Das transcript ist fertig.", &test_options(false)),
+            "Das transcript ist fertig."
+        );
     }
 
     #[test]
@@ -2982,5 +2744,211 @@ mod tests {
         // ::ffff:169.254.x.x is the IPv6 representation of an IPv4 link-local
         // address. The function explicitly handles this via to_ipv4_mapped().
         assert!(is_ssrf_target("http://[::ffff:169.254.169.254]:11434"));
+    }
+}
+
+#[cfg(test)]
+mod pull_stream_tests {
+    use super::*;
+    use crate::ai_fallback::test_support::{MockReply, MockServer};
+    use std::io::BufRead;
+    use std::time::Instant;
+
+    fn progress_line(completed: u64) -> String {
+        format!(
+            "{{\"status\":\"pulling 370c2879f176\",\"digest\":\"sha256:370c\",\"total\":1000,\"completed\":{}}}",
+            completed
+        )
+    }
+
+    /// Runs the consumer over `reader`, returning how it ended and what the callbacks saw.
+    fn consume<R: BufRead>(reader: R) -> (PullStreamEnd, u64, u64) {
+        let mut logged = 0u64;
+        let mut progressed = 0u64;
+        let end = consume_pull_stream(
+            reader,
+            &mut |_, _| logged += 1,
+            &mut |_| progressed += 1,
+        );
+        (end, logged, progressed)
+    }
+
+    fn text(lines: &[String]) -> std::io::Cursor<Vec<u8>> {
+        std::io::Cursor::new((lines.join("\n") + "\n").into_bytes())
+    }
+
+    #[test]
+    fn a_pull_that_reaches_success_ends_with_success() {
+        let reader = text(&[
+            "{\"status\":\"pulling manifest\"}".to_string(),
+            progress_line(500),
+            "{\"status\":\"success\"}".to_string(),
+        ]);
+        let (end, logged, progressed) = consume(reader);
+        assert_eq!(end, PullStreamEnd::Success { lines: 3 });
+        assert_eq!(logged, 3, "every line is logged");
+        assert_eq!(progressed, 2, "the final success line is not a progress event");
+    }
+
+    #[test]
+    fn an_error_line_ends_the_pull_after_its_progress_event() {
+        let reader = text(&[
+            progress_line(1),
+            "{\"error\":\"pull model manifest: file does not exist\"}".to_string(),
+            progress_line(2),
+        ]);
+        let (end, _, progressed) = consume(reader);
+        assert_eq!(
+            end,
+            PullStreamEnd::Failed {
+                error: "pull model manifest: file does not exist".to_string(),
+                lines: 2
+            }
+        );
+        assert_eq!(progressed, 2);
+    }
+
+    #[test]
+    fn blank_and_garbage_lines_are_skipped_and_not_counted() {
+        let reader = text(&[
+            String::new(),
+            "   ".to_string(),
+            "this is not json".to_string(),
+            "{\"status\":\"pulling manifest\"}".to_string(),
+            "<html>".to_string(),
+        ]);
+        let (end, logged, _) = consume(reader);
+        assert_eq!(end, PullStreamEnd::EndedEarly { lines: 1 });
+        assert_eq!(logged, 1);
+    }
+
+    #[test]
+    fn a_stream_that_ends_cleanly_without_success_is_ended_early() {
+        let (end, _, _) = consume(text(&[progress_line(10), progress_line(20)]));
+        assert_eq!(end, PullStreamEnd::EndedEarly { lines: 2 });
+        let (end, logged, _) = consume(std::io::Cursor::new(Vec::<u8>::new()));
+        assert_eq!(end, PullStreamEnd::EndedEarly { lines: 0 });
+        assert_eq!(logged, 0);
+    }
+
+    /// 50 pairs of progress lines (~5 KB), announced in full but cut off half way: Ollama was
+    /// killed or restarted, the network dropped.
+    fn broken_pull_server() -> (MockServer, usize) {
+        let body = (1..=100u64)
+            .map(|i| progress_line(i * 10) + "\n")
+            .collect::<String>();
+        let half = body.len() / 2;
+        let served = body.clone();
+        (
+            MockServer::start(move |_| MockReply::text(200, &served).cut_at(half)),
+            half,
+        )
+    }
+
+    #[test]
+    fn a_connection_that_breaks_mid_pull_ends_the_pull_instead_of_spinning() {
+        let (server, _) = broken_pull_server();
+        let response = ureq::get(&format!("{}/api/pull", server.base_url)).call().unwrap();
+        let started = Instant::now();
+
+        let mut seen = 0u64;
+        let end = consume_pull_stream(
+            std::io::BufReader::new(response.into_reader()),
+            &mut |_, _| seen += 1,
+            &mut |_| {},
+        );
+
+        match end {
+            PullStreamEnd::Broken { error, lines } => {
+                assert!(lines > 10 && lines < 100, "the complete lines before the cut: {}", lines);
+                assert!(!error.is_empty());
+                assert_eq!(seen, lines);
+            }
+            other => panic!("a broken connection must end the pull as Broken: {:?}", other),
+        }
+        assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn control_a_broken_reader_keeps_failing_so_skipping_its_errors_never_ends() {
+        // Why `consume_pull_stream` returns on the first read error: `lines()` over a broken
+        // connection yields an error on every call, forever. The old loop skipped errors with
+        // `continue`, which turned this into a busy loop (measured: 100,000 errors in 0.13 s)
+        // that kept the model "pull in progress" until the app was restarted.
+        let (server, _) = broken_pull_server();
+        let response = ureq::get(&format!("{}/api/pull", server.base_url)).call().unwrap();
+        let buffered = std::io::BufReader::new(response.into_reader());
+        let mut errors = 0usize;
+        let mut calls = 0usize;
+        for line in buffered.lines() {
+            calls += 1;
+            if line.is_err() {
+                errors += 1;
+            }
+            if calls >= 1000 {
+                break;
+            }
+        }
+        assert_eq!(calls, 1000, "the iterator never ran dry");
+        assert!(errors > 900, "errors: {}", errors);
+    }
+}
+
+#[cfg(test)]
+mod quick_ping_tests {
+    use super::*;
+    use crate::ai_fallback::test_support::{MockReply, MockServer};
+
+    /// The cache is process-wide and these two tests are the only ones that use it: they take
+    /// turns, and whatever they leave in it is cleared again.
+    static CACHE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct CacheReset;
+
+    impl Drop for CacheReset {
+        fn drop(&mut self) {
+            reset_quick_ping_cache();
+        }
+    }
+
+    #[test]
+    fn the_cached_quick_ping_outlives_the_server_but_the_fresh_ping_does_not() {
+        let _turn = CACHE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _reset = CacheReset;
+        reset_quick_ping_cache();
+        let server = MockServer::start(|_| MockReply::ok(serde_json::json!({ "models": [] })));
+        let endpoint = server.base_url.clone();
+        assert!(ping_ollama_quick(&endpoint).is_ok(), "the server answers");
+
+        drop(server); // the server is gone
+
+        assert!(
+            ping_ollama_quick(&endpoint).is_ok(),
+            "control: within 3 s the cache still says it is there (why start/stop must not use it)"
+        );
+        assert!(
+            ping_ollama_quick_fresh(&endpoint).is_err(),
+            "the fresh ping sees that nothing answers any more"
+        );
+        reset_quick_ping_cache();
+        assert!(
+            ping_ollama_quick(&endpoint).is_err(),
+            "after a reset the next cached check looks again"
+        );
+    }
+
+    #[test]
+    fn the_fresh_ping_sees_a_server_that_just_came_up_and_leaves_the_cache_alone() {
+        let _turn = CACHE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _reset = CacheReset;
+        reset_quick_ping_cache();
+        let server = MockServer::start(|_| MockReply::ok(serde_json::json!({ "models": [] })));
+        assert!(ping_ollama_quick_fresh(&server.base_url).is_ok());
+        assert_eq!(
+            QUICK_PING_CACHE_TS.load(Ordering::Relaxed),
+            0,
+            "the fresh ping does not write the cache"
+        );
+        assert!(ping_ollama_quick_fresh("http://127.0.0.1:1").is_err());
     }
 }

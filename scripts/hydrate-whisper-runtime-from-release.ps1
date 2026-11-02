@@ -362,7 +362,6 @@ $copiedQuantize = Copy-FileIfExists (Join-Path $installedBinRoot "quantize.exe")
 
 if ($CopyOptionalPayloads) {
   [void](Copy-DirIfExists (Join-Path $installedBinRoot "ffmpeg") (Join-Path $BinRoot "ffmpeg"))
-  [void](Copy-DirIfExists (Join-Path $installedBinRoot "piper") (Join-Path $BinRoot "piper"))
 }
 
 if (-not $copiedCuda -or -not $copiedVulkan) {

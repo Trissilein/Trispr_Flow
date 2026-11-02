@@ -55,13 +55,6 @@ vi.hoisted(() => {
     <input id="overlay-refining-indicator-range" type="range" min="60" max="180" value="100" />
     <span id="overlay-refining-indicator-range-value"></span>
 
-    <input id="overlay-tts-stop-enabled" type="checkbox" />
-    <select id="overlay-tts-stop-shape">
-      <option value="compact">compact</option>
-      <option value="round">round</option>
-    </select>
-    <input id="overlay-tts-stop-color" type="color" value="#00ff00" />
-
     <input id="overlay-kitt-min-width" type="range" min="4" max="40" value="10" />
     <span id="overlay-kitt-min-width-value"></span>
     <input id="overlay-kitt-max-width" type="range" min="50" max="3840" value="400" />
@@ -104,9 +97,6 @@ function freshSettings(): Settings {
     overlay_refining_indicator_color: "#ff0000",
     overlay_refining_indicator_speed_ms: 1000,
     overlay_refining_indicator_range: 100,
-    overlay_tts_stop_enabled: false,
-    overlay_tts_stop_shape: "compact",
-    overlay_tts_stop_color: "#00ff00",
     overlay_kitt_min_width: 10,
     overlay_kitt_max_width: 400,
     overlay_kitt_height: 20,
@@ -140,9 +130,6 @@ beforeEach(() => {
   if (dom.overlayRefiningIndicatorColor) dom.overlayRefiningIndicatorColor.value = "#ff0000";
   if (dom.overlayRefiningIndicatorSpeed) dom.overlayRefiningIndicatorSpeed.value = "1000";
   if (dom.overlayRefiningIndicatorRange) dom.overlayRefiningIndicatorRange.value = "100";
-  if (dom.overlayTtsStopEnabled) dom.overlayTtsStopEnabled.checked = false;
-  if (dom.overlayTtsStopShape) dom.overlayTtsStopShape.value = "compact";
-  if (dom.overlayTtsStopColor) dom.overlayTtsStopColor.value = "#00ff00";
   if (dom.overlayKittMinWidth) dom.overlayKittMinWidth.value = "10";
   if (dom.overlayKittMaxWidth) dom.overlayKittMaxWidth.value = "400";
   if (dom.overlayKittHeight) dom.overlayKittHeight.value = "20";
@@ -370,40 +357,6 @@ describe("wireOverlay — refining indicator", () => {
     fire(dom.overlayRefiningIndicatorRange, "input");
     expect(settings!.overlay_refining_indicator_range).toBe(180);
     expect(dom.overlayRefiningIndicatorRangeValue?.textContent).toBe("180%");
-  });
-});
-
-describe("wireOverlay — TTS stop button", () => {
-  it("enabled checkbox change persists", async () => {
-    if (dom.overlayTtsStopEnabled) dom.overlayTtsStopEnabled.checked = true;
-    fire(dom.overlayTtsStopEnabled, "change");
-    await flush();
-    expect(settings!.overlay_tts_stop_enabled).toBe(true);
-    expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.any(Object));
-  });
-
-  it("shape change normalizes to 'round' or 'compact'", async () => {
-    if (dom.overlayTtsStopShape) dom.overlayTtsStopShape.value = "round";
-    fire(dom.overlayTtsStopShape, "change");
-    await flush();
-    expect(settings!.overlay_tts_stop_shape).toBe("round");
-
-    // Falls back to compact for any non-"round" value
-    if (dom.overlayTtsStopShape) {
-      const opt = document.createElement("option");
-      opt.value = "weird";
-      dom.overlayTtsStopShape.appendChild(opt);
-      dom.overlayTtsStopShape.value = "weird";
-    }
-    fire(dom.overlayTtsStopShape, "change");
-    await flush();
-    expect(settings!.overlay_tts_stop_shape).toBe("compact");
-  });
-
-  it("color input writes overlay_tts_stop_color", () => {
-    if (dom.overlayTtsStopColor) dom.overlayTtsStopColor.value = "#0099ff";
-    fire(dom.overlayTtsStopColor, "input");
-    expect(settings!.overlay_tts_stop_color).toBe("#0099ff");
   });
 });
 

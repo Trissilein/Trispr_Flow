@@ -1,6 +1,12 @@
 import { modelProgress, ollamaPullProgress, quantizeProgress } from "./state";
-import { getRuntimeInstallProgress, computeOllamaPercent } from "./ollama-models";
+import {
+  OLLAMA_PULLS_CHANGED_EVENT,
+  getRuntimeInstallProgress,
+  computeOllamaPercent,
+  getOllamaPullOverall,
+} from "./ollama-models";
 import { formatBytes } from "./ui-helpers";
+import { escapeHtml } from "./utils";
 
 interface DownloadItem {
   key: string;
@@ -23,12 +29,19 @@ function collectItems(): DownloadItem[] {
 
   // Ollama model pulls
   for (const [model, p] of ollamaPullProgress.entries()) {
-    const pct = p.total && p.total > 0 && p.completed != null
-      ? computeOllamaPercent(p)
-      : null;
-    const status = pct !== null
-      ? `${formatBytes(p.completed!)} / ${formatBytes(p.total!)}  •  ${pct}%`
-      : (p.status ?? "Downloading…");
+    // Overall progress across all layers; the last event only describes one layer.
+    const overall = getOllamaPullOverall(model);
+    const hasOverall = overall !== null && overall.percent !== null && overall.total > 0;
+    const pct = hasOverall
+      ? overall.percent
+      : p.total && p.total > 0 && p.completed != null
+        ? computeOllamaPercent(p)
+        : null;
+    const status = hasOverall
+      ? `${formatBytes(overall.completed)} / ${formatBytes(overall.total)}  •  ${pct}%`
+      : pct !== null
+        ? `${formatBytes(p.completed!)} / ${formatBytes(p.total!)}  •  ${pct}%`
+        : (p.status ?? "Downloading…");
     items.push({ key: `pull:${model}`, label: model, percent: pct, statusText: status });
   }
 
@@ -60,10 +73,12 @@ function buildItemHtml(item: DownloadItem): string {
   const isIndeterminate = item.percent === null;
   const fillStyle = isIndeterminate ? "" : `style="width: ${Math.min(100, Math.max(0, item.percent!))}%"`;
   const fillClass = `dpp-item-bar-fill${isIndeterminate ? " dpp-item-bar-fill--indeterminate" : ""}`;
+  // Labels and status lines are model names, file names and registry/server text: never markup.
+  const label = escapeHtml(String(item.label));
   return `<div class="dpp-item">
-      <span class="dpp-item-label" title="${item.label}">${item.label}</span>
+      <span class="dpp-item-label" title="${label}">${label}</span>
       <div class="dpp-item-bar"><div class="${fillClass}" ${fillStyle}></div></div>
-      <span class="dpp-item-status">${item.statusText}</span>
+      <span class="dpp-item-status">${escapeHtml(String(item.statusText))}</span>
     </div>`;
 }
 
@@ -76,6 +91,9 @@ export function scheduleDownloadProgressRender(): void {
     renderDownloadProgressPopup();
   });
 }
+
+// The model manager drops a pull that stopped reporting without any event main.ts could hear.
+window.addEventListener(OLLAMA_PULLS_CHANGED_EVENT, () => scheduleDownloadProgressRender());
 
 export function renderDownloadProgressPopup(): void {
   const popup = document.getElementById("download-progress-popup");

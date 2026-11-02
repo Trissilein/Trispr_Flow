@@ -36,8 +36,6 @@ vi.hoisted(() => {
     <span id="vad-silence-value"></span>
     <input id="transcribe-hotkey" />
     <input id="toggle-activation-words-hotkey" />
-    <input id="product-mode-hotkey" />
-    <input id="tts-stop-hotkey" />
     <select id="transcribe-device-select">
       <option value="default" selected>default</option>
       <option value="loopback-1">loopback-1</option>
@@ -98,8 +96,6 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
         vad_silence_ms: 1200,
         transcribe_hotkey: "CommandOrControl+Shift+Enter",
         hotkey_toggle_activation_words: "CommandOrControl+Shift+A",
-        hotkey_product_mode_toggle: "CommandOrControl+Shift+P",
-        hotkey_tts_stop: "CommandOrControl+Shift+F12",
         transcribe_output_device: "loopback-1",
         transcribe_vad_mode: true,
         transcribe_vad_threshold: 0.6,

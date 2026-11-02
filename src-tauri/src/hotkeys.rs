@@ -238,7 +238,6 @@ pub(crate) fn get_hotkey_conflicts(state: State<'_, AppState>) -> Vec<ConflictIn
         settings.hotkey_ptt.clone(),
         settings.hotkey_toggle.clone(),
         settings.transcribe_hotkey.clone(),
-        settings.hotkey_product_mode_toggle.clone(),
     ];
     detect_conflicts(hotkeys)
 }

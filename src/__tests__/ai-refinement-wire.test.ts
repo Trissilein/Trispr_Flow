@@ -1,7 +1,7 @@
 /**
  * Smoke tests for wireAiRefinement() — R2 slice 5.
  * Covers: language controls, post-processing toggles, AI fallback enable gate,
- * local backend switching, temperature slider, auth modal keydown, topic keywords reset.
+ * temperature slider, topic keywords reset.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,50 +35,19 @@ vi.hoisted(() => {
 
     <!-- AI fallback -->
     <input id="ai-fallback-enabled" type="checkbox" />
-    <div id="ai-fallback-cloud-provider-list"></div>
-    <select id="ai-fallback-local-backend-select">
-      <option value="ollama">ollama</option>
-      <option value="lm_studio">lm_studio</option>
-      <option value="oobabooga">oobabooga</option>
-    </select>
     <input id="ai-fallback-temperature" type="range" min="0" max="1" step="0.01" value="0.3" />
     <span id="ai-fallback-temperature-value"></span>
     <input id="ai-fallback-preserve-language" type="checkbox" />
     <input id="ai-fallback-low-latency-mode" type="checkbox" />
     <input id="ai-fallback-max-tokens" type="number" value="4000" />
-    <select id="ai-fallback-model"><option value="">-</option></select>
     <div id="ai-fallback-local-lane"></div>
-    <div id="ai-fallback-online-lane"></div>
     <button id="ai-fallback-local-primary-action" data-runtime-action="install"></button>
     <button id="ai-fallback-local-import-action"></button>
     <button id="ai-fallback-local-verify-action"></button>
     <button id="ai-fallback-local-refresh-action"></button>
     <button id="ai-fallback-fetch-versions-action"></button>
     <span id="ai-fallback-fetch-versions-status"></span>
-    <select id="ai-fallback-local-runtime-version"><option value="0.20.2">0.20.2</option></select>
-    <select id="ai-fallback-local-runtime-source">
-      <option value="managed">managed</option>
-      <option value="system">system</option>
-    </select>
-    <textarea id="ai-fallback-local-fallback-endpoints"></textarea>
-    <input id="ai-fallback-compat-endpoint" value="http://127.0.0.1:1234" />
-    <input id="ai-fallback-compat-api-key" value="" />
-    <button id="ai-fallback-compat-fetch-models">Fetch models</button>
-    <span id="ai-fallback-compat-status"></span>
-    <button id="ai-fallback-compat-verify-action"></button>
-    <button id="ai-fallback-lm-studio-install-action">Install LM Studio</button>
-
-    <!-- Auth modal -->
-    <div id="ai-auth-modal" hidden></div>
-    <button id="ai-auth-modal-close"></button>
-    <div id="ai-auth-modal-backdrop"></div>
-    <select id="ai-auth-method"><option value="api_key">api_key</option><option value="oauth">oauth</option></select>
-    <span id="ai-auth-provider-name"></span>
-    <input id="ai-auth-api-key-input" type="password" value="" />
-    <button id="ai-auth-save-key"></button>
-    <button id="ai-auth-clear-key"></button>
-    <button id="ai-auth-verify-key"></button>
-    <span id="ai-auth-status"></span>
+    <div id="ai-fallback-runtime-version-list"></div>
 
     <!-- Prompt presets -->
     <div id="prompt-preset-list"></div>
@@ -195,7 +164,6 @@ function freshSettings(): Settings {
     postproc_custom_vocab_enabled: false,
     postproc_language: "auto",
     postproc_llm_enabled: false,
-    postproc_llm_provider: "ollama",
     postproc_llm_model: "",
     postproc_llm_prompt: "",
     topic_keywords: [],
@@ -203,35 +171,11 @@ function freshSettings(): Settings {
       enabled_modules: ["ai_refinement"],
     },
     providers: {
-      claude: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: ["claude-3-5-sonnet-20241022"],
-        preferred_model: "claude-3-5-sonnet-20241022",
-      },
-      openai: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: ["gpt-4o-mini"],
-        preferred_model: "gpt-4o-mini",
-      },
-      gemini: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: ["gemini-2.0-flash"],
-        preferred_model: "gemini-2.0-flash",
-      },
       ollama: {
         endpoint: "http://127.0.0.1:11434",
         available_models: [],
         preferred_model: "",
-        runtime_source: "managed",
+        runtime_source: "per_user_zip",
         runtime_path: "",
         runtime_version: "",
         runtime_target_version: "0.20.2",
@@ -241,9 +185,6 @@ function freshSettings(): Settings {
     ai_fallback: {
       enabled: false,
       provider: "ollama",
-      fallback_provider: null,
-      execution_mode: "local_primary",
-      strict_local_mode: true,
       preserve_source_language: true,
       low_latency_mode: false,
       model: "",
@@ -281,16 +222,12 @@ beforeEach(() => {
   if (dom.whisperInputLanguageSelect)
     dom.whisperInputLanguageSelect.value = "auto";
   if (dom.aiFallbackEnabled) dom.aiFallbackEnabled.checked = false;
-  if (dom.aiFallbackLocalBackendSelect)
-    dom.aiFallbackLocalBackendSelect.value = "ollama";
   if (dom.aiFallbackTemperature) dom.aiFallbackTemperature.value = "0.3";
   if (dom.aiFallbackPreserveLanguage)
     dom.aiFallbackPreserveLanguage.checked = true;
   if (dom.aiFallbackLowLatencyMode)
     dom.aiFallbackLowLatencyMode.checked = false;
   if (dom.aiFallbackMaxTokens) dom.aiFallbackMaxTokens.value = "4000";
-  const modal = document.getElementById("ai-auth-modal");
-  if (modal) modal.hidden = true;
 });
 
 // ── Post-processing listeners ────────────────────────────────────────────────
@@ -522,87 +459,32 @@ describe("temperature slider", () => {
   });
 });
 
-// ── Local backend switching ──────────────────────────────────────────────────
+// ── Removed provider / source / endpoint / auth controls ─────────────────────
 
-describe("local backend switching", () => {
-  it("aiFallbackLocalBackendSelect: switching to lm_studio updates provider", async () => {
-    wireOnce();
-    dom.aiFallbackLocalBackendSelect!.value = "lm_studio";
-    dom.aiFallbackLocalBackendSelect!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() =>
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        "save_settings",
-        expect.anything(),
-      ),
-    );
-    expect(settings?.ai_fallback.provider).toBe("lm_studio");
+describe("provider, runtime source, endpoint and auth controls are gone from the page", () => {
+  it("the page has none of them and the wiring still comes up", () => {
+    for (const id of [
+      "ai-fallback-local-backend-select",
+      "ai-fallback-local-runtime-source",
+      "ai-fallback-local-fallback-endpoints",
+      "ai-fallback-compat-endpoint",
+      "ai-fallback-model",
+      "ai-auth-modal",
+    ]) {
+      expect(document.getElementById(id), id).toBeNull();
+    }
+    expect(() => wireOnce()).not.toThrow();
   });
 
-  it("aiFallbackLocalBackendSelect: switching to oobabooga updates provider", async () => {
+  it("a saved cloud / LM Studio provider and system runtime source land on Ollama and the managed runtime", () => {
     wireOnce();
-    dom.aiFallbackLocalBackendSelect!.value = "oobabooga";
-    dom.aiFallbackLocalBackendSelect!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() =>
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        "save_settings",
-        expect.anything(),
-      ),
-    );
-    expect(settings?.ai_fallback.provider).toBe("oobabooga");
-  });
-
-  it("aiFallbackLocalBackendSelect: switching back to ollama triggers runtime refresh", async () => {
-    wireOnce();
-    setSettings({
-      ...freshSettings(),
-      ai_fallback: { ...freshSettings().ai_fallback, provider: "lm_studio" },
-    });
-    mockedInvoke.mockResolvedValue({ found: false, healthy: false });
-    dom.aiFallbackLocalBackendSelect!.value = "ollama";
-    dom.aiFallbackLocalBackendSelect!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() =>
-      expect(settings?.ai_fallback.provider).toBe("ollama"),
-    );
-    await vi.waitFor(() =>
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        "save_settings",
-        expect.anything(),
-      ),
-    );
-  });
-});
-
-// ── Auth modal ───────────────────────────────────────────────────────────────
-
-describe("auth modal keydown", () => {
-  it("Escape closes the auth modal when it is visible", () => {
-    wireOnce();
-    const modal = document.getElementById("ai-auth-modal") as HTMLElement;
-    modal.hidden = false;
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-    );
-    expect(modal.hidden).toBe(true);
-  });
-
-  it("Escape has no effect when modal is already hidden", () => {
-    wireOnce();
-    const modal = document.getElementById("ai-auth-modal") as HTMLElement;
-    modal.hidden = true;
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-    );
-    expect(modal.hidden).toBe(true);
-  });
-
-  it("other keys do not close the modal", () => {
-    wireOnce();
-    const modal = document.getElementById("ai-auth-modal") as HTMLElement;
-    modal.hidden = false;
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
-    );
-    expect(modal.hidden).toBe(false);
+    const saved = freshSettings();
+    (saved.ai_fallback as { provider: string }).provider = "lm_studio";
+    (saved.providers.ollama as { runtime_source: string }).runtime_source = "system";
+    setSettings(saved);
+    dom.aiFallbackTemperature!.dispatchEvent(new Event("input"));
+    expect(settings?.ai_fallback.provider).toBe("ollama");
+    expect(settings?.providers.ollama.runtime_source).toBe("per_user_zip");
   });
 });
 

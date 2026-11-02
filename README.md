@@ -1,8 +1,8 @@
 # Trispr Flow
 
-> Offline-first dictation and system-audio transcription with local AI refinement.
+> Offline-first dictation and system-audio transcription with local Ollama refinement.
 
-[![Version](https://img.shields.io/badge/version-0.8.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.8.4-blue.svg)](CHANGELOG.md)
 [![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
 [![macOS](https://img.shields.io/badge/macOS-planned-lightgrey?style=flat&logo=apple)](ROADMAP.md)
 [![Notices](https://img.shields.io/badge/license-notices-blue.svg)](THIRD_PARTY_NOTICES.md)
@@ -15,14 +15,15 @@ It is designed for local-first transcription and editing workflows:
 - microphone capture (PTT / VAD)
 - system-audio transcription (WASAPI loopback)
 - local post-processing
-- optional local AI refinement via Ollama
+- optional refinement with a local Ollama model (no cloud providers)
+- custom vocabulary with auto-learn
 - export + session history for recovery and auditability
 
 ## Current Release
 
-- Current app line: `v0.8.3`
+- Current app line: `v0.8.4`
 - Packaging: unified Windows installer flow (vulkan-only / cuda-lite / cuda-complete)
-- Next architectural focus: **lean core + on-demand modules** (see [docs/AUDIT-BRIEF.md](docs/AUDIT-BRIEF.md) §1b)
+- Current focus: **lean core** (dictation, Ollama refinement, history, vocabulary). The 2026-11-02 lean-down removed cloud providers, LM Studio/Oobabooga, TTS/Piper, video generation, the assistant, GDD/Confluence, task capture and benchmarks (see [CHANGELOG.md](CHANGELOG.md))
 
 Release details:
 - [CHANGELOG.md](CHANGELOG.md)
@@ -39,7 +40,8 @@ Release details:
 ### Refinement
 - Local-first refinement pipeline
 - Managed Ollama runtime flow (detect/install/start/verify)
-- Curated local model cards and activation flow
+- Curated catalog of three models: Gemma 4 E4B (recommended), Gemma 4 E2B, Qwen 3.5 4B
+- Runtime version list with install, switch and replace-with-test
 - Prompt presets + custom prompt support
 
 ### Output and Organization
@@ -49,9 +51,8 @@ Release details:
 - Live dump + restore workflows
 
 ### Modules (Managed)
-- GDD generation/publish flow
-- Confluence publishing inside the GDD module
-- Workflow agent and multimodal modules (status per roadmap)
+- Optional on-demand packages (for example the Opus export sidecar) through the Modules Hub
+- Removed: GDD/Confluence, TTS/Piper, video generation, assistant
 
 ## Quick Start
 
@@ -62,6 +63,9 @@ Release details:
    - `*.cuda-lite-*.exe` (CUDA without `cublasLt64_13.dll`, Vulkan fallback included)
    - `*.cuda-complete-*.exe` (full CUDA payload including `cublasLt64_13.dll`)
 3. Open **AI Refinement** in-app to install/start local Ollama runtime and download models.
+
+### Quick start (dev checkout)
+Double-click `start-trispr-flow.vbs` in the repo root. It runs `npm run dev` with no console window, rebuilds changed code on its own and exits quietly if Trispr Flow is already running.
 
 ### Developers (Windows)
 ```bat
@@ -89,8 +93,8 @@ Installer build/upload shortcuts:
 | `v0.8.0` | Released    | Block A release-gate closure (assistant phase)             |
 | `v0.8.1` | Released    | CUDA multi-arch fat-binary, whisper-server build target    |
 | `v0.8.2` | Released    | CUDA runtime DLL bundling, ASR language controls           |
-| `v0.8.3` | Released    | CUDA 13 migration, GDD module package, runtime seed asset  |
-| `v0.8.4` | In progress | GPU-load gate, Vulkan installer validation, lean-core prep |
+| `v0.8.3` | Released    | CUDA 13 migration, runtime seed asset (GDD package, since removed) |
+| `v0.8.4` | In progress | GPU-load gate, Vulkan installer validation, lean-down, OLED theme |
 
 Canonical planning docs:
 - [ROADMAP.md](ROADMAP.md)

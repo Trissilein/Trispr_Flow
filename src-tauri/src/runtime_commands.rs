@@ -1,14 +1,11 @@
 use crate::ai_fallback::provider::ping_ollama_quick;
-use crate::modules::canonicalize_module_id;
 use crate::modules::health as module_health;
 use crate::modules::registry as module_registry;
-use crate::modules::ASSISTANT_CORE_MODULE_ID;
 use crate::state::{
     self, AppState, RuntimeDiagnostics, RuntimeMetricsSnapshot, Settings, StartupStatus,
 };
 use crate::{
-    apply_hidden_creation_flags, capability_enabled, refresh_runtime_diagnostics,
-    refresh_startup_status, RuntimeCapability,
+    capability_enabled, refresh_runtime_diagnostics, refresh_startup_status, RuntimeCapability,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{info, warn};
@@ -88,39 +85,6 @@ pub(crate) fn record_runtime_metric(
     }
 }
 
-#[cfg(target_os = "windows")]
-fn check_powershell_available() -> bool {
-    let mut cmd = std::process::Command::new("powershell.exe");
-    cmd.args(["-NoProfile", "-Command", "$PSVersionTable.PSVersion.Major"]);
-    apply_hidden_creation_flags(&mut cmd);
-    cmd.output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
-
-fn assistant_core_setup_should_surface_at_startup(settings: &Settings) -> bool {
-    settings
-        .product_mode
-        .trim()
-        .eq_ignore_ascii_case("assistant")
-}
-
-fn should_emit_module_dependency_preflight_item(
-    settings: &Settings,
-    module_id: &str,
-    health_state: &str,
-) -> bool {
-    if health_state != "needs_setup" {
-        return true;
-    }
-
-    if canonicalize_module_id(module_id) == ASSISTANT_CORE_MODULE_ID {
-        return assistant_core_setup_should_surface_at_startup(settings);
-    }
-
-    true
-}
-
 fn build_module_dependency_preflight_items(settings: &Settings) -> Vec<DependencyPreflightItem> {
     let installed_package_ids = std::collections::HashSet::new();
     let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
@@ -137,13 +101,6 @@ fn build_module_dependency_preflight_items(settings: &Settings) -> Vec<Dependenc
             let descriptor = descriptors
                 .iter()
                 .find(|descriptor| descriptor.id == entry.module_id)?;
-            if !should_emit_module_dependency_preflight_item(
-                settings,
-                &entry.module_id,
-                &entry.state,
-            ) {
-                return None;
-            }
             let (status, required) = match entry.state.as_str() {
                 "release_blocker" | "error" => ("error", true),
                 "needs_setup" | "fallback_active" | "local_warning" | "degraded" => {
@@ -161,11 +118,6 @@ fn build_module_dependency_preflight_items(settings: &Settings) -> Vec<Dependenc
             })
         })
         .collect()
-}
-
-#[cfg(not(target_os = "windows"))]
-fn check_powershell_available() -> bool {
-    false
 }
 
 pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyPreflightReport {
@@ -235,50 +187,10 @@ pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyP
         });
     }
 
-    let powershell_ok = check_powershell_available();
-    let tts_enabled = capability_enabled(&settings_snapshot, RuntimeCapability::VoiceOutputTts);
-    if powershell_ok {
-        items.push(DependencyPreflightItem {
-            id: "powershell_tts".to_string(),
-            status: "ok".to_string(),
-            required: tts_enabled,
-            message: "PowerShell runtime is available for Windows TTS.".to_string(),
-            hint: None,
-        });
-    } else {
-        items.push(DependencyPreflightItem {
-            id: "powershell_tts".to_string(),
-            status: if tts_enabled {
-                "error".to_string()
-            } else {
-                "warning".to_string()
-            },
-            required: tts_enabled,
-            message: "PowerShell runtime is not available.".to_string(),
-            hint: Some(
-                "Windows-native TTS requires powershell.exe and System.Speech support.".to_string(),
-            ),
-        });
-    }
-
-    if tts_enabled && settings_snapshot.voice_output_settings.default_provider == "local_custom" {
-        items.push(DependencyPreflightItem {
-            id: "tts_local_custom".to_string(),
-            status: "warning".to_string(),
-            required: false,
-            message: "Local custom TTS provider is still a placeholder.".to_string(),
-            hint: Some(
-                "Current fallback uses Windows native TTS until the custom runtime is integrated."
-                    .to_string(),
-            ),
-        });
-    }
-
     if capability_enabled(&settings_snapshot, RuntimeCapability::AiRefinement)
         && settings_snapshot.ai_fallback.provider == "ollama"
     {
         let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
-        let local_mode = settings_snapshot.ai_fallback.strict_local_mode;
         let reachable = ping_ollama_quick(&endpoint).is_ok();
         items.push(DependencyPreflightItem {
             id: "ollama_runtime".to_string(),
@@ -296,11 +208,7 @@ pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyP
             hint: if reachable {
                 None
             } else {
-                Some(if local_mode {
-                    "Start/install local Ollama runtime in AI Refinement > Runtime.".to_string()
-                } else {
-                    "Ensure configured Ollama endpoint is running.".to_string()
-                })
+                Some("Start/install local Ollama runtime in AI Refinement > Runtime.".to_string())
             },
         });
     }
@@ -329,54 +237,22 @@ pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyP
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::{registry, ASSISTANT_CORE_MODULE_ID};
+    use crate::modules::registry;
 
     #[test]
     fn dependency_preflight_ignores_stale_disabled_optional_module_error() {
         let mut settings = Settings::default();
         registry::set_last_error(
             &mut settings.module_settings,
-            ASSISTANT_CORE_MODULE_ID,
+            "opus",
             "Module is in error state.",
         );
 
         let items = build_module_dependency_preflight_items(&settings);
 
-        assert!(items.iter().all(|item| item.id != "module_assistant_core"));
+        assert!(items.iter().all(|item| item.id != "module_opus"));
     }
 
-    #[test]
-    fn dependency_preflight_suppresses_assistant_core_setup_gap_in_transcribe_mode() {
-        let mut settings = Settings::default();
-        settings
-            .module_settings
-            .enabled_modules
-            .insert(ASSISTANT_CORE_MODULE_ID.to_string());
-
-        let items = build_module_dependency_preflight_items(&settings);
-
-        assert!(items.iter().all(|item| item.id != "module_assistant_core"));
-    }
-
-    #[test]
-    fn dependency_preflight_warns_for_assistant_core_setup_gap_in_assistant_mode() {
-        let mut settings = Settings::default();
-        settings.product_mode = "assistant".to_string();
-        settings
-            .module_settings
-            .enabled_modules
-            .insert(ASSISTANT_CORE_MODULE_ID.to_string());
-
-        let items = build_module_dependency_preflight_items(&settings);
-        let assistant_item = items
-            .iter()
-            .find(|item| item.id == "module_assistant_core")
-            .expect("enabled Assistant Core setup gap should be reported");
-
-        assert_eq!(assistant_item.status, "warning");
-        assert!(!assistant_item.required);
-        assert!(assistant_item.message.contains("Assistant Core"));
-    }
 }
 
 pub(crate) fn run_dependency_preflight(app: &AppHandle) {
@@ -397,8 +273,8 @@ pub(crate) fn run_dependency_preflight(app: &AppHandle) {
 
 #[tauri::command]
 pub(crate) async fn get_dependency_preflight_status(app: AppHandle) -> DependencyPreflightReport {
-    // Wrapped in spawn_blocking: check_powershell_available() spawns powershell.exe
-    // which blocks for 1-5s; running that on a Tokio worker thread would starve IPC.
+    // Wrapped in spawn_blocking: the preflight pings Ollama synchronously;
+    // running that on a Tokio worker thread would starve IPC.
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         build_dependency_preflight_report(state.inner())

@@ -1,8 +1,8 @@
 /**
- * Block N, N5d: Vision + Diagnostics Regression Validation
+ * Block N, N5d: Diagnostics Regression Validation
  *
  * Covers startup health diagnostics, overlay health recovery, module health checks,
- * runtime snapshots, partial availability handling, and vision buffer/snapshot contracts.
+ * runtime snapshots, and partial availability handling.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -12,8 +12,6 @@ import type {
   OverlayHealthEvent,
   RuntimeDiagnostics,
   StartupStatus,
-  VisionSnapshotResult,
-  VisionStreamHealth,
   WhisperRuntimeDiagnostics,
 } from "../types";
 
@@ -170,31 +168,31 @@ describe("Block N N5d-S2 — Overlay health recovery", () => {
 // N5d-S3: Module Health Checks
 // ---------------------------------------------------------------------------
 describe("Block N N5d-S3 — Module health checks", () => {
-  it("reports healthy multimodal modules when runtime is available", () => {
+  it("reports healthy modules when runtime is available", () => {
     const moduleHealth: ModuleHealthStatus[] = [
-      { module_id: "input_vision", state: "ok", detail: "Vision stream ready." },
-      { module_id: "output_voice_tts", state: "ok", detail: "TTS provider available." },
+      { module_id: "ai_refinement", state: "ok", detail: "Module active." },
+      { module_id: "opus", state: "ok", detail: "Module active." },
     ];
 
     expect(moduleHealth.every((item) => item.state === "ok")).toBe(true);
   });
 
-  it("reports degraded vision module while preserving tts health", () => {
+  it("reports a degraded module while preserving the health of the others", () => {
     const moduleHealth: ModuleHealthStatus[] = [
       {
-        module_id: "input_vision",
+        module_id: "opus",
         state: "degraded",
-        detail: "Screen capture permission denied by OS.",
+        detail: "Sidecar permission denied by OS.",
       },
-      { module_id: "output_voice_tts", state: "ok", detail: "TTS provider available." },
+      { module_id: "ai_refinement", state: "ok", detail: "Module active." },
     ];
 
-    const vision = moduleHealth.find((item) => item.module_id === "input_vision");
-    const tts = moduleHealth.find((item) => item.module_id === "output_voice_tts");
+    const opus = moduleHealth.find((item) => item.module_id === "opus");
+    const refinement = moduleHealth.find((item) => item.module_id === "ai_refinement");
 
-    expect(vision?.state).toBe("degraded");
-    expect(vision?.detail.toLowerCase()).toContain("permission");
-    expect(tts?.state).toBe("ok");
+    expect(opus?.state).toBe("degraded");
+    expect(opus?.detail.toLowerCase()).toContain("permission");
+    expect(refinement?.state).toBe("ok");
   });
 });
 
@@ -264,52 +262,5 @@ describe("Block N N5d-S5 — Integration: partial availability", () => {
     expect(status.interactive).toBe(false);
     expect(status.transcription_ready).toBe(false);
     expect(status.ollama_ready).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// N5d-S6: Vision Buffer + Snapshot Contracts
-// ---------------------------------------------------------------------------
-describe("Block N N5d-S6 — Vision buffer and snapshot contracts", () => {
-  it("tracks bounded in-memory vision buffer metadata", () => {
-    const health: VisionStreamHealth = {
-      running: true,
-      fps: 5,
-      source_scope: "all_monitors",
-      started_at_ms: 1738000000000,
-      frame_seq: 42,
-      buffered_frames: 12,
-      buffered_bytes: 1_024_000,
-      last_frame_timestamp_ms: 1738000002400,
-      last_frame_width: 1280,
-      last_frame_height: 720,
-    };
-
-    expect(health.running).toBe(true);
-    expect(health.frame_seq).toBeGreaterThan(0);
-    expect(health.buffered_frames).toBeGreaterThan(0);
-    expect(health.buffered_bytes).toBeGreaterThan(0);
-    expect(health.last_frame_width).toBeGreaterThan(0);
-    expect(health.last_frame_height).toBeGreaterThan(0);
-  });
-
-  it("returns snapshot payload from RAM path without filesystem fields", () => {
-    const snapshot: VisionSnapshotResult = {
-      captured: true,
-      timestamp_ms: 1738000002500,
-      source_count: 2,
-      note: "Snapshot returned from in-memory vision buffer.",
-      frame_seq: 43,
-      width: 1280,
-      height: 720,
-      bytes: 22_341,
-      source_scope: "all_monitors",
-      jpeg_base64: "AAECAwQ=",
-    };
-
-    expect(snapshot.captured).toBe(true);
-    expect(snapshot.note.toLowerCase()).toContain("in-memory");
-    expect(snapshot.jpeg_base64?.length).toBeGreaterThan(0);
-    expect(Object.prototype.hasOwnProperty.call(snapshot, "file_path")).toBe(false);
   });
 });

@@ -5,7 +5,6 @@
  *  H-S1: Settings shape and defaults
  *  H-S2: Offline model refresh / empty-list handling
  *  H-S3: No transcript loss guarantee (fallback logic)
- *  H-S4: Provider identification & routing (no API key, zero cost)
  *  H-S5: Connection error classification and toast type mapping
  */
 
@@ -23,7 +22,7 @@ describe("Block H S1 — Ollama settings defaults", () => {
       endpoint: "http://localhost:11434",
       available_models: [],
       preferred_model: "",
-      runtime_source: "manual",
+      runtime_source: "per_user_zip",
       runtime_path: "",
       runtime_version: "",
       runtime_target_version: "0.17.7",
@@ -38,9 +37,6 @@ describe("Block H S1 — Ollama settings defaults", () => {
     const fallback: AIFallbackSettings = {
       enabled: false,
       provider: "ollama",
-      fallback_provider: null,
-      execution_mode: "local_primary",
-      strict_local_mode: true,
       preserve_source_language: true,
       model: "",
       temperature: 0.3,
@@ -59,35 +55,11 @@ describe("Block H S1 — Ollama settings defaults", () => {
 
   it("includes ollama field inside AIProvidersSettings", () => {
     const providers: AIProvidersSettings = {
-      claude: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: [],
-        preferred_model: ""
-      },
-      openai: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: [],
-        preferred_model: ""
-      },
-      gemini: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: [],
-        preferred_model: ""
-      },
       ollama: {
         endpoint: "http://localhost:11434",
         available_models: [],
         preferred_model: "",
-        runtime_source: "manual",
+        runtime_source: "per_user_zip",
         runtime_path: "",
         runtime_version: "",
         runtime_target_version: "0.17.7",
@@ -96,8 +68,6 @@ describe("Block H S1 — Ollama settings defaults", () => {
     };
     expect(providers.ollama).toBeDefined();
     expect(providers.ollama.endpoint).toBe("http://localhost:11434");
-    // Ollama has no api_key_stored field
-    expect("api_key_stored" in providers.ollama).toBe(false);
   });
 });
 
@@ -110,7 +80,7 @@ describe("Block H S2 — Offline model refresh", () => {
       endpoint: "http://localhost:11434",
       available_models: [],
       preferred_model: "",
-      runtime_source: "manual",
+      runtime_source: "per_user_zip",
       runtime_path: "",
       runtime_version: "",
       runtime_target_version: "0.17.7",
@@ -132,7 +102,7 @@ describe("Block H S2 — Offline model refresh", () => {
       endpoint: "http://localhost:11434",
       available_models: [],
       preferred_model: "",
-      runtime_source: "manual",
+      runtime_source: "per_user_zip",
       runtime_path: "",
       runtime_version: "",
       runtime_target_version: "0.17.7",
@@ -141,9 +111,6 @@ describe("Block H S2 — Offline model refresh", () => {
     const fallback: AIFallbackSettings = {
       enabled: true,
       provider: "ollama",
-      fallback_provider: null,
-      execution_mode: "local_primary",
-      strict_local_mode: true,
       preserve_source_language: true,
       model: "",
       temperature: 0.3,
@@ -173,7 +140,7 @@ describe("Block H S2 — Offline model refresh", () => {
       endpoint: "http://localhost:11434",
       available_models: ["llama3.2:3b", "mistral:7b"],
       preferred_model: "mistral:7b",
-      runtime_source: "manual",
+      runtime_source: "per_user_zip",
       runtime_path: "",
       runtime_version: "",
       runtime_target_version: "0.17.7",
@@ -194,7 +161,7 @@ describe("Block H S2 — Offline model refresh", () => {
       endpoint: "http://localhost:11434",
       available_models: ["old-model:7b"],
       preferred_model: "old-model:7b",
-      runtime_source: "manual",
+      runtime_source: "per_user_zip",
       runtime_path: "",
       runtime_version: "",
       runtime_target_version: "0.17.7",
@@ -265,55 +232,6 @@ describe("Block H S3 — No transcript loss", () => {
       // Enabled but error
       expect(applyRefinement(t, true, null)).toBe(t);
     }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// H-S4: Provider identification and routing
-// ---------------------------------------------------------------------------
-describe("Block H S4 — Provider identification", () => {
-  const requiresApiKey = (provider: string): boolean => provider !== "ollama";
-
-  it("identifies ollama as not requiring an API key", () => {
-    expect(requiresApiKey("ollama")).toBe(false);
-  });
-
-  it("identifies cloud providers as requiring an API key", () => {
-    expect(requiresApiKey("claude")).toBe(true);
-    expect(requiresApiKey("openai")).toBe(true);
-    expect(requiresApiKey("gemini")).toBe(true);
-  });
-
-  const estimateCost = (provider: string, inp: number, out: number): number => {
-    if (provider === "ollama") return 0;
-    if (provider === "claude") return inp * 0.000003 + out * 0.000015;
-    if (provider === "openai") return inp * 0.000005 + out * 0.000015;
-    if (provider === "gemini") return inp * 0.0000015 + out * 0.0000035;
-    return 0;
-  };
-
-  it("estimates zero cost for Ollama (local inference)", () => {
-    expect(estimateCost("ollama", 1000, 1000)).toBe(0);
-  });
-
-  it("estimates positive cost for cloud providers", () => {
-    expect(estimateCost("claude", 1000, 1000)).toBeGreaterThan(0);
-    expect(estimateCost("openai", 1000, 1000)).toBeGreaterThan(0);
-    expect(estimateCost("gemini", 1000, 1000)).toBeGreaterThan(0);
-  });
-
-  it("normalises known provider IDs and falls back to ollama for unknown", () => {
-    const normalize = (p: string): string => {
-      const known = ["claude", "openai", "gemini", "ollama"] as const;
-      const lower = p.trim().toLowerCase();
-      return known.includes(lower as (typeof known)[number]) ? lower : "ollama";
-    };
-    expect(normalize("ollama")).toBe("ollama");
-    expect(normalize("claude")).toBe("claude");
-    expect(normalize("OPENAI")).toBe("openai");
-    expect(normalize("gemini")).toBe("gemini");
-    expect(normalize("unknown")).toBe("ollama");
-    expect(normalize("  claude  ")).toBe("claude");
   });
 });
 

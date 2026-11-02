@@ -2,20 +2,15 @@
 #![allow(clippy::needless_return)]
 
 mod ai_fallback;
-mod assistant_presence;
 mod audio;
-mod confluence;
 mod constants;
 mod continuous_dump;
 mod data_migration;
 mod errors;
-mod gdd;
 mod history_partition;
 mod hotkeys;
 mod models;
 mod modules;
-mod multimodal_io;
-mod narrative_composer;
 mod ollama_runtime;
 mod opus;
 mod overlay;
@@ -27,14 +22,9 @@ mod runtime_commands;
 mod session_manager;
 mod state;
 mod transcription;
-mod tts_benchmark;
 mod uiautomation_capture;
 mod util;
-mod video_generation;
-mod video_ingest;
-mod weather;
 mod whisper_server;
-mod workflow_agent;
 
 use arboard::{Clipboard, ImageData};
 use enigo::{Enigo, Key, KeyboardControllable};
@@ -67,45 +57,16 @@ use tracing::{error, info, warn};
 pub(crate) use audio::{
     get_last_recording_path, get_recordings_directory, open_recordings_directory,
 };
-#[cfg(feature = "module-gdd")]
-pub(crate) use gdd::confluence::{
-    clear_confluence_secret, confluence_list_spaces, confluence_oauth_exchange,
-    confluence_oauth_start, delete_pending_gdd_publish, list_pending_gdd_publishes,
-    load_gdd_template_from_confluence, load_gdd_template_from_file, publish_gdd_to_confluence,
-    publish_or_queue_gdd_to_confluence, retry_pending_gdd_publish, save_confluence_secret,
-    suggest_confluence_target, test_confluence_connection,
-};
-#[cfg(feature = "module-gdd")]
-pub(crate) use gdd::{
-    detect_gdd_preset, generate_gdd_draft, list_gdd_presets, render_gdd_for_confluence,
-    render_gdd_markdown, save_gdd_preset_clone, validate_gdd_draft,
-};
 pub(crate) use history_partition::{
     add_history_entry, add_transcribe_entry, clear_active_transcript_history,
     delete_active_transcript_entry, get_history, get_transcribe_history, list_history_partitions,
     load_history_partition, save_transcript,
 };
 pub(crate) use hotkeys::{get_hotkey_conflicts, test_hotkey, validate_hotkey};
-pub(crate) use modules::task_capture::{
-    get_task_capture_settings, save_task_capture_settings, test_task_capture_endpoint,
-};
-pub(crate) use multimodal_io::{
-    capture_vision_snapshot, download_piper_voice_key, get_vision_stream_health,
-    list_piper_voice_catalog, list_screen_sources, list_tts_providers, list_tts_voices, speak_tts,
-    start_vision_stream, stop_tts, stop_vision_stream, test_tts_provider,
-};
 pub(crate) use opus::{check_ffmpeg, encode_to_opus, get_ffmpeg_version_info};
 pub(crate) use paths::open_log_directory;
 pub(crate) use session_manager::{clear_crash_recovery, save_crash_recovery};
-pub(crate) use tts_benchmark::{run_latency_benchmark, run_tts_benchmark};
 pub(crate) use util::{frontend_heartbeat, log_frontend_event};
-pub(crate) use video_generation::{video_generate, video_get_output_dir, video_open_output_dir};
-pub(crate) use video_ingest::{video_ingest_history_entry, video_ingest_sources};
-pub(crate) use workflow_agent::{
-    agent_build_execution_plan, agent_cancel_pending_confirmation, agent_compose_unknown_reply,
-    agent_execute_gdd_plan, agent_list_supported_actions, agent_parse_command,
-    assistant_execute_direct_action, search_transcript_sessions,
-};
 
 /// Wrap a Tauri command body in `catch_unwind` so that a panic inside module
 /// code returns a clean `Err(String)` instead of crashing the app.
@@ -132,31 +93,30 @@ use crate::models::{
     hide_external_model, list_models, pick_model_dir, quantize_model, remove_model,
 };
 use crate::modules::{
-    canonicalize_module_id, health as module_health, normalize_confluence_settings,
-    normalize_gdd_module_settings, normalize_module_settings, normalize_task_capture_settings,
-    normalize_vision_input_settings, normalize_voice_output_settings,
-    normalize_workflow_agent_settings, package as module_package, registry as module_registry,
-    ASSISTANT_CORE_MODULE_ID,
+    canonicalize_module_id, health as module_health, normalize_module_settings,
+    package as module_package, registry as module_registry,
 };
 use crate::state::{
     load_settings, normalize_ai_fallback_fields, normalize_ai_refinement_module_binding,
-    normalize_assistant_core_binding, normalize_assistant_presence_binding,
-    normalize_continuous_dump_fields, normalize_history_alias_fields, normalize_product_mode_field,
-    save_settings_file, sync_model_dir_env, AI_REFINEMENT_MODULE_ID,
+    normalize_continuous_dump_fields, normalize_history_alias_fields, save_settings_file,
+    sync_model_dir_env, AI_REFINEMENT_MODULE_ID,
 };
 use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, start_transcribe_monitor,
     stop_transcribe_monitor_and_release_whisper, toggle_transcribe_state,
 };
 pub(crate) use ai_fallback::commands::{
-    clear_provider_api_key, delete_ollama_model, detect_ollama_runtime, download_ollama_runtime,
-    fetch_available_models, fetch_ollama_models_with_size, fetch_ollama_online_versions,
-    get_ollama_model_info, import_ollama_model_from_file, install_lm_studio,
-    install_ollama_runtime, list_ollama_runtime_versions, ping_refinement_model, pull_ollama_model,
-    purge_gpu_memory, refine_transcript, save_ollama_endpoint, save_provider_api_key,
-    set_strict_local_mode, start_ollama_runtime, stop_ollama_runtime, test_provider_connection,
-    unload_ollama_model, unload_ollama_model_impl, verify_ollama_runtime, verify_provider_auth,
-    warmup_ollama_model_impl,
+    check_ollama_model_updates, delete_ollama_model, detect_ollama_runtime, download_ollama_runtime,
+    fetch_ollama_models_with_size, fetch_ollama_online_versions, get_ollama_model_info,
+    import_ollama_model_from_file, install_ollama_runtime, list_ollama_runtime_versions,
+    ping_refinement_model, pull_ollama_model, purge_gpu_memory, refine_transcript,
+    start_ollama_runtime, stop_ollama_runtime, unload_ollama_model, unload_ollama_model_impl,
+    verify_ollama_runtime, warmup_ollama_model, warmup_ollama_model_impl,
+};
+pub(crate) use ai_fallback::model_info::{get_ollama_model_details, open_model_page};
+pub(crate) use ai_fallback::model_verify::{
+    backup_ollama_model, check_ollama_model_requirements, finalize_ollama_model_update,
+    replace_ollama_model, rollback_ollama_model_update, verify_ollama_model,
 };
 pub(crate) use runtime_commands::{
     get_dependency_preflight_status, get_runtime_diagnostics, get_runtime_metrics_snapshot,
@@ -503,12 +463,11 @@ pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> 
         .to_string();
     let (managed_pid, _) = managed_child_slot_status(&state.managed_ollama_child);
     let endpoint = settings.providers.ollama.endpoint.clone();
-    // Only ping Ollama when it is the active provider — avoids a 2–3 s Windows
-    // localhost-DNS stall on every save_settings call when the user is on LM Studio
-    // or Oobabooga.  The reachability field stays false until Ollama is re-selected
-    // and the frontend explicitly calls refreshOllamaRuntimeState.
-    let ollama_is_active_provider = capability_enabled(&settings, RuntimeCapability::AiRefinement)
-        && settings.ai_fallback.provider == "ollama";
+    // Only ping Ollama while AI refinement is enabled — avoids a 2–3 s Windows
+    // localhost-DNS stall on every save_settings call otherwise.  The reachability field
+    // stays false until refinement is enabled and the frontend explicitly calls
+    // refreshOllamaRuntimeState.
+    let ollama_is_active_provider = capability_enabled(&settings, RuntimeCapability::AiRefinement);
     let reachable = if ollama_is_active_provider {
         let now = crate::util::now_ms();
         let next_ms = OLLAMA_DIAG_NEXT_MS.load(Ordering::Relaxed);
@@ -745,7 +704,6 @@ pub(crate) fn terminate_managed_child_slot(label: &str, slot: &Mutex<Option<std:
 }
 
 pub(crate) fn cleanup_managed_processes(app: &AppHandle, state: &AppState) {
-    crate::multimodal_io::shutdown_piper_daemon(state);
     terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
     crate::ollama_runtime::clear_ollama_pid_lockfile(app);
     terminate_managed_child_slot(
@@ -1036,98 +994,6 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         }
     };
 
-    let register_product_mode_toggle = || -> Result<(), String> {
-        let hotkey = settings.hotkey_product_mode_toggle.trim();
-        if hotkey.is_empty() {
-            return Ok(());
-        }
-        if !try_claim(hotkey, "Product Mode") {
-            return Ok(());
-        }
-        info!("Registering Product Mode hotkey (toggle): {}", hotkey);
-        match manager.on_shortcut(hotkey, |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                toggle_product_mode_async(app.clone());
-            }
-        }) {
-            Ok(_) => {
-                info!("Product Mode hotkey registered successfully");
-                Ok(())
-            }
-            Err(e) => {
-                let err_str = e.to_string();
-                if is_already_registered_error(&err_str) {
-                    warn!(
-                        "Product Mode hotkey '{}' is already held by another application — shortcut will not fire.",
-                        hotkey
-                    );
-                    Ok(())
-                } else {
-                    error!(
-                        "Failed to register Product Mode hotkey '{}': {}",
-                        hotkey, err_str
-                    );
-                    emit_error(
-                        app,
-                        AppError::Hotkey(format!(
-                            "Could not register Product Mode hotkey '{}': {}",
-                            hotkey, err_str
-                        )),
-                        Some("Hotkey Registration"),
-                    );
-                    Err(err_str)
-                }
-            }
-        }
-    };
-
-    let register_tts_stop = || -> Result<(), String> {
-        let hotkey = settings.hotkey_tts_stop.trim();
-        if hotkey.is_empty() {
-            return Ok(());
-        }
-        if !try_claim(hotkey, "TTS Stop") {
-            return Ok(());
-        }
-        info!("Registering TTS Stop hotkey: {}", hotkey);
-        match manager.on_shortcut(hotkey, |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                let app = app.clone();
-                let _ =
-                    crate::multimodal_io::stop_tts_internal(&app, app.state::<AppState>().inner());
-            }
-        }) {
-            Ok(_) => {
-                info!("TTS Stop hotkey registered successfully");
-                Ok(())
-            }
-            Err(e) => {
-                let err_str = e.to_string();
-                if is_already_registered_error(&err_str) {
-                    warn!(
-                        "TTS Stop hotkey '{}' is already held by another application — shortcut will not fire.",
-                        hotkey
-                    );
-                    Ok(())
-                } else {
-                    error!(
-                        "Failed to register TTS Stop hotkey '{}': {}",
-                        hotkey, err_str
-                    );
-                    emit_error(
-                        app,
-                        AppError::Hotkey(format!(
-                            "Could not register TTS Stop hotkey '{}': {}",
-                            hotkey, err_str
-                        )),
-                        Some("Hotkey Registration"),
-                    );
-                    Err(err_str)
-                }
-            }
-        }
-    };
-
     match settings.mode.as_str() {
         "ptt" => {
             if let Err(e) = register_ptt() {
@@ -1150,12 +1016,6 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
 
     if let Err(e) = register_transcribe() {
         errors.push(format!("Transcribe: {}", e));
-    }
-    if let Err(e) = register_product_mode_toggle() {
-        errors.push(format!("Product Mode: {}", e));
-    }
-    if let Err(e) = register_tts_stop() {
-        errors.push(format!("TTS Stop: {}", e));
     }
 
     // Register Toggle Activation Words hotkey
@@ -1218,16 +1078,6 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
                 "registered": !errors.iter().any(|e| e.starts_with("Toggle Activation")),
                 "error": errors.iter().find(|e| e.starts_with("Toggle Activation")).cloned(),
             },
-            "product_mode": {
-                "key": settings.hotkey_product_mode_toggle.trim(),
-                "registered": !errors.iter().any(|e| e.starts_with("Product Mode")),
-                "error": errors.iter().find(|e| e.starts_with("Product Mode")).cloned(),
-            },
-            "tts_stop": {
-                "key": settings.hotkey_tts_stop.trim(),
-                "registered": !errors.iter().any(|e| e.starts_with("TTS Stop")),
-                "error": errors.iter().find(|e| e.starts_with("TTS Stop")).cloned(),
-            },
         });
         let _ = app.emit("hotkey:registration-status", &status);
     }
@@ -1243,81 +1093,6 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
     }
 }
 
-pub(crate) fn format_ureq_status_error(
-    context: &str,
-    code: u16,
-    response: ureq::Response,
-) -> String {
-    let mut body = response.into_string().unwrap_or_default();
-    body = body.replace('\n', " ").replace('\r', " ");
-    let body = body.trim();
-    if body.is_empty() {
-        format!("{} failed with HTTP {}", context, code)
-    } else {
-        format!("{} failed with HTTP {}: {}", context, code, body)
-    }
-}
-
-#[cfg(test)]
-mod piper_daemon_lifecycle_tests {
-    use super::{piper_daemon_lifecycle_action, PiperDaemonLifecycleAction};
-    use crate::modules::VoiceOutputSettings;
-
-    #[test]
-    fn lifecycle_action_prewarms_when_voice_output_enabled_and_piper_primary() {
-        let mut voice = VoiceOutputSettings::default();
-        voice.enabled = true;
-        voice.default_provider = "local_custom".to_string();
-        voice.fallback_provider = "windows_native".to_string();
-
-        assert_eq!(
-            piper_daemon_lifecycle_action(&voice),
-            PiperDaemonLifecycleAction::PrewarmPrimary
-        );
-    }
-
-    #[test]
-    fn lifecycle_action_stops_when_voice_output_disabled() {
-        let mut voice = VoiceOutputSettings::default();
-        voice.enabled = false;
-        voice.default_provider = "local_custom".to_string();
-
-        assert_eq!(
-            piper_daemon_lifecycle_action(&voice),
-            PiperDaemonLifecycleAction::Shutdown
-        );
-    }
-
-    #[test]
-    fn lifecycle_action_stops_when_piper_is_only_fallback() {
-        let mut voice = VoiceOutputSettings::default();
-        voice.enabled = true;
-        voice.default_provider = "windows_native".to_string();
-        voice.fallback_provider = "local_custom".to_string();
-
-        assert_eq!(
-            piper_daemon_lifecycle_action(&voice),
-            PiperDaemonLifecycleAction::Shutdown
-        );
-    }
-}
-fn assistant_requires_transcribe(settings: &Settings) -> bool {
-    settings
-        .product_mode
-        .trim()
-        .eq_ignore_ascii_case("assistant")
-        && capability_enabled(settings, RuntimeCapability::WorkflowAgent)
-        && settings.workflow_agent.hands_free_enabled
-}
-
-pub(crate) fn reconcile_assistant_transcribe_flag(settings: &mut Settings) -> bool {
-    if assistant_requires_transcribe(settings) && !settings.transcribe_enabled {
-        settings.transcribe_enabled = true;
-        return true;
-    }
-    false
-}
-
 fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String> {
     let state = app.state::<AppState>();
     let (settings, effective_enabled) = {
@@ -1325,16 +1100,11 @@ fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String
             .settings
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let requested = if assistant_requires_transcribe(&current) {
-            true
-        } else {
-            enabled
-        };
-        if current.transcribe_enabled == requested {
+        if current.transcribe_enabled == enabled {
             return Ok(current.transcribe_enabled);
         }
-        current.transcribe_enabled = requested;
-        (current.clone(), requested)
+        current.transcribe_enabled = enabled;
+        (current.clone(), enabled)
     };
 
     if effective_enabled {
@@ -1377,7 +1147,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
         prev_transcribe_output_device,
         prev_local_backend_preference,
         prev_ai_refinement_enabled,
-        prev_provider,
     ) = {
         let current = state
             .settings
@@ -1391,29 +1160,14 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
             current.transcribe_output_device.clone(),
             current.local_backend_preference.clone(),
             current.ai_fallback.enabled,
-            current.ai_fallback.provider.clone(),
         )
     };
     info!("[DIAG] save_settings_inner: normalizing");
     normalize_ai_fallback_fields(settings);
     normalize_continuous_dump_fields(settings);
     normalize_history_alias_fields(settings);
-    crate::modules::migrate_legacy_confluence_module_binding(
-        &settings.module_settings,
-        &mut settings.gdd_module_settings,
-    );
     normalize_module_settings(&mut settings.module_settings);
-    normalize_assistant_core_binding(settings);
-    normalize_product_mode_field(settings);
     normalize_ai_refinement_module_binding(settings);
-    normalize_gdd_module_settings(&mut settings.gdd_module_settings);
-    normalize_confluence_settings(&mut settings.confluence_settings);
-    normalize_workflow_agent_settings(&mut settings.workflow_agent);
-    normalize_assistant_presence_binding(settings);
-    normalize_vision_input_settings(&mut settings.vision_input_settings);
-    normalize_voice_output_settings(&mut settings.voice_output_settings);
-    normalize_task_capture_settings(&mut settings.task_capture_settings);
-    reconcile_assistant_transcribe_flag(settings);
 
     info!("[DIAG] save_settings_inner: acquiring settings lock (write)");
     {
@@ -1427,11 +1181,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
     info!("[DIAG] save_settings_inner: saving file");
     sync_model_dir_env(settings);
     save_settings_file(app, settings)?;
-    schedule_piper_daemon_reconcile(
-        app.clone(),
-        settings.voice_output_settings.clone(),
-        "save_settings",
-    );
 
     // Register hotkeys on a detached thread: the Windows GlobalShortcut API
     // internally dispatches to the main event-loop thread and waits for
@@ -1446,32 +1195,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
                 warn!("Hotkey registration failed: {}", e);
             }
         });
-    }
-
-    // LM Studio daemon lifecycle: start when switching TO lm_studio,
-    // stop when switching AWAY from lm_studio.
-    if prev_provider != settings.ai_fallback.provider {
-        if settings.ai_fallback.provider == "lm_studio" {
-            let preferred_model = settings
-                .providers
-                .lm_studio
-                .preferred_model
-                .trim()
-                .to_string();
-            crate::util::spawn_guarded("lms_daemon_up", move || {
-                lms_daemon_command("up");
-                // Give the daemon a few seconds to bind its HTTP port before
-                // attempting to load a model.
-                if !preferred_model.is_empty() {
-                    std::thread::sleep(std::time::Duration::from_secs(3));
-                    lms_load_model(&preferred_model);
-                }
-            });
-        } else if prev_provider == "lm_studio" {
-            crate::util::spawn_guarded("lms_daemon_stop", || {
-                lms_daemon_command("stop");
-            });
-        }
     }
 
     info!("[DIAG] save_settings_inner: hotkeys spawned, acquiring recorder lock");
@@ -1602,13 +1325,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
 
     info!("[DIAG] save_settings_inner: emitting settings-changed");
     let _ = app.emit("settings-changed", settings.clone());
-    assistant_presence::reconcile_assistant_presence_window(app, settings);
-    let _ = workflow_agent::emit_assistant_baseline_state(
-        app,
-        state.inner(),
-        settings,
-        "save_settings",
-    );
     let _ = app.emit("menu:update-mic", settings.capture_enabled);
     let _ = app.emit("menu:update-transcribe", settings.transcribe_enabled);
     info!("[DIAG] save_settings_inner: done");
@@ -1657,45 +1373,6 @@ fn scan_installed_module_ids_lossy(app: &AppHandle) -> std::collections::HashSet
     }
 }
 
-fn bundled_module_package_source(app: &AppHandle, module_id: &str) -> Option<PathBuf> {
-    let module_id = canonicalize_module_id(module_id);
-    let mut candidates = Vec::new();
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(resource_dir.join("module-packages").join(module_id));
-    }
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("module-packages")
-            .join(module_id),
-    );
-
-    candidates.into_iter().find(|candidate| candidate.is_dir())
-}
-
-#[tauri::command]
-fn install_bundled_module_package(
-    app: AppHandle,
-    module_id: String,
-) -> Result<module_package::ModulePackageInstallResult, String> {
-    let module_id = canonicalize_module_id(&module_id).to_string();
-    let manifest = module_registry::find_manifest(&module_id)
-        .ok_or_else(|| format!("Unknown module id '{}'.", module_id))?;
-    if !manifest.bundled {
-        return Err(format!(
-            "Module '{}' is not bundled in this build.",
-            module_id
-        ));
-    }
-    let source_dir = bundled_module_package_source(&app, &module_id).ok_or_else(|| {
-        format!(
-            "Bundled module package '{}' was not found in app resources.",
-            module_id
-        )
-    })?;
-    let modules_dir = crate::paths::resolve_modules_dir(&app);
-    module_package::install_package_from_dir(&source_dir, &modules_dir)
-}
-
 /// List modules published in the on-demand module index, annotated with local
 /// install state. Network call → run off the main thread.
 #[tauri::command]
@@ -1732,15 +1409,24 @@ async fn uninstall_module(app: AppHandle, module_id: String) -> Result<(), Strin
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
     capability_enabled(settings, RuntimeCapability::AiRefinement)
         && settings.ai_fallback.provider == "ollama"
-        && settings.ai_fallback.execution_mode == "local_primary"
 }
 
 fn warmup_ai_refinement_model_once(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     let setup = crate::ai_fallback::prepare_refinement(app, settings)?;
+    if setup.repaired {
+        let model = setup.model.clone();
+        crate::ai_fallback::update_and_persist_settings(app, &app.state::<AppState>(), |s| {
+            s.ai_fallback.model = model.clone();
+            s.providers.ollama.preferred_model = model.clone();
+            s.postproc_llm_model = model;
+            normalize_ai_fallback_fields(s);
+            Ok(())
+        })?;
+    }
     let warmup_text = "Warmup: local AI refinement runtime.";
     setup
         .provider
-        .refine_transcript(warmup_text, &setup.model, &setup.options, &setup.api_key)
+        .refine_transcript(warmup_text, &setup.model, &setup.options)
         .map(|_| ())
         .map_err(|err| err.to_string())
 }
@@ -1799,55 +1485,6 @@ pub(crate) fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
                 "AI refinement warmup failed after module re-enable (non-fatal): {}",
                 error
             ),
-        }
-    });
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PiperDaemonLifecycleAction {
-    PrewarmPrimary,
-    Shutdown,
-}
-
-fn piper_daemon_lifecycle_action(
-    voice_settings: &crate::modules::VoiceOutputSettings,
-) -> PiperDaemonLifecycleAction {
-    if voice_settings.enabled && voice_settings.default_provider == "local_custom" {
-        PiperDaemonLifecycleAction::PrewarmPrimary
-    } else {
-        PiperDaemonLifecycleAction::Shutdown
-    }
-}
-
-pub(crate) fn schedule_piper_daemon_reconcile(
-    app: AppHandle,
-    voice_settings: crate::modules::VoiceOutputSettings,
-    trigger: &'static str,
-) {
-    crate::util::spawn_guarded("piper_daemon_reconcile", move || {
-        let state = app.state::<AppState>();
-        match piper_daemon_lifecycle_action(&voice_settings) {
-            PiperDaemonLifecycleAction::Shutdown => {
-                crate::multimodal_io::shutdown_piper_daemon(state.inner());
-            }
-            PiperDaemonLifecycleAction::PrewarmPrimary => {
-                let rate = voice_settings.rate.clamp(0.5, 2.0);
-                match crate::multimodal_io::prewarm_piper_daemon(
-                    state.inner(),
-                    &voice_settings.piper_binary_path,
-                    &voice_settings.piper_model_path,
-                    rate,
-                ) {
-                    Ok(()) => info!(
-                        "[piper-daemon] prewarm complete trigger={} rate={:.3}",
-                        trigger, rate
-                    ),
-                    Err(error) => warn!(
-                        "[piper-daemon] prewarm failed trigger={} rate={:.3}: {}",
-                        trigger, rate, error
-                    ),
-                }
-            }
         }
     });
 }
@@ -1936,27 +1573,18 @@ fn module_enabled(settings: &Settings, module_id: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeCapability {
     AiRefinement,
-    WorkflowAgent,
-    VisionInput,
-    VoiceOutputTts,
 }
 
 impl RuntimeCapability {
     pub(crate) fn module_id(self) -> &'static str {
         match self {
             Self::AiRefinement => AI_REFINEMENT_MODULE_ID,
-            Self::WorkflowAgent => ASSISTANT_CORE_MODULE_ID,
-            Self::VisionInput => "input_vision",
-            Self::VoiceOutputTts => "output_voice_tts",
         }
     }
 
     fn setting_enabled(self, settings: &Settings) -> bool {
         match self {
             Self::AiRefinement => settings.ai_fallback.enabled,
-            Self::WorkflowAgent => settings.workflow_agent.enabled,
-            Self::VisionInput => settings.vision_input_settings.enabled,
-            Self::VoiceOutputTts => settings.voice_output_settings.enabled,
         }
     }
 
@@ -1965,24 +1593,12 @@ impl RuntimeCapability {
             Self::AiRefinement => {
                 "AI Refinement module is disabled. Enable module 'ai_refinement' first."
             }
-            Self::WorkflowAgent => {
-                "Assistant Core module is disabled. Enable module 'assistant_core' first."
-            }
-            Self::VisionInput => {
-                "Vision input module is disabled. Enable module 'input_vision' first."
-            }
-            Self::VoiceOutputTts => {
-                "Voice output module is disabled. Enable module 'output_voice_tts' first."
-            }
         }
     }
 
     fn setting_disabled_message(self) -> &'static str {
         match self {
             Self::AiRefinement => "AI refinement is disabled in settings.",
-            Self::WorkflowAgent => "Assistant Core is disabled in settings.",
-            Self::VisionInput => "Vision input is disabled in settings.",
-            Self::VoiceOutputTts => "Voice output is disabled in settings.",
         }
     }
 }
@@ -2023,13 +1639,6 @@ mod runtime_capability_gate_tests {
         }
         match capability {
             RuntimeCapability::AiRefinement => settings.ai_fallback.enabled = setting_enabled,
-            RuntimeCapability::WorkflowAgent => settings.workflow_agent.enabled = setting_enabled,
-            RuntimeCapability::VisionInput => {
-                settings.vision_input_settings.enabled = setting_enabled
-            }
-            RuntimeCapability::VoiceOutputTts => {
-                settings.voice_output_settings.enabled = setting_enabled
-            }
         }
         settings
     }
@@ -2056,24 +1665,6 @@ mod runtime_capability_gate_tests {
             &refinement_missing_setting,
             RuntimeCapability::AiRefinement
         ));
-
-        let both_enabled = settings_for_capability(RuntimeCapability::VisionInput, true, true);
-        assert!(capability_enabled(
-            &both_enabled,
-            RuntimeCapability::VisionInput
-        ));
-
-        let missing_module = settings_for_capability(RuntimeCapability::VisionInput, false, true);
-        assert!(!capability_enabled(
-            &missing_module,
-            RuntimeCapability::VisionInput
-        ));
-
-        let missing_setting = settings_for_capability(RuntimeCapability::VisionInput, true, false);
-        assert!(!capability_enabled(
-            &missing_setting,
-            RuntimeCapability::VisionInput
-        ));
     }
 
     #[test]
@@ -2094,29 +1685,12 @@ mod runtime_capability_gate_tests {
             require_capability_enabled(&ai_setting_disabled, RuntimeCapability::AiRefinement)
                 .unwrap_err();
         assert_eq!(ai_setting_error, "AI refinement is disabled in settings.");
-
-        let module_disabled =
-            settings_for_capability(RuntimeCapability::VoiceOutputTts, false, true);
-        let module_error =
-            require_capability_enabled(&module_disabled, RuntimeCapability::VoiceOutputTts)
-                .unwrap_err();
-        assert_eq!(
-            module_error,
-            "Voice output module is disabled. Enable module 'output_voice_tts' first."
-        );
-
-        let setting_disabled =
-            settings_for_capability(RuntimeCapability::VoiceOutputTts, true, false);
-        let setting_error =
-            require_capability_enabled(&setting_disabled, RuntimeCapability::VoiceOutputTts)
-                .unwrap_err();
-        assert_eq!(setting_error, "Voice output is disabled in settings.");
     }
 }
 
 #[tauri::command]
 fn save_window_visibility_state(app: AppHandle, visibility: String) {
-    // "normal" or "minimized" from frontend; "tray" is set by hide_main_window
+    // "normal" or "minimized" from frontend; closing to the tray is not persisted
     if ["normal", "minimized"].contains(&visibility.as_str()) {
         save_window_visibility(&app, &visibility);
     }
@@ -2189,28 +1763,6 @@ fn save_window_state(
     drop(current);
 
     let _ = save_settings_file(&app, &settings);
-    Ok(())
-}
-
-#[tauri::command]
-fn show_assistant_presence_window(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let snapshot = {
-        let mut settings = state
-            .settings
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        settings.assistant_presence_enabled = true;
-        normalize_module_settings(&mut settings.module_settings);
-        normalize_workflow_agent_settings(&mut settings.workflow_agent);
-        normalize_assistant_presence_binding(&mut settings);
-        settings.clone()
-    };
-    save_settings_file(&app, &snapshot)?;
-    let _ = app.emit("settings-changed", snapshot.clone());
-    assistant_presence::reconcile_assistant_presence_window(&app, &snapshot);
     Ok(())
 }
 
@@ -2310,10 +1862,6 @@ pub struct HardwareInfo {
     pub cuda_available: bool,
     pub driver_version: String,
     pub update_url: Option<String>,
-    /// Whether h264_nvenc is functional on this GPU. None = probe not run yet
-    /// (non-NVIDIA path). False = probe ran and failed (Blackwell SDK mismatch,
-    /// missing driver, etc.). True = NVENC encode succeeded.
-    pub nvenc_probe_ok: Option<bool>,
 }
 
 #[tauri::command]
@@ -2423,13 +1971,6 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
             "cpu".to_string()
         };
 
-        // NVENC probe only makes sense on NVIDIA hardware.
-        let nvenc_probe_ok = if gpu_name.to_lowercase().contains("nvidia") {
-            Some(crate::opus::probe_nvenc_available())
-        } else {
-            None
-        };
-
         Ok(HardwareInfo {
             gpu_name,
             gpu_vram,
@@ -2437,7 +1978,6 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
             cuda_available,
             driver_version,
             update_url,
-            nvenc_probe_ok,
         })
     }
 
@@ -2450,7 +1990,6 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
             cuda_available: false,
             driver_version: "N/A".to_string(),
             update_url: None,
-            nvenc_probe_ok: None,
         })
     }
 }
@@ -2784,97 +2323,6 @@ fn sanitize_session_name(name: &str) -> String {
     }
 }
 
-/// Start or stop the LM Studio daemon via its CLI (`lms daemon up|stop`).
-/// True fire-and-forget: spawns the process and detaches immediately.
-/// The daemon runs independently — we never wait for it.
-pub(crate) fn lms_daemon_command(action: &str) {
-    use std::process::{Command, Stdio};
-
-    let candidates = [
-        "lms".to_string(),
-        format!(
-            "{}\\LM Studio\\lms.exe",
-            std::env::var("LOCALAPPDATA").unwrap_or_default()
-        ),
-    ];
-    for bin in &candidates {
-        let mut cmd = Command::new(bin);
-        cmd.args(["daemon", action])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-
-        // Suppress console window on Windows
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        }
-
-        match cmd.spawn() {
-            Ok(child) => {
-                info!(
-                    "lms daemon {} spawned (pid {:?}) — detached",
-                    action,
-                    child.id()
-                );
-                // Do NOT wait — the daemon runs independently
-                return;
-            }
-            Err(_) => continue,
-        }
-    }
-    warn!("lms CLI not found — cannot run 'lms daemon {}'", action);
-}
-
-/// Load a model into LM Studio via `lms load <identifier>`.
-/// This is a one-shot command that blocks until complete — call from a
-/// background thread only.
-fn lms_load_model(model_identifier: &str) {
-    use std::process::{Command, Stdio};
-
-    let candidates = [
-        "lms".to_string(),
-        format!(
-            "{}\\LM Studio\\lms.exe",
-            std::env::var("LOCALAPPDATA").unwrap_or_default()
-        ),
-    ];
-    for bin in &candidates {
-        let mut cmd = Command::new(bin);
-        cmd.args(["load", model_identifier])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        }
-
-        match cmd.spawn() {
-            Ok(mut child) => {
-                info!(
-                    "lms load '{}' spawned (pid {:?})",
-                    model_identifier,
-                    child.id()
-                );
-                match child.wait() {
-                    Ok(status) => info!("lms load '{}' exited: {}", model_identifier, status),
-                    Err(e) => warn!("lms load '{}' wait failed: {}", model_identifier, e),
-                }
-                return;
-            }
-            Err(_) => continue,
-        }
-    }
-    warn!(
-        "lms CLI not found — cannot run 'lms load {}'",
-        model_identifier
-    );
-}
-
 fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
     let use_kitt = settings.overlay_style == "kitt";
     let (color, rise_ms, fall_ms, opacity_inactive, opacity_active, pos_x, pos_y) = if use_kitt {
@@ -2914,9 +2362,6 @@ fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
         refining_indicator_color: settings.overlay_refining_indicator_color.clone(),
         refining_indicator_speed_ms: settings.overlay_refining_indicator_speed_ms,
         refining_indicator_range: settings.overlay_refining_indicator_range as f64,
-        tts_stop_enabled: settings.overlay_tts_stop_enabled,
-        tts_stop_shape: settings.overlay_tts_stop_shape.clone(),
-        tts_stop_color: settings.overlay_tts_stop_color.clone(),
         kitt_min_width: settings.overlay_kitt_min_width as f64,
         kitt_max_width: settings.overlay_kitt_max_width as f64,
         kitt_height: settings.overlay_kitt_height as f64,
@@ -3622,7 +3067,7 @@ fn recreate_main_window_from_config(
 
 fn recover_main_window_webview(app: &AppHandle, reason: &str) -> Result<(), String> {
     let mut attempts: Vec<String> = Vec::new();
-    let mut was_visible = load_settings(app).main_window_start_state != "tray";
+    let mut was_visible = true;
 
     if let Some(window) = app.get_webview_window("main") {
         was_visible = window.is_visible().unwrap_or(true);
@@ -3689,11 +3134,36 @@ fn hide_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
         let _ = window.set_skip_taskbar(true);
-        save_window_visibility(app, "tray");
+        // Deliberately not persisted: closing to the tray must not hide the next manual start.
     }
 }
 
-/// Persist the window visibility state ("normal", "minimized", "tray") to settings
+/// Only a session that ended minimized restarts minimized; everything else shows the window.
+/// "tray" is never persisted anymore; a stored "tray" is stale (older versions) and
+/// `load_settings` maps it to "normal".
+fn start_window_minimized(persisted_start_state: &str) -> bool {
+    persisted_start_state == "minimized"
+}
+
+#[cfg(test)]
+mod start_window_tests {
+    use super::start_window_minimized;
+
+    #[test]
+    fn only_minimized_restarts_minimized() {
+        assert!(start_window_minimized("minimized"));
+        assert!(!start_window_minimized("normal"));
+    }
+
+    #[test]
+    fn stale_or_default_tray_still_shows_window() {
+        assert!(!start_window_minimized("tray"));
+        assert!(!start_window_minimized(""));
+    }
+}
+
+/// Persist the window visibility state ("normal", "minimized") to settings.
+/// Callers never pass "tray": see `hide_main_window`.
 fn save_window_visibility(app: &AppHandle, visibility: &str) {
     let state = app.state::<AppState>();
     let mut settings = state
@@ -3743,75 +3213,6 @@ pub(crate) fn toggle_activation_words_async(app: AppHandle) {
             settings
         });
         info!("Activation words toggled to: {}", new_enabled);
-    });
-}
-
-pub(crate) fn toggle_product_mode_async(app: AppHandle) {
-    crate::util::spawn_guarded("toggle_product_mode", move || {
-        let state = app.state::<AppState>();
-        let toggled = {
-            let mut settings = state
-                .settings
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let prev_transcribe_enabled = settings.transcribe_enabled;
-            let assistant_core_available =
-                capability_enabled(&settings, RuntimeCapability::WorkflowAgent);
-            if !assistant_core_available {
-                normalize_product_mode_field(&mut settings);
-                let snapshot = settings.clone();
-                let _ = save_settings_file(&app, &settings);
-                let _ = app.emit("settings-changed", snapshot.clone());
-                assistant_presence::reconcile_assistant_presence_window(&app, &snapshot);
-                let _ = workflow_agent::emit_assistant_baseline_state(
-                    &app,
-                    state.inner(),
-                    &snapshot,
-                    "hotkey_toggle_product_mode_blocked",
-                );
-                info!("Product mode toggle ignored because Assistant Core is unavailable.");
-                return;
-            }
-            settings.product_mode = if settings
-                .product_mode
-                .trim()
-                .eq_ignore_ascii_case("assistant")
-            {
-                "transcribe".to_string()
-            } else {
-                "assistant".to_string()
-            };
-            normalize_product_mode_field(&mut settings);
-            reconcile_assistant_transcribe_flag(&mut settings);
-            let next_mode = settings.product_mode.clone();
-            let snapshot = settings.clone();
-            let _ = save_settings_file(&app, &settings);
-            (next_mode, snapshot, prev_transcribe_enabled)
-        };
-        let (next_mode, snapshot, prev_transcribe_enabled) = toggled;
-
-        if snapshot.transcribe_enabled && !prev_transcribe_enabled {
-            let _ = start_transcribe_monitor(&app, &state, &snapshot);
-        } else if !snapshot.transcribe_enabled && prev_transcribe_enabled {
-            stop_transcribe_monitor_and_release_whisper(&app, &state);
-        }
-
-        let _ = app.emit("settings-changed", snapshot.clone());
-        let _ = app.emit("menu:update-transcribe", snapshot.transcribe_enabled);
-        assistant_presence::reconcile_assistant_presence_window(&app, &snapshot);
-        let _ = workflow_agent::emit_assistant_baseline_state(
-            &app,
-            state.inner(),
-            &snapshot,
-            "hotkey_toggle_product_mode",
-        );
-        let cue = if next_mode == "assistant" {
-            "start"
-        } else {
-            "stop"
-        };
-        let _ = app.emit("audio:cue", cue);
-        info!("Product mode toggled to: {}", next_mode);
     });
 }
 
@@ -3908,7 +3309,6 @@ pub fn run() {
             }
 
             let mut settings = load_settings(app.handle());
-            reconcile_assistant_transcribe_flag(&mut settings);
             crate::state::sync_diagnostic_logging_enabled(&settings);
 
             // Compute partition base directories and legacy paths for migration.
@@ -3954,7 +3354,6 @@ pub fn run() {
                 refinement_timeouts: AtomicU64::new(0),
                 refinement_fallback_failed: AtomicU64::new(0),
                 refinement_fallback_timed_out: AtomicU64::new(0),
-                task_capture_generation: AtomicU64::new(0),
                 paste_arbiter: crate::paste_arbiter::PasteArbiter::default(),
                 last_mic_recording_path: Mutex::new(None),
                 last_system_recording_path: Mutex::new(None),
@@ -3969,10 +3368,6 @@ pub fn run() {
                 gpu_util_low_streak: AtomicU32::new(0),
                 whisper_server_warm_until_ms: AtomicU64::new(0),
                 whisper_server_retire_generation: AtomicU64::new(0),
-                vision_stream_running: AtomicBool::new(false),
-                vision_stream_started_ms: AtomicU64::new(0),
-                vision_stream_frame_seq: AtomicU64::new(0),
-                vision_frame_buffer: Mutex::new(crate::multimodal_io::VisionFrameBuffer::default()),
                 startup_status: Mutex::new(StartupStatus::default()),
                 runtime_diagnostics: Mutex::new(RuntimeDiagnostics::default()),
                 overlay_controller: Mutex::new(crate::overlay::OverlayController::default()),
@@ -3980,11 +3375,6 @@ pub fn run() {
                 frontend_watchdog_last_reload_ms: AtomicU64::new(0),
                 frontend_watchdog_reload_count: AtomicU64::new(0),
                 frontend_watchdog_state: Mutex::new(state::FrontendWatchdogState::default()),
-                assistant_orchestrator: Mutex::new(state::AssistantOrchestratorStatus::default()),
-                tts_speaking: AtomicBool::new(false),
-                tts_session_counter: AtomicU64::new(0),
-                tts_playback_control: Mutex::new(None),
-                piper_daemon: crate::multimodal_io::PiperDaemonState::default(),
                 enter_capture: crate::state::EnterCaptureState::default(),
                 #[cfg(target_os = "windows")]
                 system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
@@ -4013,7 +3403,13 @@ pub fn run() {
                     ledger.timestamps_ms.iter().copied().collect();
             }
 
-            configure_windows_local_dumps(app.handle());
+            // 12 sequential reg.exe spawns: keep off the startup path.
+            {
+                let handle = app.handle().clone();
+                crate::util::spawn_guarded("configure_local_dumps", move || {
+                    configure_windows_local_dumps(&handle);
+                });
+            }
 
             {
                 let state = app.state::<AppState>();
@@ -4055,87 +3451,6 @@ pub fn run() {
                 let handle = app.handle().clone();
                 crate::util::spawn_guarded("dependency_preflight", move || {
                     runtime_commands::run_dependency_preflight(&handle);
-                });
-            }
-
-            if env_flag("TRISPR_RUN_LATENCY_BENCHMARK") {
-                let app_handle = app.handle().clone();
-                crate::util::spawn_guarded("latency_benchmark", move || {
-                    let request = crate::tts_benchmark::latency_benchmark_request_from_env();
-                    let result = {
-                        let state = app_handle.state::<AppState>();
-                        crate::tts_benchmark::run_latency_benchmark_inner(
-                            &app_handle,
-                            state.inner(),
-                            &request,
-                        )
-                    };
-
-                    match result {
-                        Ok(report) => match crate::tts_benchmark::write_latency_benchmark_report(&report) {
-                            Ok(path) => {
-                                info!(
-                                    "Latency benchmark complete: p50={}ms p95={}ms (report: {})",
-                                    report.p50_ms,
-                                    report.p95_ms,
-                                    path.display()
-                                );
-                                if !report.slo_pass {
-                                    warn!(
-                                        "Latency benchmark SLO warning: p50={}ms (target {}), p95={}ms (target {})",
-                                        report.p50_ms,
-                                        report.slo_p50_ms,
-                                        report.p95_ms,
-                                        report.slo_p95_ms
-                                    );
-                                }
-                            }
-                            Err(err) => {
-                                error!("Failed to write latency benchmark report: {}", err);
-                            }
-                        },
-                        Err(err) => {
-                            error!("Latency benchmark failed: {}", err);
-                            if let Err(write_err) =
-                                crate::tts_benchmark::write_latency_benchmark_error(&err)
-                            {
-                                error!("Failed to write latency benchmark error: {}", write_err);
-                            }
-                        }
-                    }
-
-                    if env_flag("TRISPR_RUN_LATENCY_BENCHMARK_EXIT") {
-                        app_handle.exit(0);
-                    }
-                });
-            }
-
-            if env_flag("TRISPR_RUN_TTS_BENCHMARK") {
-                let app_handle = app.handle().clone();
-                crate::util::spawn_guarded("tts_benchmark", move || {
-                    let request = tts_benchmark::tts_benchmark_request_from_env();
-                    let result = {
-                        let state = app_handle.state::<AppState>();
-                        tts_benchmark::run_tts_benchmark_inner(state.inner(), &request)
-                    };
-
-                    match result {
-                        Ok(report) => match tts_benchmark::write_tts_benchmark_report(&report) {
-                            Ok(path) => {
-                                report.log_summary(&path);
-                            }
-                            Err(err) => {
-                                error!("Failed to write TTS benchmark report: {}", err);
-                            }
-                        },
-                        Err(err) => {
-                            error!("TTS benchmark failed: {}", err);
-                        }
-                    }
-
-                    if env_flag("TRISPR_RUN_TTS_BENCHMARK_EXIT") {
-                        app_handle.exit(0);
-                    }
                 });
             }
 
@@ -4389,30 +3704,6 @@ pub fn run() {
                 });
             }
 
-            // LM Studio daemon auto-start: if lm_studio was the active provider when the
-            // app was last closed, the provider-switch event never fires at next launch.
-            // We ping first — if the daemon is already running (e.g. user keeps it open),
-            // we leave it alone. Only start if unreachable.
-            if capability_enabled(&settings, RuntimeCapability::AiRefinement)
-                && settings.ai_fallback.provider == "lm_studio"
-            {
-                let endpoint = settings.providers.lm_studio.endpoint.clone();
-                let preferred_model = settings.providers.lm_studio.preferred_model.trim().to_string();
-                crate::util::spawn_guarded("lms_daemon_startup", move || {
-                    use crate::ai_fallback::provider::ping_lm_studio_quick;
-                    if ping_lm_studio_quick(&endpoint).is_err() {
-                        info!("LM Studio not reachable at startup — starting daemon");
-                        lms_daemon_command("up");
-                        if !preferred_model.is_empty() {
-                            std::thread::sleep(std::time::Duration::from_secs(3));
-                            lms_load_model(&preferred_model);
-                        }
-                    } else {
-                        info!("LM Studio already reachable at startup — skipping daemon start");
-                    }
-                });
-            }
-
             if settings.mode == "vad" && settings.capture_enabled {
                 // Delay VAD start by 2 seconds to allow models to load on first startup
                 let app_handle = app.handle().clone();
@@ -4453,7 +3744,6 @@ pub fn run() {
                 overlay::preload_overlay_window(&app.handle());
                 info!("[DIAG] setup: overlay state primed + window pre-warmed, building tray...");
             }
-            assistant_presence::reconcile_assistant_presence_window(&app.handle(), &settings);
 
             let icon = {
                 let paths = [
@@ -4642,30 +3932,21 @@ pub fn run() {
 
             // Restore main window geometry and visibility state
             if let Some(window) = app.get_webview_window("main") {
-                let window_settings = load_settings(app.handle());
-                restore_window_geometry(&window, &window_settings);
+                // Reuse the settings loaded at the top of setup (window fields are untouched since).
+                let window_settings = &settings;
+                restore_window_geometry(&window, window_settings);
                 MAIN_WINDOW_RESTORED.store(true, Ordering::Release);
 
-                // Restore window visibility state from last session
-                match window_settings.main_window_start_state.as_str() {
-                    "tray" => {
-                        // Start hidden in system tray
-                        info!("Restoring window state: hidden in system tray");
-                        let _ = window.hide();
-                        let _ = window.set_skip_taskbar(true);
-                    }
-                    "minimized" => {
-                        // Start minimized
-                        info!("Restoring window state: minimized");
-                        let _ = window.show();
-                        let _ = window.set_skip_taskbar(false);
-                        let _ = window.minimize();
-                    }
-                    _ => {
-                        // "normal" — explicitly show from hidden startup config.
-                        let _ = window.show();
-                        let _ = window.set_skip_taskbar(false);
-                    }
+                // Restore window visibility state from last session (never hidden in the tray)
+                if start_window_minimized(&window_settings.main_window_start_state) {
+                    info!("Restoring window state: minimized");
+                    let _ = window.show();
+                    let _ = window.set_skip_taskbar(false);
+                    let _ = window.minimize();
+                } else {
+                    // Explicitly show from hidden startup config.
+                    let _ = window.show();
+                    let _ = window.set_skip_taskbar(false);
                 }
             }
 
@@ -4724,18 +4005,13 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
-            get_task_capture_settings,
-            save_task_capture_settings,
-            test_task_capture_endpoint,
             get_startup_status,
             get_runtime_diagnostics,
             save_settings,
             save_window_state,
             save_window_visibility_state,
-            show_assistant_presence_window,
             list_modules,
             scan_module_packages,
-            install_bundled_module_package,
             enable_module,
             disable_module,
             get_module_health,
@@ -4743,68 +4019,6 @@ pub fn run() {
             list_available_modules,
             download_module,
             uninstall_module,
-            agent_list_supported_actions,
-            agent_parse_command,
-            agent_compose_unknown_reply,
-            assistant_execute_direct_action,
-            search_transcript_sessions,
-            agent_build_execution_plan,
-            agent_execute_gdd_plan,
-            agent_cancel_pending_confirmation,
-            list_screen_sources,
-            start_vision_stream,
-            stop_vision_stream,
-            get_vision_stream_health,
-            capture_vision_snapshot,
-            list_tts_providers,
-            list_tts_voices,
-            list_piper_voice_catalog,
-            download_piper_voice_key,
-            speak_tts,
-            stop_tts,
-            test_tts_provider,
-            #[cfg(feature = "module-gdd")]
-            list_gdd_presets,
-            #[cfg(feature = "module-gdd")]
-            save_gdd_preset_clone,
-            #[cfg(feature = "module-gdd")]
-            detect_gdd_preset,
-            #[cfg(feature = "module-gdd")]
-            generate_gdd_draft,
-            #[cfg(feature = "module-gdd")]
-            validate_gdd_draft,
-            #[cfg(feature = "module-gdd")]
-            render_gdd_for_confluence,
-            #[cfg(feature = "module-gdd")]
-            render_gdd_markdown,
-            #[cfg(feature = "module-gdd")]
-            test_confluence_connection,
-            #[cfg(feature = "module-gdd")]
-            confluence_oauth_start,
-            #[cfg(feature = "module-gdd")]
-            confluence_oauth_exchange,
-            #[cfg(feature = "module-gdd")]
-            confluence_list_spaces,
-            #[cfg(feature = "module-gdd")]
-            load_gdd_template_from_file,
-            #[cfg(feature = "module-gdd")]
-            load_gdd_template_from_confluence,
-            #[cfg(feature = "module-gdd")]
-            suggest_confluence_target,
-            #[cfg(feature = "module-gdd")]
-            publish_gdd_to_confluence,
-            #[cfg(feature = "module-gdd")]
-            publish_or_queue_gdd_to_confluence,
-            #[cfg(feature = "module-gdd")]
-            list_pending_gdd_publishes,
-            #[cfg(feature = "module-gdd")]
-            retry_pending_gdd_publish,
-            #[cfg(feature = "module-gdd")]
-            delete_pending_gdd_publish,
-            #[cfg(feature = "module-gdd")]
-            save_confluence_secret,
-            #[cfg(feature = "module-gdd")]
-            clear_confluence_secret,
             save_transcript,
             list_audio_devices,
             list_output_devices,
@@ -4844,26 +4058,28 @@ pub fn run() {
             get_recordings_directory,
             open_recordings_directory,
             open_log_directory,
-            fetch_available_models,
+            check_ollama_model_updates,
+            check_ollama_model_requirements,
+            get_ollama_model_details,
+            open_model_page,
+            warmup_ollama_model,
+            verify_ollama_model,
+            backup_ollama_model,
+            finalize_ollama_model_update,
+            rollback_ollama_model_update,
+            replace_ollama_model,
             fetch_ollama_models_with_size,
-            test_provider_connection,
-            save_provider_api_key,
-            clear_provider_api_key,
-            verify_provider_auth,
-            save_ollama_endpoint,
             detect_ollama_runtime,
             list_ollama_runtime_versions,
             fetch_ollama_online_versions,
+            ollama_runtime::delete_ollama_runtime_version,
             download_ollama_runtime,
             install_ollama_runtime,
             start_ollama_runtime,
             verify_ollama_runtime,
             import_ollama_model_from_file,
-            set_strict_local_mode,
             refine_transcript,
             ping_refinement_model,
-            run_latency_benchmark,
-            run_tts_benchmark,
             get_runtime_metrics_snapshot,
             record_runtime_metric,
             frontend_heartbeat,
@@ -4877,12 +4093,6 @@ pub fn run() {
             get_hardware_info,
             purge_gpu_memory,
             stop_ollama_runtime,
-            install_lm_studio,
-            video_ingest_sources,
-            video_ingest_history_entry,
-            video_generate,
-            video_get_output_dir,
-            video_open_output_dir,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

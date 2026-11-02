@@ -1,66 +1,9 @@
 // Type definitions for Trispr Flow application
 
-export type LocalAIFallbackProvider = "ollama" | "lm_studio" | "oobabooga";
-export type AIFallbackProvider = "claude" | "openai" | "gemini" | LocalAIFallbackProvider;
-export type CloudAIFallbackProvider = Exclude<AIFallbackProvider, LocalAIFallbackProvider>;
-export type AIExecutionMode = "local_primary" | "online_fallback";
-export type ProductMode = "transcribe" | "assistant";
-export type AIProviderAuthStatus = "locked" | "verified_api_key" | "verified_oauth";
-export type AIProviderAuthMethodPreference = "api_key" | "oauth";
 export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
-export type ModuleSurface = "assistant" | "transcription" | "shared" | "ui";
-export type AssistantActionRisk = "low" | "medium" | "high";
-export type ModuleId =
-  | "gdd"
-  | "ai_refinement"
-  | "assistant_core"
-  | "assistant_presence"
-  | "workflow_agent"
-  | "input_vision"
-  | "output_voice_tts";
+export type ModuleId = "ai_refinement" | "opus";
 export type ModuleState = "not_installed" | "installed" | "enabled" | "active" | "error";
-export type ModulePermission =
-  | "network_confluence"
-  | "filesystem_history"
-  | "filesystem_exports"
-  | "keyring_access"
-  | "screen_capture"
-  | "audio_output";
-export type AgentIntent =
-  | "gdd_generate_publish"
-  | "reminder_capture"
-  | "session_recap"
-  | "plan_status"
-  | "confirm_or_cancel"
-  | "web_search"
-  | "open_module"
-  | "open_app"
-  | "unknown";
-export type AssistantOrchestratorState =
-  | "idle"
-  | "listening"
-  | "parsing"
-  | "planning"
-  | "awaiting_confirm"
-  | "executing"
-  | "recovering";
-export type AgentTargetLanguage =
-  | "source"
-  | "en"
-  | "de"
-  | "fr"
-  | "es"
-  | "it"
-  | "pt"
-  | "nl"
-  | "pl"
-  | "ru"
-  | "ja"
-  | "ko"
-  | "zh"
-  | "ar"
-  | "tr"
-  | "hi";
+export type ModulePermission = string;
 export type RefinementPromptPreset =
   | "wording"
   | "summary"
@@ -105,17 +48,6 @@ export interface ModuleDescriptor {
   bundled: boolean;
   core: boolean;
   toggleable: boolean;
-  surface?: ModuleSurface;
-  assistant_capable?: boolean;
-  assistant_actions?: AssistantActionDescriptor[];
-}
-
-export interface AssistantActionDescriptor {
-  id: string;
-  label: string;
-  risk_level: AssistantActionRisk;
-  requires_online: boolean;
-  allowlist_eligible: boolean;
 }
 
 export interface ModuleSettings {
@@ -124,452 +56,10 @@ export interface ModuleSettings {
   module_overrides: Record<string, unknown>;
 }
 
-export interface GddPresetSection {
-  id: string;
-  title: string;
-  required: boolean;
-}
-
-export interface GddPreset {
-  id: string;
-  name: string;
-  description: string;
-  is_clone: boolean;
-  base_preset_id?: string | null;
-  detail_level: string;
-  tone: string;
-  keywords: string[];
-  sections: GddPresetSection[];
-}
-
-export interface GddPresetClone {
-  id: string;
-  name: string;
-  detail_level: string;
-  tone: string;
-  keywords: string[];
-  section_order: string[];
-  required_sections: string[];
-}
-
-export interface GddRecognitionCandidate {
-  preset_id: string;
-  label: string;
-  score: number;
-}
-
-export interface GddRecognitionResult {
-  suggested_preset_id: string;
-  confidence: number;
-  candidates: GddRecognitionCandidate[];
-  reasoning_snippets: string[];
-}
-
-export interface GddSectionDraft {
-  id: string;
-  title: string;
-  content: string;
-  evidence_gap: boolean;
-}
-
-export interface GddDraft {
-  preset_id: string;
-  title: string;
-  summary: string;
-  sections: GddSectionDraft[];
-  chunk_count: number;
-  generated_at_iso: string;
-}
-
-export interface GddTemplateSourceResult {
-  source_kind: "confluence" | "file" | string;
-  source_label: string;
-  source_ref: string;
-  text: string;
-  original_chars: number;
-  truncated: boolean;
-}
-
-export interface GenerateGddDraftRequest {
-  transcript: string;
-  preset_id?: string | null;
-  title?: string | null;
-  max_chunk_chars?: number | null;
-  template_hint?: string | null;
-  template_label?: string | null;
-}
-
-export interface GddPublishRequest {
-  title: string;
-  storage_body: string;
-  space_key: string;
-  parent_page_id?: string | null;
-  target_page_id?: string | null;
-}
-
-export interface GddPublishResult {
-  page_id: string;
-  page_url: string;
-  created: boolean;
-  version: number;
-  message: string;
-}
-
-export interface GddPublishFallbackBundle {
-  bundle_dir: string;
-  draft_json_path: string;
-  markdown_path: string;
-  confluence_html_path: string;
-  publish_request_path: string;
-  manifest_path: string;
-}
-
-export interface GddPendingPublishJob {
-  job_id: string;
-  title: string;
-  space_key: string;
-  parent_page_id?: string | null;
-  target_page_id?: string | null;
-  created_at_iso: string;
-  updated_at_iso: string;
-  retry_count: number;
-  last_error: string;
-  bundle_dir: string;
-  routing_confidence?: number | null;
-  routing_reasoning?: string | null;
-}
-
-export interface GddPublishAttemptResult {
-  status: "published" | "queued" | "failed";
-  publish_result?: GddPublishResult;
-  queued_job?: GddPendingPublishJob;
-  error?: string;
-}
-
-export interface GddModuleSettings {
-  enabled: boolean;
-  default_preset_id: string;
-  detect_preset_automatically: boolean;
-  prefer_one_click_publish: boolean;
-  workflow_mode_default: "standard" | "advanced";
-  transcript_source_default: "runtime_session";
-  target_routing_strategy: "hybrid_memory" | "fixed" | "fresh_suggest";
-  one_click_confidence_threshold: number;
-  preset_clones: GddPresetClone[];
-}
-
-export interface ConfluenceSettings {
-  enabled: boolean;
-  site_base_url: string;
-  oauth_cloud_id: string;
-  default_space_key: string;
-  api_user_email: string;
-  default_parent_page_id: string;
-  auth_mode: "oauth" | "api_token";
-  routing_memory: Record<string, string>;
-}
-
-export interface WorkflowAgentSettings {
-  enabled: boolean;
-  wakewords: string[];
-  wakeword_aliases?: string[];
-  intent_keywords: Record<string, string[]>;
-  model: string;
-  temperature: number;
-  max_tokens: number;
-  session_gap_minutes: number;
-  max_candidates: number;
-  hands_free_enabled?: boolean;
-  confirm_timeout_sec?: number;
-  reply_mode?: "rule_only" | "hybrid_local_llm";
-  online_enabled?: boolean;
-  voice_feedback_enabled?: boolean;
-  activation_mode?: "hotkey_first" | "wakeword_optional";
-  trusted_action_allowlist?: string[];
-  expert_yolo_enabled?: boolean;
-}
-
-export interface VisionInputSettings {
-  enabled: boolean;
-  fps: number;
-  source_scope: "all_monitors" | "active_monitor" | "active_window";
-  max_width: number;
-  jpeg_quality: number;
-  ram_buffer_seconds: number;
-  all_monitors_default: boolean;
-}
-
-export interface VoiceOutputSettings {
-  enabled: boolean;
-  default_provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
-  fallback_provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
-  voice_id_windows: string;
-  voice_id_windows_fallback?: string;
-  auto_voice_by_detected_language?: boolean;
-  voice_id_local: string;
-  rate: number;
-  volume: number;
-  piper_gain_db?: number;
-  output_policy: "agent_replies_only" | "replies_and_events" | "explicit_only";
-  output_device: string;
-  piper_binary_path?: string;
-  piper_model_path?: string;
-  piper_model_dir?: string;
-  qwen3_tts_endpoint?: string;
-  qwen3_tts_model?: string;
-  qwen3_tts_voice?: string;
-  qwen3_tts_api_key?: string;
-  qwen3_tts_timeout_sec?: number;
-  qwen3_tts_enabled?: boolean;
-}
-
-export interface TaskCaptureRoute {
-  label: string;
-  keywords: string[];
-  endpoint: string;
-  confluence_page_id: string;
-}
-
-export interface TaskCaptureSettings {
-  routes: TaskCaptureRoute[];
-  match_mode: "exact" | "contains";
-  ai_refinement_enabled: boolean;
-  refinement_prompt: string;
-}
-
-export interface AgentCommandParseResult {
-  detected: boolean;
-  intent: AgentIntent;
-  confidence: number;
-  publish_requested: boolean;
-  wakeword_matched: boolean;
-  temporal_hint?: string | null;
-  topic_hint?: string | null;
-  reasoning: string;
-  command_text: string;
-}
-
-export interface TranscriptSessionCandidate {
-  session_id: string;
-  start_ms: number;
-  end_ms: number;
-  entry_count: number;
-  source_mix: string[];
-  preview: string;
-  score: number;
-  reasoning: string;
-}
-
-export interface AgentExecutionStep {
-  id: string;
-  title: string;
-  status: "pending" | "running" | "done" | "failed";
-  detail?: string;
-}
-
-export interface AgentExecutionPlan {
-  intent: AgentIntent;
-  session_id: string;
-  session_title: string;
-  target_language: AgentTargetLanguage;
-  publish: boolean;
-  analysis_steps: AgentExecutionStep[];
-  execution_steps: AgentExecutionStep[];
-  steps: AgentExecutionStep[];
-  recognized_signals: string[];
-  assumptions: string[];
-  proposed_actions: string[];
-  summary: string;
-}
-
-export interface AgentBuildExecutionPlanRequest {
-  intent: AgentIntent | string;
-  session_id: string;
-  target_language: AgentTargetLanguage | string;
-  publish: boolean;
-  command_text?: string | null;
-  temporal_hint?: string | null;
-  topic_hint?: string | null;
-  parse_confidence?: number | null;
-}
-
-export interface AgentExecutionResult {
-  status: "completed" | "queued" | "failed" | "cancelled";
-  message: string;
-  draft?: GddDraft;
-  publish_result?: GddPublishResult;
-  queued_job?: GddPendingPublishJob;
-  error?: string;
-}
-
-export interface AgentReplyResult {
-  text: string;
-  source: "rule" | "local_llm";
-  reason_code: string;
-}
-
-export interface AssistantCapabilitySnapshot {
-  product_mode: ProductMode;
-  assistant_mode: boolean;
-  assistant_core_available?: boolean;
-  workflow_agent_available?: boolean;
-  tts_available: boolean;
-  vision_available: boolean;
-  degraded: boolean;
-  hard_blocked: boolean;
-  missing_capabilities: string[];
-}
-
-export interface AssistantStateChangedEvent {
-  state: AssistantOrchestratorState;
-  previous_state: AssistantOrchestratorState;
-  reason: string;
-  transition_id: number;
-  changed_at_ms: number;
-  capability: AssistantCapabilitySnapshot;
-}
-
-export interface AssistantPlanReadyEvent {
-  state: AssistantOrchestratorState;
-  reason: string;
-  plan: AgentExecutionPlan;
-  capability: AssistantCapabilitySnapshot;
-}
-
-export interface AssistantIntentDetectedEvent {
-  state: AssistantOrchestratorState;
-  reason: string;
-  parse: AgentCommandParseResult;
-  capability: AssistantCapabilitySnapshot;
-}
-
-export interface AssistantAwaitingConfirmationEvent {
-  state: AssistantOrchestratorState;
-  reason: string;
-  plan: AgentExecutionPlan;
-  confirm_token: string;
-  confirm_timeout_sec: number;
-  expires_at_ms: number;
-  capability: AssistantCapabilitySnapshot;
-}
-
-export interface AssistantConfirmationExpiredEvent {
-  state: AssistantOrchestratorState;
-  reason: string;
-  expired_at_ms: number;
-  capability: AssistantCapabilitySnapshot;
-}
-
-export interface AssistantActionResultEvent {
-  state: AssistantOrchestratorState;
-  reason: string;
-  result: AgentExecutionResult;
-  capability: AssistantCapabilitySnapshot;
-}
-
-export interface AssistantReplyDraftEvent {
-  text: string;
-  reason: string;
-  intent?: AgentIntent | string | null;
-}
-
-export interface AssistantReplyFinalEvent {
-  text: string;
-  reason: string;
-  intent?: AgentIntent | string | null;
-  source?: string | null;
-}
-
-export interface AssistantModuleOpenEvent {
-  target: string;
-  reason: string;
-}
-
-export interface VisionSourceInfo {
-  id: string;
-  label: string;
-  width: number;
-  height: number;
-}
-
-export interface VisionStreamHealth {
-  running: boolean;
-  fps: number;
-  source_scope: string;
-  started_at_ms?: number | null;
-  frame_seq: number;
-  buffered_frames: number;
-  buffered_bytes: number;
-  last_frame_timestamp_ms?: number | null;
-  last_frame_width?: number | null;
-  last_frame_height?: number | null;
-}
-
-export interface VisionSnapshotResult {
-  captured: boolean;
-  timestamp_ms: number;
-  source_count: number;
-  note: string;
-  frame_seq?: number | null;
-  width?: number | null;
-  height?: number | null;
-  bytes?: number | null;
-  source_scope?: string | null;
-  jpeg_base64?: string | null;
-}
-
-export interface TtsProviderInfo {
-  id: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
-  label: string;
-  available: boolean;
-  surface: "runtime_stable" | "benchmark_experimental";
-  reason?: string | null;
-}
-
-export interface TtsVoiceInfo {
-  id: string;
-  label: string;
-  provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
-  locale?: string | null;
-  profile?: string | null;
-}
-
-export interface PiperVoiceCatalogEntry {
-  key: string;
-  label: string;
-  locale: string | null;
-  quality: "x_low" | "low" | "medium" | "high";
-  installed: boolean;
-  curated: boolean;
-  path: string | null;
-}
-
-export interface PiperVoiceDownloadProgress {
-  voice_key: string;
-  stage: "started" | "downloading" | "completed" | "error";
-  file_name: string;
-  downloaded_bytes: number;
-  total_bytes?: number | null;
-  percent?: number | null;
-  message?: string | null;
-}
-
-export interface TtsSpeakResult {
-  provider_used: "windows_native" | "windows_natural" | "local_custom" | string;
-  accepted: boolean;
-  message: string;
-  used_fallback?: boolean | null;
-  preferred_provider?: "windows_native" | "windows_natural" | "local_custom" | string | null;
-  fallback_provider?: "windows_native" | "windows_natural" | "local_custom" | string | null;
-  primary_error?: string | null;
-}
-
 export interface AIFallbackSettings {
   enabled: boolean;
-  provider: AIFallbackProvider;
-  fallback_provider: CloudAIFallbackProvider | null;
-  execution_mode: AIExecutionMode;
-  strict_local_mode: boolean;
+  /** Refinement is Ollama-only; the backend normalizes every saved value to "ollama". */
+  provider: "ollama";
   preserve_source_language: boolean;
   model: string;
   temperature: number;
@@ -584,41 +74,22 @@ export interface AIFallbackSettings {
   prompt_preset_overrides?: PromptPresetOverrides;
 }
 
-export interface AIProviderSettings {
-  api_key_stored: boolean;
-  auth_method_preference: AIProviderAuthMethodPreference;
-  auth_status: AIProviderAuthStatus;
-  auth_verified_at: string | null;
-  available_models: string[];
-  preferred_model: string;
-}
-
 export interface OllamaSettings {
   endpoint: string;
-  fallback_endpoints?: string[];
   available_models: string[];
   preferred_model: string;
-  runtime_source: "system" | "per_user_zip" | "manual";
+  /** Always the managed per-user runtime. */
+  runtime_source: "per_user_zip";
   runtime_path: string;
   runtime_version: string;
   runtime_target_version: string;
+  /** The target was picked in the runtime version list; only then may it stay older than the running runtime. */
+  runtime_target_explicit?: boolean;
   last_health_check: string | null;
 }
 
-export interface OpenAICompatSettings {
-  endpoint: string;
-  api_key: string;
-  preferred_model: string;
-  available_models: string[];
-}
-
 export interface AIProvidersSettings {
-  claude: AIProviderSettings;
-  openai: AIProviderSettings;
-  gemini: AIProviderSettings;
   ollama: OllamaSettings;
-  lm_studio?: OpenAICompatSettings;
-  oobabooga?: OpenAICompatSettings;
 }
 
 export interface SetupSettings {
@@ -629,33 +100,16 @@ export interface SetupSettings {
 
 export interface Settings {
   mode: "ptt" | "vad";
-  product_mode: ProductMode;
   hotkey_ptt: string;
   hotkey_toggle: string;
-  hotkey_tts_stop: string;
   input_device: string;
   language_mode: "auto" | "en" | "de" | "fr" | "es" | "it" | "pt" | "nl" | "pl" | "ru" | "ja" | "ko" | "zh" | "ar" | "tr" | "hi";
   language_pinned: boolean;
   model: string;
-  // Legacy compatibility toggle for optional old cloud transcription path.
-  cloud_fallback: boolean;
   ai_fallback: AIFallbackSettings;
   providers: AIProvidersSettings;
   setup: SetupSettings;
   module_settings?: ModuleSettings;
-  gdd_module_settings?: GddModuleSettings;
-  confluence_settings?: ConfluenceSettings;
-  workflow_agent?: WorkflowAgentSettings;
-  vision_input_settings?: VisionInputSettings;
-  voice_output_settings?: VoiceOutputSettings;
-  task_capture_settings?: TaskCaptureSettings;
-  assistant_presence_enabled?: boolean;
-  assistant_presence_pinned?: boolean;
-  assistant_presence_window_x?: number | null;
-  assistant_presence_window_y?: number | null;
-  assistant_presence_window_width?: number | null;
-  assistant_presence_window_height?: number | null;
-  assistant_presence_window_monitor?: string | null;
   audio_cues: boolean;
   audio_cues_volume: number;
   diagnostic_logging_enabled?: boolean;
@@ -668,7 +122,6 @@ export interface Settings {
   transcribe_enabled: boolean;
   transcribe_hotkey: string;
   hotkey_toggle_activation_words: string;
-  hotkey_product_mode_toggle?: string;
   transcribe_output_device: string;
   transcribe_vad_mode: boolean;
   transcribe_vad_threshold: number;
@@ -706,9 +159,6 @@ export interface Settings {
   overlay_refining_indicator_color: string;
   overlay_refining_indicator_speed_ms: number;
   overlay_refining_indicator_range: number;
-  overlay_tts_stop_enabled: boolean;
-  overlay_tts_stop_shape: "compact" | "round" | string;
-  overlay_tts_stop_color: string;
   overlay_kitt_min_width: number;
   overlay_kitt_max_width: number;
   overlay_kitt_height: number;
@@ -738,8 +188,6 @@ export interface Settings {
   /** Unix-ms timestamp of the last successful LLM vocab cleanup run. */
   last_vocab_cleanup_ms?: number;
   postproc_llm_enabled: boolean;
-  postproc_llm_provider: string;
-  postproc_llm_api_key: string;
   postproc_llm_model: string;
   postproc_llm_prompt: string;
   // Recording export settings
@@ -928,12 +376,6 @@ export interface RefinementGateDecision {
   ollama_vram_bytes?: number;
 }
 
-export interface TranscriptionRawResultEvent {
-  text: string;
-  source: string;
-  timestamp_ms: number;
-}
-
 export interface TranscriptionRefinementStartedEvent {
   job_id: string;
   entry_id?: string;
@@ -1013,6 +455,99 @@ export interface OllamaPullError {
   error: string;
 }
 
+/** One row of `check_ollama_model_requirements` (Registry config blob `requires` vs. running runtime). */
+export interface OllamaModelRequirement {
+  name: string;
+  /** Minimum Ollama version the model needs; null for Hugging Face refs and unreadable manifests. */
+  requires: string | null;
+  runtime_version: string | null;
+  /** runtime >= requires; null when either side is not a strict x.y.z version. */
+  compatible: boolean | null;
+  detail?: string | null;
+}
+
+/** `verify_ollama_model`: functional check with the app's own request form. */
+export interface OllamaModelVerifyResult {
+  ok: boolean;
+  latency_ms: number;
+  load_ms: number;
+  sample?: string | null;
+  detail?: string | null;
+}
+
+/** `finalize_ollama_model_update`: the old build is only dropped after the new one passed. */
+export interface OllamaModelFinalizeResult {
+  verified: boolean;
+  restored: boolean;
+  /**
+   * The check could not finish (timeout, transport error, HTTP 5xx, Ollama gone): neither passed nor
+   * failed. The new build and the backup both stay; `detail` names the reason.
+   */
+  inconclusive?: boolean;
+  detail?: string | null;
+}
+
+/** `rollback_ollama_model_update`: removes the new build and restores the backed-up one. */
+export interface OllamaModelRollbackResult {
+  restored: boolean;
+  detail?: string | null;
+}
+
+/** What the local Ollama reports for an installed model (`get_ollama_model_details`, `/api/show`). */
+export interface OllamaLocalModelInfo {
+  license?: string | null;
+  capabilities?: string[];
+  family?: string | null;
+  parameter_size?: string | null;
+  quantization_level?: string | null;
+  format?: string | null;
+  context_length?: number | null;
+  architecture?: string | null;
+  parameter_count?: number | null;
+  base_model?: string | null;
+  requires?: string | null;
+  modified_at?: string | null;
+}
+
+/** What the model's public page says (Hugging Face API or Ollama library page). */
+export interface OllamaRemoteModelInfo {
+  source: "huggingface" | "ollama";
+  /** Hugging Face: repository created. The Ollama library has no release date. */
+  released_at?: string | null;
+  updated_at?: string | null;
+  downloads?: number | null;
+  /** Ollama shows rounded counts ("28.4M"). */
+  downloads_text?: string | null;
+  likes?: number | null;
+  license?: string | null;
+  pipeline_tag?: string | null;
+  languages?: string[];
+  base_model?: string | null;
+  description?: string | null;
+  gated?: boolean | null;
+}
+
+/** `get_ollama_model_details`: local data always, public data when online and not in strict local mode. */
+export interface OllamaModelDetails {
+  model: string;
+  local?: OllamaLocalModelInfo | null;
+  local_error?: string | null;
+  remote?: OllamaRemoteModelInfo | null;
+  remote_note?: string | null;
+  remote_cached?: boolean;
+  remote_stale?: boolean;
+  remote_fetched_at_ms?: number | null;
+}
+
+/** `replace_ollama_model`: verify the new model first, then switch settings and delete the old one. */
+export interface OllamaModelReplaceResult {
+  verified: boolean;
+  switched_active: boolean;
+  deleted_old: boolean;
+  latency_ms: number;
+  detail?: string | null;
+}
+
 export interface OllamaRuntimeDetectResult {
   found: boolean;
   is_serving: boolean;
@@ -1021,6 +556,8 @@ export interface OllamaRuntimeDetectResult {
   version: string;
   managed_pid?: number | null;
   managed_alive?: boolean;
+  /** File-system truth: the selected target version's runtime folder exists with an ollama.exe. */
+  target_installed?: boolean;
 }
 
 export interface OllamaRuntimeVersionInfo {
@@ -1029,11 +566,26 @@ export interface OllamaRuntimeVersionInfo {
   selected: boolean;
   installed: boolean;
   recommended: boolean;
+  /** Newest stable verified release in the fetched catalog. */
+  latest?: boolean;
   prerelease: boolean;
   installable: boolean;
   installable_reason?: string | null;
   release_name?: string | null;
   release_notes_summary?: string | null;
+  /** ISO timestamp the release was published on GitHub. */
+  released_at?: string | null;
+  /** Size of the Windows archive in bytes. */
+  size_bytes?: number | null;
+  /** When the runtime folder was installed on this machine (epoch ms). */
+  installed_at_ms?: number | null;
+}
+
+/** Answer of `delete_ollama_runtime_version`: a refusal is `deleted: false` with the reason in `detail`. */
+export interface OllamaRuntimeDeleteResult {
+  deleted: boolean;
+  freed_bytes: number;
+  detail?: string | null;
 }
 
 export interface OllamaRuntimeDownloadResult {
@@ -1170,20 +722,6 @@ export interface ModuleUpdateInfo {
   current_version: string;
   latest_version: string;
   update_available: boolean;
-}
-
-export interface ConfluenceSpace {
-  id: string;
-  key: string;
-  name: string;
-}
-
-export interface ConfluenceTargetSuggestion {
-  space_key: string;
-  parent_page_id?: string | null;
-  existing_page_id?: string | null;
-  confidence: number;
-  reasoning: string;
 }
 
 export interface HardwareInfo {

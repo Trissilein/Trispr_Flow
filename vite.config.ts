@@ -28,7 +28,15 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      ignored: [
+        "**/src-tauri/**",
+        "**/logs/**",
+        "**/tmp/**",
+        "**/vendor/**",
+        "**/bench/**",
+        "**/*.log",
+        "**/src-tauri/target*/**",
+      ],
     },
   },
   build: {
@@ -36,7 +44,6 @@ export default defineConfig(async () => ({
       input: {
         main: resolve(rootDir, "index.html"),
         overlay: resolve(rootDir, "overlay.html"),
-        "assistant-presence": resolve(rootDir, "assistant-presence.html"),
       },
       output: {
         // Ensure all HTML files output with simple names (no paths)

@@ -1,23 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings } from "../types";
 
-function makeSettings(
-  moduleEnabled: boolean,
-  aiEnabled: boolean,
-  ttsModuleEnabled = false,
-  workflowAgentEnabled = false
-): Settings {
+function makeSettings(moduleEnabled: boolean, aiEnabled: boolean): Settings {
   const enabledModules: string[] = [];
   if (moduleEnabled) enabledModules.push("ai_refinement");
-  if (ttsModuleEnabled) enabledModules.push("output_voice_tts");
-  if (workflowAgentEnabled) enabledModules.push("workflow_agent");
   return {
     ai_fallback: {
       enabled: aiEnabled,
       provider: "ollama",
-      fallback_provider: null,
-      execution_mode: "local_primary",
-      strict_local_mode: true,
       preserve_source_language: true,
       model: "",
       temperature: 0.3,
@@ -31,30 +21,6 @@ function makeSettings(
       active_prompt_preset_id: "wording",
     },
     providers: {
-      claude: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: [],
-        preferred_model: "",
-      },
-      openai: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: [],
-        preferred_model: "",
-      },
-      gemini: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: [],
-        preferred_model: "",
-      },
       ollama: {
         endpoint: "http://127.0.0.1:11434",
         available_models: [],
@@ -65,45 +31,13 @@ function makeSettings(
         runtime_target_version: "0.17.7",
         last_health_check: null,
       },
-      lm_studio: {
-        endpoint: "http://127.0.0.1:1234",
-        api_key: "",
-        preferred_model: "",
-        available_models: [],
-      },
-      oobabooga: {
-        endpoint: "http://127.0.0.1:5000",
-        api_key: "",
-        preferred_model: "",
-        available_models: [],
-      },
     },
     module_settings: {
       enabled_modules: enabledModules,
       consented_permissions: {},
       module_overrides: {},
     },
-    workflow_agent: {
-      enabled: workflowAgentEnabled,
-      wakewords: ["trispr"],
-      intent_keywords: {
-        gdd_generate_publish: ["gdd"],
-      },
-      model: "qwen3.5:4b",
-      temperature: 0.2,
-      max_tokens: 512,
-      session_gap_minutes: 20,
-      max_candidates: 3,
-      hands_free_enabled: false,
-      confirm_timeout_sec: 45,
-      reply_mode: "rule_only",
-      voice_feedback_enabled: false,
-    },
     postproc_llm_enabled: aiEnabled,
-    voice_output_settings: {
-      enabled: ttsModuleEnabled,
-      output_device: "default",
-    },
   } as unknown as Settings;
 }
 
@@ -112,14 +46,10 @@ function mountMainTabDom(): void {
     <button id="tab-btn-transcription"></button>
     <button id="tab-btn-settings"></button>
     <button id="tab-btn-ai-refinement"></button>
-    <button id="tab-btn-voice-output"></button>
-    <button id="tab-btn-agent"></button>
     <button id="tab-btn-modules"></button>
     <div id="tab-transcription"></div>
     <div id="tab-settings"></div>
     <div id="tab-ai-refinement"></div>
-    <div id="tab-voice-output"></div>
-    <div id="tab-agent"></div>
     <div id="tab-modules"></div>
   `;
 }
@@ -188,105 +118,16 @@ describe("AI refinement module tab gating", () => {
     expect(state.isRefinementEnabled()).toBe(true);
   });
 
-  it("shows Voice Output tab only when output_voice_tts module is enabled", async () => {
-    const state = await import("../state");
-    const listeners = await import("../wiring/app-chrome.wire");
-
-    state.setSettings(makeSettings(true, true, false));
-    listeners.initMainTab();
-
-    const voiceBtn = document.getElementById("tab-btn-voice-output") as HTMLButtonElement | null;
-    const voicePanel = document.getElementById("tab-voice-output") as HTMLDivElement | null;
-    expect(voiceBtn?.hidden).toBe(true);
-    expect(voicePanel?.hidden).toBe(true);
-
-    state.setSettings(makeSettings(true, true, true));
-    listeners.reconcileMainTabVisibility();
-    expect(voiceBtn?.hidden).toBe(false);
-    expect(voicePanel?.hidden).toBe(false);
-  });
-
-  it("falls back to transcription when active Voice Output tab gets disabled", async () => {
-    const state = await import("../state");
-    const listeners = await import("../wiring/app-chrome.wire");
-
-    state.setSettings(makeSettings(true, true, true));
-    listeners.initMainTab();
-
-    const transBtn = document.getElementById("tab-btn-transcription");
-    const voiceBtn = document.getElementById("tab-btn-voice-output");
-    const transPanel = document.getElementById("tab-transcription");
-    const voicePanel = document.getElementById("tab-voice-output");
-
-    transBtn?.classList.remove("active");
-    voiceBtn?.classList.add("active");
-    transPanel?.classList.remove("active");
-    voicePanel?.classList.add("active");
-    localStorage.setItem("trispr-active-tab", "voice-output");
-
-    state.setSettings(makeSettings(true, true, false));
-    listeners.reconcileMainTabVisibility();
-
-    expect(localStorage.getItem("trispr-active-tab")).toBe("transcription");
-    expect(transBtn?.classList.contains("active")).toBe(true);
-    expect(voiceBtn?.classList.contains("active")).toBe(false);
-  });
-
-  it("ignores persisted Voice Output tab when module is disabled", async () => {
+  it("ignores a persisted tab id of a removed tab (voice-output)", async () => {
     const state = await import("../state");
     const listeners = await import("../wiring/app-chrome.wire");
 
     localStorage.setItem("trispr-active-tab", "voice-output");
-    state.setSettings(makeSettings(true, true, false));
+    state.setSettings(makeSettings(true, true));
     listeners.initMainTab();
 
     const transBtn = document.getElementById("tab-btn-transcription");
-    const voiceBtn = document.getElementById("tab-btn-voice-output");
     expect(transBtn?.classList.contains("active")).toBe(true);
-    expect(voiceBtn?.classList.contains("active")).toBe(false);
-  });
-
-  it("shows Agent tab only when workflow_agent is enabled", async () => {
-    const state = await import("../state");
-    const listeners = await import("../wiring/app-chrome.wire");
-
-    state.setSettings(makeSettings(true, true, true, false));
-    listeners.initMainTab();
-
-    const agentBtn = document.getElementById("tab-btn-agent") as HTMLButtonElement | null;
-    const agentPanel = document.getElementById("tab-agent") as HTMLDivElement | null;
-    expect(agentBtn?.hidden).toBe(true);
-    expect(agentPanel?.hidden).toBe(true);
-
-    state.setSettings(makeSettings(true, true, true, true));
-    listeners.reconcileMainTabVisibility();
-    expect(agentBtn?.hidden).toBe(false);
-    expect(agentPanel?.hidden).toBe(false);
-  });
-
-  it("falls back to transcription when active Agent tab gets disabled", async () => {
-    const state = await import("../state");
-    const listeners = await import("../wiring/app-chrome.wire");
-
-    state.setSettings(makeSettings(true, true, true, true));
-    listeners.initMainTab();
-
-    const transBtn = document.getElementById("tab-btn-transcription");
-    const agentBtn = document.getElementById("tab-btn-agent");
-    const transPanel = document.getElementById("tab-transcription");
-    const agentPanel = document.getElementById("tab-agent");
-
-    transBtn?.classList.remove("active");
-    agentBtn?.classList.add("active");
-    transPanel?.classList.remove("active");
-    agentPanel?.classList.add("active");
-    localStorage.setItem("trispr-active-tab", "agent");
-
-    state.setSettings(makeSettings(true, true, true, false));
-    listeners.reconcileMainTabVisibility();
-
     expect(localStorage.getItem("trispr-active-tab")).toBe("transcription");
-    expect(transBtn?.classList.contains("active")).toBe(true);
-    expect(agentBtn?.classList.contains("active")).toBe(false);
   });
 });

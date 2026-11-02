@@ -50,9 +50,9 @@ describe("settings visibility resolver", () => {
 
   it("does not revive a runtime-hidden module and hides its empty Basic tab", async () => {
     document.body.innerHTML = `
-      <button data-settings-visibility-tab="voice-output"></button>
-      <section data-settings-visibility-tab-content="voice-output" hidden>
-        <label ${managed("voice.provider", "basic", "Voice Output")}></label>
+      <button data-settings-visibility-tab="example-tab"></button>
+      <section data-settings-visibility-tab-content="example-tab" hidden>
+        <label ${managed("example.provider", "basic", "Example")}></label>
       </section>`;
     const { applySettingsVisibility } = await resolver();
     applySettingsVisibility();
@@ -67,7 +67,7 @@ describe("settings visibility resolver", () => {
       PROFILE_KEY,
       JSON.stringify({
         version: 1,
-        overrides: { "task.route.work": "expert" },
+        overrides: { "dynamic.route.work": "expert" },
         removalCandidates: {},
       }),
     );
@@ -78,10 +78,10 @@ describe("settings visibility resolver", () => {
     const dynamic = document.createElement("label");
     dynamic.innerHTML = "Route";
     dynamic.setAttribute("data-settings-visibility-managed", "true");
-    dynamic.dataset.settingsVisibilityKey = "task.route.work";
-    dynamic.dataset.settingsVisibilityLabel = "Work route";
+    dynamic.dataset.settingsVisibilityKey = "dynamic.route.work";
+    dynamic.dataset.settingsVisibilityLabel = "Dynamic route";
     dynamic.dataset.settingsVisibilityDefault = "basic";
-    dynamic.dataset.settingsVisibilityGroup = "Task Capture";
+    dynamic.dataset.settingsVisibilityGroup = "Dynamic Group";
     document.body.append(dynamic);
     applySettingsVisibility();
 

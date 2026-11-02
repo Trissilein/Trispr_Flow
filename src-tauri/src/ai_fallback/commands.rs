@@ -1,120 +1,18 @@
 use super::error::AIError;
-use super::keyring as ai_fallback_keyring;
 use super::provider::{
-    default_models_for_provider, is_local_ollama_endpoint, is_ssrf_target, list_ollama_models,
-    list_ollama_models_with_size, ollama_endpoint_candidates, ping_ollama, ping_ollama_quick,
-    ProviderFactory,
+    is_ssrf_target, ollama_endpoint_candidates, ping_ollama_quick,
 };
-use super::{check_strict_local_mode, prepare_refinement, update_and_persist_settings};
+use super::{prepare_refinement, update_and_persist_settings};
 use crate::state::{normalize_ai_fallback_fields, AppState};
-use crate::{
-    now_iso, terminate_managed_child_slot, update_runtime_diagnostics, update_startup_status,
-};
+use crate::{terminate_managed_child_slot, update_runtime_diagnostics, update_startup_status};
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub(crate) use crate::ollama_runtime::{
     detect_ollama_runtime, download_ollama_runtime, fetch_ollama_online_versions,
     import_ollama_model_from_file, install_ollama_runtime, list_ollama_runtime_versions,
-    set_strict_local_mode, start_ollama_runtime, verify_ollama_runtime,
+    start_ollama_runtime, verify_ollama_runtime,
 };
-
-#[tauri::command]
-pub(crate) async fn fetch_available_models(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    provider: String,
-) -> Result<Vec<String>, String> {
-    let provider_id = provider.trim().to_lowercase();
-    if provider_id == "ollama" {
-        let endpoint = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            check_strict_local_mode(&settings)?;
-            settings.providers.ollama.endpoint.clone()
-        };
-        return tauri::async_runtime::spawn_blocking(move || {
-            fetch_available_models_ollama_impl(endpoint)
-        })
-        .await
-        .map_err(|e| format!("Fetch available models task failed: {}", e))?;
-    }
-
-    if provider_id == "lm_studio" || provider_id == "oobabooga" {
-        let (endpoint, api_key) = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if provider_id == "lm_studio" {
-                (
-                    settings.providers.lm_studio.endpoint.clone(),
-                    settings.providers.lm_studio.api_key.clone(),
-                )
-            } else {
-                (
-                    settings.providers.oobabooga.endpoint.clone(),
-                    settings.providers.oobabooga.api_key.clone(),
-                )
-            }
-        };
-        return tauri::async_runtime::spawn_blocking(move || {
-            let models = super::provider::list_openai_compat_models(&endpoint, &api_key);
-            if models.is_empty() {
-                Err(format!(
-                    "No models found at {}. Is the server running?",
-                    endpoint
-                ))
-            } else {
-                Ok(models)
-            }
-        })
-        .await
-        .map_err(|e| format!("Fetch available models task failed: {}", e))?;
-    }
-
-    let app_handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || fetch_available_models_impl(&app_handle, provider))
-        .await
-        .map_err(|e| format!("Fetch available models task failed: {}", e))?
-}
-
-fn fetch_available_models_ollama_impl(endpoint: String) -> Result<Vec<String>, String> {
-    let models = list_ollama_models(&endpoint);
-    if models.is_empty() {
-        ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
-    }
-    Ok(models)
-}
-
-fn fetch_available_models_impl(app: &AppHandle, provider: String) -> Result<Vec<String>, String> {
-    let provider_id = provider.trim().to_lowercase();
-
-    let from_settings = {
-        let state = app.state::<AppState>();
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        settings
-            .providers
-            .get(&provider_id)
-            .map(|cfg| cfg.available_models.clone())
-            .unwrap_or_default()
-    };
-
-    if !from_settings.is_empty() {
-        return Ok(from_settings);
-    }
-
-    let defaults = default_models_for_provider(&provider_id);
-    if defaults.is_empty() {
-        return Err(format!("Unknown AI provider: {}", provider));
-    }
-    Ok(defaults)
-}
 
 #[tauri::command]
 pub(crate) async fn fetch_ollama_models_with_size(
@@ -125,7 +23,6 @@ pub(crate) async fn fetch_ollama_models_with_size(
             .settings
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        check_strict_local_mode(&settings)?;
         settings.providers.ollama.endpoint.clone()
     };
     tauri::async_runtime::spawn_blocking(move || fetch_ollama_models_with_size_impl(endpoint))
@@ -134,280 +31,67 @@ pub(crate) async fn fetch_ollama_models_with_size(
 }
 
 fn fetch_ollama_models_with_size_impl(endpoint: String) -> Result<Vec<serde_json::Value>, String> {
-    let models = list_ollama_models_with_size(&endpoint);
+    let models = super::provider::list_ollama_models_detailed(&endpoint);
     if models.is_empty() {
         ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
     }
-    Ok(models
-        .into_iter()
-        .map(|(name, size_bytes)| serde_json::json!({ "name": name, "size_bytes": size_bytes }))
-        .collect())
+    Ok(models)
 }
 
+/// Compares installed models with what the public registry currently serves for the
+/// same tag. Makes small manifest requests to registry.ollama.ai / huggingface.co only.
 #[tauri::command]
-pub(crate) async fn test_provider_connection(
+pub(crate) async fn check_ollama_model_updates(
     state: State<'_, AppState>,
-    provider: String,
-    api_key: String,
-) -> Result<serde_json::Value, String> {
-    let provider_id = provider.trim().to_lowercase();
-
-    if provider_id == "ollama" {
-        let endpoint = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            check_strict_local_mode(&settings)?;
-            settings.providers.ollama.endpoint.clone()
-        };
-        return tauri::async_runtime::spawn_blocking(move || {
-            test_provider_connection_ollama_impl(endpoint)
-        })
-        .await
-        .map_err(|e| format!("Test provider connection task failed: {}", e))?;
-    }
-
-    if provider_id == "lm_studio" || provider_id == "oobabooga" {
-        let (endpoint, stored_key, label) = {
-            let settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if provider_id == "lm_studio" {
-                (
-                    settings.providers.lm_studio.endpoint.clone(),
-                    settings.providers.lm_studio.api_key.clone(),
-                    "LM Studio".to_string(),
-                )
-            } else {
-                (
-                    settings.providers.oobabooga.endpoint.clone(),
-                    settings.providers.oobabooga.api_key.clone(),
-                    "Oobabooga".to_string(),
-                )
-            }
-        };
-        let effective_key = if api_key.trim().is_empty() {
-            stored_key
-        } else {
-            api_key
-        };
-        return tauri::async_runtime::spawn_blocking(move || {
-            let models = super::provider::list_openai_compat_models(&endpoint, &effective_key);
-            if models.is_empty() {
-                Err(format!(
-                    "{} not reachable at {}. Is the server running?",
-                    label, endpoint
-                ))
-            } else {
-                Ok(serde_json::json!({
-                    "ok": true,
-                    "provider": provider_id,
-                    "message": format!("{} is running. {} model(s) available.", label, models.len()),
-                    "models": models,
-                }))
-            }
-        })
-        .await
-        .map_err(|e| format!("Test provider connection task failed: {}", e))?;
-    }
-
-    tauri::async_runtime::spawn_blocking(move || {
-        test_provider_connection_impl(provider_id, api_key)
-    })
-    .await
-    .map_err(|e| format!("Test provider connection task failed: {}", e))?
-}
-
-fn test_provider_connection_ollama_impl(endpoint: String) -> Result<serde_json::Value, String> {
-    ping_ollama(&endpoint).map_err(|e| e.to_string())?;
-    let models = list_ollama_models(&endpoint);
-    Ok(serde_json::json!({
-        "ok": true,
-        "provider": "ollama",
-        "message": format!("Ollama is running. {} model(s) available.", models.len()),
-        "models": models,
-    }))
-}
-
-fn test_provider_connection_impl(
-    provider_id: String,
-    api_key: String,
-) -> Result<serde_json::Value, String> {
-    let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
-    provider_client
-        .validate_api_key(api_key.trim())
-        .map_err(|e| e.to_string())?;
-
-    Ok(serde_json::json!({
-      "ok": true,
-      "provider": provider_id,
-      "message": "API key format looks valid. Live provider connection checks are activated with provider integrations.",
-    }))
-}
-
-#[tauri::command]
-pub(crate) fn save_provider_api_key(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    provider: String,
-    api_key: String,
-) -> Result<serde_json::Value, String> {
-    let provider_id = provider.trim().to_lowercase();
-    let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
-    provider_client
-        .validate_api_key(api_key.trim())
-        .map_err(|e| e.to_string())?;
-    ai_fallback_keyring::store_api_key(&app, &provider_id, api_key.trim())?;
-
-    update_and_persist_settings(&app, state.inner(), |settings| {
-        settings.providers.set_api_key_stored(&provider_id, true)?;
-        normalize_ai_fallback_fields(settings);
-        Ok(())
-    })?;
-
-    Ok(serde_json::json!({
-      "status": "success",
-      "provider": provider_id,
-      "stored": true,
-      "auth_status": "locked",
-    }))
-}
-
-#[tauri::command]
-pub(crate) fn clear_provider_api_key(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    provider: String,
-) -> Result<serde_json::Value, String> {
-    let provider_id = provider.trim().to_lowercase();
-    ai_fallback_keyring::clear_api_key(&app, &provider_id)?;
-
-    update_and_persist_settings(&app, state.inner(), |settings| {
-        settings.providers.set_api_key_stored(&provider_id, false)?;
-        normalize_ai_fallback_fields(settings);
-        Ok(())
-    })?;
-
-    Ok(serde_json::json!({
-      "status": "success",
-      "provider": provider_id,
-      "stored": false,
-      "auth_status": "locked",
-    }))
-}
-
-#[tauri::command]
-pub(crate) fn verify_provider_auth(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    provider: String,
-    method: Option<String>,
-) -> Result<serde_json::Value, String> {
-    let provider_id = provider.trim().to_lowercase();
-    let method_id = method.as_deref().unwrap_or("api_key").trim().to_lowercase();
-
-    if provider_id == "ollama" {
-        return Err("Ollama does not require cloud credential verification.".to_string());
-    }
-    if !matches!(provider_id.as_str(), "claude" | "openai" | "gemini") {
-        return Err(format!("Unknown AI provider: {}", provider));
-    }
-    if method_id != "api_key" && method_id != "oauth" {
-        return Err(format!(
-            "Unsupported auth verification method '{}'.",
-            method_id
-        ));
-    }
-
-    if method_id == "oauth" {
-        update_and_persist_settings(&app, state.inner(), |settings| {
-            settings.providers.lock_auth(&provider_id)?;
-            normalize_ai_fallback_fields(settings);
-            Ok(())
-        })?;
-        return Err(
-            "OAuth verification is not supported yet. Use API key verification.".to_string(),
-        );
-    }
-
-    let stored_key = ai_fallback_keyring::read_api_key(&app, &provider_id)?;
-    let Some(api_key) = stored_key else {
-        update_and_persist_settings(&app, state.inner(), |settings| {
-            settings.providers.lock_auth(&provider_id)?;
-            normalize_ai_fallback_fields(settings);
-            Ok(())
-        })?;
-        return Err(format!(
-            "No stored API key found for provider '{}'.",
-            provider_id
-        ));
-    };
-
-    let provider_client = ProviderFactory::create(&provider_id).map_err(|e| e.to_string())?;
-    if let Err(error) = provider_client.validate_api_key(api_key.trim()) {
-        update_and_persist_settings(&app, state.inner(), |settings| {
-            settings.providers.lock_auth(&provider_id)?;
-            normalize_ai_fallback_fields(settings);
-            Ok(())
-        })?;
-        return Err(error.to_string());
-    }
-
-    let verified_at = now_iso();
-    update_and_persist_settings(&app, state.inner(), |settings| {
-        settings.providers.set_auth_verified(
-            &provider_id,
-            "verified_api_key",
-            Some(verified_at.clone()),
-        )?;
-        normalize_ai_fallback_fields(settings);
-        Ok(())
-    })?;
-
-    Ok(serde_json::json!({
-      "ok": true,
-      "provider": provider_id,
-      "method": "verified_api_key",
-      "verified_at": verified_at,
-      "message": "Provider credentials verified successfully.",
-    }))
-}
-
-#[tauri::command]
-pub(crate) fn save_ollama_endpoint(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    endpoint: String,
-) -> Result<serde_json::Value, String> {
-    let trimmed = endpoint.trim().to_string();
-    if trimmed.is_empty() {
-        return Err("Endpoint cannot be empty.".to_string());
-    }
-    if is_ssrf_target(&trimmed) {
-        return Err("This endpoint address is not allowed (SSRF protection).".to_string());
-    }
-    {
+    models: Vec<super::model_registry::ModelUpdateCheckInput>,
+) -> Result<Vec<super::model_registry::ModelUpdateStatus>, String> {
+    let endpoint = {
         let settings = state
             .settings
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if settings.ai_fallback.strict_local_mode && !is_local_ollama_endpoint(&trimmed) {
-            return Err(
-                "Strict local mode is enabled. Only localhost/127.0.0.1:11434 is allowed."
-                    .to_string(),
-            );
-        }
+        settings.providers.ollama.endpoint.clone()
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        // The digest a runtime lists for a model depends on the runtime version; the weights
+        // layer does not. Collect the local blob digests so "current" is decided on weights.
+        let enriched = models
+            .into_iter()
+            .map(|mut model| {
+                model.local_layers = fetch_local_layer_digests(&endpoint, &model.name);
+                model
+            })
+            .collect();
+        super::model_registry::check_model_updates(enriched)
+    })
+    .await
+    .map_err(|e| format!("Model update check failed: {}", e))
+}
+
+/// Blob digests of a local model (from `/api/show`). Empty when the lookup fails; the
+/// caller then falls back to the manifest digest.
+fn fetch_local_layer_digests(endpoint: &str, model: &str) -> Vec<String> {
+    let agent = ureq::builder()
+        .timeout_connect(std::time::Duration::from_secs(2))
+        .timeout_read(std::time::Duration::from_secs(5))
+        .build();
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/show", candidate);
+        let Ok(response) = agent
+            .post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(serde_json::json!({ "model": model }))
+        else {
+            continue;
+        };
+        let Ok(json) = response.into_json::<serde_json::Value>() else {
+            continue;
+        };
+        return super::model_registry::parse_modelfile_blob_digests(
+            json["modelfile"].as_str().unwrap_or(""),
+        );
     }
-    update_and_persist_settings(&app, state.inner(), |settings| {
-        settings.providers.ollama.endpoint = trimmed.clone();
-        Ok(())
-    })?;
-    Ok(serde_json::json!({
-        "status": "success",
-        "endpoint": trimmed,
-    }))
+    Vec::new()
 }
 
 #[tauri::command]
@@ -440,7 +124,7 @@ pub(crate) async fn refine_transcript(
     let result = tauri::async_runtime::spawn_blocking(move || {
         setup
             .provider
-            .refine_transcript(&transcript, &setup.model, &setup.options, &setup.api_key)
+            .refine_transcript(&transcript, &setup.model, &setup.options)
     })
     .await
     .map_err(|e| format!("refine_transcript task failed: {}", e))?;
@@ -471,11 +155,6 @@ pub(crate) async fn ping_refinement_model(
         return Ok(false);
     }
 
-    let provider = &settings_snapshot.ai_fallback.provider;
-    if provider != "ollama" && provider != "lm_studio" && provider != "oobabooga" {
-        return Ok(false);
-    }
-
     let setup = match prepare_refinement(&app, &settings_snapshot) {
         Ok(setup) => setup,
         Err(_) => return Ok(false),
@@ -486,7 +165,7 @@ pub(crate) async fn ping_refinement_model(
     let result = tauri::async_runtime::spawn_blocking(move || {
         setup
             .provider
-            .refine_transcript(ping_text, &setup.model, &setup.options, &setup.api_key)
+            .refine_transcript(ping_text, &setup.model, &setup.options)
     })
     .await
     .map_err(|e| format!("ping_refinement_model task failed: {}", e))?;
@@ -494,15 +173,24 @@ pub(crate) async fn ping_refinement_model(
     Ok(result.is_ok())
 }
 
+/// Takes `model` out of the set of running pulls. A lock that a panicking thread poisoned is
+/// recovered (like everywhere else): skipping it would leave the entry in place and the model
+/// "already in progress" until the app restarts.
+pub(super) fn release_pull(pulls: &std::sync::Mutex<std::collections::HashSet<String>>, model: &str) {
+    pulls
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(model);
+}
+
 #[tauri::command]
-pub(crate) fn pull_ollama_model(
+pub(crate) async fn pull_ollama_model(
     app: AppHandle,
     state: State<'_, AppState>,
     model: String,
 ) -> Result<(), String> {
-    use super::provider::{
-        precheck_ollama_registry_model_tag, pull_ollama_model_inner, validate_ollama_model_name,
-    };
+    use super::model_registry::precheck_model_ref;
+    use super::provider::{pull_ollama_model_inner, validate_ollama_model_name};
 
     validate_ollama_model_name(&model)?;
 
@@ -522,18 +210,24 @@ pub(crate) fn pull_ollama_model(
             .settings
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Err(error) = check_strict_local_mode(&settings) {
-            let mut pulls = state
-                .ollama_pulls
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            pulls.remove(&model);
-            return Err(error);
-        }
         settings.providers.ollama.endpoint.clone()
     };
 
-    if let Err(error) = precheck_ollama_registry_model_tag(&model) {
+    // Registry/runtime lookups are network calls: keep them off the command thread. Besides the
+    // existence precheck, refuse before any download when the running runtime is provably too
+    // old for the model (the registry would answer the pull with HTTP 412 only afterwards).
+    let precheck = {
+        let model = model.clone();
+        let endpoint = endpoint.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            precheck_model_ref(&model)?;
+            super::model_verify::ensure_runtime_supports_model(&endpoint, &model)
+        })
+        .await
+        .map_err(|e| format!("Model precheck task failed: {}", e))
+        .and_then(|result| result)
+    };
+    if let Err(error) = precheck {
         let mut pulls = state
             .ollama_pulls
             .lock()
@@ -548,9 +242,7 @@ pub(crate) fn pull_ollama_model(
     }
     impl Drop for PullGuard {
         fn drop(&mut self) {
-            if let Ok(mut pulls) = self.app.state::<AppState>().ollama_pulls.lock() {
-                pulls.remove(&self.model);
-            }
+            release_pull(&self.app.state::<AppState>().ollama_pulls, &self.model);
         }
     }
 
@@ -580,7 +272,6 @@ pub(crate) async fn delete_ollama_model(
             .settings
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        check_strict_local_mode(&settings)?;
         settings.providers.ollama.endpoint.clone()
     };
 
@@ -589,8 +280,13 @@ pub(crate) async fn delete_ollama_model(
         .map_err(|e| format!("Delete Ollama model task failed: {}", e))?
 }
 
-fn delete_ollama_model_impl(endpoint: String, model: String) -> Result<(), String> {
+pub(super) fn delete_ollama_model_impl(endpoint: String, model: String) -> Result<(), String> {
     use super::provider::ollama_endpoint_candidates;
+
+    // Unload first: on Windows the runner loads without mmap, so /api/delete succeeds on a
+    // loaded model but leaves a runner that can no longer be unloaded (404) until the
+    // server restarts. Best effort; a model that is not loaded is simply a no-op.
+    let _ = unload_ollama_model_impl(&endpoint, &model);
 
     let body = serde_json::json!({ "model": model.clone() });
 
@@ -638,7 +334,6 @@ pub(crate) async fn get_ollama_model_info(
             .settings
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        check_strict_local_mode(&settings)?;
         settings.providers.ollama.endpoint.clone()
     };
 
@@ -701,7 +396,6 @@ fn unload_configured_ollama_model(app: &AppHandle, model: &str) -> Result<(), St
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
-    check_strict_local_mode(&settings)?;
     unload_ollama_model_impl(&settings.providers.ollama.endpoint, model)
 }
 
@@ -742,6 +436,29 @@ pub(crate) fn unload_ollama_model_impl(endpoint: &str, model: &str) -> Result<()
         "Failed to unload Ollama model: {}",
         last_error.unwrap_or_else(|| "unable to reach Ollama endpoint".to_string())
     ))
+}
+
+/// Loads `model` with the same runner options refinement uses, so the first dictation after
+/// a download or switch does not pay the one-time load (measured: 7-28 s on a fresh pull).
+#[tauri::command]
+pub(crate) async fn warmup_ollama_model(
+    state: State<'_, AppState>,
+    model: String,
+) -> Result<(), String> {
+    super::provider::validate_ollama_model_name(&model)?;
+    let (endpoint, num_ctx) = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (
+            settings.providers.ollama.endpoint.clone(),
+            super::provider::num_ctx_for_tier(settings.ai_fallback.adaptive_num_ctx_tier),
+        )
+    };
+    tauri::async_runtime::spawn_blocking(move || warmup_ollama_model_impl(&endpoint, &model, num_ctx))
+        .await
+        .map_err(|e| format!("Model warmup failed: {}", e))?
 }
 
 pub(crate) fn warmup_ollama_model_impl(
@@ -832,7 +549,9 @@ pub(crate) async fn stop_ollama_runtime(app: AppHandle) -> Result<(), String> {
                 .clone();
             settings.providers.ollama.endpoint
         };
-        let runtime_reachable = ping_ollama_quick(&endpoint).is_ok();
+        // Right after the kill: the cached quick ping would still say "running" for up to 3 s.
+        super::provider::reset_quick_ping_cache();
+        let runtime_reachable = super::provider::ping_ollama_quick_fresh(&endpoint).is_ok();
         update_startup_status(&app, state.inner(), |status| {
             status.ollama_ready = runtime_reachable;
             status.ollama_starting = false;
@@ -856,38 +575,32 @@ pub(crate) async fn stop_ollama_runtime(app: AppHandle) -> Result<(), String> {
     .unwrap_or_else(|_| Ok(()))
 }
 
-#[tauri::command]
-pub(crate) fn install_lm_studio() -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-        std::process::Command::new("cmd")
-            .args([
-                "/C",
-                "start",
-                "powershell",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-NoExit",
-                "-Command",
-                "Write-Host 'Trispr Flow: Installing LM Studio...' -ForegroundColor Cyan; irm 'https://lmstudio.ai/install.ps1' | iex",
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| format!("Failed to launch LM Studio installer: {e}"))?;
-        Ok(())
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Err("LM Studio installer helper is only supported on Windows.".to_string())
-    }
-}
-
 #[cfg(test)]
 mod unload_tests {
-    use super::unload_ollama_model_impl;
+    use super::{release_pull, unload_ollama_model_impl};
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn a_finished_pull_is_released_even_when_the_pull_set_lock_is_poisoned() {
+        let pulls = Arc::new(Mutex::new(HashSet::from(["gemma4:e4b".to_string()])));
+        let poisoner = pulls.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.lock().unwrap();
+            panic!("a thread died while holding the pull set");
+        })
+        .join();
+        assert!(pulls.is_poisoned());
+
+        release_pull(&pulls, "gemma4:e4b");
+
+        assert!(
+            pulls.lock().unwrap_or_else(|p| p.into_inner()).is_empty(),
+            "the model must not stay 'already in progress' for the rest of the session"
+        );
+        // releasing something that is not there is a no-op
+        release_pull(&pulls, "other:1");
+    }
 
     #[test]
     fn unload_reports_when_no_ollama_endpoint_accepts_the_release_request() {

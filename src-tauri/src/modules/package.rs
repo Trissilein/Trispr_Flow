@@ -8,19 +8,15 @@ const SUPPORTED_SCHEMA_VERSION: u16 = 1;
 
 /// Module package kind.
 ///
-/// - `assets` (default): metadata + asset package for a host-known capability
-///   (the original install-by-unpack model, e.g. GDD). `host_capability` must
-///   match `id` and be a known host capability.
-/// - `runtime`: external binaries/assets the host resolves and calls (e.g. a
-///   downloaded FFmpeg or whisper runtime). Requires `entrypoint`.
+/// - `runtime` (default): external binaries/assets the host resolves and calls
+///   (e.g. a downloaded FFmpeg or whisper runtime). Requires `entrypoint`.
 /// - `sidecar`: a self-contained executable that owns capability logic and is
 ///   spawned as a managed child process. Requires `entrypoint`.
-pub const KIND_ASSETS: &str = "assets";
 pub const KIND_RUNTIME: &str = "runtime";
 pub const KIND_SIDECAR: &str = "sidecar";
 
 fn default_kind() -> String {
-    KIND_ASSETS.to_string()
+    KIND_RUNTIME.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -30,14 +26,10 @@ pub struct ModulePackageManifest {
     pub id: String,
     pub name: String,
     pub version: String,
-    /// Package kind: "assets" | "runtime" | "sidecar". Defaults to "assets" so
-    /// existing host-capability packages (GDD) parse unchanged.
+    /// Package kind: "runtime" | "sidecar". Defaults to "runtime".
     pub kind: String,
-    /// Only meaningful for "assets" packages — the host capability this package
-    /// backs. For runtime/sidecar packages this may be empty.
-    pub host_capability: String,
     /// Relative path (inside the package) to the runtime binary or sidecar
-    /// executable. Required for "runtime"/"sidecar" kinds, ignored for "assets".
+    /// executable. Required for both kinds.
     pub entrypoint: Option<String>,
     pub required_assets: Vec<ModulePackageAsset>,
     pub sub_capabilities: Vec<ModulePackageSubCapability>,
@@ -52,7 +44,6 @@ impl Default for ModulePackageManifest {
             name: String::new(),
             version: String::new(),
             kind: default_kind(),
-            host_capability: String::new(),
             entrypoint: None,
             required_assets: Vec::new(),
             sub_capabilities: Vec::new(),
@@ -357,21 +348,6 @@ fn validate_manifest(package_dir: &Path, manifest: &ModulePackageManifest) -> Re
     }
 
     match manifest.kind.as_str() {
-        KIND_ASSETS => {
-            require_non_empty("host capability", &manifest.host_capability)?;
-            if !known_host_capability(&manifest.host_capability) {
-                return Err(format!(
-                    "Unknown host capability '{}'.",
-                    manifest.host_capability
-                ));
-            }
-            if manifest.id != manifest.host_capability {
-                return Err(format!(
-                    "Module id '{}' must match host capability '{}' for an assets package.",
-                    manifest.id, manifest.host_capability
-                ));
-            }
-        }
         KIND_RUNTIME | KIND_SIDECAR => {
             let entrypoint = manifest.entrypoint.as_deref().unwrap_or("").trim();
             if entrypoint.is_empty() {
@@ -417,10 +393,6 @@ fn require_non_empty(label: &str, value: &str) -> Result<(), String> {
 
 fn known_module_id(module_id: &str) -> bool {
     super::registry::find_manifest(module_id).is_some()
-}
-
-fn known_host_capability(host_capability: &str) -> bool {
-    matches!(host_capability, "gdd")
 }
 
 fn validate_required_asset(package_dir: &Path, asset: &ModulePackageAsset) -> Result<(), String> {
@@ -479,23 +451,24 @@ mod tests {
 
     fn write_valid_package(test_name: &str) -> PathBuf {
         let package_dir = unique_package_dir(test_name);
-        fs::create_dir_all(package_dir.join("templates")).expect("create templates dir");
-        fs::write(package_dir.join("templates/universal-strict.md"), "# GDD\n")
-            .expect("write template");
+        fs::create_dir_all(package_dir.join("bin")).expect("create bin dir");
+        fs::write(package_dir.join("bin/tool.exe"), b"MZ").expect("write entrypoint");
+        fs::write(package_dir.join("bin/data.bin"), b"data").expect("write asset");
         fs::write(
             package_dir.join(MODULE_MANIFEST_FILE),
             r#"{
   "schema_version": 1,
-  "id": "gdd",
-  "name": "GDD Automation",
+  "id": "opus",
+  "name": "Opus Runtime",
   "version": "0.1.0",
-  "host_capability": "gdd",
+  "kind": "runtime",
+  "entrypoint": "bin/tool.exe",
   "required_assets": [
-    { "id": "universal_template", "path": "templates/universal-strict.md", "kind": "file" }
+    { "id": "asset_data", "path": "bin/data.bin", "kind": "file" }
   ],
   "sub_capabilities": [
-    { "id": "draft_generation", "label": "Draft Generation" },
-    { "id": "confluence_publishing", "label": "Confluence Publishing", "requires_setup": true }
+    { "id": "encode", "label": "Encode" },
+    { "id": "export", "label": "Export", "requires_setup": true }
   ]
 }"#,
         )
@@ -504,12 +477,12 @@ mod tests {
     }
 
     #[test]
-    fn accepts_valid_gdd_package() {
+    fn accepts_valid_package() {
         let package_dir = write_valid_package("valid");
         let package = scan_package_dir(&package_dir).expect("valid package");
 
-        assert_eq!(package.manifest.id, "gdd");
-        assert_eq!(package.manifest.host_capability, "gdd");
+        assert_eq!(package.manifest.id, "opus");
+        assert_eq!(package.manifest.kind, "runtime");
         assert_eq!(package.manifest.required_assets.len(), 1);
         assert_eq!(package.manifest.sub_capabilities.len(), 2);
 
@@ -522,7 +495,7 @@ mod tests {
         let manifest_path = package_dir.join(MODULE_MANIFEST_FILE);
         let manifest = fs::read_to_string(&manifest_path)
             .expect("read manifest")
-            .replace("\"id\": \"gdd\"", "\"id\": \"unknown\"");
+            .replace("\"id\": \"opus\"", "\"id\": \"unknown\"");
         fs::write(&manifest_path, manifest).expect("write manifest");
 
         let error = scan_package_dir(&package_dir).expect_err("unknown id should fail");
@@ -537,7 +510,7 @@ mod tests {
         let manifest_path = package_dir.join(MODULE_MANIFEST_FILE);
         let manifest = fs::read_to_string(&manifest_path)
             .expect("read manifest")
-            .replace("\"id\": \"gdd\"", "\"id\": \"analysis\"");
+            .replace("\"id\": \"opus\"", "\"id\": \"analysis\"");
         fs::write(&manifest_path, manifest).expect("write manifest");
 
         let error = scan_package_dir(&package_dir).expect_err("removed id should fail");
@@ -549,11 +522,11 @@ mod tests {
     #[test]
     fn rejects_missing_required_asset() {
         let package_dir = write_valid_package("missing-asset");
-        fs::remove_file(package_dir.join("templates/universal-strict.md")).expect("remove asset");
+        fs::remove_file(package_dir.join("bin/data.bin")).expect("remove asset");
 
         let error = scan_package_dir(&package_dir).expect_err("missing asset should fail");
 
-        assert!(error.contains("Required asset 'universal_template' is missing file"));
+        assert!(error.contains("Required asset 'asset_data' is missing file"));
         let _ = fs::remove_dir_all(package_dir);
     }
 
@@ -563,7 +536,7 @@ mod tests {
         let manifest_path = package_dir.join(MODULE_MANIFEST_FILE);
         let manifest = fs::read_to_string(&manifest_path)
             .expect("read manifest")
-            .replace("templates/universal-strict.md", "../outside.md");
+            .replace("bin/data.bin", "../outside.md");
         fs::write(&manifest_path, manifest).expect("write manifest");
 
         let error = scan_package_dir(&package_dir).expect_err("path traversal should fail");
@@ -596,30 +569,27 @@ mod tests {
         fs::create_dir_all(&modules_dir).expect("create modules dir");
         let valid_package = write_valid_package("scan-valid");
         let invalid_package = write_valid_package("scan-invalid");
-        let valid_target = modules_dir.join("gdd");
+        let valid_target = modules_dir.join("opus");
         let invalid_target = modules_dir.join("broken");
         fs::rename(&valid_package, &valid_target).expect("move valid package");
         fs::rename(&invalid_package, &invalid_target).expect("move invalid package");
-        fs::remove_file(invalid_target.join("templates/universal-strict.md"))
-            .expect("remove invalid asset");
+        fs::remove_file(invalid_target.join("bin/data.bin")).expect("remove invalid asset");
 
         let report = scan_modules_dir(&modules_dir).expect("scan modules dir");
 
         assert_eq!(report.packages.len(), 1);
-        assert_eq!(report.packages[0].manifest.id, "gdd");
+        assert_eq!(report.packages[0].manifest.id, "opus");
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].error.contains("missing file"));
         let _ = fs::remove_dir_all(modules_dir);
     }
 
     fn write_runtime_package(test_name: &str, with_entrypoint: bool) -> PathBuf {
-        // "piper_tts" is a known registry id, so known_module_id passes and we
-        // exercise the runtime-kind branch rather than the assets branch.
         let package_dir = unique_package_dir(test_name);
         fs::create_dir_all(package_dir.join("bin")).expect("create bin dir");
         fs::write(package_dir.join("bin/tool.exe"), b"MZ").expect("write entrypoint");
         let entrypoint_line = if with_entrypoint {
-            "\n  \"entrypoint\": \"bin/tool.exe\","
+            ",\n  \"entrypoint\": \"bin/tool.exe\""
         } else {
             ""
         };
@@ -628,11 +598,10 @@ mod tests {
             format!(
                 r#"{{
   "schema_version": 1,
-  "id": "piper_tts",
-  "name": "Piper Runtime",
+  "id": "opus",
+  "name": "Opus Runtime",
   "version": "0.1.0",
-  "kind": "runtime",{entrypoint_line}
-  "host_capability": ""
+  "kind": "runtime"{entrypoint_line}
 }}"#
             ),
         )
@@ -665,12 +634,12 @@ mod tests {
         let result = install_package_from_dir(&source_dir, &modules_dir).expect("install package");
 
         assert!(result.installed);
-        assert_eq!(result.module_id, "gdd");
-        assert!(modules_dir.join("gdd").join(MODULE_MANIFEST_FILE).is_file());
+        assert_eq!(result.module_id, "opus");
         assert!(modules_dir
-            .join("gdd")
-            .join("templates/universal-strict.md")
+            .join("opus")
+            .join(MODULE_MANIFEST_FILE)
             .is_file());
+        assert!(modules_dir.join("opus").join("bin/data.bin").is_file());
         let _ = fs::remove_dir_all(source_dir);
         let _ = fs::remove_dir_all(modules_dir);
     }
@@ -685,7 +654,7 @@ mod tests {
 
         assert!(first.installed);
         assert!(!second.installed);
-        assert_eq!(second.package.manifest.id, "gdd");
+        assert_eq!(second.package.manifest.id, "opus");
         let _ = fs::remove_dir_all(source_dir);
         let _ = fs::remove_dir_all(modules_dir);
     }

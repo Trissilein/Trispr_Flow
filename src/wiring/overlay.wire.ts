@@ -3,7 +3,7 @@
 // Owns DOM event listeners for the "Overlay appearance" settings cluster:
 // colour, radius range, rise/fall timing, opacity (active + inactive),
 // position, style (dot/kitt), refining indicator (enable/preset/colour/
-// speed/range), the optional TTS-stop button, KITT-mode dimensions, and
+// speed/range), KITT-mode dimensions, and
 // the Apply button.
 //
 // These listeners only mutate `settings.overlay_*` fields and persist.
@@ -237,27 +237,6 @@ export function wireOverlay(): void {
   });
 
   onChangePersist(dom.overlayRefiningIndicatorRange);
-
-  // ───────── TTS-stop button on the overlay ─────────
-
-  dom.overlayTtsStopEnabled?.addEventListener("change", async () => {
-    if (!settings) return;
-    settings.overlay_tts_stop_enabled = Boolean(dom.overlayTtsStopEnabled?.checked);
-    await persistSettings();
-  });
-
-  dom.overlayTtsStopShape?.addEventListener("change", async () => {
-    if (!settings || !dom.overlayTtsStopShape) return;
-    settings.overlay_tts_stop_shape = dom.overlayTtsStopShape.value === "round" ? "round" : "compact";
-    await persistSettings();
-  });
-
-  dom.overlayTtsStopColor?.addEventListener("input", () => {
-    if (!settings || !dom.overlayTtsStopColor) return;
-    settings.overlay_tts_stop_color = dom.overlayTtsStopColor.value;
-  });
-
-  onChangePersist(dom.overlayTtsStopColor);
 
   // ───────── KITT-mode dimensions ─────────
 

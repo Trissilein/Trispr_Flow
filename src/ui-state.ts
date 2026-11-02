@@ -226,25 +226,12 @@ export function setGpuActivity(event: TranscriptionGpuActivityEvent) {
 export function renderHero() {
   if (!settings) return;
   const aiFallbackOn = isRefinementEnabled();
-  const provider = settings.ai_fallback?.provider ?? "ollama";
-  const executionMode = settings.ai_fallback?.execution_mode ?? "local_primary";
-  const isOnlineRefinement = aiFallbackOn && executionMode === "online_fallback" && provider !== "ollama";
   const configuredModel = settings.ai_fallback?.model?.trim() || "";
-  const providerModel =
-    provider === "claude"
-      ? settings.providers?.claude?.preferred_model?.trim() || ""
-      : provider === "openai"
-        ? settings.providers?.openai?.preferred_model?.trim() || ""
-        : provider === "gemini"
-          ? settings.providers?.gemini?.preferred_model?.trim() || ""
-          : settings.providers?.ollama?.preferred_model?.trim() || "";
+  const providerModel = settings.providers?.ollama?.preferred_model?.trim() || "";
   const effectiveRefinementModel = configuredModel || providerModel || "No model selected";
 
   if (dom.dictationBadge) {
-    dom.dictationBadge.textContent = isOnlineRefinement
-      ? "AI Refinement (Online)"
-      : "Private Mode (Offline)";
-    dom.dictationBadge.classList.toggle("badge--online", isOnlineRefinement);
+    dom.dictationBadge.textContent = "Private Mode (Offline)";
   }
   if (dom.engineRefineModel) {
     dom.engineRefineModel.textContent = aiFallbackOn ? formatModelName(effectiveRefinementModel) : "—";

@@ -34,12 +34,6 @@ vi.hoisted(() => {
     <span id="overlay-refining-indicator-speed-value"></span>
     <input id="overlay-refining-indicator-range" type="range" min="60" max="180" />
     <span id="overlay-refining-indicator-range-value"></span>
-    <input id="overlay-tts-stop-enabled" type="checkbox" />
-    <select id="overlay-tts-stop-shape">
-      <option value="compact">compact</option>
-      <option value="round">round</option>
-    </select>
-    <input id="overlay-tts-stop-color" type="color" />
     <input id="overlay-kitt-min-width" type="range" />
     <span id="overlay-kitt-min-width-value"></span>
     <input id="overlay-kitt-max-width" type="range" min="50" max="3840" />
@@ -80,9 +74,6 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
         overlay_refining_indicator_color: "#6ec8ff",
         overlay_refining_indicator_speed_ms: 1150,
         overlay_refining_indicator_range: 100,
-        overlay_tts_stop_enabled: true,
-        overlay_tts_stop_shape: "compact",
-        overlay_tts_stop_color: "#ff00aa",
         ...overrides,
     } as unknown as Settings;
 }
@@ -183,8 +174,6 @@ describe("renderOverlaySettings", () => {
             overlay_refining_indicator_color: "not-a-color",
             overlay_refining_indicator_speed_ms: 12,
             overlay_refining_indicator_range: 999,
-            overlay_tts_stop_shape: "square" as any,
-            overlay_tts_stop_color: "bad-color",
         }));
         renderOverlaySettings();
         expect(settings?.overlay_refining_indicator_preset).toBe("standard");
@@ -192,8 +181,6 @@ describe("renderOverlaySettings", () => {
         expect(settings?.overlay_refining_indicator_color).toBe("#6ec8ff");
         expect(settings?.overlay_refining_indicator_speed_ms).toBe(450);
         expect(settings?.overlay_refining_indicator_range).toBe(180);
-        expect(settings?.overlay_tts_stop_shape).toBe("compact");
-        expect(settings?.overlay_tts_stop_color).toBe("#4be0d4");
     });
 
     it("renders overlay-refining indicator controls", () => {
@@ -204,12 +191,5 @@ describe("renderOverlaySettings", () => {
         expect(byId<HTMLElement>("overlay-refining-indicator-speed-value").textContent).toBe("1150 ms");
         expect(byId<HTMLInputElement>("overlay-refining-indicator-range").value).toBe("100");
         expect(byId<HTMLElement>("overlay-refining-indicator-range-value").textContent).toBe("100%");
-    });
-
-    it("renders overlay TTS stop controls", () => {
-        renderOverlaySettings();
-        expect(byId<HTMLInputElement>("overlay-tts-stop-enabled").checked).toBe(true);
-        expect(byId<HTMLSelectElement>("overlay-tts-stop-shape").value).toBe("compact");
-        expect(byId<HTMLInputElement>("overlay-tts-stop-color").value).toBe("#ff00aa");
     });
 });

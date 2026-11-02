@@ -28,14 +28,6 @@ function runOrExit(steps, name, command) {
   }
 }
 
-function readJsonIfExists(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
 const startedAtIso = new Date().toISOString();
 const startedAtMs = Date.now();
 const steps = [];
@@ -54,16 +46,6 @@ runOrExit(
 );
 runOrExit(steps, "cargo-build", "cargo build --manifest-path src-tauri/Cargo.toml");
 runOrExit(steps, "audit-rust", "npm run audit:rust");
-runOrExit(
-  steps,
-  "benchmark-latency",
-  "npm run benchmark:latency -- -Warmup 1 -Runs 3 -NoRefinement -FailOnSloMiss"
-);
-runOrExit(
-  steps,
-  "benchmark-tts",
-  "npm run benchmark:tts:strict -- -Warmup 1 -Runs 3"
-);
 
 const endedAtIso = new Date().toISOString();
 const report = {
@@ -71,8 +53,6 @@ const report = {
   ended_at: endedAtIso,
   duration_ms: Date.now() - startedAtMs,
   steps,
-  latency_report: readJsonIfExists(path.join(resultsDir, "latest.json")),
-  tts_report: readJsonIfExists(path.join(resultsDir, "tts.latest.json")),
 };
 
 fs.mkdirSync(resultsDir, { recursive: true });

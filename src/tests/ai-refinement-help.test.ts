@@ -20,11 +20,6 @@ describe("ai-refinement-help", () => {
     document.body.innerHTML = `
       <h3 id="ai-refinement-provider-model-title" class="ai-refine-section-title">Provider & Model</h3>
       <div class="field toggle"><label class="toggle-row"><span class="field-label">Enable AI refinement</span><input id="ai-fallback-enabled" /></label></div>
-      <div class="field"><span class="field-label">Provider</span><select id="ai-fallback-provider"></select></div>
-      <label id="ai-fallback-model-field" class="field"><span class="field-label">Model</span><select id="ai-fallback-model"></select></label>
-      <div id="ai-fallback-ollama-managed-note" class="field-hint"></div>
-      <div class="field"><span class="field-label">API key</span><input id="ai-fallback-api-key-input" /></div>
-      <div class="hotkey-input-group"><button id="ai-fallback-save-key">Save</button><button id="ai-fallback-clear-key">Clear</button><button id="ai-fallback-test-key">Test</button></div>
       <label class="field range"><span class="field-label">Temperature</span><input id="ai-fallback-temperature" /></label>
       <div class="field toggle"><label class="toggle-row"><span class="field-label">Preserve source language</span><input id="ai-fallback-preserve-language" /></label></div>
       <div class="field toggle"><label class="toggle-row"><span class="field-label">Speed Mode</span><input id="ai-fallback-low-latency-mode" /></label></div>

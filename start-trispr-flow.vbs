@@ -1,6 +1,6 @@
-' start-trispr-flow.vbs - double-click to start Trispr Flow.
-' Runs the same "npm run dev" path as the console, with no visible window.
-' "tauri dev --release" rebuilds changed code by itself, so this is always the latest version.
+' start-trispr-flow.vbs - double-click for the dev start of Trispr Flow (hot reload, no window).
+' Runs the same "npm run dev" path as the console, so this is always the latest code.
+' Quick start without waiting for a build: start-trispr-flow-quick.vbs.
 Set sh = CreateObject("WScript.Shell")
 sh.CurrentDirectory = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\") - 1)
 

@@ -23,5 +23,5 @@ function New-TrisprShortcut([string]$name, [string]$script) {
     "{0}`n  Target    {1}`n  Arguments {2}`n  WorkDir   {3}`n  Icon      {4}" -f $path, $saved.TargetPath, $saved.Arguments, $saved.WorkingDirectory, $saved.IconLocation
 }
 
-New-TrisprShortcut 'Trispr Flow' 'scripts\launch-quick.vbs'
+New-TrisprShortcut 'Trispr Flow' 'start-trispr-flow-quick.vbs'
 New-TrisprShortcut 'Trispr Flow Dev' 'start-trispr-flow.vbs'

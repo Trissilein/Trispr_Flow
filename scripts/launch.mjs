@@ -1,4 +1,4 @@
-// Quick-start launcher behind the "Trispr Flow" desktop shortcut (entry: launch-quick.vbs).
+// Quick-start launcher behind the "Trispr Flow" desktop shortcut (entry: start-trispr-flow-quick.vbs).
 //
 // 1. Starts the last built debug exe at once. A running app is only brought to the front
 //    (single-instance plugin), no second process stays alive.

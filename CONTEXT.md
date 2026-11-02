@@ -4,7 +4,7 @@ This file is the canonical source for domain language in Trispr Flow.
 It is written for domain experts (users, designers, contributors), not for implementation details.
 Update this file inline as terms are resolved during design sessions.
 
-Last updated: 2026-06-10
+Last updated: 2026-11-02
 
 ---
 
@@ -35,30 +35,20 @@ Model Management is only partially Core: the minimum ability to locate and use a
 → `src-tauri/src/whisper_server.rs`, `src-tauri/src/models.rs`
 
 ### Release Gate
-The evidence-backed check that decides whether the current release line can move forward. For v0.8.3, the Vulkan Whisper hotfix is the active release-gate closure block.
+The evidence-backed check that decides whether the current release line can move forward. Trispr Core and the active Whisper path (CUDA or Vulkan) must pass, and a fresh/default profile must not show false red errors for optional parts. The assistant and TTS release-gate scripts were removed with those features.
 
-Confirmed 2026-06-09: Block A closes only when the strict assistant gate passes on fresh `main`. The gate must link both latency evidence (`bench/results/latest.json`) and TTS evidence (`bench/results/tts.latest.json`). TTS evidence is green after PR #11, while latency evidence still requires a local production-default Whisper model.
+Confirmed 2026-06-09: latency evidence must use the production default Whisper model class, `ggml-large-v3-turbo.bin`, or an explicit `TRISPR_WHISPER_MODEL` pointing to equivalent evidence. Smaller smoke models are not accepted as final release evidence.
 
-Confirmed 2026-06-09: Block A latency evidence must use the production default Whisper model class, `ggml-large-v3-turbo.bin`, or an explicit `TRISPR_WHISPER_MODEL` pointing to equivalent large-v3-turbo evidence. Smaller smoke models are not accepted as final release evidence.
-
-Confirmed 2026-06-09: the final release target for this gate is v0.8.3 because v0.8.2 is already published. The v0.8.3 fix should hydrate from the published v0.8.2 installer payload to reproduce the shipped Vulkan failure before changing the runtime.
-
-Confirmed 2026-06-10: for the v0.8.3 Vulkan Whisper hotfix, release-clean means Trispr Core and the active Vulkan Whisper path pass their gate, and a fresh/default profile does not show false red errors for optional Feature Modules. Optional modules such as Assistant Core, AI Refinement/Ollama, GDD, Confluence, and experimental or supported-optional TTS providers do not block the hotfix unless they are enabled, part of the default flow, or actively selected by the user.
-
-→ `scripts/assistant-release-gate.mjs`, `scripts/latency-benchmark.ps1`, `docs/V0.8.x_BLOCK_U_RELEASE_GATE.md`
+→ `docs/RELEASE_QA_CHECKLIST.md`, `scripts/latency-benchmark.ps1`
 
 ### AI Refinement
-An optional post-transcription pass that sends raw transcript text to a local LLM (Ollama or LM Studio) or a cloud provider to correct, reformat, or summarize. A managed Module; disabled by default.
+An optional post-transcription pass that sends raw transcript text to a local Ollama model to correct, reformat, or summarize. A managed Module; disabled by default.
 
 User-facing name: **AI Refinement** (UI tab, ModuleId `"ai_refinement"`).
-Internal code name: `ai_fallback` (Rust module `src-tauri/src/ai_fallback/`, settings key `settings.ai_fallback`).
+Internal code name: `ai_fallback` (Rust module `src-tauri/src/ai_fallback/`, settings key `settings.ai_fallback`). The name is historical: the old provider fallback chain (Ollama, then cloud) was removed, Ollama is the only provider. Same system, two names; "AI Refinement" is canonical for user-facing contexts.
 
-The "Fallback" in the code name refers to the **provider fallback chain** (Ollama local → cloud provider as fallback), per DEC-009/DEC-023. The module handles both provider selection and text processing (prompt construction, LLM call, result) in one place.
-
-Same system, two names. "AI Refinement" is canonical for user-facing contexts.
-
-AI Refinement is an optional Feature Module, not part of Trispr Core. Its boundary includes provider selection, prompt/profile logic, LLM calls, fallback-chain behavior, and local AI runtime management such as Ollama or LM Studio when those runtimes serve refinement. AI model discovery/download/repair for refinement belongs here. Whisper model management, rule-based Post-Processing, and the Core transcription pipeline do not.
-→ `src-tauri/src/ai_fallback/`, `src/refinement-prompts.ts`, `src/refinement-inspector.ts`
+AI Refinement is an optional Feature Module, not part of Trispr Core. Its boundary includes prompt/profile logic, LLM calls, and the managed local Ollama runtime (detect, install, start, verify, version switching) and the three-model catalog (Gemma 4 E4B recommended, Gemma 4 E2B, Qwen 3.5 4B). Whisper model management, rule-based Post-Processing, and the Core transcription pipeline do not belong here.
+→ `src-tauri/src/ai_fallback/`, `src-tauri/src/ollama_runtime.rs`, `src/refinement-prompts.ts`, `src/refinement-inspector.ts`
 
 ### System Audio
 The user-facing name for capturing and transcribing what's playing through the system speakers (WASAPI loopback). Formerly called "Output" — renamed per DEC-017.
@@ -71,25 +61,25 @@ System Audio is part of Trispr Core. It is a baseline local capture/transcriptio
 ### Overlay
 An always-on-top transparent floating WebView window (`overlay.html`) that shows audio level and refinement status during recording. Controlled from Rust via `window.eval()`, not via Tauri events.
 
-**Note:** "Overlay" is overloaded — also refers to CSS overlay dialogs in HTML. In ROADMAP Block F, a third window (Assistant Presence) is introduced alongside the main window and overlay.
+**Note:** "Overlay" is overloaded, it also refers to CSS overlay dialogs in HTML.
 
-The capture overlay is part of Trispr Core because it is direct capture UX for PTT, VAD, and system-audio recording state. Assistant Presence, agent UI, GDD/Confluence surfaces, and generic CSS modal overlays are not Core; they are separate optional surfaces or UI mechanisms.
+The capture overlay is part of Trispr Core because it is direct capture UX for PTT, VAD, and system-audio recording state. Generic CSS modal overlays are a UI mechanism, not Core.
 → `src-tauri/src/overlay.rs`, `overlay.html`, `public/overlay.js`
 
 ### Trispr Core
 The non-toggleable product baseline: local capture, local transcription, rule-based post-processing, history, and the app shell needed to operate those flows. Trispr Core is not a Feature Module and does not appear as something users can install, consent to, enable, or disable in the Modules Hub.
 
-Trispr Core includes PTT, VAD, the Continuous Dump Pipeline, the Whisper Backend, Post-Processing, Partitioned History, core settings, hotkeys, and the capture overlay. Optional capabilities such as AI Refinement, Assistant Core, Voice Output TTS, Vision Input, GDD, Confluence, Task Capture, and Video Generation sit outside Core as Feature Modules.
+Trispr Core includes PTT, VAD, the Continuous Dump Pipeline, the Whisper Backend, Post-Processing, Partitioned History, core settings, hotkeys, and the capture overlay. AI Refinement (Ollama) and the Opus export sidecar sit outside Core as Feature Modules.
 
 Use **Trispr Core** for the product baseline. Use **Feature Module** for optional capabilities with consent, lifecycle, and permission gating.
 → `src-tauri/src/lib.rs`, `src-tauri/src/audio.rs`, `src-tauri/src/transcription.rs`, `src-tauri/src/postprocessing.rs`, `src-tauri/src/history_partition.rs`
 
 ### Module System
-A registry of opt-in feature modules (e.g. `gdd`, `ai_refinement`, `assistant_core`, `output_voice_tts`) each with consent flow, enable/disable lifecycle, and permission gating. Users enable modules via the **Modules Hub** UI.
+A registry of opt-in feature modules (today `ai_refinement` and `opus`) each with enable/disable lifecycle and health reporting. Users manage modules via the **Modules Hub** UI.
 
 **Note:** "Module" is an overloaded term in this codebase. It also refers to Rust crate modules (`mod audio` in `lib.rs`) and occasionally to UI panels ("Model Manager module"). In domain/user-facing contexts, "Module" always means a Feature Module from this registry.
 
-Setup and health reporting must separate lifecycle state from user intent. Disabled, uninstalled, or unused optional Feature Modules are not global app errors. Missing consent, runtime, model, secret, or dependency setup is user-facing setup work only when the user has enabled the feature, selected a product mode that depends on it, or is actively using that feature surface. Trispr Core failures remain release blockers.
+Setup and health reporting must separate lifecycle state from user intent. Disabled, uninstalled, or unused optional Feature Modules are not global app errors. Missing runtime, model, or dependency setup is user-facing setup work only when the user has enabled the feature or is actively using that feature surface. Trispr Core failures remain release blockers.
 
 → `src-tauri/src/modules/`, `src/modules-hub.ts`, `src/types.ts:ModuleId`
 
@@ -101,9 +91,9 @@ Core Settings are distinct from Module Settings. The current persisted `Settings
 → `src-tauri/src/state.rs`, `src/settings/`
 
 ### Module Settings
-Settings owned by Feature Modules rather than by Trispr Core. Examples include AI Refinement provider/model/prompt/auth settings, Voice Output TTS provider/voice settings, Vision Input settings, GDD and Confluence settings, Assistant Core settings, Task Capture settings, and Video Generation settings.
+Settings owned by Feature Modules rather than by Trispr Core. Today these are the AI Refinement model/prompt/runtime settings (`settings.ai_fallback`, `settings.providers.ollama`).
 
-Module Settings may currently be persisted inside the same `Settings` struct as Core Settings. Long-term modularization should not treat that shared persistence shape as the domain boundary.
+Module Settings may be persisted inside the same `Settings` struct as Core Settings. Long-term modularization should not treat that shared persistence shape as the domain boundary.
 
 → `src-tauri/src/state.rs`, `src-tauri/src/modules/`, `src/settings/`
 
@@ -129,88 +119,22 @@ A runtime-health property: the capability can be used now. Availability depends 
 
 For release and setup reporting, unavailable optional features should be classified by intent. If the feature is disabled or unused, report it neutrally in feature-local surfaces. If the feature is enabled or selected, report the missing prerequisite as setup-needed or fallback-active. Reserve global error language for Trispr Core failures, active release-gate failures, and optional capabilities the current default or selected flow depends on.
 
-For GDD, draft generation and validation can be available without Confluence auth. Confluence publishing is only available when the internal Confluence integration has valid configuration, credentials, required permissions, and service reachability.
-
 Feature Module lifecycle should distinguish these states: **Bundled → Installable/Installed → Enabled → Available/Healthy**. Trispr Core does not follow this module lifecycle; Core is always the baseline, though parts of Core can still be degraded (for example, if no Whisper model is available).
 
 Module installation should not imply that the app can load arbitrary third-party code into the process. If runtime plugin code is ever introduced, it needs a separate security and compatibility decision.
 
-### Assistant Core (`assistant_core`)
-Wake-word listening, intent detection, and agent orchestration. Canonical ModuleId: `assistant_core`.
-
-Assistant Core is an optional Feature Module, not part of Trispr Core. Trispr Core can transcribe without Assistant Core. Product Mode `"assistant"` activates an agent-first UX that depends on Assistant Core; it does not redefine Core itself.
-
-Legacy ID `workflow_agent` still exists in persisted user settings and as the Rust filename (`workflow_agent.rs`). Migration in `state.ts` normalizes `workflow_agent` → `assistant_core` on load. Rust filename rename is a cleanup candidate, not urgent.
-→ `src-tauri/src/workflow_agent.rs`, `src/workflow-agent-console.ts`
-
-### Voice Output TTS (`output_voice_tts`)
-Optional Feature Module that speaks text aloud. Voice Output TTS is not part of Trispr Core: Core can emit events or text that Voice Output consumes, but speech playback, provider/voice selection, Piper/Qwen/Windows runtime behavior, playback control, output policy, and voice settings belong to the Feature Module.
-
-Confirmed 2026-06-09: for the v0.8.2 release gate, Windows Native TTS is the supported baseline provider. Piper `local_custom` is still a provider we intend to fix, but it is not release-critical for v0.8.2. A Piper runtime failure should make that provider degraded and tracked as follow-up work, not block release when Windows Native TTS is healthy.
-
-Confirmed 2026-06-09: TTS providers use release-gate roles. A **baseline** provider must pass the release gate. A **supported optional** provider is supported and should be reported when degraded, but it does not block release if the baseline provider passes. An **experimental** provider is benchmark-observed only and does not block release. For v0.8.2, `windows_native` is baseline, `local_custom` is supported optional, and `qwen3_tts` is experimental.
-
-Confirmed 2026-06-09: a degraded supported optional TTS provider passes the release gate with a warning. The release report should make degraded optional providers visible without requiring a manual override flag.
-
-Confirmed 2026-06-09: for now, TTS provider release-gate roles are release policy, not runtime product configuration. The benchmark/release-gate scripts own the provider-tier mapping until a real product need appears to expose or share those roles elsewhere.
-
-→ `src-tauri/src/multimodal_io.rs`, `src/settings/voice-output.settings.ts`
-
-### Assistant Presence (`assistant_presence`)
-Optional assistant-facing surface/window. Assistant Presence is not part of Trispr Core and is distinct from the capture overlay. It can be bundled with or enabled alongside Assistant Core, but it remains a Feature Module surface rather than baseline capture/transcription UX.
-
-→ `src-tauri/src/assistant_presence.rs`, `assistant-presence.html`, `public/assistant-presence.js`
-
-### Vision Input (`input_vision`)
-Optional Feature Module for screen capture, visual context, and vision snapshots. Vision Input is not part of Trispr Core because Core transcription does not require visual context. It owns its own privacy/consent boundary, settings, health checks, and capture lifecycle.
-
-→ `src-tauri/src/multimodal_io.rs`, `src/settings/ai-refinement.settings.ts`
-
-### Task Capture (`task_capture`)
-Optional Feature Module that interprets transcript text as tasks, reminders, or agenda items and can post them to configured task endpoints. Task Capture is not part of Trispr Core: Core produces transcript text, while Task Capture is an optional automation/action layer on top of that text.
-
-Task Capture owns its own route settings, endpoint checks, task-formatting prompt, and delivery behavior.
-
-→ `src-tauri/src/modules/task_capture.rs`, `src/task-capture-config.ts`
-
-### GDD Automation (`gdd`)
-Optional Feature Module that turns transcript/history material into Game Design Document drafts and publishing workflows. GDD is not part of Trispr Core: Core provides transcript text and history; GDD is an optional document-generation capability on top of that material.
-
-Confirmed by Ingo on 2026-06-08: GDD should be installable as a Feature Module. It should not be treated as part of Trispr Core. The long-term module-install path is unpacking a module package into a module directory.
-
-Confirmed 2026-06-08: the first GDD module package boundary is descriptive and asset-oriented. A GDD package contains its manifest, presets, templates, validation/default schemas, UI-surface metadata, and Confluence configuration/template metadata as internal GDD assets. The host app still owns the Rust commands, TypeScript UI, permission enforcement, settings normalization, and feature-gated executable capability surface.
-
-Confirmed 2026-06-08: GDD is one Feature Module with internal sub-capabilities, not multiple product-level modules. Expected sub-capabilities include draft generation, validation, file template import, Confluence template import, Confluence publishing, and routing suggestions. These sub-capabilities may have separate health and setup states while the GDD Module remains installed and enabled.
-
-### Confluence Integration
-A GDD-owned integration surface. From a product perspective, Confluence belongs to the GDD publishing workflow rather than being a generic integration platform. Confirmed by Ingo on 2026-06-08: Confluence is part of the GDD Module, not a separately installable Feature Module. `integrations_confluence` remains a legacy/internal identifier until the implementation converges on the GDD module boundary.
-
-Confluence may keep an internal capability or permission boundary for auth, secrets, network access, spaces/pages, target routing, and queue behavior. That boundary is an implementation and security concern inside the GDD Module, not a product-level module boundary.
-
-Confluence-related GDD sub-capabilities can be unavailable while non-Confluence GDD capabilities remain available. For example, draft generation can be healthy when Confluence publishing is degraded due to missing credentials or network reachability.
-
-→ `src-tauri/src/gdd/`, `src-tauri/src/gdd/confluence.rs`
-
-### Video Generation (`output_video_generation`)
-Optional Feature Module that generates video output artifacts from transcripts, source items, and assets. Video Generation is not part of Trispr Core: Core can capture, transcribe, post-process, and persist text without rendering video.
-
-Video Generation owns its own sidecar/runtime concerns, jobs, work directories, asset materialization, export paths, and render lifecycle.
-
-→ `src-tauri/src/video_generation.rs`, `src-tauri/src/video_ingest.rs`
-
-→ `src/modules-hub.ts`, `src/types.ts:ModuleId`
+### Removed features (lean-down, 2026-11-02)
+Trispr Flow was cut back to its core on 2026-11-02 (Ingo's decision, binding). Removed completely: cloud providers, LM Studio and Oobabooga, TTS / Voice Output / Piper, Video Generation, Vision Input, benchmarks, Assistant Core and Assistant Presence (including Product Mode), GDD and Confluence, Task Capture. Old `settings.json` files still load: unknown fields are ignored and old provider values fall back to `ollama`. Historical decisions about these features stay in `docs/DECISIONS.md` and `docs/archive/` as history only.
 
 ### Export
-Basic transcript persistence and simple user export are Core-adjacent baseline behavior because users must be able to keep or move their transcript text. Advanced export workflows are optional tooling or Feature Module surfaces.
-
-Advanced exports include batch export, analytics export, schema-heavy archive formats, GDD/Confluence publishing, and Video Generation output.
+Basic transcript persistence and simple user export are Core-adjacent baseline behavior because users must be able to keep or move their transcript text. Advanced export workflows (batch export, analytics export, schema-heavy archive formats, Opus recordings) are optional tooling surfaces.
 
 → `docs/EXPORT_GUIDE.md`, `docs/EXPORT_SCHEMA.md`
 
 ### Partitioned History
 The separation of mic dictation results (stored as `history`) from system-audio results (stored as `transcribeHistory`). Both are merged into the **Conversation** view in the UI.
 
-Partitioned History is part of Trispr Core: transcript storage, mic/system separation, partition loading/saving, active history lists, and basic crash-safe persistence are baseline product behavior. Optional consumers of history, such as GDD source selection, Assistant recaps, semantic search, analytics, or advanced exports, are Feature Module surfaces that depend on Core history rather than belonging to it.
+Partitioned History is part of Trispr Core: transcript storage, mic/system separation, partition loading/saving, active history lists, and basic crash-safe persistence are baseline product behavior.
 → `src-tauri/src/history_partition.rs`, `src/history.ts`
 
 ### Session
@@ -222,12 +146,11 @@ Intentionally overloaded term (confirmed by Ingo, 2026-05-15). Always means "som
 No rename planned. Context determines which meaning applies.
 
 ### Product Mode
-The top-level operating mode of the app: `"transcribe"` (dictation-first UX) or `"assistant"` (agent-first UX). Toggled via hotkey or UI button.
-→ `src/types.ts:ProductMode`, `src/event-listeners.ts`
+Removed with the assistant (2026-11-02). The app has one operating mode, dictation. A stored `product_mode` in an old `settings.json` is ignored.
 
 ### Chapters
 Time- or silence-based segmentation markers applied to long transcripts for navigation and export organization.
-→ `src/chapters.ts`, `src/history.ts`
+→ `src/history.ts`
 
 ### Custom Vocabulary
 User-defined find-replace pairs applied post-transcription by the rule-based Post-Processing pipeline. Separate from Vocabulary Learning (which auto-promotes candidates).

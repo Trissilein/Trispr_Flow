@@ -101,17 +101,16 @@ Last updated: 2026-03-28
 - Settings: `chapters_enabled` (master toggle), `chapters_show_in` ("conversation" or "all"), `chapters_method` ("silence" or "time" or "hybrid").
 - Why: Reduces UI noise for common use cases while keeping flexibility for power users.
 
-### DEC-019 Window visibility state persistence (v0.5.0+)
+### DEC-019 Window start state (v0.5.0+, revised 2026-11-02)
 
 - Status: `implemented`
-- Decision: Persist window visibility state (normal/minimized/tray) across sessions. If user closes app while minimized, next launch starts minimized. If closed while in system tray, next launch stays in tray.
-- Context: Users expect window state to persist across restarts. Previous implementation only saved geometry (position, size, monitor) but not visibility state. This led to minimized/tray windows always restoring to normal visible state.
+- Decision: A manual start always shows the main window. `main_window_start_state` accepts `"normal"` and `"minimized"`; `"minimized"` is the only value that starts minimized (window shown, then minimized, taskbar entry kept). Any other stored value, including the legacy `"tray"`, is normalized to `"normal"` on load. The tray icon stays for background operation (close/hide to tray), but the app never starts hidden in the tray.
+- Context: The original rule ("closed in the tray, next launch stays in the tray") made a manual start look like nothing happened. Geometry (position, size, monitor) is still persisted separately.
 - Implementation:
-  - New setting: `main_window_start_state` ("normal" | "minimized" | "tray")
-  - Frontend tracks minimize via `window.onFocusChanged` + `window.isMinimized()`
-  - Backend tracks tray state in `hide_main_window()` / `show_main_window()`
-  - Startup code in `.setup()` handler checks setting and conditionally shows/hides/minimizes window
-- Why: Improves UX consistency, especially for users who run Trispr Flow in background (tray-only mode).
+  - `start_window_minimized()` in `src-tauri/src/lib.rs` returns true only for `"minimized"`; the `.setup()` handler shows the window in every other case.
+  - `normalize_main_window_start_state()` in `src-tauri/src/state.rs` runs in `load_settings`, so old `settings.json` files with `"tray"` keep loading.
+  - Frontend tracks minimize via `window.onFocusChanged` + `window.isMinimized()`.
+- Why: A launch the user triggers must always produce a visible window; the tray stays a deliberate background mode, not a persisted start state.
 
 ### DEC-020 VibeVoice-ASR Sidecar Architecture (v0.6.0)
 
@@ -371,7 +370,7 @@ Last updated: 2026-03-28
   - Deterministischer Fallback auf bestehende Provider bleibt verpflichtend.
   - Vor jeder kommerziellen Nutzung ist ein separates Lizenz-/Alternativen-Gate Pflicht.
 - Reference:
-  - `docs/VOXTRAL_TTS_DECISION_MEMO.md`
+  - `docs/archive/VOXTRAL_TTS_DECISION_MEMO.md`
 
 ### DEC-054 Agent-Evolution Guardrails und Phasenpfad (2026-03-28)
 
@@ -386,7 +385,7 @@ Last updated: 2026-03-28
   - Kein Breaking Change für den bestehenden Transcribe-Produktpfad.
   - Transcript/Archive bleiben v1-Primärwissensbasis.
 - Reference:
-  - `docs/AGENT_EVOLUTION_ROADMAP.md`
+  - `docs/archive/AGENT_EVOLUTION_ROADMAP.md`
   - `ROADMAP.md`
   - `docs/TASK_SCHEDULE.md`
 

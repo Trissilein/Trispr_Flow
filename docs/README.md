@@ -1,6 +1,6 @@
 # Documentation Guide
 
-Last updated: 2026-02-20
+Last updated: 2026-11-02
 
 This file is the canonical documentation map for Trispr Flow.
 Rule: every topic has one canonical file.
@@ -27,14 +27,13 @@ All other project docs belong in `docs/`.
 | Contributor workflow | `CONTRIBUTING.md` | PR/testing expectations |
 | Architecture | `docs/ARCHITECTURE.md` | Runtime/module boundaries |
 | App behavior and user flows | `docs/APP_FLOW.md` | UX and panel flow |
-| Frontend implementation guidelines | `docs/frontend/FRONTEND_GUIDELINES.md` | TS/frontend conventions |
-| Visual tokens and UI patterns | `docs/frontend/DESIGN_SYSTEM.md` | Design system |
+| Frontend guidelines + design tokens | `docs/FRONTEND_GUIDELINES.md` | TS conventions, OLED token table (§5) |
 | State model | `docs/STATE_MANAGEMENT.md` | UI/runtime states |
 | Dev setup + build/test | `docs/DEVELOPMENT.md` | Local environment |
 | Decisions (ADR-lite) | `docs/DECISIONS.md` | Why/tradeoffs |
 | Installer variants | `docs/INSTALLER_VARIANTS.md` | Packaging matrix |
 | Documentation contradiction log | `docs/DOC_SYNC_CONFLICTS.md` | Resolve doc conflicts |
-| Historical docs | `docs/archive/*.md` | Archive only, not canonical |
+| Historical docs | `docs/archive/*.md` | Archive only, not canonical (includes plans of removed features: cloud, TTS, video, assistant, GDD) |
 | Wiki navigation | `docs/wiki/*.md` | Link hub only |
 
 ## Update workflow

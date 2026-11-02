@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Trispr Flow Overlay</title>
     <style>
+      :root {
+        --overlay-rec: #ff3d2e;
+        --overlay-transcribe-rgb: 245, 179, 66;
+        --refine-rgb: 110, 200, 255;
+      }
+
       * { margin: 0; padding: 0; box-sizing: border-box; }
 
       body {
@@ -28,7 +34,7 @@
         width: 16px;
         height: 16px;
         border-radius: 50%;
-        background: #ff3d2e;
+        background: var(--overlay-rec);
         transition: opacity 0.12s ease-out, width 0.04s linear, height 0.04s linear;
       }
 
@@ -39,7 +45,7 @@
         width: 20px;
         height: 20px;
         border-radius: 4px;
-        background: #ff3d2e;
+        background: var(--overlay-rec);
         transition: opacity 0.12s ease-out, width 0.04s linear;
       }
 
@@ -49,9 +55,9 @@
         width: 10px;
         height: 10px;
         border-radius: 50%;
-        border: 2px solid rgba(245, 179, 66, 0.9);
-        background: rgba(245, 179, 66, 0.15);
-        box-shadow: 0 0 8px rgba(245, 179, 66, 0.6);
+        border: 2px solid rgba(var(--overlay-transcribe-rgb), 0.9);
+        background: rgba(var(--overlay-transcribe-rgb), 0.15);
+        box-shadow: 0 0 8px rgba(var(--overlay-transcribe-rgb), 0.6);
         opacity: 0;
         transform: scale(0.8);
         transition: opacity 0.16s ease-out, transform 0.16s ease-out;
@@ -92,7 +98,6 @@
         --refine-pulse-duration: 1150ms;
         --refine-duration-factor: 1;
         --refine-range-scale: 1;
-        --refine-rgb: 110, 200, 255;
         --refine-ring-opacity-a: 0.8;
         --refine-ring-opacity-b: 0.55;
         --refine-shadow-a: 14px;

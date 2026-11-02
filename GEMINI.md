@@ -4,15 +4,17 @@ This file provides foundational context and instructions for AI agents working o
 
 ## Project Overview
 
-Trispr Flow is a professional-grade desktop dictation application for Windows (macOS planned) built with **Tauri 2**, **Rust**, and **TypeScript**. It specializes in GPU-accelerated offline transcription and system audio capture with local AI refinement.
+Trispr Flow is a professional-grade desktop dictation application for Windows (macOS planned) built with **Tauri 2**, **Rust**, and **TypeScript**. It specializes in GPU-accelerated offline transcription and system audio capture with local Ollama refinement.
+
+Lean core since 2026-11-02: cloud providers, LM Studio/Oobabooga, TTS/Piper, video generation, the assistant, GDD/Confluence, task capture and benchmarks were removed. Do not reintroduce them.
 
 ### Architecture
 
 - **Backend (Rust)**: Located in `src-tauri/`. Handles audio capture (WASAPI), transcription (whisper.cpp), model management, and system-level integrations.
 - **Frontend (TypeScript)**: Located in `src/`. Built with Vite and modern TypeScript. Uses a modular approach for DOM manipulation, event handling, and state management.
 - **Overlay**: A standalone `overlay.html` with inline JS, controlled from Rust via `window.eval()`.
-- **Managed Modules**: A platform for optional features like GDD automation and workflow agents.
-- **AI Refinement**: Local-first refinement using Ollama (Qwen models) and Piper (TTS).
+- **Managed Modules**: Optional packages through the Modules Hub (`ai_refinement`, `opus`).
+- **AI Refinement**: Local refinement with Ollama only (catalog: Gemma 4 E4B, Gemma 4 E2B, Qwen 3.5 4B).
 
 ## Core Technologies
 
@@ -20,7 +22,6 @@ Trispr Flow is a professional-grade desktop dictation application for Windows (m
 - **Rust**: Systems programming for high-performance audio and transcription.
 - **Whisper.cpp**: High-performance Whisper inference (CUDA/Vulkan).
 - **Ollama**: Local AI model runtime for refinement.
-- **Piper**: Local neural voice engine for TTS.
 - **FFmpeg**: Bundled for OPUS encoding of audio recordings.
 
 ## Building and Running
@@ -28,7 +29,7 @@ Trispr Flow is a professional-grade desktop dictation application for Windows (m
 ### Development
 ```powershell
 npm install
-npm run dev          # Starts Tauri in release mode for performance
+npm run dev          # Starts Tauri in release mode for performance (or double-click start-trispr-flow.vbs)
 npm run dev:web      # Starts Vite dev server only
 ```
 
@@ -36,12 +37,6 @@ npm run dev:web      # Starts Vite dev server only
 ```powershell
 npm run test         # Unit tests (Vitest)
 npm run test:smoke   # Frontend production build + Rust unit tests (--lib then --bins)
-```
-
-### Benchmarks
-```powershell
-npm run benchmark:latency        # Transcription latency (p50/p95)
-npm run benchmark:latency:live   # Live transcription benchmark
 ```
 
 ### Building Installers
@@ -75,9 +70,8 @@ npm run benchmark:latency:live   # Live transcription benchmark
 - **Command Registration**: Commands must be registered in `src-tauri/src/lib.rs`.
 - **Global State**: Managed in `AppState` (Mutex-protected) in `src-tauri/src/state.rs`.
 
-### Multimodal I/O (Current Focus)
-- **TTS**: Implementations in `multimodal_io.rs`. Supports Windows Native and Piper.
-- **Vision**: Skeleton commands are present; implementation of real frame capture (Task N5) is the primary upcoming goal.
+### Theme
+- OLED dark theme. Colors come from tokens in `:root` of `src/styles.css`; no color literals in rules. Reference: `docs/FRONTEND_GUIDELINES.md` §5.
 
 ## Key Files
 

@@ -15,7 +15,6 @@ export function normalizeRuntimeTargetVersion(value: string | null | undefined):
 
 /** Fields of `OllamaSettings` that decide what the runtime target means. */
 export type RuntimeTargetFields = {
-  runtime_source?: string;
   runtime_version?: string;
   runtime_target_version: string;
   /** The user picked the target in the version list (see `runtime_target_explicit` in Rust). */
@@ -25,13 +24,13 @@ export type RuntimeTargetFields = {
 /**
  * A target nobody chose that is older than the runtime in use moves up to that runtime, so the UI
  * never offers a downgrade the user did not ask for. Twin of `heal_stale_runtime_target` in
- * `ai_fallback/models.rs` (managed runtimes only). True when the target changed.
+ * `ai_fallback/models.rs`. True when the target changed.
  */
 export function healStaleRuntimeTarget(
   ollama: RuntimeTargetFields,
   runningVersion?: string | null
 ): boolean {
-  if (ollama.runtime_target_explicit || ollama.runtime_source !== "per_user_zip") return false;
+  if (ollama.runtime_target_explicit) return false;
   const running = (runningVersion || ollama.runtime_version || "").trim().replace(/^v/, "");
   if (!/^\d+\.\d+\.\d+$/.test(running)) return false;
   const order = compareVersions(ollama.runtime_target_version, running);

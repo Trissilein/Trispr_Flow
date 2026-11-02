@@ -105,9 +105,6 @@ function makeSettings(options: { ai?: boolean } = {}): Settings {
     ai_fallback: {
       enabled: options.ai ?? false,
       provider: "ollama",
-      fallback_provider: null,
-      execution_mode: "local_first",
-      strict_local_mode: false,
       preserve_source_language: true,
       low_latency_mode: false,
       model: "",

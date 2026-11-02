@@ -313,28 +313,14 @@ describe("double clicks", () => {
     await Promise.all([ctx.mod.ensureLocalRuntimeReady(), ctx.mod.ensureLocalRuntimeReady()]);
     expect(ctx.callsOf("start_ollama_runtime")).toHaveLength(1);
   });
-
-  it("switching the runtime source to managed twice restores nothing and fails nothing", async () => {
-    const catalog = [runtime("0.40.7", { installed: true, recommended: true, selected: true })];
-    const ctx = await load(
-      { ...runtimeHandlers(version, () => catalog), fetch_ollama_models_with_size: () => [] as InstalledRow[] },
-      { source: "system" }
-    );
-    await ctx.boot();
-    await Promise.all([ctx.mod.useManagedOllamaRuntime(), ctx.mod.useManagedOllamaRuntime()]);
-    await settle();
-    expect(ctx.callsOf("start_ollama_runtime")).toHaveLength(1);
-    expect(toastTitles(ctx.showToast)).not.toContain("Managed runtime restore failed");
-    expect(ctx.state.settings!.providers.ollama.runtime_source).toBe("per_user_zip");
-  });
 });
 
 describe("a runtime change never runs under a model operation", () => {
-  it("the 'Switch to X' main action, managed and system switches are refused while a model update runs", async () => {
+  it("the 'Switch to X' main action is refused while a model update runs", async () => {
     const catalog = [runtime("0.40.7", { installed: true, recommended: true }), runtime("0.40.13", { installed: true })];
     const ctx = await load(
       updateHandlers(version, { list_ollama_runtime_versions: () => catalog, fetch_ollama_online_versions: () => catalog }),
-      { settingsModel: OLD, target: "0.40.13", source: "system" }
+      { settingsModel: OLD, target: "0.40.13" }
     );
     await ctx.boot();
     await startUpdate(ctx);
@@ -342,15 +328,12 @@ describe("a runtime change never runs under a model operation", () => {
     const before = ctx.calls.length;
 
     await ctx.mod.ensureLocalRuntimeReady();
-    await ctx.mod.useManagedOllamaRuntime();
-    await ctx.mod.useSystemOllamaRuntime();
     await settle();
 
     const after = ctx.calls.slice(before).map((call) => call.command);
     expect(after).not.toContain("start_ollama_runtime");
     expect(after).not.toContain("download_ollama_runtime");
     expect(after).not.toContain("install_ollama_runtime");
-    expect(ctx.state.settings!.providers.ollama.runtime_source).toBe("system");
     expect(toastTitles(ctx.showToast)).toContain("Runtime change postponed");
 
     ctx.emit("ollama:pull-complete", { model: OLD });

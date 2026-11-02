@@ -39,18 +39,6 @@ vi.hoisted(() => {
     <button id="ai-fallback-fetch-versions-action"></button>
     <div id="ai-fallback-runtime-version-list"></div>
     <div id="ai-fallback-local-lane-title-text"></div>
-    <div id="ai-fallback-local-advanced"></div>
-    <div id="ai-fallback-compat-config"></div>
-    <div id="ai-fallback-ollama-managed-note"></div>
-    <button id="ai-fallback-lm-studio-install-action"></button>
-    <div id="ai-fallback-compat-guide"></div>
-    <input id="ai-fallback-compat-endpoint" />
-    <div id="ai-fallback-compat-endpoint-hint"></div>
-    <input id="ai-fallback-compat-api-key" />
-    <div id="ai-fallback-compat-model-list"></div>
-    <div id="ai-fallback-provider-lanes"></div>
-    <div id="ai-fallback-model-field"></div>
-    <select id="ai-fallback-model"></select>
     <input id="ai-fallback-temperature" type="range" />
     <span id="ai-fallback-temperature-value"></span>
     <input id="ai-fallback-preserve-language" type="checkbox" />
@@ -101,7 +89,7 @@ function mkCard(overrides: Partial<RuntimeCardState> = {}): RuntimeCardState {
     busy: false,
     detected: true,
     endpoint: "http://127.0.0.1:11434",
-    source: "managed",
+    source: "per_user_zip",
     version: "0.40.13",
     detail: "Healthy",
     primaryAction: "ready",
@@ -120,7 +108,7 @@ function mkCard(overrides: Partial<RuntimeCardState> = {}): RuntimeCardState {
 function mkSettings(
   target: string,
   recorded = "0.40.13",
-  overrides: { provider?: string; source?: string; path?: string; explicit?: boolean } = {}
+  overrides: { path?: string; explicit?: boolean } = {}
 ): Settings {
   return {
     mode: "ptt",
@@ -128,33 +116,23 @@ function mkSettings(
     language_pinned: false,
     postproc_enabled: true,
     postproc_language: "multi",
-    postproc_llm_provider: "ollama",
     topic_keywords: { bug: ["bug"], summary: ["summary"], actions: ["todo"] },
     providers: {
-      claude: { api_key_stored: false, auth_method_preference: "api_key", auth_status: "locked", auth_verified_at: null, available_models: ["c"], preferred_model: "c" },
-      openai: { api_key_stored: false, auth_method_preference: "api_key", auth_status: "locked", auth_verified_at: null, available_models: ["o"], preferred_model: "o" },
-      gemini: { api_key_stored: false, auth_method_preference: "api_key", auth_status: "locked", auth_verified_at: null, available_models: ["g"], preferred_model: "g" },
       ollama: {
         endpoint: "http://127.0.0.1:11434",
         available_models: ["llama3"],
         preferred_model: "llama3",
-        runtime_source: overrides.source ?? "per_user_zip",
+        runtime_source: "per_user_zip",
         runtime_path: overrides.path ?? "",
         runtime_version: recorded,
         runtime_target_version: target,
         runtime_target_explicit: overrides.explicit ?? false,
-        fallback_endpoints: ["http://127.0.0.1:11434"],
         last_health_check: null,
       },
-      lm_studio: { endpoint: "http://127.0.0.1:1234", api_key: "", preferred_model: "a-model", available_models: ["a-model"] },
-      oobabooga: { endpoint: "http://127.0.0.1:5000", api_key: "", preferred_model: "textgen", available_models: ["textgen"] },
     },
     ai_fallback: {
       enabled: true,
-      provider: overrides.provider ?? "ollama",
-      fallback_provider: "openai",
-      execution_mode: "local_primary",
-      strict_local_mode: true,
+      provider: "ollama",
       preserve_source_language: true,
       low_latency_mode: false,
       model: "llama3",
@@ -358,32 +336,19 @@ describe("runtime version list", () => {
 });
 
 describe("the removed provider, source and endpoint controls", () => {
-  it("renders without those elements and keeps the plain status line for managed Ollama", () => {
+  it("renders without those elements and shows the plain status line for managed Ollama", () => {
     renderAIFallbackSettingsUi();
     expect(status().textContent).toContain("Runtime running");
-    expect(status().textContent).not.toContain("managed Ollama is the supported setup");
-    expect(status().hidden).toBe(false);
-  });
-
-  it("names a saved non-managed source in one line and changes nothing", () => {
-    setSettings(mkSettings("0.40.13", "0.40.13", { source: "system" }));
-    renderAIFallbackSettingsUi();
-    expect(status().textContent).toContain("Provider: ollama, source: system — managed Ollama is the supported setup");
-    expect(settings?.providers.ollama.runtime_source).toBe("system");
-  });
-
-  it("names a saved LM Studio provider on the status line, keeps it saved and stays usable", () => {
-    setSettings(mkSettings("0.40.13", "0.40.13", { provider: "lm_studio" }));
-    renderAIFallbackSettingsUi();
-    expect(status().hidden).toBe(false);
-    expect(status().textContent).toBe("Provider: lm_studio, source: per_user_zip — managed Ollama is the supported setup");
-    expect(settings?.ai_fallback.provider).toBe("lm_studio");
-    expect(settings?.providers.ollama.fallback_endpoints).toEqual(["http://127.0.0.1:11434"]);
-  });
-
-  it("does not nag about a fresh install that has no manual runtime path", () => {
-    setSettings(mkSettings("0.40.13", "", { source: "manual", path: "" }));
-    renderAIFallbackSettingsUi();
     expect(status().textContent).not.toContain("supported setup");
+    expect(status().hidden).toBe(false);
+  });
+
+  it("a stale LM Studio provider lands on Ollama", () => {
+    const stale = mkSettings("0.40.13", "0.40.13");
+    (stale.ai_fallback as { provider: string }).provider = "lm_studio";
+    setSettings(stale);
+    renderAIFallbackSettingsUi();
+    expect(settings?.ai_fallback.provider).toBe("ollama");
+    expect(status().textContent).toContain("Runtime running");
   });
 });

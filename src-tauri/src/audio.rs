@@ -1435,7 +1435,7 @@ fn handle_transcription_ok(
         .map(|status| (status.loaded, status.size_vram))
         .unwrap_or((false, 0))
     } else {
-        // lm_studio / oobabooga expose no /api/ps probe — keep prior behaviour.
+        // Not reachable: the provider is always normalized to "ollama".
         (true, 0)
     };
     let gpu_busy = provider_is_ollama && state.gpu_busy.load(std::sync::atomic::Ordering::Relaxed);
@@ -1559,15 +1559,9 @@ fn should_defer_paste_for_refinement_inner(settings: &Settings, _ollama_ready: b
     if !ai_refinement_capability_enabled(settings) {
         return false;
     }
-    let provider = settings.ai_fallback.provider.as_str();
     // Ollama jobs own on-demand runtime startup. A stale ollama_ready=false
     // must not force raw paste before the real refinement job can start.
-    if provider == "ollama" {
-        return settings.ai_fallback.execution_mode == "local_primary";
-    }
-    // LM Studio / Oobabooga: external local servers — always defer so refined
-    // output replaces raw paste instead of both appearing in sequence.
-    provider == "lm_studio" || provider == "oobabooga"
+    true
 }
 
 fn should_defer_paste_for_refinement(app_handle: &AppHandle, settings: &Settings) -> bool {
@@ -1637,12 +1631,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
         return;
     }
     let provider = settings.ai_fallback.provider.as_str();
-    let is_local_compat = provider == "lm_studio" || provider == "oobabooga";
     let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
-    // Cloud providers (claude, openai, gemini) are deferred to v0.7.3.
-    if provider != "ollama" && !is_local_compat {
-        return;
-    }
     if diagnostics_enabled {
         info!(
             "[refinement:{}] queued trigger={} source={} provider={} model={} entry_id={:?} input_bytes={} input_words={} active_count={}",
@@ -1884,12 +1873,10 @@ pub(crate) fn maybe_spawn_ai_refinement(
             }
 
             let mut effective_model = setup.model.clone();
-            let mut refinement_result = setup.provider.refine_transcript(
-                &text,
-                &effective_model,
-                &setup.options,
-                &setup.api_key,
-            );
+            let mut refinement_result =
+                setup
+                    .provider
+                    .refine_transcript(&text, &effective_model, &setup.options);
             if let Err(error) = &refinement_result {
                 if provider_id == "ollama" && is_ollama_model_not_found_message(&error.to_string())
                 {
@@ -1911,7 +1898,6 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             &text,
                             &effective_model,
                             &setup.options,
-                            &setup.api_key,
                         );
                     }
                 }
@@ -3570,7 +3556,6 @@ mod refinement_defer_policy_tests {
         }
         settings.ai_fallback.enabled = setting_enabled;
         settings.ai_fallback.provider = "ollama".to_string();
-        settings.ai_fallback.execution_mode = "local_primary".to_string();
         settings
     }
 
@@ -3607,15 +3592,5 @@ mod refinement_defer_policy_tests {
             "Model 'qwen3:8b' not found in Ollama"
         ));
         assert!(!is_ollama_model_not_found_message("Ollama timed out"));
-    }
-
-    #[test]
-    fn compat_local_provider_still_defers_when_capability_on() {
-        let mut settings = settings_for_policy(true, true);
-        settings.ai_fallback.provider = "lm_studio".to_string();
-        assert!(should_defer_paste_for_refinement_inner(&settings, false));
-
-        settings.ai_fallback.provider = "oobabooga".to_string();
-        assert!(should_defer_paste_for_refinement_inner(&settings, false));
     }
 }

@@ -25,7 +25,7 @@ use crate::postprocessing::process_transcript;
 #[cfg(target_os = "windows")]
 use crate::state::push_transcribe_entry_inner;
 use crate::state::{AppState, Settings};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::ErrorKind;
@@ -1877,30 +1877,8 @@ pub(crate) fn transcribe_audio(
 ) -> Result<(String, String), String> {
     let wav_bytes = encode_wav_i16(samples, TARGET_SAMPLE_RATE);
 
-    if settings.cloud_fallback && legacy_cloud_transcription_enabled() {
-        match transcribe_cloud(&wav_bytes) {
-            Ok(text) => return Ok((text, "cloud-legacy".to_string())),
-            Err(err) => {
-                warn!(
-                    "Legacy cloud transcription failed, falling back to local whisper: {}",
-                    err
-                );
-                let _ = app.emit("transcription:legacy-cloud-failed", err.clone());
-            }
-        }
-    }
-
     let text = transcribe_local(app, settings, &wav_bytes)?;
     Ok((text, "local".to_string()))
-}
-
-fn legacy_cloud_transcription_enabled() -> bool {
-    matches!(
-      std::env::var("TRISPR_ENABLE_LEGACY_CLOUD_TRANSCRIBE")
-        .ok()
-        .map(|v| v.trim().to_lowercase()),
-      Some(v) if v == "1" || v == "true" || v == "yes" || v == "on"
-    )
 }
 
 fn parse_env_usize(name: &str) -> Option<usize> {
@@ -3253,28 +3231,6 @@ fn read_first_existing_text_file(paths: &[PathBuf]) -> Option<(PathBuf, String)>
         );
     }
     None
-}
-
-#[derive(Deserialize)]
-struct CloudResponse {
-    text: String,
-}
-
-fn transcribe_cloud(wav_bytes: &[u8]) -> Result<String, String> {
-    let endpoint = std::env::var("TRISPR_CLOUD_ENDPOINT").unwrap_or_default();
-    if endpoint.trim().is_empty() {
-        return Err("Legacy cloud transcription fallback is not configured".to_string());
-    }
-
-    let token = std::env::var("TRISPR_CLOUD_TOKEN").unwrap_or_default();
-    let mut req = ureq::post(&endpoint).set("Content-Type", "audio/wav");
-    if !token.trim().is_empty() {
-        req = req.set("Authorization", &format!("Bearer {token}"));
-    }
-
-    let resp = req.send_bytes(wav_bytes).map_err(|e| e.to_string())?;
-    let parsed: CloudResponse = resp.into_json().map_err(|e| e.to_string())?;
-    Ok(parsed.text)
 }
 
 #[cfg(target_os = "windows")]

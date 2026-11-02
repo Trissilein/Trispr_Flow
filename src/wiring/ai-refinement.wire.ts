@@ -1,28 +1,13 @@
 // AI Refinement wiring (R2 slice 5).
 //
-// Covers: AI Refinement + Post-Processing + topic-keywords + provider-chain +
+// Covers: AI Refinement + Post-Processing + topic-keywords +
 // prompt-editor + local-runtime per CONTEXT.md. Language controls
 // (languageSelect, languagePinnedToggle, whisperInputLanguageSelect) are folded
 // in because they mutate AI-Refinement prompt state. See OQ-3 clause 8
 // (project-spec/decisions/2026-05-15/refactoring-plan.md).
 
 import { invoke } from "@tauri-apps/api/core";
-import type {
-  AIFallbackProvider,
-  CloudAIFallbackProvider,
-  AIExecutionMode,
-  AIProviderAuthStatus,
-  Settings,
-} from "../types";
-import {
-  CLOUD_PROVIDER_IDS,
-  CLOUD_PROVIDER_LABELS,
-  normalizeCloudProvider,
-  normalizeExecutionMode,
-  normalizeAuthMethodPreference,
-  isVerifiedAuthStatus,
-  normalizeAIFallbackProvider,
-} from "../ai-provider-utils";
+import type { Settings } from "../types";
 import { settings } from "../state";
 import * as dom from "../dom-refs";
 import {
@@ -71,7 +56,6 @@ import {
   startOllamaRuntime,
   verifyOllamaRuntime,
 } from "../ollama-models";
-import { normalizeModelTag } from "../ollama-tag-utils";
 import {
   DEFAULT_RUNTIME_VERSION,
   RUNTIME_VERSION_ACTION_EVENT,
@@ -82,13 +66,8 @@ import { onChangePersist, scheduleSettingsRender } from "./wire-helpers";
 
 // ── Module-level constants ──────────────────────────────────────────────────
 
-const LOCAL_BACKENDS = ["ollama", "lm_studio", "oobabooga"] as const;
 const AI_REFINEMENT_MODULE_ID = "ai_refinement";
 const AI_REFINEMENT_MIGRATION_FLAG_KEY = "ai_refinement.migrated_legacy";
-
-// ── Module-level state ──────────────────────────────────────────────────────
-
-let authModalProvider: CloudAIFallbackProvider | null = null;
 
 // ── Private helpers ─────────────────────────────────────────────────────────
 
@@ -110,37 +89,6 @@ function refreshAIUi(): void {
   renderAIFallbackSettingsUi();
   renderOllamaModelManager();
   renderHero();
-}
-
-function getCredentialTargetProvider(): CloudAIFallbackProvider | null {
-  if (authModalProvider) {
-    return authModalProvider;
-  }
-  return normalizeCloudProvider(
-    settings?.ai_fallback?.fallback_provider ?? null,
-  );
-}
-
-function getFallbackProvider(): CloudAIFallbackProvider | null {
-  return normalizeCloudProvider(
-    settings?.ai_fallback?.fallback_provider ?? null,
-  );
-}
-
-function isProviderVerified(provider: CloudAIFallbackProvider | null): boolean {
-  if (!provider || !settings) return false;
-  const providerSettings = getAIFallbackProviderSettings(provider);
-  if (!providerSettings) return false;
-  return isVerifiedAuthStatus(providerSettings.auth_status);
-}
-
-function getAIFallbackProviderSettings(provider: AIFallbackProvider) {
-  if (!settings?.providers) return null;
-  if (provider === "claude") return settings.providers.claude;
-  if (provider === "openai") return settings.providers.openai;
-  if (provider === "gemini") return settings.providers.gemini;
-  // Ollama uses OllamaSettings, handled separately
-  return null;
 }
 
 function normalizeAiRefinementModuleBindingInSettings(): void {
@@ -177,45 +125,6 @@ function normalizeAiRefinementModuleBindingInSettings(): void {
     settings.postproc_llm_enabled = false;
   }
   overrides[AI_REFINEMENT_MIGRATION_FLAG_KEY] = true;
-}
-
-function applyExecutionModeInSettings(mode: AIExecutionMode): void {
-  if (!settings) return;
-  settings.ai_fallback.execution_mode = "local_primary";
-  // Preserve the currently selected local backend — do NOT reset to "ollama"
-  if (
-    !LOCAL_BACKENDS.includes(
-      settings.ai_fallback.provider as (typeof LOCAL_BACKENDS)[number],
-    )
-  ) {
-    settings.ai_fallback.provider = "ollama";
-  }
-  settings.postproc_llm_provider = settings.ai_fallback.provider;
-  if (mode === "online_fallback") {
-    settings.ai_fallback.execution_mode = "local_primary";
-  }
-}
-
-function ensureOnlineModeConstraints(notify: boolean): boolean {
-  if (!settings) return false;
-  const fallbackProvider = getFallbackProvider();
-  if (
-    settings.ai_fallback.execution_mode === "online_fallback" &&
-    (!fallbackProvider || !isProviderVerified(fallbackProvider))
-  ) {
-    applyExecutionModeInSettings("local_primary");
-    if (notify) {
-      showToast({
-        type: "warning",
-        title: "Fallback switched to local",
-        message:
-          "Fallback provider is locked/unverified. Switched back to local Ollama.",
-        duration: 3800,
-      });
-    }
-    return true;
-  }
-  return false;
 }
 
 function isLaneControlTarget(target: EventTarget | null): boolean {
@@ -419,9 +328,6 @@ function ensureAIFallbackSettingsDefaults() {
     settings.ai_fallback = {
       enabled: false,
       provider: "ollama",
-      fallback_provider: null,
-      execution_mode: "local_primary",
-      strict_local_mode: true,
       preserve_source_language: true,
       model: "gemma4:e4b",
       temperature: 0.3,
@@ -438,43 +344,11 @@ function ensureAIFallbackSettingsDefaults() {
   }
   if (!settings.providers) {
     settings.providers = {
-      claude: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: [
-          "claude-3-5-sonnet-20241022",
-          "claude-3-5-haiku-20241022",
-          "claude-3-opus-20240229",
-        ],
-        preferred_model: "claude-3-5-sonnet-20241022",
-      },
-      openai: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
-        preferred_model: "gpt-4o-mini",
-      },
-      gemini: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: [
-          "gemini-2.0-flash",
-          "gemini-1.5-pro",
-          "gemini-1.5-flash",
-        ],
-        preferred_model: "gemini-2.0-flash",
-      },
       ollama: {
         endpoint: "http://127.0.0.1:11434",
         available_models: [],
         preferred_model: "",
-        runtime_source: "manual",
+        runtime_source: "per_user_zip",
         runtime_path: "",
         runtime_version: "",
         runtime_target_version: DEFAULT_RUNTIME_VERSION,
@@ -488,7 +362,7 @@ function ensureAIFallbackSettingsDefaults() {
       endpoint: "http://127.0.0.1:11434",
       available_models: [],
       preferred_model: "",
-      runtime_source: "manual",
+      runtime_source: "per_user_zip",
       runtime_path: "",
       runtime_version: "",
       runtime_target_version: DEFAULT_RUNTIME_VERSION,
@@ -496,7 +370,6 @@ function ensureAIFallbackSettingsDefaults() {
       last_health_check: null,
     };
   }
-  settings.ai_fallback.strict_local_mode ??= true;
   settings.ai_fallback.preserve_source_language ??= true;
   settings.ai_fallback.prompt_profile = normalizeRefinementPromptPreset(
     settings.ai_fallback.prompt_profile,
@@ -512,33 +385,8 @@ function ensureAIFallbackSettingsDefaults() {
     );
   settings.ai_fallback.low_latency_mode ??= false;
   syncActivePromptPresetSelection();
-  settings.ai_fallback.fallback_provider = normalizeCloudProvider(
-    settings.ai_fallback.fallback_provider ?? null,
-  );
-  settings.ai_fallback.execution_mode = normalizeExecutionMode(
-    settings.ai_fallback.execution_mode,
-  );
-  if (
-    !settings.ai_fallback.fallback_provider &&
-    !LOCAL_BACKENDS.includes(
-      settings.ai_fallback.provider as (typeof LOCAL_BACKENDS)[number],
-    )
-  ) {
-    settings.ai_fallback.fallback_provider = normalizeCloudProvider(
-      settings.ai_fallback.provider,
-    );
-  }
-  // Online fallback lane is intentionally roadmap-only for now.
-  settings.ai_fallback.execution_mode = "local_primary";
-  // Preserve the selected local backend — only reset if something invalid crept in
-  if (
-    !LOCAL_BACKENDS.includes(
-      settings.ai_fallback.provider as (typeof LOCAL_BACKENDS)[number],
-    )
-  ) {
-    settings.ai_fallback.provider = "ollama";
-  }
-  settings.postproc_llm_provider = settings.ai_fallback.provider;
+  // Refinement is Ollama-only; saved cloud / LM Studio / Oobabooga values land on Ollama.
+  settings.ai_fallback.provider = "ollama";
   settings.postproc_language = derivePostprocLanguageFromAsr(
     settings.language_mode,
     settings.language_pinned,
@@ -559,7 +407,7 @@ function ensureAIFallbackSettingsDefaults() {
     settings.topic_keywords,
   );
   setTopicKeywords(settings.topic_keywords);
-  settings.providers.ollama.runtime_source ??= "manual";
+  settings.providers.ollama.runtime_source = "per_user_zip";
   settings.providers.ollama.runtime_path ??= "";
   settings.providers.ollama.runtime_version ??= "";
   // Legacy default (0.20.2), empty target and a stale target nobody picked (older than the
@@ -567,26 +415,6 @@ function ensureAIFallbackSettingsDefaults() {
   settings.providers.ollama.runtime_target_explicit ??= false;
   syncRuntimeTarget(settings.providers.ollama);
   settings.providers.ollama.last_health_check ??= null;
-  CLOUD_PROVIDER_IDS.forEach((provider) => {
-    const providerSettings = getAIFallbackProviderSettings(provider);
-    if (!providerSettings) return;
-    providerSettings.auth_method_preference = normalizeAuthMethodPreference(
-      providerSettings.auth_method_preference,
-    );
-    providerSettings.auth_status = isVerifiedAuthStatus(
-      providerSettings.auth_status,
-    )
-      ? (providerSettings.auth_status as AIProviderAuthStatus)
-      : "locked";
-    providerSettings.auth_verified_at ??= null;
-    if (
-      !providerSettings.api_key_stored &&
-      providerSettings.auth_status !== "verified_oauth"
-    ) {
-      providerSettings.auth_status = "locked";
-      providerSettings.auth_verified_at = null;
-    }
-  });
   settings.setup ??= {
     local_ai_wizard_completed: false,
     local_ai_wizard_pending: true,
@@ -595,233 +423,6 @@ function ensureAIFallbackSettingsDefaults() {
   settings.setup.ollama_remote_expert_opt_in ??= false;
   normalizeAiRefinementModuleBindingInSettings();
   syncDerivedLanguageSettings();
-}
-
-async function refreshAIFallbackModels(provider: AIFallbackProvider) {
-  if (!settings) return;
-  const models = await invoke<string[]>("fetch_available_models", { provider });
-
-  if (provider === "ollama") {
-    ensureAIFallbackSettingsDefaults();
-    const mergedModels = Array.from(
-      new Set(
-        [...(settings.providers.ollama.available_models ?? []), ...models]
-          .map((name) => normalizeModelTag(name))
-          .filter((name) => name.length > 0),
-      ),
-    );
-    settings.providers.ollama.available_models = mergedModels;
-    if (!models.includes(settings.providers.ollama.preferred_model)) {
-      settings.providers.ollama.preferred_model = models[0] ?? "";
-    }
-    if (
-      settings.ai_fallback.provider === "ollama" &&
-      !models.includes(settings.ai_fallback.model)
-    ) {
-      settings.ai_fallback.model =
-        settings.providers.ollama.preferred_model || models[0] || "";
-    }
-    return;
-  }
-
-  const providerSettings = getAIFallbackProviderSettings(provider);
-  if (!providerSettings) return;
-  providerSettings.available_models = models;
-  if (
-    !providerSettings.preferred_model ||
-    !models.includes(providerSettings.preferred_model)
-  ) {
-    providerSettings.preferred_model = models[0] ?? "";
-  }
-  const mode = normalizeExecutionMode(settings.ai_fallback.execution_mode);
-  const fallbackProvider = getFallbackProvider();
-  if (
-    settings.ai_fallback.provider === provider ||
-    (mode === "online_fallback" && fallbackProvider === provider)
-  ) {
-    if (!models.includes(settings.ai_fallback.model)) {
-      settings.ai_fallback.model =
-        providerSettings.preferred_model || models[0] || "";
-    }
-  }
-}
-
-function setAuthModalOpen(open: boolean): void {
-  if (!dom.aiAuthModal) return;
-  dom.aiAuthModal.hidden = !open;
-  dom.aiAuthModal.classList.toggle("is-open", open);
-}
-
-function refreshAuthModalContent(): void {
-  const provider = authModalProvider;
-  if (!provider) return;
-  const providerSettings = getAIFallbackProviderSettings(provider);
-  if (!providerSettings) return;
-
-  const providerLabel = CLOUD_PROVIDER_LABELS[provider];
-  if (dom.aiAuthProviderName) {
-    dom.aiAuthProviderName.textContent = `${providerLabel} credentials`;
-  }
-  if (dom.aiAuthMethod) {
-    dom.aiAuthMethod.value = normalizeAuthMethodPreference(
-      providerSettings.auth_method_preference,
-    );
-  }
-  if (dom.aiAuthVerifyKey) {
-    dom.aiAuthVerifyKey.disabled =
-      normalizeAuthMethodPreference(providerSettings.auth_method_preference) ===
-      "oauth";
-  }
-  if (dom.aiAuthStatus) {
-    if (
-      normalizeAuthMethodPreference(providerSettings.auth_method_preference) ===
-      "oauth"
-    ) {
-      dom.aiAuthStatus.textContent = `OAuth for ${providerLabel} is coming soon. Use API key verification for now.`;
-    } else {
-      dom.aiAuthStatus.textContent = providerSettings.api_key_stored
-        ? `${providerLabel} key stored. Verify to unlock online usage.`
-        : `No API key stored for ${providerLabel} yet.`;
-    }
-  }
-}
-
-function closeAuthModal(): void {
-  setAuthModalOpen(false);
-  authModalProvider = null;
-  if (dom.aiAuthApiKeyInput) {
-    dom.aiAuthApiKeyInput.value = "";
-  }
-}
-
-async function saveProviderApiKey(
-  provider: CloudAIFallbackProvider,
-  apiKey: string,
-): Promise<void> {
-  if (!settings) return;
-  await invoke("save_provider_api_key", { provider, apiKey });
-  const providerSettings = getAIFallbackProviderSettings(provider);
-  if (providerSettings) {
-    providerSettings.api_key_stored = true;
-    providerSettings.auth_status = "locked";
-    providerSettings.auth_verified_at = null;
-  }
-  ensureOnlineModeConstraints(true);
-  await persistSettings();
-  renderAIFallbackSettingsUi();
-  refreshAuthModalContent();
-}
-
-async function clearProviderApiKey(
-  provider: CloudAIFallbackProvider,
-): Promise<void> {
-  if (!settings) return;
-  await invoke("clear_provider_api_key", { provider });
-  const providerSettings = getAIFallbackProviderSettings(provider);
-  if (providerSettings) {
-    providerSettings.api_key_stored = false;
-    providerSettings.auth_status = "locked";
-    providerSettings.auth_verified_at = null;
-  }
-  ensureOnlineModeConstraints(true);
-  await persistSettings();
-  renderAIFallbackSettingsUi();
-  refreshAuthModalContent();
-}
-
-async function verifyProviderCredentials(
-  provider: CloudAIFallbackProvider,
-): Promise<void> {
-  if (!settings) return;
-  const providerSettings = getAIFallbackProviderSettings(provider);
-  const authMethod = normalizeAuthMethodPreference(
-    providerSettings?.auth_method_preference,
-  );
-  if (authMethod === "oauth") {
-    showToast({
-      type: "info",
-      title: "OAuth coming soon",
-      message:
-        "OAuth verification is not available yet. Use API key verification for now.",
-      duration: 4200,
-    });
-    return;
-  }
-  if (!providerSettings?.api_key_stored) {
-    showToast({
-      type: "warning",
-      title: "Missing API key",
-      message: "Save an API key first, then click Verify.",
-      duration: 3000,
-    });
-    return;
-  }
-
-  try {
-    const result = await invoke<{
-      message?: string;
-      method?: string;
-      verified_at?: string;
-    }>("verify_provider_auth", { provider, method: authMethod });
-    if (providerSettings) {
-      providerSettings.auth_status =
-        (result?.method as "verified_api_key" | "verified_oauth") ||
-        "verified_api_key";
-      providerSettings.auth_verified_at =
-        result?.verified_at ?? new Date().toISOString();
-    }
-    if (!settings.ai_fallback.fallback_provider) {
-      settings.ai_fallback.fallback_provider = provider;
-    }
-    await refreshAIFallbackModels(provider);
-    await persistSettings();
-    renderAIFallbackSettingsUi();
-    refreshAuthModalContent();
-    showToast({
-      type: "success",
-      title: "Provider verified",
-      message:
-        result?.message ?? `${provider} is unlocked for online fallback.`,
-      duration: 3500,
-    });
-  } catch (error) {
-    if (providerSettings) {
-      providerSettings.auth_status = "locked";
-      providerSettings.auth_verified_at = null;
-    }
-    ensureOnlineModeConstraints(true);
-    await persistSettings();
-    renderAIFallbackSettingsUi();
-    refreshAuthModalContent();
-    showToast({
-      type: "error",
-      title: "Verification failed",
-      message: String(error),
-      duration: 5000,
-    });
-  }
-}
-
-// ── Local-closure lifts (per OQ-3 clause 3) ────────────────────────────────
-
-function getCompatSettings() {
-  if (!settings) return null;
-  const p = settings.ai_fallback.provider;
-  if (p === "lm_studio")
-    return (settings.providers.lm_studio ??= {
-      endpoint: "http://127.0.0.1:1234",
-      api_key: "",
-      preferred_model: "",
-      available_models: [],
-    });
-  if (p === "oobabooga")
-    return (settings.providers.oobabooga ??= {
-      endpoint: "http://127.0.0.1:5000",
-      api_key: "",
-      preferred_model: "",
-      available_models: [],
-    });
-  return null;
 }
 
 async function setWhisperInputLanguage(mode: Settings["language_mode"]) {
@@ -843,119 +444,15 @@ async function setWhisperInputLanguage(mode: Settings["language_mode"]) {
   renderSettings();
 }
 
-async function activateLocalLane(notify = false) {
+async function activateLocalLane() {
   if (!settings) return;
   ensureAIFallbackSettingsDefaults();
-  const switched = settings.ai_fallback.execution_mode !== "local_primary";
-  applyExecutionModeInSettings("local_primary");
-  // Only refresh Ollama runtime state when Ollama is actually the active backend.
-  // Calling this for LM Studio / Oobabooga causes a 2–3 s freeze due to the
-  // Ollama endpoint ping in detect_ollama_runtime.
-  if (settings.ai_fallback.provider === "ollama") {
-    await refreshOllamaRuntimeState({ force: true });
-    if (getOllamaRuntimeCardState().healthy) {
-      await refreshOllamaInstalledModels();
-    }
+  await refreshOllamaRuntimeState({ force: true });
+  if (getOllamaRuntimeCardState().healthy) {
+    await refreshOllamaInstalledModels();
   }
   await persistSettings();
   refreshAIUi();
-  if (notify && switched) {
-    showToast({
-      type: "success",
-      title: "Local runtime active",
-      message: "Local AI backend active.",
-      duration: 2600,
-    });
-  }
-}
-
-async function handleSaveCredentialsClick() {
-  if (!settings) return;
-  ensureAIFallbackSettingsDefaults();
-  const provider = getCredentialTargetProvider();
-  if (!provider) {
-    showToast({
-      type: "warning",
-      title: "Select provider",
-      message: "Choose a cloud provider before saving credentials.",
-      duration: 3000,
-    });
-    return;
-  }
-  const apiKey = (dom.aiAuthApiKeyInput?.value ?? "").trim();
-  if (!apiKey) {
-    showToast({
-      type: "warning",
-      title: "Missing API key",
-      message: "Paste an API key before saving.",
-      duration: 3000,
-    });
-    return;
-  }
-  try {
-    await saveProviderApiKey(provider, apiKey);
-    if (dom.aiAuthApiKeyInput) dom.aiAuthApiKeyInput.value = "";
-    showToast({
-      type: "success",
-      title: "API key saved",
-      message: `Stored API key for ${provider}.`,
-      duration: 2500,
-    });
-  } catch (error) {
-    showToast({
-      type: "error",
-      title: "API key save failed",
-      message: String(error),
-      duration: 5000,
-    });
-  }
-}
-
-async function handleClearCredentialsClick() {
-  if (!settings) return;
-  ensureAIFallbackSettingsDefaults();
-  const provider = getCredentialTargetProvider();
-  if (!provider) {
-    showToast({
-      type: "warning",
-      title: "Select provider",
-      message: "Choose a cloud provider before clearing credentials.",
-      duration: 3000,
-    });
-    return;
-  }
-  try {
-    await clearProviderApiKey(provider);
-    showToast({
-      type: "info",
-      title: "API key removed",
-      message: `Removed API key for ${provider}.`,
-      duration: 2500,
-    });
-  } catch (error) {
-    showToast({
-      type: "error",
-      title: "API key remove failed",
-      message: String(error),
-      duration: 5000,
-    });
-  }
-}
-
-async function handleVerifyCredentialsClick() {
-  if (!settings) return;
-  ensureAIFallbackSettingsDefaults();
-  const provider = getCredentialTargetProvider();
-  if (!provider) {
-    showToast({
-      type: "warning",
-      title: "Select provider",
-      message: "Choose a cloud provider before verification.",
-      duration: 3000,
-    });
-    return;
-  }
-  await verifyProviderCredentials(provider);
 }
 
 // ── Public entry point ──────────────────────────────────────────────────────
@@ -1084,22 +581,18 @@ export function wireAiRefinement(): void {
     const enabling = dom.aiFallbackEnabled!.checked;
 
     if (enabling) {
-      const provider = settings.ai_fallback.provider;
-      if (provider === "ollama") {
-        // For Ollama: check if runtime is available before enabling
-        const runtimeInfo = await invoke<any>("detect_ollama_runtime").catch(
-          () => null,
-        );
-        const ollamaDetected = runtimeInfo?.found === true;
-        if (!ollamaDetected) {
-          const userWantsInstall = await showOllamaRequiredModal();
-          if (!userWantsInstall) {
-            dom.aiFallbackEnabled!.checked = false;
-            return;
-          }
+      // Check if the runtime is available before enabling
+      const runtimeInfo = await invoke<any>("detect_ollama_runtime").catch(
+        () => null,
+      );
+      const ollamaDetected = runtimeInfo?.found === true;
+      if (!ollamaDetected) {
+        const userWantsInstall = await showOllamaRequiredModal();
+        if (!userWantsInstall) {
+          dom.aiFallbackEnabled!.checked = false;
+          return;
         }
       }
-      // LM Studio / Oobabooga: no runtime detection needed, server is managed externally
     }
 
     settings.ai_fallback.enabled = enabling;
@@ -1108,15 +601,13 @@ export function wireAiRefinement(): void {
     renderAIFallbackSettingsUi();
     renderHero();
     if (!settings.ai_fallback.enabled) {
-      // Stop Ollama runtime when AI refinement is disabled — only if Ollama is the active provider
-      if (settings.ai_fallback.provider === "ollama") {
-        try {
-          await invoke("stop_ollama_runtime");
-        } catch (error) {
-          console.warn("Failed to stop Ollama runtime:", error);
-        }
+      // Stop Ollama runtime when AI refinement is disabled
+      try {
+        await invoke("stop_ollama_runtime");
+      } catch (error) {
+        console.warn("Failed to stop Ollama runtime:", error);
       }
-    } else if (settings.ai_fallback.provider === "ollama") {
+    } else {
       void autoStartLocalRuntimeIfNeeded("enable_toggle").finally(() => {
         renderAIFallbackSettingsUi();
         renderOllamaModelManager();
@@ -1126,79 +617,21 @@ export function wireAiRefinement(): void {
     }
   });
 
-  dom.aiAuthModalClose?.addEventListener("click", () => {
-    closeAuthModal();
-  });
-  dom.aiAuthModalBackdrop?.addEventListener("click", () => {
-    closeAuthModal();
-  });
-  // Auth-modal Escape handler — added directly to window per OQ-3 clause 1
-  // (no cleanup; listeners persist for app lifetime). Note: if wireAiRefinement()
-  // is ever called more than once (e.g. in a future hot-reload path) this handler
-  // will accumulate, but each instance is idempotent (checks dom.aiAuthModal.hidden).
-  window.addEventListener("keydown", (event: KeyboardEvent) => {
-    if (event.key === "Escape" && dom.aiAuthModal && !dom.aiAuthModal.hidden) {
-      closeAuthModal();
-    }
-  });
-
-  dom.aiAuthMethod?.addEventListener("change", async () => {
-    if (!settings || !dom.aiAuthMethod || !authModalProvider) return;
-    ensureAIFallbackSettingsDefaults();
-    const providerSettings = getAIFallbackProviderSettings(authModalProvider);
-    if (!providerSettings) return;
-    providerSettings.auth_method_preference = normalizeAuthMethodPreference(
-      dom.aiAuthMethod.value,
-    );
-    await persistSettings();
-    renderAIFallbackSettingsUi();
-    refreshAuthModalContent();
-    if (providerSettings.auth_method_preference === "oauth") {
-      showToast({
-        type: "info",
-        title: "OAuth coming soon",
-        message:
-          "OAuth verification is not available yet. Use API key for now.",
-        duration: 3600,
-      });
-    }
-  });
-
   dom.aiFallbackLocalLane?.addEventListener("click", (event) => {
     if (isLaneControlTarget(event.target)) return;
-    void activateLocalLane(false);
+    void activateLocalLane();
   });
   dom.aiFallbackLocalLane?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     if (isLaneControlTarget(event.target)) return;
     event.preventDefault();
-    void activateLocalLane(false);
-  });
-
-  dom.aiFallbackModel?.addEventListener("change", async () => {
-    if (!settings || !dom.aiFallbackModel) return;
-    ensureAIFallbackSettingsDefaults();
-    const mode = normalizeExecutionMode(settings.ai_fallback.execution_mode);
-    const provider = normalizeAIFallbackProvider(settings.ai_fallback.provider);
-    if (provider === "ollama" || mode !== "online_fallback") {
-      // Ollama model selection is handled only in the Local AI Runtime manager.
-      return;
-    }
-    settings.ai_fallback.model = dom.aiFallbackModel.value;
-    settings.postproc_llm_model = settings.ai_fallback.model;
-    const providerSettings = getAIFallbackProviderSettings(provider);
-    if (providerSettings) {
-      providerSettings.preferred_model = settings.ai_fallback.model;
-    }
-    await persistSettings();
+    void activateLocalLane();
   });
 
   // Local runtime action handlers in Local Primary card
   dom.aiFallbackLocalPrimaryAction?.addEventListener("click", async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
-    applyExecutionModeInSettings("local_primary");
-    await persistSettings();
     const action =
       dom.aiFallbackLocalPrimaryAction?.dataset.runtimeAction ?? "install";
     if (action === "ready") {
@@ -1220,8 +653,6 @@ export function wireAiRefinement(): void {
   dom.aiFallbackLocalImportAction?.addEventListener("click", async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
-    applyExecutionModeInSettings("local_primary");
-    await persistSettings();
     const importPromise = importOllamaModelFromLocalFile();
     renderAIFallbackSettingsUi();
     await importPromise;
@@ -1277,124 +708,10 @@ export function wireAiRefinement(): void {
     if (!settings) return;
     const { version, action } = (event as CustomEvent<{ version: string; action: RuntimeVersionActionId }>).detail;
     ensureAIFallbackSettingsDefaults();
-    applyExecutionModeInSettings("local_primary");
     const actionPromise = runRuntimeVersionAction(version, action);
     renderAIFallbackSettingsUi();
     await actionPromise;
     refreshAIUi();
-  });
-
-  // ── OpenAI-compat backend (LM Studio / Oobabooga) config listeners ─────────
-
-  dom.aiFallbackCompatEndpoint?.addEventListener("change", async () => {
-    const s = getCompatSettings();
-    if (!s || !dom.aiFallbackCompatEndpoint) return;
-    s.endpoint = dom.aiFallbackCompatEndpoint.value.trim() || s.endpoint;
-    await persistSettings();
-  });
-
-  dom.aiFallbackCompatApiKey?.addEventListener("change", async () => {
-    const s = getCompatSettings();
-    if (!s || !dom.aiFallbackCompatApiKey) return;
-    s.api_key = dom.aiFallbackCompatApiKey.value;
-    await persistSettings();
-  });
-
-  // Model selection is now handled by card "Set active" buttons in settings.ts
-  // (renderCompatModelCards). The old <select> dropdown has been removed.
-
-  dom.aiFallbackCompatFetchModels?.addEventListener("click", async () => {
-    const s = getCompatSettings();
-    if (!s || !dom.aiFallbackCompatFetchModels || !settings) return;
-    dom.aiFallbackCompatFetchModels.disabled = true;
-    dom.aiFallbackCompatFetchModels.textContent = "Fetching…";
-    if (dom.aiFallbackCompatStatus)
-      dom.aiFallbackCompatStatus.textContent = "Connecting to server…";
-    try {
-      const models = await invoke<string[]>("fetch_available_models", {
-        provider: settings.ai_fallback.provider,
-      });
-      s.available_models = models;
-      if (!s.preferred_model && models.length > 0) {
-        s.preferred_model = models[0];
-        settings.ai_fallback.model = models[0];
-      }
-      await persistSettings();
-      if (dom.aiFallbackCompatStatus)
-        dom.aiFallbackCompatStatus.textContent = `${models.length} model(s) found.`;
-    } catch (err) {
-      if (dom.aiFallbackCompatStatus) {
-        dom.aiFallbackCompatStatus.textContent = `Connection failed: ${err instanceof Error ? err.message : String(err)}`;
-      }
-    } finally {
-      dom.aiFallbackCompatFetchModels!.disabled = false;
-      dom.aiFallbackCompatFetchModels!.textContent = "Fetch models";
-      renderAIFallbackSettingsUi();
-    }
-  });
-
-  dom.aiFallbackCompatVerifyAction?.addEventListener("click", async () => {
-    const s = getCompatSettings();
-    if (!s || !dom.aiFallbackCompatVerifyAction || !settings) return;
-    dom.aiFallbackCompatVerifyAction.disabled = true;
-    if (dom.aiFallbackCompatStatus)
-      dom.aiFallbackCompatStatus.textContent = "Verifying…";
-    try {
-      const result = await invoke<{ ok: boolean; message: string }>(
-        "test_provider_connection",
-        {
-          provider: settings.ai_fallback.provider,
-          apiKey: s.api_key || "",
-        },
-      );
-      if (dom.aiFallbackCompatStatus) {
-        dom.aiFallbackCompatStatus.textContent = result.ok
-          ? `✓ ${result.message}`
-          : `✗ ${result.message}`;
-      }
-    } catch (err) {
-      if (dom.aiFallbackCompatStatus) {
-        dom.aiFallbackCompatStatus.textContent = `✗ ${err instanceof Error ? err.message : String(err)}`;
-      }
-    } finally {
-      dom.aiFallbackCompatVerifyAction!.disabled = false;
-    }
-  });
-
-  dom.aiFallbackLmStudioInstallAction?.addEventListener("click", async () => {
-    const btn = dom.aiFallbackLmStudioInstallAction!;
-    btn.disabled = true;
-    btn.textContent = "Opening installer…";
-    try {
-      await invoke("install_lm_studio");
-      showToast({
-        type: "info",
-        title: "LM Studio installer launched",
-        message:
-          "A PowerShell window has opened. Follow the prompts to complete installation, then restart Trispr Flow.",
-        duration: 7000,
-      });
-    } catch (err) {
-      showToast({
-        type: "error",
-        title: "Installer failed to launch",
-        message: err instanceof Error ? err.message : String(err),
-        duration: 5000,
-      });
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Install LM Studio";
-    }
-  });
-
-  dom.aiAuthSaveKey?.addEventListener("click", () => {
-    void handleSaveCredentialsClick();
-  });
-  dom.aiAuthClearKey?.addEventListener("click", () => {
-    void handleClearCredentialsClick();
-  });
-  dom.aiAuthVerifyKey?.addEventListener("click", () => {
-    void handleVerifyCredentialsClick();
   });
 
   dom.aiFallbackTemperature?.addEventListener("input", () => {

@@ -1153,16 +1153,8 @@ fn a_runtime_that_died_between_unpacking_and_the_swap_never_counts_as_installed(
     );
 
     // and selecting the target does not launch it
-    let (binary, _) = select_runtime_binary_in(
-        &{
-            let mut s = settings.clone();
-            s.providers.ollama.runtime_source = "per_user_zip".to_string();
-            s
-        },
-        Some(root.path()),
-        || None,
-    )
-    .expect("falls back to an installed runtime");
+    let (binary, _) = select_runtime_binary_in(&settings, Some(root.path()))
+        .expect("falls back to an installed runtime");
     assert_eq!(binary, root.path().join("0.30.4").join("ollama.exe"));
 }
 
@@ -1919,14 +1911,6 @@ fn the_previous_runtime_is_found_by_stored_path_or_by_its_version_folder() {
 }
 
 #[test]
-fn the_source_of_a_fallback_binary_follows_where_it_lives() {
-    let root = Path::new("C:\\rt");
-    assert_eq!(source_for_binary(&root.join("0.30.4").join("ollama.exe"), Some(root), "system"), "per_user_zip");
-    assert_eq!(source_for_binary(Path::new("D:\\tools\\ollama.exe"), Some(root), "system"), "system");
-    assert_eq!(source_for_binary(&root.join("0.30.4").join("ollama.exe"), None, "manual"), "manual");
-}
-
-#[test]
 fn a_lost_exit_code_is_still_a_readable_message() {
     assert!(describe_exit(Some(2)).contains("exit code 2"));
     assert!(describe_exit(None).contains("exited right after it was started"));
@@ -2030,112 +2014,44 @@ fn a_garbage_pid_file_is_removed_without_killing_anything() {
     kill_stale_ollama_pid_in(&dir.path().join("none.pid"));
 }
 
-// ───────────────────────── 5. system runtime: PATH first, in detect and in start ─────────────────────────
-
-fn system_settings(path: &str, version: &str) -> crate::state::Settings {
-    let mut settings = crate::state::Settings::default();
-    settings.providers.ollama.runtime_source = "system".to_string();
-    settings.providers.ollama.runtime_path = path.to_string();
-    settings.providers.ollama.runtime_version = version.to_string();
-    settings.providers.ollama.runtime_target_version = "0.40.13".to_string();
-    settings
-}
+// ───────────────────────── 5. managed runtime: start and detect agree ─────────────────────────
 
 #[test]
-fn a_system_runtime_with_no_stored_path_is_the_one_on_path_for_detect_and_for_start() {
-    let root = Scratch::new("system-order");
-    marker(&root.path().join("0.40.13"), "managed");
-    let on_path = root.path().join("path-dir").join("ollama.exe");
-    fs::create_dir_all(on_path.parent().unwrap()).unwrap();
-    fs::write(&on_path, "system").unwrap();
-    let settings = system_settings("", "");
-
-    let started = select_runtime_binary_in(&settings, Some(root.path()), || Some(on_path.clone()))
-        .expect("start picks a runtime");
-    let detected = detect_runtime_in(&settings, Some(root.path()), || Some(on_path.clone()))
-        .expect("detect finds a runtime");
-
-    assert_eq!(started, (on_path.clone(), "system".to_string()), "start: PATH first");
-    assert_eq!(
-        (detected.0.as_str(), detected.1.clone()),
-        ("system", on_path.clone()),
-        "detect must report what start will launch, not the managed runtime"
-    );
-}
-
-#[test]
-fn a_system_runtime_whose_stored_path_is_gone_still_means_path_first() {
-    let root = Scratch::new("system-gone");
-    marker(&root.path().join("0.40.13"), "managed");
-    let on_path = root.path().join("on-path").join("ollama.exe");
-    fs::create_dir_all(on_path.parent().unwrap()).unwrap();
-    fs::write(&on_path, "system").unwrap();
-    let gone = root.path().join("removed").join("ollama.exe");
-    let settings = system_settings(&gone.to_string_lossy(), "0.40.13");
-
-    let started = select_runtime_binary_in(&settings, Some(root.path()), || Some(on_path.clone())).unwrap();
-    let detected = detect_runtime_in(&settings, Some(root.path()), || Some(on_path.clone())).unwrap();
-
-    assert_eq!(started.0, on_path);
-    assert_eq!(detected.1, on_path);
-    assert_eq!(
-        detected.2, "",
-        "the stored version belongs to the removed binary, not to the one on PATH"
-    );
-}
-
-#[test]
-fn start_and_detect_agree_for_every_source_and_every_combination_of_what_exists() {
-    // The full table: source x (stored path exists?) x (PATH has ollama?) x (managed installed?).
+fn start_and_detect_agree_for_every_combination_of_what_exists() {
+    // The full table: (stored path exists?) x (managed installed?).
     // Whatever start would launch, detect must report as the current runtime.
     let root = Scratch::new("agree");
     marker(&root.path().join("0.40.13"), "managed");
-    let managed_exe = root.path().join("0.40.13").join("ollama.exe");
     let stored_exe = root.path().join("stored").join("ollama.exe");
     fs::create_dir_all(stored_exe.parent().unwrap()).unwrap();
     fs::write(&stored_exe, "stored").unwrap();
-    let path_exe = root.path().join("path-dir").join("ollama.exe");
     let gone_exe = root.path().join("gone").join("ollama.exe");
 
     let mut disagreements: Vec<String> = Vec::new();
-    for source in ["system", "per_user_zip", "manual", ""] {
-        for stored in [None, Some(&stored_exe), Some(&gone_exe)] {
-            for has_path in [false, true] {
-                for has_managed in [false, true] {
-                    let mut settings = system_settings(
-                        &stored.map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
-                        "",
-                    );
-                    settings.providers.ollama.runtime_source = source.to_string();
-                    // target = the stored managed one only matters for per_user_zip start
-                    settings.providers.ollama.runtime_target_version = String::new();
-                    let managed = has_managed.then_some(root.path());
-                    let system = || has_path.then(|| path_exe.clone());
-                    let started = select_runtime_binary_in(&settings, managed, system).ok();
-                    let detected = detect_runtime_in(&settings, managed, system);
-                    // `managed_exe` / `path_exe` need not exist on disk for PATH lookups
-                    let started_path = started.as_ref().map(|(p, _)| p.clone());
-                    let detected_path = detected.as_ref().map(|(_, p, _)| p.clone());
-                    // `per_user_zip` with nothing installed: start refuses on purpose (it never
-                    // falls back to PATH for an explicit managed choice) while detect still
-                    // reports the Ollama it finds, so the UI can offer to use it.
-                    let start_refused = started_path.is_none();
-                    if !start_refused && started_path != detected_path {
-                        disagreements.push(format!(
-                            "source={:?} stored={:?} path={} managed={}: start={:?} detect={:?}",
-                            source,
-                            stored.map(|p| p.file_name().map(|_| p.parent().unwrap().file_name().unwrap().to_string_lossy().to_string())),
-                            has_path,
-                            has_managed,
-                            started_path.map(|p| p.display().to_string()),
-                            detected_path.map(|p| p.display().to_string()),
-                        ));
-                    }
-                }
+    for stored in [None, Some(&stored_exe), Some(&gone_exe)] {
+        for has_managed in [false, true] {
+            let mut settings = crate::state::Settings::default();
+            settings.providers.ollama.runtime_path =
+                stored.map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+            settings.providers.ollama.runtime_target_version = String::new();
+            let managed = has_managed.then_some(root.path());
+            let started = select_runtime_binary_in(&settings, managed).ok();
+            let detected = detect_runtime_in(&settings, managed);
+            let started_path = started.as_ref().map(|(p, _)| p.clone());
+            let detected_path = detected.as_ref().map(|(_, p, _)| p.clone());
+            // Nothing installed: start refuses on purpose with the "install it" message.
+            let start_refused = started_path.is_none();
+            if !start_refused && started_path != detected_path {
+                disagreements.push(format!(
+                    "stored={:?} managed={}: start={:?} detect={:?}",
+                    stored.map(|p| p.display().to_string()),
+                    has_managed,
+                    started_path.map(|p| p.display().to_string()),
+                    detected_path.map(|p| p.display().to_string()),
+                ));
             }
         }
     }
-    let _ = managed_exe;
     assert!(disagreements.is_empty(), "start and detect disagree:\n{}", disagreements.join("\n"));
 }
 
@@ -2463,7 +2379,7 @@ fn live_a_foreign_program_on_the_port_is_detected_before_anything_is_spawned() {
         }
     });
 
-    let reachable = runtime_endpoint_reachable(&endpoint, &[]);
+    let reachable = runtime_endpoint_reachable(&endpoint);
     let in_use = endpoint_port_in_use(&endpoint);
     println!("reachable as Ollama: {}, port in use: {}", reachable, in_use);
     assert!(!reachable && in_use);

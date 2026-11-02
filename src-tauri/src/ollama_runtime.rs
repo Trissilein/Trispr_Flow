@@ -1,7 +1,6 @@
-use crate::ai_fallback::check_strict_local_mode;
 use crate::ai_fallback::provider::{
-    is_local_ollama_endpoint, list_ollama_models, ping_ollama, ping_ollama_quick,
-    ping_ollama_quick_fresh, reset_quick_ping_cache,
+    list_ollama_models, ping_ollama, ping_ollama_quick, ping_ollama_quick_fresh,
+    reset_quick_ping_cache,
 };
 use crate::managed_child_slot_status;
 use crate::now_iso;
@@ -26,7 +25,6 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{info, warn};
 use url::Url;
-use which::which;
 use zip::ZipArchive;
 
 #[cfg(target_os = "windows")]
@@ -36,6 +34,7 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const DEFAULT_RUNTIME_VERSION: &str = "0.40.13";
+const MANAGED_RUNTIME_SOURCE: &str = "per_user_zip";
 const GITHUB_RELEASES_API: &str = "https://api.github.com/repos/ollama/ollama/releases";
 const BACKGROUND_IO_THROTTLE_BYTES: u64 = 16 * 1024 * 1024;
 const BACKGROUND_IO_THROTTLE_SLEEP_MS: u64 = 2;
@@ -1676,33 +1675,15 @@ fn managed_runtime_root(app: &AppHandle) -> Option<PathBuf> {
 fn detect_runtime_in(
     settings: &Settings,
     managed_root: Option<&Path>,
-    system_ollama: impl Fn() -> Option<PathBuf>,
 ) -> Option<(String, PathBuf, String)> {
-    let source_hint = settings
-        .providers
-        .ollama
-        .runtime_source
-        .trim()
-        .to_lowercase();
-    let find_managed =
-        || managed_root.and_then(|root| find_managed_runtime_binary_in(root, settings));
-
     let configured = settings.providers.ollama.runtime_path.trim();
     let configured_binary = (!configured.is_empty())
         .then(|| PathBuf::from(configured))
         .filter(|path| path.exists());
-    let stored_as = |label: &str| configured_binary.clone().map(|p| (label.to_string(), p));
-    let managed = || find_managed().map(|p| ("per_user_zip".to_string(), p));
-    let system = || system_ollama().map(|p| ("system".to_string(), p));
-
-    // `system` looks in the same order `select_runtime_binary_in` launches in (PATH, then the
-    // stored path, then a managed runtime): detect must report what a start would run. Other
-    // sources keep the stored path first.
-    let (source, path) = match source_hint.as_str() {
-        "system" => system().or_else(|| stored_as("system")).or_else(managed),
-        "per_user_zip" => stored_as("per_user_zip").or_else(managed).or_else(system),
-        _ => stored_as("manual").or_else(system).or_else(managed),
-    }?;
+    let path = configured_binary.or_else(|| {
+        managed_root.and_then(|root| find_managed_runtime_binary_in(root, settings))
+    })?;
+    let source = MANAGED_RUNTIME_SOURCE.to_string();
     let version = detect_runtime_version_hint(settings, &source, &path, managed_root);
     Some((source, path, version))
 }
@@ -1780,90 +1761,34 @@ fn select_runtime_binary(
     app: &AppHandle,
     settings: &crate::state::Settings,
 ) -> Result<(PathBuf, String), String> {
-    select_runtime_binary_in(settings, managed_runtime_root(app).as_deref(), || {
-        which("ollama").ok()
-    })
+    select_runtime_binary_in(settings, managed_runtime_root(app).as_deref())
 }
 
-/// Which binary to launch. For the managed runtime (`per_user_zip`) the selected version
-/// (`runtime_target_version`) wins whenever its folder is installed: the stored
-/// `runtime_path` only remembers what ran last and must not pin the old build after the user
-/// switched version. `system` and `manual` are explicit user choices and stay untouched.
+/// Which binary to launch: the selected version (`runtime_target_version`) wins whenever its
+/// folder is installed; the stored `runtime_path` only remembers what ran last and must not pin
+/// the old build after the user switched version.
 fn select_runtime_binary_in(
     settings: &crate::state::Settings,
     managed_root: Option<&Path>,
-    system_ollama: impl Fn() -> Option<PathBuf>,
 ) -> Result<(PathBuf, String), String> {
-    let find_managed =
-        || managed_root.and_then(|root| find_managed_runtime_binary_in(root, settings));
-    let configured_source = settings
-        .providers
-        .ollama
-        .runtime_source
-        .trim()
-        .to_lowercase();
+    let source = MANAGED_RUNTIME_SOURCE.to_string();
+    if let Some(target) = managed_root.and_then(|root| target_runtime_binary_in(root, settings)) {
+        return Ok((target, source));
+    }
     let configured = settings.providers.ollama.runtime_path.trim();
-
-    if configured_source == "system" {
-        if let Some(system) = system_ollama() {
-            return Ok((system, "system".to_string()));
-        }
-        if !configured.is_empty() {
-            let path = PathBuf::from(configured);
-            if path.exists() {
-                return Ok((path, "system".to_string()));
-            }
-        }
-        if let Some(managed) = find_managed() {
-            return Ok((managed, "per_user_zip".to_string()));
-        }
-        return Err(
-            "System runtime was selected, but no Ollama was found in PATH. Use 'Use managed runtime' or install Ollama system-wide."
-                .to_string(),
-        );
-    }
-
-    if configured_source == "per_user_zip" {
-        if let Some(target) = managed_root.and_then(|root| target_runtime_binary_in(root, settings))
-        {
-            return Ok((target, "per_user_zip".to_string()));
-        }
-        if !configured.is_empty() {
-            let path = PathBuf::from(configured);
-            if path.exists() {
-                return Ok((path, "per_user_zip".to_string()));
-            }
-        }
-        if let Some(managed) = find_managed() {
-            return Ok((managed, "per_user_zip".to_string()));
-        }
-        return Err(
-            "Managed local runtime is selected, but no local Ollama runtime is installed yet. Use 'Install local runtime'."
-                .to_string(),
-        );
-    }
-
     if !configured.is_empty() {
         let path = PathBuf::from(configured);
         if path.exists() {
-            let source = if configured_source == "per_user_zip" {
-                "per_user_zip"
-            } else if configured_source == "system" {
-                "system"
-            } else {
-                "manual"
-            };
-            return Ok((path, source.to_string()));
+            return Ok((path, source));
         }
     }
-
-    if let Some(system) = system_ollama() {
-        return Ok((system, "system".to_string()));
+    if let Some(managed) = managed_root.and_then(|root| find_managed_runtime_binary_in(root, settings)) {
+        return Ok((managed, source));
     }
-    if let Some(managed) = find_managed() {
-        return Ok((managed, "per_user_zip".to_string()));
-    }
-    Err("No Ollama runtime found. Install local runtime or install Ollama system-wide.".to_string())
+    Err(
+        "Managed local runtime is selected, but no local Ollama runtime is installed yet. Use 'Install local runtime'."
+            .to_string(),
+    )
 }
 
 /// The version to store next to `binary_path` in the settings: always the BINARY's own.
@@ -1923,28 +1848,22 @@ fn update_runtime_in_settings(
     Ok(())
 }
 
-fn runtime_endpoint_reachable(endpoint: &str, fallbacks: &[String]) -> bool {
+fn runtime_endpoint_reachable(endpoint: &str) -> bool {
     // Uncached: callers decide about starting and stopping servers on this answer.
     if ping_ollama_quick_fresh(endpoint).is_ok() {
         return true;
     }
 
-    // Slightly slower probe (2 s) for busy-but-running Ollama, plus any configured fallbacks.
+    // Slightly slower probe (2 s) for busy-but-running Ollama.
     // Do NOT use the shared agent — its 60 s read timeout causes full freezes when Ollama
     // is simply not running.
     let agent = ureq::builder()
         .timeout_connect(Duration::from_secs(2))
         .timeout_read(Duration::from_secs(2))
         .build();
-    for candidate in
-        crate::ai_fallback::provider::ollama_all_endpoint_candidates(endpoint, fallbacks)
-    {
-        let url = format!("{}/api/tags", candidate);
-        if agent.get(&url).call().is_ok() {
-            return true;
-        }
-    }
-    false
+    crate::ai_fallback::provider::ollama_endpoint_candidates(endpoint)
+        .into_iter()
+        .any(|candidate| agent.get(&format!("{}/api/tags", candidate)).call().is_ok())
 }
 
 fn managed_child_status(state: &AppState) -> (Option<u32>, bool) {
@@ -1997,7 +1916,7 @@ fn plan_runtime_start(
 }
 
 /// True while something still accepts TCP connections on the endpoint's port. Uncached and
-/// independent of fallback endpoints, so it answers "is the port released yet?".
+/// so it answers "is the port released yet?".
 fn endpoint_port_in_use(endpoint: &str) -> bool {
     use std::net::ToSocketAddrs;
     let Ok(host_port) = endpoint_host_port(endpoint) else {
@@ -2305,15 +2224,13 @@ fn detect_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeDetectResu
         .as_deref()
         .and_then(|root| target_runtime_binary_in(root, &settings))
         .is_some();
-    let binary_info = detect_runtime_in(&settings, managed_root.as_deref(), || {
-        which("ollama").ok()
-    });
+    let binary_info = detect_runtime_in(&settings, managed_root.as_deref());
 
     let result = match binary_info {
         None => OllamaRuntimeDetectResult {
             found: false,
             is_serving: false,
-            source: "manual".to_string(),
+            source: MANAGED_RUNTIME_SOURCE.to_string(),
             path: String::new(),
             version: String::new(),
             managed_pid,
@@ -4163,15 +4080,6 @@ fn previous_runtime_binary(
     }
 }
 
-/// `per_user_zip` for a binary inside the managed runtime root, otherwise `default_source`.
-fn source_for_binary(binary: &Path, managed_root: Option<&Path>, default_source: &str) -> String {
-    if managed_root.is_some_and(|root| binary.starts_with(root)) {
-        "per_user_zip".to_string()
-    } else {
-        default_source.to_string()
-    }
-}
-
 fn describe_exit(code: Option<i32>) -> String {
     match code {
         Some(code) => format!(
@@ -4206,8 +4114,7 @@ impl RealHost<'_> {
             WaitOutcome::TimedOut => LaunchOutcome::Pending { pid, waited },
             WaitOutcome::Exited(code) => {
                 clear_ollama_pid_lockfile(self.app);
-                let fallbacks = self.settings.providers.ollama.fallback_endpoints.clone();
-                if runtime_endpoint_reachable(self.endpoint, &fallbacks) {
+                if runtime_endpoint_reachable(self.endpoint) {
                     LaunchOutcome::TakenOver
                 } else {
                     LaunchOutcome::Failed {
@@ -4226,10 +4133,7 @@ impl RealHost<'_> {
 
 impl StartHost for RealHost<'_> {
     fn endpoint_reachable(&self) -> bool {
-        runtime_endpoint_reachable(
-            self.endpoint,
-            &self.settings.providers.ollama.fallback_endpoints,
-        )
+        runtime_endpoint_reachable(self.endpoint)
     }
 
     fn running_version(&self) -> Option<String> {
@@ -4266,8 +4170,7 @@ impl StartHost for RealHost<'_> {
         terminate_managed_child_slot("managed Ollama runtime", &self.state.managed_ollama_child);
         reset_quick_ping_cache();
         clear_ollama_pid_lockfile(self.app);
-        // Wait for the PORT to be free (not for "any endpoint answers": a configured fallback
-        // endpoint must not keep us waiting for a port that is already released).
+        // Wait for the PORT to be free (not for "any endpoint answers").
         let release_deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < release_deadline && endpoint_port_in_use(self.endpoint) {
             std::thread::sleep(Duration::from_millis(300));
@@ -4558,9 +4461,8 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
         .clone();
     if crate::state::diagnostic_logging_enabled() {
         info!(
-            "[ollama.runtime] start requested endpoint={} strict_local={} runtime_path={} runtime_version={} model={}",
+            "[ollama.runtime] start requested endpoint={} runtime_path={} runtime_version={} model={}",
             settings_snapshot.providers.ollama.endpoint,
-            settings_snapshot.ai_fallback.strict_local_mode,
             settings_snapshot.providers.ollama.runtime_path,
             settings_snapshot.providers.ollama.runtime_version,
             settings_snapshot.ai_fallback.model
@@ -4625,20 +4527,6 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
             "Ollama endpoint is empty.".to_string(),
         ));
     }
-    if settings_snapshot.ai_fallback.strict_local_mode && !is_local_ollama_endpoint(&endpoint) {
-        return Err(mark_failure(
-            "invalid_configuration",
-            "Strict local mode is enabled. Only localhost/127.0.0.1 endpoints are allowed."
-                .to_string(),
-        ));
-    }
-    if !is_local_ollama_endpoint(&endpoint) {
-        return Err(mark_failure(
-            "invalid_configuration",
-            "Runtime autostart only supports local endpoints. Configure a local endpoint first."
-                .to_string(),
-        ));
-    }
 
     tidy_runtime_folders(app);
     let managed_root = managed_runtime_root(app);
@@ -4696,7 +4584,7 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
             // The selected runtime failed; the previous one serves again. The request still
             // failed (the user asked for another version), but the server is up.
             record_runtime_start_failure(state.inner());
-            let previous_source = source_for_binary(&binary, managed_root.as_deref(), &source);
+            let previous_source = source.clone();
             let own_version = parse_ollama_version(&binary);
             let previous_recorded = version_to_record_for_binary(
                 &settings_snapshot,
@@ -4783,22 +4671,6 @@ fn verify_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeVerifyResu
         );
         return Err("Ollama endpoint is empty.".to_string());
     }
-    check_strict_local_mode(&settings_snapshot).inspect_err(|err| {
-        update_ollama_runtime_diagnostics(
-            app,
-            &settings_snapshot,
-            !settings_snapshot
-                .providers
-                .ollama
-                .runtime_path
-                .trim()
-                .is_empty(),
-            "verify_failed",
-            None,
-            false,
-            Some(err.clone()),
-        );
-    })?;
     let models = list_ollama_models(&endpoint);
     if models.is_empty() {
         if let Err(err) = ping_ollama_quick_fresh(&endpoint) {
@@ -4889,7 +4761,6 @@ pub fn import_ollama_model_from_file(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
     let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
-    check_strict_local_mode(&settings_snapshot)?;
     ping_ollama(&endpoint).map_err(|e| {
         format!(
             "Ollama runtime is not reachable. Start runtime first: {}",
@@ -4976,32 +4847,6 @@ pub fn import_ollama_model_from_file(
     let _ = app.emit("settings-changed", snapshot);
 
     Ok(OllamaImportResult { model_name })
-}
-
-#[tauri::command]
-pub fn set_strict_local_mode(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    enabled: bool,
-) -> Result<serde_json::Value, String> {
-    let snapshot = {
-        let mut settings = state
-            .settings
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        settings.ai_fallback.strict_local_mode = enabled;
-        if enabled && !is_local_ollama_endpoint(&settings.providers.ollama.endpoint) {
-            settings.providers.ollama.endpoint = "http://127.0.0.1:11434".to_string();
-        }
-        settings.clone()
-    };
-    save_settings_file(&app, &snapshot)?;
-    let _ = app.emit("settings-changed", snapshot.clone());
-    Ok(serde_json::json!({
-        "status": "success",
-        "strict_local_mode": snapshot.ai_fallback.strict_local_mode,
-        "endpoint": snapshot.providers.ollama.endpoint,
-    }))
 }
 
 #[cfg(test)]
@@ -6291,7 +6136,7 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
         let settings = managed_settings("0.40.13", &remembered);
 
         let (path, source) =
-            select_runtime_binary_in(&settings, Some(root.path()), || None).expect("binary");
+            select_runtime_binary_in(&settings, Some(root.path())).expect("binary");
 
         assert_eq!(path, root.path().join("0.40.13").join("ollama.exe"));
         assert_eq!(source, "per_user_zip");
@@ -6306,52 +6151,27 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
         // target folder absent, e.g. a legacy "0.20.2" that was never installed
         let settings = managed_settings("0.20.2", &remembered);
         let (path, _) =
-            select_runtime_binary_in(&settings, Some(root.path()), || None).expect("binary");
+            select_runtime_binary_in(&settings, Some(root.path())).expect("binary");
         assert_eq!(path, remembered);
 
         // an empty target folder (no ollama.exe inside) does not count as installed
         fs::create_dir_all(root.path().join("0.40.13")).expect("empty target dir");
         let settings = managed_settings("0.40.13", &remembered);
         let (path, _) =
-            select_runtime_binary_in(&settings, Some(root.path()), || None).expect("binary");
+            select_runtime_binary_in(&settings, Some(root.path())).expect("binary");
         assert_eq!(path, remembered);
 
         // a target that is not a plain version string is never joined into a path
         let settings = managed_settings("..\\0.40.7", &remembered);
         let (path, _) =
-            select_runtime_binary_in(&settings, Some(root.path()), || None).expect("binary");
+            select_runtime_binary_in(&settings, Some(root.path())).expect("binary");
         assert_eq!(path, remembered);
-    }
-
-    #[test]
-    fn target_folder_does_not_override_explicit_system_or_manual_choices() {
-        let root = TempDir::new("select-explicit");
-        write_marker(&root.path().join("0.40.13"), "managed");
-        let system = root.path().join("system-ollama.exe");
-        fs::write(&system, "system").expect("system marker");
-        let manual = root.path().join("manual-ollama.exe");
-        fs::write(&manual, "manual").expect("manual marker");
-
-        let mut settings = managed_settings("0.40.13", &manual);
-        settings.providers.ollama.runtime_source = "system".to_string();
-        let (path, source) = select_runtime_binary_in(&settings, Some(root.path()), || {
-            Some(system.clone())
-        })
-        .expect("system binary");
-        assert_eq!((path, source.as_str()), (system.clone(), "system"));
-
-        settings.providers.ollama.runtime_source = "manual".to_string();
-        let (path, source) = select_runtime_binary_in(&settings, Some(root.path()), || {
-            Some(system.clone())
-        })
-        .expect("manual binary");
-        assert_eq!((path, source.as_str()), (manual, "manual"));
     }
 
     #[test]
     fn managed_selection_without_any_runtime_root_reports_the_missing_install() {
         let settings = managed_settings("0.40.13", Path::new("Z:\\does\\not\\exist\\ollama.exe"));
-        let err = select_runtime_binary_in(&settings, None, || None).expect_err("nothing installed");
+        let err = select_runtime_binary_in(&settings, None).expect_err("nothing installed");
         assert!(err.contains("no local Ollama runtime is installed"), "got: {}", err);
     }
 
@@ -6415,9 +6235,8 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
     fn detect(
         settings: &crate::state::Settings,
         root: &Path,
-        system: Option<PathBuf>,
     ) -> Option<(String, PathBuf, String)> {
-        detect_runtime_in(settings, Some(root), || system.clone())
+        detect_runtime_in(settings, Some(root))
     }
 
     #[test]
@@ -6429,7 +6248,7 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
 
         for stored_path in [gone.as_path(), Path::new("")] {
             let settings = detect_settings("0.40.7", stored_path, "0.30.4");
-            let (source, path, version) = detect(&settings, root.path(), None).expect("runtime");
+            let (source, path, version) = detect(&settings, root.path()).expect("runtime");
 
             assert_eq!(source, "per_user_zip");
             assert_eq!(path, root.path().join("0.40.7").join("ollama.exe"));
@@ -6451,7 +6270,7 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
         let current = root.path().join("0.30.4").join("ollama.exe");
 
         let mut settings = detect_settings("0.40.7", &current, "0.30.4");
-        let (source, path, version) = detect(&settings, root.path(), None).expect("runtime");
+        let (source, path, version) = detect(&settings, root.path()).expect("runtime");
         assert_eq!(
             (source.as_str(), path, version.as_str()),
             ("per_user_zip", current.clone(), "0.30.4")
@@ -6464,7 +6283,7 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
 
         // a lost stored version is recovered from the binary's own managed folder
         settings.providers.ollama.runtime_version = String::new();
-        let (_, path, version) = detect(&settings, root.path(), None).expect("runtime");
+        let (_, path, version) = detect(&settings, root.path()).expect("runtime");
         assert_eq!((path, version.as_str()), (current, "0.30.4"));
     }
 
@@ -6477,7 +6296,7 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
         // target not on disk: the stored pair is reported unchanged
         let settings = detect_settings("0.40.13", &current, "0.40.7");
         assert_eq!(target_runtime_binary_in(root.path(), &settings), None);
-        let (source, path, version) = detect(&settings, root.path(), None).expect("runtime");
+        let (source, path, version) = detect(&settings, root.path()).expect("runtime");
         assert_eq!(
             (source.as_str(), path, version.as_str()),
             ("per_user_zip", current.clone(), "0.40.7")
@@ -6486,12 +6305,12 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
         // stored path gone: the installed runtime is found, with its own version
         let gone = root.path().join("0.30.4").join("ollama.exe");
         let settings = detect_settings("0.40.13", &gone, "0.30.4");
-        let (_, path, version) = detect(&settings, root.path(), None).expect("runtime");
+        let (_, path, version) = detect(&settings, root.path()).expect("runtime");
         assert_eq!((path, version.as_str()), (current, "0.40.7"));
 
         // nothing anywhere
         let settings = detect_settings("0.40.13", &gone, "0.30.4");
-        assert_eq!(detect_runtime_in(&settings, None, || None), None);
+        assert_eq!(detect_runtime_in(&settings, None), None);
     }
 
     #[test]
@@ -6513,44 +6332,5 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
         assert_eq!(version_of(root.join("0.40.7")), None);
         assert_eq!(version_of(Path::new("elsewhere").join("0.40.7").join("ollama.exe")), None);
         assert_eq!(version_of(root.join("a b").join("ollama.exe")), None);
-    }
-
-    #[test]
-    fn detect_leaves_system_and_manual_sources_alone() {
-        let root = TempDir::new("detect-explicit");
-        write_marker(&root.path().join("0.40.7"), "managed target");
-        let explicit = root.path().join("explicit-ollama.exe");
-        fs::write(&explicit, "explicit").expect("explicit marker");
-        let system = root.path().join("system-ollama.exe");
-
-        let mut settings = detect_settings("0.40.7", &explicit, "1.2.3");
-        settings.providers.ollama.runtime_source = "manual".to_string();
-        let (source, path, version) = detect(&settings, root.path(), None).expect("manual");
-        assert_eq!(
-            (source.as_str(), path, version.as_str()),
-            ("manual", explicit.clone(), "1.2.3")
-        );
-
-        // `system`: PATH first (the order a start launches in); the stored version belongs to
-        // the stored binary, so it is not reported next to the one on PATH
-        settings.providers.ollama.runtime_source = "system".to_string();
-        let (source, path, version) =
-            detect(&settings, root.path(), Some(system.clone())).expect("system");
-        assert_eq!(
-            (source.as_str(), path, version.as_str()),
-            ("system", system.clone(), "")
-        );
-        // without a PATH ollama the stored path is used, with its own version
-        let (source, path, version) = detect(&settings, root.path(), None).expect("system, stored");
-        assert_eq!(
-            (source.as_str(), path, version.as_str()),
-            ("system", explicit.clone(), "1.2.3")
-        );
-
-        // no stored path, no managed runtime: PATH is used
-        let settings = detect_settings("0.40.7", Path::new(""), "");
-        let (source, path, _) =
-            detect_runtime_in(&settings, None, || Some(system.clone())).expect("system");
-        assert_eq!((source.as_str(), path), ("system", system));
     }
 }

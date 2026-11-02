@@ -17,7 +17,7 @@ pub enum AppError {
     /// Settings/history storage errors
     Storage(String),
 
-    /// Network errors (model download, cloud fallback, etc.)
+    /// Network errors (model download, etc.)
     Network(String),
 
     /// Overlay/window management errors

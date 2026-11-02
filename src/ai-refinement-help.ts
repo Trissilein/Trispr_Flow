@@ -8,13 +8,8 @@ export type HelpKey =
   | "ai_refinement_provider_model_section"
   | "ai_refinement_topic_section"
   | "ai_refinement_local_primary"
-  | "ai_refinement_execution_mode"
   | "ai_refinement_enable"
   | "ai_refinement_asr_language_hint"
-  | "ai_refinement_provider"
-  | "ai_refinement_model"
-  | "ai_refinement_auth_method"
-  | "ai_refinement_api_key"
   | "ai_refinement_language_lock"
   | "ai_refinement_speed_mode"
   | "ai_refinement_temperature"
@@ -26,14 +21,10 @@ export type HelpKey =
   | "ollama_runtime_section"
   | "ollama_runtime_stage"
   | "ollama_runtime_endpoint"
-  | "ollama_runtime_strict_local"
-  | "ollama_runtime_source"
   | "ollama_runtime_version"
   | "ollama_runtime_health"
   | "ollama_service_section"
   | "ollama_service_endpoint"
-  | "ollama_service_strict_local"
-  | "ollama_service_remote_expert"
   | "ollama_service_runtime"
   | "ollama_service_tools"
   | "ollama_models_section"
@@ -41,7 +32,6 @@ export type HelpKey =
   | "ollama_action_start"
   | "ollama_action_verify"
   | "ollama_action_detect"
-  | "ollama_action_use_system"
   | "ollama_action_import"
   | "ollama_action_refresh"
   | "ollama_action_download"
@@ -50,9 +40,9 @@ export type HelpKey =
 
 export const HELP_TEXTS: Record<HelpKey, HelpText> = {
   ai_refinement_provider_model_section: {
-    title: "Runtime & Provider",
-    description: "Choose where refinement runs: local Ollama by default, or optional verified cloud fallback.",
-    consequence: "Local model cards are managed below; cloud model selection appears only in online mode.",
+    title: "AI Runtime",
+    description: "Refinement runs on the local Ollama runtime that Trispr Flow manages.",
+    consequence: "Local model cards are managed below.",
   },
   ai_refinement_topic_section: {
     title: "Topic Detection",
@@ -63,11 +53,6 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
     title: "Local Primary Runtime",
     description: "Ollama runs refinement locally so transcripts stay on this device by default.",
     consequence: "Choose this for privacy-first and offline-capable workflows.",
-  },
-  ai_refinement_execution_mode: {
-    title: "Execution Mode",
-    description: "Controls whether refinement uses local Ollama or a verified online fallback provider.",
-    consequence: "Online mode is blocked until credentials are saved and verified.",
   },
   ai_refinement_enable: {
     title: "Enable AI Refinement",
@@ -80,26 +65,6 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
       "Controls speech recognition language behavior. Unpinned uses auto-detect; pinned forces the selected language.",
     consequence:
       "Rule-based processing language is derived from this: pinned EN/DE -> EN/DE rules, otherwise multilingual rules.",
-  },
-  ai_refinement_provider: {
-    title: "Refinement Provider",
-    description: "Select the service that executes the LLM refinement step.",
-    consequence: "Switching provider can change latency, quality, and privacy guarantees.",
-  },
-  ai_refinement_model: {
-    title: "Refinement Model",
-    description: "Model used by the selected provider for transcript refinement.",
-    consequence: "Different models trade speed, memory usage, and output quality.",
-  },
-  ai_refinement_auth_method: {
-    title: "Authentication Method",
-    description: "Choose how cloud credentials are verified for the selected provider.",
-    consequence: "API key verification is available now. OAuth is shown for visibility and will be enabled later.",
-  },
-  ai_refinement_api_key: {
-    title: "Cloud API Key",
-    description: "Credential for cloud providers to authenticate refinement requests.",
-    consequence: "Without a valid key, cloud refinement requests will fail.",
   },
   ai_refinement_language_lock: {
     title: "Preserve Source Language",
@@ -158,16 +123,6 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
     description: "HTTP address where the local Ollama API is reachable.",
     consequence: "Wrong endpoint prevents model list, pulls, and refinement requests.",
   },
-  ollama_runtime_strict_local: {
-    title: "Strict Local Mode",
-    description: "Allows only localhost and 127.0.0.1 Ollama endpoints.",
-    consequence: "Prevents accidental remote routing of transcript data.",
-  },
-  ollama_runtime_source: {
-    title: "Runtime Source",
-    description: "Indicates whether runtime comes from per-user install, system PATH, or manual setup.",
-    consequence: "Source affects update flow and troubleshooting path.",
-  },
   ollama_runtime_version: {
     title: "Runtime Version",
     description: "Detected Ollama runtime build currently used by the app.",
@@ -188,16 +143,6 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
     description: "Current address used for Ollama API requests.",
     consequence: "If the service is not listening on this address, requests fail.",
   },
-  ollama_service_strict_local: {
-    title: "Service Privacy Guard",
-    description: "Enforcement state for localhost-only endpoint policy.",
-    consequence: "When enabled, remote endpoints are blocked server-side.",
-  },
-  ollama_service_remote_expert: {
-    title: "Remote Expert Mode",
-    description: "Expert-only switch for showing remote endpoint controls.",
-    consequence: "Use only if you intentionally run Ollama outside localhost.",
-  },
   ollama_service_runtime: {
     title: "Runtime Details",
     description: "Detected source, version, and health for the active runtime.",
@@ -206,7 +151,7 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
   ollama_service_tools: {
     title: "Service Tools",
     description: "Advanced runtime and model maintenance actions.",
-    consequence: "Some actions can switch runtime source or modify local model state.",
+    consequence: "Some actions can switch the runtime version or modify local model state.",
   },
   ollama_models_section: {
     title: "Models",
@@ -232,11 +177,6 @@ export const HELP_TEXTS: Record<HelpKey, HelpText> = {
     title: "Detect Runtime",
     description: "Scans for local runtime binaries and reports source/version.",
     consequence: "Detection decides whether install or start is the next step.",
-  },
-  ollama_action_use_system: {
-    title: "Use System Runtime",
-    description: "Switches to an Ollama executable already available in PATH.",
-    consequence: "System runtime configuration may differ from per-user runtime.",
   },
   ollama_action_import: {
     title: "Import Model",
@@ -299,7 +239,6 @@ export function renderAIRefinementStaticHelp(): void {
   applyHelpTooltip(document.getElementById("ai-fallback-local-verify-action"), "ollama_action_verify");
   applyHelpTooltip(document.getElementById("ai-fallback-local-refresh-action"), "ollama_action_refresh");
   applyHelpTooltip(document.getElementById("ai-refinement-models-title"), "ollama_models_section");
-  applyHelpTooltip(document.getElementById("ai-auth-method"), "ai_refinement_auth_method");
   applyHelpTooltip(document.getElementById("language-select"), "ai_refinement_asr_language_hint");
   applyHelpTooltip(document.getElementById("language-pinned-toggle"), "ai_refinement_asr_language_hint");
   applyHelpTooltip(document.getElementById("ai-fallback-preserve-language"), "ai_refinement_language_lock");

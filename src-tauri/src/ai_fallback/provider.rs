@@ -72,45 +72,6 @@ const OLLAMA_PROMPT_LLM_PROMPT_EN: &str = "You are an expert prompt engineer. Co
 
 const OLLAMA_PROMPT_LLM_PROMPT_DE: &str = "Du bist ein erfahrener Prompt-Engineer. Wandle das Transkript in den <transcript> Tags in einen praezisen, einsatzbereiten Prompt fuer ein grosses Sprachmodell um.\n\nEin guter Prompt enthaelt:\n1. Eine klare Rolle oder Persona (z.B. \"You are a...\")\n2. Eine eindeutige Aufgabenbeschreibung\n3. Relevanten Kontext, Hintergrund oder Einschraenkungen\n4. Das gewuenschte Ausgabeformat (falls zutreffend)\n\nRegeln:\n- Schreibe den fertigen Prompt immer auf Englisch, unabhaengig von der Eingabesprache.\n- Keine Erklaerungen, Kommentare oder Vorbemerkungen.\n- Den Sprecher nicht adressieren und nicht auf dieses Gespraech verweisen.\n- Gib nur den fertigen Prompt zurueck, nichts weiteres.";
 
-pub trait AIProvider: Send + Sync {
-    fn id(&self) -> &'static str;
-    fn validate_api_key(&self, api_key: &str) -> Result<(), AIError>;
-    fn estimate_cost_usd(&self, model: &str, input_tokens: usize, output_tokens: usize) -> f64;
-    fn refine_transcript(
-        &self,
-        text: &str,
-        model: &str,
-        options: &RefinementOptions,
-        api_key: &str,
-    ) -> Result<RefinementResult, AIError>;
-}
-
-pub struct ProviderFactory;
-
-impl ProviderFactory {
-    pub fn create(provider: &str) -> Result<Box<dyn AIProvider>, AIError> {
-        match normalize_provider(provider) {
-            "claude" => Ok(Box::new(ClaudeProvider)),
-            "openai" => Ok(Box::new(OpenAIProvider)),
-            "gemini" => Ok(Box::new(GeminiProvider)),
-            "ollama" => Ok(Box::new(OllamaProvider::new())),
-            other => Err(AIError::UnknownProvider(other.to_string())),
-        }
-    }
-
-    pub fn create_ollama(endpoint: String) -> Box<dyn AIProvider> {
-        Box::new(OllamaProvider::with_endpoint(endpoint))
-    }
-
-    pub fn create_lm_studio(endpoint: String, api_key: String) -> Box<dyn AIProvider> {
-        Box::new(OpenAICompatProvider::lm_studio(endpoint, api_key))
-    }
-
-    pub fn create_oobabooga(endpoint: String, api_key: String) -> Box<dyn AIProvider> {
-        Box::new(OpenAICompatProvider::oobabooga(endpoint, api_key))
-    }
-}
-
 fn normalize_ollama_endpoint(endpoint: &str) -> String {
     let trimmed = endpoint.trim().trim_end_matches('/');
     if trimmed.is_empty() {
@@ -118,34 +79,6 @@ fn normalize_ollama_endpoint(endpoint: &str) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-pub fn is_local_ollama_endpoint(endpoint: &str) -> bool {
-    let normalized = normalize_ollama_endpoint(endpoint);
-    let parsed = match Url::parse(&normalized) {
-        Ok(url) => url,
-        Err(_) => return false,
-    };
-    if parsed.scheme() != "http" {
-        return false;
-    }
-    let host = parsed
-        .host_str()
-        .map(|h| h.to_ascii_lowercase())
-        .unwrap_or_default();
-    if host != "localhost" && host != "127.0.0.1" {
-        return false;
-    }
-    if parsed.port_or_known_default().unwrap_or(0) != 11434 {
-        return false;
-    }
-    if parsed.path() != "/" && !parsed.path().is_empty() {
-        return false;
-    }
-    if parsed.query().is_some() || parsed.fragment().is_some() {
-        return false;
-    }
-    true
 }
 
 /// Check if an endpoint targets a known SSRF-sensitive address
@@ -186,23 +119,6 @@ pub fn is_ssrf_target(endpoint: &str) -> bool {
         }
     }
     false
-}
-
-/// Return all endpoint candidates: primary (with localhost/127.0.0.1 variants)
-/// followed by each configured fallback endpoint and its own variants.
-/// SSRF targets are silently filtered out.
-pub fn ollama_all_endpoint_candidates(primary: &str, fallbacks: &[String]) -> Vec<String> {
-    let mut all = ollama_endpoint_candidates(primary);
-    for fb in fallbacks {
-        if !is_ssrf_target(fb) {
-            for candidate in ollama_endpoint_candidates(fb) {
-                if !all.contains(&candidate) {
-                    all.push(candidate);
-                }
-            }
-        }
-    }
-    all
 }
 
 /// Return preferred endpoint plus a localhost/127.0.0.1 fallback variant.
@@ -481,61 +397,6 @@ pub fn reset_quick_ping_cache() {
     QUICK_PING_CACHE_TS.store(0, Ordering::Relaxed);
 }
 
-/// Quick reachability check for LM Studio (or any OpenAI-compatible local server).
-/// Returns Ok(()) if the server responds and has at least one model loaded.
-/// Timeout is 500 ms — suitable for pre-flight checks before refinement.
-pub fn ping_lm_studio_quick(endpoint: &str) -> Result<(), AIError> {
-    let url = format!("{}/v1/models", endpoint.trim_end_matches('/'));
-    let agent = ureq::builder()
-        .timeout_connect(Duration::from_millis(500))
-        .timeout_read(Duration::from_millis(500))
-        .build();
-    match agent.get(&url).call() {
-        Ok(resp) => {
-            if let Ok(body) = resp.into_json::<serde_json::Value>() {
-                let has_models = body["data"].as_array().map_or(false, |arr| !arr.is_empty());
-                if has_models {
-                    Ok(())
-                } else {
-                    Err(AIError::NetworkError(
-                        "LM Studio is running but no models are loaded".into(),
-                    ))
-                }
-            } else {
-                Err(AIError::NetworkError(
-                    "LM Studio returned invalid JSON".into(),
-                ))
-            }
-        }
-        Err(_) => Err(AIError::NetworkError(format!(
-            "LM Studio not reachable at {}",
-            endpoint
-        ))),
-    }
-}
-
-pub fn default_models_for_provider(provider: &str) -> Vec<String> {
-    match normalize_provider(provider) {
-        "claude" => vec![
-            "claude-3-5-sonnet-20241022".to_string(),
-            "claude-3-5-haiku-20241022".to_string(),
-            "claude-3-opus-20240229".to_string(),
-        ],
-        "openai" => vec![
-            "gpt-4o-mini".to_string(),
-            "gpt-4o".to_string(),
-            "gpt-4.1-mini".to_string(),
-        ],
-        "gemini" => vec![
-            "gemini-2.0-flash".to_string(),
-            "gemini-1.5-pro".to_string(),
-            "gemini-1.5-flash".to_string(),
-        ],
-        "ollama" => vec![], // Models discovered dynamically via /api/tags
-        _ => vec![],
-    }
-}
-
 pub fn default_prompt_for_language(language: &str) -> &'static str {
     match language.trim().to_lowercase().as_str() {
         "de" | "german" => OLLAMA_PROMPT_DE,
@@ -634,62 +495,9 @@ pub fn prompt_for_profile(
     }
 }
 
-fn normalize_provider(provider: &str) -> &str {
-    // Delegates to the canonical normalize_provider_id in models.rs.
-    // The only difference: unrecognized providers yield "unknown" here (not "ollama")
-    // so callers like ProviderFactory::create can surface a proper error.
-    let canonical = super::models::normalize_provider_id(provider);
-    let trimmed = provider.trim();
-    if canonical == "ollama" && !trimmed.eq_ignore_ascii_case("ollama") {
-        "unknown"
-    } else {
-        canonical
-    }
-}
-
 fn rough_token_estimate(text: &str) -> usize {
     let words = text.split_whitespace().count();
     (words as f64 * 1.35).ceil().max(1.0) as usize
-}
-
-fn validate_key_basic(api_key: &str, provider: &str) -> Result<(), AIError> {
-    let trimmed = api_key.trim();
-    if trimmed.is_empty() {
-        return Err(AIError::MissingApiKey(provider.to_string()));
-    }
-    if trimmed.len() < 12 {
-        return Err(AIError::InvalidApiKey(format!(
-            "{} key is too short",
-            provider
-        )));
-    }
-    Ok(())
-}
-
-fn passthrough_refinement(
-    provider: &dyn AIProvider,
-    text: &str,
-    model: &str,
-    options: &RefinementOptions,
-) -> RefinementResult {
-    let input_tokens = rough_token_estimate(text);
-    let output_tokens = input_tokens.min(options.max_tokens as usize);
-    let cost = provider.estimate_cost_usd(model, input_tokens, output_tokens);
-    RefinementResult {
-        text: text.to_string(),
-        usage: TokenUsage {
-            input_tokens,
-            output_tokens,
-            total_cost_usd: cost,
-        },
-        provider: provider.id().to_string(),
-        model: model.to_string(),
-        execution_time_ms: 0,
-        ollama_load_ms: None,
-        ollama_prompt_eval_ms: None,
-        ollama_eval_ms: None,
-        tier_update: None,
-    }
 }
 
 pub(super) fn extract_ollama_error_message(response: ureq::Response) -> String {
@@ -1439,127 +1247,25 @@ fn is_ollama_runner_command_line(process_name: &str, command_line: &str) -> bool
     })
 }
 
-struct ClaudeProvider;
-struct OpenAIProvider;
-struct GeminiProvider;
-
 #[derive(Clone)]
-struct OllamaProvider {
+pub struct OllamaProvider {
     endpoint: String,
 }
 
 impl OllamaProvider {
-    fn new() -> Self {
-        Self {
-            endpoint: "http://127.0.0.1:11434".to_string(),
-        }
-    }
-
-    fn with_endpoint(endpoint: String) -> Self {
+    pub fn new(endpoint: String) -> Self {
         Self { endpoint }
     }
-}
 
-impl AIProvider for ClaudeProvider {
-    fn id(&self) -> &'static str {
-        "claude"
-    }
-
-    fn validate_api_key(&self, api_key: &str) -> Result<(), AIError> {
-        validate_key_basic(api_key, self.id())?;
-        Ok(())
-    }
-
-    fn estimate_cost_usd(&self, _model: &str, input_tokens: usize, output_tokens: usize) -> f64 {
-        // Approximation for planning UI only.
-        (input_tokens as f64 * 0.000003) + (output_tokens as f64 * 0.000015)
-    }
-
-    fn refine_transcript(
-        &self,
-        text: &str,
-        model: &str,
-        options: &RefinementOptions,
-        api_key: &str,
-    ) -> Result<RefinementResult, AIError> {
-        self.validate_api_key(api_key)?;
-        Ok(passthrough_refinement(self, text, model, options))
-    }
-}
-
-impl AIProvider for OpenAIProvider {
-    fn id(&self) -> &'static str {
-        "openai"
-    }
-
-    fn validate_api_key(&self, api_key: &str) -> Result<(), AIError> {
-        validate_key_basic(api_key, self.id())?;
-        Ok(())
-    }
-
-    fn estimate_cost_usd(&self, _model: &str, input_tokens: usize, output_tokens: usize) -> f64 {
-        (input_tokens as f64 * 0.000005) + (output_tokens as f64 * 0.000015)
-    }
-
-    fn refine_transcript(
-        &self,
-        text: &str,
-        model: &str,
-        options: &RefinementOptions,
-        api_key: &str,
-    ) -> Result<RefinementResult, AIError> {
-        self.validate_api_key(api_key)?;
-        Ok(passthrough_refinement(self, text, model, options))
-    }
-}
-
-impl AIProvider for GeminiProvider {
-    fn id(&self) -> &'static str {
-        "gemini"
-    }
-
-    fn validate_api_key(&self, api_key: &str) -> Result<(), AIError> {
-        validate_key_basic(api_key, self.id())?;
-        Ok(())
-    }
-
-    fn estimate_cost_usd(&self, _model: &str, input_tokens: usize, output_tokens: usize) -> f64 {
-        (input_tokens as f64 * 0.0000015) + (output_tokens as f64 * 0.0000035)
-    }
-
-    fn refine_transcript(
-        &self,
-        text: &str,
-        model: &str,
-        options: &RefinementOptions,
-        api_key: &str,
-    ) -> Result<RefinementResult, AIError> {
-        self.validate_api_key(api_key)?;
-        Ok(passthrough_refinement(self, text, model, options))
-    }
-}
-
-impl AIProvider for OllamaProvider {
-    fn id(&self) -> &'static str {
+    pub fn id(&self) -> &'static str {
         "ollama"
     }
 
-    fn validate_api_key(&self, _api_key: &str) -> Result<(), AIError> {
-        // Ollama doesn't use API keys
-        Ok(())
-    }
-
-    fn estimate_cost_usd(&self, _model: &str, _input_tokens: usize, _output_tokens: usize) -> f64 {
-        // Local Ollama has no cost
-        0.0
-    }
-
-    fn refine_transcript(
+    pub fn refine_transcript(
         &self,
         text: &str,
         model: &str,
         options: &RefinementOptions,
-        _api_key: &str,
     ) -> Result<RefinementResult, AIError> {
         let start = Instant::now();
         let diagnostics_enabled = crate::state::diagnostic_logging_enabled();
@@ -1838,10 +1544,8 @@ impl AIProvider for OllamaProvider {
     }
 }
 
-// ============================================================================
 /// Truncate input text for local inference to prevent extremely long refinement
-/// times on CPU-bound models. Cloud providers have much higher token limits and
-/// are not truncated.
+/// times on CPU-bound models.
 fn truncate_for_local_inference(text: &str, max_words: usize) -> String {
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.len() <= max_words {
@@ -1854,212 +1558,6 @@ fn truncate_for_local_inference(text: &str, max_words: usize) -> String {
     } else {
         format!("{} [truncated]", truncated)
     }
-}
-
-// OpenAI-compatible provider (LM Studio, Oobabooga, any /v1/chat/completions)
-// ============================================================================
-
-pub struct OpenAICompatProvider {
-    pub endpoint: String,
-    pub api_key: String,
-    pub provider_id: &'static str,
-    pub label: &'static str,
-}
-
-impl OpenAICompatProvider {
-    fn lm_studio(endpoint: String, api_key: String) -> Self {
-        Self {
-            endpoint,
-            api_key,
-            provider_id: "lm_studio",
-            label: "LM Studio",
-        }
-    }
-
-    fn oobabooga(endpoint: String, api_key: String) -> Self {
-        Self {
-            endpoint,
-            api_key,
-            provider_id: "oobabooga",
-            label: "Oobabooga",
-        }
-    }
-}
-
-impl AIProvider for OpenAICompatProvider {
-    fn id(&self) -> &'static str {
-        self.provider_id
-    }
-
-    fn validate_api_key(&self, _api_key: &str) -> Result<(), AIError> {
-        // Local OpenAI-compat backends (LM Studio, Oobabooga) don't require API keys.
-        Ok(())
-    }
-
-    fn estimate_cost_usd(&self, _model: &str, _input_tokens: usize, _output_tokens: usize) -> f64 {
-        0.0
-    }
-
-    fn refine_transcript(
-        &self,
-        text: &str,
-        model: &str,
-        options: &RefinementOptions,
-        _api_key: &str,
-    ) -> Result<RefinementResult, AIError> {
-        let start = Instant::now();
-        let model = model.trim();
-        if model.is_empty() {
-            return Err(AIError::NetworkError(format!(
-                "No model selected for {}. Set an active model in AI Refinement settings.",
-                self.label
-            )));
-        }
-
-        let system_prompt = options
-            .custom_prompt
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| {
-                let lang = options.language.as_deref().unwrap_or("en");
-                default_prompt_for_language(lang)
-            });
-
-        let system_prompt = with_language_lock(
-            system_prompt,
-            options.language.as_deref().unwrap_or(""),
-            options.enforce_language_guard,
-        );
-
-        // Limit input size for local inference to prevent multi-minute refinement times
-        let effective_text = truncate_for_local_inference(text, 2000);
-
-        let body = serde_json::json!({
-            "model": model,
-            "stream": false,
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user", "content": wrap_transcript_in_xml(&effective_text) }
-            ],
-            "temperature": options.temperature,
-            "max_tokens": options.max_tokens,
-            "chat_template_kwargs": {"enable_thinking": false}
-        });
-
-        let agent = refinement_agent(&effective_text, &system_prompt);
-        let endpoint = normalize_ollama_endpoint(&self.endpoint);
-        let url = format!("{}/v1/chat/completions", endpoint);
-
-        let mut request = agent.post(&url).set("Content-Type", "application/json");
-
-        if !self.api_key.is_empty() {
-            request = request.set("Authorization", &format!("Bearer {}", self.api_key));
-        }
-
-        let response = match request.send_json(body) {
-            Ok(resp) => resp,
-            Err(ureq::Error::Status(code, resp)) => {
-                let body = resp.into_string().unwrap_or_default();
-                if code == 404 {
-                    return Err(AIError::NetworkError(format!(
-                        "{} endpoint not reachable at {}. Is {} running?",
-                        self.label, url, self.label
-                    )));
-                }
-                return Err(AIError::NetworkError(format!(
-                    "{} returned HTTP {}: {}",
-                    self.label, code, body
-                )));
-            }
-            Err(ureq::Error::Transport(t)) => {
-                let msg = t.to_string().to_lowercase();
-                return Err(if msg.contains("timed out") || msg.contains("timeout") {
-                    AIError::Timeout
-                } else {
-                    AIError::NetworkError(format!(
-                        "{} not reachable at {}. Is it running?",
-                        self.label, url
-                    ))
-                });
-            }
-        };
-
-        let json: serde_json::Value = response.into_json().map_err(|e| {
-            AIError::NetworkError(format!("Failed to parse {} response: {}", self.label, e))
-        })?;
-
-        let refined_text = json
-            .pointer("/choices/0/message/content")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| {
-                AIError::NetworkError(format!(
-                    "Unexpected {} response format: missing choices[0].message.content",
-                    self.label
-                ))
-            })?;
-
-        // Strip <think>...</think> blocks from reasoning models before sanitization
-        let refined_text = strip_thinking_tags(&refined_text);
-        let refined_text = sanitize_ollama_refinement_output(text, &refined_text, options);
-
-        let input_tokens = json
-            .pointer("/usage/prompt_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
-        let output_tokens = json
-            .pointer("/usage/completion_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
-
-        Ok(RefinementResult {
-            text: refined_text,
-            usage: TokenUsage {
-                input_tokens,
-                output_tokens,
-                total_cost_usd: 0.0,
-            },
-            provider: self.id().to_string(),
-            model: model.to_string(),
-            execution_time_ms: start.elapsed().as_millis() as u64,
-            ollama_load_ms: None,
-            ollama_prompt_eval_ms: None,
-            ollama_eval_ms: None,
-            tier_update: None,
-        })
-    }
-}
-
-/// List models available on an OpenAI-compatible endpoint via GET /v1/models.
-pub fn list_openai_compat_models(endpoint: &str, api_key: &str) -> Vec<String> {
-    let normalized = normalize_ollama_endpoint(endpoint);
-    let url = format!("{}/v1/models", normalized);
-    let agent = ureq::builder()
-        .timeout_connect(Duration::from_secs(3))
-        .timeout_read(Duration::from_secs(5))
-        .build();
-    let mut request = agent.get(&url).set("Content-Type", "application/json");
-    if !api_key.is_empty() {
-        request = request.set("Authorization", &format!("Bearer {}", api_key));
-    }
-    let Ok(resp) = request.call() else {
-        return Vec::new();
-    };
-    let Ok(json) = resp.into_json::<serde_json::Value>() else {
-        return Vec::new();
-    };
-    json.get("data")
-        .and_then(|d| d.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|item| {
-                    item.get("id")
-                        .and_then(|id| id.as_str())
-                        .map(str::to_string)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 // ============================================================================
@@ -2535,20 +2033,6 @@ mod tests {
     }
 
     #[test]
-    fn factory_creates_known_providers() {
-        assert!(ProviderFactory::create("claude").is_ok());
-        assert!(ProviderFactory::create("openai").is_ok());
-        assert!(ProviderFactory::create("gemini").is_ok());
-        assert!(ProviderFactory::create("ollama").is_ok());
-    }
-
-    #[test]
-    fn factory_rejects_unknown_provider() {
-        let err = ProviderFactory::create("other").err();
-        assert!(matches!(err, Some(AIError::UnknownProvider(_))));
-    }
-
-    #[test]
     fn endpoint_candidates_include_ipv4_fallback_for_localhost() {
         let candidates = ollama_endpoint_candidates("http://localhost:11434");
         assert_eq!(candidates[0], "http://127.0.0.1:11434");
@@ -2639,21 +2123,6 @@ mod tests {
         });
 
         assert_eq!(parse_ollama_running_vram(&json), Some(3_500));
-    }
-
-    #[test]
-    fn strict_local_endpoint_accepts_localhost_and_loopback() {
-        assert!(is_local_ollama_endpoint("http://localhost:11434"));
-        assert!(is_local_ollama_endpoint("http://127.0.0.1:11434"));
-        assert!(is_local_ollama_endpoint("http://localhost:11434/"));
-    }
-
-    #[test]
-    fn strict_local_endpoint_rejects_remote_or_wrong_port() {
-        assert!(!is_local_ollama_endpoint("http://192.168.1.20:11434"));
-        assert!(!is_local_ollama_endpoint("http://localhost:8080"));
-        assert!(!is_local_ollama_endpoint("https://localhost:11434"));
-        assert!(!is_local_ollama_endpoint("http://localhost:11434/api"));
     }
 
     // --- Ollama: unreachable endpoint returns empty model list (no panic) ---
@@ -2776,44 +2245,6 @@ mod tests {
             prompt.contains("Detect the language") || prompt.contains("Detect the input language")
         );
         assert!(prompt.contains("never translate") || prompt.contains("keep it unchanged"));
-    }
-
-    // --- OllamaProvider: validate_api_key is always Ok (no key needed) ---
-    #[test]
-    fn ollama_provider_validates_any_key() {
-        let p = OllamaProvider::new();
-        assert!(p.validate_api_key("").is_ok());
-        assert!(p.validate_api_key("some-random-key").is_ok());
-    }
-
-    // --- OllamaProvider: cost is always zero ---
-    #[test]
-    fn ollama_provider_has_zero_cost() {
-        let p = OllamaProvider::new();
-        let cost = p.estimate_cost_usd("llama3.2:3b", 10_000, 10_000);
-        assert_eq!(cost, 0.0, "Ollama should never charge");
-    }
-
-    // --- default_models_for_provider returns empty for ollama (dynamic) ---
-    #[test]
-    fn ollama_default_models_are_empty() {
-        let models = default_models_for_provider("ollama");
-        assert!(models.is_empty(), "Ollama models are discovered at runtime");
-    }
-
-    // --- cloud providers have non-empty default model lists ---
-    #[test]
-    fn cloud_providers_have_default_models() {
-        assert!(!default_models_for_provider("claude").is_empty());
-        assert!(!default_models_for_provider("openai").is_empty());
-        assert!(!default_models_for_provider("gemini").is_empty());
-    }
-
-    // --- ProviderFactory::create_ollama passes custom endpoint ---
-    #[test]
-    fn create_ollama_with_custom_endpoint() {
-        let provider = ProviderFactory::create_ollama("http://my-server:11434".to_string());
-        assert_eq!(provider.id(), "ollama");
     }
 
     // --- rough_token_estimate is sensible ---
@@ -2958,9 +2389,9 @@ mod tests {
     // --- Task 32: OllamaProvider refine_transcript maps connection refused to OllamaNotRunning ---
     #[test]
     fn ollama_provider_connection_refused_returns_not_running() {
-        let provider = OllamaProvider::with_endpoint("http://127.0.0.1:19999".to_string());
+        let provider = OllamaProvider::new("http://127.0.0.1:19999".to_string());
         let options = test_options(false);
-        let result = provider.refine_transcript("hello world", "qwen3:14b", &options, "");
+        let result = provider.refine_transcript("hello world", "qwen3:14b", &options);
         // Accept both OllamaNotRunning and Timeout: some systems (filtered ports/firewall)
         // return a timeout instead of connection-refused for a closed local port. Both
         // indicate Ollama is not reachable.

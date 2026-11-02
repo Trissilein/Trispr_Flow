@@ -29,19 +29,7 @@ import {
   toUserRefinementPromptOptionId,
   type BuiltInRefinementPromptPreset,
 } from "../refinement-prompts";
-import type {
-  AIProviderSettings,
-  AIFallbackProvider,
-  AIExecutionMode,
-  OpenAICompatSettings,
-  UserRefinementPromptPreset,
-} from "../types";
-import {
-  CLOUD_PROVIDER_IDS,
-  normalizeCloudProvider,
-  normalizeExecutionMode,
-  normalizeAuthMethodPreference,
-} from "../ai-provider-utils";
+import type { UserRefinementPromptPreset } from "../types";
 import {
   ensureSetupDefaults,
   persistSettings,
@@ -57,15 +45,6 @@ import { resolveEffectiveAsrLanguageHint } from "../language-utils";
 //               renderTopicKeywords()         called by ai-refinement.wire.ts
 //               renderOverlayHealthNote()     called by renderSettings() in index.ts
 //               __resetForTesting()           test-only state reset helper
-function getProviderSettings(provider: AIFallbackProvider): AIProviderSettings | null {
-  if (!settings?.providers) return null;
-  if (provider === "claude") return settings.providers.claude;
-  if (provider === "openai") return settings.providers.openai;
-  if (provider === "gemini") return settings.providers.gemini;
-  // Ollama uses OllamaSettings, not AIProviderSettings
-  return null;
-}
-
 function cloneTopicKeywords(input: TopicKeywords): TopicKeywords {
   const out: TopicKeywords = {};
   Object.entries(input).forEach(([topic, words]) => {
@@ -174,163 +153,13 @@ function syncAIRefinementExpanders(): void {
   });
 }
 
-/**
- * Render model cards for OpenAI-compatible providers (LM Studio, Oobabooga).
- * Reuses the same .model-item CSS as the Ollama model manager.
- */
-/**
- * Returns true if the model name matches known Chain-of-Thought reasoning patterns.
- * These models engage extended internal reasoning before output, causing 20-30s latency
- * for simple refinement tasks where a 3s instruct-model response is expected.
- */
-function isReasoningModel(name: string): boolean {
-  const n = name.toLowerCase();
-  return (
-    /deepseek-r\d/i.test(n) ||
-    n.includes("qwq") ||
-    n.includes("-think") ||
-    n.includes("thinking") ||
-    n.includes("-reason")
-  );
-}
-
-function renderCompatModelCards(
-  compatSettings: OpenAICompatSettings | undefined,
-  _provider?: string,
-) {
-  const container = dom.aiFallbackCompatModelList;
-  if (!container) return;
-  container.innerHTML = "";
-
-  const models = compatSettings?.available_models ?? [];
-  const preferred = compatSettings?.preferred_model || "";
-
-  if (models.length === 0) {
-    const hint = document.createElement("p");
-    hint.className = "field-hint";
-    hint.textContent = "Click \u2018Fetch models\u2019 to discover loaded models from the server.";
-    container.appendChild(hint);
-    return;
-  }
-
-  // Sort: active model first, then alphabetical
-  const sorted = [...models].sort((a, b) => {
-    if (a === preferred) return -1;
-    if (b === preferred) return 1;
-    return a.localeCompare(b);
-  });
-
-  sorted.forEach((modelName) => {
-    const isActive = modelName === preferred;
-    const card = document.createElement("article");
-    card.className = `model-item${isActive ? " selected" : ""}`;
-
-    const header = document.createElement("div");
-    header.className = "model-header";
-
-    const nameEl = document.createElement("div");
-    nameEl.className = "model-name";
-    nameEl.textContent = modelName;
-    header.appendChild(nameEl);
-    card.appendChild(header);
-
-    const statusEl = document.createElement("div");
-    statusEl.className = `model-status ${isActive ? "active" : "downloaded"}`;
-    statusEl.textContent = isActive ? "Active" : "Available";
-    card.appendChild(statusEl);
-
-    if (isReasoningModel(modelName)) {
-      const warningEl = document.createElement("div");
-      warningEl.className = "model-reasoning-warn";
-      warningEl.textContent = "⚠ Reasoning model - refinement may take 20-30s. Prefer an instruct model.";
-      card.appendChild(warningEl);
-    }
-
-    const actionsEl = document.createElement("div");
-    actionsEl.className = "model-actions";
-    card.appendChild(actionsEl);
-
-    if (actionsEl && !isActive) {
-      const activateBtn = document.createElement("button");
-      activateBtn.className = "btn-sm btn-primary";
-      activateBtn.textContent = "Activate";
-      activateBtn.title = `Use ${modelName} for AI refinement`;
-      activateBtn.addEventListener("click", () => {
-        if (!settings || !compatSettings) return;
-        compatSettings.preferred_model = modelName;
-        settings.ai_fallback.model = modelName;
-        void persistSettings().then(() => renderAIFallbackSettingsUi());
-      });
-      actionsEl.appendChild(activateBtn);
-    }
-
-    container.appendChild(card);
-  });
-}
-
-function applyProviderLaneVisibility(isOnlineMode: boolean) {
-  if (dom.aiFallbackModelField)
-    dom.aiFallbackModelField.style.display = isOnlineMode ? "block" : "none";
-  if (dom.aiFallbackOllamaManagedNote)
-    dom.aiFallbackOllamaManagedNote.style.display = isOnlineMode ? "none" : "block";
-  if (dom.aiFallbackProviderLanes) {
-    dom.aiFallbackProviderLanes.style.display = "grid";
-  }
-}
-
-function renderAIFallbackModelOptions(provider: AIFallbackProvider, selectedModel: string) {
-  if (!dom.aiFallbackModel) return;
-
-  if (provider === "ollama" || provider === "lm_studio" || provider === "oobabooga") {
-    // Local backends manage their model in the Runtime section — hide this picker
-    dom.aiFallbackModel.disabled = true;
-    dom.aiFallbackModel.innerHTML = "";
-    const option = document.createElement("option");
-    option.value = selectedModel || "";
-    option.textContent = selectedModel || "Managed in Local AI Runtime section";
-    dom.aiFallbackModel.appendChild(option);
-    dom.aiFallbackModel.value = option.value;
-    return;
-  }
-
-  dom.aiFallbackModel.disabled = false;
-  const models = getProviderSettings(provider)?.available_models ?? [];
-
-  dom.aiFallbackModel.innerHTML = "";
-  for (const modelId of models) {
-    const option = document.createElement("option");
-    option.value = modelId;
-    option.textContent = modelId;
-    dom.aiFallbackModel.appendChild(option);
-  }
-  if (models.length > 0) {
-    dom.aiFallbackModel.value = models.includes(selectedModel) ? selectedModel : models[0];
-  } else {
-    const placeholder = "No models available";
-    const option = document.createElement("option");
-    option.value = selectedModel || "";
-    option.textContent = selectedModel || placeholder;
-    dom.aiFallbackModel.appendChild(option);
-    dom.aiFallbackModel.value = option.value;
-  }
-}
-
 function renderRefinementPipelineNote() {
   if (!settings || !dom.refinementPipelineNote) return;
   const aiEnabled = Boolean(settings.ai_fallback?.enabled);
   const rulesEnabled = Boolean(settings.postproc_enabled);
-  const provider = settings.ai_fallback?.provider ?? "ollama";
-  const isCompatLocal = provider === "lm_studio" || provider === "oobabooga";
-  const ollamaReady = Boolean(startupStatus?.ollama_ready);
-  const ollamaStarting = Boolean(startupStatus?.ollama_starting);
-  // LM Studio / Oobabooga are external servers — treat as "ready" when AI is enabled
-  const aiReady = isCompatLocal || ollamaReady;
-  const aiStarting = !isCompatLocal && ollamaStarting;
-
-  const providerLabels: Record<string, string> = {
-    ollama: "Ollama", lm_studio: "LM Studio", oobabooga: "Oobabooga",
-  };
-  const label = providerLabels[provider] ?? provider;
+  const aiReady = Boolean(startupStatus?.ollama_ready);
+  const aiStarting = Boolean(startupStatus?.ollama_starting);
+  const label = "Ollama";
 
   let note = "No refinement active: raw transcription output is used.";
   if (aiEnabled && rulesEnabled) {
@@ -450,13 +279,6 @@ export function renderAIFallbackSettingsUi() {
   if (!settings) return;
   ensureSetupDefaults();
   syncDerivedLanguageSettings();
-  CLOUD_PROVIDER_IDS.forEach((providerId) => {
-    const providerSettings = getProviderSettings(providerId);
-    if (!providerSettings) return;
-    providerSettings.auth_method_preference = normalizeAuthMethodPreference(
-      providerSettings.auth_method_preference
-    );
-  });
   const ai = settings.ai_fallback;
   syncOllamaRuntimeTargetWithInstalledRuntime();
   ai.prompt_profile = normalizeRefinementPromptPreset(ai.prompt_profile);
@@ -484,21 +306,7 @@ export function renderAIFallbackSettingsUi() {
   }
   ai.use_default_prompt = false;
   ai.preserve_source_language ??= true;
-  ai.fallback_provider = normalizeCloudProvider(ai?.fallback_provider ?? null);
-  ai.execution_mode = normalizeExecutionMode(ai?.execution_mode);
-  const LOCAL_BACKENDS: AIFallbackProvider[] = ["ollama", "lm_studio", "oobabooga"];
-  if (!LOCAL_BACKENDS.includes(ai.provider as AIFallbackProvider)) {
-    // Cloud provider somehow set as primary — migrate fallback and reset to ollama
-    if (!ai.fallback_provider) {
-      ai.fallback_provider = normalizeCloudProvider(ai.provider);
-    }
-    ai.provider = "ollama";
-  }
-
-  const executionMode: AIExecutionMode = "local_primary";
-  const provider = ai.provider as AIFallbackProvider;
-  ai.execution_mode = executionMode;
-  settings.postproc_llm_provider = provider === "ollama" ? "ollama" : provider;
+  ai.provider = "ollama";
 
   const runtimeCardState = getOllamaRuntimeCardState();
   syncOllamaRuntimeTargetWithInstalledRuntime(runtimeCardState.version);
@@ -515,7 +323,7 @@ export function renderAIFallbackSettingsUi() {
       || runtimeCardState.backgroundStarting
       || Boolean(startupStatus?.ollama_starting)
     );
-  const aiRuntimeBannerVisible = Boolean(ai?.enabled) && provider === "ollama" && runtimeStarting;
+  const aiRuntimeBannerVisible = Boolean(ai?.enabled) && runtimeStarting;
   if (runtimeHealthy && startupStatus?.ollama_starting) {
     if (!aiRuntimeStateDriftLogged) {
       aiRuntimeStateDriftLogged = true;
@@ -556,15 +364,6 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackLocalLane.classList.toggle("is-runtime-busy", runtimeCardState.busy);
     dom.aiFallbackLocalLane.setAttribute("aria-pressed", "true");
   }
-  // The provider and runtime-source dropdowns are gone: a saved non-default setup is kept
-  // untouched and only named here.
-  const runtimeSource = settings.providers.ollama.runtime_source || "per_user_zip";
-  const setupHint =
-    provider !== "ollama"
-    || runtimeSource === "system"
-    || (runtimeSource === "manual" && Boolean(settings.providers.ollama.runtime_path?.trim()))
-      ? `Provider: ${provider}, source: ${runtimeSource} — managed Ollama is the supported setup`
-      : "";
   if (dom.aiFallbackLocalPrimaryStatus) {
     const healthText = runtimeCardState.healthy
       ? "running"
@@ -577,9 +376,7 @@ export function renderAIFallbackSettingsUi() {
         ? "running (external or unmanaged)"
         : "no managed process";
     const statusText = `Runtime ${healthText} • Source: ${runtimeCardState.source} • Version: ${runtimeCardState.version} • Process: ${processText}`;
-    dom.aiFallbackLocalPrimaryStatus.textContent = setupHint
-      ? provider === "ollama" ? `${statusText} • ${setupHint}` : setupHint
-      : statusText;
+    dom.aiFallbackLocalPrimaryStatus.textContent = statusText;
   }
   if (dom.aiFallbackLocalRuntimeNote) {
     let baseNote = runtimeCardState.busy
@@ -682,97 +479,12 @@ export function renderAIFallbackSettingsUi() {
     });
   }
 
-  const backendTitleEl = document.getElementById("ai-fallback-local-lane-title-text");
-  if (backendTitleEl) {
-    const labels: Record<string, string> = {
-      ollama: "Ollama (Local)",
-      lm_studio: "LM Studio (Local)",
-      oobabooga: "Oobabooga (Local)",
-    };
-    backendTitleEl.textContent = labels[ai?.provider ?? "ollama"] ?? "Local AI (Local)";
-  }
-
-  const isOllama = provider === "ollama";
-  const isCompatBackend = provider === "lm_studio" || provider === "oobabooga";
-
-  // Show/hide Ollama-specific controls vs OpenAI-compat config
-  if (dom.aiFallbackLocalAdvanced) {
-    dom.aiFallbackLocalAdvanced.hidden = !isOllama;
-  }
-  if (dom.aiFallbackCompatConfig) {
-    dom.aiFallbackCompatConfig.hidden = !isCompatBackend;
-  }
-
-  // Update the "managed note" to reflect the active backend
-  if (dom.aiFallbackOllamaManagedNote) {
-    if (isOllama) {
-      dom.aiFallbackOllamaManagedNote.textContent =
-        "Ollama model selection is managed in the model cards below.";
-    } else if (provider === "lm_studio") {
-      dom.aiFallbackOllamaManagedNote.textContent =
-        "LM Studio must be running with its local server enabled. Start LM Studio → load a model → enable Local Server → then click \u2018Fetch models\u2019 above.";
-    } else if (provider === "oobabooga") {
-      dom.aiFallbackOllamaManagedNote.textContent =
-        "Oobabooga (text-generation-webui) must be running with the API extension enabled. Start the server, load a model, then click \u2018Fetch models\u2019 above.";
-    }
-  }
-
-  // Primary action button: Ollama only (install/start), hide for compat backends
   if (dom.aiFallbackLocalPrimaryAction) {
-    dom.aiFallbackLocalPrimaryAction.hidden = !isOllama;
-    if (isOllama) {
-      dom.aiFallbackLocalPrimaryAction.title = "Install or start local Ollama runtime";
-    }
+    dom.aiFallbackLocalPrimaryAction.title = "Install or start local Ollama runtime";
   }
-  // Import model button: Ollama only
   if (dom.aiFallbackLocalImportAction) {
-    dom.aiFallbackLocalImportAction.hidden = !isOllama;
-    if (isOllama) {
-      dom.aiFallbackLocalImportAction.title = "Import a local GGUF or Modelfile into Ollama";
-    }
+    dom.aiFallbackLocalImportAction.title = "Import a local GGUF or Modelfile into Ollama";
   }
-  // Runtime status line: Ollama only, or the one-line note about an unsupported saved setup
-  if (dom.aiFallbackLocalPrimaryStatus) {
-    dom.aiFallbackLocalPrimaryStatus.hidden = !isOllama && !setupHint;
-  }
-  // LM Studio install button: only for LM Studio backend
-  if (dom.aiFallbackLmStudioInstallAction) {
-    dom.aiFallbackLmStudioInstallAction.hidden = provider !== "lm_studio";
-  }
-
-  if (isCompatBackend) {
-    const compatSettings = provider === "lm_studio"
-      ? settings.providers.lm_studio
-      : settings.providers.oobabooga;
-    const defaultEndpoint = provider === "lm_studio" ? "http://127.0.0.1:1234" : "http://127.0.0.1:5000";
-    const endpointHint = provider === "lm_studio"
-      ? "Default LM Studio port: 127.0.0.1:1234"
-      : "Default Oobabooga port: 127.0.0.1:5000";
-
-    if (dom.aiFallbackCompatGuide) {
-      dom.aiFallbackCompatGuide.textContent = provider === "lm_studio"
-        ? "Setup: Install LM Studio \u2192 load a model \u2192 open the \u201cLocal Server\u201d tab \u2192 click Start. Then click \u2018Fetch models\u2019."
-        : "Setup: Start text-generation-webui with --api flag \u2192 load a model. Then click \u2018Fetch models\u2019.";
-    }
-
-    if (dom.aiFallbackCompatEndpoint && document.activeElement !== dom.aiFallbackCompatEndpoint) {
-      dom.aiFallbackCompatEndpoint.value = compatSettings?.endpoint || defaultEndpoint;
-      dom.aiFallbackCompatEndpoint.placeholder = defaultEndpoint;
-    }
-    if (dom.aiFallbackCompatEndpointHint) {
-      dom.aiFallbackCompatEndpointHint.textContent = endpointHint;
-    }
-    if (dom.aiFallbackCompatApiKey && document.activeElement !== dom.aiFallbackCompatApiKey) {
-      dom.aiFallbackCompatApiKey.value = compatSettings?.api_key || "";
-    }
-
-    // Model select
-    // Render model cards (same visual pattern as Ollama model manager)
-    renderCompatModelCards(compatSettings, provider);
-  }
-
-  applyProviderLaneVisibility(false);
-  renderAIFallbackModelOptions(provider, ai?.model || "");
 
   if (dom.aiFallbackTemperature) {
     const temp = Math.max(0, Math.min(1, Number(ai?.temperature ?? 0.3)));

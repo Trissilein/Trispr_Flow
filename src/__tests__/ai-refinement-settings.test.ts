@@ -37,18 +37,6 @@ vi.hoisted(() => {
     <button id="ai-fallback-fetch-versions-action"></button>
     <div id="ai-fallback-runtime-version-list"></div>
     <div id="ai-fallback-local-lane-title-text"></div>
-    <div id="ai-fallback-local-advanced"></div>
-    <div id="ai-fallback-compat-config"></div>
-    <div id="ai-fallback-ollama-managed-note"></div>
-    <button id="ai-fallback-lm-studio-install-action"></button>
-    <div id="ai-fallback-compat-guide"></div>
-    <input id="ai-fallback-compat-endpoint" />
-    <div id="ai-fallback-compat-endpoint-hint"></div>
-    <input id="ai-fallback-compat-api-key" />
-    <div id="ai-fallback-compat-model-list"></div>
-    <div id="ai-fallback-provider-lanes"></div>
-    <div id="ai-fallback-model-field"></div>
-    <select id="ai-fallback-model"></select>
     <input id="ai-fallback-temperature" type="range" />
     <span id="ai-fallback-temperature-value"></span>
     <input id="ai-fallback-preserve-language" type="checkbox" />
@@ -136,22 +124,13 @@ function mkSettings(overrides: Partial<Settings> = {}): Settings {
         language_pinned: false,
         postproc_enabled: true,
         postproc_language: "multi",
-        postproc_llm_provider: "ollama",
         topic_keywords: { bug: ["bug"], summary: ["summary"], actions: ["todo"] },
         providers: {
-            claude: { api_key_stored: false, auth_method_preference: "api_key", auth_status: "locked", auth_verified_at: null, available_models: ["c"], preferred_model: "c" },
-            openai: { api_key_stored: false, auth_method_preference: "api_key", auth_status: "locked", auth_verified_at: null, available_models: ["o"], preferred_model: "o" },
-            gemini: { api_key_stored: false, auth_method_preference: "api_key", auth_status: "locked", auth_verified_at: null, available_models: ["g"], preferred_model: "g" },
-            ollama: { endpoint: "http://127.0.0.1:11434", available_models: ["llama3"], preferred_model: "llama3", runtime_source: "per_user_zip", runtime_path: "", runtime_version: "0.20.2", runtime_target_version: "0.20.2", fallback_endpoints: ["http://127.0.0.1:11434"], last_health_check: null },
-            lm_studio: { endpoint: "http://127.0.0.1:1234", api_key: "", preferred_model: "a-model", available_models: ["a-model", "deepseek-r1"] },
-            oobabooga: { endpoint: "http://127.0.0.1:5000", api_key: "", preferred_model: "textgen", available_models: ["textgen"] },
+            ollama: { endpoint: "http://127.0.0.1:11434", available_models: ["llama3"], preferred_model: "llama3", runtime_source: "per_user_zip", runtime_path: "", runtime_version: "0.20.2", runtime_target_version: "0.20.2", last_health_check: null },
         },
         ai_fallback: {
             enabled: true,
             provider: "ollama",
-            fallback_provider: "openai",
-            execution_mode: "local_primary",
-            strict_local_mode: true,
             preserve_source_language: true,
             low_latency_mode: false,
             model: "llama3",
@@ -188,28 +167,13 @@ beforeEach(() => {
 describe("ai-refinement settings", () => {
     it("no-op on null settings", () => { setSettings(null); expect(() => renderAIFallbackSettingsUi()).not.toThrow(); });
     it("local lane active", () => { renderAIFallbackSettingsUi(); expect(byId<HTMLElement>("ai-fallback-local-lane").classList.contains("is-active")).toBe(true); });
-    it("execution mode pinned", () => { setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, execution_mode: "online_fallback" as never } })); renderAIFallbackSettingsUi(); expect(settings?.ai_fallback.execution_mode).toBe("local_primary"); });
-    it("cloud provider migration", () => { setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, provider: "openai" as never, fallback_provider: null } })); renderAIFallbackSettingsUi(); expect(settings?.ai_fallback.provider).toBe("ollama"); expect(settings?.ai_fallback.fallback_provider).toBe("openai"); });
+    it("cloud provider migration", () => { setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, provider: "openai" as never } })); renderAIFallbackSettingsUi(); expect(settings?.ai_fallback.provider).toBe("ollama"); });
 
-    it.each([
-        ["ollama", false, true],
-        ["lm_studio", true, false],
-        ["oobabooga", true, false],
-    ])("provider visuals %s", (provider, compatVisible, primaryVisible) => {
+    it.each(["lm_studio", "oobabooga", "claude"])("stale provider %s lands on ollama", (provider) => {
         setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, provider: provider as never } }));
         renderAIFallbackSettingsUi();
-        expect(byId<HTMLElement>("ai-fallback-compat-config").hidden).toBe(!compatVisible);
-        expect(byId<HTMLButtonElement>("ai-fallback-local-primary-action").hidden).toBe(!primaryVisible);
-    });
-
-    it.each([
-        ["ollama", "Ollama"],
-        ["lm_studio", "LM Studio"],
-        ["oobabooga", "Oobabooga"],
-    ])("provider note copy %s", (provider, expected) => {
-        setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, provider: provider as never } }));
-        renderAIFallbackSettingsUi();
-        expect(byId<HTMLElement>("ai-fallback-ollama-managed-note").textContent).toContain(expected);
+        expect(settings?.ai_fallback.provider).toBe("ollama");
+        expect(byId<HTMLButtonElement>("ai-fallback-local-primary-action").hidden).toBe(false);
     });
 
     it.each([
@@ -298,11 +262,6 @@ describe("ai-refinement settings", () => {
     it("reset enabled with unsaved built-in edits", () => { renderAIFallbackSettingsUi(); const t = byId<HTMLTextAreaElement>("ai-fallback-custom-prompt"); t.focus(); t.value = "edited"; renderAIFallbackSettingsUi(); const btn = byId<HTMLButtonElement>("ai-fallback-prompt-preset-reset"); expect(btn.hidden).toBe(false); expect(btn.disabled).toBe(false); });
     it("reset hidden for user preset", () => { setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, prompt_presets: [{ id: "u1", name: "User", prompt: "X" }], active_prompt_preset_id: "user:u1" } })); renderAIFallbackSettingsUi(); expect(byId<HTMLButtonElement>("ai-fallback-prompt-preset-reset").hidden).toBe(true); });
     it("user preset edit enables Save (dirty vs saved prompt, not live custom_prompt)", () => { setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, prompt_presets: [{ id: "u1", name: "User", prompt: "saved prompt" }], active_prompt_preset_id: "user:u1", custom_prompt: "edited live" } })); const t = byId<HTMLTextAreaElement>("ai-fallback-custom-prompt"); t.focus(); t.value = "edited live"; renderAIFallbackSettingsUi(); expect(byId<HTMLButtonElement>("ai-fallback-prompt-preset-save").disabled).toBe(false); });
-
-    it("compat model list renders text", () => { setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, provider: "lm_studio" } })); renderAIFallbackSettingsUi(); expect(byId<HTMLElement>("ai-fallback-compat-model-list").textContent).toContain("a-model"); });
-    it("compat model XSS not injected", () => { setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, provider: "lm_studio" }, providers: { ...settings!.providers, lm_studio: { ...settings!.providers.lm_studio!, endpoint: settings!.providers.lm_studio!.endpoint, api_key: settings!.providers.lm_studio!.api_key, available_models: ["<img src=x onerror=alert(1)>"], preferred_model: "<img src=x onerror=alert(1)>" } } })); renderAIFallbackSettingsUi(); expect(byId<HTMLElement>("ai-fallback-compat-model-list").querySelector("img")).toBeNull(); });
-    it("reasoning warning shown", () => { setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, provider: "lm_studio" }, providers: { ...settings!.providers, lm_studio: { ...settings!.providers.lm_studio!, endpoint: settings!.providers.lm_studio!.endpoint, api_key: settings!.providers.lm_studio!.api_key, available_models: ["deepseek-r1"], preferred_model: "deepseek-r1" } } })); renderAIFallbackSettingsUi(); expect(byId<HTMLElement>("ai-fallback-compat-model-list").textContent).toContain("Reasoning model"); });
-    it("activate model persists", async () => { setSettings(mkSettings({ ai_fallback: { ...settings!.ai_fallback, provider: "lm_studio" }, providers: { ...settings!.providers, lm_studio: { ...settings!.providers.lm_studio!, endpoint: settings!.providers.lm_studio!.endpoint, api_key: settings!.providers.lm_studio!.api_key, available_models: ["a", "b"], preferred_model: "a" } } })); renderAIFallbackSettingsUi(); const btn = byId<HTMLElement>("ai-fallback-compat-model-list").querySelector("button") as HTMLButtonElement; btn.click(); await Promise.resolve(); expect(settings!.providers.lm_studio!.preferred_model).toBe("b"); expect(persistSettingsMock).toHaveBeenCalled(); });
 
     it("expander defaults true", () => { renderAIRefinementTab(); expect(byId<HTMLDetailsElement>("ai-refinement-runtime-expander").open).toBe(true); });
     it("expander writes to localStorage", () => { renderAIRefinementTab(); const d = byId<HTMLDetailsElement>("ai-refinement-runtime-expander"); d.open = false; d.dispatchEvent(new Event("toggle")); expect(window.localStorage.getItem("ai_refinement_expanders_v1") || "").toContain("ai-refinement-runtime-expander"); });

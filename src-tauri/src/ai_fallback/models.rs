@@ -1,20 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
-use super::provider::{default_models_for_provider, NUM_CTX_TIERS, NUM_PREDICT_TIERS};
+use super::provider::{NUM_CTX_TIERS, NUM_PREDICT_TIERS};
 
 const DEFAULT_PROVIDER: &str = "ollama";
 const DEFAULT_TEMPERATURE: f32 = 0.3;
 const DEFAULT_MAX_TOKENS: u32 = 4000;
-const DEFAULT_EXECUTION_MODE: &str = "local_primary";
 const DEFAULT_PROMPT_PROFILE: &str = "wording";
 const USER_PROMPT_PRESET_PREFIX: &str = "user:";
 const DEFAULT_PRESERVE_SOURCE_LANGUAGE: bool = true;
-const AUTH_STATUS_LOCKED: &str = "locked";
-const AUTH_STATUS_VERIFIED_API_KEY: &str = "verified_api_key";
-const AUTH_STATUS_VERIFIED_OAUTH: &str = "verified_oauth";
-const AUTH_METHOD_API_KEY: &str = "api_key";
-const AUTH_METHOD_OAUTH: &str = "oauth";
+const DEFAULT_OLLAMA_ENDPOINT: &str = "http://127.0.0.1:11434";
+const MANAGED_RUNTIME_SOURCE: &str = "per_user_zip";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -41,10 +37,7 @@ impl Default for UserPromptPreset {
 #[serde(default)]
 pub struct AIFallbackSettings {
     pub enabled: bool,
-    pub provider: String, // "claude" | "openai" | "gemini" | "ollama"
-    pub fallback_provider: Option<String>, // "claude" | "openai" | "gemini"
-    pub execution_mode: String, // "local_primary" | "online_fallback"
-    pub strict_local_mode: bool,
+    pub provider: String, // always "ollama"
     pub preserve_source_language: bool,
     pub model: String,
     pub temperature: f32,
@@ -75,19 +68,11 @@ pub struct AIFallbackSettings {
 
 impl Default for AIFallbackSettings {
     fn default() -> Self {
-        let provider = DEFAULT_PROVIDER.to_string();
-        let model = default_models_for_provider(&provider)
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| "gemma4:e4b".to_string());
         Self {
             enabled: false,
-            provider,
-            fallback_provider: None,
-            execution_mode: DEFAULT_EXECUTION_MODE.to_string(),
-            strict_local_mode: true,
+            provider: DEFAULT_PROVIDER.to_string(),
             preserve_source_language: DEFAULT_PRESERVE_SOURCE_LANGUAGE,
-            model,
+            model: "gemma4:e4b".to_string(),
             temperature: DEFAULT_TEMPERATURE,
             max_tokens: DEFAULT_MAX_TOKENS,
             low_latency_mode: false,
@@ -107,31 +92,9 @@ impl Default for AIFallbackSettings {
 
 impl AIFallbackSettings {
     pub fn normalize(&mut self) {
-        self.fallback_provider = self
-            .fallback_provider
-            .as_ref()
-            .and_then(|provider| normalize_cloud_provider_id(provider).map(str::to_string));
-
-        if self.execution_mode != "local_primary" && self.execution_mode != "online_fallback" {
-            self.execution_mode = DEFAULT_EXECUTION_MODE.to_string();
-        }
-
-        let normalized_provider = normalize_provider_id(&self.provider).to_string();
-        const LOCAL_BACKENDS: &[&str] = &["ollama", "lm_studio", "oobabooga"];
-        self.provider = if self.execution_mode == "online_fallback" {
-            self.fallback_provider
-                .clone()
-                .unwrap_or_else(|| DEFAULT_PROVIDER.to_string())
-        } else if LOCAL_BACKENDS.contains(&self.provider.as_str()) {
-            // Preserve the currently selected local backend.
-            self.provider.clone()
-        } else {
-            DEFAULT_PROVIDER.to_string()
-        };
-        if !LOCAL_BACKENDS.contains(&self.provider.as_str()) && self.fallback_provider.is_none() {
-            self.fallback_provider =
-                normalize_cloud_provider_id(&normalized_provider).map(str::to_string);
-        }
+        // Refinement is Ollama-only. Older settings may still name a cloud, LM Studio or
+        // Oobabooga provider; they all land on Ollama.
+        self.provider = DEFAULT_PROVIDER.to_string();
 
         self.temperature = self.temperature.clamp(0.0, 1.0);
         if self.max_tokens < 128 {
@@ -179,83 +142,6 @@ impl AIFallbackSettings {
         if self.custom_prompt.trim().is_empty() {
             self.custom_prompt = AIFallbackSettings::default().custom_prompt;
         }
-        if self.model.trim().is_empty() {
-            // For Ollama: models are discovered at runtime, don't default to a cloud model.
-            let defaults = default_models_for_provider(&self.provider);
-            if let Some(first) = defaults.into_iter().next() {
-                self.model = first;
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AIProviderSettings {
-    pub api_key_stored: bool,
-    pub auth_method_preference: String, // "api_key" | "oauth"
-    pub auth_status: String,            // "locked" | "verified_api_key" | "verified_oauth"
-    pub auth_verified_at: Option<String>,
-    pub available_models: Vec<String>,
-    pub preferred_model: String,
-}
-
-impl AIProviderSettings {
-    fn with_provider_defaults(provider: &str) -> Self {
-        let mut models = default_models_for_provider(provider);
-        if models.is_empty() {
-            models.push("unknown".to_string());
-        }
-        let preferred_model = models[0].clone();
-        Self {
-            api_key_stored: false,
-            auth_method_preference: AUTH_METHOD_API_KEY.to_string(),
-            auth_status: AUTH_STATUS_LOCKED.to_string(),
-            auth_verified_at: None,
-            available_models: models,
-            preferred_model,
-        }
-    }
-
-    fn normalize_for_provider(&mut self, provider: &str) {
-        if !is_valid_auth_method_preference(&self.auth_method_preference) {
-            self.auth_method_preference = AUTH_METHOD_API_KEY.to_string();
-        }
-        if !is_valid_auth_status(&self.auth_status) {
-            self.auth_status = AUTH_STATUS_LOCKED.to_string();
-            self.auth_verified_at = None;
-        }
-        if !self.api_key_stored && self.auth_status != AUTH_STATUS_VERIFIED_OAUTH {
-            self.auth_status = AUTH_STATUS_LOCKED.to_string();
-            self.auth_verified_at = None;
-        }
-        if self.available_models.is_empty() {
-            self.available_models = default_models_for_provider(provider);
-        }
-        if self.available_models.is_empty() {
-            self.available_models.push("unknown".to_string());
-        }
-        if self.preferred_model.trim().is_empty()
-            || !self
-                .available_models
-                .iter()
-                .any(|m| m == &self.preferred_model)
-        {
-            self.preferred_model = self.available_models[0].clone();
-        }
-    }
-}
-
-impl Default for AIProviderSettings {
-    fn default() -> Self {
-        Self {
-            api_key_stored: false,
-            auth_method_preference: AUTH_METHOD_API_KEY.to_string(),
-            auth_status: AUTH_STATUS_LOCKED.to_string(),
-            auth_verified_at: None,
-            available_models: Vec::new(),
-            preferred_model: String::new(),
-        }
     }
 }
 
@@ -263,12 +149,9 @@ impl Default for AIProviderSettings {
 #[serde(default)]
 pub struct OllamaSettings {
     pub endpoint: String,
-    /// Additional endpoints tried in order when the primary endpoint is unreachable.
-    /// Useful for alternate ports (e.g. 11435), LM Studio (1234), or Oobabooga (5000).
-    pub fallback_endpoints: Vec<String>,
     pub available_models: Vec<String>,
     pub preferred_model: String,
-    pub runtime_source: String, // "system" | "per_user_zip" | "manual"
+    pub runtime_source: String, // always "per_user_zip" (managed runtime)
     pub runtime_path: String,
     pub runtime_version: String,
     pub runtime_target_version: String,
@@ -281,11 +164,10 @@ pub struct OllamaSettings {
 impl Default for OllamaSettings {
     fn default() -> Self {
         Self {
-            endpoint: "http://127.0.0.1:11434".to_string(),
-            fallback_endpoints: Vec::new(),
+            endpoint: DEFAULT_OLLAMA_ENDPOINT.to_string(),
             available_models: Vec::new(),
             preferred_model: String::new(),
-            runtime_source: "manual".to_string(),
+            runtime_source: MANAGED_RUNTIME_SOURCE.to_string(),
             runtime_path: String::new(),
             runtime_version: String::new(),
             runtime_target_version: "0.40.13".to_string(),
@@ -297,10 +179,10 @@ impl Default for OllamaSettings {
 
 impl OllamaSettings {
     /// A target nobody chose that is older than the runtime we have recorded as running moves up
-    /// to that runtime, so the UI never offers a downgrade the user did not ask for. Managed
-    /// runtimes only: the target is meaningless for a system or manual Ollama. True when changed.
+    /// to that runtime, so the UI never offers a downgrade the user did not ask for. True when
+    /// changed.
     pub fn heal_stale_runtime_target(&mut self) -> bool {
-        if self.runtime_target_explicit || self.runtime_source != "per_user_zip" {
+        if self.runtime_target_explicit {
             return false;
         }
         let running = self.runtime_version.trim().trim_start_matches('v');
@@ -318,9 +200,9 @@ impl OllamaSettings {
     }
 
     fn normalize(&mut self) {
-        if self.endpoint.trim().is_empty() {
-            self.endpoint = "http://127.0.0.1:11434".to_string();
-        }
+        // The managed runtime always serves on this address; a stored remote or custom
+        // endpoint (older versions let the user type one) is dropped.
+        self.endpoint = DEFAULT_OLLAMA_ENDPOINT.to_string();
         if self.available_models.is_empty() {
             self.preferred_model = String::new();
         } else if self.preferred_model.trim().is_empty()
@@ -331,11 +213,11 @@ impl OllamaSettings {
         {
             self.preferred_model = self.available_models[0].clone();
         }
-        if self.runtime_source != "system"
-            && self.runtime_source != "per_user_zip"
-            && self.runtime_source != "manual"
-        {
-            self.runtime_source = "manual".to_string();
+        if self.runtime_source != MANAGED_RUNTIME_SOURCE {
+            // A system or manual runtime was somebody else's binary: forget its path and version.
+            self.runtime_source = MANAGED_RUNTIME_SOURCE.to_string();
+            self.runtime_path.clear();
+            self.runtime_version.clear();
         }
         // Targets that older releases wrote as their default are not a choice the user made.
         const LEGACY_RUNTIME_TARGETS: [&str; 1] = ["0.20.2"];
@@ -350,169 +232,15 @@ impl OllamaSettings {
     }
 }
 
-/// Settings for any OpenAI-compatible local backend (LM Studio, Oobabooga, etc.)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct OpenAICompatSettings {
-    pub endpoint: String,
-    /// Optional API key. LM Studio and Oobabooga usually don't require one.
-    pub api_key: String,
-    pub preferred_model: String,
-    pub available_models: Vec<String>,
-}
-
-impl OpenAICompatSettings {
-    pub fn lm_studio_defaults() -> Self {
-        Self {
-            endpoint: "http://127.0.0.1:1234".to_string(),
-            api_key: String::new(),
-            preferred_model: String::new(),
-            available_models: Vec::new(),
-        }
-    }
-
-    pub fn oobabooga_defaults() -> Self {
-        Self {
-            endpoint: "http://127.0.0.1:5000".to_string(),
-            api_key: String::new(),
-            preferred_model: String::new(),
-            available_models: Vec::new(),
-        }
-    }
-}
-
-impl Default for OpenAICompatSettings {
-    fn default() -> Self {
-        Self {
-            endpoint: String::new(),
-            api_key: String::new(),
-            preferred_model: String::new(),
-            available_models: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct AIProvidersSettings {
-    pub claude: AIProviderSettings,
-    pub openai: AIProviderSettings,
-    pub gemini: AIProviderSettings,
     pub ollama: OllamaSettings,
-    pub lm_studio: OpenAICompatSettings,
-    pub oobabooga: OpenAICompatSettings,
-}
-
-impl Default for AIProvidersSettings {
-    fn default() -> Self {
-        Self {
-            claude: AIProviderSettings::with_provider_defaults("claude"),
-            openai: AIProviderSettings::with_provider_defaults("openai"),
-            gemini: AIProviderSettings::with_provider_defaults("gemini"),
-            ollama: OllamaSettings::default(),
-            lm_studio: OpenAICompatSettings::lm_studio_defaults(),
-            oobabooga: OpenAICompatSettings::oobabooga_defaults(),
-        }
-    }
 }
 
 impl AIProvidersSettings {
-    pub fn get(&self, provider: &str) -> Option<&AIProviderSettings> {
-        match normalize_provider_id(provider) {
-            "claude" => Some(&self.claude),
-            "openai" => Some(&self.openai),
-            "gemini" => Some(&self.gemini),
-            _ => None,
-        }
-    }
-
-    pub fn get_mut(&mut self, provider: &str) -> Option<&mut AIProviderSettings> {
-        match normalize_provider_id(provider) {
-            "claude" => Some(&mut self.claude),
-            "openai" => Some(&mut self.openai),
-            "gemini" => Some(&mut self.gemini),
-            _ => None,
-        }
-    }
-
     pub fn normalize(&mut self) {
-        self.claude.normalize_for_provider("claude");
-        self.openai.normalize_for_provider("openai");
-        self.gemini.normalize_for_provider("gemini");
         self.ollama.normalize();
-    }
-
-    pub fn sync_from_ai_fallback(&mut self, fallback: &AIFallbackSettings) {
-        self.normalize();
-        let provider = normalize_provider_id(&fallback.provider);
-        if let Some(config) = self.get_mut(provider) {
-            if !config.available_models.iter().any(|m| m == &fallback.model) {
-                config.available_models.push(fallback.model.clone());
-            }
-            config.preferred_model = fallback.model.clone();
-        }
-    }
-
-    pub fn set_api_key_stored(&mut self, provider: &str, stored: bool) -> Result<(), String> {
-        let provider_config = self
-            .get_mut(provider)
-            .ok_or_else(|| format!("Unknown AI provider: {}", provider))?;
-        provider_config.api_key_stored = stored;
-        provider_config.auth_status = AUTH_STATUS_LOCKED.to_string();
-        provider_config.auth_verified_at = None;
-        Ok(())
-    }
-
-    pub fn set_auth_verified(
-        &mut self,
-        provider: &str,
-        method: &str,
-        verified_at: Option<String>,
-    ) -> Result<(), String> {
-        let provider_config = self
-            .get_mut(provider)
-            .ok_or_else(|| format!("Unknown AI provider: {}", provider))?;
-        if method != AUTH_STATUS_VERIFIED_API_KEY && method != AUTH_STATUS_VERIFIED_OAUTH {
-            return Err(format!("Unsupported auth verification method: {}", method));
-        }
-        provider_config.auth_status = method.to_string();
-        provider_config.auth_verified_at = verified_at;
-        Ok(())
-    }
-
-    pub fn lock_auth(&mut self, provider: &str) -> Result<(), String> {
-        let provider_config = self
-            .get_mut(provider)
-            .ok_or_else(|| format!("Unknown AI provider: {}", provider))?;
-        provider_config.auth_status = AUTH_STATUS_LOCKED.to_string();
-        provider_config.auth_verified_at = None;
-        Ok(())
-    }
-
-    pub fn is_verified(&self, provider: &str) -> bool {
-        self.get(provider)
-            .map(|config| config.auth_status != AUTH_STATUS_LOCKED)
-            .unwrap_or(false)
-    }
-}
-
-fn is_valid_auth_status(status: &str) -> bool {
-    matches!(
-        status.trim(),
-        AUTH_STATUS_LOCKED | AUTH_STATUS_VERIFIED_API_KEY | AUTH_STATUS_VERIFIED_OAUTH
-    )
-}
-
-fn is_valid_auth_method_preference(method: &str) -> bool {
-    matches!(method.trim(), AUTH_METHOD_API_KEY | AUTH_METHOD_OAUTH)
-}
-
-pub(crate) fn normalize_cloud_provider_id(provider: &str) -> Option<&'static str> {
-    match provider.trim().to_lowercase().as_str() {
-        "claude" => Some("claude"),
-        "openai" => Some("openai"),
-        "gemini" => Some("gemini"),
-        _ => None,
     }
 }
 
@@ -572,18 +300,6 @@ pub struct RefinementResult {
     /// that fit comfortably within the already-persisted tiers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier_update: Option<TierUpdate>,
-}
-
-pub fn normalize_provider_id(provider: &str) -> &'static str {
-    match provider.trim().to_lowercase().as_str() {
-        "claude" => "claude",
-        "openai" => "openai",
-        "gemini" => "gemini",
-        "ollama" => "ollama",
-        "lm_studio" => "lm_studio",
-        "oobabooga" => "oobabooga",
-        _ => DEFAULT_PROVIDER,
-    }
 }
 
 pub fn normalize_prompt_profile_id(profile: &str) -> &'static str {

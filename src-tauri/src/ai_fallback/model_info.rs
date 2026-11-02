@@ -10,7 +10,6 @@
 //! - one remote fetch per model at a time;
 //! - with strict local mode on, nothing leaves the machine.
 
-use super::check_strict_local_mode;
 use super::model_registry::{parse_model_ref, ModelRef, ModelRegistry};
 use super::provider::{ollama_endpoint_candidates, validate_ollama_model_name};
 use crate::state::AppState;
@@ -912,12 +911,11 @@ fn remote_outcome(
     }
 }
 
-/// Local answer plus (unless `strict_local`) the public page, with every failure reduced to a note.
+/// Local answer plus the public page, with every failure reduced to a note.
 pub(crate) fn build_model_details(
     endpoint: &str,
     model: &str,
     cache_dir: Option<&Path>,
-    strict_local: bool,
     sources: &RemoteSources,
     now_ms: u64,
 ) -> ModelDetails {
@@ -925,11 +923,7 @@ pub(crate) fn build_model_details(
         Ok(info) => (Some(info), None),
         Err(error) => (None, Some(error)),
     };
-    let remote = if strict_local {
-        RemoteOutcome::none("Strict local mode is on: only data from this computer is shown.")
-    } else {
-        remote_outcome(model, cache_dir, sources, now_ms)
-    };
+    let remote = remote_outcome(model, cache_dir, sources, now_ms);
     ModelDetails {
         model: model.to_string(),
         local,
@@ -952,16 +946,12 @@ pub(crate) async fn get_ollama_model_details(
     model: String,
 ) -> Result<ModelDetails, String> {
     validate_ollama_model_name(&model)?;
-    let (endpoint, strict_local) = {
+    let endpoint = {
         let settings = state
             .settings
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        check_strict_local_mode(&settings)?;
-        (
-            settings.providers.ollama.endpoint.clone(),
-            settings.ai_fallback.strict_local_mode,
-        )
+        settings.providers.ollama.endpoint.clone()
     };
     let cache_dir = crate::paths::resolve_data_path(&app, "runtime-cache").join("model-details");
     tauri::async_runtime::spawn_blocking(move || {
@@ -969,7 +959,6 @@ pub(crate) async fn get_ollama_model_details(
             &endpoint,
             &model,
             Some(&cache_dir),
-            strict_local,
             &RemoteSources::production(),
             crate::util::now_ms(),
         )
@@ -1705,7 +1694,6 @@ mod tests {
             &ollama.base_url,
             "hf.co/unsloth/gemma-4-E4B-it-GGUF:Q4_K_M",
             Some(&dir),
-            false,
             &sources_for(&remote),
             5_000,
         );
@@ -1719,7 +1707,6 @@ mod tests {
             &ollama.base_url,
             "hf.co/unsloth/gemma-4-E4B-it-GGUF:Q4_K_M",
             Some(&dir),
-            false,
             &sources_for(&remote),
             6_000,
         );
@@ -1744,7 +1731,6 @@ mod tests {
             &ollama.base_url,
             "gemma4:e4b",
             None,
-            false,
             &sources_for(&remote),
             1,
         );
@@ -1752,24 +1738,6 @@ mod tests {
         assert_eq!(info.source, "ollama");
         assert_eq!(info.updated_at.as_deref(), Some("2026-10-12T22:18:00Z"));
         assert_eq!(details.local.unwrap().context_length, Some(131072));
-    }
-
-    #[test]
-    fn strict_local_mode_never_contacts_the_internet() {
-        let ollama = ollama_endpoint_mock();
-        let remote = MockServer::start(|_| MockReply::ok(hf_sample()));
-        let details = build_model_details(
-            &ollama.base_url,
-            "hf.co/a/b:Q4",
-            None,
-            true,
-            &sources_for(&remote),
-            1,
-        );
-        assert!(details.local.is_some());
-        assert!(details.remote.is_none());
-        assert!(details.remote_note.unwrap().contains("Strict local mode"));
-        assert!(remote.requests().is_empty());
     }
 
     #[test]
@@ -1788,7 +1756,7 @@ mod tests {
             policy: Box::new(|url: &Url| url.scheme() == "http"),
             total_timeout: Duration::from_millis(800),
         };
-        let details = build_model_details(&ollama.base_url, "gemma4:e4b", None, false, &sources, 1);
+        let details = build_model_details(&ollama.base_url, "gemma4:e4b", None, &sources, 1);
         assert!(details.local.is_some());
         assert!(details.remote.is_none());
         assert!(details
@@ -1807,7 +1775,6 @@ mod tests {
             &ollama.base_url,
             model,
             Some(&dir),
-            false,
             &sources_for(&good),
             1_000,
         );
@@ -1817,7 +1784,6 @@ mod tests {
             &ollama.base_url,
             model,
             Some(&dir),
-            false,
             &sources_for(&broken),
             later,
         );
@@ -1837,7 +1803,6 @@ mod tests {
             &ollama.base_url,
             "mine:custom",
             None,
-            false,
             &sources_for(&remote),
             1,
         );
@@ -1869,7 +1834,6 @@ mod tests {
                 &ollama.base_url,
                 "hf.co/a/b:Q4",
                 None,
-                false,
                 &sources_for(&remote),
                 1,
             );
@@ -1889,7 +1853,7 @@ mod tests {
             format!("http://127.0.0.1:{}", port)
         };
         let details =
-            build_model_details(&dead, "hf.co/a/b:Q4", None, false, &sources_for(&remote), 1);
+            build_model_details(&dead, "hf.co/a/b:Q4", None, &sources_for(&remote), 1);
         assert!(details.local.is_none());
         assert!(details.local_error.unwrap().contains("not reachable"));
         assert!(details.remote.is_some());
@@ -1898,12 +1862,12 @@ mod tests {
     #[test]
     fn model_not_installed_reports_that() {
         let ollama = ollama_endpoint_mock();
+        let remote = MockServer::start(|_| MockReply::error(404, "x"));
         let details = build_model_details(
             &ollama.base_url,
             "missing:model",
             None,
-            true,
-            &RemoteSources::production(),
+            &sources_for(&remote),
             1,
         );
         assert!(details.local.is_none());
@@ -1941,7 +1905,6 @@ mod tests {
                         &ollama_url,
                         "hf.co/single/flight:Q4",
                         Some(&dir),
-                        false,
                         &sources,
                         1_000,
                     )
@@ -1966,7 +1929,6 @@ mod tests {
             &ollama.base_url,
             "a/b/c/d",
             None,
-            false,
             &RemoteSources::production(),
             1,
         );
@@ -2038,7 +2000,6 @@ mod tests {
             &endpoint,
             &model,
             Some(&dir),
-            false,
             &RemoteSources::production(),
             crate::util::now_ms(),
         );
@@ -2050,7 +2011,6 @@ mod tests {
             &endpoint,
             &model,
             Some(&dir),
-            false,
             &RemoteSources::production(),
             crate::util::now_ms(),
         );

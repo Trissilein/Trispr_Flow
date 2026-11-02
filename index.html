@@ -1474,52 +1474,6 @@
                               </button>
                             </div>
                           </div>
-                          <!-- OpenAI-compat backend config (LM Studio / Oobabooga) -->
-                          <div id="ai-fallback-compat-config" hidden data-expert-only="true">
-                            <p id="ai-fallback-compat-guide" class="field-hint span-2" style="margin-bottom:0.5rem;"></p>
-                            <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.compat.endpoint" data-settings-visibility-label="Server endpoint" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                              <span class="field-label">Server endpoint</span>
-                              <input
-                                id="ai-fallback-compat-endpoint"
-                                type="url"
-                                class="field-input"
-                                spellcheck="false"
-                                placeholder="http://127.0.0.1:1234"
-                                title="Base URL of the local AI server"
-                              />
-                              <span id="ai-fallback-compat-endpoint-hint" class="field-hint">Default: LM Studio port 1234, Oobabooga port 5000</span>
-                            </label>
-                            <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.compat.api.key" data-settings-visibility-label="API key (optional)" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                              <span class="field-label">API key <span class="field-label-optional">(optional)</span></span>
-                              <input
-                                id="ai-fallback-compat-api-key"
-                                type="password"
-                                class="field-input"
-                                spellcheck="false"
-                                placeholder="Leave empty if not required"
-                                title="API key for the local server (most local servers don't require one)"
-                              />
-                            </label>
-                            <div class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.compat.fetch.models" data-settings-visibility-label="Models" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                              <div class="field-row" style="margin-bottom:0.5rem;">
-                                <span class="field-label">Models</span>
-                                <button id="ai-fallback-compat-fetch-models" class="hotkey-record-btn" type="button" title="Fetch available models from the server">
-                                  Fetch models
-                                </button>
-                              </div>
-                              <div id="ai-fallback-compat-model-list" class="model-list card-list"></div>
-                              <span id="ai-fallback-compat-status" class="field-hint"></span>
-                            </div>
-                            <div class="ai-provider-advanced-actions">
-                              <button id="ai-fallback-compat-verify-action" class="hotkey-record-btn" type="button" title="Test connection to the local server" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.compat.verify.action" data-settings-visibility-label="ai-fallback-compat-verify-action" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                                Verify connection
-                              </button>
-                              <button id="ai-fallback-lm-studio-install-action" class="hotkey-record-btn" type="button" title="Download and install LM Studio via the official installer script" hidden data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.lm.studio.install.action" data-settings-visibility-label="ai-fallback-lm-studio-install-action" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                                Install LM Studio
-                              </button>
-                            </div>
-                          </div>
-
                           <span id="ai-fallback-local-runtime-note" class="field-hint">
                             Local mode keeps transcript data on this device.
                           </span>
@@ -1532,12 +1486,7 @@
                         </div>
                       </div>
 
-                      <label id="ai-fallback-model-field" class="field" data-settings-visibility-managed="true" data-settings-visibility-key="ai.fallback.model" data-settings-visibility-label="Online model" data-settings-visibility-default="expert" data-settings-visibility-group="AI Refinement">
-                        <span class="field-label">Online model</span>
-                        <select id="ai-fallback-model" title="Model to use for refinement (loaded from selected provider)"></select>
-                      </label>
-
-                      <div id="ai-fallback-ollama-managed-note" class="field-hint span-2" style="display:none;">
+                      <div class="field-hint span-2">
                         Ollama model selection is managed in the model cards below.
                       </div>
 
@@ -1829,34 +1778,6 @@
           <button id="wizard-next-btn" type="button" class="btn btn-primary">Weiter</button>
           <button id="wizard-finish-btn" type="button" class="btn btn-primary" hidden>Los geht's!</button>
         </div>
-      </div>
-    </div>
-
-    <div id="ai-auth-modal" class="auth-modal" hidden>
-      <div id="ai-auth-modal-backdrop" class="auth-modal-backdrop"></div>
-      <div class="auth-modal-card" role="dialog" aria-modal="true" aria-labelledby="ai-auth-modal-title">
-        <div class="auth-modal-header">
-          <h3 id="ai-auth-modal-title" class="ai-refine-section-title">Authenticate Provider</h3>
-          <button id="ai-auth-modal-close" type="button" class="hotkey-record-btn">Close</button>
-        </div>
-        <p id="ai-auth-provider-name" class="field-hint">Provider</p>
-        <label class="field">
-          <span class="field-label">Authentication method</span>
-          <select id="ai-auth-method" title="Select cloud authentication method">
-            <option value="api_key">API key</option>
-            <option value="oauth" disabled>OAuth (coming soon)</option>
-          </select>
-        </label>
-        <label class="field">
-          <span class="field-label">API key</span>
-          <input id="ai-auth-api-key-input" type="password" placeholder="Paste provider API key" title="API key for the selected cloud provider" />
-        </label>
-        <div class="auth-modal-actions">
-          <button id="ai-auth-save-key" class="hotkey-record-btn" type="button">Save key</button>
-          <button id="ai-auth-clear-key" class="hotkey-record-btn" type="button">Clear key</button>
-          <button id="ai-auth-verify-key" class="hotkey-record-btn" type="button">Verify</button>
-        </div>
-        <span id="ai-auth-status" class="field-hint">No API key stored.</span>
       </div>
     </div>
 

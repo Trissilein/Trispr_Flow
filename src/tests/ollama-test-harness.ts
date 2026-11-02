@@ -51,7 +51,6 @@ export type LoadOptions = {
   catalogJson?: unknown;
   settingsModel?: string;
   target?: string;
-  source?: string;
   /** `null`: the app has not loaded its settings yet. */
   settings?: null;
 };
@@ -108,7 +107,7 @@ export async function load(handlers: Record<string, Handler> = {}, options: Load
       providers: {
         ollama: {
           preferred_model: model,
-          runtime_source: options.source ?? "per_user_zip",
+          runtime_source: "per_user_zip",
           runtime_target_version: options.target ?? "0.40.7",
           endpoint: "http://127.0.0.1:11434",
         },

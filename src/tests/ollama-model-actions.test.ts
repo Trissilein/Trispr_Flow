@@ -41,7 +41,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 70));
 
 async function load(
   handlers: Record<string, Handler> = {},
-  options: { catalogJson?: unknown; settingsModel?: string; target?: string; source?: string } = {}
+  options: { catalogJson?: unknown; settingsModel?: string; target?: string } = {}
 ) {
   vi.resetModules();
   if (options.catalogJson) vi.doMock("../model-catalog.json", () => ({ default: options.catalogJson }));
@@ -84,7 +84,7 @@ async function load(
     providers: {
       ollama: {
         preferred_model: model,
-        runtime_source: options.source ?? "per_user_zip",
+        runtime_source: "per_user_zip",
         runtime_target_version: options.target ?? "0.40.7",
         endpoint: "http://127.0.0.1:11434",
       },

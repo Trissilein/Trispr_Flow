@@ -1,5 +1,5 @@
 use crate::ai_fallback::models::{AIFallbackSettings, AIProvidersSettings};
-use crate::ai_fallback::provider::{is_local_ollama_endpoint, prompt_for_profile};
+use crate::ai_fallback::provider::prompt_for_profile;
 use crate::audio::Recorder;
 use crate::constants::{
     HALLUCINATION_MAX_CHARS, HALLUCINATION_MAX_DURATION_MS, HALLUCINATION_MAX_WORDS,
@@ -258,8 +258,6 @@ pub(crate) struct Settings {
     pub(crate) language_mode: String,
     pub(crate) language_pinned: bool,
     pub(crate) model: String,
-    // Legacy toggle kept for backward compatibility with old cloud transcription paths.
-    pub(crate) cloud_fallback: bool,
     // v0.7.0 AI Fallback settings
     pub(crate) ai_fallback: AIFallbackSettings,
     pub(crate) providers: AIProvidersSettings,
@@ -361,9 +359,6 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) edit_delta_migrated: bool,
     pub(crate) postproc_llm_enabled: bool,
-    pub(crate) postproc_llm_provider: String,
-    #[serde(skip_serializing)]
-    pub(crate) postproc_llm_api_key: String,
     pub(crate) postproc_llm_model: String,
     pub(crate) postproc_llm_prompt: String,
     // OPUS archive settings
@@ -419,7 +414,6 @@ impl Default for Settings {
       language_mode: "auto".to_string(),
       language_pinned: false,
       model: "whisper-large-v3-turbo".to_string(),
-      cloud_fallback: false,
       ai_fallback: AIFallbackSettings::default(),
       providers: AIProvidersSettings::default(),
       setup: SetupSettings::default(),
@@ -496,8 +490,6 @@ impl Default for Settings {
       edit_substitutions: Vec::new(),
       edit_delta_migrated: false,
       postproc_llm_enabled: false,
-      postproc_llm_provider: "ollama".to_string(),
-      postproc_llm_api_key: String::new(),
       postproc_llm_model: String::new(),
       postproc_llm_prompt: "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
       opus_enabled: true,
@@ -1234,22 +1226,9 @@ pub(crate) fn normalize_topic_keywords_fields(settings: &mut Settings) {
 }
 
 pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
-    fn normalize_cloud_provider(provider: &str) -> Option<String> {
-        crate::ai_fallback::models::normalize_cloud_provider_id(provider).map(str::to_string)
-    }
-
-    fn is_verified_auth_status(status: &str) -> bool {
-        matches!(status.trim(), "verified_api_key" | "verified_oauth")
-    }
-
     // Migrate legacy postproc_llm toggle and values if still used.
     if settings.postproc_llm_enabled && !settings.ai_fallback.enabled {
         settings.ai_fallback.enabled = true;
-    }
-    if settings.ai_fallback.provider.trim().is_empty()
-        && !settings.postproc_llm_provider.trim().is_empty()
-    {
-        settings.ai_fallback.provider = settings.postproc_llm_provider.clone();
     }
     if settings.ai_fallback.model.trim().is_empty()
         && !settings.postproc_llm_model.trim().is_empty()
@@ -1273,91 +1252,13 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
         };
     }
 
-    // Preserve legacy cloud provider selection as optional fallback candidate.
-    // Skip for local backends — they are not cloud providers.
-    let is_local = matches!(
-        settings.ai_fallback.provider.as_str(),
-        "ollama" | "lm_studio" | "oobabooga"
-    );
-    if settings.ai_fallback.fallback_provider.is_none() && !is_local {
-        settings.ai_fallback.fallback_provider =
-            normalize_cloud_provider(&settings.ai_fallback.provider);
-    }
-
     settings.ai_fallback.normalize();
     settings.ai_fallback.custom_prompt_enabled = settings.ai_fallback.prompt_profile == "custom";
     settings.ai_fallback.use_default_prompt = false;
     settings.providers.normalize();
 
-    // Migration rule: cloud providers remain locked until explicit verify succeeds.
-    for provider in ["claude", "openai", "gemini"] {
-        if let Some(config) = settings.providers.get_mut(provider) {
-            if !is_verified_auth_status(&config.auth_status) {
-                config.auth_status = "locked".to_string();
-                config.auth_verified_at = None;
-            }
-            if !config.api_key_stored && config.auth_status != "verified_oauth" {
-                config.auth_status = "locked".to_string();
-                config.auth_verified_at = None;
-            }
-        }
-    }
-
-    settings.ai_fallback.execution_mode =
-        if settings.ai_fallback.execution_mode == "online_fallback" {
-            "online_fallback".to_string()
-        } else {
-            "local_primary".to_string()
-        };
-
-    settings.ai_fallback.fallback_provider = settings
-        .ai_fallback
-        .fallback_provider
-        .as_ref()
-        .and_then(|provider| normalize_cloud_provider(provider));
-
-    const LOCAL_BACKENDS: &[&str] = &["ollama", "lm_studio", "oobabooga"];
-
-    if settings.ai_fallback.execution_mode == "online_fallback" {
-        let verified = settings
-            .ai_fallback
-            .fallback_provider
-            .as_ref()
-            .map(|provider| settings.providers.is_verified(provider))
-            .unwrap_or(false);
-
-        if verified {
-            if let Some(provider) = settings.ai_fallback.fallback_provider.clone() {
-                settings.ai_fallback.provider = provider;
-            } else {
-                settings.ai_fallback.execution_mode = "local_primary".to_string();
-                settings.ai_fallback.provider = "ollama".to_string();
-            }
-        } else {
-            settings.ai_fallback.execution_mode = "local_primary".to_string();
-            settings.ai_fallback.provider = "ollama".to_string();
-        }
-    } else {
-        // Preserve the selected local backend (ollama / lm_studio / oobabooga).
-        // Only reset to "ollama" if something invalid crept in.
-        if !LOCAL_BACKENDS.contains(&settings.ai_fallback.provider.as_str()) {
-            settings.ai_fallback.provider = "ollama".to_string();
-        }
-    }
-
-    if settings.ai_fallback.provider == "ollama"
-        && settings.ai_fallback.strict_local_mode
-        && !is_local_ollama_endpoint(&settings.providers.ollama.endpoint)
-    {
-        settings.providers.ollama.endpoint = "http://127.0.0.1:11434".to_string();
-    }
-    settings
-        .providers
-        .sync_from_ai_fallback(&settings.ai_fallback);
-
     // Keep legacy post-processing fields synchronized for compatibility with older code paths.
     settings.postproc_llm_enabled = settings.ai_fallback.enabled;
-    settings.postproc_llm_provider = settings.ai_fallback.provider.clone();
     settings.postproc_llm_model = settings.ai_fallback.model.clone();
     settings.postproc_language =
         derive_postproc_language_from_asr(&settings.language_mode, settings.language_pinned);
@@ -1994,6 +1895,99 @@ mod tests {
             "vision_input_settings",
             "voice_output_settings",
             "video_generation_settings",
+        ] {
+            assert!(!rewritten.contains(removed), "{removed} must not persist");
+        }
+    }
+
+    #[test]
+    fn settings_with_removed_cloud_provider_lm_studio_and_runtime_variant_fields_still_load() {
+        // Shape of a settings.json written before cloud providers, LM Studio / Oobabooga and the
+        // system / manual Ollama runtime variants were removed. Unknown fields are ignored by
+        // serde, known ones with removed values must land on Ollama + the managed runtime.
+        let raw = r#"{
+            "mode": "ptt",
+            "cloud_fallback": true,
+            "postproc_llm_provider": "claude",
+            "postproc_llm_api_key": "must-never-persist",
+            "ai_fallback": {
+                "enabled": true,
+                "provider": "claude",
+                "fallback_provider": "openai",
+                "execution_mode": "online_fallback",
+                "strict_local_mode": false,
+                "model": "gemma4:e4b"
+            },
+            "providers": {
+                "claude": { "api_key_stored": true, "auth_status": "verified_api_key", "preferred_model": "claude-3-5-haiku-20241022" },
+                "openai": { "api_key_stored": true, "auth_status": "verified_api_key" },
+                "gemini": { "api_key_stored": false, "auth_status": "locked" },
+                "lm_studio": { "endpoint": "http://127.0.0.1:1234", "api_key": "lm-key", "preferred_model": "x" },
+                "oobabooga": { "endpoint": "http://127.0.0.1:5000", "api_key": "" },
+                "ollama": {
+                    "endpoint": "http://192.168.1.20:11434",
+                    "fallback_endpoints": ["http://127.0.0.1:1234", "http://127.0.0.1:5000"],
+                    "runtime_source": "system",
+                    "runtime_path": "C:/Program Files/Ollama/ollama.exe",
+                    "runtime_version": "0.9.0",
+                    "preferred_model": "gemma4:e4b",
+                    "available_models": ["gemma4:e4b"]
+                }
+            },
+            "module_settings": { "enabled_modules": ["ai_refinement"] }
+        }"#;
+
+        let mut settings: Settings =
+            serde_json::from_str(raw).expect("old settings.json must still deserialize");
+        for stale_provider in ["claude", "openai", "gemini", "lm_studio", "oobabooga", "manual"] {
+            settings.ai_fallback.provider = stale_provider.to_string();
+            settings.providers.ollama.runtime_source = "manual".to_string();
+            normalize_ai_fallback_fields(&mut settings);
+            assert_eq!(settings.ai_fallback.provider, "ollama", "{stale_provider}");
+            assert_eq!(settings.providers.ollama.runtime_source, "per_user_zip");
+        }
+
+        let mut settings: Settings = serde_json::from_str(raw).expect("deserialize again");
+        normalize_ai_fallback_fields(&mut settings);
+        assert!(settings.ai_fallback.enabled);
+        assert_eq!(settings.ai_fallback.provider, "ollama");
+        assert_eq!(settings.providers.ollama.runtime_source, "per_user_zip");
+        assert_eq!(settings.providers.ollama.endpoint, "http://127.0.0.1:11434");
+        // The system Ollama was somebody else's binary: its path and version are forgotten.
+        assert!(settings.providers.ollama.runtime_path.is_empty());
+        assert!(settings.providers.ollama.runtime_version.is_empty());
+        assert_eq!(settings.providers.ollama.preferred_model, "gemma4:e4b");
+
+        // A managed runtime that is already recorded keeps its path.
+        let mut managed: Settings = serde_json::from_str(
+            r#"{ "providers": { "ollama": {
+                "runtime_source": "per_user_zip",
+                "runtime_path": "C:/rt/0.40.13/ollama.exe",
+                "runtime_version": "0.40.13" } } }"#,
+        )
+        .expect("managed settings");
+        normalize_ai_fallback_fields(&mut managed);
+        assert_eq!(managed.providers.ollama.runtime_path, "C:/rt/0.40.13/ollama.exe");
+        assert_eq!(managed.providers.ollama.runtime_version, "0.40.13");
+
+        // Removed fields (and any secret) must not be written back out.
+        let rewritten = serde_json::to_string(&settings).expect("serialize settings");
+        for removed in [
+            "cloud_fallback",
+            "postproc_llm_provider",
+            "postproc_llm_api_key",
+            "must-never-persist",
+            "lm-key",
+            "fallback_provider",
+            "fallback_endpoints",
+            "execution_mode",
+            "strict_local_mode",
+            "api_key_stored",
+            "lm_studio",
+            "oobabooga",
+            "claude",
+            "openai",
+            "gemini",
         ] {
             assert!(!rewritten.contains(removed), "{removed} must not persist");
         }

@@ -15,7 +15,7 @@ use super::provider::{
     ollama_runner_defining_options, strip_thinking_tags, strip_transcript_wrapper_tags,
     validate_ollama_model_name, wrap_transcript_in_xml, OLLAMA_PROMPT_DE,
 };
-use super::{check_strict_local_mode, update_and_persist_settings};
+use super::update_and_persist_settings;
 use crate::state::{normalize_ai_fallback_fields, AppState, Settings};
 use serde::Serialize;
 use std::collections::HashSet;
@@ -1001,7 +1001,6 @@ fn local_endpoint(state: &AppState) -> Result<String, String> {
         .settings
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    check_strict_local_mode(&settings)?;
     Ok(settings.providers.ollama.endpoint.clone())
 }
 

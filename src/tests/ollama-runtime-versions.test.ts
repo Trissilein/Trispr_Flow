@@ -154,7 +154,6 @@ describe("buildRuntimeVersionRows", () => {
 
 describe("runtime target healing", () => {
   const fields = (overrides: Record<string, unknown> = {}) => ({
-    runtime_source: "per_user_zip",
     runtime_version: "0.40.13",
     runtime_target_version: "0.30.4",
     runtime_target_explicit: false,
@@ -174,13 +173,11 @@ describe("runtime target healing", () => {
     expect(ollama.runtime_target_version).toBe("0.40.13");
   });
 
-  it("leaves an explicit target, a newer or equal target, other sources and odd versions alone", () => {
+  it("leaves an explicit target, a newer or equal target and odd versions alone", () => {
     const cases: Array<[Record<string, unknown>, string | undefined]> = [
       [fields({ runtime_target_explicit: true }), undefined],
       [fields({ runtime_target_version: "0.40.13" }), undefined],
       [fields({ runtime_target_version: "0.50.0" }), undefined],
-      [fields({ runtime_source: "system" }), undefined],
-      [fields({ runtime_source: "manual" }), undefined],
       [fields({ runtime_version: "" }), undefined],
       [fields({ runtime_version: "0.41.0-rc1" }), undefined],
       [fields({ runtime_target_version: "garbage" }), undefined],

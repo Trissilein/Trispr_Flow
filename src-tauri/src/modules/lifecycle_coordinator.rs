@@ -146,34 +146,25 @@ pub(crate) fn disable_module_actions(
             "ai_refinement" => {
                 crate::audio::force_reset_refinement_activity(app, "forced_reset");
 
-                let provider = snapshot.ai_fallback.provider.clone();
-                if provider == "ollama" {
-                    let app_clone = app.clone();
-                    let endpoint = snapshot.providers.ollama.endpoint.clone();
-                    let model = snapshot.ai_fallback.model.clone();
-                    tauri::async_runtime::spawn(async move {
-                        match tauri::async_runtime::spawn_blocking(move || {
-                            crate::ai_fallback::commands::unload_ollama_model_impl(
-                                &endpoint, &model,
-                            )
-                        })
-                        .await
-                        {
-                            Ok(Ok(())) => crate::audio::mark_ollama_model_cold(&app_clone),
-                            Ok(Err(error)) => {
-                                warn!("[module:disable] Ollama unload failed: {}", error)
-                            }
-                            Err(error) => {
-                                warn!("[module:disable] Ollama unload task failed: {}", error)
-                            }
+                let app_clone = app.clone();
+                let endpoint = snapshot.providers.ollama.endpoint.clone();
+                let model = snapshot.ai_fallback.model.clone();
+                tauri::async_runtime::spawn(async move {
+                    match tauri::async_runtime::spawn_blocking(move || {
+                        crate::ai_fallback::commands::unload_ollama_model_impl(&endpoint, &model)
+                    })
+                    .await
+                    {
+                        Ok(Ok(())) => crate::audio::mark_ollama_model_cold(&app_clone),
+                        Ok(Err(error)) => {
+                            warn!("[module:disable] Ollama unload failed: {}", error)
                         }
-                        let _ = crate::ai_fallback::commands::stop_ollama_runtime(app_clone).await;
-                    });
-                } else if provider == "lm_studio" {
-                    crate::util::spawn_guarded("lms_daemon_stop_module_disable", || {
-                        crate::lms_daemon_command("stop");
-                    });
-                }
+                        Err(error) => {
+                            warn!("[module:disable] Ollama unload task failed: {}", error)
+                        }
+                    }
+                    let _ = crate::ai_fallback::commands::stop_ollama_runtime(app_clone).await;
+                });
             }
             _ => {}
         }

@@ -1,11 +1,5 @@
 // Type definitions for Trispr Flow application
 
-export type LocalAIFallbackProvider = "ollama" | "lm_studio" | "oobabooga";
-export type AIFallbackProvider = "claude" | "openai" | "gemini" | LocalAIFallbackProvider;
-export type CloudAIFallbackProvider = Exclude<AIFallbackProvider, LocalAIFallbackProvider>;
-export type AIExecutionMode = "local_primary" | "online_fallback";
-export type AIProviderAuthStatus = "locked" | "verified_api_key" | "verified_oauth";
-export type AIProviderAuthMethodPreference = "api_key" | "oauth";
 export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
 export type ModuleId = "ai_refinement" | "opus";
 export type ModuleState = "not_installed" | "installed" | "enabled" | "active" | "error";
@@ -64,10 +58,8 @@ export interface ModuleSettings {
 
 export interface AIFallbackSettings {
   enabled: boolean;
-  provider: AIFallbackProvider;
-  fallback_provider: CloudAIFallbackProvider | null;
-  execution_mode: AIExecutionMode;
-  strict_local_mode: boolean;
+  /** Refinement is Ollama-only; the backend normalizes every saved value to "ollama". */
+  provider: "ollama";
   preserve_source_language: boolean;
   model: string;
   temperature: number;
@@ -82,21 +74,12 @@ export interface AIFallbackSettings {
   prompt_preset_overrides?: PromptPresetOverrides;
 }
 
-export interface AIProviderSettings {
-  api_key_stored: boolean;
-  auth_method_preference: AIProviderAuthMethodPreference;
-  auth_status: AIProviderAuthStatus;
-  auth_verified_at: string | null;
-  available_models: string[];
-  preferred_model: string;
-}
-
 export interface OllamaSettings {
   endpoint: string;
-  fallback_endpoints?: string[];
   available_models: string[];
   preferred_model: string;
-  runtime_source: "system" | "per_user_zip" | "manual";
+  /** Always the managed per-user runtime. */
+  runtime_source: "per_user_zip";
   runtime_path: string;
   runtime_version: string;
   runtime_target_version: string;
@@ -105,20 +88,8 @@ export interface OllamaSettings {
   last_health_check: string | null;
 }
 
-export interface OpenAICompatSettings {
-  endpoint: string;
-  api_key: string;
-  preferred_model: string;
-  available_models: string[];
-}
-
 export interface AIProvidersSettings {
-  claude: AIProviderSettings;
-  openai: AIProviderSettings;
-  gemini: AIProviderSettings;
   ollama: OllamaSettings;
-  lm_studio?: OpenAICompatSettings;
-  oobabooga?: OpenAICompatSettings;
 }
 
 export interface SetupSettings {
@@ -135,8 +106,6 @@ export interface Settings {
   language_mode: "auto" | "en" | "de" | "fr" | "es" | "it" | "pt" | "nl" | "pl" | "ru" | "ja" | "ko" | "zh" | "ar" | "tr" | "hi";
   language_pinned: boolean;
   model: string;
-  // Legacy compatibility toggle for optional old cloud transcription path.
-  cloud_fallback: boolean;
   ai_fallback: AIFallbackSettings;
   providers: AIProvidersSettings;
   setup: SetupSettings;
@@ -219,8 +188,6 @@ export interface Settings {
   /** Unix-ms timestamp of the last successful LLM vocab cleanup run. */
   last_vocab_cleanup_ms?: number;
   postproc_llm_enabled: boolean;
-  postproc_llm_provider: string;
-  postproc_llm_api_key: string;
   postproc_llm_model: string;
   postproc_llm_prompt: string;
   // Recording export settings

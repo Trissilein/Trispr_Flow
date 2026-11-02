@@ -104,12 +104,6 @@ body {
   border: 1px solid rgba(var(--accent-2-rgb), 0.35);
 }
 
-.badge--online {
-  background: rgba(239, 68, 68, 0.2);
-  color: #f87171;
-  border-color: rgba(239, 68, 68, 0.35);
-}
-
 h1 {
   margin: 8px 0 6px;
   font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
@@ -2843,13 +2837,6 @@ button.refinement-chip:focus-visible {
   opacity: 0.6;
 }
 
-.model-reasoning-warn {
-  font-size: 0.72rem;
-  color: #f3c87b;
-  margin-top: 4px;
-  line-height: 1.3;
-}
-
 .model-manager .model-item.model-item--available,
 .ollama-model-list .model-item.model-item--available {
   opacity: 0.78;
@@ -4699,59 +4686,6 @@ input[type="range"]:focus-visible {
   flex: 0 0 auto;
 }
 
-.ai-provider-advanced {
-  border-top: 1px solid rgba(255, 255, 255, 0.09);
-  padding-top: 8px;
-}
-
-.ai-provider-advanced > summary {
-  cursor: pointer;
-  list-style: none;
-  font-size: 12px;
-  color: var(--ink-soft);
-  position: relative;
-  padding-right: 22px;
-  user-select: none;
-}
-
-.ai-provider-advanced > summary::-webkit-details-marker {
-  display: none;
-}
-
-.ai-provider-advanced > summary::marker {
-  content: "";
-  font-size: 0;
-}
-
-.ai-provider-advanced > summary::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  top: 50%;
-  width: 14px;
-  height: 14px;
-  transform: translateY(-50%);
-  transition: transform 0.2s ease;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='%239ca3af'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19.5 8.25l-7.5 7.5-7.5-7.5'/%3E%3C/svg%3E");
-  background-size: contain;
-  background-repeat: no-repeat;
-}
-
-.ai-provider-advanced[open] > summary::after {
-  transform: translateY(-50%) rotate(-180deg);
-}
-
-.ai-provider-advanced-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.ai-provider-advanced-body > .field {
-  margin: 0;
-}
-
 .ai-provider-advanced-actions {
   display: flex;
   flex-wrap: wrap;
@@ -4761,102 +4695,6 @@ input[type="range"]:focus-visible {
 .ai-provider-advanced-actions .hotkey-record-btn {
   min-width: 0;
   flex: 0 0 auto;
-}
-
-#ai-fallback-local-runtime-version {
-  min-width: 180px;
-}
-
-#ai-fallback-local-runtime-version-refresh {
-  flex: 0 0 auto;
-  align-self: flex-start;
-}
-
-.runtime-version-badges {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  vertical-align: middle;
-}
-
-.runtime-version-chip {
-  padding: 1px 7px;
-  font-size: 10px;
-  letter-spacing: 0.03em;
-}
-
-.runtime-version-chip--selected {
-  background: rgba(var(--accent-2-bright-rgb), 0.14);
-  border-color: rgba(var(--accent-2-bright-rgb), 0.4);
-  color: var(--accent-2-bright);
-}
-
-.runtime-version-chip--installed {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.22);
-  color: var(--ink-soft);
-}
-
-.runtime-version-chip--recommended {
-  background: rgba(245, 179, 66, 0.15);
-  border-color: rgba(245, 179, 66, 0.42);
-  color: #f5b342;
-}
-
-.runtime-version-chip--prerelease {
-  background: rgba(168, 85, 247, 0.12);
-  border-color: rgba(168, 85, 247, 0.42);
-  color: #d8b4fe;
-}
-
-.runtime-version-chip--source {
-  background: rgba(76, 224, 212, 0.11);
-  border-color: rgba(76, 224, 212, 0.33);
-  color: #9cf6ef;
-}
-
-.runtime-version-chip--installable {
-  background: rgba(74, 222, 128, 0.14);
-  border-color: rgba(74, 222, 128, 0.4);
-  color: #86efac;
-}
-
-.runtime-version-chip--not-installable {
-  background: rgba(255, 184, 77, 0.14);
-  border-color: rgba(255, 184, 77, 0.42);
-  color: #ffb84d;
-}
-
-.runtime-version-chip--unchecked {
-  background: rgba(148, 163, 184, 0.14);
-  border-color: rgba(148, 163, 184, 0.36);
-  color: #cbd5e1;
-}
-
-.runtime-version-reason {
-  display: block;
-  margin-top: 6px;
-  font-size: 11px;
-  color: #ffb84d;
-}
-
-.runtime-version-release {
-  display: block;
-  margin-top: 8px;
-  font-size: 11px;
-  color: var(--ink-soft);
-}
-
-.runtime-version-release-name {
-  display: block;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.runtime-version-release-notes {
-  display: block;
-  margin-top: 2px;
-  line-height: 1.35;
 }
 
 .ai-refine-section--coming-soon {

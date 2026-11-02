@@ -238,9 +238,7 @@ pub(crate) fn resolve_adaptive_low_latency(
     settings: &Settings,
     model: &str,
 ) -> LowLatencyDecision {
-    if settings.ai_fallback.provider.as_str() != "ollama"
-        || settings.ai_fallback.execution_mode.as_str() != "local_primary"
-    {
+    if settings.ai_fallback.provider.as_str() != "ollama" {
         return LowLatencyDecision {
             enabled: false,
             reason: "provider_not_ollama".to_string(),

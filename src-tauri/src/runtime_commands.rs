@@ -191,7 +191,6 @@ pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyP
         && settings_snapshot.ai_fallback.provider == "ollama"
     {
         let endpoint = settings_snapshot.providers.ollama.endpoint.clone();
-        let local_mode = settings_snapshot.ai_fallback.strict_local_mode;
         let reachable = ping_ollama_quick(&endpoint).is_ok();
         items.push(DependencyPreflightItem {
             id: "ollama_runtime".to_string(),
@@ -209,11 +208,7 @@ pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyP
             hint: if reachable {
                 None
             } else {
-                Some(if local_mode {
-                    "Start/install local Ollama runtime in AI Refinement > Runtime.".to_string()
-                } else {
-                    "Ensure configured Ollama endpoint is running.".to_string()
-                })
+                Some("Start/install local Ollama runtime in AI Refinement > Runtime.".to_string())
             },
         });
     }

@@ -763,7 +763,6 @@ async function bootstrap() {
       if (
         !isRefinementEnabled()
         || settingsSnapshot?.ai_fallback?.provider !== "ollama"
-        || settingsSnapshot?.ai_fallback?.execution_mode !== "local_primary"
       ) {
         resetTrackedRefinementJobs();
       }
@@ -1342,7 +1341,7 @@ function startRefinementModelKeepalive() {
 
   setInterval(async () => {
     if (!settings?.ai_fallback?.enabled) return;
-    if (settings?.ai_fallback?.provider !== "ollama" && settings?.ai_fallback?.provider !== "lm_studio" && settings?.ai_fallback?.provider !== "oobabooga") {
+    if (settings?.ai_fallback?.provider !== "ollama") {
       return;
     }
 

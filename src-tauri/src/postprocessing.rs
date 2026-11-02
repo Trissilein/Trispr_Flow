@@ -390,16 +390,6 @@ fn apply_custom_vocabulary(text: &str, vocab: &HashMap<String, String>) -> Strin
     result
 }
 
-/// Refine transcript using Claude API
-///
-/// Sends text to Claude with configurable prompt template.
-/// Handles errors gracefully:
-/// - Network timeout (10s)
-/// - Invalid API key
-/// - HTTP errors (401, 429, 500)
-///
-/// Returns error on failure - caller should fallback to original text.
-
 #[cfg(test)]
 mod tests {
     use super::*;

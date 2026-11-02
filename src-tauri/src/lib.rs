@@ -106,14 +106,12 @@ use crate::transcription::{
     stop_transcribe_monitor_and_release_whisper, toggle_transcribe_state,
 };
 pub(crate) use ai_fallback::commands::{
-    check_ollama_model_updates, clear_provider_api_key, delete_ollama_model, detect_ollama_runtime, download_ollama_runtime,
-    fetch_available_models, fetch_ollama_models_with_size, fetch_ollama_online_versions,
-    get_ollama_model_info, import_ollama_model_from_file, install_lm_studio,
-    install_ollama_runtime, list_ollama_runtime_versions, ping_refinement_model, pull_ollama_model,
-    purge_gpu_memory, refine_transcript, save_ollama_endpoint, save_provider_api_key,
-    set_strict_local_mode, start_ollama_runtime, stop_ollama_runtime, test_provider_connection,
-    unload_ollama_model, unload_ollama_model_impl, verify_ollama_runtime, verify_provider_auth,
-    warmup_ollama_model, warmup_ollama_model_impl,
+    check_ollama_model_updates, delete_ollama_model, detect_ollama_runtime, download_ollama_runtime,
+    fetch_ollama_models_with_size, fetch_ollama_online_versions, get_ollama_model_info,
+    import_ollama_model_from_file, install_ollama_runtime, list_ollama_runtime_versions,
+    ping_refinement_model, pull_ollama_model, purge_gpu_memory, refine_transcript,
+    start_ollama_runtime, stop_ollama_runtime, unload_ollama_model, unload_ollama_model_impl,
+    verify_ollama_runtime, warmup_ollama_model, warmup_ollama_model_impl,
 };
 pub(crate) use ai_fallback::model_info::{get_ollama_model_details, open_model_page};
 pub(crate) use ai_fallback::model_verify::{
@@ -465,12 +463,11 @@ pub(crate) fn refresh_runtime_diagnostics(app: &AppHandle, state: &AppState) -> 
         .to_string();
     let (managed_pid, _) = managed_child_slot_status(&state.managed_ollama_child);
     let endpoint = settings.providers.ollama.endpoint.clone();
-    // Only ping Ollama when it is the active provider — avoids a 2–3 s Windows
-    // localhost-DNS stall on every save_settings call when the user is on LM Studio
-    // or Oobabooga.  The reachability field stays false until Ollama is re-selected
-    // and the frontend explicitly calls refreshOllamaRuntimeState.
-    let ollama_is_active_provider = capability_enabled(&settings, RuntimeCapability::AiRefinement)
-        && settings.ai_fallback.provider == "ollama";
+    // Only ping Ollama while AI refinement is enabled — avoids a 2–3 s Windows
+    // localhost-DNS stall on every save_settings call otherwise.  The reachability field
+    // stays false until refinement is enabled and the frontend explicitly calls
+    // refreshOllamaRuntimeState.
+    let ollama_is_active_provider = capability_enabled(&settings, RuntimeCapability::AiRefinement);
     let reachable = if ollama_is_active_provider {
         let now = crate::util::now_ms();
         let next_ms = OLLAMA_DIAG_NEXT_MS.load(Ordering::Relaxed);
@@ -1150,7 +1147,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
         prev_transcribe_output_device,
         prev_local_backend_preference,
         prev_ai_refinement_enabled,
-        prev_provider,
     ) = {
         let current = state
             .settings
@@ -1164,7 +1160,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
             current.transcribe_output_device.clone(),
             current.local_backend_preference.clone(),
             current.ai_fallback.enabled,
-            current.ai_fallback.provider.clone(),
         )
     };
     info!("[DIAG] save_settings_inner: normalizing");
@@ -1200,32 +1195,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
                 warn!("Hotkey registration failed: {}", e);
             }
         });
-    }
-
-    // LM Studio daemon lifecycle: start when switching TO lm_studio,
-    // stop when switching AWAY from lm_studio.
-    if prev_provider != settings.ai_fallback.provider {
-        if settings.ai_fallback.provider == "lm_studio" {
-            let preferred_model = settings
-                .providers
-                .lm_studio
-                .preferred_model
-                .trim()
-                .to_string();
-            crate::util::spawn_guarded("lms_daemon_up", move || {
-                lms_daemon_command("up");
-                // Give the daemon a few seconds to bind its HTTP port before
-                // attempting to load a model.
-                if !preferred_model.is_empty() {
-                    std::thread::sleep(std::time::Duration::from_secs(3));
-                    lms_load_model(&preferred_model);
-                }
-            });
-        } else if prev_provider == "lm_studio" {
-            crate::util::spawn_guarded("lms_daemon_stop", || {
-                lms_daemon_command("stop");
-            });
-        }
     }
 
     info!("[DIAG] save_settings_inner: hotkeys spawned, acquiring recorder lock");
@@ -1440,7 +1409,6 @@ async fn uninstall_module(app: AppHandle, module_id: String) -> Result<(), Strin
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
     capability_enabled(settings, RuntimeCapability::AiRefinement)
         && settings.ai_fallback.provider == "ollama"
-        && settings.ai_fallback.execution_mode == "local_primary"
 }
 
 fn warmup_ai_refinement_model_once(app: &AppHandle, settings: &Settings) -> Result<(), String> {
@@ -1448,7 +1416,7 @@ fn warmup_ai_refinement_model_once(app: &AppHandle, settings: &Settings) -> Resu
     let warmup_text = "Warmup: local AI refinement runtime.";
     setup
         .provider
-        .refine_transcript(warmup_text, &setup.model, &setup.options, &setup.api_key)
+        .refine_transcript(warmup_text, &setup.model, &setup.options)
         .map(|_| ())
         .map_err(|err| err.to_string())
 }
@@ -2343,97 +2311,6 @@ fn sanitize_session_name(name: &str) -> String {
     } else {
         trimmed
     }
-}
-
-/// Start or stop the LM Studio daemon via its CLI (`lms daemon up|stop`).
-/// True fire-and-forget: spawns the process and detaches immediately.
-/// The daemon runs independently — we never wait for it.
-pub(crate) fn lms_daemon_command(action: &str) {
-    use std::process::{Command, Stdio};
-
-    let candidates = [
-        "lms".to_string(),
-        format!(
-            "{}\\LM Studio\\lms.exe",
-            std::env::var("LOCALAPPDATA").unwrap_or_default()
-        ),
-    ];
-    for bin in &candidates {
-        let mut cmd = Command::new(bin);
-        cmd.args(["daemon", action])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-
-        // Suppress console window on Windows
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        }
-
-        match cmd.spawn() {
-            Ok(child) => {
-                info!(
-                    "lms daemon {} spawned (pid {:?}) — detached",
-                    action,
-                    child.id()
-                );
-                // Do NOT wait — the daemon runs independently
-                return;
-            }
-            Err(_) => continue,
-        }
-    }
-    warn!("lms CLI not found — cannot run 'lms daemon {}'", action);
-}
-
-/// Load a model into LM Studio via `lms load <identifier>`.
-/// This is a one-shot command that blocks until complete — call from a
-/// background thread only.
-fn lms_load_model(model_identifier: &str) {
-    use std::process::{Command, Stdio};
-
-    let candidates = [
-        "lms".to_string(),
-        format!(
-            "{}\\LM Studio\\lms.exe",
-            std::env::var("LOCALAPPDATA").unwrap_or_default()
-        ),
-    ];
-    for bin in &candidates {
-        let mut cmd = Command::new(bin);
-        cmd.args(["load", model_identifier])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        }
-
-        match cmd.spawn() {
-            Ok(mut child) => {
-                info!(
-                    "lms load '{}' spawned (pid {:?})",
-                    model_identifier,
-                    child.id()
-                );
-                match child.wait() {
-                    Ok(status) => info!("lms load '{}' exited: {}", model_identifier, status),
-                    Err(e) => warn!("lms load '{}' wait failed: {}", model_identifier, e),
-                }
-                return;
-            }
-            Err(_) => continue,
-        }
-    }
-    warn!(
-        "lms CLI not found — cannot run 'lms load {}'",
-        model_identifier
-    );
 }
 
 fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
@@ -3811,30 +3688,6 @@ pub fn run() {
                 });
             }
 
-            // LM Studio daemon auto-start: if lm_studio was the active provider when the
-            // app was last closed, the provider-switch event never fires at next launch.
-            // We ping first — if the daemon is already running (e.g. user keeps it open),
-            // we leave it alone. Only start if unreachable.
-            if capability_enabled(&settings, RuntimeCapability::AiRefinement)
-                && settings.ai_fallback.provider == "lm_studio"
-            {
-                let endpoint = settings.providers.lm_studio.endpoint.clone();
-                let preferred_model = settings.providers.lm_studio.preferred_model.trim().to_string();
-                crate::util::spawn_guarded("lms_daemon_startup", move || {
-                    use crate::ai_fallback::provider::ping_lm_studio_quick;
-                    if ping_lm_studio_quick(&endpoint).is_err() {
-                        info!("LM Studio not reachable at startup — starting daemon");
-                        lms_daemon_command("up");
-                        if !preferred_model.is_empty() {
-                            std::thread::sleep(std::time::Duration::from_secs(3));
-                            lms_load_model(&preferred_model);
-                        }
-                    } else {
-                        info!("LM Studio already reachable at startup — skipping daemon start");
-                    }
-                });
-            }
-
             if settings.mode == "vad" && settings.capture_enabled {
                 // Delay VAD start by 2 seconds to allow models to load on first startup
                 let app_handle = app.handle().clone();
@@ -4188,7 +4041,6 @@ pub fn run() {
             get_recordings_directory,
             open_recordings_directory,
             open_log_directory,
-            fetch_available_models,
             check_ollama_model_updates,
             check_ollama_model_requirements,
             get_ollama_model_details,
@@ -4200,11 +4052,6 @@ pub fn run() {
             rollback_ollama_model_update,
             replace_ollama_model,
             fetch_ollama_models_with_size,
-            test_provider_connection,
-            save_provider_api_key,
-            clear_provider_api_key,
-            verify_provider_auth,
-            save_ollama_endpoint,
             detect_ollama_runtime,
             list_ollama_runtime_versions,
             fetch_ollama_online_versions,
@@ -4214,7 +4061,6 @@ pub fn run() {
             start_ollama_runtime,
             verify_ollama_runtime,
             import_ollama_model_from_file,
-            set_strict_local_mode,
             refine_transcript,
             ping_refinement_model,
             get_runtime_metrics_snapshot,
@@ -4230,7 +4076,6 @@ pub fn run() {
             get_hardware_info,
             purge_gpu_memory,
             stop_ollama_runtime,
-            install_lm_studio,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

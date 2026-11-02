@@ -8,9 +8,6 @@ function makeSettings(moduleEnabled: boolean, aiEnabled: boolean): Settings {
     ai_fallback: {
       enabled: aiEnabled,
       provider: "ollama",
-      fallback_provider: null,
-      execution_mode: "local_primary",
-      strict_local_mode: true,
       preserve_source_language: true,
       model: "",
       temperature: 0.3,
@@ -24,30 +21,6 @@ function makeSettings(moduleEnabled: boolean, aiEnabled: boolean): Settings {
       active_prompt_preset_id: "wording",
     },
     providers: {
-      claude: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: [],
-        preferred_model: "",
-      },
-      openai: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: [],
-        preferred_model: "",
-      },
-      gemini: {
-        api_key_stored: false,
-        auth_method_preference: "api_key",
-        auth_status: "locked",
-        auth_verified_at: null,
-        available_models: [],
-        preferred_model: "",
-      },
       ollama: {
         endpoint: "http://127.0.0.1:11434",
         available_models: [],
@@ -57,18 +30,6 @@ function makeSettings(moduleEnabled: boolean, aiEnabled: boolean): Settings {
         runtime_version: "",
         runtime_target_version: "0.17.7",
         last_health_check: null,
-      },
-      lm_studio: {
-        endpoint: "http://127.0.0.1:1234",
-        api_key: "",
-        preferred_model: "",
-        available_models: [],
-      },
-      oobabooga: {
-        endpoint: "http://127.0.0.1:5000",
-        api_key: "",
-        preferred_model: "",
-        available_models: [],
       },
     },
     module_settings: {

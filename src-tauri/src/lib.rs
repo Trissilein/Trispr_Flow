@@ -3057,7 +3057,7 @@ fn recreate_main_window_from_config(
 
 fn recover_main_window_webview(app: &AppHandle, reason: &str) -> Result<(), String> {
     let mut attempts: Vec<String> = Vec::new();
-    let mut was_visible = load_settings(app).main_window_start_state != "tray";
+    let mut was_visible = true;
 
     if let Some(window) = app.get_webview_window("main") {
         was_visible = window.is_visible().unwrap_or(true);
@@ -3129,8 +3129,8 @@ fn hide_main_window(app: &AppHandle) {
 }
 
 /// Only a session that ended minimized restarts minimized; everything else shows the window.
-/// "tray" is never persisted anymore, so a stored "tray" is stale (older versions) or the
-/// fresh-install default and must not hide a manual start.
+/// "tray" is never persisted anymore; a stored "tray" is stale (older versions) and
+/// `load_settings` maps it to "normal".
 fn start_window_minimized(persisted_start_state: &str) -> bool {
     persisted_start_state == "minimized"
 }
@@ -3393,7 +3393,13 @@ pub fn run() {
                     ledger.timestamps_ms.iter().copied().collect();
             }
 
-            configure_windows_local_dumps(app.handle());
+            // 12 sequential reg.exe spawns: keep off the startup path.
+            {
+                let handle = app.handle().clone();
+                crate::util::spawn_guarded("configure_local_dumps", move || {
+                    configure_windows_local_dumps(&handle);
+                });
+            }
 
             {
                 let state = app.state::<AppState>();
@@ -3916,8 +3922,9 @@ pub fn run() {
 
             // Restore main window geometry and visibility state
             if let Some(window) = app.get_webview_window("main") {
-                let window_settings = load_settings(app.handle());
-                restore_window_geometry(&window, &window_settings);
+                // Reuse the settings loaded at the top of setup (window fields are untouched since).
+                let window_settings = &settings;
+                restore_window_geometry(&window, window_settings);
                 MAIN_WINDOW_RESTORED.store(true, Ordering::Release);
 
                 // Restore window visibility state from last session (never hidden in the tray)

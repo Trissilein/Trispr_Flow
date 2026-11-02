@@ -1,5 +1,6 @@
 // Main entry point - Bootstrap and backend event listeners
 
+import "./fonts.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";

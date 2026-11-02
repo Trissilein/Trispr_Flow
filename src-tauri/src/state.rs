@@ -397,7 +397,7 @@ pub(crate) struct Settings {
     pub(crate) main_window_width: Option<u32>,
     pub(crate) main_window_height: Option<u32>,
     pub(crate) main_window_monitor: Option<String>,
-    /// Window visibility state at shutdown: "normal", "minimized", or "tray"
+    /// Window visibility state at shutdown: "normal" or "minimized" (legacy "tray" maps to "normal")
     pub(crate) main_window_start_state: String,
     /// GPU layers for Whisper (CUDA acceleration). Default: 35
     #[serde(default = "default_whisper_gpu_layers")]
@@ -523,7 +523,7 @@ impl Default for Settings {
       main_window_width: None,
       main_window_height: None,
       main_window_monitor: None,
-      main_window_start_state: "tray".to_string(),
+      main_window_start_state: "normal".to_string(),
       whisper_gpu_layers: default_whisper_gpu_layers(),
     }
     }
@@ -885,6 +885,13 @@ pub(crate) fn get_runtime_metrics_snapshot(state: &AppState) -> RuntimeMetricsSn
     }
 }
 
+/// Only "minimized" is a real start state; unknown values and the legacy "tray" become "normal".
+fn normalize_main_window_start_state(settings: &mut Settings) {
+    if settings.main_window_start_state != "minimized" {
+        settings.main_window_start_state = "normal".to_string();
+    }
+}
+
 pub(crate) fn load_settings(app: &AppHandle) -> Settings {
     let path = resolve_config_path(app, "settings.json");
     match fs::read_to_string(path) {
@@ -1163,11 +1170,7 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if settings.overlay_kitt_opacity_active < settings.overlay_kitt_opacity_inactive {
                 settings.overlay_kitt_opacity_active = settings.overlay_kitt_opacity_inactive;
             }
-            // Validate main_window_start_state
-            if !["normal", "minimized", "tray"].contains(&settings.main_window_start_state.as_str())
-            {
-                settings.main_window_start_state = "normal".to_string();
-            }
+            normalize_main_window_start_state(&mut settings);
             normalize_topic_keywords_fields(&mut settings);
             // Normalize v0.7 AI fallback settings and legacy compatibility fields.
             normalize_ai_fallback_fields(&mut settings);
@@ -1743,6 +1746,22 @@ pub(crate) fn mark_entry_refinement_failed(
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn legacy_tray_start_state_normalizes_to_normal() {
+        assert_eq!(Settings::default().main_window_start_state, "normal");
+        for (stored, expected) in [
+            ("tray", "normal"),
+            ("normal", "normal"),
+            ("minimized", "minimized"),
+            ("bogus", "normal"),
+        ] {
+            let mut settings = Settings::default();
+            settings.main_window_start_state = stored.to_string();
+            normalize_main_window_start_state(&mut settings);
+            assert_eq!(settings.main_window_start_state, expected);
+        }
+    }
 
     #[test]
     fn ai_refinement_module_migration_preserves_legacy_enabled_state() {

@@ -2850,7 +2850,8 @@ export async function refreshOllamaRuntimeState(
 
     activeModelRequiredRuntime = null;
     const activeModel = settings?.ai_fallback?.model?.trim();
-    if (activeModel) {
+    // /api/show needs a serving runtime; skip it (and its timeout) while the runtime is down.
+    if (activeModel && runtimeHealth?.ok) {
       try {
         const modelInfo = await invokeWithTimeout<Record<string, unknown>>(
           "get_ollama_model_info",

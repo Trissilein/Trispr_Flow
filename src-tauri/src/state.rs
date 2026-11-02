@@ -1255,7 +1255,19 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
         };
     }
 
+    // A model name saved for a removed provider (e.g. `claude-…`) is no Ollama model: swap it for
+    // the Ollama preference, else the catalog default. Stored `ollama` keeps its model untouched.
+    let provider = settings.ai_fallback.provider.trim();
+    let from_removed_provider = !provider.is_empty() && !provider.eq_ignore_ascii_case("ollama");
     settings.ai_fallback.normalize();
+    if from_removed_provider {
+        let preferred = settings.providers.ollama.preferred_model.trim();
+        settings.ai_fallback.model = if preferred.is_empty() {
+            AIFallbackSettings::default().model
+        } else {
+            preferred.to_string()
+        };
+    }
     settings.ai_fallback.custom_prompt_enabled = settings.ai_fallback.prompt_profile == "custom";
     settings.ai_fallback.use_default_prompt = false;
     settings.providers.normalize();
@@ -2010,6 +2022,43 @@ mod tests {
         ] {
             assert!(!rewritten.contains(removed), "{removed} must not persist");
         }
+    }
+
+    fn settings_from(ai_fallback: &str, providers: &str) -> Settings {
+        serde_json::from_str(&format!(
+            r#"{{ "ai_fallback": {ai_fallback}, "providers": {providers} }}"#
+        ))
+        .expect("settings json")
+    }
+
+    #[test]
+    fn model_of_a_removed_provider_is_replaced_by_the_ollama_model() {
+        // (a) no Ollama preference: catalog default.
+        let mut a = settings_from(
+            r#"{ "provider": "claude", "model": "claude-3-5-sonnet" }"#,
+            "{}",
+        );
+        normalize_ai_fallback_fields(&mut a);
+        assert_eq!(a.ai_fallback.provider, "ollama");
+        assert_eq!(a.ai_fallback.model, "gemma4:e4b");
+        assert_eq!(a.postproc_llm_model, "gemma4:e4b");
+
+        // (b) Ollama preference wins.
+        let mut b = settings_from(
+            r#"{ "provider": "lm_studio", "model": "local-model" }"#,
+            r#"{ "ollama": { "preferred_model": "qwen3.5:4b" } }"#,
+        );
+        normalize_ai_fallback_fields(&mut b);
+        assert_eq!(b.ai_fallback.provider, "ollama");
+        assert_eq!(b.ai_fallback.model, "qwen3.5:4b");
+
+        // (c) A stored Ollama provider keeps its model.
+        let mut c = settings_from(
+            r#"{ "provider": "ollama", "model": "gemma4:e2b" }"#,
+            r#"{ "ollama": { "preferred_model": "qwen3.5:4b" } }"#,
+        );
+        normalize_ai_fallback_fields(&mut c);
+        assert_eq!(c.ai_fallback.model, "gemma4:e2b");
     }
 
     fn sample_history_entry(id: &str, status: &str, refined: &str, error: &str) -> HistoryEntry {

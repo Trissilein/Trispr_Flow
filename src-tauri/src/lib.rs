@@ -1413,6 +1413,16 @@ fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
 
 fn warmup_ai_refinement_model_once(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     let setup = crate::ai_fallback::prepare_refinement(app, settings)?;
+    if setup.repaired {
+        let model = setup.model.clone();
+        crate::ai_fallback::update_and_persist_settings(app, &app.state::<AppState>(), |s| {
+            s.ai_fallback.model = model.clone();
+            s.providers.ollama.preferred_model = model.clone();
+            s.postproc_llm_model = model;
+            normalize_ai_fallback_fields(s);
+            Ok(())
+        })?;
+    }
     let warmup_text = "Warmup: local AI refinement runtime.";
     setup
         .provider

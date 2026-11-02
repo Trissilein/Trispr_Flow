@@ -1195,11 +1195,11 @@ fn transcribe_worker(
             Ok((text, _source)) => {
                 let _ = app.emit(
                     "transcription:raw-result",
-                    crate::workflow_agent::RawTranscriptionEvent {
-                        text: text.clone(),
-                        source: "output".to_string(),
-                        timestamp_ms: crate::util::now_ms(),
-                    },
+                    serde_json::json!({
+                        "text": text,
+                        "source": "output",
+                        "timestamp_ms": crate::util::now_ms(),
+                    }),
                 );
                 if text.trim().is_empty()
                     || should_drop_transcript(&text, level, duration_ms, true)

@@ -41,18 +41,10 @@ import type {
   TranscriptionRefinementActivityEvent,
   TranscriptionGpuActivityEvent,
   TranscriptionResultEvent,
-  TranscriptionRawResultEvent,
   PasteSettledEvent,
   DependencyPreflightReport,
   StabilityDegradedEvent,
   StartupStatus,
-  AssistantActionResultEvent,
-  AssistantAwaitingConfirmationEvent,
-  AssistantConfirmationExpiredEvent,
-  AssistantIntentDetectedEvent,
-  AssistantModuleOpenEvent,
-  AssistantPlanReadyEvent,
-  AssistantStateChangedEvent,
   PiperVoiceDownloadProgress,
 } from "./types";
 import {
@@ -101,7 +93,6 @@ import {
 } from "./event-listeners";
 import {
   initMainTab,
-  openMainTab,
   reconcileMainTabVisibility,
 } from "./wiring/app-chrome.wire";
 import { scheduleSettingsRender } from "./wiring/wire-helpers";
@@ -119,24 +110,8 @@ import {
   refreshSettingsVisibilityEditor,
 } from "./settings-visibility";
 import { initModulesHub, refreshModulesHub } from "./modules-hub";
-import { initGddFlow, openGddFlow } from "./gdd-flow";
 import { initOnboardingWizard } from "./onboarding-wizard";
 import { initPipelineStatus } from "./pipeline-status";
-import {
-  appendWorkflowAgentLog,
-  handleAssistantActionResult as handleWorkflowAssistantActionResult,
-  handleAssistantAwaitingConfirmation,
-  handleAssistantConfirmationExpired,
-  handleAssistantIntentDetected,
-  handleAssistantPlanReady as handleWorkflowAssistantPlanReady,
-  handleAssistantStateChanged,
-  handleWorkflowAgentFinalResult,
-  handleWorkflowAgentRawResult,
-  handleTtsSpeechStarted,
-  handleTtsSpeechFinished,
-  initWorkflowAgentConsole,
-  syncWorkflowAgentConsoleState,
-} from "./workflow-agent-console";
 import { syncVoiceOutputConsoleState } from "./voice-output-console";
 import { ingestEditDelta } from "./vocab-auto-learn";
 import { scheduleVocabCleanupIfNeeded } from "./vocab-cleanup";
@@ -330,10 +305,6 @@ function applyStartupReadinessUi(): void {
   const ready = Boolean(startupStatus?.interactive && startupStatus?.transcription_ready);
   const controls = [
     dom.captureEnabledToggle,
-    dom.productModeTranscribeBtn,
-    dom.productModeAssistantBtn,
-    dom.globalOnlineOfflineBtn,
-    dom.globalOnlineEnabledBtn,
     dom.modeSelect,
     dom.deviceSelect,
     dom.pttHotkey,
@@ -344,8 +315,6 @@ function applyStartupReadinessUi(): void {
     dom.transcribeHotkey,
     dom.transcribeHotkeyRecord,
     dom.transcribeDeviceSelect,
-    dom.productModeHotkey,
-    dom.productModeHotkeyRecord,
   ];
   for (const control of controls) {
     if (control) {
@@ -643,8 +612,6 @@ async function bootstrap() {
   initExpertMode();
   initSettingsVisibility();
   initModulesHub();
-  initGddFlow();
-  initWorkflowAgentConsole();
   void initOnboardingWizard();
   initPipelineStatus();
   syncVoiceOutputConsoleState();
@@ -808,7 +775,6 @@ async function bootstrap() {
       renderHero();
       renderModels();
       refreshModulesHub();
-      syncWorkflowAgentConsoleState();
       void refreshModelsDir().catch((e) => console.error("refreshModelsDir failed:", e));
       if (isRefinementEnabled() && settings?.ai_fallback?.provider === "ollama") {
         if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshInstalledModels) {
@@ -878,7 +844,6 @@ async function bootstrap() {
       context?: string;
       error: string;
     }>("tts:speech-error", (event) => {
-      handleTtsSpeechFinished();
       const preferred = event.payload.preferred_provider || event.payload.provider || "unknown";
       const fallback = event.payload.fallback_provider || "none";
       showToast({
@@ -895,7 +860,6 @@ async function bootstrap() {
       primary_error?: string;
       context?: string;
     }>("tts:speech-finished", (event) => {
-      handleTtsSpeechFinished();
       if (!event.payload.used_fallback || event.payload.context !== "manual_test") return;
       const preferred = event.payload.preferred_provider || "unknown";
       const used = event.payload.provider_used || "unknown";
@@ -906,14 +870,6 @@ async function bootstrap() {
         message: `${preferred} failed${primaryError}. Switched to ${used}.`,
       });
     }),
-    listen<{
-      session_id?: number;
-      provider?: string;
-      text_len?: number;
-      context?: string;
-    }>("tts:speech-started", () => {
-      handleTtsSpeechStarted();
-    }),
     // Re-check Ollama health when a timeout or connection error occurs during
     // refinement — avoids requiring a full app restart to recover the status.
     listen("ai_fallback:health_degraded", async () => {
@@ -922,7 +878,6 @@ async function bootstrap() {
     }),
     listen<TranscriptionResultEvent>("transcription:result", (event) => {
       const payload = event.payload;
-      void handleWorkflowAgentFinalResult(payload);
       handlePipelineTranscriptionResult(payload);
       handleTranscriptionResultForInspector(payload);
       scheduleHistoryRender();
@@ -945,93 +900,6 @@ async function bootstrap() {
           message: payload.paste_error,
           duration: 7000,
         });
-      }
-    }),
-    listen<TranscriptionRawResultEvent>("transcription:raw-result", (event) => {
-      void handleWorkflowAgentRawResult(event.payload);
-    }),
-    ...(["agent:command-detected", "agent:plan-ready", "agent:execution-progress",
-      "agent:execution-finished", "agent:execution-failed"] as const).map((name) =>
-        listen(name, (event) => {
-          appendWorkflowAgentLog(`Event ${name} -> ${JSON.stringify(event.payload)}`);
-        })
-      ),
-    listen("agent:execution-progress", (event: any) => {
-      const p = event.payload;
-      if (p?.intent === "reminder_capture" && p?.message) {
-        showToast({ type: "info", title: "Task Capture", message: p.message, duration: 2500 });
-      }
-    }),
-    listen("agenda:notification", (event: any) => {
-      const p = event.payload;
-      const type = p?.ok ? "success" : "error";
-      showToast({ type, title: p?.title || "Agenda", message: p?.message || "", duration: 4000 });
-    }),
-    listen<AssistantStateChangedEvent>("assistant:state-changed", (event) => {
-      if (!event.payload) return;
-      handleAssistantStateChanged(event.payload);
-      appendWorkflowAgentLog(
-        `Event assistant:state-changed -> state=${event.payload.state}, reason=${event.payload.reason}`
-      );
-    }),
-    listen<AssistantPlanReadyEvent>("assistant:plan-ready", (event) => {
-      if (!event.payload) return;
-      handleWorkflowAssistantPlanReady(event.payload);
-      appendWorkflowAgentLog(
-        `Event assistant:plan-ready -> intent=${event.payload.plan.intent}, session=${event.payload.plan.session_id}`
-      );
-    }),
-    listen<AssistantIntentDetectedEvent>("assistant:intent-detected", (event) => {
-      if (!event.payload) return;
-      handleAssistantIntentDetected(event.payload);
-      appendWorkflowAgentLog(
-        `Event assistant:intent-detected -> intent=${event.payload.parse.intent}, confidence=${event.payload.parse.confidence.toFixed(2)}`
-      );
-    }),
-    listen<AssistantAwaitingConfirmationEvent>("assistant:awaiting-confirmation", (event) => {
-      if (!event.payload) return;
-      handleAssistantAwaitingConfirmation(event.payload);
-      appendWorkflowAgentLog(
-        `Event assistant:awaiting-confirmation -> timeout=${event.payload.confirm_timeout_sec}s`
-      );
-    }),
-    listen<AssistantConfirmationExpiredEvent>("assistant:confirmation-expired", (event) => {
-      if (!event.payload) return;
-      handleAssistantConfirmationExpired(event.payload);
-      appendWorkflowAgentLog("Event assistant:confirmation-expired");
-    }),
-    listen<AssistantActionResultEvent>("assistant:action-result", (event) => {
-      if (!event.payload) return;
-      handleWorkflowAssistantActionResult(event.payload);
-      appendWorkflowAgentLog(
-        `Event assistant:action-result -> status=${event.payload.result.status}, reason=${event.payload.reason}`
-      );
-    }),
-    listen<AssistantModuleOpenEvent>("assistant:open-module", (event) => {
-      const target = event.payload?.target?.trim();
-      if (!target) return;
-      if (target === "gdd_flow") {
-        void openGddFlow();
-        return;
-      }
-      if (target === "voice-output") {
-        openMainTab("voice-output");
-        syncVoiceOutputConsoleState();
-        return;
-      }
-      if (target === "agent") {
-        openMainTab("agent");
-        syncWorkflowAgentConsoleState();
-        return;
-      }
-      if (
-        target === "transcription"
-        || target === "settings"
-        || target === "ai-refinement"
-        || target === "task-capture"
-        || target === "modules"
-      ) {
-        openMainTab(target);
       }
     }),
     listen<TranscriptionRefinementStartedEvent>("transcription:refinement-started", (event) => {

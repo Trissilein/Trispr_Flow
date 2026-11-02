@@ -49,7 +49,6 @@ const INPUTS = [
   "public",
   "index.html",
   "overlay.html",
-  "assistant-presence.html",
   "vite.config.ts",
   "tsconfig.json",
   "src-tauri/src",

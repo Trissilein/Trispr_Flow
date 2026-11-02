@@ -8,9 +8,6 @@ import { invoke } from "@tauri-apps/api/core";
 vi.hoisted(() => {
   document.body.innerHTML = `
     <div id="toast-container"></div>
-    <button id="product-mode-transcribe-btn"></button>
-    <button id="product-mode-assistant-btn"></button>
-
     <input id="capture-enabled-toggle" type="checkbox" />
     <input id="transcribe-enabled-toggle" type="checkbox" />
     <select id="mode-select"><option value="ptt">ptt</option><option value="vad">vad</option></select>

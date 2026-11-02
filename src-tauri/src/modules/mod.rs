@@ -6,25 +6,29 @@ pub mod package;
 pub mod permissions;
 pub mod registry;
 pub mod runtime;
-pub mod task_capture;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-use crate::gdd::GddPresetClone;
-
-pub const ASSISTANT_CORE_MODULE_ID: &str = "assistant_core";
-pub const ASSISTANT_PRESENCE_MODULE_ID: &str = "assistant_presence";
-pub const GDD_MODULE_ID: &str = "gdd";
-pub const LEGACY_CONFLUENCE_MODULE_ID: &str = "integrations_confluence";
-pub const LEGACY_WORKFLOW_AGENT_MODULE_ID: &str = "workflow_agent";
+/// Module ids removed from the app. Saved settings may still mention them.
+const REMOVED_MODULE_IDS: &[&str] = &[
+    "analysis",
+    "assistant_core",
+    "assistant_presence",
+    "gdd",
+    "integrations_confluence",
+    "task_capture",
+    "workflow_agent",
+];
 
 pub fn canonicalize_module_id(module_id: &str) -> &str {
-    match module_id.trim() {
-        LEGACY_WORKFLOW_AGENT_MODULE_ID => ASSISTANT_CORE_MODULE_ID,
-        LEGACY_CONFLUENCE_MODULE_ID => GDD_MODULE_ID,
-        other => other,
-    }
+    module_id.trim()
+}
+
+fn is_removed_module_key(key: &str) -> bool {
+    REMOVED_MODULE_IDS
+        .iter()
+        .any(|id| key == *id || key.starts_with(&format!("{id}.")))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,17 +45,6 @@ pub struct ModuleDescriptor {
     pub core: bool,
     pub toggleable: bool,
     pub surface: String,
-    pub assistant_capable: bool,
-    pub assistant_actions: Vec<AssistantActionDescriptor>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AssistantActionDescriptor {
-    pub id: String,
-    pub label: String,
-    pub risk_level: String,
-    pub requires_online: bool,
-    pub allowlist_eligible: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,152 +76,6 @@ impl Default for ModuleSettings {
             enabled_modules: HashSet::new(),
             consented_permissions: HashMap::new(),
             module_overrides: HashMap::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct GddModuleSettings {
-    pub enabled: bool,
-    pub default_preset_id: String,
-    pub detect_preset_automatically: bool,
-    pub prefer_one_click_publish: bool,
-    pub workflow_mode_default: String, // "standard" | "advanced"
-    pub transcript_source_default: String, // "runtime_session"
-    pub target_routing_strategy: String, // "hybrid_memory" | "fixed" | "fresh_suggest"
-    pub one_click_confidence_threshold: f32, // 0.0..1.0
-    pub preset_clones: Vec<GddPresetClone>,
-}
-
-impl Default for GddModuleSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            default_preset_id: "universal_strict".to_string(),
-            detect_preset_automatically: true,
-            prefer_one_click_publish: false,
-            workflow_mode_default: "standard".to_string(),
-            transcript_source_default: "runtime_session".to_string(),
-            target_routing_strategy: "hybrid_memory".to_string(),
-            one_click_confidence_threshold: 0.75,
-            preset_clones: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ConfluenceSettings {
-    pub enabled: bool,
-    pub site_base_url: String,
-    pub oauth_cloud_id: String,
-    pub default_space_key: String,
-    pub api_user_email: String,
-    pub default_parent_page_id: String,
-    pub auth_mode: String,                       // "oauth" | "api_token"
-    pub routing_memory: HashMap<String, String>, // key -> page_id
-}
-
-impl Default for ConfluenceSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            site_base_url: String::new(),
-            oauth_cloud_id: String::new(),
-            default_space_key: String::new(),
-            api_user_email: String::new(),
-            default_parent_page_id: String::new(),
-            auth_mode: "oauth".to_string(),
-            routing_memory: HashMap::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct WorkflowAgentSettings {
-    pub enabled: bool,
-    pub wakewords: Vec<String>,
-    pub wakeword_aliases: Vec<String>,
-    pub intent_keywords: HashMap<String, Vec<String>>,
-    pub model: String,
-    pub temperature: f32,
-    pub max_tokens: u32,
-    pub session_gap_minutes: u32,
-    pub max_candidates: u8,
-    pub hands_free_enabled: bool,
-    pub confirm_timeout_sec: u16,
-    pub reply_mode: String,
-    pub online_enabled: bool,
-    pub voice_feedback_enabled: bool,
-    pub activation_mode: String,
-    pub trusted_action_allowlist: Vec<String>,
-    pub expert_yolo_enabled: bool,
-    /// TTS provider used for agent replies. Empty string = inherit global VoiceOutputSettings.
-    /// Valid values: "local_custom" (Piper), "windows_native", "windows_natural", "qwen3_tts", ""
-    pub tts_provider: String,
-}
-
-impl Default for WorkflowAgentSettings {
-    fn default() -> Self {
-        let mut keywords = HashMap::new();
-        keywords.insert(
-            "gdd_generate_publish".to_string(),
-            vec![
-                "gdd",
-                "game design document",
-                "design document",
-                "designdokument",
-                "game design",
-                "publish",
-                "confluence",
-                "draft",
-                "generate",
-                "create gdd",
-                "erstelle gdd",
-                "erstellen",
-                "veroeffentlichen",
-                "posten",
-                "session",
-                "meeting",
-                "interview",
-                "minutes",
-                "zusammenfassung",
-                "dokument",
-                "doc",
-                "spec",
-                "gameplay",
-                "feature",
-            ]
-            .into_iter()
-            .map(str::to_string)
-            .collect(),
-        );
-
-        Self {
-            enabled: false,
-            wakewords: vec![
-                "trispr".to_string(),
-                "hey trispr".to_string(),
-                "trispr agent".to_string(),
-            ],
-            wakeword_aliases: Vec::new(),
-            intent_keywords: keywords,
-            model: "qwen3.5:4b".to_string(),
-            temperature: 0.2,
-            max_tokens: 512,
-            session_gap_minutes: 20,
-            max_candidates: 3,
-            hands_free_enabled: false,
-            confirm_timeout_sec: 45,
-            reply_mode: "rule_only".to_string(),
-            online_enabled: false,
-            voice_feedback_enabled: false,
-            activation_mode: "hotkey_first".to_string(),
-            trusted_action_allowlist: Vec::new(),
-            expert_yolo_enabled: false,
-            tts_provider: "local_custom".to_string(),
         }
     }
 }
@@ -354,9 +201,6 @@ pub fn normalize_module_settings(settings: &mut ModuleSettings) {
 
     let mut normalized_permissions: HashMap<String, HashSet<String>> = HashMap::new();
     for (module_id, permissions) in &settings.consented_permissions {
-        if module_id == LEGACY_CONFLUENCE_MODULE_ID {
-            continue;
-        }
         let normalized_module_id = canonicalize_module_id(module_id).to_string();
         if let Some(manifest) = registry::find_manifest(&normalized_module_id) {
             let allowed = manifest
@@ -380,33 +224,10 @@ pub fn normalize_module_settings(settings: &mut ModuleSettings) {
     let normalized_overrides = settings
         .module_overrides
         .iter()
-        .filter_map(|(key, value)| {
-            if key.starts_with(&format!("{LEGACY_CONFLUENCE_MODULE_ID}.")) {
-                return None;
-            }
-            if let Some(rest) = key.strip_prefix(&format!("{LEGACY_WORKFLOW_AGENT_MODULE_ID}.")) {
-                Some((format!("{ASSISTANT_CORE_MODULE_ID}.{rest}"), value.clone()))
-            } else if key == "analysis" || key.starts_with("analysis.") {
-                None
-            } else {
-                Some((key.clone(), value.clone()))
-            }
-        })
+        .filter(|(key, _)| !is_removed_module_key(key))
+        .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<HashMap<_, _>>();
     settings.module_overrides = normalized_overrides;
-}
-
-pub fn migrate_legacy_confluence_module_binding(
-    module_settings: &ModuleSettings,
-    gdd_settings: &mut GddModuleSettings,
-) {
-    if module_settings
-        .enabled_modules
-        .iter()
-        .any(|module_id| module_id == LEGACY_CONFLUENCE_MODULE_ID)
-    {
-        gdd_settings.enabled = true;
-    }
 }
 
 #[cfg(test)]
@@ -417,12 +238,17 @@ mod tests {
     fn drops_removed_analysis_settings() {
         let mut settings = ModuleSettings::default();
         settings.enabled_modules.insert("analysis".to_string());
+        settings.enabled_modules.insert("assistant_core".to_string());
         settings.consented_permissions.insert(
             "analysis".to_string(),
             HashSet::from(["filesystem_history".to_string()]),
         );
         settings.module_overrides.insert(
             "analysis.last_error".to_string(),
+            serde_json::Value::String("stale".to_string()),
+        );
+        settings.module_overrides.insert(
+            "assistant_core.last_error".to_string(),
             serde_json::Value::String("stale".to_string()),
         );
         settings.module_overrides.insert(
@@ -433,6 +259,10 @@ mod tests {
         normalize_module_settings(&mut settings);
 
         assert!(!settings.enabled_modules.contains("analysis"));
+        assert!(!settings.enabled_modules.contains("assistant_core"));
+        assert!(!settings
+            .module_overrides
+            .contains_key("assistant_core.last_error"));
         assert!(!settings.consented_permissions.contains_key("analysis"));
         assert!(!settings
             .module_overrides
@@ -442,122 +272,6 @@ mod tests {
             Some(&serde_json::Value::Bool(true))
         );
     }
-}
-
-pub fn normalize_gdd_module_settings(settings: &mut GddModuleSettings) {
-    if settings.default_preset_id.trim().is_empty() {
-        settings.default_preset_id = "universal_strict".to_string();
-    }
-    settings.workflow_mode_default = match settings.workflow_mode_default.as_str() {
-        "advanced" => "advanced".to_string(),
-        _ => "standard".to_string(),
-    };
-    settings.transcript_source_default = "runtime_session".to_string();
-    settings.target_routing_strategy = match settings.target_routing_strategy.as_str() {
-        "fixed" => "fixed".to_string(),
-        "fresh_suggest" => "fresh_suggest".to_string(),
-        _ => "hybrid_memory".to_string(),
-    };
-    if !settings.one_click_confidence_threshold.is_finite() {
-        settings.one_click_confidence_threshold = 0.75;
-    }
-    settings.one_click_confidence_threshold =
-        settings.one_click_confidence_threshold.clamp(0.0, 1.0);
-    settings
-        .preset_clones
-        .retain(|preset| !preset.id.trim().is_empty());
-}
-
-pub fn normalize_confluence_settings(settings: &mut ConfluenceSettings) {
-    settings.site_base_url = settings
-        .site_base_url
-        .trim()
-        .trim_end_matches('/')
-        .to_string();
-    settings.oauth_cloud_id = settings.oauth_cloud_id.trim().to_string();
-    settings.default_space_key = settings.default_space_key.trim().to_string();
-    settings.api_user_email = settings.api_user_email.trim().to_string();
-    settings.default_parent_page_id = settings.default_parent_page_id.trim().to_string();
-    settings.auth_mode = match settings.auth_mode.as_str() {
-        "api_token" => "api_token".to_string(),
-        _ => "oauth".to_string(),
-    };
-    settings
-        .routing_memory
-        .retain(|key, value| !key.trim().is_empty() && !value.trim().is_empty());
-}
-
-pub fn normalize_workflow_agent_settings(settings: &mut WorkflowAgentSettings) {
-    settings.wakewords = settings
-        .wakewords
-        .iter()
-        .map(|word| word.trim().to_lowercase())
-        .filter(|word| !word.is_empty())
-        .collect();
-    settings.wakewords.sort();
-    settings.wakewords.dedup();
-    if settings.wakewords.is_empty() {
-        settings.wakewords = WorkflowAgentSettings::default().wakewords;
-    }
-    settings.wakeword_aliases = settings
-        .wakeword_aliases
-        .iter()
-        .map(|word| word.trim().to_lowercase())
-        .filter(|word| !word.is_empty())
-        .collect();
-    settings.wakeword_aliases.sort();
-    settings.wakeword_aliases.dedup();
-    settings.model = settings.model.trim().to_string();
-    if settings.model.is_empty() {
-        settings.model = "qwen3.5:4b".to_string();
-    }
-    if !settings.temperature.is_finite() {
-        settings.temperature = 0.2;
-    }
-    settings.temperature = settings.temperature.clamp(0.0, 1.0);
-    settings.max_tokens = settings.max_tokens.clamp(128, 4096);
-    settings.session_gap_minutes = settings.session_gap_minutes.clamp(5, 240);
-    settings.max_candidates = settings.max_candidates.clamp(1, 5);
-    settings.confirm_timeout_sec = settings.confirm_timeout_sec.clamp(10, 300);
-    settings.reply_mode = match settings.reply_mode.as_str() {
-        "hybrid_local_llm" => "hybrid_local_llm".to_string(),
-        _ => "rule_only".to_string(),
-    };
-    settings.activation_mode = match settings.activation_mode.as_str() {
-        "wakeword_optional" => "wakeword_optional".to_string(),
-        _ => "hotkey_first".to_string(),
-    };
-    settings.trusted_action_allowlist = settings
-        .trusted_action_allowlist
-        .iter()
-        .map(|value| value.trim().to_lowercase())
-        .filter(|value| !value.is_empty())
-        .collect();
-    settings.trusted_action_allowlist.sort();
-    settings.trusted_action_allowlist.dedup();
-
-    let defaults = WorkflowAgentSettings::default().intent_keywords;
-    if settings.intent_keywords.is_empty() {
-        settings.intent_keywords = defaults;
-        return;
-    }
-
-    settings.intent_keywords.retain(|intent, words| {
-        if intent.trim().is_empty() {
-            return false;
-        }
-        words.retain(|word| !word.trim().is_empty());
-        !words.is_empty()
-    });
-    for (intent, words) in defaults {
-        settings.intent_keywords.entry(intent).or_insert(words);
-    }
-    settings.tts_provider = match settings.tts_provider.trim() {
-        "local_custom" | "windows_native" | "windows_natural" | "qwen3_tts" => {
-            settings.tts_provider.trim().to_string()
-        }
-        _ => String::new(),
-    };
 }
 
 pub fn normalize_vision_input_settings(settings: &mut VisionInputSettings) {
@@ -699,62 +413,6 @@ impl Default for VideoGenerationSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct TaskCaptureRoute {
-    pub label: String,
-    pub keywords: Vec<String>,
-    pub endpoint: String,
-    pub confluence_page_id: String,
-}
-
-impl Default for TaskCaptureRoute {
-    fn default() -> Self {
-        Self {
-            label: String::new(),
-            keywords: Vec::new(),
-            endpoint: String::new(),
-            confluence_page_id: String::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct TaskCaptureSettings {
-    pub routes: Vec<TaskCaptureRoute>,
-    pub match_mode: String,
-    pub ai_refinement_enabled: bool,
-    pub refinement_prompt: String,
-}
-
-impl Default for TaskCaptureSettings {
-    fn default() -> Self {
-        Self {
-            routes: vec![TaskCaptureRoute {
-                label: "Agenda".to_string(),
-                keywords: vec![
-                    "erinnere mich".to_string(),
-                    "trag ein".to_string(),
-                    "trag auf liste".to_string(),
-                    "auf meine liste".to_string(),
-                    "auf die agenda".to_string(),
-                    "auf meine todo liste".to_string(),
-                    "add to list".to_string(),
-                    "add to my agenda".to_string(),
-                    "put on my todo".to_string(),
-                    "remind me".to_string(),
-                ],
-                endpoint: "http://127.0.0.1:8177/agenda/add".to_string(),
-                confluence_page_id: String::new(),
-            }],
-            match_mode: "contains".to_string(),
-            ai_refinement_enabled: true,
-            refinement_prompt: "Du bist ein Task-Formatierer. Formuliere den folgenden Sprachtext als klaren, konkreten Task in einem Satz. Antworte NUR mit dem formatierten Task, nichts anderes.".to_string(),
-        }
-    }
-}
-
 pub fn normalize_video_generation_settings(settings: &mut VideoGenerationSettings) {
     settings.output_dir = settings.output_dir.trim().to_string();
     settings.default_resolution = match settings.default_resolution.as_str() {
@@ -788,31 +446,5 @@ pub fn normalize_video_generation_settings(settings: &mut VideoGenerationSetting
     // 0 means "use hyperframes default (auto)"; otherwise clamp to a sane range.
     if settings.render_workers != 0 {
         settings.render_workers = settings.render_workers.clamp(1, 16);
-    }
-}
-
-pub fn normalize_task_capture_settings(settings: &mut TaskCaptureSettings) {
-    if settings.routes.is_empty() {
-        settings.routes = TaskCaptureSettings::default().routes;
-    }
-    for route in &mut settings.routes {
-        route.label = route.label.trim().to_string();
-        route.endpoint = route.endpoint.trim().to_string();
-        route.confluence_page_id = route.confluence_page_id.trim().to_string();
-        route.keywords.retain(|kw| !kw.trim().is_empty());
-        route.keywords = route
-            .keywords
-            .iter()
-            .map(|kw| kw.trim().to_lowercase())
-            .collect();
-        route.keywords.sort();
-        route.keywords.dedup();
-    }
-    settings.match_mode = match settings.match_mode.as_str() {
-        "exact" => "exact".to_string(),
-        _ => "contains".to_string(),
-    };
-    if settings.refinement_prompt.trim().is_empty() {
-        settings.refinement_prompt = TaskCaptureSettings::default().refinement_prompt;
     }
 }

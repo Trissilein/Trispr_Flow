@@ -109,7 +109,7 @@ export function getHotkeyRegistrationStatus(type: string): { registered: boolean
 }
 
 export function setupHotkeyRecorder(
-  type: "ptt" | "toggle" | "transcribe" | "toggleActivationWords" | "productModeToggle" | "ttsStop",
+  type: "ptt" | "toggle" | "transcribe" | "toggleActivationWords" | "ttsStop",
   input: HTMLInputElement | null,
   recordBtn: HTMLButtonElement | null,
   statusEl: HTMLSpanElement | null
@@ -228,8 +228,6 @@ export function setupHotkeyRecorder(
         settings.transcribe_hotkey = hotkeyString;
       } else if (type === "toggleActivationWords") {
         settings.hotkey_toggle_activation_words = hotkeyString;
-      } else if (type === "productModeToggle") {
-        settings.hotkey_product_mode_toggle = hotkeyString;
       } else if (type === "ttsStop") {
         settings.hotkey_tts_stop = hotkeyString;
       }

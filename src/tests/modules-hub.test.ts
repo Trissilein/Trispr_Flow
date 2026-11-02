@@ -3,8 +3,6 @@ import type { ModuleDescriptor, ModuleHealthStatus, Settings } from "../types";
 
 const invokeMock = vi.fn();
 const showToastMock = vi.fn();
-const syncWorkflowAgentConsoleStateMock = vi.fn();
-const focusWorkflowAgentConsoleMock = vi.fn();
 const syncVoiceOutputConsoleStateMock = vi.fn();
 const focusVoiceOutputConsoleMock = vi.fn();
 const openMainTabMock = vi.fn();
@@ -15,15 +13,6 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("../toast", () => ({
   showToast: showToastMock,
-}));
-
-vi.mock("../gdd-flow", () => ({
-  openGddFlow: vi.fn(),
-}));
-
-vi.mock("../workflow-agent-console", () => ({
-  syncWorkflowAgentConsoleState: syncWorkflowAgentConsoleStateMock,
-  focusWorkflowAgentConsole: focusWorkflowAgentConsoleMock,
 }));
 
 vi.mock("../wiring/app-chrome.wire", () => ({
@@ -41,8 +30,8 @@ vi.mock("../modal-focus", () => ({
 
 function moduleDefaults(overrides: Partial<ModuleDescriptor>): ModuleDescriptor {
   return {
-    id: "workflow_agent",
-    name: "Workflow Agent",
+    id: "ai_refinement",
+    name: "AI Refinement",
     version: "0.1.0",
     state: "installed",
     dependencies: [],
@@ -58,28 +47,13 @@ function moduleDefaults(overrides: Partial<ModuleDescriptor>): ModuleDescriptor 
 
 function makeSettings(
   consents: Record<string, string[]> = {},
-  enabledModules: string[] = [],
-  workflowAgentEnabled = false
+  enabledModules: string[] = []
 ): Settings {
   return {
     module_settings: {
       enabled_modules: enabledModules,
       consented_permissions: consents,
       module_overrides: {},
-    },
-    workflow_agent: {
-      enabled: workflowAgentEnabled,
-      wakewords: ["trispr"],
-      intent_keywords: { gdd_generate_publish: ["gdd"] },
-      model: "qwen3.5:4b",
-      temperature: 0.2,
-      max_tokens: 512,
-      session_gap_minutes: 20,
-      max_candidates: 3,
-      hands_free_enabled: false,
-      confirm_timeout_sec: 45,
-      reply_mode: "rule_only",
-      voice_feedback_enabled: false,
     },
   } as unknown as Settings;
 }
@@ -88,7 +62,6 @@ function bootstrapDom(): void {
   document.body.innerHTML = `
     <span id="modules-status"></span>
     <div id="modules-list"></div>
-    <div id="workflow-agent-console" hidden></div>
     <div id="voice-output-console" hidden></div>
     <div id="module-config-modal" hidden></div>
     <button id="module-config-modal-close" type="button"></button>
@@ -113,8 +86,6 @@ describe("modules-hub consent messaging", () => {
     vi.resetModules();
     invokeMock.mockReset();
     showToastMock.mockReset();
-    syncWorkflowAgentConsoleStateMock.mockReset();
-    focusWorkflowAgentConsoleMock.mockReset();
     syncVoiceOutputConsoleStateMock.mockReset();
     focusVoiceOutputConsoleMock.mockReset();
     openMainTabMock.mockReset();
@@ -173,18 +144,18 @@ describe("modules-hub consent messaging", () => {
   it("renders setup health as a warning instead of descriptor error", async () => {
     const modules: ModuleDescriptor[] = [
       moduleDefaults({
-        id: "assistant_core",
-        name: "Assistant Core",
+        id: "output_voice_tts",
+        name: "Voice Output (TTS)",
         state: "error",
-        permissions: ["filesystem_history"],
+        permissions: ["audio_output"],
         last_error: "Enabled module needs setup before it can run.",
       }),
     ];
     const health: ModuleHealthStatus[] = [
       {
-        module_id: "assistant_core",
+        module_id: "output_voice_tts",
         state: "needs_setup",
-        detail: "Consent required before this module is available: filesystem_history.",
+        detail: "Consent required before this module is available: audio_output.",
       },
     ];
 
@@ -199,14 +170,14 @@ describe("modules-hub consent messaging", () => {
     await flushAsync();
 
     const badge = document.querySelector(
-      "[data-module-card='assistant_core'] .model-status"
+      "[data-module-card='output_voice_tts'] .model-status"
     ) as HTMLElement | null;
     expect(badge?.textContent).toBe("Needs setup");
     expect(badge?.className).toContain("model-status--warning");
     expect(badge?.className).not.toContain("is-error");
 
     const feedback = document.querySelector(
-      "[data-module-card='assistant_core'] .module-row-feedback"
+      "[data-module-card='output_voice_tts'] .module-row-feedback"
     ) as HTMLElement | null;
     expect(feedback?.className).toContain("is-warning");
     expect(feedback?.className).not.toContain("is-error");
@@ -300,16 +271,16 @@ describe("modules-hub consent messaging", () => {
     expect(modal?.hasAttribute("hidden")).toBe(true);
   });
 
-  it("routes Workflow Agent configure action to agent main tab", async () => {
+  it("routes AI Refinement configure action to the ai-refinement main tab", async () => {
     const modules: ModuleDescriptor[] = [
       moduleDefaults({
-        id: "workflow_agent",
-        name: "Workflow Agent",
+        id: "ai_refinement",
+        name: "AI Refinement",
         state: "active",
       }),
     ];
     const state = await import("../state");
-    state.setSettings(makeSettings({}, ["workflow_agent"], true));
+    state.setSettings(makeSettings({}, ["ai_refinement"]));
 
     invokeMock.mockImplementation(async (command: string) => {
       if (command === "list_modules") return modules;
@@ -321,14 +292,13 @@ describe("modules-hub consent messaging", () => {
     await flushAsync();
 
     const configureBtn = document.querySelector<HTMLButtonElement>(
-      "[data-module-action='open-config'][data-module-id='workflow_agent']"
+      "[data-module-action='open-config'][data-module-id='ai_refinement']"
     );
     expect(configureBtn).not.toBeNull();
 
     configureBtn?.click();
     await flushAsync();
 
-    expect(openMainTabMock).toHaveBeenCalledWith("agent");
-    expect(focusWorkflowAgentConsoleMock).toHaveBeenCalledTimes(1);
+    expect(openMainTabMock).toHaveBeenCalledWith("ai-refinement");
   });
 });

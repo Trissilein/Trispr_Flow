@@ -2,7 +2,7 @@
 
 import { listen } from "@tauri-apps/api/event";
 
-const stages = ["rec", "whisper", "postproc", "agent", "paste"] as const;
+const stages = ["rec", "whisper", "postproc", "paste"] as const;
 type Stage = (typeof stages)[number];
 
 let activeStage: Stage | null = null;
@@ -97,19 +97,4 @@ export function initPipelineStatus(): void {
 
   // Dropped/filtered transcript → no paste will follow, so clear the pipeline.
   listen("transcription:dropped", () => { clearAfterDelay(400); });
-
-  listen("assistant:intent-detected", () => {
-    setStage("agent", "active", true);
-  });
-
-  listen("assistant:action-result", () => {
-    setStage("agent", "done", true);
-    clearAfterDelay(1500);
-  });
-
-  listen<{ state?: string }>("assistant:state-changed", (event) => {
-    if (event.payload?.state === "idle" || event.payload?.state === "recovering") {
-      clearAfterDelay(400);
-    }
-  });
 }

@@ -594,71 +594,12 @@ function ensureAIFallbackSettingsDefaults() {
     ollama_remote_expert_opt_in: false,
   };
   settings.setup.ollama_remote_expert_opt_in ??= false;
-  settings.product_mode =
-    settings.product_mode === "assistant" ? "assistant" : "transcribe";
-  settings.hotkey_product_mode_toggle ??= "CommandOrControl+Shift+P";
   settings.hotkey_tts_stop ??= "CommandOrControl+Shift+F12";
   settings.overlay_tts_stop_enabled ??= true;
   settings.overlay_tts_stop_shape =
     settings.overlay_tts_stop_shape === "round" ? "round" : "compact";
   settings.overlay_tts_stop_color ??= "#4be0d4";
   normalizeAiRefinementModuleBindingInSettings();
-  settings.gdd_module_settings ??= {
-    enabled: false,
-    default_preset_id: "universal_strict",
-    detect_preset_automatically: true,
-    prefer_one_click_publish: false,
-    workflow_mode_default: "standard",
-    transcript_source_default: "runtime_session",
-    target_routing_strategy: "hybrid_memory",
-    one_click_confidence_threshold: 0.75,
-    preset_clones: [],
-  };
-  settings.gdd_module_settings.default_preset_id ??= "universal_strict";
-  settings.gdd_module_settings.detect_preset_automatically ??= true;
-  settings.gdd_module_settings.prefer_one_click_publish ??= false;
-  settings.gdd_module_settings.workflow_mode_default =
-    settings.gdd_module_settings.workflow_mode_default === "advanced"
-      ? "advanced"
-      : "standard";
-  settings.gdd_module_settings.transcript_source_default = "runtime_session";
-  settings.gdd_module_settings.target_routing_strategy =
-    settings.gdd_module_settings.target_routing_strategy === "fixed"
-      ? "fixed"
-      : settings.gdd_module_settings.target_routing_strategy === "fresh_suggest"
-        ? "fresh_suggest"
-        : "hybrid_memory";
-  {
-    const threshold = Number(
-      settings.gdd_module_settings.one_click_confidence_threshold,
-    );
-    settings.gdd_module_settings.one_click_confidence_threshold =
-      Number.isFinite(threshold) && threshold >= 0 && threshold <= 1
-        ? threshold
-        : 0.75;
-  }
-  settings.gdd_module_settings.preset_clones ??= [];
-  settings.confluence_settings ??= {
-    enabled: false,
-    site_base_url: "",
-    oauth_cloud_id: "",
-    default_space_key: "",
-    api_user_email: "",
-    default_parent_page_id: "",
-    auth_mode: "oauth",
-    routing_memory: {},
-  };
-  settings.confluence_settings.enabled ??= false;
-  settings.confluence_settings.site_base_url ??= "";
-  settings.confluence_settings.oauth_cloud_id ??= "";
-  settings.confluence_settings.default_space_key ??= "";
-  settings.confluence_settings.api_user_email ??= "";
-  settings.confluence_settings.default_parent_page_id ??= "";
-  settings.confluence_settings.auth_mode =
-    settings.confluence_settings.auth_mode === "api_token"
-      ? "api_token"
-      : "oauth";
-  settings.confluence_settings.routing_memory ??= {};
   syncDerivedLanguageSettings();
 }
 

@@ -67,7 +67,7 @@ describe("settings visibility resolver", () => {
       PROFILE_KEY,
       JSON.stringify({
         version: 1,
-        overrides: { "task.route.work": "expert" },
+        overrides: { "dynamic.route.work": "expert" },
         removalCandidates: {},
       }),
     );
@@ -78,10 +78,10 @@ describe("settings visibility resolver", () => {
     const dynamic = document.createElement("label");
     dynamic.innerHTML = "Route";
     dynamic.setAttribute("data-settings-visibility-managed", "true");
-    dynamic.dataset.settingsVisibilityKey = "task.route.work";
-    dynamic.dataset.settingsVisibilityLabel = "Work route";
+    dynamic.dataset.settingsVisibilityKey = "dynamic.route.work";
+    dynamic.dataset.settingsVisibilityLabel = "Dynamic route";
     dynamic.dataset.settingsVisibilityDefault = "basic";
-    dynamic.dataset.settingsVisibilityGroup = "Task Capture";
+    dynamic.dataset.settingsVisibilityGroup = "Dynamic Group";
     document.body.append(dynamic);
     applySettingsVisibility();
 

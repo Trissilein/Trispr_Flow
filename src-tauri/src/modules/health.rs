@@ -126,7 +126,7 @@ pub fn check_updates_with_packages(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::{registry, ASSISTANT_CORE_MODULE_ID};
+    use crate::modules::registry;
     use std::collections::HashSet;
 
     fn health_for(module_id: &str, settings: &ModuleSettings) -> ModuleHealthStatus {
@@ -161,11 +161,11 @@ mod tests {
         let mut settings = ModuleSettings::default();
         registry::set_last_error(
             &mut settings,
-            ASSISTANT_CORE_MODULE_ID,
-            "Missing consent for assistant_core: filesystem_history",
+            "output_voice_tts",
+            "Missing consent for output_voice_tts: audio_output",
         );
 
-        let health = health_for(ASSISTANT_CORE_MODULE_ID, &settings);
+        let health = health_for("output_voice_tts", &settings);
 
         assert_eq!(health.state, "ok");
         assert!(health.detail.contains("previous setup issue is not active"));
@@ -176,24 +176,20 @@ mod tests {
         let mut settings = ModuleSettings::default();
         settings
             .enabled_modules
-            .insert(ASSISTANT_CORE_MODULE_ID.to_string());
+            .insert("output_voice_tts".to_string());
 
-        let health = health_for_with_packages(
-            ASSISTANT_CORE_MODULE_ID,
-            &settings,
-            HashSet::from(["gdd".to_string()]),
-        );
+        let health = health_for_with_packages("output_voice_tts", &settings, HashSet::new());
 
         assert_eq!(health.state, "needs_setup");
-        assert!(health.detail.contains("filesystem_history"));
+        assert!(health.detail.contains("audio_output"));
     }
 
     #[test]
     fn enabled_not_installed_optional_module_needs_setup() {
         let mut settings = ModuleSettings::default();
-        settings.enabled_modules.insert("gdd".to_string());
+        settings.enabled_modules.insert("opus".to_string());
 
-        let health = health_for("gdd", &settings);
+        let health = health_for("opus", &settings);
 
         assert_eq!(health.state, "needs_setup");
         assert!(health.detail.contains("assets"));
@@ -215,8 +211,6 @@ mod tests {
             core: true,
             toggleable: false,
             surface: "core".to_string(),
-            assistant_capable: false,
-            assistant_actions: Vec::new(),
         };
 
         let health = classify_module_health(&settings, descriptor);

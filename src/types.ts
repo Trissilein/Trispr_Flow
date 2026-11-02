@@ -4,63 +4,19 @@ export type LocalAIFallbackProvider = "ollama" | "lm_studio" | "oobabooga";
 export type AIFallbackProvider = "claude" | "openai" | "gemini" | LocalAIFallbackProvider;
 export type CloudAIFallbackProvider = Exclude<AIFallbackProvider, LocalAIFallbackProvider>;
 export type AIExecutionMode = "local_primary" | "online_fallback";
-export type ProductMode = "transcribe" | "assistant";
 export type AIProviderAuthStatus = "locked" | "verified_api_key" | "verified_oauth";
 export type AIProviderAuthMethodPreference = "api_key" | "oauth";
 export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
 export type ModuleSurface = "assistant" | "transcription" | "shared" | "ui";
-export type AssistantActionRisk = "low" | "medium" | "high";
 export type ModuleId =
-  | "gdd"
   | "ai_refinement"
-  | "assistant_core"
-  | "assistant_presence"
-  | "workflow_agent"
   | "input_vision"
   | "output_voice_tts";
 export type ModuleState = "not_installed" | "installed" | "enabled" | "active" | "error";
 export type ModulePermission =
-  | "network_confluence"
-  | "filesystem_history"
   | "filesystem_exports"
-  | "keyring_access"
   | "screen_capture"
   | "audio_output";
-export type AgentIntent =
-  | "gdd_generate_publish"
-  | "reminder_capture"
-  | "session_recap"
-  | "plan_status"
-  | "confirm_or_cancel"
-  | "web_search"
-  | "open_module"
-  | "open_app"
-  | "unknown";
-export type AssistantOrchestratorState =
-  | "idle"
-  | "listening"
-  | "parsing"
-  | "planning"
-  | "awaiting_confirm"
-  | "executing"
-  | "recovering";
-export type AgentTargetLanguage =
-  | "source"
-  | "en"
-  | "de"
-  | "fr"
-  | "es"
-  | "it"
-  | "pt"
-  | "nl"
-  | "pl"
-  | "ru"
-  | "ja"
-  | "ko"
-  | "zh"
-  | "ar"
-  | "tr"
-  | "hi";
 export type RefinementPromptPreset =
   | "wording"
   | "summary"
@@ -106,187 +62,12 @@ export interface ModuleDescriptor {
   core: boolean;
   toggleable: boolean;
   surface?: ModuleSurface;
-  assistant_capable?: boolean;
-  assistant_actions?: AssistantActionDescriptor[];
-}
-
-export interface AssistantActionDescriptor {
-  id: string;
-  label: string;
-  risk_level: AssistantActionRisk;
-  requires_online: boolean;
-  allowlist_eligible: boolean;
 }
 
 export interface ModuleSettings {
   enabled_modules: string[];
   consented_permissions: Record<string, string[]>;
   module_overrides: Record<string, unknown>;
-}
-
-export interface GddPresetSection {
-  id: string;
-  title: string;
-  required: boolean;
-}
-
-export interface GddPreset {
-  id: string;
-  name: string;
-  description: string;
-  is_clone: boolean;
-  base_preset_id?: string | null;
-  detail_level: string;
-  tone: string;
-  keywords: string[];
-  sections: GddPresetSection[];
-}
-
-export interface GddPresetClone {
-  id: string;
-  name: string;
-  detail_level: string;
-  tone: string;
-  keywords: string[];
-  section_order: string[];
-  required_sections: string[];
-}
-
-export interface GddRecognitionCandidate {
-  preset_id: string;
-  label: string;
-  score: number;
-}
-
-export interface GddRecognitionResult {
-  suggested_preset_id: string;
-  confidence: number;
-  candidates: GddRecognitionCandidate[];
-  reasoning_snippets: string[];
-}
-
-export interface GddSectionDraft {
-  id: string;
-  title: string;
-  content: string;
-  evidence_gap: boolean;
-}
-
-export interface GddDraft {
-  preset_id: string;
-  title: string;
-  summary: string;
-  sections: GddSectionDraft[];
-  chunk_count: number;
-  generated_at_iso: string;
-}
-
-export interface GddTemplateSourceResult {
-  source_kind: "confluence" | "file" | string;
-  source_label: string;
-  source_ref: string;
-  text: string;
-  original_chars: number;
-  truncated: boolean;
-}
-
-export interface GenerateGddDraftRequest {
-  transcript: string;
-  preset_id?: string | null;
-  title?: string | null;
-  max_chunk_chars?: number | null;
-  template_hint?: string | null;
-  template_label?: string | null;
-}
-
-export interface GddPublishRequest {
-  title: string;
-  storage_body: string;
-  space_key: string;
-  parent_page_id?: string | null;
-  target_page_id?: string | null;
-}
-
-export interface GddPublishResult {
-  page_id: string;
-  page_url: string;
-  created: boolean;
-  version: number;
-  message: string;
-}
-
-export interface GddPublishFallbackBundle {
-  bundle_dir: string;
-  draft_json_path: string;
-  markdown_path: string;
-  confluence_html_path: string;
-  publish_request_path: string;
-  manifest_path: string;
-}
-
-export interface GddPendingPublishJob {
-  job_id: string;
-  title: string;
-  space_key: string;
-  parent_page_id?: string | null;
-  target_page_id?: string | null;
-  created_at_iso: string;
-  updated_at_iso: string;
-  retry_count: number;
-  last_error: string;
-  bundle_dir: string;
-  routing_confidence?: number | null;
-  routing_reasoning?: string | null;
-}
-
-export interface GddPublishAttemptResult {
-  status: "published" | "queued" | "failed";
-  publish_result?: GddPublishResult;
-  queued_job?: GddPendingPublishJob;
-  error?: string;
-}
-
-export interface GddModuleSettings {
-  enabled: boolean;
-  default_preset_id: string;
-  detect_preset_automatically: boolean;
-  prefer_one_click_publish: boolean;
-  workflow_mode_default: "standard" | "advanced";
-  transcript_source_default: "runtime_session";
-  target_routing_strategy: "hybrid_memory" | "fixed" | "fresh_suggest";
-  one_click_confidence_threshold: number;
-  preset_clones: GddPresetClone[];
-}
-
-export interface ConfluenceSettings {
-  enabled: boolean;
-  site_base_url: string;
-  oauth_cloud_id: string;
-  default_space_key: string;
-  api_user_email: string;
-  default_parent_page_id: string;
-  auth_mode: "oauth" | "api_token";
-  routing_memory: Record<string, string>;
-}
-
-export interface WorkflowAgentSettings {
-  enabled: boolean;
-  wakewords: string[];
-  wakeword_aliases?: string[];
-  intent_keywords: Record<string, string[]>;
-  model: string;
-  temperature: number;
-  max_tokens: number;
-  session_gap_minutes: number;
-  max_candidates: number;
-  hands_free_enabled?: boolean;
-  confirm_timeout_sec?: number;
-  reply_mode?: "rule_only" | "hybrid_local_llm";
-  online_enabled?: boolean;
-  voice_feedback_enabled?: boolean;
-  activation_mode?: "hotkey_first" | "wakeword_optional";
-  trusted_action_allowlist?: string[];
-  expert_yolo_enabled?: boolean;
 }
 
 export interface VisionInputSettings {
@@ -321,168 +102,6 @@ export interface VoiceOutputSettings {
   qwen3_tts_api_key?: string;
   qwen3_tts_timeout_sec?: number;
   qwen3_tts_enabled?: boolean;
-}
-
-export interface TaskCaptureRoute {
-  label: string;
-  keywords: string[];
-  endpoint: string;
-  confluence_page_id: string;
-}
-
-export interface TaskCaptureSettings {
-  routes: TaskCaptureRoute[];
-  match_mode: "exact" | "contains";
-  ai_refinement_enabled: boolean;
-  refinement_prompt: string;
-}
-
-export interface AgentCommandParseResult {
-  detected: boolean;
-  intent: AgentIntent;
-  confidence: number;
-  publish_requested: boolean;
-  wakeword_matched: boolean;
-  temporal_hint?: string | null;
-  topic_hint?: string | null;
-  reasoning: string;
-  command_text: string;
-}
-
-export interface TranscriptSessionCandidate {
-  session_id: string;
-  start_ms: number;
-  end_ms: number;
-  entry_count: number;
-  source_mix: string[];
-  preview: string;
-  score: number;
-  reasoning: string;
-}
-
-export interface AgentExecutionStep {
-  id: string;
-  title: string;
-  status: "pending" | "running" | "done" | "failed";
-  detail?: string;
-}
-
-export interface AgentExecutionPlan {
-  intent: AgentIntent;
-  session_id: string;
-  session_title: string;
-  target_language: AgentTargetLanguage;
-  publish: boolean;
-  analysis_steps: AgentExecutionStep[];
-  execution_steps: AgentExecutionStep[];
-  steps: AgentExecutionStep[];
-  recognized_signals: string[];
-  assumptions: string[];
-  proposed_actions: string[];
-  summary: string;
-}
-
-export interface AgentBuildExecutionPlanRequest {
-  intent: AgentIntent | string;
-  session_id: string;
-  target_language: AgentTargetLanguage | string;
-  publish: boolean;
-  command_text?: string | null;
-  temporal_hint?: string | null;
-  topic_hint?: string | null;
-  parse_confidence?: number | null;
-}
-
-export interface AgentExecutionResult {
-  status: "completed" | "queued" | "failed" | "cancelled";
-  message: string;
-  draft?: GddDraft;
-  publish_result?: GddPublishResult;
-  queued_job?: GddPendingPublishJob;
-  error?: string;
-}
-
-export interface AgentReplyResult {
-  text: string;
-  source: "rule" | "local_llm";
-  reason_code: string;
-}
-
-export interface AssistantCapabilitySnapshot {
-  product_mode: ProductMode;
-  assistant_mode: boolean;
-  assistant_core_available?: boolean;
-  workflow_agent_available?: boolean;
-  tts_available: boolean;
-  vision_available: boolean;
-  degraded: boolean;
-  hard_blocked: boolean;
-  missing_capabilities: string[];
-}
-
-export interface AssistantStateChangedEvent {
-  state: AssistantOrchestratorState;
-  previous_state: AssistantOrchestratorState;
-  reason: string;
-  transition_id: number;
-  changed_at_ms: number;
-  capability: AssistantCapabilitySnapshot;
-}
-
-export interface AssistantPlanReadyEvent {
-  state: AssistantOrchestratorState;
-  reason: string;
-  plan: AgentExecutionPlan;
-  capability: AssistantCapabilitySnapshot;
-}
-
-export interface AssistantIntentDetectedEvent {
-  state: AssistantOrchestratorState;
-  reason: string;
-  parse: AgentCommandParseResult;
-  capability: AssistantCapabilitySnapshot;
-}
-
-export interface AssistantAwaitingConfirmationEvent {
-  state: AssistantOrchestratorState;
-  reason: string;
-  plan: AgentExecutionPlan;
-  confirm_token: string;
-  confirm_timeout_sec: number;
-  expires_at_ms: number;
-  capability: AssistantCapabilitySnapshot;
-}
-
-export interface AssistantConfirmationExpiredEvent {
-  state: AssistantOrchestratorState;
-  reason: string;
-  expired_at_ms: number;
-  capability: AssistantCapabilitySnapshot;
-}
-
-export interface AssistantActionResultEvent {
-  state: AssistantOrchestratorState;
-  reason: string;
-  result: AgentExecutionResult;
-  capability: AssistantCapabilitySnapshot;
-}
-
-export interface AssistantReplyDraftEvent {
-  text: string;
-  reason: string;
-  intent?: AgentIntent | string | null;
-}
-
-export interface AssistantReplyFinalEvent {
-  text: string;
-  reason: string;
-  intent?: AgentIntent | string | null;
-  source?: string | null;
-}
-
-export interface AssistantModuleOpenEvent {
-  target: string;
-  reason: string;
 }
 
 export interface VisionSourceInfo {
@@ -631,7 +250,6 @@ export interface SetupSettings {
 
 export interface Settings {
   mode: "ptt" | "vad";
-  product_mode: ProductMode;
   hotkey_ptt: string;
   hotkey_toggle: string;
   hotkey_tts_stop: string;
@@ -645,19 +263,8 @@ export interface Settings {
   providers: AIProvidersSettings;
   setup: SetupSettings;
   module_settings?: ModuleSettings;
-  gdd_module_settings?: GddModuleSettings;
-  confluence_settings?: ConfluenceSettings;
-  workflow_agent?: WorkflowAgentSettings;
   vision_input_settings?: VisionInputSettings;
   voice_output_settings?: VoiceOutputSettings;
-  task_capture_settings?: TaskCaptureSettings;
-  assistant_presence_enabled?: boolean;
-  assistant_presence_pinned?: boolean;
-  assistant_presence_window_x?: number | null;
-  assistant_presence_window_y?: number | null;
-  assistant_presence_window_width?: number | null;
-  assistant_presence_window_height?: number | null;
-  assistant_presence_window_monitor?: string | null;
   audio_cues: boolean;
   audio_cues_volume: number;
   diagnostic_logging_enabled?: boolean;
@@ -670,7 +277,6 @@ export interface Settings {
   transcribe_enabled: boolean;
   transcribe_hotkey: string;
   hotkey_toggle_activation_words: string;
-  hotkey_product_mode_toggle?: string;
   transcribe_output_device: string;
   transcribe_vad_mode: boolean;
   transcribe_vad_threshold: number;
@@ -928,12 +534,6 @@ export interface RefinementGateDecision {
   skipped_reason?: string | null;
   ollama_model_loaded?: boolean;
   ollama_vram_bytes?: number;
-}
-
-export interface TranscriptionRawResultEvent {
-  text: string;
-  source: string;
-  timestamp_ms: number;
 }
 
 export interface TranscriptionRefinementStartedEvent {
@@ -1282,20 +882,6 @@ export interface ModuleUpdateInfo {
   current_version: string;
   latest_version: string;
   update_available: boolean;
-}
-
-export interface ConfluenceSpace {
-  id: string;
-  key: string;
-  name: string;
-}
-
-export interface ConfluenceTargetSuggestion {
-  space_key: string;
-  parent_page_id?: string | null;
-  existing_page_id?: string | null;
-  confidence: number;
-  reasoning: string;
 }
 
 export interface HardwareInfo {

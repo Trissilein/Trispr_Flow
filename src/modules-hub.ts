@@ -1,13 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import * as dom from "./dom-refs";
-import { ASSISTANT_CORE_MODULE_ID, ASSISTANT_PRESENCE_MODULE_ID, isAssistantCoreAvailable, setSettings, settings } from "./state";
+import { setSettings, settings } from "./state";
 import { renderSettings } from "./settings";
 import type { Settings } from "./types";
 import { showToast } from "./toast";
-import { openGddFlow } from "./gdd-flow";
 import { openMainTab } from "./wiring/app-chrome.wire";
-import { focusWorkflowAgentConsole, syncWorkflowAgentConsoleState } from "./workflow-agent-console";
 import { focusVoiceOutputConsole, syncVoiceOutputConsoleState } from "./voice-output-console";
 import { focusFirstElement } from "./modal-focus";
 import type { ModuleDescriptor, ModuleHealthStatus, ModuleUpdateInfo } from "./types";
@@ -100,28 +98,10 @@ function permissionCopy(permission: string): PermissionCopy {
       detail: "Allows spoken replies via TTS playback only (no microphone capture).",
     };
   }
-  if (permission === "filesystem_history") {
-    return {
-      label: "Transcript history",
-      detail: "Allows module access to existing local transcript entries.",
-    };
-  }
   if (permission === "filesystem_exports") {
     return {
       label: "Export files",
       detail: "Allows module access to generated local export files.",
-    };
-  }
-  if (permission === "network_confluence") {
-    return {
-      label: "Confluence network",
-      detail: "Allows calls to configured Confluence Cloud endpoints.",
-    };
-  }
-  if (permission === "keyring_access") {
-    return {
-      label: "Credential storage",
-      detail: "Allows secure credential read/write via keyring storage.",
     };
   }
   return {
@@ -167,34 +147,10 @@ function consentDialogMessage(moduleInfo: ModuleDescriptor, missing: string[]): 
 }
 
 function moduleGuide(moduleId: string): { description: string; usage: string } {
-  if (moduleId === "gdd") {
-    return {
-      description: "Builds structured Game Design Documents from transcript sessions.",
-      usage: "Use: Open GDD Flow, pick a session/preset, then generate and publish.",
-    };
-  }
-  if (moduleId === ASSISTANT_CORE_MODULE_ID || moduleId === "workflow_agent") {
-    return {
-      description: "Desktop assistant runtime for conversation, direct actions, and confirmable GDD plans.",
-      usage: "Use: Enable Assistant mode, open Assistant Debug, then parse commands or voice actions.",
-    };
-  }
-  if (moduleId === ASSISTANT_PRESENCE_MODULE_ID) {
-    return {
-      description: "Floating assistant presence window with live transcript, state, and action feedback.",
-      usage: "Use: Keep Assistant mode active to auto-show the Presence window as the primary assistant surface.",
-    };
-  }
   if (moduleId === "ai_refinement") {
     return {
       description: "Adds optional local AI transcript refinement and prompt/runtime controls.",
       usage: "Use: Enable module, then open the AI Refinement tab to configure provider and prompts.",
-    };
-  }
-  if (moduleId === "task_capture") {
-    return {
-      description: "Voice-activated task capture with AI refinement and Confluence agenda posting.",
-      usage: "Say 'Trispr erinnere mich...' or 'Trispr remind me...' to capture tasks.",
     };
   }
   if (moduleId === "input_vision") {
@@ -285,49 +241,6 @@ function openModuleConfig(moduleId: string): void {
     return;
   }
 
-  if (moduleId === "task_capture") {
-    const enabled = settings?.module_settings?.enabled_modules?.includes("task_capture") ?? false;
-    if (!enabled) {
-      showToast({
-        type: "info",
-        title: "Enable module first",
-        message: "Enable Task Capture to open its configuration tab.",
-        duration: 3200,
-      });
-      return;
-    }
-    openMainTab("task-capture");
-    return;
-  }
-
-  if (moduleId === ASSISTANT_CORE_MODULE_ID || moduleId === "workflow_agent") {
-    const enabled = isAssistantCoreAvailable();
-    if (!enabled) {
-      showToast({
-        type: "info",
-        title: "Enable module first",
-        message: "Enable Assistant Core to open its debug tab.",
-        duration: 3200,
-      });
-      return;
-    }
-    openMainTab("agent");
-    focusWorkflowAgentConsole();
-    return;
-  }
-
-  if (moduleId === ASSISTANT_PRESENCE_MODULE_ID) {
-    void invoke("show_assistant_presence_window").catch((error) => {
-      showToast({
-        type: "warning",
-        title: "Presence unavailable",
-        message: String(error),
-        duration: 3200,
-      });
-    });
-    return;
-  }
-
   if (!dom.moduleConfigModal) return;
 
   const guide = moduleGuide(moduleId);
@@ -375,7 +288,6 @@ function cardActions(moduleInfo: ModuleDescriptor): string {
 
   const canEnable = moduleInfo.toggleable && (moduleInfo.state === "installed" || moduleInfo.state === "error");
   const canDisable = moduleInfo.toggleable && (moduleInfo.state === "active" || moduleInfo.state === "enabled");
-  const canInstall = moduleInfo.toggleable && moduleInfo.bundled && moduleInfo.state === "not_installed";
 
   // On-demand module: present in the remote index, not bundled into the binary.
   const available = availableSnapshot.get(moduleInfo.id);
@@ -393,8 +305,6 @@ function cardActions(moduleInfo: ModuleDescriptor): string {
   } else if (moduleInfo.state === "not_installed" && downloadable) {
     const sizeLabel = formatBytes(available!.size);
     primary = `<button class="hotkey-record-btn" data-module-action="download" data-module-id="${id}" ${moduleVisibilityAttributes(id, "download", `${moduleInfo.name} download`)}>Download${sizeLabel ? ` (${sizeLabel})` : ""}</button>`;
-  } else if (canInstall) {
-    primary = `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${id}" ${moduleVisibilityAttributes(id, "install", `${moduleInfo.name} install`)}>Install</button>`;
   } else {
     primary = `<button class="hotkey-record-btn" data-module-action="install" data-module-id="${id}" disabled ${moduleVisibilityAttributes(id, "install", `${moduleInfo.name} install`)}>Install</button>`;
   }
@@ -483,11 +393,9 @@ function renderModuleRow(moduleInfo: ModuleDescriptor): string {
   const feedback = feedbackText
     ? `<span class="${feedbackClass}" title="${feedbackTitle}">${escapeHtml(feedbackText)}</span>`
     : "";
-  const launch = moduleInfo.id === "gdd"
-    ? `<button class="ghost-btn" data-module-action="launch-gdd" data-module-id="gdd" ${moduleVisibilityAttributes(moduleInfo.id, "launch", "Open GDD Flow")}>Open GDD Flow</button>`
-    : moduleInfo.core
-      ? ""
-      : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}" ${moduleVisibilityAttributes(moduleInfo.id, "configure", `${moduleInfo.name} configuration`)}>Configure</button>`;
+  const launch = moduleInfo.core
+    ? ""
+    : `<button class="ghost-btn" data-module-action="open-config" data-module-id="${moduleInfo.id}" ${moduleVisibilityAttributes(moduleInfo.id, "configure", `${moduleInfo.name} configuration`)}>Configure</button>`;
 
   return `<div class="module-row" data-module-card="${moduleInfo.id}" data-module-state="${moduleStateKey(moduleInfo)}">
         <div class="module-row-main">
@@ -551,7 +459,6 @@ async function refreshModuleState(): Promise<void> {
   }
   moduleSnapshot = modules;
   renderModulesList(modules);
-  syncWorkflowAgentConsoleState();
   syncVoiceOutputConsoleState();
   if (dom.modulesStatus) {
     const active = modules.filter((moduleInfo) => moduleInfo.state === "active").length;
@@ -584,7 +491,7 @@ async function refreshAvailableModules(): Promise<void> {
 
 async function refreshSettingsAndRender(): Promise<void> {
   // Re-fetch settings from backend so module changes are reflected in the frontend
-  // state before renderSettings() checks isAssistantCoreAvailable() etc.
+  // state before renderSettings() reads module availability.
   try {
     const fresh = await invoke<Settings>("get_settings");
     setSettings(fresh);
@@ -641,31 +548,6 @@ async function handleEnable(moduleId: string): Promise<void> {
       title: "Enable failed",
       message: String(error),
       duration: 5000,
-    });
-    await refreshModuleState();
-  }
-}
-
-async function handleInstall(moduleId: string): Promise<void> {
-  const moduleInfo = moduleSnapshot.find((candidate) => candidate.id === moduleId);
-  if (!moduleInfo) return;
-  try {
-    const result = await invoke<{ installed: boolean; target_dir: string }>("install_bundled_module_package", {
-      moduleId,
-    });
-    await refreshModuleState();
-    showToast({
-      type: "success",
-      title: result.installed ? "Module installed" : "Module already installed",
-      message: `${moduleInfo.name} package is available locally.`,
-      duration: 3600,
-    });
-  } catch (error) {
-    showToast({
-      type: "error",
-      title: "Install failed",
-      message: String(error),
-      duration: 5200,
     });
     await refreshModuleState();
   }
@@ -825,10 +707,6 @@ function bindModulesEvents(): void {
       void handleEnable(moduleId);
       return;
     }
-    if (action === "install") {
-      void handleInstall(moduleId);
-      return;
-    }
     if (action === "download") {
       void handleDownload(moduleId);
       return;
@@ -847,10 +725,6 @@ function bindModulesEvents(): void {
     }
     if (action === "updates") {
       void handleUpdates(moduleId);
-      return;
-    }
-    if (action === "launch-gdd") {
-      void openGddFlow();
       return;
     }
     if (action === "open-config") {

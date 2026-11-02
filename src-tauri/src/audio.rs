@@ -1348,11 +1348,11 @@ fn handle_transcription_ok(
 ) -> Option<usize> {
     let _ = app_handle.emit(
         "transcription:raw-result",
-        crate::workflow_agent::RawTranscriptionEvent {
-            text: text.to_string(),
-            source: source.to_string(),
-            timestamp_ms: crate::util::now_ms(),
-        },
+        serde_json::json!({
+            "text": text,
+            "source": source,
+            "timestamp_ms": crate::util::now_ms(),
+        }),
     );
 
     if text.trim().is_empty()

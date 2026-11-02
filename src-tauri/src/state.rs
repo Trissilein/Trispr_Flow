@@ -8,13 +8,9 @@ use crate::constants::{
 };
 use crate::history_partition::PartitionedHistory;
 use crate::modules::{
-    canonicalize_module_id, normalize_confluence_settings, normalize_gdd_module_settings,
-    normalize_module_settings, normalize_task_capture_settings,
-    normalize_video_generation_settings, normalize_vision_input_settings,
-    normalize_voice_output_settings, normalize_workflow_agent_settings, ConfluenceSettings,
-    GddModuleSettings, ModuleSettings, TaskCaptureSettings, VideoGenerationSettings,
-    VisionInputSettings, VoiceOutputSettings, WorkflowAgentSettings, ASSISTANT_CORE_MODULE_ID,
-    ASSISTANT_PRESENCE_MODULE_ID, LEGACY_WORKFLOW_AGENT_MODULE_ID,
+    normalize_module_settings, normalize_video_generation_settings, normalize_vision_input_settings,
+    normalize_voice_output_settings, ModuleSettings, VideoGenerationSettings, VisionInputSettings,
+    VoiceOutputSettings,
 };
 use crate::multimodal_io::{PiperDaemonState, VisionFrameBuffer};
 use crate::overlay::OverlayController;
@@ -30,7 +26,6 @@ use tauri::{AppHandle, Emitter, Manager};
 use tracing::warn;
 
 const HISTORY_LOCK_WARN_MS: u128 = 20;
-const ASSISTANT_CORE_MIGRATION_FLAG_KEY: &str = "assistant_core.migrated_legacy_binding";
 
 /// Debounce flags for asynchronous history persistence.  When set, a background
 /// thread is already scheduled to flush the corresponding history to disk within
@@ -267,22 +262,6 @@ fn default_whisper_gpu_layers() -> Option<usize> {
     Some(35)
 }
 
-fn default_product_mode() -> String {
-    "transcribe".to_string()
-}
-
-fn default_hotkey_product_mode_toggle() -> String {
-    "CommandOrControl+Shift+P".to_string()
-}
-
-fn default_assistant_presence_enabled() -> bool {
-    true
-}
-
-fn default_assistant_presence_pinned() -> bool {
-    true
-}
-
 fn default_local_backend_preference() -> String {
     "auto".to_string()
 }
@@ -290,19 +269,10 @@ fn default_local_backend_preference() -> String {
 pub(crate) const AI_REFINEMENT_MODULE_ID: &str = "ai_refinement";
 const AI_REFINEMENT_MIGRATION_FLAG_KEY: &str = "ai_refinement.migrated_legacy";
 
-fn normalize_product_mode_value(value: &str) -> String {
-    match value.trim().to_lowercase().as_str() {
-        "assistant" | "agent" | "workflow_agent" => "assistant".to_string(),
-        _ => "transcribe".to_string(),
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
     pub(crate) mode: String,
-    #[serde(default = "default_product_mode")]
-    pub(crate) product_mode: String,
     pub(crate) hotkey_ptt: String,
     pub(crate) hotkey_toggle: String,
     #[serde(default = "default_hotkey_tts_stop")]
@@ -320,24 +290,10 @@ pub(crate) struct Settings {
     pub(crate) setup: SetupSettings,
     // Managed module platform settings
     pub(crate) module_settings: ModuleSettings,
-    pub(crate) gdd_module_settings: GddModuleSettings,
-    pub(crate) confluence_settings: ConfluenceSettings,
-    pub(crate) workflow_agent: WorkflowAgentSettings,
     pub(crate) vision_input_settings: VisionInputSettings,
     pub(crate) voice_output_settings: VoiceOutputSettings,
     #[serde(default)]
     pub(crate) video_generation_settings: VideoGenerationSettings,
-    #[serde(default)]
-    pub(crate) task_capture_settings: TaskCaptureSettings,
-    #[serde(default = "default_assistant_presence_enabled")]
-    pub(crate) assistant_presence_enabled: bool,
-    #[serde(default = "default_assistant_presence_pinned")]
-    pub(crate) assistant_presence_pinned: bool,
-    pub(crate) assistant_presence_window_x: Option<i32>,
-    pub(crate) assistant_presence_window_y: Option<i32>,
-    pub(crate) assistant_presence_window_width: Option<u32>,
-    pub(crate) assistant_presence_window_height: Option<u32>,
-    pub(crate) assistant_presence_window_monitor: Option<String>,
     pub(crate) audio_cues: bool,
     pub(crate) audio_cues_volume: f32,
     #[serde(default)]
@@ -351,8 +307,6 @@ pub(crate) struct Settings {
     pub(crate) transcribe_enabled: bool,
     pub(crate) transcribe_hotkey: String,
     pub(crate) hotkey_toggle_activation_words: String,
-    #[serde(default = "default_hotkey_product_mode_toggle")]
-    pub(crate) hotkey_product_mode_toggle: String,
     pub(crate) transcribe_output_device: String,
     pub(crate) transcribe_vad_mode: bool,
     pub(crate) transcribe_vad_threshold: f32,
@@ -492,7 +446,6 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
       mode: "ptt".to_string(),
-      product_mode: default_product_mode(),
       hotkey_ptt: "CommandOrControl+Shift+Space".to_string(),
       hotkey_toggle: "CommandOrControl+Shift+M".to_string(),
       hotkey_tts_stop: default_hotkey_tts_stop(),
@@ -505,20 +458,9 @@ impl Default for Settings {
       providers: AIProvidersSettings::default(),
       setup: SetupSettings::default(),
       module_settings: ModuleSettings::default(),
-      gdd_module_settings: GddModuleSettings::default(),
-      confluence_settings: ConfluenceSettings::default(),
-      workflow_agent: WorkflowAgentSettings::default(),
       vision_input_settings: VisionInputSettings::default(),
       voice_output_settings: VoiceOutputSettings::default(),
       video_generation_settings: VideoGenerationSettings::default(),
-      task_capture_settings: TaskCaptureSettings::default(),
-      assistant_presence_enabled: default_assistant_presence_enabled(),
-      assistant_presence_pinned: default_assistant_presence_pinned(),
-      assistant_presence_window_x: None,
-      assistant_presence_window_y: None,
-      assistant_presence_window_width: None,
-      assistant_presence_window_height: None,
-      assistant_presence_window_monitor: None,
       audio_cues: true,
       audio_cues_volume: 0.3,
       diagnostic_logging_enabled: false,
@@ -531,7 +473,6 @@ impl Default for Settings {
       transcribe_enabled: true,
       transcribe_hotkey: "CommandOrControl+Shift+T".to_string(),
       hotkey_toggle_activation_words: "CommandOrControl+Shift+A".to_string(),
-      hotkey_product_mode_toggle: default_hotkey_product_mode_toggle(),
       transcribe_output_device: "default".to_string(),
       transcribe_vad_mode: false,
       transcribe_vad_threshold: 0.04,
@@ -833,43 +774,6 @@ pub(crate) struct FrontendWatchdogState {
     pub(crate) last_degraded_reason: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AssistantOrchestratorState {
-    Idle,
-    Listening,
-    Parsing,
-    Planning,
-    AwaitingConfirm,
-    Executing,
-    Recovering,
-}
-
-impl Default for AssistantOrchestratorState {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct AssistantOrchestratorStatus {
-    pub(crate) state: AssistantOrchestratorState,
-    pub(crate) last_reason: String,
-    pub(crate) changed_at_ms: u64,
-    pub(crate) transition_id: u64,
-}
-
-impl Default for AssistantOrchestratorStatus {
-    fn default() -> Self {
-        Self {
-            state: AssistantOrchestratorState::Idle,
-            last_reason: "startup".to_string(),
-            changed_at_ms: 0,
-            transition_id: 0,
-        }
-    }
-}
-
 /// Window/control identity captured at paste time. Used by the Enter-handler
 /// to validate that the user has not switched to a different target before
 /// pressing Enter — without this, any focused window would feed the learner.
@@ -913,8 +817,6 @@ pub(crate) struct AppState {
     pub(crate) refinement_timeouts: AtomicU64,
     pub(crate) refinement_fallback_failed: AtomicU64,
     pub(crate) refinement_fallback_timed_out: AtomicU64,
-    /// Invalidates queued Task Capture work when its module or Assistant Core is disabled.
-    pub(crate) task_capture_generation: AtomicU64,
     /// Single owner of every job's paste outcome (see `paste_arbiter.rs`).
     pub(crate) paste_arbiter: crate::paste_arbiter::PasteArbiter,
     /// Last recorded OPUS file path for mic input.
@@ -953,7 +855,6 @@ pub(crate) struct AppState {
     pub(crate) frontend_watchdog_last_reload_ms: AtomicU64,
     pub(crate) frontend_watchdog_reload_count: AtomicU64,
     pub(crate) frontend_watchdog_state: Mutex<FrontendWatchdogState>,
-    pub(crate) assistant_orchestrator: Mutex<AssistantOrchestratorStatus>,
     pub(crate) tts_speaking: AtomicBool,
     pub(crate) tts_session_counter: AtomicU64,
     pub(crate) tts_playback_control:
@@ -1345,22 +1246,11 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             normalize_topic_keywords_fields(&mut settings);
             // Normalize v0.7 AI fallback settings and legacy compatibility fields.
             normalize_ai_fallback_fields(&mut settings);
-            crate::modules::migrate_legacy_confluence_module_binding(
-                &settings.module_settings,
-                &mut settings.gdd_module_settings,
-            );
             normalize_module_settings(&mut settings.module_settings);
             normalize_ai_refinement_module_binding(&mut settings);
-            normalize_gdd_module_settings(&mut settings.gdd_module_settings);
-            normalize_confluence_settings(&mut settings.confluence_settings);
-            normalize_workflow_agent_settings(&mut settings.workflow_agent);
-            normalize_assistant_core_binding(&mut settings);
-            normalize_product_mode_field(&mut settings);
-            normalize_assistant_presence_binding(&mut settings);
             normalize_vision_input_settings(&mut settings.vision_input_settings);
             normalize_voice_output_settings(&mut settings.voice_output_settings);
             normalize_video_generation_settings(&mut settings.video_generation_settings);
-            normalize_task_capture_settings(&mut settings.task_capture_settings);
             if settings.setup.local_ai_wizard_completed {
                 settings.setup.local_ai_wizard_pending = false;
             }
@@ -1696,112 +1586,6 @@ fn normalize_history_alias_value(value: &str, fallback: &str) -> String {
     }
 }
 
-pub(crate) fn assistant_core_module_enabled(settings: &Settings) -> bool {
-    settings
-        .module_settings
-        .enabled_modules
-        .iter()
-        .any(|module_id| canonicalize_module_id(module_id) == ASSISTANT_CORE_MODULE_ID)
-        && settings.workflow_agent.enabled
-}
-
-fn assistant_core_binding_migrated(settings: &Settings) -> bool {
-    settings
-        .module_settings
-        .module_overrides
-        .get(ASSISTANT_CORE_MIGRATION_FLAG_KEY)
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-}
-
-fn assistant_core_binding_explicit(settings: &Settings) -> bool {
-    settings
-        .module_settings
-        .enabled_modules
-        .iter()
-        .any(|module_id| {
-            matches!(
-                canonicalize_module_id(module_id),
-                ASSISTANT_CORE_MODULE_ID | ASSISTANT_PRESENCE_MODULE_ID
-            )
-        })
-}
-
-fn assistant_core_has_legacy_usage_signals(settings: &Settings) -> bool {
-    let default_agent = WorkflowAgentSettings::default();
-    let has_legacy_permissions =
-        settings
-            .module_settings
-            .consented_permissions
-            .keys()
-            .any(|module_id| {
-                matches!(
-                    canonicalize_module_id(module_id),
-                    ASSISTANT_CORE_MODULE_ID | LEGACY_WORKFLOW_AGENT_MODULE_ID
-                )
-            });
-    let has_legacy_overrides = settings
-        .module_settings
-        .module_overrides
-        .keys()
-        .filter(|key| key.as_str() != ASSISTANT_CORE_MIGRATION_FLAG_KEY)
-        .any(|key| {
-            key.starts_with(&format!("{ASSISTANT_CORE_MODULE_ID}."))
-                || key.starts_with(&format!("{LEGACY_WORKFLOW_AGENT_MODULE_ID}."))
-        });
-    let wakewords_customized = settings.workflow_agent.wakewords != default_agent.wakewords
-        || settings.workflow_agent.wakeword_aliases != default_agent.wakeword_aliases;
-
-    settings.workflow_agent.enabled
-        || settings
-            .product_mode
-            .trim()
-            .eq_ignore_ascii_case("assistant")
-        || has_legacy_permissions
-        || has_legacy_overrides
-        || wakewords_customized
-        || settings.workflow_agent.hands_free_enabled
-        || settings.workflow_agent.online_enabled
-        || settings.workflow_agent.voice_feedback_enabled
-        || settings.workflow_agent.activation_mode != default_agent.activation_mode
-        || !settings.workflow_agent.trusted_action_allowlist.is_empty()
-        || settings.workflow_agent.expert_yolo_enabled
-}
-
-pub(crate) fn normalize_assistant_core_binding(settings: &mut Settings) {
-    let binding_explicit = assistant_core_binding_explicit(settings);
-    if !assistant_core_binding_migrated(settings) {
-        let legacy_usage = assistant_core_has_legacy_usage_signals(settings);
-        if binding_explicit || legacy_usage {
-            settings.module_settings.module_overrides.insert(
-                ASSISTANT_CORE_MIGRATION_FLAG_KEY.to_string(),
-                serde_json::Value::Bool(true),
-            );
-            if !binding_explicit && legacy_usage {
-                settings
-                    .module_settings
-                    .enabled_modules
-                    .insert(ASSISTANT_CORE_MODULE_ID.to_string());
-                settings.workflow_agent.enabled = true;
-            }
-        }
-    }
-}
-
-pub(crate) fn normalize_assistant_presence_binding(settings: &mut Settings) {
-    if assistant_core_module_enabled(settings) && settings.assistant_presence_enabled {
-        settings
-            .module_settings
-            .enabled_modules
-            .insert(ASSISTANT_PRESENCE_MODULE_ID.to_string());
-    } else {
-        settings
-            .module_settings
-            .enabled_modules
-            .retain(|module_id| canonicalize_module_id(module_id) != ASSISTANT_PRESENCE_MODULE_ID);
-    }
-}
-
 pub(crate) fn normalize_history_alias_fields(settings: &mut Settings) {
     settings.history_alias_mic =
         normalize_history_alias_value(&settings.history_alias_mic, &default_history_alias_mic());
@@ -1809,13 +1593,6 @@ pub(crate) fn normalize_history_alias_fields(settings: &mut Settings) {
         &settings.history_alias_system,
         &default_history_alias_system(),
     );
-}
-
-pub(crate) fn normalize_product_mode_field(settings: &mut Settings) {
-    settings.product_mode = normalize_product_mode_value(&settings.product_mode);
-    if settings.product_mode == "assistant" && !assistant_core_module_enabled(settings) {
-        settings.product_mode = "transcribe".to_string();
-    }
 }
 
 pub(crate) fn speaker_name_for_source(settings: &Settings, source: &str) -> String {
@@ -1831,23 +1608,12 @@ pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result
     let mut persisted = settings.clone();
     // Do not persist session-only transcribe enablement.
     persisted.transcribe_enabled = false;
-    crate::modules::migrate_legacy_confluence_module_binding(
-        &persisted.module_settings,
-        &mut persisted.gdd_module_settings,
-    );
     normalize_module_settings(&mut persisted.module_settings);
     normalize_history_alias_fields(&mut persisted);
     normalize_ai_refinement_module_binding(&mut persisted);
-    normalize_gdd_module_settings(&mut persisted.gdd_module_settings);
-    normalize_confluence_settings(&mut persisted.confluence_settings);
-    normalize_workflow_agent_settings(&mut persisted.workflow_agent);
-    normalize_assistant_core_binding(&mut persisted);
-    normalize_product_mode_field(&mut persisted);
-    normalize_assistant_presence_binding(&mut persisted);
     normalize_vision_input_settings(&mut persisted.vision_input_settings);
     normalize_voice_output_settings(&mut persisted.voice_output_settings);
     normalize_video_generation_settings(&mut persisted.video_generation_settings);
-    normalize_task_capture_settings(&mut persisted.task_capture_settings);
     let raw = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
     // Atomic write: write to .tmp then rename to avoid partial/corrupted JSON on crash.
     let tmp_path = path.with_extension("json.tmp");
@@ -2151,16 +1917,6 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn product_mode_normalization_accepts_assistant_and_defaults_to_transcribe() {
-        assert_eq!(normalize_product_mode_value("assistant"), "assistant");
-        assert_eq!(normalize_product_mode_value("agent"), "assistant");
-        assert_eq!(normalize_product_mode_value("workflow_agent"), "assistant");
-        assert_eq!(normalize_product_mode_value("transcribe"), "transcribe");
-        assert_eq!(normalize_product_mode_value(""), "transcribe");
-        assert_eq!(normalize_product_mode_value("unexpected"), "transcribe");
-    }
-
-    #[test]
     fn ai_refinement_module_migration_preserves_legacy_enabled_state() {
         let mut settings = Settings::default();
         settings.ai_fallback.enabled = true;
@@ -2176,50 +1932,6 @@ mod tests {
             .module_settings
             .enabled_modules
             .contains(AI_REFINEMENT_MODULE_ID));
-    }
-
-    #[test]
-    fn legacy_confluence_module_migrates_to_enabled_gdd_without_install_override() {
-        let mut settings = Settings::default();
-        settings
-            .module_settings
-            .enabled_modules
-            .insert("integrations_confluence".to_string());
-        settings.module_settings.consented_permissions.insert(
-            "integrations_confluence".to_string(),
-            HashSet::from(["network_confluence".to_string()]),
-        );
-        settings.module_settings.module_overrides.insert(
-            "integrations_confluence.installed".to_string(),
-            serde_json::Value::Bool(true),
-        );
-
-        crate::modules::migrate_legacy_confluence_module_binding(
-            &settings.module_settings,
-            &mut settings.gdd_module_settings,
-        );
-        normalize_module_settings(&mut settings.module_settings);
-
-        assert!(settings.gdd_module_settings.enabled);
-        assert!(settings.module_settings.enabled_modules.contains("gdd"));
-        assert!(!settings
-            .module_settings
-            .enabled_modules
-            .contains("integrations_confluence"));
-        assert!(settings.module_settings.consented_permissions.is_empty());
-        assert!(!settings
-            .module_settings
-            .module_overrides
-            .contains_key("gdd.installed"));
-        assert_eq!(
-            crate::gdd::require_gdd_module_active_from_ids(&settings, &HashSet::new()).unwrap_err(),
-            "GDD module assets are not installed. Install module package 'gdd' first."
-        );
-        assert!(crate::gdd::require_gdd_module_active_from_ids(
-            &settings,
-            &HashSet::from(["gdd".to_string()]),
-        )
-        .is_ok());
     }
 
     #[test]
@@ -2245,56 +1957,50 @@ mod tests {
     }
 
     #[test]
-    fn assistant_core_legacy_permissions_enable_migration_once() {
-        let mut settings = Settings::default();
-        settings.workflow_agent.enabled = false;
-        settings.workflow_agent.wakewords = vec!["hey trisper".to_string(), "trispr".to_string()];
-        settings
-            .module_settings
-            .consented_permissions
-            .insert(ASSISTANT_CORE_MODULE_ID.to_string(), HashSet::new());
+    fn settings_with_removed_assistant_gdd_confluence_task_capture_fields_still_load() {
+        // Shape of a settings.json written before the Assistant / GDD / Confluence /
+        // Task Capture modules were removed. Unknown fields are ignored by serde.
+        let raw = r#"{
+            "mode": "ptt",
+            "hotkey_ptt": "CommandOrControl+Shift+Space",
+            "product_mode": "assistant",
+            "hotkey_product_mode_toggle": "CommandOrControl+Shift+P",
+            "gdd_module_settings": { "enabled": true, "default_preset_id": "x", "preset_clones": [] },
+            "confluence_settings": { "enabled": true, "site_base_url": "https://example.atlassian.net" },
+            "workflow_agent": { "enabled": true, "wakewords": ["trispr"], "hands_free_enabled": true },
+            "task_capture_settings": { "routes": [], "match_mode": "contains" },
+            "assistant_presence_enabled": true,
+            "assistant_presence_window_x": 10,
+            "module_settings": {
+                "enabled_modules": ["assistant_core", "assistant_presence", "gdd", "task_capture", "ai_refinement"],
+                "consented_permissions": { "assistant_core": ["filesystem_history"], "integrations_confluence": [] },
+                "module_overrides": {
+                    "assistant_core.migrated_legacy_binding": true,
+                    "workflow_agent.last_error": "stale",
+                    "ai_refinement.migrated_legacy": true
+                }
+            }
+        }"#;
 
+        let mut settings: Settings =
+            serde_json::from_str(raw).expect("old settings.json must still deserialize");
         normalize_module_settings(&mut settings.module_settings);
-        normalize_workflow_agent_settings(&mut settings.workflow_agent);
-        normalize_assistant_core_binding(&mut settings);
 
-        assert!(settings.workflow_agent.enabled);
-        assert!(settings
-            .module_settings
-            .enabled_modules
-            .contains(ASSISTANT_CORE_MODULE_ID));
+        assert_eq!(settings.mode, "ptt");
+        assert_eq!(settings.hotkey_ptt, "CommandOrControl+Shift+Space");
+        assert_eq!(
+            settings.module_settings.enabled_modules,
+            HashSet::from(["ai_refinement".to_string()])
+        );
+        assert!(settings.module_settings.consented_permissions.is_empty());
         assert_eq!(
             settings
                 .module_settings
                 .module_overrides
-                .get(ASSISTANT_CORE_MIGRATION_FLAG_KEY)
-                .and_then(|value| value.as_bool()),
-            Some(true)
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["ai_refinement.migrated_legacy"]
         );
-    }
-
-    #[test]
-    fn assistant_core_migration_flag_preserves_manual_disable() {
-        let mut settings = Settings::default();
-        settings.workflow_agent.enabled = false;
-        settings
-            .module_settings
-            .consented_permissions
-            .insert(ASSISTANT_CORE_MODULE_ID.to_string(), HashSet::new());
-        settings.module_settings.module_overrides.insert(
-            ASSISTANT_CORE_MIGRATION_FLAG_KEY.to_string(),
-            serde_json::Value::Bool(true),
-        );
-
-        normalize_module_settings(&mut settings.module_settings);
-        normalize_workflow_agent_settings(&mut settings.workflow_agent);
-        normalize_assistant_core_binding(&mut settings);
-
-        assert!(!settings.workflow_agent.enabled);
-        assert!(!settings
-            .module_settings
-            .enabled_modules
-            .contains(ASSISTANT_CORE_MODULE_ID));
     }
 
     fn sample_history_entry(id: &str, status: &str, refined: &str, error: &str) -> HistoryEntry {

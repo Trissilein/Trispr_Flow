@@ -20,7 +20,6 @@ const mocks = vi.hoisted(() => ({
   refreshOllamaRuntimeState: vi.fn(),
   renderOllamaModelManager: vi.fn(),
   applyAccentColor: vi.fn(),
-  syncWorkflowAgentConsoleState: vi.fn(),
   initVideoGenerationPanel: vi.fn(),
   teardownVideoGenerationPanel: vi.fn(),
 }));
@@ -68,10 +67,6 @@ vi.mock("../utils", () => ({
   applyAccentColor: mocks.applyAccentColor,
 }));
 
-vi.mock("../workflow-agent-console", () => ({
-  syncWorkflowAgentConsoleState: mocks.syncWorkflowAgentConsoleState,
-}));
-
 vi.mock("../video-generation", () => ({
   initVideoGenerationPanel: mocks.initVideoGenerationPanel,
   teardownVideoGenerationPanel: mocks.teardownVideoGenerationPanel,
@@ -84,20 +79,13 @@ function mountDom(): void {
     <button id="tab-btn-ai-refinement"></button>
     <button id="tab-btn-voice-output"></button>
     <button id="tab-btn-video"></button>
-    <button id="tab-btn-agent"></button>
     <button id="tab-btn-modules"></button>
     <div id="tab-transcription"></div>
     <div id="tab-settings"></div>
     <div id="tab-ai-refinement"></div>
     <div id="tab-voice-output"></div>
     <div id="tab-video"></div>
-    <div id="tab-agent"></div>
     <div id="tab-modules"></div>
-
-    <button id="product-mode-transcribe-btn"></button>
-    <button id="product-mode-assistant-btn"></button>
-    <button id="global-online-offline-btn"></button>
-    <button id="global-online-enabled-btn"></button>
 
     <div class="panel" data-panel="panel-a">
       <button class="panel-collapse-btn" data-panel-collapse="panel-a"></button>
@@ -112,9 +100,6 @@ function mountDom(): void {
     <button id="open-recordings-btn"></button>
     <button id="open-modules-btn"></button>
 
-    <input id="product-mode-hotkey" />
-    <button id="product-mode-hotkey-record"></button>
-    <span id="product-mode-hotkey-status"></span>
     <input id="tts-stop-hotkey" />
     <button id="tts-stop-hotkey-record"></button>
     <span id="tts-stop-hotkey-status"></span>
@@ -128,24 +113,17 @@ function makeSettings(options: {
   ai?: boolean;
   voice?: boolean;
   video?: boolean;
-  assistant?: boolean;
 } = {}): Settings {
   const enabledModules: string[] = [];
   if (options.ai) enabledModules.push("ai_refinement");
   if (options.voice) enabledModules.push("output_voice_tts");
   if (options.video) enabledModules.push("output_video_generation");
-  if (options.assistant) enabledModules.push("assistant_core");
   return {
-    product_mode: "transcribe",
     accent_color: "#00ff00",
     module_settings: {
       enabled_modules: enabledModules,
       consented_permissions: {},
       module_overrides: {},
-    },
-    workflow_agent: {
-      enabled: options.assistant ?? false,
-      online_enabled: false,
     },
     ai_fallback: {
       enabled: options.ai ?? false,
@@ -324,20 +302,6 @@ describe("wireAppChrome - main tabs", () => {
     expect(mocks.initVideoGenerationPanel).toHaveBeenCalled();
   });
 
-  it("shows Agent tab only when assistant core is available", async () => {
-    const { appChrome } = await setup({ assistant: true });
-    appChrome.initMainTab();
-    expect((document.getElementById("tab-btn-agent") as HTMLButtonElement).hidden).toBe(false);
-  });
-
-  it("reconciles away from active agent when assistant becomes unavailable", async () => {
-    const { appChrome, state } = await setup({ assistant: true });
-    appChrome.openMainTab("agent");
-    state.setSettings(makeSettings({ assistant: false }));
-    appChrome.reconcileMainTabVisibility();
-    expect(activeTabId()).toBe("tab-btn-transcription");
-  });
-
   it("refreshes Ollama state when opening AI tab", async () => {
     const { appChrome } = await setup({ ai: true });
     appChrome.openMainTab("ai-refinement");
@@ -355,57 +319,6 @@ describe("wireAppChrome - main tabs", () => {
     await flush();
     expect(mocks.refreshOllamaRuntimeState).toHaveBeenCalled();
     expect(mocks.refreshOllamaInstalledModels).not.toHaveBeenCalled();
-  });
-});
-
-describe("wireAppChrome - app controls", () => {
-  it("assistant mode button falls back when assistant is unavailable", async () => {
-    const { appChrome, state } = await setup({ assistant: false });
-    appChrome.wireAppChrome();
-    click("product-mode-assistant-btn");
-    await flush();
-    expect(state.settings!.product_mode).toBe("transcribe");
-    expect(mocks.persistSettings).not.toHaveBeenCalled();
-  });
-
-  it("assistant mode button persists when assistant is available", async () => {
-    const { appChrome, state } = await setup({ assistant: true });
-    appChrome.wireAppChrome();
-    click("product-mode-assistant-btn");
-    await flush();
-    expect(state.settings!.product_mode).toBe("assistant");
-    expect(mocks.syncWorkflowAgentConsoleState).toHaveBeenCalled();
-    expect(mocks.persistSettings).toHaveBeenCalled();
-    expect(mocks.renderHero).toHaveBeenCalled();
-  });
-
-  it("transcribe mode button persists transcribe mode", async () => {
-    const { appChrome, state } = await setup({ assistant: true });
-    state.settings!.product_mode = "assistant";
-    appChrome.wireAppChrome();
-    click("product-mode-transcribe-btn");
-    await flush();
-    expect(state.settings!.product_mode).toBe("transcribe");
-    expect(mocks.persistSettings).toHaveBeenCalled();
-  });
-
-  it("global offline button persists offline mode", async () => {
-    const { appChrome, state } = await setup({ assistant: true });
-    state.settings!.workflow_agent!.online_enabled = true;
-    appChrome.wireAppChrome();
-    click("global-online-offline-btn");
-    await flush();
-    expect(state.settings!.workflow_agent!.online_enabled).toBe(false);
-    expect(mocks.persistSettings).toHaveBeenCalled();
-  });
-
-  it("global online button persists online mode", async () => {
-    const { appChrome, state } = await setup({ assistant: true });
-    appChrome.wireAppChrome();
-    click("global-online-enabled-btn");
-    await flush();
-    expect(state.settings!.workflow_agent!.online_enabled).toBe(true);
-    expect(mocks.syncWorkflowAgentConsoleState).toHaveBeenCalled();
   });
 });
 
@@ -457,12 +370,6 @@ describe("wireAppChrome - panels and shortcuts", () => {
     const { appChrome } = await setup();
     appChrome.wireAppChrome();
     expect(mocks.initHotkeyStatusListener).toHaveBeenCalled();
-    expect(mocks.setupHotkeyRecorder).toHaveBeenCalledWith(
-      "productModeToggle",
-      expect.any(HTMLInputElement),
-      expect.any(HTMLButtonElement),
-      expect.any(HTMLSpanElement),
-    );
     expect(mocks.setupHotkeyRecorder).toHaveBeenCalledWith(
       "ttsStop",
       expect.any(HTMLInputElement),

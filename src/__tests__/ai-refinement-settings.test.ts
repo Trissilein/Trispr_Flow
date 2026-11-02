@@ -132,14 +132,12 @@ function mkCard(overrides: Partial<RuntimeCardState> = {}): RuntimeCardState {
 function mkSettings(overrides: Partial<Settings> = {}): Settings {
     return {
         mode: "ptt",
-        product_mode: "assistant",
         language_mode: "auto",
         language_pinned: false,
         postproc_enabled: true,
         postproc_language: "multi",
         postproc_llm_provider: "ollama",
         topic_keywords: { bug: ["bug"], summary: ["summary"], actions: ["todo"] },
-        workflow_agent: { online_enabled: false } as Settings["workflow_agent"],
         providers: {
             claude: { api_key_stored: false, auth_method_preference: "api_key", auth_status: "locked", auth_verified_at: null, available_models: ["c"], preferred_model: "c" },
             openai: { api_key_stored: false, auth_method_preference: "api_key", auth_status: "locked", auth_verified_at: null, available_models: ["o"], preferred_model: "o" },

@@ -15,7 +15,6 @@ import { VAD_DB_FLOOR, formatHotkeyForDisplay, thresholdToDb } from "../ui-helpe
 //
 // Per Decision 6 (settings-decomposition.md): all other functions are private.
 // syncDerivedLanguageSettings() moved to settings-persist.ts during S5 to avoid index.ts dependency cycles.
-// productModeHotkey stays owned by this slice (capture/hotkey UI block cohesion).
 
 export function updateTranscribeVadVisibility(enabled: boolean): void {
     if (dom.transcribeMeterThreshold) {
@@ -137,11 +136,6 @@ export function renderTranscriptionSettings(): void {
     if (dom.transcribeHotkey) dom.transcribeHotkey.value = formatHotkeyForDisplay(settings.transcribe_hotkey);
     if (dom.toggleActivationWordsHotkey) {
         dom.toggleActivationWordsHotkey.value = formatHotkeyForDisplay(settings.hotkey_toggle_activation_words);
-    }
-    if (dom.productModeHotkey) {
-        dom.productModeHotkey.value = formatHotkeyForDisplay(
-            settings.hotkey_product_mode_toggle || "CommandOrControl+Shift+P"
-        );
     }
     if (dom.transcribeDeviceSelect) {
         dom.transcribeDeviceSelect.value = settings.transcribe_output_device;

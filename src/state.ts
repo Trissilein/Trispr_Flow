@@ -14,12 +14,16 @@ import type {
   StartupStatus,
 } from "./types";
 
-export const ASSISTANT_CORE_MODULE_ID = "assistant_core";
-export const ASSISTANT_PRESENCE_MODULE_ID = "assistant_presence";
-export const GDD_MODULE_ID = "gdd";
-export const LEGACY_CONFLUENCE_MODULE_ID = "integrations_confluence";
-export const LEGACY_WORKFLOW_AGENT_MODULE_ID = "workflow_agent";
-export const REMOVED_MODULE_IDS = new Set(["analysis"]);
+// Module ids that no longer exist. Old settings.json files may still mention them.
+export const REMOVED_MODULE_IDS = new Set([
+  "analysis",
+  "assistant_core",
+  "assistant_presence",
+  "gdd",
+  "integrations_confluence",
+  "task_capture",
+  "workflow_agent",
+]);
 
 export let settings: Settings | null = null;
 export let history: HistoryEntry[] = [];
@@ -42,99 +46,39 @@ export let overlayHealth: OverlayHealthEvent | null = null;
 
 export function normalizeEnabledModuleIds(enabledModules: string[] | undefined): string[] {
   const normalized = new Set<string>();
-  for (const rawId of enabledModules ?? []) {
-    const moduleId = rawId === LEGACY_WORKFLOW_AGENT_MODULE_ID
-      ? ASSISTANT_CORE_MODULE_ID
-      : rawId === LEGACY_CONFLUENCE_MODULE_ID
-        ? GDD_MODULE_ID
-        : rawId;
+  for (const moduleId of enabledModules ?? []) {
     if (!moduleId || REMOVED_MODULE_IDS.has(moduleId)) continue;
     normalized.add(moduleId);
   }
   return Array.from(normalized);
 }
 
-export function normalizeAssistantSettings(newSettings: Settings | null): Settings | null {
+function isRemovedModuleKey(key: string): boolean {
+  for (const moduleId of REMOVED_MODULE_IDS) {
+    if (key === moduleId || key.startsWith(`${moduleId}.`)) return true;
+  }
+  return false;
+}
+
+export function normalizeSettings(newSettings: Settings | null): Settings | null {
   if (!newSettings) return null;
   const moduleSettings = newSettings.module_settings;
   if (moduleSettings) {
-    const legacyConfluenceEnabled = moduleSettings.enabled_modules?.includes(LEGACY_CONFLUENCE_MODULE_ID);
     moduleSettings.enabled_modules = normalizeEnabledModuleIds(moduleSettings.enabled_modules);
-    if (legacyConfluenceEnabled && newSettings.gdd_module_settings) {
-      newSettings.gdd_module_settings.enabled = true;
-    }
-
-    const remappedPermissions: Record<string, string[]> = {};
-    for (const [moduleId, permissions] of Object.entries(moduleSettings.consented_permissions ?? {})) {
-      if (moduleId === LEGACY_CONFLUENCE_MODULE_ID) continue;
-      const nextId = moduleId === LEGACY_WORKFLOW_AGENT_MODULE_ID ? ASSISTANT_CORE_MODULE_ID : moduleId;
-      if (REMOVED_MODULE_IDS.has(nextId)) continue;
-      const current = remappedPermissions[nextId] ?? [];
-      remappedPermissions[nextId] = Array.from(new Set([...current, ...(permissions ?? [])]));
-    }
-    moduleSettings.consented_permissions = remappedPermissions;
-
-    const remappedOverrides: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(moduleSettings.module_overrides ?? {})) {
-      if (key.startsWith(`${LEGACY_CONFLUENCE_MODULE_ID}.`)) continue;
-      const nextKey = key.startsWith(`${LEGACY_WORKFLOW_AGENT_MODULE_ID}.`)
-        ? `${ASSISTANT_CORE_MODULE_ID}.${key.slice(LEGACY_WORKFLOW_AGENT_MODULE_ID.length + 1)}`
-        : key;
-      if (nextKey === "analysis" || nextKey.startsWith("analysis.")) continue;
-      remappedOverrides[nextKey] = value;
-    }
-    moduleSettings.module_overrides = remappedOverrides;
+    moduleSettings.consented_permissions = Object.fromEntries(
+      Object.entries(moduleSettings.consented_permissions ?? {}).filter(([key]) => !isRemovedModuleKey(key)),
+    );
+    moduleSettings.module_overrides = Object.fromEntries(
+      Object.entries(moduleSettings.module_overrides ?? {}).filter(([key]) => !isRemovedModuleKey(key)),
+    );
   }
-
-  newSettings.workflow_agent ??= {
-    enabled: false,
-    wakewords: ["trispr", "hey trispr", "trispr agent"],
-    wakeword_aliases: [],
-    intent_keywords: { gdd_generate_publish: ["gdd"] },
-    model: "qwen3.5:4b",
-    temperature: 0.2,
-    max_tokens: 512,
-    session_gap_minutes: 20,
-    max_candidates: 3,
-    hands_free_enabled: false,
-    confirm_timeout_sec: 45,
-    reply_mode: "rule_only",
-    online_enabled: false,
-    voice_feedback_enabled: false,
-    activation_mode: "hotkey_first",
-    trusted_action_allowlist: [],
-    expert_yolo_enabled: false,
-  };
-  newSettings.workflow_agent.activation_mode ??= "hotkey_first";
-  newSettings.workflow_agent.trusted_action_allowlist ??= [];
-  newSettings.workflow_agent.expert_yolo_enabled ??= false;
-  newSettings.assistant_presence_enabled ??= true;
-  newSettings.assistant_presence_pinned ??= true;
   newSettings.diagnostic_logging_enabled ??= false;
-
-  const assistantCoreEnabled = isAssistantCoreAvailable(newSettings);
-  if (!assistantCoreEnabled && newSettings.product_mode === "assistant") {
-    newSettings.product_mode = "transcribe";
-  }
-
   return newSettings;
 }
 
 // State setters
 export function setSettings(newSettings: Settings | null) {
-  settings = normalizeAssistantSettings(newSettings);
-}
-
-export function isAssistantCoreModuleEnabled(current: Settings | null = settings): boolean {
-  return current?.module_settings?.enabled_modules?.includes(ASSISTANT_CORE_MODULE_ID) ?? false;
-}
-
-export function isAssistantPresenceModuleEnabled(current: Settings | null = settings): boolean {
-  return current?.module_settings?.enabled_modules?.includes(ASSISTANT_PRESENCE_MODULE_ID) ?? false;
-}
-
-export function isAssistantCoreAvailable(current: Settings | null = settings): boolean {
-  return isAssistantCoreModuleEnabled(current) && Boolean(current?.workflow_agent?.enabled);
+  settings = normalizeSettings(newSettings);
 }
 
 /** Returns true only when AI refinement is explicitly enabled in settings. */
@@ -159,7 +103,7 @@ export function updateSettings(newSettings: Partial<Settings>) {
 
     // Merge the rest
     Object.assign(settings, { ...newSettings, setup: settings.setup, ai_fallback: settings.ai_fallback });
-    normalizeAssistantSettings(settings);
+    normalizeSettings(settings);
   }
 }
 

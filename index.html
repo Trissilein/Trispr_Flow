@@ -107,67 +107,6 @@
 
       <!-- Expert Mode global toggle -->
       <div id="expert-mode-global-bar" class="expert-mode-global-bar">
-        <div class="global-control-group">
-          <div id="product-mode-control" class="global-mode-control" hidden>
-            <span class="global-mode-label">Product mode</span>
-            <div class="global-mode-toggle" role="group" aria-label="Product mode toggle">
-              <button
-                id="product-mode-transcribe-btn"
-                class="global-mode-btn"
-                type="button"
-                data-mode="transcribe"
-                title="Transcribe mode: Voice capture and transcript-first workflow"
-                aria-pressed="true" data-settings-visibility-excluded="global-or-navigation">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 5.25h10.5M3.75 10.5h16.5M3.75 15.75h16.5M3.75 21h10.5" />
-                </svg>
-                <span>Transcribe</span>
-              </button>
-              <button
-                id="product-mode-assistant-btn"
-                class="global-mode-btn"
-                type="button"
-                data-mode="assistant"
-                title="Assistant mode: Wakeword-driven assistant with actions and confirmations"
-                aria-pressed="false" data-settings-visibility-excluded="global-or-navigation">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6.75a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.5 20.25a7.5 7.5 0 0 1 15 0" />
-                </svg>
-                <span>Assistant</span>
-              </button>
-            </div>
-          </div>
-
-          <div id="global-online-control" class="global-mode-control global-mode-control--compact" hidden>
-            <div class="global-mode-toggle global-mode-toggle--compact" role="group" aria-label="Online scope toggle">
-              <button
-                id="global-online-offline-btn"
-                class="global-mode-btn"
-                type="button"
-                data-online-mode="offline"
-                title="Offline mode: Agent stays local-only"
-                aria-pressed="true" data-settings-visibility-excluded="global-or-navigation">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 18 0A9 9 0 0 0 3 12Zm9-9v18M2 12h20" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 4.5 19.5 19.5" />
-                </svg>
-                <span>Offline</span>
-              </button>
-              <button
-                id="global-online-enabled-btn"
-                class="global-mode-btn"
-                type="button"
-                data-online-mode="online"
-                title="Online mode: Enables real-time lookups like weather, news, or live data — not related to AI model selection"
-                aria-pressed="false" data-settings-visibility-excluded="global-or-navigation">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 18 0A9 9 0 0 0 3 12Zm9-9v18M2 12h20M5.7 6.8A11.8 11.8 0 0 0 12 8.8c2.2 0 4.4-.8 6.3-2M5.7 17.2A11.8 11.8 0 0 1 12 15.2c2.2 0 4.4.8 6.3 2" />
-                </svg>
-                <span>Online</span>
-              </button>
-            </div>
-          </div>
-        </div>
         <label class="expert-toggle-label" for="expert-mode-toggle">
           <span>Expert</span>
           <input id="expert-mode-toggle" type="checkbox" title="Show advanced settings and modules" data-settings-visibility-excluded="global-or-navigation" />
@@ -192,14 +131,8 @@
         <button id="tab-btn-voice-output" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-voice-output" data-settings-visibility-tab="voice-output" data-settings-visibility-excluded="global-or-navigation">
           Voice Output
         </button>
-        <button id="tab-btn-task-capture" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-task-capture" data-settings-visibility-tab="task-capture" data-settings-visibility-excluded="global-or-navigation">
-          Task Capture
-        </button>
         <button id="tab-btn-video" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-video" data-settings-visibility-tab="video" data-settings-visibility-excluded="global-or-navigation">
           Video
-        </button>
-        <button id="tab-btn-agent" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-agent" data-settings-visibility-tab="agent" data-settings-visibility-excluded="global-or-navigation">
-          Assistant Debug
         </button>
         <button id="tab-btn-modules" class="main-tab-btn" role="tab" aria-selected="false" aria-controls="tab-modules" data-settings-visibility-tab="modules" data-settings-visibility-excluded="global-or-navigation">
           Modules
@@ -213,8 +146,6 @@
         <span class="pipeline-stage" data-stage="whisper">Whisper</span>
         <span class="pipeline-arrow">&rarr;</span>
         <span class="pipeline-stage" data-stage="postproc">Postproc</span>
-        <span class="pipeline-arrow">&rarr;</span>
-        <span class="pipeline-stage" data-stage="agent">Agent</span>
         <span class="pipeline-arrow">&rarr;</span>
         <span class="pipeline-stage" data-stage="paste">Paste</span>
       </div>
@@ -1082,21 +1013,6 @@
                 </button>
               </div>
               <span id="toggle-activation-words-hotkey-status" class="hotkey-status"
-                    role="status"
-                    aria-live="polite"></span>
-            </div>
-            <div class="field hotkey-field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="product.mode.hotkey" data-settings-visibility-label="Toggle product mode" data-settings-visibility-default="expert" data-settings-visibility-group="Overlay & Hotkeys">
-              <span class="field-label">Toggle product mode</span>
-              <div class="hotkey-input-group">
-                <input id="product-mode-hotkey" type="text" readonly title="Current hotkey for toggling Product mode — click Record to change" />
-                <button id="product-mode-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
-                  </svg>
-                  Record
-                </button>
-              </div>
-              <span id="product-mode-hotkey-status" class="hotkey-status"
                     role="status"
                     aria-live="polite"></span>
             </div>
@@ -2057,18 +1973,6 @@
           </section>
         </div>
 
-        <div id="tab-task-capture" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-task-capture" data-settings-visibility-tab-content="task-capture">
-          <section class="panel" data-panel="task-capture" style="--delay: 0.12s">
-            <div class="panel-header">
-              <h2>Task Capture</h2>
-              <span class="field-hint">Configure voice-triggered task capture routes and AI refinement.</span>
-            </div>
-            <div class="panel-body" id="task-capture-panel-body" data-settings-visibility-group-container>
-              <!-- Dynamically rendered -->
-            </div>
-          </section>
-        </div>
-
         <!-- Video Tab -->
         <div id="tab-video" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-video" data-settings-visibility-tab-content="video" data-settings-visibility-group-container>
           <section class="panel" data-panel="video" style="--delay: 0.12s">
@@ -2177,209 +2081,6 @@
           </section>
         </div>
 
-        <!-- Agent Tab -->
-        <div id="tab-agent" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-agent" data-settings-visibility-tab-content="agent" data-settings-visibility-group-container>
-          <section class="panel" data-panel="agent" style="--delay: 0.12s">
-            <div class="panel-header">
-              <div class="panel-title">
-                <h2>Assistant Debug</h2>
-                <p>Expert console for the desktop assistant core, pipeline state, and confirm lanes.</p>
-              </div>
-            </div>
-            <div class="panel-body">
-              <section id="workflow-agent-console" class="module-agent-console" hidden>
-                <div class="module-agent-console-header">
-                  <h3>Assistant Core</h3>
-                  <span id="workflow-agent-status" class="field-hint">Assistant Core disabled. Enable module + Assistant mode.</span>
-                </div>
-                <details class="expander" open>
-                  <summary><h4 class="ai-refine-section-title">Conversation</h4></summary>
-                  <div class="expander-body">
-                    <div class="panel-grid">
-                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.command" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Command">
-                        <span class="field-label">Command</span>
-                        <textarea
-                          id="workflow-agent-command-input"
-                          rows="3"
-                          placeholder="Hey Trispr, build a GDD draft from yesterday's combat discussion."
-                        ></textarea>
-                        <span class="field-hint">Wakeword + intent. Unbekannte Fragen bekommen eine sichere Antwort ohne Side-Effects.</span>
-                      </label>
-                      <div class="auth-modal-actions span-2">
-                        <button id="workflow-agent-parse-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">Parse Command</button>
-                        <button id="workflow-agent-ptt-arm-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">PTT (Agent)</button>
-                      </div>
-                      <div class="field span-2">
-                        <span class="field-label">Agent pipeline</span>
-                        <div id="workflow-agent-state-pipeline" class="workflow-agent-state-pipeline" role="group" aria-label="Agent orchestration state">
-                          <span class="workflow-agent-stage-chip" data-agent-stage="idle">Idle</span>
-                          <span class="workflow-agent-stage-chip" data-agent-stage="listening">Listening</span>
-                          <span class="workflow-agent-stage-chip" data-agent-stage="parsing">Parsing</span>
-                          <span class="workflow-agent-stage-chip" data-agent-stage="planning">Planning</span>
-                          <span class="workflow-agent-stage-chip" data-agent-stage="awaiting_confirm">Await Confirm</span>
-                          <span class="workflow-agent-stage-chip" data-agent-stage="executing">Executing</span>
-                          <span class="workflow-agent-stage-chip" data-agent-stage="recovering">Recovering</span>
-                        </div>
-                        <div id="workflow-agent-state-note" class="field-hint">Idle: waiting for wakeword or PTT command.</div>
-                      </div>
-                      <div class="field span-2">
-                        <span class="field-label">Live status</span>
-                        <div class="workflow-agent-live-grid">
-                          <div>
-                            <span class="field-hint">Last heard</span>
-                            <div id="workflow-agent-last-heard" class="workflow-agent-live-line">No utterance captured yet.</div>
-                          </div>
-                          <div>
-                            <span class="field-hint">Last intent</span>
-                            <div id="workflow-agent-last-intent" class="workflow-agent-live-line">No intent detected yet.</div>
-                          </div>
-                          <div>
-                            <span class="field-hint">Latest reply</span>
-                            <div id="workflow-agent-last-reply" class="workflow-agent-live-line">No replies yet.</div>
-                          </div>
-                          <div>
-                            <span class="field-hint">Last gate reason</span>
-                            <div id="workflow-agent-last-gate" class="workflow-agent-live-line">No gate decisions yet.</div>
-                          </div>
-                          <div>
-                            <span class="field-hint">Confirmation</span>
-                            <div id="workflow-agent-awaiting-confirmation" class="workflow-agent-live-line">No pending confirmation.</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </details>
-                <details class="expander" open>
-                  <summary><h4 class="ai-refine-section-title">Actions</h4></summary>
-                  <div class="expander-body">
-                    <div class="panel-grid">
-                      <div class="field span-2">
-                        <span class="field-label">Action lane</span>
-                        <div id="workflow-agent-action-hint" class="workflow-agent-live-line">
-                          Non-side-effect intents reply immediately. GDD intents open a confirmable plan lane.
-                        </div>
-                      </div>
-                      <div id="workflow-agent-plan-lane" class="span-2 workflow-agent-plan-lane">
-                        <div class="panel-grid">
-                          <div id="workflow-agent-candidates" class="module-agent-candidates span-2"></div>
-                          <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="workflow.agent.target.language" data-settings-visibility-label="Target language (required)" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant">
-                            <span class="field-label">Target language <strong>(required)</strong></span>
-                            <select id="workflow-agent-target-language">
-                              <option value="" disabled selected>— select language —</option>
-                              <option value="source">Source language (keep original)</option>
-                              <option value="en">English</option>
-                              <option value="de">Deutsch</option>
-                              <option value="fr">Français</option>
-                              <option value="es">Español</option>
-                            </select>
-                            <span class="field-hint">Choose a language for each GDD command before building a plan.</span>
-                          </label>
-                          <div class="field">
-                            <button id="workflow-agent-build-plan-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">Build Plan</button>
-                          </div>
-                          <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="workflow.agent.plan.preview" data-settings-visibility-label="Plan preview" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant">
-                            <span class="field-label">Plan preview</span>
-                            <textarea id="workflow-agent-plan-preview" rows="5" readonly placeholder="Execution plan appears here..."></textarea>
-                          </label>
-                          <div class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="workflow.agent.review.confirm" data-settings-visibility-label="Review confirmed" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant">
-                            <label class="toggle-row">
-                              <span class="field-label">Review confirmed</span>
-                              <input id="workflow-agent-review-confirm" type="checkbox" title="Confirm you reviewed the plan details before execution" />
-                              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                            </label>
-                            <span id="workflow-agent-review-summary" class="field-hint">Build a plan first, review analysis/execution lanes, then confirm before execute.</span>
-                          </div>
-                          <div class="auth-modal-actions span-2">
-                            <button id="workflow-agent-execute-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">Confirm & Execute</button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </details>
-                <details class="expander">
-                  <summary><h4 class="ai-refine-section-title">Configuration</h4></summary>
-                  <div class="expander-body">
-                    <div class="panel-grid">
-                      <div class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.hands_free" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Hands-free mode">
-                        <label class="toggle-row">
-                          <span class="field-label">Hands-free mode</span>
-                          <input id="workflow-agent-hands-free-enabled" type="checkbox" title="Enable wakeword-driven command parsing in assistant mode" />
-                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                        </label>
-                        <span class="field-hint">When enabled, wakeword commands are parsed in Assistant mode. PTT remains available for one-shot bypass.</span>
-                      </div>
-                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.wakewords" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Wakewords">
-                        <span class="field-label">Wakewords</span>
-                        <textarea id="workflow-agent-wakewords" rows="3" placeholder="trispr&#10;hey trispr&#10;trispr agent"></textarea>
-                        <span class="field-hint">One wakeword per line (comma-separated entries also supported).</span>
-                      </label>
-                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.aliases" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Wakeword aliases (optional)">
-                        <span class="field-label">Wakeword aliases (optional)</span>
-                        <textarea id="workflow-agent-wakeword-aliases" rows="2" placeholder="trispa&#10;trisper"></textarea>
-                        <span class="field-hint">Alternative pronunciations that should trigger the same wakeword intent.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.confirm_timeout" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Confirm timeout (seconds)">
-                        <span class="field-label">Confirm timeout (seconds)</span>
-                        <input id="workflow-agent-confirm-timeout-sec" type="number" min="10" max="300" step="1" value="45" />
-                        <span class="field-hint">How long the confirm token remains valid before auto-cancel.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.suggestion_level" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Suggestion level">
-                        <span class="field-label">Suggestion level</span>
-                        <select id="workflow-agent-suggestion-level">
-                          <option value="standard">Standard</option>
-                          <option value="low">Low</option>
-                          <option value="high">High</option>
-                        </select>
-                        <span class="field-hint">Controls session candidate breadth.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.reply_mode" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Reply mode">
-                        <span class="field-label">Reply mode</span>
-                        <select id="workflow-agent-reply-mode">
-                          <option value="rule_only">Rule-only</option>
-                          <option value="hybrid_local_llm">Hybrid local LLM</option>
-                        </select>
-                        <span class="field-hint">Hybrid only affects wording; execution remains deterministic.</span>
-                      </label>
-                      <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.online_mode" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Knowledge scope">
-                        <span class="field-label">Knowledge scope</span>
-                        <select id="workflow-agent-online-mode">
-                          <option value="local_only">Local only</option>
-                          <option value="online_enabled">Online enabled</option>
-                        </select>
-                        <span class="field-hint">Online enabled allows cloud-model replies. Live web lookup tools are still explicit and separate.</span>
-                      </label>
-                      <div class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="assistant.voice_feedback" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant" data-settings-visibility-label="Voice feedback">
-                        <label class="toggle-row">
-                          <span class="field-label">Voice feedback</span>
-                          <input id="workflow-agent-voice-feedback-enabled" type="checkbox" title="Allow spoken agent feedback when TTS is available" />
-                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                        </label>
-                        <span class="field-hint">Falls back to text responses when voice output is unavailable.</span>
-                      </div>
-                    </div>
-                  </div>
-                </details>
-                <details class="expander">
-                  <summary><h4 class="ai-refine-section-title">Expert &amp; Diagnostics</h4></summary>
-                  <div class="expander-body">
-                    <div class="panel-grid">
-                      <div class="auth-modal-actions span-2">
-                        <button id="workflow-agent-refresh-candidates-btn" type="button" class="hotkey-record-btn" data-settings-visibility-excluded="global-or-navigation">Find Sessions</button>
-                      </div>
-                      <label class="field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="workflow.agent.execution.log" data-settings-visibility-label="Conversation log" data-settings-visibility-default="expert" data-settings-visibility-group="Assistant">
-                        <span class="field-label">Conversation log</span>
-                        <textarea id="workflow-agent-execution-log" rows="6" readonly placeholder="Agent events and execution output appear here..."></textarea>
-                      </label>
-                    </div>
-                  </div>
-                </details>
-              </section>
-            </div>
-          </section>
-        </div>
-
         <!-- Modules Tab -->
         <div id="tab-modules" class="main-tab-content" role="tabpanel" aria-labelledby="tab-btn-modules" data-settings-visibility-tab-content="modules" data-settings-visibility-group-container>
           <section class="panel modules-panel" style="--delay: 0.12s">
@@ -2394,7 +2095,6 @@
             </div>
             <div class="panel-body">
               <div id="modules-list" class="modules-list" data-settings-visibility-group-container></div>
-              <div class="field-hint">Workflow Agent configuration moved to the Agent tab.</div>
             </div>
           </section>
         </div>
@@ -2650,145 +2350,6 @@
             <div id="archive-entries" class="archive-entries"></div>
           </section>
         </div>
-      </div>
-    </div>
-
-    <div id="gdd-flow-modal" class="auth-modal" hidden>
-      <div id="gdd-flow-backdrop" class="auth-modal-backdrop"></div>
-      <div class="auth-modal-card gdd-flow-modal-card gdd-mode-standard" role="dialog" aria-modal="true" aria-labelledby="gdd-flow-title-label">
-        <div class="auth-modal-header">
-          <h3 id="gdd-flow-title-label" class="ai-refine-section-title">GDD Draft Generator</h3>
-          <button id="gdd-flow-close" type="button" class="hotkey-record-btn">Close</button>
-        </div>
-
-        <div class="gdd-mode-switch" role="group" aria-label="GDD workflow mode">
-          <button id="gdd-flow-mode-standard" type="button" class="hotkey-record-btn is-active">Standard</button>
-          <button id="gdd-flow-mode-advanced" type="button" class="hotkey-record-btn">Advanced</button>
-        </div>
-
-        <details id="gdd-flow-step-input" class="expander gdd-step" open>
-          <summary>1. Input</summary>
-          <div class="expander-body">
-            <span id="gdd-flow-runtime-summary" class="field-hint">Current runtime session is used as default input.</span>
-
-            <label class="field">
-              <span class="field-label">Draft title</span>
-              <input id="gdd-flow-title" type="text" placeholder="Game Design Document" />
-            </label>
-
-            <div class="gdd-template-box gdd-advanced-only">
-              <label class="field">
-                <span class="field-label">Template source (optional)</span>
-                <select id="gdd-flow-template-source">
-                  <option value="none">No external template</option>
-                  <option value="confluence">Confluence page URL</option>
-                  <option value="file">PDF/DOCX/TXT file</option>
-                </select>
-              </label>
-
-              <div id="gdd-flow-template-confluence-group" class="gdd-template-group" hidden>
-                <label class="field">
-                  <span class="field-label">Confluence page URL</span>
-                  <input id="gdd-flow-template-confluence-url" type="url" placeholder="https://your-site.atlassian.net/wiki/.../pages/12345/..." />
-                </label>
-                <button id="gdd-flow-template-confluence-load" type="button" class="hotkey-record-btn">Load from Confluence</button>
-              </div>
-
-              <div id="gdd-flow-template-file-group" class="gdd-template-group" hidden>
-                <label class="field">
-                  <span class="field-label">Template file</span>
-                  <input id="gdd-flow-template-file-path" type="text" placeholder="No file selected" readonly />
-                </label>
-                <div class="gdd-template-file-actions">
-                  <button id="gdd-flow-template-file-pick" type="button" class="hotkey-record-btn">Choose file</button>
-                  <button id="gdd-flow-template-file-load" type="button" class="hotkey-record-btn">Load file</button>
-                </div>
-              </div>
-
-              <span id="gdd-flow-template-meta" class="field-hint">No template loaded.</span>
-              <textarea id="gdd-flow-template-preview" class="gdd-template-preview" rows="8" placeholder="Template preview appears here..." readonly></textarea>
-            </div>
-          </div>
-        </details>
-
-        <details id="gdd-flow-step-drafting" class="expander gdd-step" open>
-          <summary>2. Drafting</summary>
-          <div class="expander-body">
-            <div class="gdd-flow-grid gdd-advanced-only">
-              <label class="field">
-                <span class="field-label">Preset</span>
-                <select id="gdd-flow-preset"></select>
-              </label>
-              <div class="field">
-                <span class="field-label">Preset recognition</span>
-                <button id="gdd-flow-detect-preset" type="button" class="hotkey-record-btn">Auto-detect Preset</button>
-              </div>
-            </div>
-
-            <label class="field gdd-advanced-only">
-              <span class="field-label">Chunk size</span>
-              <select id="gdd-flow-max-chunk">
-                <option value="2200">2200 chars</option>
-                <option value="3500" selected>3500 chars (recommended)</option>
-                <option value="5000">5000 chars</option>
-                <option value="7000">7000 chars</option>
-              </select>
-            </label>
-
-            <div class="auth-modal-actions">
-              <button id="gdd-flow-generate" type="button" class="hotkey-record-btn">Generate Draft</button>
-              <button id="gdd-flow-validate" type="button" class="hotkey-record-btn gdd-advanced-only">Validate</button>
-            </div>
-          </div>
-        </details>
-
-        <details id="gdd-flow-step-routing" class="expander gdd-step" open>
-          <summary>3. Target Routing</summary>
-          <div class="expander-body">
-            <div class="gdd-flow-grid">
-              <label class="field">
-                <span class="field-label">Confluence space key</span>
-                <input id="gdd-flow-space-key" type="text" placeholder="GAME" />
-              </label>
-              <label class="field gdd-advanced-only">
-                <span class="field-label">Parent page id (optional)</span>
-                <input id="gdd-flow-parent-page-id" type="text" placeholder="123456789" />
-              </label>
-            </div>
-            <label class="field gdd-advanced-only">
-              <span class="field-label">Target page id (optional)</span>
-              <input id="gdd-flow-target-page-id" type="text" placeholder="Leave empty to auto-create or title-match" />
-            </label>
-            <div class="auth-modal-actions gdd-advanced-only">
-              <button id="gdd-flow-suggest-target" type="button" class="hotkey-record-btn">Suggest Target</button>
-            </div>
-          </div>
-        </details>
-
-        <details id="gdd-flow-step-publish" class="expander gdd-step" open>
-          <summary>4. Publish &amp; Output</summary>
-          <div class="expander-body">
-            <span id="gdd-flow-status" class="field-hint">Uses the current runtime session as input.</span>
-            <div class="auth-modal-actions">
-              <button id="gdd-flow-one-click-publish" type="button" class="hotkey-record-btn">One-click Publish</button>
-              <button id="gdd-flow-publish" type="button" class="hotkey-record-btn gdd-advanced-only">Publish to Confluence</button>
-            </div>
-            <span class="field-hint">One-click uses route suggestion and asks for confirmation on low confidence.</span>
-            <a id="gdd-flow-publish-link" class="field-hint gdd-publish-link" href="#" target="_blank" rel="noopener" hidden>Open published page</a>
-
-            <textarea id="gdd-flow-output" class="gdd-output-preview" rows="12" placeholder="Draft output appears here..." readonly></textarea>
-
-            <div class="gdd-publish-box gdd-advanced-only">
-              <div class="gdd-queue-header">
-                <span class="field-label">Pending publish queue</span>
-                <button id="gdd-flow-queue-refresh" type="button" class="hotkey-record-btn">Refresh queue</button>
-              </div>
-              <div id="gdd-flow-queue-list" class="gdd-queue-list">
-                <div class="archive-empty">No pending publishes.</div>
-              </div>
-            </div>
-          </div>
-        </details>
       </div>
     </div>
   </body>

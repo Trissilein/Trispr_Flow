@@ -602,6 +602,8 @@ export interface OllamaSettings {
   runtime_path: string;
   runtime_version: string;
   runtime_target_version: string;
+  /** The target was picked in the runtime version list; only then may it stay older than the running runtime. */
+  runtime_target_explicit?: boolean;
   last_health_check: string | null;
 }
 
@@ -1013,6 +1015,99 @@ export interface OllamaPullError {
   error: string;
 }
 
+/** One row of `check_ollama_model_requirements` (Registry config blob `requires` vs. running runtime). */
+export interface OllamaModelRequirement {
+  name: string;
+  /** Minimum Ollama version the model needs; null for Hugging Face refs and unreadable manifests. */
+  requires: string | null;
+  runtime_version: string | null;
+  /** runtime >= requires; null when either side is not a strict x.y.z version. */
+  compatible: boolean | null;
+  detail?: string | null;
+}
+
+/** `verify_ollama_model`: functional check with the app's own request form. */
+export interface OllamaModelVerifyResult {
+  ok: boolean;
+  latency_ms: number;
+  load_ms: number;
+  sample?: string | null;
+  detail?: string | null;
+}
+
+/** `finalize_ollama_model_update`: the old build is only dropped after the new one passed. */
+export interface OllamaModelFinalizeResult {
+  verified: boolean;
+  restored: boolean;
+  /**
+   * The check could not finish (timeout, transport error, HTTP 5xx, Ollama gone): neither passed nor
+   * failed. The new build and the backup both stay; `detail` names the reason.
+   */
+  inconclusive?: boolean;
+  detail?: string | null;
+}
+
+/** `rollback_ollama_model_update`: removes the new build and restores the backed-up one. */
+export interface OllamaModelRollbackResult {
+  restored: boolean;
+  detail?: string | null;
+}
+
+/** What the local Ollama reports for an installed model (`get_ollama_model_details`, `/api/show`). */
+export interface OllamaLocalModelInfo {
+  license?: string | null;
+  capabilities?: string[];
+  family?: string | null;
+  parameter_size?: string | null;
+  quantization_level?: string | null;
+  format?: string | null;
+  context_length?: number | null;
+  architecture?: string | null;
+  parameter_count?: number | null;
+  base_model?: string | null;
+  requires?: string | null;
+  modified_at?: string | null;
+}
+
+/** What the model's public page says (Hugging Face API or Ollama library page). */
+export interface OllamaRemoteModelInfo {
+  source: "huggingface" | "ollama";
+  /** Hugging Face: repository created. The Ollama library has no release date. */
+  released_at?: string | null;
+  updated_at?: string | null;
+  downloads?: number | null;
+  /** Ollama shows rounded counts ("28.4M"). */
+  downloads_text?: string | null;
+  likes?: number | null;
+  license?: string | null;
+  pipeline_tag?: string | null;
+  languages?: string[];
+  base_model?: string | null;
+  description?: string | null;
+  gated?: boolean | null;
+}
+
+/** `get_ollama_model_details`: local data always, public data when online and not in strict local mode. */
+export interface OllamaModelDetails {
+  model: string;
+  local?: OllamaLocalModelInfo | null;
+  local_error?: string | null;
+  remote?: OllamaRemoteModelInfo | null;
+  remote_note?: string | null;
+  remote_cached?: boolean;
+  remote_stale?: boolean;
+  remote_fetched_at_ms?: number | null;
+}
+
+/** `replace_ollama_model`: verify the new model first, then switch settings and delete the old one. */
+export interface OllamaModelReplaceResult {
+  verified: boolean;
+  switched_active: boolean;
+  deleted_old: boolean;
+  latency_ms: number;
+  detail?: string | null;
+}
+
 export interface OllamaRuntimeDetectResult {
   found: boolean;
   is_serving: boolean;
@@ -1021,6 +1116,8 @@ export interface OllamaRuntimeDetectResult {
   version: string;
   managed_pid?: number | null;
   managed_alive?: boolean;
+  /** File-system truth: the selected target version's runtime folder exists with an ollama.exe. */
+  target_installed?: boolean;
 }
 
 export interface OllamaRuntimeVersionInfo {
@@ -1029,11 +1126,26 @@ export interface OllamaRuntimeVersionInfo {
   selected: boolean;
   installed: boolean;
   recommended: boolean;
+  /** Newest stable verified release in the fetched catalog. */
+  latest?: boolean;
   prerelease: boolean;
   installable: boolean;
   installable_reason?: string | null;
   release_name?: string | null;
   release_notes_summary?: string | null;
+  /** ISO timestamp the release was published on GitHub. */
+  released_at?: string | null;
+  /** Size of the Windows archive in bytes. */
+  size_bytes?: number | null;
+  /** When the runtime folder was installed on this machine (epoch ms). */
+  installed_at_ms?: number | null;
+}
+
+/** Answer of `delete_ollama_runtime_version`: a refusal is `deleted: false` with the reason in `detail`. */
+export interface OllamaRuntimeDeleteResult {
+  deleted: boolean;
+  freed_bytes: number;
+  detail?: string | null;
 }
 
 export interface OllamaRuntimeDownloadResult {

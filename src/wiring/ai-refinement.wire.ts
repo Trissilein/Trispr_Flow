@@ -58,26 +58,31 @@ import {
   autoStartLocalRuntimeIfNeeded,
   ensureLocalRuntimeReady,
   fetchOnlineVersionCatalog,
+  RUNTIME_CATALOG_UPDATED_EVENT,
   getOllamaRuntimeCardState,
   importOllamaModelFromLocalFile,
   refreshOllamaInstalledModels,
   refreshOllamaRuntimeVersionCatalog,
+  runRuntimeVersionAction,
   refreshOllamaRuntimeAndModels,
   refreshOllamaRuntimeState,
   renderOllamaModelManager,
   showOllamaRequiredModal,
   startOllamaRuntime,
-  useManagedOllamaRuntime,
-  useSystemOllamaRuntime,
   verifyOllamaRuntime,
 } from "../ollama-models";
 import { normalizeModelTag } from "../ollama-tag-utils";
+import {
+  DEFAULT_RUNTIME_VERSION,
+  RUNTIME_VERSION_ACTION_EVENT,
+  syncRuntimeTarget,
+  type RuntimeVersionActionId,
+} from "../ollama-runtime-versions";
 import { onChangePersist, scheduleSettingsRender } from "./wire-helpers";
 
 // ── Module-level constants ──────────────────────────────────────────────────
 
 const LOCAL_BACKENDS = ["ollama", "lm_studio", "oobabooga"] as const;
-const DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION = "0.20.2";
 const AI_REFINEMENT_MODULE_ID = "ai_refinement";
 const AI_REFINEMENT_MIGRATION_FLAG_KEY = "ai_refinement.migrated_legacy";
 
@@ -217,7 +222,7 @@ function ensureOnlineModeConstraints(notify: boolean): boolean {
 function isLaneControlTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   return Boolean(
-    target.closest("button,select,input,textarea,summary,details,label,a"),
+    target.closest("button,select,input,textarea,summary,details,label,a,.ollama-zebra-host"),
   );
 }
 
@@ -419,7 +424,7 @@ function ensureAIFallbackSettingsDefaults() {
       execution_mode: "local_primary",
       strict_local_mode: true,
       preserve_source_language: true,
-      model: "",
+      model: "gemma4:e4b",
       temperature: 0.3,
       max_tokens: 4000,
       low_latency_mode: false,
@@ -473,7 +478,8 @@ function ensureAIFallbackSettingsDefaults() {
         runtime_source: "manual",
         runtime_path: "",
         runtime_version: "",
-        runtime_target_version: DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION,
+        runtime_target_version: DEFAULT_RUNTIME_VERSION,
+        runtime_target_explicit: false,
         last_health_check: null,
       },
     };
@@ -486,7 +492,8 @@ function ensureAIFallbackSettingsDefaults() {
       runtime_source: "manual",
       runtime_path: "",
       runtime_version: "",
-      runtime_target_version: DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION,
+      runtime_target_version: DEFAULT_RUNTIME_VERSION,
+      runtime_target_explicit: false,
       last_health_check: null,
     };
   }
@@ -556,13 +563,10 @@ function ensureAIFallbackSettingsDefaults() {
   settings.providers.ollama.runtime_source ??= "manual";
   settings.providers.ollama.runtime_path ??= "";
   settings.providers.ollama.runtime_version ??= "";
-  settings.providers.ollama.runtime_target_version ??= DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION;
-  if (
-    settings.providers.ollama.runtime_version.trim()
-    && settings.providers.ollama.runtime_target_version === DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION
-  ) {
-    settings.providers.ollama.runtime_target_version = settings.providers.ollama.runtime_version.trim();
-  }
+  // Legacy default (0.20.2), empty target and a stale target nobody picked (older than the
+  // runtime in use) are fixed here; a pick in the version list stays as it is.
+  settings.providers.ollama.runtime_target_explicit ??= false;
+  syncRuntimeTarget(settings.providers.ollama);
   settings.providers.ollama.last_health_check ??= null;
   CLOUD_PROVIDER_IDS.forEach((provider) => {
     const providerSettings = getAIFallbackProviderSettings(provider);
@@ -1347,7 +1351,12 @@ export function wireAiRefinement(): void {
     renderAIFallbackSettingsUi();
   });
 
-  // Explicit GitHub fetch for version list — only on user request
+  // The automatic once-per-session catalog refresh finishes after the first render.
+  window.addEventListener(RUNTIME_CATALOG_UPDATED_EVENT, () => {
+    renderAIFallbackSettingsUi();
+  });
+
+  // Explicit GitHub fetch for version list (bypasses the 6 h cache)
   dom.aiFallbackFetchVersionsAction?.addEventListener("click", async () => {
     if (dom.aiFallbackFetchVersionsAction) {
       dom.aiFallbackFetchVersionsAction.disabled = true;
@@ -1369,59 +1378,16 @@ export function wireAiRefinement(): void {
     renderAIFallbackSettingsUi();
   });
 
-  dom.aiFallbackLocalRuntimeVersion?.addEventListener("change", async () => {
-    if (!settings || !dom.aiFallbackLocalRuntimeVersion) return;
-    const selected = dom.aiFallbackLocalRuntimeVersion.value.trim();
-    if (!selected) return;
-    settings.providers.ollama.runtime_target_version = selected;
-    await persistSettings();
-    renderAIFallbackSettingsUi();
-  });
-
-  // Runtime source toggle: managed ↔ system
-  dom.aiFallbackLocalRuntimeSource?.addEventListener("change", async () => {
-    if (!settings || !dom.aiFallbackLocalRuntimeSource) return;
-    const source = dom.aiFallbackLocalRuntimeSource.value;
+  // Row buttons of the runtime version list (Install / Switch to / Delete).
+  dom.aiFallbackRuntimeVersionList?.addEventListener(RUNTIME_VERSION_ACTION_EVENT, async (event) => {
+    if (!settings) return;
+    const { version, action } = (event as CustomEvent<{ version: string; action: RuntimeVersionActionId }>).detail;
     ensureAIFallbackSettingsDefaults();
     applyExecutionModeInSettings("local_primary");
-    await persistSettings();
-    const switchPromise =
-      source === "system"
-        ? useSystemOllamaRuntime()
-        : useManagedOllamaRuntime();
+    const actionPromise = runRuntimeVersionAction(version, action);
     renderAIFallbackSettingsUi();
-    await switchPromise;
+    await actionPromise;
     refreshAIUi();
-  });
-
-  dom.aiFallbackLocalBackendSelect?.addEventListener("change", async () => {
-    if (!settings || !dom.aiFallbackLocalBackendSelect) return;
-    const backend = dom.aiFallbackLocalBackendSelect.value as
-      | "ollama"
-      | "lm_studio"
-      | "oobabooga";
-    settings.ai_fallback.provider = backend;
-    // Render immediately so the UI reflects the new backend before the slow save.
-    renderAIFallbackSettingsUi();
-    await persistSettings();
-    // After save, re-render with the normalized settings from Rust.
-    renderAIFallbackSettingsUi();
-    // Trigger Ollama runtime refresh only when Ollama is selected.
-    if (backend === "ollama") {
-      void refreshOllamaRuntimeState({ force: false }).finally(() =>
-        renderAIFallbackSettingsUi(),
-      );
-    }
-  });
-
-  dom.aiFallbackLocalFallbackEndpoints?.addEventListener("change", async () => {
-    if (!settings || !dom.aiFallbackLocalFallbackEndpoints) return;
-    const raw = dom.aiFallbackLocalFallbackEndpoints.value;
-    settings.providers.ollama.fallback_endpoints = raw
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-    await persistSettings();
   });
 
   // ── OpenAI-compat backend (LM Studio / Oobabooga) config listeners ─────────

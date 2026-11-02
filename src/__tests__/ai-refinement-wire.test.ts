@@ -36,11 +36,6 @@ vi.hoisted(() => {
     <!-- AI fallback -->
     <input id="ai-fallback-enabled" type="checkbox" />
     <div id="ai-fallback-cloud-provider-list"></div>
-    <select id="ai-fallback-local-backend-select">
-      <option value="ollama">ollama</option>
-      <option value="lm_studio">lm_studio</option>
-      <option value="oobabooga">oobabooga</option>
-    </select>
     <input id="ai-fallback-temperature" type="range" min="0" max="1" step="0.01" value="0.3" />
     <span id="ai-fallback-temperature-value"></span>
     <input id="ai-fallback-preserve-language" type="checkbox" />
@@ -55,12 +50,7 @@ vi.hoisted(() => {
     <button id="ai-fallback-local-refresh-action"></button>
     <button id="ai-fallback-fetch-versions-action"></button>
     <span id="ai-fallback-fetch-versions-status"></span>
-    <select id="ai-fallback-local-runtime-version"><option value="0.20.2">0.20.2</option></select>
-    <select id="ai-fallback-local-runtime-source">
-      <option value="managed">managed</option>
-      <option value="system">system</option>
-    </select>
-    <textarea id="ai-fallback-local-fallback-endpoints"></textarea>
+    <div id="ai-fallback-runtime-version-list"></div>
     <input id="ai-fallback-compat-endpoint" value="http://127.0.0.1:1234" />
     <input id="ai-fallback-compat-api-key" value="" />
     <button id="ai-fallback-compat-fetch-models">Fetch models</button>
@@ -281,8 +271,6 @@ beforeEach(() => {
   if (dom.whisperInputLanguageSelect)
     dom.whisperInputLanguageSelect.value = "auto";
   if (dom.aiFallbackEnabled) dom.aiFallbackEnabled.checked = false;
-  if (dom.aiFallbackLocalBackendSelect)
-    dom.aiFallbackLocalBackendSelect.value = "ollama";
   if (dom.aiFallbackTemperature) dom.aiFallbackTemperature.value = "0.3";
   if (dom.aiFallbackPreserveLanguage)
     dom.aiFallbackPreserveLanguage.checked = true;
@@ -522,53 +510,30 @@ describe("temperature slider", () => {
   });
 });
 
-// ── Local backend switching ──────────────────────────────────────────────────
+// ── Removed provider / source / endpoint controls ────────────────────────────
 
-describe("local backend switching", () => {
-  it("aiFallbackLocalBackendSelect: switching to lm_studio updates provider", async () => {
+describe("provider, runtime source and fallback endpoint controls are gone from the page", () => {
+  it("the page has none of them and the wiring still comes up", () => {
+    expect(document.getElementById("ai-fallback-local-backend-select")).toBeNull();
+    expect(document.getElementById("ai-fallback-local-runtime-source")).toBeNull();
+    expect(document.getElementById("ai-fallback-local-fallback-endpoints")).toBeNull();
+    expect(() => wireOnce()).not.toThrow();
+  });
+
+  it("a saved LM Studio provider, runtime source and fallback endpoints are left exactly as saved", async () => {
     wireOnce();
-    dom.aiFallbackLocalBackendSelect!.value = "lm_studio";
-    dom.aiFallbackLocalBackendSelect!.dispatchEvent(new Event("change"));
+    const saved = freshSettings();
+    saved.ai_fallback.provider = "lm_studio";
+    saved.providers.ollama.runtime_source = "system";
+    saved.providers.ollama.fallback_endpoints = ["http://127.0.0.1:11435"];
+    setSettings(saved);
+    dom.aiFallbackTemperature!.dispatchEvent(new Event("change"));
     await vi.waitFor(() =>
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        "save_settings",
-        expect.anything(),
-      ),
+      expect(mockedInvoke).toHaveBeenCalledWith("save_settings", expect.anything()),
     );
     expect(settings?.ai_fallback.provider).toBe("lm_studio");
-  });
-
-  it("aiFallbackLocalBackendSelect: switching to oobabooga updates provider", async () => {
-    wireOnce();
-    dom.aiFallbackLocalBackendSelect!.value = "oobabooga";
-    dom.aiFallbackLocalBackendSelect!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() =>
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        "save_settings",
-        expect.anything(),
-      ),
-    );
-    expect(settings?.ai_fallback.provider).toBe("oobabooga");
-  });
-
-  it("aiFallbackLocalBackendSelect: switching back to ollama triggers runtime refresh", async () => {
-    wireOnce();
-    setSettings({
-      ...freshSettings(),
-      ai_fallback: { ...freshSettings().ai_fallback, provider: "lm_studio" },
-    });
-    mockedInvoke.mockResolvedValue({ found: false, healthy: false });
-    dom.aiFallbackLocalBackendSelect!.value = "ollama";
-    dom.aiFallbackLocalBackendSelect!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() =>
-      expect(settings?.ai_fallback.provider).toBe("ollama"),
-    );
-    await vi.waitFor(() =>
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        "save_settings",
-        expect.anything(),
-      ),
-    );
+    expect(settings?.providers.ollama.runtime_source).toBe("system");
+    expect(settings?.providers.ollama.fallback_endpoints).toEqual(["http://127.0.0.1:11435"]);
   });
 });
 

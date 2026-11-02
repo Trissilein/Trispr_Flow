@@ -39,16 +39,12 @@ vi.hoisted(() => {
     <button id="ai-fallback-local-verify-action"></button>
     <button id="ai-fallback-local-refresh-action"></button>
     <button id="ai-fallback-fetch-versions-action"></button>
-    <select id="ai-fallback-local-runtime-source"><option value="per_user_zip">per_user_zip</option></select>
-    <select id="ai-fallback-local-runtime-version"></select>
-    <div id="ai-fallback-local-runtime-version-note"></div>
-    <select id="ai-fallback-local-backend-select"><option value="ollama">ollama</option><option value="lm_studio">lm_studio</option><option value="oobabooga">oobabooga</option></select>
+    <div id="ai-fallback-runtime-version-list"></div>
     <div id="ai-fallback-local-lane-title-text"></div>
     <div id="ai-fallback-local-advanced"></div>
     <div id="ai-fallback-compat-config"></div>
     <div id="ai-fallback-ollama-managed-note"></div>
     <button id="ai-fallback-lm-studio-install-action"></button>
-    <textarea id="ai-fallback-local-fallback-endpoints"></textarea>
     <div id="ai-fallback-compat-guide"></div>
     <input id="ai-fallback-compat-endpoint" />
     <div id="ai-fallback-compat-endpoint-hint"></div>

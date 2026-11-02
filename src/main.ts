@@ -164,6 +164,7 @@ import {
   autoStartLocalRuntimeIfNeeded,
   clearActiveOllamaPull,
   getOllamaRuntimeCardState,
+  isOllamaModelOperationRunning,
   isRuntimeBackgroundPollingActive,
   renderOllamaModelManager,
   refreshOllamaInstalledModels,
@@ -1131,16 +1132,19 @@ async function bootstrap() {
       clearActiveOllamaPull(event.payload.model);
       ollamaPullProgress.delete(event.payload.model);
       renderDownloadProgressPopup();
-      showToast({
-        type: "success",
-        title: "Model downloaded",
-        message: `${event.payload.model} is installed locally.`,
-        actionLabel: "Activate now",
-        onAction: async () => {
-          await activateOllamaModel(event.payload.model);
-          renderAIFallbackSettingsUi();
-        },
-      });
+      // A safe update/replace owns its pull and reports the outcome itself.
+      if (!isOllamaModelOperationRunning(event.payload.model)) {
+        showToast({
+          type: "success",
+          title: "Model downloaded",
+          message: `${event.payload.model} is installed locally.`,
+          actionLabel: "Activate now",
+          onAction: async () => {
+            await activateOllamaModel(event.payload.model);
+            renderAIFallbackSettingsUi();
+          },
+        });
+      }
       await refreshOllamaRuntimeState({ force: true });
       if (getOllamaRuntimeCardState().healthy) {
         await refreshOllamaInstalledModels();
@@ -1152,11 +1156,13 @@ async function bootstrap() {
       clearActiveOllamaPull(event.payload.model);
       ollamaPullProgress.delete(event.payload.model);
       renderDownloadProgressPopup();
-      showToast({
-        type: "error",
-        title: "Download Failed",
-        message: `${event.payload.model}: ${event.payload.error}`,
-      });
+      if (!isOllamaModelOperationRunning(event.payload.model)) {
+        showToast({
+          type: "error",
+          title: "Download Failed",
+          message: `${event.payload.model}: ${event.payload.error}`,
+        });
+      }
       renderOllamaModelManager();
       renderAIFallbackSettingsUi();
     }),

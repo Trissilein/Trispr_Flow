@@ -79,7 +79,7 @@ impl Default for AIFallbackSettings {
         let model = default_models_for_provider(&provider)
             .into_iter()
             .next()
-            .unwrap_or_default();
+            .unwrap_or_else(|| "gemma4:e4b".to_string());
         Self {
             enabled: false,
             provider,
@@ -272,6 +272,9 @@ pub struct OllamaSettings {
     pub runtime_path: String,
     pub runtime_version: String,
     pub runtime_target_version: String,
+    /// The user picked `runtime_target_version` in the version list (Install / Switch to). Only
+    /// then may it stay older than the running runtime; an implicit target is lifted instead.
+    pub runtime_target_explicit: bool,
     pub last_health_check: Option<String>,
 }
 
@@ -285,13 +288,35 @@ impl Default for OllamaSettings {
             runtime_source: "manual".to_string(),
             runtime_path: String::new(),
             runtime_version: String::new(),
-            runtime_target_version: "0.20.2".to_string(),
+            runtime_target_version: "0.40.13".to_string(),
+            runtime_target_explicit: false,
             last_health_check: None,
         }
     }
 }
 
 impl OllamaSettings {
+    /// A target nobody chose that is older than the runtime we have recorded as running moves up
+    /// to that runtime, so the UI never offers a downgrade the user did not ask for. Managed
+    /// runtimes only: the target is meaningless for a system or manual Ollama. True when changed.
+    pub fn heal_stale_runtime_target(&mut self) -> bool {
+        if self.runtime_target_explicit || self.runtime_source != "per_user_zip" {
+            return false;
+        }
+        let running = self.runtime_version.trim().trim_start_matches('v');
+        let stale = matches!(
+            (
+                crate::ollama_runtime::parse_stable_semver(&self.runtime_target_version),
+                crate::ollama_runtime::parse_stable_semver(running),
+            ),
+            (Some(target), Some(running)) if target < running
+        );
+        if stale {
+            self.runtime_target_version = running.to_string();
+        }
+        stale
+    }
+
     fn normalize(&mut self) {
         if self.endpoint.trim().is_empty() {
             self.endpoint = "http://127.0.0.1:11434".to_string();
@@ -312,9 +337,16 @@ impl OllamaSettings {
         {
             self.runtime_source = "manual".to_string();
         }
-        if self.runtime_target_version.trim().is_empty() {
-            self.runtime_target_version = "0.20.2".to_string();
+        // Targets that older releases wrote as their default are not a choice the user made.
+        const LEGACY_RUNTIME_TARGETS: [&str; 1] = ["0.20.2"];
+        let target = self.runtime_target_version.trim();
+        if target.is_empty()
+            || (!self.runtime_target_explicit && LEGACY_RUNTIME_TARGETS.contains(&target))
+        {
+            self.runtime_target_version = "0.40.13".to_string();
+            self.runtime_target_explicit = false;
         }
+        self.heal_stale_runtime_target();
     }
 }
 

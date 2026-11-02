@@ -149,14 +149,19 @@ use crate::transcription::{
     stop_transcribe_monitor_and_release_whisper, toggle_transcribe_state,
 };
 pub(crate) use ai_fallback::commands::{
-    clear_provider_api_key, delete_ollama_model, detect_ollama_runtime, download_ollama_runtime,
+    check_ollama_model_updates, clear_provider_api_key, delete_ollama_model, detect_ollama_runtime, download_ollama_runtime,
     fetch_available_models, fetch_ollama_models_with_size, fetch_ollama_online_versions,
     get_ollama_model_info, import_ollama_model_from_file, install_lm_studio,
     install_ollama_runtime, list_ollama_runtime_versions, ping_refinement_model, pull_ollama_model,
     purge_gpu_memory, refine_transcript, save_ollama_endpoint, save_provider_api_key,
     set_strict_local_mode, start_ollama_runtime, stop_ollama_runtime, test_provider_connection,
     unload_ollama_model, unload_ollama_model_impl, verify_ollama_runtime, verify_provider_auth,
-    warmup_ollama_model_impl,
+    warmup_ollama_model, warmup_ollama_model_impl,
+};
+pub(crate) use ai_fallback::model_info::{get_ollama_model_details, open_model_page};
+pub(crate) use ai_fallback::model_verify::{
+    backup_ollama_model, check_ollama_model_requirements, finalize_ollama_model_update,
+    replace_ollama_model, rollback_ollama_model_update, verify_ollama_model,
 };
 pub(crate) use runtime_commands::{
     get_dependency_preflight_status, get_runtime_diagnostics, get_runtime_metrics_snapshot,
@@ -4845,6 +4850,16 @@ pub fn run() {
             open_recordings_directory,
             open_log_directory,
             fetch_available_models,
+            check_ollama_model_updates,
+            check_ollama_model_requirements,
+            get_ollama_model_details,
+            open_model_page,
+            warmup_ollama_model,
+            verify_ollama_model,
+            backup_ollama_model,
+            finalize_ollama_model_update,
+            rollback_ollama_model_update,
+            replace_ollama_model,
             fetch_ollama_models_with_size,
             test_provider_connection,
             save_provider_api_key,
@@ -4854,6 +4869,7 @@ pub fn run() {
             detect_ollama_runtime,
             list_ollama_runtime_versions,
             fetch_ollama_online_versions,
+            ollama_runtime::delete_ollama_runtime_version,
             download_ollama_runtime,
             install_ollama_runtime,
             start_ollama_runtime,

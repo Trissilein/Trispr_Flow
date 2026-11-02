@@ -2,7 +2,7 @@ use super::error::AIError;
 use super::keyring as ai_fallback_keyring;
 use super::provider::{
     default_models_for_provider, is_local_ollama_endpoint, is_ssrf_target, list_ollama_models,
-    list_ollama_models_with_size, ollama_endpoint_candidates, ping_ollama, ping_ollama_quick,
+    ollama_endpoint_candidates, ping_ollama, ping_ollama_quick,
     ProviderFactory,
 };
 use super::{check_strict_local_mode, prepare_refinement, update_and_persist_settings};
@@ -134,14 +134,68 @@ pub(crate) async fn fetch_ollama_models_with_size(
 }
 
 fn fetch_ollama_models_with_size_impl(endpoint: String) -> Result<Vec<serde_json::Value>, String> {
-    let models = list_ollama_models_with_size(&endpoint);
+    let models = super::provider::list_ollama_models_detailed(&endpoint);
     if models.is_empty() {
         ping_ollama_quick(&endpoint).map_err(|e| e.to_string())?;
     }
-    Ok(models
-        .into_iter()
-        .map(|(name, size_bytes)| serde_json::json!({ "name": name, "size_bytes": size_bytes }))
-        .collect())
+    Ok(models)
+}
+
+/// Compares installed models with what the public registry currently serves for the
+/// same tag. Makes small manifest requests to registry.ollama.ai / huggingface.co only.
+#[tauri::command]
+pub(crate) async fn check_ollama_model_updates(
+    state: State<'_, AppState>,
+    models: Vec<super::model_registry::ModelUpdateCheckInput>,
+) -> Result<Vec<super::model_registry::ModelUpdateStatus>, String> {
+    let endpoint = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        check_strict_local_mode(&settings)?;
+        settings.providers.ollama.endpoint.clone()
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        // The digest a runtime lists for a model depends on the runtime version; the weights
+        // layer does not. Collect the local blob digests so "current" is decided on weights.
+        let enriched = models
+            .into_iter()
+            .map(|mut model| {
+                model.local_layers = fetch_local_layer_digests(&endpoint, &model.name);
+                model
+            })
+            .collect();
+        super::model_registry::check_model_updates(enriched)
+    })
+    .await
+    .map_err(|e| format!("Model update check failed: {}", e))
+}
+
+/// Blob digests of a local model (from `/api/show`). Empty when the lookup fails; the
+/// caller then falls back to the manifest digest.
+fn fetch_local_layer_digests(endpoint: &str, model: &str) -> Vec<String> {
+    let agent = ureq::builder()
+        .timeout_connect(std::time::Duration::from_secs(2))
+        .timeout_read(std::time::Duration::from_secs(5))
+        .build();
+    for candidate in ollama_endpoint_candidates(endpoint) {
+        let url = format!("{}/api/show", candidate);
+        let Ok(response) = agent
+            .post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(serde_json::json!({ "model": model }))
+        else {
+            continue;
+        };
+        let Ok(json) = response.into_json::<serde_json::Value>() else {
+            continue;
+        };
+        return super::model_registry::parse_modelfile_blob_digests(
+            json["modelfile"].as_str().unwrap_or(""),
+        );
+    }
+    Vec::new()
 }
 
 #[tauri::command]
@@ -494,15 +548,24 @@ pub(crate) async fn ping_refinement_model(
     Ok(result.is_ok())
 }
 
+/// Takes `model` out of the set of running pulls. A lock that a panicking thread poisoned is
+/// recovered (like everywhere else): skipping it would leave the entry in place and the model
+/// "already in progress" until the app restarts.
+pub(super) fn release_pull(pulls: &std::sync::Mutex<std::collections::HashSet<String>>, model: &str) {
+    pulls
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(model);
+}
+
 #[tauri::command]
-pub(crate) fn pull_ollama_model(
+pub(crate) async fn pull_ollama_model(
     app: AppHandle,
     state: State<'_, AppState>,
     model: String,
 ) -> Result<(), String> {
-    use super::provider::{
-        precheck_ollama_registry_model_tag, pull_ollama_model_inner, validate_ollama_model_name,
-    };
+    use super::model_registry::precheck_model_ref;
+    use super::provider::{pull_ollama_model_inner, validate_ollama_model_name};
 
     validate_ollama_model_name(&model)?;
 
@@ -533,7 +596,21 @@ pub(crate) fn pull_ollama_model(
         settings.providers.ollama.endpoint.clone()
     };
 
-    if let Err(error) = precheck_ollama_registry_model_tag(&model) {
+    // Registry/runtime lookups are network calls: keep them off the command thread. Besides the
+    // existence precheck, refuse before any download when the running runtime is provably too
+    // old for the model (the registry would answer the pull with HTTP 412 only afterwards).
+    let precheck = {
+        let model = model.clone();
+        let endpoint = endpoint.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            precheck_model_ref(&model)?;
+            super::model_verify::ensure_runtime_supports_model(&endpoint, &model)
+        })
+        .await
+        .map_err(|e| format!("Model precheck task failed: {}", e))
+        .and_then(|result| result)
+    };
+    if let Err(error) = precheck {
         let mut pulls = state
             .ollama_pulls
             .lock()
@@ -548,9 +625,7 @@ pub(crate) fn pull_ollama_model(
     }
     impl Drop for PullGuard {
         fn drop(&mut self) {
-            if let Ok(mut pulls) = self.app.state::<AppState>().ollama_pulls.lock() {
-                pulls.remove(&self.model);
-            }
+            release_pull(&self.app.state::<AppState>().ollama_pulls, &self.model);
         }
     }
 
@@ -589,8 +664,13 @@ pub(crate) async fn delete_ollama_model(
         .map_err(|e| format!("Delete Ollama model task failed: {}", e))?
 }
 
-fn delete_ollama_model_impl(endpoint: String, model: String) -> Result<(), String> {
+pub(super) fn delete_ollama_model_impl(endpoint: String, model: String) -> Result<(), String> {
     use super::provider::ollama_endpoint_candidates;
+
+    // Unload first: on Windows the runner loads without mmap, so /api/delete succeeds on a
+    // loaded model but leaves a runner that can no longer be unloaded (404) until the
+    // server restarts. Best effort; a model that is not loaded is simply a no-op.
+    let _ = unload_ollama_model_impl(&endpoint, &model);
 
     let body = serde_json::json!({ "model": model.clone() });
 
@@ -744,6 +824,30 @@ pub(crate) fn unload_ollama_model_impl(endpoint: &str, model: &str) -> Result<()
     ))
 }
 
+/// Loads `model` with the same runner options refinement uses, so the first dictation after
+/// a download or switch does not pay the one-time load (measured: 7-28 s on a fresh pull).
+#[tauri::command]
+pub(crate) async fn warmup_ollama_model(
+    state: State<'_, AppState>,
+    model: String,
+) -> Result<(), String> {
+    super::provider::validate_ollama_model_name(&model)?;
+    let (endpoint, num_ctx) = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        check_strict_local_mode(&settings)?;
+        (
+            settings.providers.ollama.endpoint.clone(),
+            super::provider::num_ctx_for_tier(settings.ai_fallback.adaptive_num_ctx_tier),
+        )
+    };
+    tauri::async_runtime::spawn_blocking(move || warmup_ollama_model_impl(&endpoint, &model, num_ctx))
+        .await
+        .map_err(|e| format!("Model warmup failed: {}", e))?
+}
+
 pub(crate) fn warmup_ollama_model_impl(
     endpoint: &str,
     model: &str,
@@ -832,7 +936,9 @@ pub(crate) async fn stop_ollama_runtime(app: AppHandle) -> Result<(), String> {
                 .clone();
             settings.providers.ollama.endpoint
         };
-        let runtime_reachable = ping_ollama_quick(&endpoint).is_ok();
+        // Right after the kill: the cached quick ping would still say "running" for up to 3 s.
+        super::provider::reset_quick_ping_cache();
+        let runtime_reachable = super::provider::ping_ollama_quick_fresh(&endpoint).is_ok();
         update_startup_status(&app, state.inner(), |status| {
             status.ollama_ready = runtime_reachable;
             status.ollama_starting = false;
@@ -887,7 +993,30 @@ pub(crate) fn install_lm_studio() -> Result<(), String> {
 
 #[cfg(test)]
 mod unload_tests {
-    use super::unload_ollama_model_impl;
+    use super::{release_pull, unload_ollama_model_impl};
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn a_finished_pull_is_released_even_when_the_pull_set_lock_is_poisoned() {
+        let pulls = Arc::new(Mutex::new(HashSet::from(["gemma4:e4b".to_string()])));
+        let poisoner = pulls.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.lock().unwrap();
+            panic!("a thread died while holding the pull set");
+        })
+        .join();
+        assert!(pulls.is_poisoned());
+
+        release_pull(&pulls, "gemma4:e4b");
+
+        assert!(
+            pulls.lock().unwrap_or_else(|p| p.into_inner()).is_empty(),
+            "the model must not stay 'already in progress' for the rest of the session"
+        );
+        // releasing something that is not there is a no-op
+        release_pull(&pulls, "other:1");
+    }
 
     #[test]
     fn unload_reports_when_no_ollama_endpoint_accepts_the_release_request() {

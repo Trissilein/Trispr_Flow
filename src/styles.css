@@ -5577,6 +5577,78 @@ input[type="range"]:focus-visible {
   border: 1px solid rgba(168, 85, 247, 0.3);
 }
 
+/* Model status chips: current / outdated / local build, runtime fit, verified working. */
+.qwen-card-badge--update-current,
+.qwen-card-badge--functional,
+.qwen-card-badge--runtime-ok {
+  background: rgba(var(--accent-2-rgb), 0.12);
+  color: var(--accent-2-bright);
+  border: 1px solid rgba(var(--accent-2-rgb), 0.3);
+}
+
+.qwen-card-badge--functional {
+  background: rgba(74, 222, 128, 0.16);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.4);
+}
+
+.qwen-card-badge--update-outdated {
+  background: rgba(245, 179, 66, 0.15);
+  color: #f5b342;
+  border: 1px solid rgba(245, 179, 66, 0.35);
+}
+
+.qwen-card-badge--needs-runtime {
+  background: rgba(251, 113, 133, 0.14);
+  color: #fb7185;
+  border: 1px solid rgba(251, 113, 133, 0.38);
+}
+
+.qwen-card-badge--update-local {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--muted);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+}
+
+.qwen-card-meta--details {
+  color: var(--muted);
+  font-family: "Space Grotesk", monospace;
+}
+
+.qwen-card-hint--outdated,
+.qwen-card-hint--runtime {
+  font-weight: 600;
+}
+
+.qwen-card-hint--outdated {
+  color: #f5b342;
+}
+
+.qwen-card-hint--runtime {
+  color: #fb7185;
+}
+
+/* An update whose functional check could not finish: both builds exist, the user decides. */
+.qwen-card-hint--check {
+  color: #f5b342;
+}
+
+.qwen-card-badge--check-pending {
+  background: rgba(245, 179, 66, 0.15);
+  color: #f5b342;
+  border: 1px solid rgba(245, 179, 66, 0.35);
+}
+
+.ollama-installed-stale {
+  margin: 0 0 6px;
+}
+
+.qwen-card-note {
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
 .qwen-card-desc {
   font-size: 0.72rem;
   color: var(--muted);
@@ -7206,4 +7278,476 @@ input[type="range"]:focus-visible {
   max-height: 420px;
   border-radius: 4px;
   background: #000;
+}
+
+/* ── Runtime version list (Zebra list, src/ollama-zebra-list.ts) ───────────── */
+.ai-runtime-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ai-runtime-versions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ollama-zebra-host {
+  min-width: 0;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.ollama-zebra-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.76rem;
+}
+
+.ollama-zebra-col-actions {
+  width: 12.5rem;
+}
+
+.ollama-zebra-th {
+  padding: 5px 10px;
+  text-align: left;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.035);
+  border-bottom: 1px solid var(--stroke);
+}
+
+.ollama-zebra-end {
+  text-align: right;
+}
+
+.ollama-zebra-row.is-odd,
+.ollama-zebra-note-row.is-odd {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.ollama-zebra-row.is-even,
+.ollama-zebra-note-row.is-even {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ollama-zebra-row:hover {
+  background: rgba(var(--accent-2-bright-rgb), 0.08);
+}
+
+.ollama-zebra-row.is-current > .ollama-zebra-cell:first-child,
+.ollama-zebra-note-row.is-current > .ollama-zebra-note {
+  box-shadow: inset 3px 0 0 var(--accent-2-bright);
+}
+
+.ollama-zebra-cell {
+  padding: 6px 10px;
+  color: var(--ink-soft);
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.ollama-zebra-row.has-note > .ollama-zebra-cell {
+  padding-bottom: 2px;
+}
+
+.ollama-zebra-cell:first-child {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ollama-zebra-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  vertical-align: middle;
+}
+
+.ollama-zebra-chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.ollama-zebra-chip--neutral {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--ink-soft);
+}
+
+.ollama-zebra-chip--ok {
+  background: rgba(74, 222, 128, 0.14);
+  border-color: rgba(74, 222, 128, 0.4);
+  color: #86efac;
+}
+
+.ollama-zebra-chip--accent {
+  background: rgba(245, 179, 66, 0.15);
+  border-color: rgba(245, 179, 66, 0.42);
+  color: var(--accent-3);
+}
+
+.ollama-zebra-chip--info {
+  background: rgba(var(--accent-2-bright-rgb), 0.14);
+  border-color: rgba(var(--accent-2-bright-rgb), 0.4);
+  color: var(--accent-2-bright);
+}
+
+.ollama-zebra-chip--warn {
+  background: rgba(168, 85, 247, 0.12);
+  border-color: rgba(168, 85, 247, 0.42);
+  color: #d8b4fe;
+}
+
+.ollama-zebra-chip--danger {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.42);
+  color: #fca5a5;
+}
+
+.ollama-zebra-actions {
+  white-space: nowrap;
+}
+
+.ollama-zebra-btn {
+  min-width: 0;
+  margin-left: 6px;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+}
+
+.ollama-zebra-btn--primary {
+  border-color: rgba(var(--accent-2-bright-rgb), 0.5);
+  color: var(--accent-2-bright);
+}
+
+.ollama-zebra-btn--danger {
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fca5a5;
+}
+
+.ollama-zebra-btn.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ollama-zebra-btn:focus-visible {
+  outline: 2px solid var(--accent-2-bright);
+  outline-offset: 1px;
+}
+
+.ollama-zebra-note {
+  padding: 0 10px 6px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.ollama-zebra-note--warn {
+  color: #ffb84d;
+}
+
+.ollama-zebra-note--error {
+  color: #fca5a5;
+}
+
+.ollama-zebra-empty {
+  margin: 0;
+  padding: 12px;
+  text-align: center;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+/* ── Model list (Zebra list of collapsible rows, src/ollama-model-list.ts) ──── */
+.ollama-model-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.ollama-model-rows > .ollama-model-row {
+  padding: 0;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.ollama-model-rows > .ollama-model-row.is-even {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ollama-model-rows > .ollama-model-row:hover {
+  background: rgba(var(--accent-2-bright-rgb), 0.08);
+}
+
+.ollama-model-rows > .ollama-model-row[data-state="active"] {
+  border-left-color: var(--accent-2-bright);
+}
+
+.ollama-model-rows > .ollama-model-row[data-state="missing"] {
+  border-left-color: rgba(251, 113, 133, 0.6);
+}
+
+.ollama-model-rows > .ollama-model-row[data-state="downloading"] {
+  border-left-color: rgba(245, 179, 66, 0.6);
+}
+
+.ollama-model-rows {
+  container-type: inline-size;
+}
+
+.ollama-model-row-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 6.2rem 3.8rem 20.5rem;
+  grid-template-areas: "main source size actions";
+  align-items: center;
+  gap: 4px 12px;
+  padding: 7px 12px 7px 9px;
+}
+
+.ollama-model-main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ollama-model-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 1px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ollama-model-toggle:focus-visible,
+.ollama-model-link:focus-visible,
+.ollama-model-row .qwen-card-btn:focus-visible {
+  outline: 2px solid var(--accent-2-bright);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.ollama-model-chevron {
+  flex: 0 0 auto;
+  width: 14px;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  text-align: center;
+  transition: transform 0.15s ease;
+}
+
+.ollama-model-toggle[aria-expanded="true"] .ollama-model-chevron {
+  transform: rotate(90deg);
+  color: var(--accent-2-bright);
+}
+
+.ollama-model-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ollama-model-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  min-width: 0;
+  padding-left: 22px;
+}
+
+.ollama-model-tag {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  background: none;
+  font-size: 0.66rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ollama-model-source {
+  grid-area: source;
+  font-size: 0.68rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ollama-model-size {
+  grid-area: size;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ollama-model-chips,
+.ollama-model-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.ollama-model-actions {
+  grid-area: actions;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* A narrow list (small window, side panel): the actions move under the name. */
+@container (max-width: 760px) {
+  .ollama-model-row-head {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-areas:
+      "main main main"
+      "source size actions";
+  }
+}
+
+.ollama-model-row .qwen-card-btn {
+  white-space: nowrap;
+}
+
+.ollama-model-row .qwen-card-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ollama-model-row .qwen-card-btn--loading:disabled {
+  opacity: 1;
+  padding-left: 10px;
+}
+
+.ollama-model-hint {
+  margin: 0;
+  padding: 0 12px 6px 34px;
+  overflow-wrap: anywhere;
+}
+
+.ollama-model-row > .qwen-card-progress {
+  margin: 0 12px 8px 34px;
+}
+
+.ollama-model-panel {
+  padding: 8px 12px 12px 34px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.ollama-model-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px 20px;
+  margin: 0 0 8px;
+}
+
+.ollama-model-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.ollama-model-fact-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ollama-model-fact-value {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.ollama-model-caps {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ollama-model-cap {
+  padding: 1px 7px;
+  border: 1px solid rgba(var(--accent-2-rgb), 0.35);
+  border-radius: 999px;
+  background: rgba(var(--accent-2-rgb), 0.1);
+  color: var(--accent-2-bright);
+  font-size: 0.66rem;
+  font-weight: 600;
+}
+
+.ollama-model-about {
+  max-width: 72ch;
+  margin: 4px 0 6px;
+  overflow-wrap: anywhere;
+}
+
+.ollama-model-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 6px 0 2px;
+}
+
+.ollama-model-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-2-bright);
+  font: inherit;
+  font-size: 0.74rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.ollama-model-link:disabled {
+  color: var(--muted);
+  cursor: default;
+  text-decoration: none;
+}
+
+.ollama-model-note {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ollama-model-chevron {
+    transition: none;
+  }
 }

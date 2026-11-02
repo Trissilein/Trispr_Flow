@@ -1,8 +1,13 @@
 pub mod commands;
 pub mod error;
 pub mod keyring;
+pub mod model_info;
+pub mod model_registry;
+pub mod model_verify;
 pub mod models;
 pub mod provider;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 use crate::state::{save_settings_file, AppState, Settings};
 use crate::{
@@ -26,7 +31,13 @@ where
     F: FnOnce(&mut Settings) -> Result<(), String>,
 {
     let snapshot = {
-        let mut settings = state.settings.write().map_err(|error| error.to_string())?;
+        // A poisoned lock is recovered like at every other settings access; failing here would
+        // make every later settings change (model switch, update, rollback) fail for the rest
+        // of the session.
+        let mut settings = state
+            .settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         f(&mut settings)?;
         settings.clone()
     };

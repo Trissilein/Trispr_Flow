@@ -7,6 +7,13 @@ import {
   getOllamaRuntimeVersionCatalog,
   isOnlineVersionFetchInProgress,
 } from "../ollama-models";
+import {
+  RUNTIME_VERSION_ACTION_EVENT,
+  RUNTIME_VERSION_COLUMNS,
+  buildRuntimeVersionRows,
+  syncRuntimeTarget,
+} from "../ollama-runtime-versions";
+import { renderZebraList } from "../ollama-zebra-list";
 import { traceFrontendWarn } from "../frontend-trace";
 import { syncRefinementPipelineGraphFromSettings } from "../refinement-pipeline-graph";
 import {
@@ -500,20 +507,11 @@ function renderPromptPresetCards(
 
 let aiRuntimeStateDriftLogged = false;
 
-const DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION = "0.20.2";
-
-function syncOllamaRuntimeTargetWithInstalledRuntime(): void {
+function syncOllamaRuntimeTargetWithInstalledRuntime(runningVersion?: string | null): void {
   if (!settings?.providers?.ollama) return;
-  const ollama = settings.providers.ollama;
-  const installedVersion = ollama.runtime_version?.trim() || "";
-  if (!installedVersion) {
-    ollama.runtime_target_version ||= DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION;
-    return;
-  }
-  const targetVersion = ollama.runtime_target_version?.trim() || "";
-  if (!targetVersion || targetVersion === DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION) {
-    ollama.runtime_target_version = installedVersion;
-  }
+  // Legacy default (0.20.2), empty target, and a target nobody picked that is older than the
+  // running runtime (never a downgrade offer). A pick in the version list stays as it is.
+  syncRuntimeTarget(settings.providers.ollama, runningVersion);
 }
 
 export function __resetForTesting(): void {
@@ -578,7 +576,7 @@ export function renderAIFallbackSettingsUi() {
   settings.postproc_llm_provider = provider === "ollama" ? "ollama" : provider;
 
   const runtimeCardState = getOllamaRuntimeCardState();
-  const runtimeVersionOptions = getOllamaRuntimeVersionCatalog();
+  syncOllamaRuntimeTargetWithInstalledRuntime(runtimeCardState.version);
   const runtimeStage = runtimeDiagnostics?.ollama?.spawn_stage?.trim() || "";
   const runtimeHealthy =
     runtimeCardState.healthy
@@ -604,7 +602,6 @@ export function renderAIFallbackSettingsUi() {
   } else {
     aiRuntimeStateDriftLogged = false;
   }
-  let selectedRuntimeEntry: (typeof runtimeVersionOptions)[number] | null = null;
 
   if (dom.aiFallbackEnabled) {
     dom.aiFallbackEnabled.checked = Boolean(ai?.enabled);
@@ -657,6 +654,15 @@ export function renderAIFallbackSettingsUi() {
     dom.aiFallbackOnlineStatusBadge.classList.remove("is-verified");
     dom.aiFallbackOnlineStatusBadge.classList.remove("is-active");
   }
+  // The provider and runtime-source dropdowns are gone: a saved non-default setup is kept
+  // untouched and only named here.
+  const runtimeSource = settings.providers.ollama.runtime_source || "per_user_zip";
+  const setupHint =
+    provider !== "ollama"
+    || runtimeSource === "system"
+    || (runtimeSource === "manual" && Boolean(settings.providers.ollama.runtime_path?.trim()))
+      ? `Provider: ${provider}, source: ${runtimeSource} — managed Ollama is the supported setup`
+      : "";
   if (dom.aiFallbackLocalPrimaryStatus) {
     const healthText = runtimeCardState.healthy
       ? "running"
@@ -668,7 +674,10 @@ export function renderAIFallbackSettingsUi() {
       : runtimeCardState.healthy
         ? "running (external or unmanaged)"
         : "no managed process";
-    dom.aiFallbackLocalPrimaryStatus.textContent = `Runtime ${healthText} • Source: ${runtimeCardState.source} • Version: ${runtimeCardState.version} • Process: ${processText}`;
+    const statusText = `Runtime ${healthText} • Source: ${runtimeCardState.source} • Version: ${runtimeCardState.version} • Process: ${processText}`;
+    dom.aiFallbackLocalPrimaryStatus.textContent = setupHint
+      ? provider === "ollama" ? `${statusText} • ${setupHint}` : setupHint
+      : statusText;
   }
   if (dom.aiFallbackLocalRuntimeNote) {
     let baseNote = runtimeCardState.busy
@@ -736,11 +745,6 @@ export function renderAIFallbackSettingsUi() {
   if (dom.aiFallbackLocalImportAction) {
     dom.aiFallbackLocalImportAction.disabled = runtimeCardState.busy;
   }
-  if (dom.aiFallbackLocalRuntimeSource) {
-    const currentSource = settings.providers.ollama.runtime_source || "per_user_zip";
-    dom.aiFallbackLocalRuntimeSource.value = currentSource;
-    dom.aiFallbackLocalRuntimeSource.disabled = runtimeCardState.busy;
-  }
   if (dom.aiFallbackLocalVerifyAction) {
     dom.aiFallbackLocalVerifyAction.disabled = runtimeCardState.busy || !runtimeCardState.detected;
   }
@@ -753,107 +757,29 @@ export function renderAIFallbackSettingsUi() {
       ? "Fetching..."
       : "Get versions";
   }
-  if (dom.aiFallbackLocalRuntimeVersion) {
-    const selectedVersion =
-      settings.providers.ollama.runtime_target_version?.trim()
-      || runtimeCardState.version
-      || DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION;
-    const optionPool = [...runtimeVersionOptions];
-    const appendIfMissing = (version: string) => {
-      if (!version) return;
-      if (optionPool.some((entry) => entry.version === version)) return;
-      optionPool.push({
-        version,
-        source: "online",
-        selected: version === selectedVersion,
-        installed: version === runtimeCardState.version,
-        recommended: version === DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION,
-        prerelease: /(?:-rc|-alpha|-beta)/i.test(version),
-        installable: false,
-        installable_reason:
-          "This version is not in the verified installable runtime catalog.",
-      });
-    };
-    appendIfMissing(selectedVersion);
-    appendIfMissing(runtimeCardState.version);
-    const prioritized = optionPool
-      .sort((a, b) => {
-        const aScore = (a.selected ? 4 : 0) + (a.installed ? 2 : 0) + (a.recommended ? 1 : 0);
-        const bScore = (b.selected ? 4 : 0) + (b.installed ? 2 : 0) + (b.recommended ? 1 : 0);
-        return bScore - aScore || b.version.localeCompare(a.version, undefined, { numeric: true });
-      })
-      .filter((entry, idx, arr) => idx === arr.findIndex((e) => e.version === entry.version));
-    const limited = prioritized;
-
-    dom.aiFallbackLocalRuntimeVersion.innerHTML = "";
-    limited.forEach((entry) => {
-      const option = document.createElement("option");
-      option.value = entry.version;
-      option.textContent = `${entry.version} (${entry.installable ? "installable" : "not installable"})`;
-      option.disabled = !entry.installable && !entry.selected;
-      dom.aiFallbackLocalRuntimeVersion?.appendChild(option);
+  if (dom.aiFallbackRuntimeVersionList) {
+    const host = dom.aiFallbackRuntimeVersionList;
+    renderZebraList(host, {
+      label: "Ollama runtime versions",
+      columns: RUNTIME_VERSION_COLUMNS,
+      emptyText: "No runtime versions known yet. Use “Get versions”.",
+      busy: runtimeCardState.busy,
+      rows: buildRuntimeVersionRows({
+        catalog: getOllamaRuntimeVersionCatalog(),
+        // Only a server that answers is "running"; a stopped one is just the recorded version.
+        runningVersion: runtimeHealthy ? runtimeCardState.version : null,
+        targetVersion: settings.providers.ollama.runtime_target_version || "",
+        recordedVersion: settings.providers.ollama.runtime_version,
+        busy: runtimeCardState.busy,
+      }),
+      onAction: (version, action) => {
+        host.dispatchEvent(
+          new CustomEvent(RUNTIME_VERSION_ACTION_EVENT, { detail: { version, action } })
+        );
+      },
     });
-    dom.aiFallbackLocalRuntimeVersion.size = 1;
-    dom.aiFallbackLocalRuntimeVersion.classList.remove("is-scroll-list");
-    if (
-      selectedVersion &&
-      Array.from(dom.aiFallbackLocalRuntimeVersion.options).some((opt) => opt.value === selectedVersion)
-    ) {
-      dom.aiFallbackLocalRuntimeVersion.value = selectedVersion;
-    }
-    selectedRuntimeEntry =
-      limited.find((entry) => entry.version === dom.aiFallbackLocalRuntimeVersion?.value) ?? null;
-    dom.aiFallbackLocalRuntimeVersion.disabled = runtimeCardState.busy;
-  }
-  if (dom.aiFallbackLocalRuntimeVersionNote) {
-    const selected = settings.providers.ollama.runtime_target_version || DEFAULT_OLLAMA_RUNTIME_TARGET_VERSION;
-    dom.aiFallbackLocalRuntimeVersionNote.textContent = "";
-    const lead = document.createElement("span");
-    lead.textContent = `Selected target ${selected}. `;
-    dom.aiFallbackLocalRuntimeVersionNote.appendChild(lead);
-
-    const badges = document.createElement("span");
-    badges.className = "runtime-version-badges";
-    const addBadge = (label: string, cls: string) => {
-      const el = document.createElement("span");
-      el.className = `ollama-runtime-badge runtime-version-chip ${cls}`;
-      el.textContent = label;
-      badges.appendChild(el);
-    };
-
-    if (selectedRuntimeEntry?.selected) addBadge("Active", "runtime-version-chip--selected");
-    if (selectedRuntimeEntry?.installed) addBadge("Installed", "runtime-version-chip--installed");
-    if (selectedRuntimeEntry?.recommended) addBadge("Recommended", "runtime-version-chip--recommended");
-    if (selectedRuntimeEntry) {
-      if (selectedRuntimeEntry.installable) {
-        addBadge("Installable", "runtime-version-chip--installable");
-      } else {
-        addBadge("Not installable", "runtime-version-chip--not-installable");
-      }
-      addBadge(
-        selectedRuntimeEntry.source === "online" ? "Online" : "Pinned",
-        "runtime-version-chip--source"
-      );
-    } else {
-      addBadge("Not installable", "runtime-version-chip--not-installable");
-      addBadge("Pinned", "runtime-version-chip--source");
-    }
-
-    dom.aiFallbackLocalRuntimeVersionNote.appendChild(badges);
-    if (selectedRuntimeEntry?.installable_reason?.trim()) {
-      const reason = document.createElement("span");
-      reason.className = "runtime-version-reason";
-      reason.textContent = selectedRuntimeEntry.installable_reason.trim();
-      dom.aiFallbackLocalRuntimeVersionNote.appendChild(reason);
-    }
   }
 
-  if (dom.aiFallbackLocalBackendSelect) {
-    const currentBackend = ai?.provider ?? "ollama";
-    const validBackends = ["ollama", "lm_studio", "oobabooga"];
-    dom.aiFallbackLocalBackendSelect.value = validBackends.includes(currentBackend) ? currentBackend : "ollama";
-    dom.aiFallbackLocalBackendSelect.disabled = runtimeCardState.busy;
-  }
   const backendTitleEl = document.getElementById("ai-fallback-local-lane-title-text");
   if (backendTitleEl) {
     const labels: Record<string, string> = {
@@ -903,20 +829,13 @@ export function renderAIFallbackSettingsUi() {
       dom.aiFallbackLocalImportAction.title = "Import a local GGUF or Modelfile into Ollama";
     }
   }
-  // Runtime status line: Ollama only
+  // Runtime status line: Ollama only, or the one-line note about an unsupported saved setup
   if (dom.aiFallbackLocalPrimaryStatus) {
-    dom.aiFallbackLocalPrimaryStatus.hidden = !isOllama;
+    dom.aiFallbackLocalPrimaryStatus.hidden = !isOllama && !setupHint;
   }
   // LM Studio install button: only for LM Studio backend
   if (dom.aiFallbackLmStudioInstallAction) {
     dom.aiFallbackLmStudioInstallAction.hidden = provider !== "lm_studio";
-  }
-
-  if (isOllama) {
-    if (dom.aiFallbackLocalFallbackEndpoints && document.activeElement !== dom.aiFallbackLocalFallbackEndpoints) {
-      dom.aiFallbackLocalFallbackEndpoints.value = (settings.providers.ollama.fallback_endpoints ?? []).join("\n");
-      dom.aiFallbackLocalFallbackEndpoints.disabled = runtimeCardState.busy;
-    }
   }
 
   if (isCompatBackend) {

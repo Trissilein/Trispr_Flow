@@ -5,8 +5,7 @@ use crate::state::{
     self, AppState, RuntimeDiagnostics, RuntimeMetricsSnapshot, Settings, StartupStatus,
 };
 use crate::{
-    apply_hidden_creation_flags, capability_enabled, refresh_runtime_diagnostics,
-    refresh_startup_status, RuntimeCapability,
+    capability_enabled, refresh_runtime_diagnostics, refresh_startup_status, RuntimeCapability,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{info, warn};
@@ -86,16 +85,6 @@ pub(crate) fn record_runtime_metric(
     }
 }
 
-#[cfg(target_os = "windows")]
-fn check_powershell_available() -> bool {
-    let mut cmd = std::process::Command::new("powershell.exe");
-    cmd.args(["-NoProfile", "-Command", "$PSVersionTable.PSVersion.Major"]);
-    apply_hidden_creation_flags(&mut cmd);
-    cmd.output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
-
 fn build_module_dependency_preflight_items(settings: &Settings) -> Vec<DependencyPreflightItem> {
     let installed_package_ids = std::collections::HashSet::new();
     let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
@@ -129,11 +118,6 @@ fn build_module_dependency_preflight_items(settings: &Settings) -> Vec<Dependenc
             })
         })
         .collect()
-}
-
-#[cfg(not(target_os = "windows"))]
-fn check_powershell_available() -> bool {
-    false
 }
 
 pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyPreflightReport {
@@ -203,45 +187,6 @@ pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyP
         });
     }
 
-    let powershell_ok = check_powershell_available();
-    let tts_enabled = capability_enabled(&settings_snapshot, RuntimeCapability::VoiceOutputTts);
-    if powershell_ok {
-        items.push(DependencyPreflightItem {
-            id: "powershell_tts".to_string(),
-            status: "ok".to_string(),
-            required: tts_enabled,
-            message: "PowerShell runtime is available for Windows TTS.".to_string(),
-            hint: None,
-        });
-    } else {
-        items.push(DependencyPreflightItem {
-            id: "powershell_tts".to_string(),
-            status: if tts_enabled {
-                "error".to_string()
-            } else {
-                "warning".to_string()
-            },
-            required: tts_enabled,
-            message: "PowerShell runtime is not available.".to_string(),
-            hint: Some(
-                "Windows-native TTS requires powershell.exe and System.Speech support.".to_string(),
-            ),
-        });
-    }
-
-    if tts_enabled && settings_snapshot.voice_output_settings.default_provider == "local_custom" {
-        items.push(DependencyPreflightItem {
-            id: "tts_local_custom".to_string(),
-            status: "warning".to_string(),
-            required: false,
-            message: "Local custom TTS provider is still a placeholder.".to_string(),
-            hint: Some(
-                "Current fallback uses Windows native TTS until the custom runtime is integrated."
-                    .to_string(),
-            ),
-        });
-    }
-
     if capability_enabled(&settings_snapshot, RuntimeCapability::AiRefinement)
         && settings_snapshot.ai_fallback.provider == "ollama"
     {
@@ -304,13 +249,13 @@ mod tests {
         let mut settings = Settings::default();
         registry::set_last_error(
             &mut settings.module_settings,
-            "output_voice_tts",
+            "opus",
             "Module is in error state.",
         );
 
         let items = build_module_dependency_preflight_items(&settings);
 
-        assert!(items.iter().all(|item| item.id != "module_output_voice_tts"));
+        assert!(items.iter().all(|item| item.id != "module_opus"));
     }
 
 }
@@ -333,8 +278,8 @@ pub(crate) fn run_dependency_preflight(app: &AppHandle) {
 
 #[tauri::command]
 pub(crate) async fn get_dependency_preflight_status(app: AppHandle) -> DependencyPreflightReport {
-    // Wrapped in spawn_blocking: check_powershell_available() spawns powershell.exe
-    // which blocks for 1-5s; running that on a Tokio worker thread would starve IPC.
+    // Wrapped in spawn_blocking: the preflight pings Ollama synchronously;
+    // running that on a Tokio worker thread would starve IPC.
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         build_dependency_preflight_report(state.inner())

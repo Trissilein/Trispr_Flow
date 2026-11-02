@@ -14,14 +14,7 @@
     "test": "vitest run",
     "audit:rust": "node scripts/run-rust-audit.mjs",
     "test:smoke": "npm run build && cargo test --manifest-path src-tauri/Cargo.toml --lib && cargo test --manifest-path src-tauri/Cargo.toml --bins",
-    "benchmark:latency": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1",
-    "benchmark:latency:live": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1 -Live",
-    "benchmark:latency:strict": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/latency-benchmark.ps1 -FailOnSloMiss",
-    "benchmark:tts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tts-benchmark.ps1",
-    "benchmark:tts:strict": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tts-benchmark.ps1 -FailOnNoRecommendation -FailOnGateMiss",
-    "benchmark:ollama-models": "node scripts/eval-ollama-models.mjs",
     "qa:release": "node scripts/release-qa.mjs",
-    "qa:assistant": "node scripts/assistant-release-gate.mjs",
     "build:installers": "cmd /c scripts\\windows\\build-installers.bat"
   },
   "dependencies": {

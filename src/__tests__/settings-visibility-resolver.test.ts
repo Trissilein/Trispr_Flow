@@ -50,9 +50,9 @@ describe("settings visibility resolver", () => {
 
   it("does not revive a runtime-hidden module and hides its empty Basic tab", async () => {
     document.body.innerHTML = `
-      <button data-settings-visibility-tab="voice-output"></button>
-      <section data-settings-visibility-tab-content="voice-output" hidden>
-        <label ${managed("voice.provider", "basic", "Voice Output")}></label>
+      <button data-settings-visibility-tab="example-tab"></button>
+      <section data-settings-visibility-tab-content="example-tab" hidden>
+        <label ${managed("example.provider", "basic", "Example")}></label>
       </section>`;
     const { applySettingsVisibility } = await resolver();
     applySettingsVisibility();

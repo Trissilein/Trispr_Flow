@@ -15,7 +15,6 @@ import { renderOverlaySettings } from "./overlay.settings";
 import { renderPostProcessingSettings } from "./post-processing.settings";
 import { renderRecordingQualitySettings } from "./recording-quality.settings";
 import { renderTranscriptionSettings } from "./transcription.settings";
-import { renderVoiceOutputSettings } from "./voice-output.settings";
 import {
   renderAIRefinementTab,
   renderOverlayHealthNote,
@@ -44,7 +43,6 @@ export function renderSettings() {
   renderContinuousDumpSettings();
   renderRecordingQualitySettings();
   renderOverlaySettings();
-  renderVoiceOutputSettings();
   // Apply accent color
   settings.accent_color = normalizeColorHex(settings.accent_color, DEFAULT_ACCENT_COLOR);
   if (dom.accentColor) dom.accentColor.value = settings.accent_color;

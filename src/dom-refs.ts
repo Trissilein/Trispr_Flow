@@ -14,14 +14,10 @@ export const bootstrapLabel = $("bootstrap-label") as HTMLSpanElement | null;
 export const tabBtnTranscription = $("tab-btn-transcription") as HTMLButtonElement | null;
 export const tabBtnSettings = $("tab-btn-settings") as HTMLButtonElement | null;
 export const tabBtnAiRefinement = $("tab-btn-ai-refinement") as HTMLButtonElement | null;
-export const tabBtnVoiceOutput = $("tab-btn-voice-output") as HTMLButtonElement | null;
-export const tabBtnVideo = $("tab-btn-video") as HTMLButtonElement | null;
 export const tabBtnModules = $("tab-btn-modules") as HTMLButtonElement | null;
 export const tabTranscription = $("tab-transcription") as HTMLDivElement | null;
 export const tabSettings = $("tab-settings") as HTMLDivElement | null;
 export const tabAiRefinement = $("tab-ai-refinement") as HTMLDivElement | null;
-export const tabVoiceOutput = $("tab-voice-output") as HTMLDivElement | null;
-export const tabVideo = $("tab-video") as HTMLDivElement | null;
 export const tabModules = $("tab-modules") as HTMLDivElement | null;
 export const expertModeToggle = $("expert-mode-toggle") as HTMLInputElement | null;
 export const expertModeLabel = $("expert-mode-label") as HTMLSpanElement | null;
@@ -68,9 +64,6 @@ export const pttHotkeyStatus = $("ptt-hotkey-status") as HTMLSpanElement | null;
 export const toggleHotkey = $("toggle-hotkey") as HTMLInputElement | null;
 export const toggleHotkeyRecord = $("toggle-hotkey-record") as HTMLButtonElement | null;
 export const toggleHotkeyStatus = $("toggle-hotkey-status") as HTMLSpanElement | null;
-export const ttsStopHotkey = $("tts-stop-hotkey") as HTMLInputElement | null;
-export const ttsStopHotkeyRecord = $("tts-stop-hotkey-record") as HTMLButtonElement | null;
-export const ttsStopHotkeyStatus = $("tts-stop-hotkey-status") as HTMLSpanElement | null;
 export const deviceSelect = $("device-select") as HTMLSelectElement | null;
 export const asrLanguageField = $("asr-language-field") as HTMLLabelElement | null;
 export const languageSelect = $("language-select") as HTMLSelectElement | null;
@@ -266,9 +259,6 @@ export const overlayRefiningIndicatorSpeed = $("overlay-refining-indicator-speed
 export const overlayRefiningIndicatorSpeedValue = $("overlay-refining-indicator-speed-value");
 export const overlayRefiningIndicatorRange = $("overlay-refining-indicator-range") as HTMLInputElement | null;
 export const overlayRefiningIndicatorRangeValue = $("overlay-refining-indicator-range-value");
-export const overlayTtsStopEnabled = $("overlay-tts-stop-enabled") as HTMLInputElement | null;
-export const overlayTtsStopShape = $("overlay-tts-stop-shape") as HTMLSelectElement | null;
-export const overlayTtsStopColor = $("overlay-tts-stop-color") as HTMLInputElement | null;
 export const overlayDotSettings = $("overlay-dot-settings") as HTMLDivElement | null;
 export const overlayKittSettings = $("overlay-kitt-settings") as HTMLDivElement | null;
 export const overlayKittMinWidth = $("overlay-kitt-min-width") as HTMLInputElement | null;
@@ -367,10 +357,6 @@ export const modelList = $("model-list");
 // Overlay controls (button not reachable via id helper above)
 export const applyOverlayBtn = $("apply-overlay-btn") as HTMLButtonElement | null;
 
-// Voice Output Console
-export const voiceOutputConsole = $("voice-output-console") as HTMLElement | null;
-export const voiceOutputConsoleStatus = $("voice-output-console-status") as HTMLSpanElement | null;
-
 // Module config modal
 export const moduleConfigModal = $("module-config-modal") as HTMLDivElement | null;
 export const moduleConfigModalBackdrop = $("module-config-modal-backdrop") as HTMLDivElement | null;
@@ -381,41 +367,6 @@ export const moduleConfigModalDesc = $("module-config-modal-desc") as HTMLElemen
 export const moduleConfigModalUsage = $("module-config-modal-usage") as HTMLElement | null;
 export const moduleConfigModalDeps = $("module-config-modal-deps") as HTMLDivElement | null;
 export const moduleConfigModalFeedback = $("module-config-modal-feedback") as HTMLDivElement | null;
-
-// Voice Output Settings
-export const voiceOutputDefaultProvider = $("voice-output-default-provider") as HTMLSelectElement | null;
-export const voiceOutputFallbackProvider = $("voice-output-fallback-provider") as HTMLSelectElement | null;
-export const voiceOutputPolicy = $("voice-output-policy") as HTMLSelectElement | null;
-export const voiceOutputDeviceSelect = $("voice-output-device-select") as HTMLSelectElement | null;
-export const voiceOutputWindowsVoiceField = $("voice-output-windows-voice-field") as HTMLLabelElement | null;
-export const voiceOutputWindowsVoiceSelect = $("voice-output-windows-voice-select") as HTMLSelectElement | null;
-export const voiceOutputWindowsVoiceHint = $("voice-output-windows-voice-hint") as HTMLSpanElement | null;
-export const voiceOutputFallbackVoiceField = $("voice-output-fallback-voice-field") as HTMLLabelElement | null;
-export const voiceOutputFallbackVoiceSelect = $("voice-output-fallback-voice-select") as HTMLSelectElement | null;
-export const voiceOutputFallbackVoiceHint = $("voice-output-fallback-voice-hint") as HTMLSpanElement | null;
-export const voiceOutputPiperDownloadStatus = $("voice-output-piper-download-status") as HTMLDivElement | null;
-export const voiceOutputPiperDownloadFill = $("voice-output-piper-download-fill") as HTMLDivElement | null;
-export const voiceOutputPiperDownloadText = $("voice-output-piper-download-text") as HTMLSpanElement | null;
-export const voiceOutputDefaultAvailability = $("voice-output-default-availability") as HTMLSpanElement | null;
-export const voiceOutputFallbackAvailability = $("voice-output-fallback-availability") as HTMLSpanElement | null;
-export const voiceOutputAutoLanguageVoiceField = $("voice-output-auto-language-voice-field") as HTMLDivElement | null;
-export const voiceOutputAutoLanguageVoice = $("voice-output-auto-language-voice") as HTMLInputElement | null;
-export const voiceOutputRate = $("voice-output-rate") as HTMLInputElement | null;
-export const voiceOutputRateValue = $("voice-output-rate-value") as HTMLSpanElement | null;
-export const voiceOutputVolume = $("voice-output-volume") as HTMLInputElement | null;
-export const voiceOutputVolumeValue = $("voice-output-volume-value") as HTMLSpanElement | null;
-export const voiceOutputTestBtn = $("voice-output-test-btn") as HTMLButtonElement | null;
-export const voiceOutputTestStatus = $("voice-output-test-status") as HTMLSpanElement | null;
-export const voiceOutputPiperGainDb = $("voice-output-piper-gain-db") as HTMLInputElement | null;
-export const voiceOutputPiperGainDbValue = $("voice-output-piper-gain-db-value") as HTMLSpanElement | null;
-export const voiceOutputPiperBinary = $("voice-output-piper-binary") as HTMLInputElement | null;
-export const voiceOutputPiperModel = $("voice-output-piper-model") as HTMLInputElement | null;
-export const voiceOutputPiperModelDir = $("voice-output-piper-model-dir") as HTMLInputElement | null;
-export const voiceOutputQwenEndpoint = $("voice-output-qwen-endpoint") as HTMLInputElement | null;
-export const voiceOutputQwenModel = $("voice-output-qwen-model") as HTMLInputElement | null;
-export const voiceOutputQwenVoice = $("voice-output-qwen-voice") as HTMLInputElement | null;
-export const voiceOutputQwenApiKey = $("voice-output-qwen-api-key") as HTMLInputElement | null;
-export const voiceOutputQwenTimeoutSec = $("voice-output-qwen-timeout-sec") as HTMLInputElement | null;
 
 // Model panel (queried by data attribute, not id)
 export const modelPanel =

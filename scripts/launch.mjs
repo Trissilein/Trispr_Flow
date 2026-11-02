@@ -10,7 +10,7 @@
 // runs must never be the file that gets built. A running copy is never overwritten, nothing
 // is killed or deleted; the first launch after the app was closed picks up the new build.
 //
-// Resources (whisper-server, CUDA/Vulkan DLLs, quantize, piper) are found because the exe
+// Resources (whisper-server, CUDA/Vulkan DLLs, quantize) are found because the exe
 // starts with cwd = repo root and paths.rs falls back to <cwd>/src-tauri/bin; module packages
 // and ffmpeg fall back to the compile-time CARGO_MANIFEST_DIR. Nothing sits next to the copy.
 //

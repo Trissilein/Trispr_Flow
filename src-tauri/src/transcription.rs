@@ -122,14 +122,6 @@ impl Default for TranscriptionTimingSummary {
     }
 }
 
-pub(crate) fn last_transcription_timing_summary() -> TranscriptionTimingSummary {
-    LAST_TRANSCRIPTION_TIMING
-        .get_or_init(|| Mutex::new(TranscriptionTimingSummary::default()))
-        .lock()
-        .map(|guard| guard.clone())
-        .unwrap_or_default()
-}
-
 fn record_transcription_timing(summary: TranscriptionTimingSummary) {
     if let Ok(mut guard) = LAST_TRANSCRIPTION_TIMING
         .get_or_init(|| Mutex::new(TranscriptionTimingSummary::default()))

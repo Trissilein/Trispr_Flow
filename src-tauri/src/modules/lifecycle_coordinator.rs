@@ -1,6 +1,6 @@
 use crate::modules::{
     canonicalize_module_id, lifecycle as module_lifecycle, normalize_module_settings,
-    normalize_vision_input_settings, normalize_voice_output_settings, registry as module_registry,
+    registry as module_registry,
 };
 use crate::state::{
     normalize_ai_refinement_module_binding, save_settings_file, AppState, AI_REFINEMENT_MODULE_ID,
@@ -44,12 +44,6 @@ pub(crate) fn enable_module_actions(
         );
 
         if result.is_ok() {
-            if module_id == "input_vision" {
-                settings.vision_input_settings.enabled = true;
-            }
-            if module_id == "output_voice_tts" {
-                settings.voice_output_settings.enabled = true;
-            }
             if module_id == AI_REFINEMENT_MODULE_ID {
                 settings.ai_fallback.enabled = true;
                 settings.postproc_llm_enabled = true;
@@ -58,8 +52,6 @@ pub(crate) fn enable_module_actions(
 
         normalize_module_settings(&mut settings.module_settings);
         normalize_ai_refinement_module_binding(&mut settings);
-        normalize_vision_input_settings(&mut settings.vision_input_settings);
-        normalize_voice_output_settings(&mut settings.voice_output_settings);
 
         let descriptors = module_registry::modules_as_descriptors_with_packages(
             &settings.module_settings,
@@ -76,14 +68,6 @@ pub(crate) fn enable_module_actions(
     // ==========================================
     // PHASE C: Reconcile (Reconcile Side-Effects)
     // ==========================================
-    if result.is_ok() && module_id == "output_voice_tts" {
-        crate::schedule_piper_daemon_reconcile(
-            app.clone(),
-            snapshot.voice_output_settings.clone(),
-            "enable_module",
-        );
-    }
-
     if result.is_ok() && module_id == "opus" {
         crate::session_manager::set_opus_module_enabled(true);
     }
@@ -130,12 +114,6 @@ pub(crate) fn disable_module_actions(
         let result = module_lifecycle::disable_module(&mut settings.module_settings, &module_id);
 
         if result.is_ok() {
-            if module_id == "input_vision" {
-                settings.vision_input_settings.enabled = false;
-            }
-            if module_id == "output_voice_tts" {
-                settings.voice_output_settings.enabled = false;
-            }
             if module_id == AI_REFINEMENT_MODULE_ID {
                 settings.ai_fallback.enabled = false;
                 settings.postproc_llm_enabled = false;
@@ -144,8 +122,6 @@ pub(crate) fn disable_module_actions(
 
         normalize_module_settings(&mut settings.module_settings);
         normalize_ai_refinement_module_binding(&mut settings);
-        normalize_vision_input_settings(&mut settings.vision_input_settings);
-        normalize_voice_output_settings(&mut settings.voice_output_settings);
 
         let descriptors = module_registry::modules_as_descriptors_with_packages(
             &settings.module_settings,
@@ -167,13 +143,6 @@ pub(crate) fn disable_module_actions(
             crate::session_manager::set_opus_module_enabled(false);
         }
         match module_id.as_str() {
-            "input_vision" => {
-                let _ = crate::multimodal_io::stop_vision_stream_internal(app, state);
-            }
-            "output_voice_tts" => {
-                let _ = crate::multimodal_io::stop_tts_internal(app, state);
-                crate::multimodal_io::shutdown_piper_daemon(state);
-            }
             "ai_refinement" => {
                 crate::audio::force_reset_refinement_activity(app, "forced_reset");
 

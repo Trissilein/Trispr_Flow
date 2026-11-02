@@ -6,7 +6,6 @@ const ALLOWED_COMPOUND_UNITS = new Set([
   "toggle.hotkey",
   "transcribe.hotkey",
   "toggle.activation.words.hotkey",
-  "tts.stop.hotkey",
 ]);
 
 describe("settings visibility markup", () => {

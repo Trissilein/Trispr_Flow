@@ -7,12 +7,7 @@ use crate::constants::{
     VAD_THRESHOLD_SUSTAIN_DEFAULT,
 };
 use crate::history_partition::PartitionedHistory;
-use crate::modules::{
-    normalize_module_settings, normalize_video_generation_settings, normalize_vision_input_settings,
-    normalize_voice_output_settings, ModuleSettings, VideoGenerationSettings, VisionInputSettings,
-    VoiceOutputSettings,
-};
-use crate::multimodal_io::{PiperDaemonState, VisionFrameBuffer};
+use crate::modules::{normalize_module_settings, ModuleSettings};
 use crate::overlay::OverlayController;
 use crate::paths::resolve_config_path;
 use crate::transcription::TranscribeRecorder;
@@ -82,22 +77,6 @@ fn default_overlay_refining_indicator_speed_ms() -> u64 {
 
 fn default_overlay_refining_indicator_range() -> f32 {
     100.0
-}
-
-fn default_hotkey_tts_stop() -> String {
-    "CommandOrControl+Shift+F12".to_string()
-}
-
-fn default_overlay_tts_stop_enabled() -> bool {
-    true
-}
-
-fn default_overlay_tts_stop_shape() -> String {
-    "compact".to_string()
-}
-
-fn default_overlay_tts_stop_color() -> String {
-    default_accent_color()
 }
 
 fn default_history_alias_mic() -> String {
@@ -275,8 +254,6 @@ pub(crate) struct Settings {
     pub(crate) mode: String,
     pub(crate) hotkey_ptt: String,
     pub(crate) hotkey_toggle: String,
-    #[serde(default = "default_hotkey_tts_stop")]
-    pub(crate) hotkey_tts_stop: String,
     pub(crate) input_device: String,
     pub(crate) language_mode: String,
     pub(crate) language_pinned: bool,
@@ -290,10 +267,6 @@ pub(crate) struct Settings {
     pub(crate) setup: SetupSettings,
     // Managed module platform settings
     pub(crate) module_settings: ModuleSettings,
-    pub(crate) vision_input_settings: VisionInputSettings,
-    pub(crate) voice_output_settings: VoiceOutputSettings,
-    #[serde(default)]
-    pub(crate) video_generation_settings: VideoGenerationSettings,
     pub(crate) audio_cues: bool,
     pub(crate) audio_cues_volume: f32,
     #[serde(default)]
@@ -353,12 +326,6 @@ pub(crate) struct Settings {
     pub(crate) overlay_refining_indicator_speed_ms: u64,
     #[serde(default = "default_overlay_refining_indicator_range")]
     pub(crate) overlay_refining_indicator_range: f32,
-    #[serde(default = "default_overlay_tts_stop_enabled")]
-    pub(crate) overlay_tts_stop_enabled: bool,
-    #[serde(default = "default_overlay_tts_stop_shape")]
-    pub(crate) overlay_tts_stop_shape: String,
-    #[serde(default = "default_overlay_tts_stop_color")]
-    pub(crate) overlay_tts_stop_color: String,
     pub(crate) overlay_kitt_min_width: f32,
     pub(crate) overlay_kitt_max_width: f32,
     pub(crate) overlay_kitt_height: f32,
@@ -448,7 +415,6 @@ impl Default for Settings {
       mode: "ptt".to_string(),
       hotkey_ptt: "CommandOrControl+Shift+Space".to_string(),
       hotkey_toggle: "CommandOrControl+Shift+M".to_string(),
-      hotkey_tts_stop: default_hotkey_tts_stop(),
       input_device: "default".to_string(),
       language_mode: "auto".to_string(),
       language_pinned: false,
@@ -458,9 +424,6 @@ impl Default for Settings {
       providers: AIProvidersSettings::default(),
       setup: SetupSettings::default(),
       module_settings: ModuleSettings::default(),
-      vision_input_settings: VisionInputSettings::default(),
-      voice_output_settings: VoiceOutputSettings::default(),
-      video_generation_settings: VideoGenerationSettings::default(),
       audio_cues: true,
       audio_cues_volume: 0.3,
       diagnostic_logging_enabled: false,
@@ -511,9 +474,6 @@ impl Default for Settings {
       overlay_refining_indicator_color: "#6ec8ff".to_string(),
       overlay_refining_indicator_speed_ms: 1_150,
       overlay_refining_indicator_range: 100.0,
-      overlay_tts_stop_enabled: default_overlay_tts_stop_enabled(),
-      overlay_tts_stop_shape: default_overlay_tts_stop_shape(),
-      overlay_tts_stop_color: default_overlay_tts_stop_color(),
       overlay_kitt_min_width: 20.0,
       overlay_kitt_max_width: 700.0,
       overlay_kitt_height: 13.0,
@@ -844,10 +804,6 @@ pub(crate) struct AppState {
     pub(crate) gpu_util_low_streak: AtomicU32,
     pub(crate) whisper_server_warm_until_ms: AtomicU64,
     pub(crate) whisper_server_retire_generation: AtomicU64,
-    pub(crate) vision_stream_running: AtomicBool,
-    pub(crate) vision_stream_started_ms: AtomicU64,
-    pub(crate) vision_stream_frame_seq: AtomicU64,
-    pub(crate) vision_frame_buffer: Mutex<VisionFrameBuffer>,
     pub(crate) startup_status: Mutex<StartupStatus>,
     pub(crate) runtime_diagnostics: Mutex<RuntimeDiagnostics>,
     pub(crate) overlay_controller: Mutex<OverlayController>,
@@ -855,11 +811,6 @@ pub(crate) struct AppState {
     pub(crate) frontend_watchdog_last_reload_ms: AtomicU64,
     pub(crate) frontend_watchdog_reload_count: AtomicU64,
     pub(crate) frontend_watchdog_state: Mutex<FrontendWatchdogState>,
-    pub(crate) tts_speaking: AtomicBool,
-    pub(crate) tts_session_counter: AtomicU64,
-    pub(crate) tts_playback_control:
-        Mutex<Option<std::sync::Arc<crate::multimodal_io::TtsPlaybackControl>>>,
-    pub(crate) piper_daemon: PiperDaemonState,
     pub(crate) enter_capture: EnterCaptureState,
     #[cfg(target_os = "windows")]
     pub(crate) system_cluster_buffer: Mutex<SystemClusterBuffer>,
@@ -1205,24 +1156,6 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if settings.overlay_refining_indicator_range > 180.0 {
                 settings.overlay_refining_indicator_range = 180.0;
             }
-            if settings.hotkey_tts_stop.trim().is_empty() {
-                settings.hotkey_tts_stop = default_hotkey_tts_stop();
-            } else {
-                settings.hotkey_tts_stop = settings.hotkey_tts_stop.trim().to_string();
-            }
-            settings.overlay_tts_stop_shape = match settings
-                .overlay_tts_stop_shape
-                .trim()
-                .to_ascii_lowercase()
-                .as_str()
-            {
-                "round" => "round".to_string(),
-                _ => "compact".to_string(),
-            };
-            settings.overlay_tts_stop_color = settings.overlay_tts_stop_color.trim().to_string();
-            if settings.overlay_tts_stop_color.is_empty() {
-                settings.overlay_tts_stop_color = default_overlay_tts_stop_color();
-            }
             if !(0.0..=1.0).contains(&settings.overlay_kitt_opacity_inactive) {
                 settings.overlay_kitt_opacity_inactive = 0.2;
             }
@@ -1248,9 +1181,6 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             normalize_ai_fallback_fields(&mut settings);
             normalize_module_settings(&mut settings.module_settings);
             normalize_ai_refinement_module_binding(&mut settings);
-            normalize_vision_input_settings(&mut settings.vision_input_settings);
-            normalize_voice_output_settings(&mut settings.voice_output_settings);
-            normalize_video_generation_settings(&mut settings.video_generation_settings);
             if settings.setup.local_ai_wizard_completed {
                 settings.setup.local_ai_wizard_pending = false;
             }
@@ -1611,9 +1541,6 @@ pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result
     normalize_module_settings(&mut persisted.module_settings);
     normalize_history_alias_fields(&mut persisted);
     normalize_ai_refinement_module_binding(&mut persisted);
-    normalize_vision_input_settings(&mut persisted.vision_input_settings);
-    normalize_voice_output_settings(&mut persisted.voice_output_settings);
-    normalize_video_generation_settings(&mut persisted.video_generation_settings);
     let raw = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
     // Atomic write: write to .tmp then rename to avoid partial/corrupted JSON on crash.
     let tmp_path = path.with_extension("json.tmp");
@@ -2001,6 +1928,75 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["ai_refinement.migrated_legacy"]
         );
+    }
+
+    #[test]
+    fn settings_with_removed_vision_voice_output_video_fields_still_load() {
+        // Shape of a settings.json written before the Vision / Voice Output (TTS, Piper) /
+        // Video Generation modules were removed. Unknown fields are ignored by serde.
+        let raw = r##"{
+            "mode": "ptt",
+            "hotkey_ptt": "CommandOrControl+Shift+Space",
+            "hotkey_tts_stop": "CommandOrControl+Shift+F12",
+            "overlay_tts_stop_enabled": true,
+            "overlay_tts_stop_shape": "round",
+            "overlay_tts_stop_color": "#ff0000",
+            "vision_input_settings": { "enabled": true, "fps": 4, "source_scope": "active_window" },
+            "voice_output_settings": {
+                "enabled": true,
+                "default_provider": "local_custom",
+                "output_policy": "agent_replies_only",
+                "piper_binary_path": "C:/piper/piper.exe",
+                "qwen3_tts_enabled": true
+            },
+            "video_generation_settings": { "enabled": true, "default_fps": 60, "narrative_mode": true },
+            "module_settings": {
+                "enabled_modules": ["input_vision", "output_voice_tts", "output_video_generation", "piper_tts", "ai_refinement"],
+                "consented_permissions": {
+                    "input_vision": ["screen_capture"],
+                    "output_voice_tts": ["audio_output"],
+                    "output_video_generation": ["filesystem_exports"],
+                    "piper_tts": ["audio_output"]
+                },
+                "module_overrides": {
+                    "output_voice_tts.last_error": "stale",
+                    "output_video_generation.installed": true,
+                    "piper_tts.installed": true,
+                    "ai_refinement.migrated_legacy": true
+                }
+            }
+        }"##;
+
+        let mut settings: Settings =
+            serde_json::from_str(raw).expect("old settings.json must still deserialize");
+        normalize_module_settings(&mut settings.module_settings);
+
+        assert_eq!(settings.mode, "ptt");
+        assert_eq!(settings.hotkey_ptt, "CommandOrControl+Shift+Space");
+        assert_eq!(
+            settings.module_settings.enabled_modules,
+            HashSet::from(["ai_refinement".to_string()])
+        );
+        assert!(settings.module_settings.consented_permissions.is_empty());
+        assert_eq!(
+            settings
+                .module_settings
+                .module_overrides
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["ai_refinement.migrated_legacy"]
+        );
+        // Removed fields must not be written back out.
+        let rewritten = serde_json::to_string(&settings).expect("serialize settings");
+        for removed in [
+            "hotkey_tts_stop",
+            "overlay_tts_stop",
+            "vision_input_settings",
+            "voice_output_settings",
+            "video_generation_settings",
+        ] {
+            assert!(!rewritten.contains(removed), "{removed} must not persist");
+        }
     }
 
     fn sample_history_entry(id: &str, status: &str, refined: &str, error: &str) -> HistoryEntry {

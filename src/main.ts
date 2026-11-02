@@ -45,7 +45,6 @@ import type {
   DependencyPreflightReport,
   StabilityDegradedEvent,
   StartupStatus,
-  PiperVoiceDownloadProgress,
 } from "./types";
 import {
   settings,
@@ -71,7 +70,6 @@ import {
 import * as dom from "./dom-refs";
 import { renderSettings } from "./settings";
 import { renderAIFallbackSettingsUi } from "./settings/ai-refinement.settings";
-import { handlePiperVoiceDownloadProgress } from "./settings/voice-output.settings";
 import { renderDevices, renderOutputDevices } from "./devices";
 import {
   renderHero,
@@ -112,7 +110,6 @@ import {
 import { initModulesHub, refreshModulesHub } from "./modules-hub";
 import { initOnboardingWizard } from "./onboarding-wizard";
 import { initPipelineStatus } from "./pipeline-status";
-import { syncVoiceOutputConsoleState } from "./voice-output-console";
 import { ingestEditDelta } from "./vocab-auto-learn";
 import { scheduleVocabCleanupIfNeeded } from "./vocab-cleanup";
 import {
@@ -614,7 +611,6 @@ async function bootstrap() {
   initModulesHub();
   void initOnboardingWizard();
   initPipelineStatus();
-  syncVoiceOutputConsoleState();
 
   if (dom.bootstrapLabel) dom.bootstrapLabel.textContent = "Rendering interface…";
   traceFrontendInfo("bootstrap", "rendering primary interface");
@@ -837,39 +833,6 @@ async function bootstrap() {
         duration: 12_000,
       });
     }),
-    listen<{
-      provider?: string;
-      preferred_provider?: string;
-      fallback_provider?: string;
-      context?: string;
-      error: string;
-    }>("tts:speech-error", (event) => {
-      const preferred = event.payload.preferred_provider || event.payload.provider || "unknown";
-      const fallback = event.payload.fallback_provider || "none";
-      showToast({
-        type: "error",
-        title: "Voice output failed",
-        message: `${event.payload.error} (preferred: ${preferred}, fallback: ${fallback})`,
-      });
-    }),
-    listen<{
-      provider_used: string;
-      preferred_provider?: string;
-      fallback_provider?: string;
-      used_fallback?: boolean;
-      primary_error?: string;
-      context?: string;
-    }>("tts:speech-finished", (event) => {
-      if (!event.payload.used_fallback || event.payload.context !== "manual_test") return;
-      const preferred = event.payload.preferred_provider || "unknown";
-      const used = event.payload.provider_used || "unknown";
-      const primaryError = event.payload.primary_error ? ` (${event.payload.primary_error})` : "";
-      showToast({
-        type: "warning",
-        title: "Voice output fallback used",
-        message: `${preferred} failed${primaryError}. Switched to ${used}.`,
-      });
-    }),
     // Re-check Ollama health when a timeout or connection error occurs during
     // refinement — avoids requiring a full app restart to recover the status.
     listen("ai_fallback:health_degraded", async () => {
@@ -966,10 +929,6 @@ async function bootstrap() {
       setModels(updatedModels);
       scheduleModelRender();
       scheduleDownloadProgressRender();
-    }),
-    listen<PiperVoiceDownloadProgress>("piper:voice-download-progress", (event) => {
-      if (!event.payload) return;
-      handlePiperVoiceDownloadProgress(event.payload);
     }),
     listen<DownloadComplete>("model:download-complete", async (event) => {
       modelProgress.delete(event.payload.id);

@@ -2,7 +2,7 @@
 //
 // Renders the "Overlay appearance" settings panel: dot/KITT style visibility,
 // shared appearance (colour, rise/fall timing, opacity, position), radius
-// sliders, dimension bounds, refining indicator controls, and TTS-stop button.
+// sliders, dimension bounds, refining indicator controls.
 //
 // Exports:
 //   Primary   — renderOverlaySettings()         called by renderSettings() in index.ts
@@ -14,7 +14,7 @@
 
 import * as dom from "../dom-refs";
 import { settings } from "../state";
-import { DEFAULT_ACCENT_COLOR, normalizeColorHex } from "../utils";
+import { normalizeColorHex } from "../utils";
 import type { OverlayRefiningIndicatorPreset } from "../types";
 
 function detectOverlayViewport(): { width: number; height: number } {
@@ -205,11 +205,6 @@ export function renderOverlaySettings(): void {
     settings.overlay_refining_indicator_range = normalizeRefiningIndicatorRange(
         settings.overlay_refining_indicator_range
     );
-    settings.overlay_tts_stop_shape = settings.overlay_tts_stop_shape === "round" ? "round" : "compact";
-    settings.overlay_tts_stop_color = normalizeColorHex(
-        settings.overlay_tts_stop_color,
-        DEFAULT_ACCENT_COLOR
-    );
     if (dom.overlayRefiningIndicatorColor) {
         dom.overlayRefiningIndicatorColor.value = settings.overlay_refining_indicator_color;
     }
@@ -224,15 +219,6 @@ export function renderOverlaySettings(): void {
     }
     if (dom.overlayRefiningIndicatorRangeValue) {
         dom.overlayRefiningIndicatorRangeValue.textContent = `${settings.overlay_refining_indicator_range}%`;
-    }
-    if (dom.overlayTtsStopEnabled) {
-        dom.overlayTtsStopEnabled.checked = Boolean(settings.overlay_tts_stop_enabled);
-    }
-    if (dom.overlayTtsStopShape) {
-        dom.overlayTtsStopShape.value = settings.overlay_tts_stop_shape;
-    }
-    if (dom.overlayTtsStopColor) {
-        dom.overlayTtsStopColor.value = settings.overlay_tts_stop_color;
     }
     updateOverlayStyleVisibility(overlayStyleValue);
     applyOverlaySharedUi(overlayStyleValue);

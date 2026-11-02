@@ -119,106 +119,10 @@ pub(crate) fn resolve_recordings_dir(app: &AppHandle) -> PathBuf {
     dir
 }
 
-pub(crate) fn resolve_video_output_dir(app: &AppHandle) -> PathBuf {
-    let dir = resolve_base_dir(app).join("videos");
-    let _ = fs::create_dir_all(&dir);
-    dir
-}
-
-pub(crate) fn resolve_video_jobs_dir(app: &AppHandle) -> PathBuf {
-    let dir = resolve_base_dir(app).join("video_jobs");
-    let _ = fs::create_dir_all(&dir);
-    dir
-}
-
 pub(crate) fn resolve_modules_dir(app: &AppHandle) -> PathBuf {
     let dir = resolve_base_dir(app).join("modules");
     let _ = fs::create_dir_all(&dir);
     dir
-}
-
-pub(crate) fn resolve_node_binary_path(app: &AppHandle) -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("TRISPR_NODE_BINARY") {
-        let candidate = PathBuf::from(path);
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-
-    // Installed video_gen module package
-    let module_node = resolve_modules_dir(app)
-        .join("output_video_generation")
-        .join("bin")
-        .join("node")
-        .join("node.exe");
-    if module_node.exists() {
-        return Some(module_node);
-    }
-
-    let mut candidates = Vec::new();
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|parent| parent.to_path_buf()));
-    let cwd = std::env::current_dir().ok();
-
-    if let Some(exe_dir) = &exe_dir {
-        candidates.push(exe_dir.join("bin/node/node.exe"));
-        candidates.push(exe_dir.join("bin/node/node"));
-    }
-    if let Some(cwd) = &cwd {
-        candidates.push(cwd.join("src-tauri/bin/node/node.exe"));
-        candidates.push(cwd.join("src-tauri/bin/node/node"));
-        candidates.push(cwd.join("bin/node/node.exe"));
-        candidates.push(cwd.join("bin/node/node"));
-    }
-
-    for path in candidates {
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    which::which("node").ok()
-}
-
-pub(crate) fn resolve_hyperframes_cwd(app: &AppHandle) -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("TRISPR_HYPERFRAMES_CWD") {
-        let candidate = PathBuf::from(path);
-        if candidate.join("package.json").exists() {
-            return Some(candidate);
-        }
-    }
-
-    // Installed video_gen module package
-    let module_hf = resolve_modules_dir(app)
-        .join("output_video_generation")
-        .join("bin")
-        .join("hyperframes");
-    if module_hf.join("package.json").exists() {
-        return Some(module_hf);
-    }
-
-    let mut candidates = Vec::new();
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|parent| parent.to_path_buf()));
-    let cwd = std::env::current_dir().ok();
-
-    if let Some(exe_dir) = &exe_dir {
-        candidates.push(exe_dir.join("bin/hyperframes"));
-    }
-    if let Some(cwd) = &cwd {
-        candidates.push(cwd.join("src-tauri/bin/hyperframes"));
-        candidates.push(cwd.join("bin/hyperframes"));
-    }
-
-    for path in candidates {
-        if path.join("package.json").exists() {
-            return Some(path);
-        }
-    }
-
-    None
 }
 
 pub(crate) fn resolve_models_dir(app: &AppHandle) -> PathBuf {

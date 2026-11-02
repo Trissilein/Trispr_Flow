@@ -3,8 +3,6 @@ import type { ModuleDescriptor, ModuleHealthStatus, Settings } from "../types";
 
 const invokeMock = vi.fn();
 const showToastMock = vi.fn();
-const syncVoiceOutputConsoleStateMock = vi.fn();
-const focusVoiceOutputConsoleMock = vi.fn();
 const openMainTabMock = vi.fn();
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -17,11 +15,6 @@ vi.mock("../toast", () => ({
 
 vi.mock("../wiring/app-chrome.wire", () => ({
   openMainTab: openMainTabMock,
-}));
-
-vi.mock("../voice-output-console", () => ({
-  syncVoiceOutputConsoleState: syncVoiceOutputConsoleStateMock,
-  focusVoiceOutputConsole: focusVoiceOutputConsoleMock,
 }));
 
 vi.mock("../modal-focus", () => ({
@@ -62,7 +55,6 @@ function bootstrapDom(): void {
   document.body.innerHTML = `
     <span id="modules-status"></span>
     <div id="modules-list"></div>
-    <div id="voice-output-console" hidden></div>
     <div id="module-config-modal" hidden></div>
     <button id="module-config-modal-close" type="button"></button>
     <div id="module-config-modal-backdrop"></div>
@@ -86,8 +78,6 @@ describe("modules-hub consent messaging", () => {
     vi.resetModules();
     invokeMock.mockReset();
     showToastMock.mockReset();
-    syncVoiceOutputConsoleStateMock.mockReset();
-    focusVoiceOutputConsoleMock.mockReset();
     openMainTabMock.mockReset();
     bootstrapDom();
     const state = await import("../state");
@@ -103,23 +93,23 @@ describe("modules-hub consent messaging", () => {
   it("renders consent-specific feedback and status count for pending permissions", async () => {
     const modules: ModuleDescriptor[] = [
       moduleDefaults({
-        id: "input_vision",
-        name: "Screen Vision Input",
+        id: "example_pending",
+        name: "Example Pending",
         state: "installed",
-        permissions: ["screen_capture"],
+        permissions: ["example_permission"],
       }),
       moduleDefaults({
-        id: "output_voice_tts",
-        name: "Voice Output (TTS)",
+        id: "example_granted",
+        name: "Example Granted",
         state: "active",
-        permissions: ["audio_output"],
+        permissions: ["example_permission"],
       }),
     ];
 
     const state = await import("../state");
     state.setSettings(
       makeSettings({
-        output_voice_tts: ["audio_output"],
+        example_granted: ["example_permission"],
       })
     );
 
@@ -136,26 +126,26 @@ describe("modules-hub consent messaging", () => {
     expect(status?.textContent).toBe("1/2 active · 1 consent pending");
 
     const feedback = document.querySelector(
-      "[data-module-card='input_vision'] .module-row-feedback"
+      "[data-module-card='example_pending'] .module-row-feedback"
     ) as HTMLElement | null;
-    expect(feedback?.textContent).toContain("Screen capture consent missing");
+    expect(feedback?.textContent).toContain("Consent required: example_permission");
   });
 
   it("renders setup health as a warning instead of descriptor error", async () => {
     const modules: ModuleDescriptor[] = [
       moduleDefaults({
-        id: "output_voice_tts",
-        name: "Voice Output (TTS)",
+        id: "example_module",
+        name: "Example Module",
         state: "error",
-        permissions: ["audio_output"],
+        permissions: ["example_permission"],
         last_error: "Enabled module needs setup before it can run.",
       }),
     ];
     const health: ModuleHealthStatus[] = [
       {
-        module_id: "output_voice_tts",
+        module_id: "example_module",
         state: "needs_setup",
-        detail: "Consent required before this module is available: audio_output.",
+        detail: "Consent required before this module is available: example_permission.",
       },
     ];
 
@@ -170,14 +160,14 @@ describe("modules-hub consent messaging", () => {
     await flushAsync();
 
     const badge = document.querySelector(
-      "[data-module-card='output_voice_tts'] .model-status"
+      "[data-module-card='example_module'] .model-status"
     ) as HTMLElement | null;
     expect(badge?.textContent).toBe("Needs setup");
     expect(badge?.className).toContain("model-status--warning");
     expect(badge?.className).not.toContain("is-error");
 
     const feedback = document.querySelector(
-      "[data-module-card='output_voice_tts'] .module-row-feedback"
+      "[data-module-card='example_module'] .module-row-feedback"
     ) as HTMLElement | null;
     expect(feedback?.className).toContain("is-warning");
     expect(feedback?.className).not.toContain("is-error");
@@ -186,10 +176,10 @@ describe("modules-hub consent messaging", () => {
   it("uses detailed consent text on enable and forwards grant permissions", async () => {
     const modules: ModuleDescriptor[] = [
       moduleDefaults({
-        id: "output_voice_tts",
-        name: "Voice Output (TTS)",
+        id: "example_module",
+        name: "Example Module",
         state: "installed",
-        permissions: ["audio_output"],
+        permissions: ["example_permission"],
       }),
     ];
 
@@ -198,7 +188,7 @@ describe("modules-hub consent messaging", () => {
       if (command === "enable_module") {
         modules[0] = { ...modules[0], state: "active" };
         return {
-          message: "Voice output module enabled.",
+          message: "Module enabled.",
           restart_required: false,
           payload,
         };
@@ -213,10 +203,10 @@ describe("modules-hub consent messaging", () => {
     await flushAsync();
 
     const enableBtn = document.querySelector<HTMLButtonElement>(
-      "[data-module-action='enable'][data-module-id='output_voice_tts']"
+      "[data-module-action='enable'][data-module-id='example_module']"
     );
     expect(enableBtn).not.toBeNull();
-    expect(enableBtn?.dataset.settingsVisibilityKey).toBe("module.output_voice_tts.state");
+    expect(enableBtn?.dataset.settingsVisibilityKey).toBe("module.example_module.state");
     expect(enableBtn?.dataset.settingsVisibilityDefault).toBe("expert");
 
     enableBtn?.click();
@@ -224,51 +214,15 @@ describe("modules-hub consent messaging", () => {
 
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     const confirmText = confirmSpy.mock.calls[0][0];
-    expect(confirmText).toContain("Audio output");
-    expect(confirmText).toContain("TTS playback only");
+    expect(confirmText).toContain("example_permission");
+    expect(confirmText).toContain("Permission required by this module.");
 
     expect(invokeMock).toHaveBeenCalledWith("enable_module", {
-      moduleId: "output_voice_tts",
-      grantPermissions: ["audio_output"],
+      moduleId: "example_module",
+      grantPermissions: ["example_permission"],
     });
 
     confirmSpy.mockRestore();
-  });
-
-  it("routes TTS configure action to voice-output main tab", async () => {
-    const modules: ModuleDescriptor[] = [
-      moduleDefaults({
-        id: "output_voice_tts",
-        name: "Voice Output (TTS)",
-        state: "active",
-        permissions: ["audio_output"],
-      }),
-    ];
-    const state = await import("../state");
-    state.setSettings(makeSettings({}, ["output_voice_tts"]));
-
-    invokeMock.mockImplementation(async (command: string) => {
-      if (command === "list_modules") return modules;
-      return null;
-    });
-
-    const modulesHub = await import("../modules-hub");
-    modulesHub.initModulesHub();
-    await flushAsync();
-
-    const configureBtn = document.querySelector<HTMLButtonElement>(
-      "[data-module-action='open-config'][data-module-id='output_voice_tts']"
-    );
-    expect(configureBtn).not.toBeNull();
-
-    configureBtn?.click();
-    await flushAsync();
-
-    expect(openMainTabMock).toHaveBeenCalledWith("voice-output");
-    expect(focusVoiceOutputConsoleMock).toHaveBeenCalledTimes(1);
-
-    const modal = document.getElementById("module-config-modal");
-    expect(modal?.hasAttribute("hidden")).toBe(true);
   });
 
   it("routes AI Refinement configure action to the ai-refinement main tab", async () => {

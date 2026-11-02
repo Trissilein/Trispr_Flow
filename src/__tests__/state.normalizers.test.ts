@@ -45,7 +45,11 @@ describe("normalizeEnabledModuleIds", () => {
                 "assistant_core",
                 "assistant_presence",
                 "gdd",
+                "input_vision",
                 "integrations_confluence",
+                "output_video_generation",
+                "output_voice_tts",
+                "piper_tts",
                 "task_capture",
                 "workflow_agent",
                 "ai_refinement",
@@ -67,10 +71,13 @@ describe("normalizeSettings", () => {
         const result = normalizeSettings(
             makeSettings({
                 module_settings: {
-                    enabled_modules: ["assistant_core", "gdd", "custom_module"],
+                    enabled_modules: ["assistant_core", "gdd", "output_voice_tts", "custom_module"],
                     consented_permissions: {
                         assistant_core: ["filesystem_history"],
                         integrations_confluence: ["network_confluence"],
+                        output_voice_tts: ["audio_output"],
+                        output_video_generation: ["filesystem_exports"],
+                        input_vision: ["screen_capture"],
                         custom_module: ["read"],
                     },
                     module_overrides: {
@@ -78,6 +85,8 @@ describe("normalizeSettings", () => {
                         "workflow_agent.some_key": 42,
                         "gdd.installed": true,
                         "analysis.last_error": "stale",
+                        "output_voice_tts.last_error": "stale",
+                        "piper_tts.installed": true,
                         "custom_module.option": true,
                     },
                 },

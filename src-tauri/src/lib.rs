@@ -11,8 +11,6 @@ mod history_partition;
 mod hotkeys;
 mod models;
 mod modules;
-mod multimodal_io;
-mod narrative_composer;
 mod ollama_runtime;
 mod opus;
 mod overlay;
@@ -24,11 +22,8 @@ mod runtime_commands;
 mod session_manager;
 mod state;
 mod transcription;
-mod tts_benchmark;
 mod uiautomation_capture;
 mod util;
-mod video_generation;
-mod video_ingest;
 mod whisper_server;
 
 use arboard::{Clipboard, ImageData};
@@ -68,18 +63,10 @@ pub(crate) use history_partition::{
     load_history_partition, save_transcript,
 };
 pub(crate) use hotkeys::{get_hotkey_conflicts, test_hotkey, validate_hotkey};
-pub(crate) use multimodal_io::{
-    capture_vision_snapshot, download_piper_voice_key, get_vision_stream_health,
-    list_piper_voice_catalog, list_screen_sources, list_tts_providers, list_tts_voices, speak_tts,
-    start_vision_stream, stop_tts, stop_vision_stream, test_tts_provider,
-};
 pub(crate) use opus::{check_ffmpeg, encode_to_opus, get_ffmpeg_version_info};
 pub(crate) use paths::open_log_directory;
 pub(crate) use session_manager::{clear_crash_recovery, save_crash_recovery};
-pub(crate) use tts_benchmark::{run_latency_benchmark, run_tts_benchmark};
 pub(crate) use util::{frontend_heartbeat, log_frontend_event};
-pub(crate) use video_generation::{video_generate, video_get_output_dir, video_open_output_dir};
-pub(crate) use video_ingest::{video_ingest_history_entry, video_ingest_sources};
 
 /// Wrap a Tauri command body in `catch_unwind` so that a panic inside module
 /// code returns a clean `Err(String)` instead of crashing the app.
@@ -107,8 +94,7 @@ use crate::models::{
 };
 use crate::modules::{
     canonicalize_module_id, health as module_health, normalize_module_settings,
-    normalize_vision_input_settings, normalize_voice_output_settings, package as module_package,
-    registry as module_registry,
+    package as module_package, registry as module_registry,
 };
 use crate::state::{
     load_settings, normalize_ai_fallback_fields, normalize_ai_refinement_module_binding,
@@ -721,7 +707,6 @@ pub(crate) fn terminate_managed_child_slot(label: &str, slot: &Mutex<Option<std:
 }
 
 pub(crate) fn cleanup_managed_processes(app: &AppHandle, state: &AppState) {
-    crate::multimodal_io::shutdown_piper_daemon(state);
     terminate_managed_child_slot("managed Ollama runtime", &state.managed_ollama_child);
     crate::ollama_runtime::clear_ollama_pid_lockfile(app);
     terminate_managed_child_slot(
@@ -1012,53 +997,6 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         }
     };
 
-    let register_tts_stop = || -> Result<(), String> {
-        let hotkey = settings.hotkey_tts_stop.trim();
-        if hotkey.is_empty() {
-            return Ok(());
-        }
-        if !try_claim(hotkey, "TTS Stop") {
-            return Ok(());
-        }
-        info!("Registering TTS Stop hotkey: {}", hotkey);
-        match manager.on_shortcut(hotkey, |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                let app = app.clone();
-                let _ =
-                    crate::multimodal_io::stop_tts_internal(&app, app.state::<AppState>().inner());
-            }
-        }) {
-            Ok(_) => {
-                info!("TTS Stop hotkey registered successfully");
-                Ok(())
-            }
-            Err(e) => {
-                let err_str = e.to_string();
-                if is_already_registered_error(&err_str) {
-                    warn!(
-                        "TTS Stop hotkey '{}' is already held by another application — shortcut will not fire.",
-                        hotkey
-                    );
-                    Ok(())
-                } else {
-                    error!(
-                        "Failed to register TTS Stop hotkey '{}': {}",
-                        hotkey, err_str
-                    );
-                    emit_error(
-                        app,
-                        AppError::Hotkey(format!(
-                            "Could not register TTS Stop hotkey '{}': {}",
-                            hotkey, err_str
-                        )),
-                        Some("Hotkey Registration"),
-                    );
-                    Err(err_str)
-                }
-            }
-        }
-    };
-
     match settings.mode.as_str() {
         "ptt" => {
             if let Err(e) = register_ptt() {
@@ -1081,9 +1019,6 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
 
     if let Err(e) = register_transcribe() {
         errors.push(format!("Transcribe: {}", e));
-    }
-    if let Err(e) = register_tts_stop() {
-        errors.push(format!("TTS Stop: {}", e));
     }
 
     // Register Toggle Activation Words hotkey
@@ -1146,11 +1081,6 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
                 "registered": !errors.iter().any(|e| e.starts_with("Toggle Activation")),
                 "error": errors.iter().find(|e| e.starts_with("Toggle Activation")).cloned(),
             },
-            "tts_stop": {
-                "key": settings.hotkey_tts_stop.trim(),
-                "registered": !errors.iter().any(|e| e.starts_with("TTS Stop")),
-                "error": errors.iter().find(|e| e.starts_with("TTS Stop")).cloned(),
-            },
         });
         let _ = app.emit("hotkey:registration-status", &status);
     }
@@ -1166,64 +1096,6 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
     }
 }
 
-pub(crate) fn format_ureq_status_error(
-    context: &str,
-    code: u16,
-    response: ureq::Response,
-) -> String {
-    let mut body = response.into_string().unwrap_or_default();
-    body = body.replace('\n', " ").replace('\r', " ");
-    let body = body.trim();
-    if body.is_empty() {
-        format!("{} failed with HTTP {}", context, code)
-    } else {
-        format!("{} failed with HTTP {}: {}", context, code, body)
-    }
-}
-
-#[cfg(test)]
-mod piper_daemon_lifecycle_tests {
-    use super::{piper_daemon_lifecycle_action, PiperDaemonLifecycleAction};
-    use crate::modules::VoiceOutputSettings;
-
-    #[test]
-    fn lifecycle_action_prewarms_when_voice_output_enabled_and_piper_primary() {
-        let mut voice = VoiceOutputSettings::default();
-        voice.enabled = true;
-        voice.default_provider = "local_custom".to_string();
-        voice.fallback_provider = "windows_native".to_string();
-
-        assert_eq!(
-            piper_daemon_lifecycle_action(&voice),
-            PiperDaemonLifecycleAction::PrewarmPrimary
-        );
-    }
-
-    #[test]
-    fn lifecycle_action_stops_when_voice_output_disabled() {
-        let mut voice = VoiceOutputSettings::default();
-        voice.enabled = false;
-        voice.default_provider = "local_custom".to_string();
-
-        assert_eq!(
-            piper_daemon_lifecycle_action(&voice),
-            PiperDaemonLifecycleAction::Shutdown
-        );
-    }
-
-    #[test]
-    fn lifecycle_action_stops_when_piper_is_only_fallback() {
-        let mut voice = VoiceOutputSettings::default();
-        voice.enabled = true;
-        voice.default_provider = "windows_native".to_string();
-        voice.fallback_provider = "local_custom".to_string();
-
-        assert_eq!(
-            piper_daemon_lifecycle_action(&voice),
-            PiperDaemonLifecycleAction::Shutdown
-        );
-    }
-}
 fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String> {
     let state = app.state::<AppState>();
     let (settings, effective_enabled) = {
@@ -1301,8 +1173,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
     normalize_history_alias_fields(settings);
     normalize_module_settings(&mut settings.module_settings);
     normalize_ai_refinement_module_binding(settings);
-    normalize_vision_input_settings(&mut settings.vision_input_settings);
-    normalize_voice_output_settings(&mut settings.voice_output_settings);
 
     info!("[DIAG] save_settings_inner: acquiring settings lock (write)");
     {
@@ -1316,11 +1186,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
     info!("[DIAG] save_settings_inner: saving file");
     sync_model_dir_env(settings);
     save_settings_file(app, settings)?;
-    schedule_piper_daemon_reconcile(
-        app.clone(),
-        settings.voice_output_settings.clone(),
-        "save_settings",
-    );
 
     // Register hotkeys on a detached thread: the Windows GlobalShortcut API
     // internally dispatches to the main event-loop thread and waits for
@@ -1646,55 +1511,6 @@ pub(crate) fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
     });
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PiperDaemonLifecycleAction {
-    PrewarmPrimary,
-    Shutdown,
-}
-
-fn piper_daemon_lifecycle_action(
-    voice_settings: &crate::modules::VoiceOutputSettings,
-) -> PiperDaemonLifecycleAction {
-    if voice_settings.enabled && voice_settings.default_provider == "local_custom" {
-        PiperDaemonLifecycleAction::PrewarmPrimary
-    } else {
-        PiperDaemonLifecycleAction::Shutdown
-    }
-}
-
-pub(crate) fn schedule_piper_daemon_reconcile(
-    app: AppHandle,
-    voice_settings: crate::modules::VoiceOutputSettings,
-    trigger: &'static str,
-) {
-    crate::util::spawn_guarded("piper_daemon_reconcile", move || {
-        let state = app.state::<AppState>();
-        match piper_daemon_lifecycle_action(&voice_settings) {
-            PiperDaemonLifecycleAction::Shutdown => {
-                crate::multimodal_io::shutdown_piper_daemon(state.inner());
-            }
-            PiperDaemonLifecycleAction::PrewarmPrimary => {
-                let rate = voice_settings.rate.clamp(0.5, 2.0);
-                match crate::multimodal_io::prewarm_piper_daemon(
-                    state.inner(),
-                    &voice_settings.piper_binary_path,
-                    &voice_settings.piper_model_path,
-                    rate,
-                ) {
-                    Ok(()) => info!(
-                        "[piper-daemon] prewarm complete trigger={} rate={:.3}",
-                        trigger, rate
-                    ),
-                    Err(error) => warn!(
-                        "[piper-daemon] prewarm failed trigger={} rate={:.3}: {}",
-                        trigger, rate, error
-                    ),
-                }
-            }
-        }
-    });
-}
-
 #[tauri::command]
 fn enable_module(
     app: AppHandle,
@@ -1779,24 +1595,18 @@ fn module_enabled(settings: &Settings, module_id: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeCapability {
     AiRefinement,
-    VisionInput,
-    VoiceOutputTts,
 }
 
 impl RuntimeCapability {
     pub(crate) fn module_id(self) -> &'static str {
         match self {
             Self::AiRefinement => AI_REFINEMENT_MODULE_ID,
-            Self::VisionInput => "input_vision",
-            Self::VoiceOutputTts => "output_voice_tts",
         }
     }
 
     fn setting_enabled(self, settings: &Settings) -> bool {
         match self {
             Self::AiRefinement => settings.ai_fallback.enabled,
-            Self::VisionInput => settings.vision_input_settings.enabled,
-            Self::VoiceOutputTts => settings.voice_output_settings.enabled,
         }
     }
 
@@ -1805,20 +1615,12 @@ impl RuntimeCapability {
             Self::AiRefinement => {
                 "AI Refinement module is disabled. Enable module 'ai_refinement' first."
             }
-            Self::VisionInput => {
-                "Vision input module is disabled. Enable module 'input_vision' first."
-            }
-            Self::VoiceOutputTts => {
-                "Voice output module is disabled. Enable module 'output_voice_tts' first."
-            }
         }
     }
 
     fn setting_disabled_message(self) -> &'static str {
         match self {
             Self::AiRefinement => "AI refinement is disabled in settings.",
-            Self::VisionInput => "Vision input is disabled in settings.",
-            Self::VoiceOutputTts => "Voice output is disabled in settings.",
         }
     }
 }
@@ -1859,12 +1661,6 @@ mod runtime_capability_gate_tests {
         }
         match capability {
             RuntimeCapability::AiRefinement => settings.ai_fallback.enabled = setting_enabled,
-            RuntimeCapability::VisionInput => {
-                settings.vision_input_settings.enabled = setting_enabled
-            }
-            RuntimeCapability::VoiceOutputTts => {
-                settings.voice_output_settings.enabled = setting_enabled
-            }
         }
         settings
     }
@@ -1891,24 +1687,6 @@ mod runtime_capability_gate_tests {
             &refinement_missing_setting,
             RuntimeCapability::AiRefinement
         ));
-
-        let both_enabled = settings_for_capability(RuntimeCapability::VisionInput, true, true);
-        assert!(capability_enabled(
-            &both_enabled,
-            RuntimeCapability::VisionInput
-        ));
-
-        let missing_module = settings_for_capability(RuntimeCapability::VisionInput, false, true);
-        assert!(!capability_enabled(
-            &missing_module,
-            RuntimeCapability::VisionInput
-        ));
-
-        let missing_setting = settings_for_capability(RuntimeCapability::VisionInput, true, false);
-        assert!(!capability_enabled(
-            &missing_setting,
-            RuntimeCapability::VisionInput
-        ));
     }
 
     #[test]
@@ -1929,23 +1707,6 @@ mod runtime_capability_gate_tests {
             require_capability_enabled(&ai_setting_disabled, RuntimeCapability::AiRefinement)
                 .unwrap_err();
         assert_eq!(ai_setting_error, "AI refinement is disabled in settings.");
-
-        let module_disabled =
-            settings_for_capability(RuntimeCapability::VoiceOutputTts, false, true);
-        let module_error =
-            require_capability_enabled(&module_disabled, RuntimeCapability::VoiceOutputTts)
-                .unwrap_err();
-        assert_eq!(
-            module_error,
-            "Voice output module is disabled. Enable module 'output_voice_tts' first."
-        );
-
-        let setting_disabled =
-            settings_for_capability(RuntimeCapability::VoiceOutputTts, true, false);
-        let setting_error =
-            require_capability_enabled(&setting_disabled, RuntimeCapability::VoiceOutputTts)
-                .unwrap_err();
-        assert_eq!(setting_error, "Voice output is disabled in settings.");
     }
 }
 
@@ -2123,10 +1884,6 @@ pub struct HardwareInfo {
     pub cuda_available: bool,
     pub driver_version: String,
     pub update_url: Option<String>,
-    /// Whether h264_nvenc is functional on this GPU. None = probe not run yet
-    /// (non-NVIDIA path). False = probe ran and failed (Blackwell SDK mismatch,
-    /// missing driver, etc.). True = NVENC encode succeeded.
-    pub nvenc_probe_ok: Option<bool>,
 }
 
 #[tauri::command]
@@ -2236,13 +1993,6 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
             "cpu".to_string()
         };
 
-        // NVENC probe only makes sense on NVIDIA hardware.
-        let nvenc_probe_ok = if gpu_name.to_lowercase().contains("nvidia") {
-            Some(crate::opus::probe_nvenc_available())
-        } else {
-            None
-        };
-
         Ok(HardwareInfo {
             gpu_name,
             gpu_vram,
@@ -2250,7 +2000,6 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
             cuda_available,
             driver_version,
             update_url,
-            nvenc_probe_ok,
         })
     }
 
@@ -2263,7 +2012,6 @@ fn get_hardware_info() -> Result<HardwareInfo, String> {
             cuda_available: false,
             driver_version: "N/A".to_string(),
             update_url: None,
-            nvenc_probe_ok: None,
         })
     }
 }
@@ -2727,9 +2475,6 @@ fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
         refining_indicator_color: settings.overlay_refining_indicator_color.clone(),
         refining_indicator_speed_ms: settings.overlay_refining_indicator_speed_ms,
         refining_indicator_range: settings.overlay_refining_indicator_range as f64,
-        tts_stop_enabled: settings.overlay_tts_stop_enabled,
-        tts_stop_shape: settings.overlay_tts_stop_shape.clone(),
-        tts_stop_color: settings.overlay_tts_stop_color.clone(),
         kitt_min_width: settings.overlay_kitt_min_width as f64,
         kitt_max_width: settings.overlay_kitt_max_width as f64,
         kitt_height: settings.overlay_kitt_height as f64,
@@ -3736,10 +3481,6 @@ pub fn run() {
                 gpu_util_low_streak: AtomicU32::new(0),
                 whisper_server_warm_until_ms: AtomicU64::new(0),
                 whisper_server_retire_generation: AtomicU64::new(0),
-                vision_stream_running: AtomicBool::new(false),
-                vision_stream_started_ms: AtomicU64::new(0),
-                vision_stream_frame_seq: AtomicU64::new(0),
-                vision_frame_buffer: Mutex::new(crate::multimodal_io::VisionFrameBuffer::default()),
                 startup_status: Mutex::new(StartupStatus::default()),
                 runtime_diagnostics: Mutex::new(RuntimeDiagnostics::default()),
                 overlay_controller: Mutex::new(crate::overlay::OverlayController::default()),
@@ -3747,10 +3488,6 @@ pub fn run() {
                 frontend_watchdog_last_reload_ms: AtomicU64::new(0),
                 frontend_watchdog_reload_count: AtomicU64::new(0),
                 frontend_watchdog_state: Mutex::new(state::FrontendWatchdogState::default()),
-                tts_speaking: AtomicBool::new(false),
-                tts_session_counter: AtomicU64::new(0),
-                tts_playback_control: Mutex::new(None),
-                piper_daemon: crate::multimodal_io::PiperDaemonState::default(),
                 enter_capture: crate::state::EnterCaptureState::default(),
                 #[cfg(target_os = "windows")]
                 system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
@@ -3821,87 +3558,6 @@ pub fn run() {
                 let handle = app.handle().clone();
                 crate::util::spawn_guarded("dependency_preflight", move || {
                     runtime_commands::run_dependency_preflight(&handle);
-                });
-            }
-
-            if env_flag("TRISPR_RUN_LATENCY_BENCHMARK") {
-                let app_handle = app.handle().clone();
-                crate::util::spawn_guarded("latency_benchmark", move || {
-                    let request = crate::tts_benchmark::latency_benchmark_request_from_env();
-                    let result = {
-                        let state = app_handle.state::<AppState>();
-                        crate::tts_benchmark::run_latency_benchmark_inner(
-                            &app_handle,
-                            state.inner(),
-                            &request,
-                        )
-                    };
-
-                    match result {
-                        Ok(report) => match crate::tts_benchmark::write_latency_benchmark_report(&report) {
-                            Ok(path) => {
-                                info!(
-                                    "Latency benchmark complete: p50={}ms p95={}ms (report: {})",
-                                    report.p50_ms,
-                                    report.p95_ms,
-                                    path.display()
-                                );
-                                if !report.slo_pass {
-                                    warn!(
-                                        "Latency benchmark SLO warning: p50={}ms (target {}), p95={}ms (target {})",
-                                        report.p50_ms,
-                                        report.slo_p50_ms,
-                                        report.p95_ms,
-                                        report.slo_p95_ms
-                                    );
-                                }
-                            }
-                            Err(err) => {
-                                error!("Failed to write latency benchmark report: {}", err);
-                            }
-                        },
-                        Err(err) => {
-                            error!("Latency benchmark failed: {}", err);
-                            if let Err(write_err) =
-                                crate::tts_benchmark::write_latency_benchmark_error(&err)
-                            {
-                                error!("Failed to write latency benchmark error: {}", write_err);
-                            }
-                        }
-                    }
-
-                    if env_flag("TRISPR_RUN_LATENCY_BENCHMARK_EXIT") {
-                        app_handle.exit(0);
-                    }
-                });
-            }
-
-            if env_flag("TRISPR_RUN_TTS_BENCHMARK") {
-                let app_handle = app.handle().clone();
-                crate::util::spawn_guarded("tts_benchmark", move || {
-                    let request = tts_benchmark::tts_benchmark_request_from_env();
-                    let result = {
-                        let state = app_handle.state::<AppState>();
-                        tts_benchmark::run_tts_benchmark_inner(state.inner(), &request)
-                    };
-
-                    match result {
-                        Ok(report) => match tts_benchmark::write_tts_benchmark_report(&report) {
-                            Ok(path) => {
-                                report.log_summary(&path);
-                            }
-                            Err(err) => {
-                                error!("Failed to write TTS benchmark report: {}", err);
-                            }
-                        },
-                        Err(err) => {
-                            error!("TTS benchmark failed: {}", err);
-                        }
-                    }
-
-                    if env_flag("TRISPR_RUN_TTS_BENCHMARK_EXIT") {
-                        app_handle.exit(0);
-                    }
                 });
             }
 
@@ -4493,18 +4149,6 @@ pub fn run() {
             list_available_modules,
             download_module,
             uninstall_module,
-            list_screen_sources,
-            start_vision_stream,
-            stop_vision_stream,
-            get_vision_stream_health,
-            capture_vision_snapshot,
-            list_tts_providers,
-            list_tts_voices,
-            list_piper_voice_catalog,
-            download_piper_voice_key,
-            speak_tts,
-            stop_tts,
-            test_tts_provider,
             save_transcript,
             list_audio_devices,
             list_output_devices,
@@ -4573,8 +4217,6 @@ pub fn run() {
             set_strict_local_mode,
             refine_transcript,
             ping_refinement_model,
-            run_latency_benchmark,
-            run_tts_benchmark,
             get_runtime_metrics_snapshot,
             record_runtime_metric,
             frontend_heartbeat,
@@ -4589,11 +4231,6 @@ pub fn run() {
             purge_gpu_memory,
             stop_ollama_runtime,
             install_lm_studio,
-            video_ingest_sources,
-            video_ingest_history_entry,
-            video_generate,
-            video_get_output_dir,
-            video_open_output_dir,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

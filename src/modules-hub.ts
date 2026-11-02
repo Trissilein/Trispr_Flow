@@ -6,7 +6,6 @@ import { renderSettings } from "./settings";
 import type { Settings } from "./types";
 import { showToast } from "./toast";
 import { openMainTab } from "./wiring/app-chrome.wire";
-import { focusVoiceOutputConsole, syncVoiceOutputConsoleState } from "./voice-output-console";
 import { focusFirstElement } from "./modal-focus";
 import type { ModuleDescriptor, ModuleHealthStatus, ModuleUpdateInfo } from "./types";
 
@@ -86,48 +85,14 @@ type PermissionCopy = {
 };
 
 function permissionCopy(permission: string): PermissionCopy {
-  if (permission === "screen_capture") {
-    return {
-      label: "Screen capture",
-      detail: "Low-FPS context frames stay in RAM and are not written to disk.",
-    };
-  }
-  if (permission === "audio_output") {
-    return {
-      label: "Audio output",
-      detail: "Allows spoken replies via TTS playback only (no microphone capture).",
-    };
-  }
-  if (permission === "filesystem_exports") {
-    return {
-      label: "Export files",
-      detail: "Allows module access to generated local export files.",
-    };
-  }
   return {
     label: permission,
     detail: "Permission required by this module.",
   };
 }
 
-function moduleScopeHint(moduleId: string): string {
-  if (moduleId === "input_vision") {
-    return "Privacy scope: in-memory vision context only; no automatic image file persistence.";
-  }
-  if (moduleId === "output_voice_tts") {
-    return "Privacy scope: TTS playback only; no microphone recording.";
-  }
-  return "";
-}
-
-function consentFeedback(moduleInfo: ModuleDescriptor, missing: string[]): string {
+function consentFeedback(missing: string[]): string {
   if (!missing.length) return "";
-  if (moduleInfo.id === "input_vision") {
-    return "Screen capture consent missing. Vision context remains disabled until granted.";
-  }
-  if (moduleInfo.id === "output_voice_tts") {
-    return "Audio output consent missing. Spoken replies remain disabled until granted.";
-  }
   const labels = missing.map((permission) => permissionCopy(permission).label).join(", ");
   return `Consent required: ${labels}`;
 }
@@ -137,12 +102,7 @@ function consentDialogMessage(moduleInfo: ModuleDescriptor, missing: string[]): 
     const copy = permissionCopy(permission);
     return `- ${copy.label}: ${copy.detail}`;
   });
-  const scopeHint = moduleScopeHint(moduleInfo.id);
-  const lines = [`Enable module "${moduleInfo.name}"?`, "", "This grants:", ...details];
-  if (scopeHint) {
-    lines.push("", scopeHint);
-  }
-  lines.push("", "Continue?");
+  const lines = [`Enable module "${moduleInfo.name}"?`, "", "This grants:", ...details, "", "Continue?"];
   return lines.join("\n");
 }
 
@@ -151,18 +111,6 @@ function moduleGuide(moduleId: string): { description: string; usage: string } {
     return {
       description: "Adds optional local AI transcript refinement and prompt/runtime controls.",
       usage: "Use: Enable module, then open the AI Refinement tab to configure provider and prompts.",
-    };
-  }
-  if (moduleId === "input_vision") {
-    return {
-      description: "Adds low-FPS screen context capture for agent-driven workflows.",
-      usage: "Use: Enable and start the vision stream when screen context is needed.",
-    };
-  }
-  if (moduleId === "output_voice_tts") {
-    return {
-      description: "Adds spoken agent replies via Windows-native or local TTS output.",
-      usage: "Use: Enable, select provider/voice, then run a TTS test.",
     };
   }
   return {
@@ -210,22 +158,6 @@ function openModuleConfig(moduleId: string): void {
   const moduleInfo = moduleSnapshot.find((m) => m.id === moduleId);
   if (!moduleInfo) return;
 
-  if (moduleId === "output_voice_tts") {
-    const enabled = settings?.module_settings?.enabled_modules?.includes("output_voice_tts") ?? false;
-    if (!enabled) {
-      showToast({
-        type: "info",
-        title: "Enable module first",
-        message: "Enable Voice Output to open its configuration tab.",
-        duration: 3200,
-      });
-      return;
-    }
-    openMainTab("voice-output");
-    focusVoiceOutputConsole();
-    return;
-  }
-
   if (moduleId === "ai_refinement") {
     const enabled = settings?.module_settings?.enabled_modules?.includes("ai_refinement") ?? false;
     if (!enabled) {
@@ -245,9 +177,8 @@ function openModuleConfig(moduleId: string): void {
 
   const guide = moduleGuide(moduleId);
   const missing = missingConsents(moduleInfo);
-  const scopeHint = moduleScopeHint(moduleId);
   const feedbackParts: string[] = [];
-  const consentMessage = consentFeedback(moduleInfo, missing);
+  const consentMessage = consentFeedback(missing);
   if (consentMessage) feedbackParts.push(consentMessage);
   if (moduleInfo.last_error) feedbackParts.push(moduleInfo.last_error);
 
@@ -258,9 +189,7 @@ function openModuleConfig(moduleId: string): void {
   if (dom.moduleConfigModalDesc)
     dom.moduleConfigModalDesc.textContent = guide.description;
   if (dom.moduleConfigModalUsage)
-    dom.moduleConfigModalUsage.textContent = scopeHint
-      ? `${guide.usage} ${scopeHint}`
-      : guide.usage;
+    dom.moduleConfigModalUsage.textContent = guide.usage;
   if (dom.moduleConfigModalDeps)
     dom.moduleConfigModalDeps.textContent = moduleInfo.dependencies.length
       ? `Deps: ${moduleInfo.dependencies.join(", ")}`
@@ -361,14 +290,13 @@ function renderModuleRow(moduleInfo: ModuleDescriptor): string {
   const summary = `Deps ${moduleInfo.dependencies.length} · Perms ${moduleInfo.permissions.length}`;
   const summaryTitle = escapeHtml(`Dependencies: ${moduleInfo.dependencies.join(", ") || "none"}\nPermissions: ${moduleInfo.permissions.join(", ") || "none"}`);
   const guide = moduleGuide(moduleInfo.id);
-  const scopeHint = moduleScopeHint(moduleInfo.id);
-  const descText = scopeHint ? `${guide.description} ${guide.usage} ${scopeHint}` : `${guide.description} ${guide.usage}`;
+  const descText = `${guide.description} ${guide.usage}`;
   const health = moduleCardHealth(moduleInfo);
   const healthIsSetupWarning = health
     ? ["needs_setup", "fallback_active", "local_warning", "degraded"].includes(health.state)
     : false;
   const missing = missingConsents(moduleInfo);
-  const consentMessage = consentFeedback(moduleInfo, missing);
+  const consentMessage = consentFeedback(missing);
   const feedbackParts: string[] = [];
   if (consentMessage) {
     feedbackParts.push(consentMessage);
@@ -459,7 +387,6 @@ async function refreshModuleState(): Promise<void> {
   }
   moduleSnapshot = modules;
   renderModulesList(modules);
-  syncVoiceOutputConsoleState();
   if (dom.modulesStatus) {
     const active = modules.filter((moduleInfo) => moduleInfo.state === "active").length;
     const pendingConsents = modules.filter((moduleInfo) => missingConsents(moduleInfo).length > 0)

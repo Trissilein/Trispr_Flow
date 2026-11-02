@@ -93,8 +93,7 @@ let authModalProvider: CloudAIFallbackProvider | null = null;
 // ── Private helpers ─────────────────────────────────────────────────────────
 
 // Duplicated one-liners per OQ-3 clause 3 (private, not exported; matching
-// the pattern established in refinement-pipeline-graph.ts and
-// voice-output-console.ts).
+// the pattern established in refinement-pipeline-graph.ts).
 function isModuleEnabled(moduleId: string): boolean {
   return (
     settings?.module_settings?.enabled_modules?.includes(moduleId) ?? false
@@ -594,11 +593,6 @@ function ensureAIFallbackSettingsDefaults() {
     ollama_remote_expert_opt_in: false,
   };
   settings.setup.ollama_remote_expert_opt_in ??= false;
-  settings.hotkey_tts_stop ??= "CommandOrControl+Shift+F12";
-  settings.overlay_tts_stop_enabled ??= true;
-  settings.overlay_tts_stop_shape =
-    settings.overlay_tts_stop_shape === "round" ? "round" : "compact";
-  settings.overlay_tts_stop_color ??= "#4be0d4";
   normalizeAiRefinementModuleBindingInSettings();
   syncDerivedLanguageSettings();
 }

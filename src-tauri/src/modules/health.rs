@@ -136,17 +136,6 @@ mod tests {
             .expect("module health should exist")
     }
 
-    fn health_for_with_packages(
-        module_id: &str,
-        settings: &ModuleSettings,
-        installed_package_ids: HashSet<String>,
-    ) -> ModuleHealthStatus {
-        get_health_with_packages(settings, Some(module_id), &installed_package_ids)
-            .into_iter()
-            .next()
-            .expect("module health should exist")
-    }
-
     #[test]
     fn fresh_default_optional_modules_do_not_report_global_setup_errors() {
         let settings = ModuleSettings::default();
@@ -161,27 +150,14 @@ mod tests {
         let mut settings = ModuleSettings::default();
         registry::set_last_error(
             &mut settings,
-            "output_voice_tts",
-            "Missing consent for output_voice_tts: audio_output",
+            "ai_refinement",
+            "Missing dependency.",
         );
 
-        let health = health_for("output_voice_tts", &settings);
+        let health = health_for("ai_refinement", &settings);
 
         assert_eq!(health.state, "ok");
         assert!(health.detail.contains("previous setup issue is not active"));
-    }
-
-    #[test]
-    fn enabled_module_without_required_consent_needs_setup() {
-        let mut settings = ModuleSettings::default();
-        settings
-            .enabled_modules
-            .insert("output_voice_tts".to_string());
-
-        let health = health_for_with_packages("output_voice_tts", &settings, HashSet::new());
-
-        assert_eq!(health.state, "needs_setup");
-        assert!(health.detail.contains("audio_output"));
     }
 
     #[test]
@@ -210,7 +186,6 @@ mod tests {
             bundled: true,
             core: true,
             toggleable: false,
-            surface: "core".to_string(),
         };
 
         let health = classify_module_health(&settings, descriptor);

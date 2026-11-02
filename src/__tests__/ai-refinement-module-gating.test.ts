@@ -1,14 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings } from "../types";
 
-function makeSettings(
-  moduleEnabled: boolean,
-  aiEnabled: boolean,
-  ttsModuleEnabled = false
-): Settings {
+function makeSettings(moduleEnabled: boolean, aiEnabled: boolean): Settings {
   const enabledModules: string[] = [];
   if (moduleEnabled) enabledModules.push("ai_refinement");
-  if (ttsModuleEnabled) enabledModules.push("output_voice_tts");
   return {
     ai_fallback: {
       enabled: aiEnabled,
@@ -82,10 +77,6 @@ function makeSettings(
       module_overrides: {},
     },
     postproc_llm_enabled: aiEnabled,
-    voice_output_settings: {
-      enabled: ttsModuleEnabled,
-      output_device: "default",
-    },
   } as unknown as Settings;
 }
 
@@ -94,12 +85,10 @@ function mountMainTabDom(): void {
     <button id="tab-btn-transcription"></button>
     <button id="tab-btn-settings"></button>
     <button id="tab-btn-ai-refinement"></button>
-    <button id="tab-btn-voice-output"></button>
     <button id="tab-btn-modules"></button>
     <div id="tab-transcription"></div>
     <div id="tab-settings"></div>
     <div id="tab-ai-refinement"></div>
-    <div id="tab-voice-output"></div>
     <div id="tab-modules"></div>
   `;
 }
@@ -168,61 +157,16 @@ describe("AI refinement module tab gating", () => {
     expect(state.isRefinementEnabled()).toBe(true);
   });
 
-  it("shows Voice Output tab only when output_voice_tts module is enabled", async () => {
+  it("ignores a persisted tab id of a removed tab (voice-output)", async () => {
     const state = await import("../state");
     const listeners = await import("../wiring/app-chrome.wire");
 
-    state.setSettings(makeSettings(true, true, false));
-    listeners.initMainTab();
-
-    const voiceBtn = document.getElementById("tab-btn-voice-output") as HTMLButtonElement | null;
-    const voicePanel = document.getElementById("tab-voice-output") as HTMLDivElement | null;
-    expect(voiceBtn?.hidden).toBe(true);
-    expect(voicePanel?.hidden).toBe(true);
-
-    state.setSettings(makeSettings(true, true, true));
-    listeners.reconcileMainTabVisibility();
-    expect(voiceBtn?.hidden).toBe(false);
-    expect(voicePanel?.hidden).toBe(false);
-  });
-
-  it("falls back to transcription when active Voice Output tab gets disabled", async () => {
-    const state = await import("../state");
-    const listeners = await import("../wiring/app-chrome.wire");
-
-    state.setSettings(makeSettings(true, true, true));
+    localStorage.setItem("trispr-active-tab", "voice-output");
+    state.setSettings(makeSettings(true, true));
     listeners.initMainTab();
 
     const transBtn = document.getElementById("tab-btn-transcription");
-    const voiceBtn = document.getElementById("tab-btn-voice-output");
-    const transPanel = document.getElementById("tab-transcription");
-    const voicePanel = document.getElementById("tab-voice-output");
-
-    transBtn?.classList.remove("active");
-    voiceBtn?.classList.add("active");
-    transPanel?.classList.remove("active");
-    voicePanel?.classList.add("active");
-    localStorage.setItem("trispr-active-tab", "voice-output");
-
-    state.setSettings(makeSettings(true, true, false));
-    listeners.reconcileMainTabVisibility();
-
+    expect(transBtn?.classList.contains("active")).toBe(true);
     expect(localStorage.getItem("trispr-active-tab")).toBe("transcription");
-    expect(transBtn?.classList.contains("active")).toBe(true);
-    expect(voiceBtn?.classList.contains("active")).toBe(false);
-  });
-
-  it("ignores persisted Voice Output tab when module is disabled", async () => {
-    const state = await import("../state");
-    const listeners = await import("../wiring/app-chrome.wire");
-
-    localStorage.setItem("trispr-active-tab", "voice-output");
-    state.setSettings(makeSettings(true, true, false));
-    listeners.initMainTab();
-
-    const transBtn = document.getElementById("tab-btn-transcription");
-    const voiceBtn = document.getElementById("tab-btn-voice-output");
-    expect(transBtn?.classList.contains("active")).toBe(true);
-    expect(voiceBtn?.classList.contains("active")).toBe(false);
   });
 });

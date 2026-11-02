@@ -7,16 +7,9 @@ export type AIExecutionMode = "local_primary" | "online_fallback";
 export type AIProviderAuthStatus = "locked" | "verified_api_key" | "verified_oauth";
 export type AIProviderAuthMethodPreference = "api_key" | "oauth";
 export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
-export type ModuleSurface = "assistant" | "transcription" | "shared" | "ui";
-export type ModuleId =
-  | "ai_refinement"
-  | "input_vision"
-  | "output_voice_tts";
+export type ModuleId = "ai_refinement" | "opus";
 export type ModuleState = "not_installed" | "installed" | "enabled" | "active" | "error";
-export type ModulePermission =
-  | "filesystem_exports"
-  | "screen_capture"
-  | "audio_output";
+export type ModulePermission = string;
 export type RefinementPromptPreset =
   | "wording"
   | "summary"
@@ -61,126 +54,12 @@ export interface ModuleDescriptor {
   bundled: boolean;
   core: boolean;
   toggleable: boolean;
-  surface?: ModuleSurface;
 }
 
 export interface ModuleSettings {
   enabled_modules: string[];
   consented_permissions: Record<string, string[]>;
   module_overrides: Record<string, unknown>;
-}
-
-export interface VisionInputSettings {
-  enabled: boolean;
-  fps: number;
-  source_scope: "all_monitors" | "active_monitor" | "active_window";
-  max_width: number;
-  jpeg_quality: number;
-  ram_buffer_seconds: number;
-  all_monitors_default: boolean;
-}
-
-export interface VoiceOutputSettings {
-  enabled: boolean;
-  default_provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
-  fallback_provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
-  voice_id_windows: string;
-  voice_id_windows_fallback?: string;
-  auto_voice_by_detected_language?: boolean;
-  voice_id_local: string;
-  rate: number;
-  volume: number;
-  piper_gain_db?: number;
-  output_policy: "agent_replies_only" | "replies_and_events" | "explicit_only";
-  output_device: string;
-  piper_binary_path?: string;
-  piper_model_path?: string;
-  piper_model_dir?: string;
-  qwen3_tts_endpoint?: string;
-  qwen3_tts_model?: string;
-  qwen3_tts_voice?: string;
-  qwen3_tts_api_key?: string;
-  qwen3_tts_timeout_sec?: number;
-  qwen3_tts_enabled?: boolean;
-}
-
-export interface VisionSourceInfo {
-  id: string;
-  label: string;
-  width: number;
-  height: number;
-}
-
-export interface VisionStreamHealth {
-  running: boolean;
-  fps: number;
-  source_scope: string;
-  started_at_ms?: number | null;
-  frame_seq: number;
-  buffered_frames: number;
-  buffered_bytes: number;
-  last_frame_timestamp_ms?: number | null;
-  last_frame_width?: number | null;
-  last_frame_height?: number | null;
-}
-
-export interface VisionSnapshotResult {
-  captured: boolean;
-  timestamp_ms: number;
-  source_count: number;
-  note: string;
-  frame_seq?: number | null;
-  width?: number | null;
-  height?: number | null;
-  bytes?: number | null;
-  source_scope?: string | null;
-  jpeg_base64?: string | null;
-}
-
-export interface TtsProviderInfo {
-  id: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
-  label: string;
-  available: boolean;
-  surface: "runtime_stable" | "benchmark_experimental";
-  reason?: string | null;
-}
-
-export interface TtsVoiceInfo {
-  id: string;
-  label: string;
-  provider: "windows_native" | "windows_natural" | "local_custom" | "qwen3_tts";
-  locale?: string | null;
-  profile?: string | null;
-}
-
-export interface PiperVoiceCatalogEntry {
-  key: string;
-  label: string;
-  locale: string | null;
-  quality: "x_low" | "low" | "medium" | "high";
-  installed: boolean;
-  curated: boolean;
-  path: string | null;
-}
-
-export interface PiperVoiceDownloadProgress {
-  voice_key: string;
-  stage: "started" | "downloading" | "completed" | "error";
-  file_name: string;
-  downloaded_bytes: number;
-  total_bytes?: number | null;
-  percent?: number | null;
-  message?: string | null;
-}
-
-export interface TtsSpeakResult {
-  provider_used: "windows_native" | "windows_natural" | "local_custom" | string;
-  accepted: boolean;
-  message: string;
-  used_fallback?: boolean | null;
-  preferred_provider?: "windows_native" | "windows_natural" | "local_custom" | string | null;
-  fallback_provider?: "windows_native" | "windows_natural" | "local_custom" | string | null;
-  primary_error?: string | null;
 }
 
 export interface AIFallbackSettings {
@@ -252,7 +131,6 @@ export interface Settings {
   mode: "ptt" | "vad";
   hotkey_ptt: string;
   hotkey_toggle: string;
-  hotkey_tts_stop: string;
   input_device: string;
   language_mode: "auto" | "en" | "de" | "fr" | "es" | "it" | "pt" | "nl" | "pl" | "ru" | "ja" | "ko" | "zh" | "ar" | "tr" | "hi";
   language_pinned: boolean;
@@ -263,8 +141,6 @@ export interface Settings {
   providers: AIProvidersSettings;
   setup: SetupSettings;
   module_settings?: ModuleSettings;
-  vision_input_settings?: VisionInputSettings;
-  voice_output_settings?: VoiceOutputSettings;
   audio_cues: boolean;
   audio_cues_volume: number;
   diagnostic_logging_enabled?: boolean;
@@ -314,9 +190,6 @@ export interface Settings {
   overlay_refining_indicator_color: string;
   overlay_refining_indicator_speed_ms: number;
   overlay_refining_indicator_range: number;
-  overlay_tts_stop_enabled: boolean;
-  overlay_tts_stop_shape: "compact" | "round" | string;
-  overlay_tts_stop_color: string;
   overlay_kitt_min_width: number;
   overlay_kitt_max_width: number;
   overlay_kitt_height: number;

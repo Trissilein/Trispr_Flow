@@ -20,7 +20,11 @@ export const REMOVED_MODULE_IDS = new Set([
   "assistant_core",
   "assistant_presence",
   "gdd",
+  "input_vision",
   "integrations_confluence",
+  "output_video_generation",
+  "output_voice_tts",
+  "piper_tts",
   "task_capture",
   "workflow_agent",
 ]);
